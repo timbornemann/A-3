@@ -47,6 +47,21 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Im aktuellen Walking Skeleton darf sie ausschließlich den typisierten `query_health`-Command aufrufen; Datei-, Shell- und SQL-Zugriffe sind nicht freigegeben.
 
+## Lokale Qualitätsgates
+
+Die CI-relevanten lokalen Prüfungen sind als stabile Root-Skripte verfügbar:
+
+```text
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+pnpm ci:frontend
+pnpm check:links
+pnpm report:dependencies
+```
+
+Der Dependency-/Lizenzbericht wird unter `target/reports/dependency-license-report.json` erzeugt und enthält keine lokalen absoluten Pfade. Aufbau, Runner-Matrix und Grenzen der Foundation-CI beschreibt die [CI-Dokumentation](docs/CI.md).
+
 ## Repositorystruktur
 
 ```text
@@ -67,6 +82,7 @@ Crates und Frontend-Pakete werden erst angelegt, wenn ein verifizierbarer vertik
 | [Architektur](docs/ARCHITECTURE.md) | Systemaufbau, Komponenten und Abhängigkeiten |
 | [Architekturregeln](docs/ARCHITECTURE_RULES.md) | Verbindliche Code- und Modulregeln |
 | [Qualitätsgates](docs/QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
+| [Continuous Integration](docs/CI.md) | Lokale Gates, Plattformmatrix und Lizenzbericht |
 | [ADRs](docs/adrs/README.md) | Akzeptierte Architekturentscheidungen |
 | [Entwicklungspläne](docs/plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
 

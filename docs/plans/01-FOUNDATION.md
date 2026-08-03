@@ -103,18 +103,22 @@ Prüfung:
 
 ## F5 CI baseline
 
+Status: In Progress
+
 Abhängigkeiten: F1 bis F4
 
-- [ ] Rust fmt, Clippy und Tests
-- [ ] Frontend format, lint, typecheck und tests
+- [x] Rust fmt, Clippy und Tests
+- [x] Frontend format, lint, typecheck und tests
 - [ ] Builds auf Windows, Linux und macOS
 - [ ] Dependency- und Lizenzbericht als CI-Artefakt
-- [ ] Markdown-Linkprüfung für lokale Links
+- [x] Markdown-Linkprüfung für lokale Links
 
 Akzeptanz:
 
 - ein absichtlicher Warning-, Test- oder Linkfehler macht CI rot;
 - Plattformmatrix baut den Walking Skeleton.
+
+Offener Nachweis: erster vollständig grüner GitHub-Actions-Lauf einschließlich Linux, macOS ARM64, macOS x86_64 und Artefakt-Upload.
 
 ## Gate M1
 

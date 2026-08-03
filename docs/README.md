@@ -43,6 +43,7 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 | [Sicherheit und Ausführung](SECURITY_AND_EXECUTION.md) | Trust Boundary, Freigaben, Prozess- und Dateisystemregeln |
 | [IPC-Protokoll](IPC_PROTOCOL.md) | Versionierte Grenztypen zwischen WebView und Rust-Kern |
 | [Qualitätsgates](QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
+| [Continuous Integration](CI.md) | Lokale Gates, GitHub-Actions-Jobs, Plattformmatrix und Lizenzbericht |
 | [ADRs](adrs/README.md) | Einzelne, nachvollziehbare Architekturentscheidungen |
 | [Entwicklungspläne](plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
 
