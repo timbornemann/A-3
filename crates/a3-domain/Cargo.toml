@@ -1,0 +1,10 @@
+[package]
+name = "a3-domain"
+description = "Framework-independent domain model and invariants for A^3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

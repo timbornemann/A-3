@@ -6,15 +6,17 @@ Relevante ADRs: 0001, 0002, 0003, 0014
 
 ## F1 Repository bootstrap
 
+Status: Completed
+
 Abhängigkeiten: keine
 
-- [ ] Workspaceverzeichnisse gemäß ARCHITECTURE.md anlegen
-- [ ] Root Cargo.toml mit zentralen Package- und Lintregeln
-- [ ] pnpm über Corepack als einzigen Frontend-Paketmanager konfigurieren und Version pinnen
-- [ ] rust-toolchain.toml und Node-Version pinnen
-- [ ] EditorConfig, Gitignore und Formattingkonfiguration
-- [ ] README, AGENTS.md, docs und ADRs integrieren
-- [ ] minimale Lizenzdatei nach Nutzerentscheidung
+- [x] Workspaceverzeichnisse gemäß ARCHITECTURE.md anlegen
+- [x] Root Cargo.toml mit zentralen Package- und Lintregeln
+- [x] pnpm über Corepack als einzigen Frontend-Paketmanager konfigurieren und Version pinnen
+- [x] rust-toolchain.toml und Node-Version pinnen
+- [x] EditorConfig, Gitignore und Formattingkonfiguration
+- [x] README, AGENTS.md, docs und ADRs integrieren
+- [x] minimale Lizenzdatei nach Nutzerentscheidung
 
 Akzeptanz:
 

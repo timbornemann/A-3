@@ -39,10 +39,10 @@ Ein Nutzer kann:
 
 ### M0 Architekturbaseline
 
-- [ ] Dokumentenpaket in das Repository übernehmen
-- [ ] ADR-Prozess und Eigentümer festlegen
-- [ ] AGENTS.md am Repository-Root aktivieren
-- [ ] Lizenz und öffentliches Repositorymodell entscheiden
+- [x] Dokumentenpaket in das Repository übernehmen
+- [x] ADR-Prozess und Eigentümer festlegen
+- [x] AGENTS.md am Repository-Root aktivieren
+- [x] Lizenz und öffentliches Repositorymodell entscheiden
 
 ### M1 Walking Skeleton
 
@@ -160,4 +160,3 @@ V1 ist nicht abgeschlossen, solange eines gilt:
 - Indexdelta benötigt regelmäßig Full Reindex;
 - Windows, Linux oder macOS hat keinen bestandenen Smoke-Test;
 - ein Performancebudget ist weder erfüllt noch mit begründeter Abweichung dokumentiert.
-

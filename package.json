@@ -1,0 +1,12 @@
+{
+  "name": "a3",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "description": "A^3 – Autonomous Agent Assistant",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": "24.14.0",
+    "pnpm": "11.9.0"
+  }
+}

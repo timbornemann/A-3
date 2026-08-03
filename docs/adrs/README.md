@@ -12,6 +12,15 @@ Die ADRs dokumentieren langfristige Entscheidungen von A^3.
 
 Akzeptierte ADRs werden nicht inhaltlich umgeschrieben. Eine neue Entscheidung erhält eine neue Nummer und verweist mit Supersedes auf das alte ADR.
 
+## Verantwortung und Freigabe
+
+Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Bornemann**.
+
+- Neue langfristige Entscheidungen beginnen als `Proposed` auf Basis von [0000-template.md](0000-template.md).
+- Der Maintainer prüft die Entscheidung gegen Sicherheitsregeln, bestehende ADRs und Architekturregeln und setzt ihren Status nach Review auf `Accepted` oder `Rejected`.
+- Änderungen an akzeptierten Entscheidungen erfolgen ausschließlich über ein neues ADR, das die ersetzte Entscheidung ausdrücklich als `Superseded` referenziert.
+- Implementierung und Planfortschritt dürfen eine neue Architekturentscheidung erst nach deren Annahme voraussetzen.
+
 ## Index
 
 | ADR | Entscheidung |
@@ -35,4 +44,3 @@ Akzeptierte ADRs werden nicht inhaltlich umgeschrieben. Eine neue Entscheidung e
 ## Neue ADRs
 
 Kopiere [0000-template.md](0000-template.md), verwende die nächste vierstellige Nummer und ergänze betroffene Dokumente und Pläne.
-

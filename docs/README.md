@@ -31,18 +31,18 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 
 | Dokument | Zweck |
 | --- | --- |
-| [AGENTS.md](AGENTS.md) | Dauerhafter Arbeitsauftrag und Verhaltensvertrag für Codex |
-| [Produktanforderungen](docs/PRODUCT_REQUIREMENTS.md) | Verbindlicher V1-Funktionsumfang und messbare Produktziele |
-| [Architektur](docs/ARCHITECTURE.md) | Systemaufbau, Komponenten, Abhängigkeiten und Laufzeitflüsse |
-| [Architekturregeln](docs/ARCHITECTURE_RULES.md) | Verbindliche Regeln für hochwertigen Code und klare Verantwortlichkeiten |
-| [Domänenmodell](docs/DOMAIN_MODEL.md) | Begriffe, Aggregate, Zustände und Invarianten |
-| [Index und Projektkarte](docs/INDEXING_AND_PROJECT_MAP.md) | Deterministische Analyse, Deep Map und inkrementelle Aktualisierung |
-| [Memory und Context](docs/MEMORY_AND_CONTEXT.md) | Evidenzgedächtnis, Task Ledger und Context Compiler |
-| [Daten und Persistenz](docs/DATA_AND_PERSISTENCE.md) | Datenmodell, Speicherorte, Migrationen und Suchindizes |
-| [Sicherheit und Ausführung](docs/SECURITY_AND_EXECUTION.md) | Trust Boundary, Freigaben, Prozess- und Dateisystemregeln |
-| [Qualitätsgates](docs/QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
-| [ADRs](docs/adrs/README.md) | Einzelne, nachvollziehbare Architekturentscheidungen |
-| [Entwicklungspläne](docs/plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
+| [AGENTS.md](../AGENTS.md) | Dauerhafter Arbeitsauftrag und Verhaltensvertrag für Codex |
+| [Produktanforderungen](PRODUCT_REQUIREMENTS.md) | Verbindlicher V1-Funktionsumfang und messbare Produktziele |
+| [Architektur](ARCHITECTURE.md) | Systemaufbau, Komponenten, Abhängigkeiten und Laufzeitflüsse |
+| [Architekturregeln](ARCHITECTURE_RULES.md) | Verbindliche Regeln für hochwertigen Code und klare Verantwortlichkeiten |
+| [Domänenmodell](DOMAIN_MODEL.md) | Begriffe, Aggregate, Zustände und Invarianten |
+| [Index und Projektkarte](INDEXING_AND_PROJECT_MAP.md) | Deterministische Analyse, Deep Map und inkrementelle Aktualisierung |
+| [Memory und Context](MEMORY_AND_CONTEXT.md) | Evidenzgedächtnis, Task Ledger und Context Compiler |
+| [Daten und Persistenz](DATA_AND_PERSISTENCE.md) | Datenmodell, Speicherorte, Migrationen und Suchindizes |
+| [Sicherheit und Ausführung](SECURITY_AND_EXECUTION.md) | Trust Boundary, Freigaben, Prozess- und Dateisystemregeln |
+| [Qualitätsgates](QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
+| [ADRs](adrs/README.md) | Einzelne, nachvollziehbare Architekturentscheidungen |
+| [Entwicklungspläne](plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
 
 ## Nicht-Ziele der ersten stabilen Version
 
@@ -56,4 +56,4 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 
 ## Arbeitsweise
 
-Codex beginnt bei [AGENTS.md](AGENTS.md), wählt genau ein freigegebenes Arbeitspaket aus dem Masterplan und liest anschließend nur die dafür nötigen Detaildokumente und ADRs. Ein Arbeitspaket ist erst abgeschlossen, wenn seine Abnahmekriterien nachweisbar erfüllt sind.
+Codex beginnt bei [AGENTS.md](../AGENTS.md), wählt genau ein freigegebenes Arbeitspaket aus dem Masterplan und liest anschließend nur die dafür nötigen Detaildokumente und ADRs. Ein Arbeitspaket ist erst abgeschlossen, wenn seine Abnahmekriterien nachweisbar erfüllt sind.

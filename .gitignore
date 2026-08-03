@@ -1,0 +1,22 @@
+# Rust
+/target/
+
+# Node and frontend builds
+node_modules/
+dist/
+.svelte-kit/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and coverage
+*.log
+coverage/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
