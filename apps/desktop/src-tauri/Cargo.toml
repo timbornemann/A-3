@@ -11,6 +11,14 @@ publish = false
 a3-application.workspace = true
 a3-domain.workspace = true
 a3-protocol.workspace = true
+tauri.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tauri = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true

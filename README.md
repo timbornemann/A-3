@@ -31,6 +31,22 @@ cargo fmt --check
 
 Der Bootstrap installiert keine globale Projekt-Runtime und startet keinen Hintergrunddienst. Provider- und Netzwerkkonnektivität gehören nicht zum Foundation-Schnitt.
 
+## Desktop lokal starten
+
+Nach dem Bootstrap startet der Entwicklungsmodus Frontend und Tauri gemeinsam:
+
+```text
+pnpm tauri dev
+```
+
+Ein lokaler Produktionsbuild ohne Installer wird so erzeugt:
+
+```text
+pnpm tauri build --no-bundle
+```
+
+Die WebView ist unprivilegiert. Im aktuellen Walking Skeleton darf sie ausschließlich den typisierten `query_health`-Command aufrufen; Datei-, Shell- und SQL-Zugriffe sind nicht freigegeben.
+
 ## Repositorystruktur
 
 ```text

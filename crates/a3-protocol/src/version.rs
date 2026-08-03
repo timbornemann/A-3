@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// Version of the A^3 IPC protocol carried by every boundary message.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
 pub struct ProtocolVersion(u16);
 
 impl ProtocolVersion {

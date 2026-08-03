@@ -1,0 +1,208 @@
+:root {
+  color: #17211f;
+  background: #edf1ec;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 15% 10%, rgb(255 255 255 / 80%), transparent 34rem),
+    linear-gradient(145deg, #edf1ec 0%, #dfe7e1 100%);
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  width: min(100%, 960px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: clamp(2rem, 7vw, 5rem);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 3rem;
+}
+
+.product-header {
+  align-self: end;
+}
+
+.eyebrow,
+.section-kicker {
+  margin: 0 0 0.7rem;
+  color: #4e645d;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0.1rem;
+  color: #102e28;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(4.5rem, 15vw, 8.5rem);
+  font-weight: 500;
+  letter-spacing: -0.075em;
+  line-height: 0.9;
+}
+
+.subtitle {
+  margin-bottom: 0;
+  color: #3f554f;
+  font-size: clamp(1rem, 2.7vw, 1.35rem);
+  letter-spacing: 0.04em;
+}
+
+.health-card {
+  align-self: start;
+  padding: clamp(1.4rem, 4vw, 2.25rem);
+  border: 1px solid rgb(22 63 54 / 14%);
+  border-radius: 1.5rem;
+  background: rgb(255 255 255 / 68%);
+  box-shadow: 0 1.5rem 4rem rgb(29 63 54 / 10%);
+  backdrop-filter: blur(20px);
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.section-heading h2 {
+  margin-bottom: 0;
+  font-size: 1.4rem;
+}
+
+.status-dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: #26a269;
+  box-shadow: 0 0 0 0.35rem rgb(38 162 105 / 13%);
+}
+
+.status-dot.pending {
+  background: #d49d21;
+  box-shadow: 0 0 0 0.35rem rgb(212 157 33 / 13%);
+}
+
+.status-dot.failed {
+  background: #c54242;
+  box-shadow: 0 0 0 0.35rem rgb(197 66 66 / 13%);
+}
+
+.status-message,
+.ready-label {
+  margin: 2rem 0 0;
+  color: #496059;
+}
+
+.ready-label {
+  color: #187049;
+  font-weight: 700;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0 0;
+}
+
+.health-grid div {
+  padding: 1rem;
+  border-radius: 1rem;
+  background: #eef3ef;
+}
+
+.health-grid dt {
+  margin-bottom: 0.35rem;
+  color: #657770;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.health-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.95rem;
+}
+
+.error-state {
+  margin-top: 1.5rem;
+  color: #7b2929;
+}
+
+.error-state button {
+  padding: 0.7rem 1rem;
+  border: 1px solid #8e3939;
+  border-radius: 0.8rem;
+  color: #742828;
+  background: transparent;
+  cursor: pointer;
+}
+
+.error-state button:hover,
+.error-state button:focus-visible {
+  background: #f8e8e7;
+  outline: 3px solid rgb(142 57 57 / 20%);
+  outline-offset: 2px;
+}
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  color: #64736e;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 620px) {
+  .app-shell {
+    gap: 2rem;
+  }
+
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

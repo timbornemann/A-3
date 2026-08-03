@@ -56,14 +56,16 @@ Prüfung:
 
 ## F3 Tauri-Svelte walking skeleton
 
+Status: Completed
+
 Abhängigkeiten: F2
 
-- [ ] Tauri 2 und Svelte/TypeScript mit statischem Build
-- [ ] UI zeigt exakt A^3 und Autonomous Agent Assistant
-- [ ] UI ruft HealthQuery auf
-- [ ] Rust antwortet mit Appversion, Protokollversion und Plattform
-- [ ] sicherer Fehlercodepfad
-- [ ] keine generische Tauri-FS-, Shell- oder SQL-Capability
+- [x] Tauri 2 und Svelte/TypeScript mit statischem Build
+- [x] UI zeigt exakt A^3 und Autonomous Agent Assistant
+- [x] UI ruft HealthQuery auf
+- [x] Rust antwortet mit Appversion, Protokollversion und Plattform
+- [x] sicherer Fehlercodepfad
+- [x] keine generische Tauri-FS-, Shell- oder SQL-Capability
 
 Akzeptanz:
 

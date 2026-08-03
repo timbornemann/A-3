@@ -46,9 +46,9 @@ Ein Nutzer kann:
 
 ### M1 Walking Skeleton
 
-- [ ] Cargo-Workspace und Desktop-App scaffolden
-- [ ] Svelte-UI statisch in Tauri laden
-- [ ] ersten versionierten IPC-Query implementieren
+- [x] Cargo-Workspace und Desktop-App scaffolden
+- [x] Svelte-UI statisch in Tauri laden
+- [x] ersten versionierten IPC-Query implementieren
 - [ ] Plattform-CI für Compile und Unit Tests aktivieren
 
 ### M2 Lokales Projekt

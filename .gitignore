@@ -6,6 +6,11 @@ node_modules/
 dist/
 .svelte-kit/
 
+# Tauri editor schemas and unused mobile icon targets
+/apps/desktop/src-tauri/gen/schemas/
+/apps/desktop/src-tauri/icons/android/
+/apps/desktop/src-tauri/icons/ios/
+
 # Local configuration and secrets
 .env
 .env.*

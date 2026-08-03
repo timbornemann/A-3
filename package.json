@@ -5,6 +5,15 @@
   "license": "GPL-3.0-only",
   "description": "A^3 – Autonomous Agent Assistant",
   "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "build": "pnpm --filter @a3/desktop build",
+    "format": "pnpm --filter @a3/desktop format",
+    "format:check": "pnpm --filter @a3/desktop format:check",
+    "lint": "pnpm --filter @a3/desktop lint",
+    "tauri": "pnpm --filter @a3/desktop tauri",
+    "test": "pnpm --filter @a3/desktop test",
+    "typecheck": "pnpm --filter @a3/desktop typecheck"
+  },
   "engines": {
     "node": "24.14.0",
     "pnpm": "11.9.0"
