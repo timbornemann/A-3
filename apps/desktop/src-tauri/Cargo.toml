@@ -1,0 +1,16 @@
+[package]
+name = "a3-desktop"
+description = "Desktop composition root for A^3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+a3-application.workspace = true
+a3-domain.workspace = true
+a3-protocol.workspace = true
+
+[lints]
+workspace = true

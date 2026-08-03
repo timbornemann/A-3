@@ -33,13 +33,15 @@ Prüfung:
 
 ## F2 Crate boundaries
 
+Status: Completed
+
 Abhängigkeiten: F1
 
-- [ ] a3-domain mit Version- und Health-Value-Objects
-- [ ] a3-application mit HealthQuery-Port
-- [ ] a3-protocol mit versioniertem Health DTO
-- [ ] leere Adapter nur anlegen, wenn der erste Slice sie nutzt
-- [ ] src-tauri als Composition Root
+- [x] a3-domain mit Version- und Health-Value-Objects
+- [x] a3-application mit HealthQuery-Port
+- [x] a3-protocol mit versioniertem Health DTO
+- [x] leere Adapter nur anlegen, wenn der erste Slice sie nutzt
+- [x] src-tauri als Composition Root
 
 Akzeptanz:
 

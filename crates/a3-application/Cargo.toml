@@ -1,0 +1,13 @@
+[package]
+name = "a3-application"
+description = "Use cases and ports for A^3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+a3-domain.workspace = true
+
+[lints]
+workspace = true

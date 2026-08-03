@@ -40,6 +40,7 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 | [Memory und Context](MEMORY_AND_CONTEXT.md) | Evidenzgedächtnis, Task Ledger und Context Compiler |
 | [Daten und Persistenz](DATA_AND_PERSISTENCE.md) | Datenmodell, Speicherorte, Migrationen und Suchindizes |
 | [Sicherheit und Ausführung](SECURITY_AND_EXECUTION.md) | Trust Boundary, Freigaben, Prozess- und Dateisystemregeln |
+| [IPC-Protokoll](IPC_PROTOCOL.md) | Versionierte Grenztypen zwischen WebView und Rust-Kern |
 | [Qualitätsgates](QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
 | [ADRs](adrs/README.md) | Einzelne, nachvollziehbare Architekturentscheidungen |
 | [Entwicklungspläne](plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
