@@ -36,6 +36,7 @@ Eine Änderung an einer akzeptierten Entscheidung benötigt ein neues ADR, das d
 | [Architektur](ARCHITECTURE.md) | Systemaufbau, Komponenten, Abhängigkeiten und Laufzeitflüsse |
 | [Architekturregeln](ARCHITECTURE_RULES.md) | Verbindliche Regeln für hochwertigen Code und klare Verantwortlichkeiten |
 | [Domänenmodell](DOMAIN_MODEL.md) | Begriffe, Aggregate, Zustände und Invarianten |
+| [Job-Laufzeit](JOB_RUNTIME.md) | Begrenzte Jobs, Fortschritt, Cancellation, Ereignisse und Shutdown |
 | [Index und Projektkarte](INDEXING_AND_PROJECT_MAP.md) | Deterministische Analyse, Deep Map und inkrementelle Aktualisierung |
 | [Memory und Context](MEMORY_AND_CONTEXT.md) | Evidenzgedächtnis, Task Ledger und Context Compiler |
 | [Daten und Persistenz](DATA_AND_PERSISTENCE.md) | Datenmodell, Speicherorte, Migrationen und Suchindizes |

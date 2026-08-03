@@ -81,13 +81,15 @@ Prüfung:
 
 ## F4 Job primitives
 
+Status: Completed
+
 Abhängigkeiten: F2
 
-- [ ] JobId, JobStatus, Progress und CancellationToken
-- [ ] begrenzter Job Scheduler
-- [ ] typisierte ProgressEvents
-- [ ] Shutdown wartet oder bricht Jobs kontrolliert ab
-- [ ] FakeClock und deterministische Tests
+- [x] JobId, JobStatus, Progress und CancellationToken
+- [x] begrenzter Job Scheduler
+- [x] typisierte ProgressEvents
+- [x] Shutdown wartet oder bricht Jobs kontrolliert ab
+- [x] FakeClock und deterministische Tests
 
 Akzeptanz:
 

@@ -26,13 +26,13 @@ fn execute_query_health(
 mod tests {
     use super::execute_query_health;
     use crate::CompositionRoot;
-    use a3_domain::{ApplicationVersion, ApplicationVersionError, Platform};
+    use a3_domain::{ApplicationVersion, Platform};
     use a3_protocol::{ErrorCodeV1, HealthRequestV1, ProtocolVersion};
 
     #[test]
     fn rejects_unsupported_protocol_version_without_executing_payload()
-    -> Result<(), ApplicationVersionError> {
-        let root = CompositionRoot::new(ApplicationVersion::try_from("0.1.0")?, Platform::Windows);
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = CompositionRoot::new(ApplicationVersion::try_from("0.1.0")?, Platform::Windows)?;
 
         let result = execute_query_health(HealthRequestV1::new(ProtocolVersion::new(999)), &root);
 

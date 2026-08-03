@@ -20,7 +20,7 @@ mod tests {
 
     #[test]
     fn tauri_ipc_enforces_the_versioned_health_contract() -> Result<(), Box<dyn Error>> {
-        let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows);
+        let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows)?;
         let app = mock_builder()
             .manage(root)
             .invoke_handler(tauri::generate_handler![a3_desktop::commands::query_health])

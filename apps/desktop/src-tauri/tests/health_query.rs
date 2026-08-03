@@ -1,12 +1,13 @@
 //! Contract tests for the desktop health-query boundary.
 
 use a3_desktop::CompositionRoot;
-use a3_domain::{ApplicationVersion, ApplicationVersionError, Platform};
+use a3_domain::{ApplicationVersion, Platform};
 use a3_protocol::{HealthStatusV1, PlatformV1, ProtocolVersion};
+use std::error::Error;
 
 #[test]
-fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), ApplicationVersionError> {
-    let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows);
+fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Error>> {
+    let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows)?;
 
     let response = root.query_health();
 
@@ -18,7 +19,7 @@ fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Applicatio
 }
 
 #[test]
-fn environment_builds_a_valid_composition_root() -> Result<(), ApplicationVersionError> {
+fn environment_builds_a_valid_composition_root() -> Result<(), Box<dyn Error>> {
     let root = CompositionRoot::from_environment()?;
 
     assert_eq!(root.query_health().application_version(), "0.1.0");
