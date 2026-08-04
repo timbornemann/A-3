@@ -5,6 +5,7 @@ members = [
     "crates/a3-application",
     "crates/a3-domain",
     "crates/a3-protocol",
+    "crates/a3-storage-libsql",
     "crates/a3-workspace",
 ]
 
@@ -21,7 +22,9 @@ a3-protocol = { path = "crates/a3-protocol" }
 a3-workspace = { path = "crates/a3-workspace" }
 blake3 = "=1.8.5"
 crossbeam-channel = "=0.5.16"
+futures = "=0.3.32"
 gix = { version = "=0.86.0", default-features = false, features = ["sha1", "sha256"] }
+libsql = { version = "=0.9.29", default-features = false, features = ["core"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 tauri = "=2.11.5"

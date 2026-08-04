@@ -26,13 +26,17 @@ Akzeptanz:
 
 Abhängigkeiten: S1
 
+Status: In Progress
+
 - [ ] KnowledgeStore-Port aus konkreten Use Cases ableiten
 - [ ] catalog.db und knowledge.db öffnen
-- [ ] Migration Runner
-- [ ] Foreign Keys und pragmatische sichere DB-Konfiguration
+- [x] Migration Runner
+- [x] Foreign Keys und pragmatische sichere DB-Konfiguration
 - [ ] Project-, Snapshot- und IndexRun-Repository
 - [ ] Storage-Contract-Suite
 - [ ] korrupte oder neuere DB sicher behandeln
+
+Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad, prüft bestehende Kataloge zunächst read-only, führt vorwärtsgerichtete Migrationen atomar aus und validiert die Connection-Policy. Leerer Start, Wiederöffnung, Rollback einer fehlgeschlagenen Migration, manipulierte Migrationshistorie, Katalogkorruption und eine neuere Katalogversion sind durch Tests abgedeckt. Die kombinierten Punkte für beide Datenbanken, die vollständige Contract-Suite und die allgemeine Fehlerbehandlung bleiben bis zur `knowledge.db`-Implementierung offen. Die Reconciliation aus S1 baut anschließend auf den noch zu implementierenden Katalog-Repositories für bekannte Projekt- und Worktree-Identitäten auf.
 
 Akzeptanz:
 

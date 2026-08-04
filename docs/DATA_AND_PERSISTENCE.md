@@ -1,7 +1,7 @@
 # Daten und Persistenz
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-04
 
 ## Entscheidung
 
@@ -13,6 +13,19 @@ Begründung:
 - FTS und ein nativer DiskANN-Vektorindex stehen heute zur Verfügung;
 - die neue Turso-Engine ist technisch attraktiv, aber Full-Text Search ist derzeit experimentell und schnelle approximative Vektorindizes stehen laut Projekt-Roadmap noch aus;
 - der Port verhindert eine fachliche Bindung an eine Engine.
+
+## Implementierter Storage-Unterbau
+
+Der erste S2-Teilschnitt liegt im Infrastruktur-Crate `a3-storage-libsql`:
+
+- Ein typisiertes `StorageLayout` nimmt ausschließlich einen absoluten, kanonisierten App-Data-Root an und begrenzt den globalen Katalog auf `catalog.db` innerhalb dieses Roots.
+- Der Adapter verwendet die stabile libSQL-Version 0.9.29 ausschließlich mit dem lokalen `core`-Feature. Remote-, Replikations- und Synchronisationsfunktionen sind nicht aktiviert.
+- Ein vorhandener Katalog wird zunächst mit `SQLITE_OPEN_READ_ONLY` auf Schema-Version und Integrität geprüft. Eine unbekannt neuere Version wird vor Connection-Konfiguration oder Migration abgelehnt und nicht verändert.
+- Schreibende Connections erzwingen `foreign_keys = ON`, WAL-Journaling, `synchronous = NORMAL`, einen Busy-Timeout von fünf Sekunden und `trusted_schema = OFF`; die Werte werden nach dem Setzen zurückgelesen.
+- `PRAGMA user_version` ist die monotone Schema-Version. `schema_migrations` hält zusätzlich Name und versionierten BLAKE3-Checksum jeder Migration fest.
+- Jede Migration läuft in einer eigenen `IMMEDIATE`-Transaktion. Ein fehlgeschlagener Migrationskörper wird explizit zurückgerollt.
+
+Dieser Teilschnitt enthält nur das Katalog-Bootstrap-Schema. Projekt-Repositories, `knowledge.db` und der `KnowledgeStore`-Port folgen aus den konkreten Use Cases; weder libSQL-Typen noch SQL werden dafür in die Application-Schicht verschoben.
 
 Quellen:
 
@@ -191,4 +204,3 @@ Der Vektorindex ist optional. Bei fehlender Unterstützung bleibt die Funktion �
 - Task, Decisions und User-Evidence benötigen Backup vor Cleanup.
 - Vollständige Toollogs können nach Policy gekürzt werden; Digest, Status, relevante Evidence und Verifikation bleiben.
 - Ein Rebuild darf keine Task-Historie oder Decisions verlieren.
-
