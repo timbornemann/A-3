@@ -100,11 +100,15 @@ a3/
 │   ├── a3-context/                 # Retrieval und Context Compiler
 │   ├── a3-provider/                # LLM- und Embedding-Adapter
 │   └── a3-workspace/               # Dateien, Patches und Prozesse
+├── tests/
+│   └── storage-contract/            # adapterneutrale Store-Verträge, dev-only
 ├── fixtures/                       # kleine, lizenzkompatible Test-Repositories
 └── docs/
 ~~~
 
 Die Crates sind logische Grenzen innerhalb eines ausgelieferten Produkts, keine getrennten Dienste.
+Das dev-only Workspace-Crate unter `tests/storage-contract` wird nicht ausgeliefert. Es hängt nur von
+Domain und Application ab und führt dieselben Portverträge gegen jeden konkreten Storageadapter aus.
 
 ## Abhängigkeitsrichtung
 

@@ -13,6 +13,7 @@ blake3.workspace = true
 libsql.workspace = true
 
 [dev-dependencies]
+a3-storage-contract-tests.workspace = true
 futures.workspace = true
 
 [lints]

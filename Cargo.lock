@@ -40,11 +40,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "a3-storage-contract-tests"
+version = "0.1.0"
+dependencies = [
+ "a3-application",
+ "a3-domain",
+]
+
+[[package]]
 name = "a3-storage-libsql"
 version = "0.1.0"
 dependencies = [
  "a3-application",
  "a3-domain",
+ "a3-storage-contract-tests",
  "blake3",
  "futures",
  "libsql",

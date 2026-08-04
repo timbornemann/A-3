@@ -51,6 +51,10 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Der aktuelle Port kann diesen Lauf nur
   als `failed` oder `cancelled` beenden. Ein Übergang zu `published` ist bewusst nicht verfügbar, bis
   S10 Indexdaten und Sichtbarkeit in derselben Adaptertransaktion committen kann.
+- Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
+  Isolation und IndexRun-Übergänge ausschließlich über die Application-Ports. Der libSQL-Adapter
+  liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-, Korruptions-
+  und Schema-Negativtests bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
   denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
   dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen

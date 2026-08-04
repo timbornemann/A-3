@@ -71,6 +71,8 @@ Der Dependency-/Lizenzbericht wird unter `target/reports/dependency-license-repo
 ```text
 apps/desktop/       Svelte-WebView und Tauri-Composition-Root
 crates/             Rust-Domain, Use Cases, Features und Adapter
+tests/storage-contract/
+                    Adapterneutrale Storage-Verträge (nur Entwicklung und CI)
 fixtures/           kleine lizenzkompatible Test-Repositories
 docs/               verbindliche Architektur, ADRs und Pläne
 ```
