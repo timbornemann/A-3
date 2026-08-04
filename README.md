@@ -7,8 +7,9 @@ Der sichtbare Produktname besteht exakt aus den drei Zeichen **A^3**. In technis
 ## Entwicklungsstand
 
 Der Foundation-Meilenstein sowie Projektidentität, lokale Storage-Grundlage, begrenzte
-Repository-Discovery und inhaltsbasierte Worktree-Snapshots des Fast Index sind abgeschlossen. Die
-weitere Implementierung folgt dem Plan für Storage und Fast Index. Die verbindliche Architektur- und
+Repository-Discovery, inhaltsbasierte Worktree-Snapshots und der versionierte Tree-sitter-
+LanguageAdapter-Contract des Fast Index sind abgeschlossen. Die weitere Implementierung folgt dem
+Plan für Storage und Fast Index. Die verbindliche Architektur- und
 Entwicklungsbaseline liegt unter [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort
 festgelegten Entscheidungen und Qualitätsgates nicht widersprechen.
 

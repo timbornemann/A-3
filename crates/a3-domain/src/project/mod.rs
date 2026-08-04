@@ -2,6 +2,7 @@ mod discovery;
 mod git;
 mod id;
 mod index_run;
+mod language;
 mod path;
 mod revision;
 mod snapshot;
@@ -18,6 +19,16 @@ pub use id::{
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
+};
+pub use language::{
+    Confidence, ConfidenceError, DiagnosticMessage, DiagnosticMessageError,
+    LanguageAdapterContractVersion, LanguageAdapterContractVersionError, LanguageParseArtifacts,
+    LanguageParseResult, LanguageParseResultError, LocalSymbolId, LocalSymbolIdError,
+    ParseCoverage, ParseCoverageError, ParseDiagnostic, ParseDiagnosticCode,
+    ParseDiagnosticSeverity, ParsedSymbol, ParsedSymbolError, SourcePosition, SourceRange,
+    SourceRangeError, SymbolKind, SymbolName, SymbolReference, SymbolReferenceError, SymbolRole,
+    SymbolRoles, SymbolSignature, SymbolTextError, SymbolVisibility, SyntaxProvider,
+    SyntaxRelation, SyntaxRelationKind, SyntaxSource, SyntaxTarget,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
 pub use revision::{

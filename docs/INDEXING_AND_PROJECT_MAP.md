@@ -90,6 +90,21 @@ Andere Textsprachen erhalten zunächst Datei-, FTS- und Manifest-Support. Ein La
 
 Tree-sitter ist die Baseline. LSP oder SCIP kann später als zusätzlicher Edge Provider eingesetzt werden; es ersetzt den lokalen Parser nicht.
 
+Der versionierte V1-Contract bindet jeden Parse an die exakte `FileRevision` und prüft die übergebenen
+Bytes erneut gegen deren BLAKE3-Hash. Gemeinsame Domain-Typen repräsentieren halboffene Byte-/
+Positionsbereiche, file-lokale Symbol-IDs, sprachneutrale Symbolarten, syntaktische Beziehungen mit
+Provider und Confidence sowie sichere Diagnostics ohne Quelltextauszüge. Ein Ergebnis enthält die
+konkrete Sprach-, Adapter- und Grammatikrevision und eine explizite Coverage aus Gesamtbytes,
+abgedeckten Bytes und unvollständigen Regionen. Syntaxfehler bleiben damit partielle Ergebnisse und
+sind kein globaler Indexfehler.
+
+Parser werden pro Grammatik in einem begrenzten, wiederverwendbaren Pool gehalten. V1 akzeptiert
+höchstens 4 MiB pro Quelldatei, wartet höchstens 500 ms auf einen Parser, begrenzt den Parse auf zwei
+Sekunden und prüft Baumgröße, Baumtiefe und Ergebnisanzahlen. Cancellation und monotone, begrenzte
+Fortschrittsmeldungen gelten während Warten, Parsen und Baumprüfung. Jeder konkrete Adapter muss die
+gemeinsame Golden-Contract-Suite bestehen; Sprachadapterrevisionen werden in der
+Snapshotkompatibilität erfasst.
+
 ### Link
 
 Kantentypen in V1:

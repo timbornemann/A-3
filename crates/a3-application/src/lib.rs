@@ -4,6 +4,7 @@ mod health_query;
 mod jobs;
 mod knowledge_index_store;
 mod knowledge_store;
+mod language_adapter;
 mod open_project;
 mod project_reconciliation;
 mod recent_projects;
@@ -22,6 +23,10 @@ pub use knowledge_index_store::{KnowledgeIndexFailure, KnowledgeIndexFuture, Kno
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
     ProjectPathDisplayError, RecentProject, RecentProjectLimit, RecentProjectLimitError,
+};
+pub use language_adapter::{
+    LanguageAdapter, LanguageParseControl, LanguageParseControlError, LanguageParseFailure,
+    LanguageParseInput, LanguageParsePolicy,
 };
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,

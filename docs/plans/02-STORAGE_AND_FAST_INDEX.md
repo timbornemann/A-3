@@ -131,11 +131,30 @@ Akzeptanz:
 
 Abhängigkeiten: S4
 
-- [ ] versionierter Adapter-Contract
-- [ ] gemeinsame Symbol-, Edge- und Diagnostic-Typen
-- [ ] Tree-sitter-Parserpool
-- [ ] Parse-Limits und Cancellation
-- [ ] gemeinsame Golden-Contract-Suite
+Status: Completed
+
+- [x] versionierter Adapter-Contract
+- [x] gemeinsame Symbol-, Edge- und Diagnostic-Typen
+- [x] Tree-sitter-Parserpool
+- [x] Parse-Limits und Cancellation
+- [x] gemeinsame Golden-Contract-Suite
+
+Verifizierter Abschluss vom 2026-08-04: Domain und Application definieren einen versionierten V1-
+Vertrag für exakte `FileRevision`-Eingaben, sprachneutrale Symbole, syntaktische Kanten, sichere
+Diagnostics und sichtbare Byte-/Region-Coverage. Der Adapter-Port trägt seine konkrete Sprach-,
+Adapter- und Grammatikrevision; dieselbe Revision wird durch den Contract-Test in
+`SnapshotCompatibility` übernommen. Der lokale Tree-sitter-Unterbau verwendet einen auf 64 Instanzen
+begrenzten, wiederverwendbaren Parserpool mit Backpressure, 500-ms-Lease-Wartezeit, zwei Sekunden
+Parsezeit, kooperativer Cancellation, begrenztem Fortschritt sowie festen Grenzen für Eingabe,
+Baumknoten, Tiefe und Ergebnisartefakte. Quellen werden vor dem Parsen erneut in 64-KiB-Blöcken gegen
+ihren BLAKE3-Hash geprüft. Syntaxfehler sind erfolgreiche partielle Parse-Ergebnisse und vergiften
+weder den Parser noch nachfolgende Dateien. Das dev-only Workspace-Crate
+`a3-language-adapter-contract-tests` prüft für jeden Adapter dieselben Golden-, Determinismus-,
+Fehlerisolations-, Coverage-, Cancellation-, Größen-, Hash-, Pfad- und Revisionsverträge. Ein
+Tree-sitter-JSON-Probeadapter bindet diese Suite, ohne einen der geplanten Produktadapter S6 bis S8
+vorwegzunehmen. Die reproduzierbare Release-Messung auf der lokalen Windows-Entwicklungsmaschine
+parste 100.000 strukturelle Zeilen beziehungsweise 1.600.002 Bytes direkt in 317 ms und über den
+vollständig begrenzten Pool-Pfad in 369 ms; sie ist kein Messwert für den vollständigen Fast Index.
 
 Akzeptanz:
 

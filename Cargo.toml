@@ -8,6 +8,7 @@ members = [
     "crates/a3-repo-index",
     "crates/a3-storage-libsql",
     "crates/a3-workspace",
+    "tests/language-adapter-contract",
     "tests/storage-contract",
 ]
 
@@ -22,6 +23,7 @@ a3-application = { path = "crates/a3-application" }
 a3-domain = { path = "crates/a3-domain" }
 a3-protocol = { path = "crates/a3-protocol" }
 a3-repo-index = { path = "crates/a3-repo-index" }
+a3-language-adapter-contract-tests = { path = "tests/language-adapter-contract" }
 a3-storage-libsql = { path = "crates/a3-storage-libsql" }
 a3-storage-contract-tests = { path = "tests/storage-contract" }
 a3-workspace = { path = "crates/a3-workspace" }
@@ -34,6 +36,8 @@ rustix = { version = "=1.1.4", features = ["fs"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 toml = { version = "=0.9.12", default-features = false, features = ["parse", "serde", "std"] }
+tree-sitter = { version = "=0.26.11", default-features = false, features = ["std"] }
+tree-sitter-json = "=0.24.8"
 tauri = "=2.11.5"
 tauri-build = "=2.6.3"
 tauri-plugin-dialog = "=2.7.2"
