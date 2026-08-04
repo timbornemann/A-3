@@ -15,7 +15,7 @@ mod tests {
     use std::error::Error;
     use std::io;
     use tauri::ipc::{CallbackFn, InvokeBody};
-    use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+    use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder};
     use tauri::webview::InvokeRequest;
 
     #[test]
@@ -24,7 +24,7 @@ mod tests {
         let app = mock_builder()
             .manage(root)
             .invoke_handler(tauri::generate_handler![a3_desktop::commands::query_health])
-            .build(mock_context(noop_assets()))?;
+            .build(tauri::generate_context!())?;
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build()?;
         let response = get_ipc_response(
             &webview,
