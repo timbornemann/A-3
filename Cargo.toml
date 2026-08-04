@@ -19,6 +19,7 @@ license = "GPL-3.0-only"
 a3-application = { path = "crates/a3-application" }
 a3-domain = { path = "crates/a3-domain" }
 a3-protocol = { path = "crates/a3-protocol" }
+a3-storage-libsql = { path = "crates/a3-storage-libsql" }
 a3-workspace = { path = "crates/a3-workspace" }
 blake3 = "=1.8.5"
 crossbeam-channel = "=0.5.16"

@@ -2,10 +2,16 @@
   import { onMount } from 'svelte';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import { openProject, type OpenProjectResponseV1, type ProjectSummaryV1 } from './lib/project';
+  import {
+    listRecentProjects,
+    type RecentProjectSummaryV1,
+    type RecentProjectsResponseV1,
+  } from './lib/recent-projects';
 
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
   }
 
   type ViewState =
@@ -16,10 +22,17 @@
     | { kind: 'cancelled' }
     | { kind: 'opened'; project: ProjectSummaryV1 }
     | { kind: 'error' };
+  type RecentProjectsView =
+    { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
-  let { healthLoader = queryHealth, projectOpener = openProject }: Props = $props();
+  let {
+    healthLoader = queryHealth,
+    projectOpener = openProject,
+    recentProjectsLoader = listRecentProjects,
+  }: Props = $props();
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
+  let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
 
   async function loadHealth(): Promise<void> {
     healthView = { kind: 'loading' };
@@ -33,16 +46,29 @@
 
   onMount(() => {
     void loadHealth();
+    void loadRecentProjects();
   });
+
+  async function loadRecentProjects(): Promise<void> {
+    recentProjectsView = { kind: 'loading' };
+    try {
+      const response = await recentProjectsLoader();
+      recentProjectsView = { kind: 'ready', projects: response.projects };
+    } catch {
+      recentProjectsView = { kind: 'error' };
+    }
+  }
 
   async function chooseProject(): Promise<void> {
     projectView = { kind: 'opening' };
     try {
       const response = await projectOpener();
-      projectView =
-        response.result.status === 'opened'
-          ? { kind: 'opened', project: response.result.project }
-          : { kind: 'cancelled' };
+      if (response.result.status === 'opened') {
+        projectView = { kind: 'opened', project: response.result.project };
+        await loadRecentProjects();
+      } else {
+        projectView = { kind: 'cancelled' };
+      }
     } catch {
       projectView = { kind: 'error' };
     }
@@ -146,6 +172,29 @@
         Der gewählte Ordner konnte nicht als sicherer Git-Worktree geöffnet werden.
       </p>
     {/if}
+
+    <div class="recent-projects" aria-labelledby="recent-projects-heading">
+      <h3 id="recent-projects-heading">Zuletzt verwendet</h3>
+      {#if recentProjectsView.kind === 'loading'}
+        <p class="project-status" role="status" aria-live="polite">Projektliste wird geladen …</p>
+      {:else if recentProjectsView.kind === 'error'}
+        <div class="recent-projects-error" role="alert">
+          <p>Die lokale Projektliste konnte nicht geladen werden.</p>
+          <button type="button" onclick={loadRecentProjects}>Erneut laden</button>
+        </div>
+      {:else if recentProjectsView.projects.length === 0}
+        <p class="project-status">Noch keine Projekte gespeichert.</p>
+      {:else}
+        <ol class="recent-project-list">
+          {#each recentProjectsView.projects as recent (recent.project.worktreeId)}
+            <li>
+              <span>{recent.project.worktreeRootDisplay}</span>
+              <code>{recent.project.worktreeId}</code>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </div>
   </section>
 
   <footer>

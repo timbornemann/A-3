@@ -1,4 +1,5 @@
-use a3_domain::ProjectIdentity;
+use crate::{KnowledgeStore, KnowledgeStoreFailure};
+use a3_domain::{ProjectId, ProjectIdentity};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ pub trait ProjectInspector: fmt::Debug + Send + Sync {
 pub struct OpenProject {
     picker: Arc<dyn ProjectDirectoryPicker>,
     inspector: Arc<dyn ProjectInspector>,
+    store: Arc<dyn KnowledgeStore>,
 }
 
 impl OpenProject {
@@ -32,12 +34,17 @@ impl OpenProject {
     pub fn new(
         picker: Arc<dyn ProjectDirectoryPicker>,
         inspector: Arc<dyn ProjectInspector>,
+        store: Arc<dyn KnowledgeStore>,
     ) -> Self {
-        Self { picker, inspector }
+        Self {
+            picker,
+            inspector,
+            store,
+        }
     }
 
     /// Opens the explicitly selected project or reports user cancellation without inspection.
-    pub fn execute(&self) -> Result<OpenProjectOutcome, OpenProjectError> {
+    pub async fn execute(&self) -> Result<OpenProjectOutcome, OpenProjectError> {
         let Some(selected_root) = self
             .picker
             .pick_project_directory()
@@ -46,11 +53,19 @@ impl OpenProject {
             return Ok(OpenProjectOutcome::Cancelled);
         };
 
-        self.inspector
+        let project = self
+            .inspector
             .inspect_project(&selected_root)
-            .map(Box::new)
-            .map(OpenProjectOutcome::Opened)
-            .map_err(OpenProjectError::Inspection)
+            .map_err(OpenProjectError::Inspection)?;
+        let project_id = self
+            .store
+            .record_opened_project(&project)
+            .await
+            .map_err(OpenProjectError::Storage)?;
+        Ok(OpenProjectOutcome::Opened {
+            project: Box::new(project),
+            project_id,
+        })
     }
 }
 
@@ -60,7 +75,12 @@ pub enum OpenProjectOutcome {
     /// The user dismissed the native directory picker.
     Cancelled,
     /// The selected directory was safely identified as a Git worktree.
-    Opened(Box<ProjectIdentity>),
+    Opened {
+        /// Safely inspected repository and worktree identity.
+        project: Box<ProjectIdentity>,
+        /// Stable catalog identity assigned by the persistence port.
+        project_id: ProjectId,
+    },
 }
 
 /// Failure to convert a native picker result into a local operating-system path.
@@ -128,6 +148,8 @@ pub enum OpenProjectError {
     DirectorySelection(ProjectDirectorySelectionError),
     /// The selected path failed safe repository inspection.
     Inspection(ProjectInspectionFailure),
+    /// The inspected project could not be recorded durably.
+    Storage(KnowledgeStoreFailure),
 }
 
 impl fmt::Display for OpenProjectError {
@@ -137,6 +159,7 @@ impl fmt::Display for OpenProjectError {
                 write!(formatter, "project selection failed: {error}")
             }
             Self::Inspection(error) => write!(formatter, "project inspection failed: {error}"),
+            Self::Storage(error) => write!(formatter, "project storage failed: {error}"),
         }
     }
 }
@@ -146,6 +169,7 @@ impl Error for OpenProjectError {
         match self {
             Self::DirectorySelection(error) => Some(error),
             Self::Inspection(error) => Some(error),
+            Self::Storage(error) => Some(error),
         }
     }
 }
@@ -153,13 +177,18 @@ impl Error for OpenProjectError {
 #[cfg(test)]
 mod tests {
     use super::{
-        OpenProject, OpenProjectOutcome, ProjectDirectoryPicker, ProjectDirectorySelectionError,
-        ProjectInspectionFailure, ProjectInspector,
+        OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,
+        ProjectDirectorySelectionError, ProjectInspectionFailure, ProjectInspector,
+    };
+    use crate::{
+        KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, RecentProject,
+        RecentProjectLimit,
     };
     use a3_domain::{
-        CanonicalDirectory, GitHead, GitReferenceName, ProjectIdentity, RepositoryId,
+        CanonicalDirectory, GitHead, GitReferenceName, ProjectId, ProjectIdentity, RepositoryId,
         RepositoryIdentity, WorktreeId, WorktreeIdentity,
     };
+    use futures::executor::block_on;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -191,20 +220,50 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct RecordingStore {
+        calls: Arc<AtomicUsize>,
+        result: Result<ProjectId, KnowledgeStoreFailure>,
+    }
+
+    impl KnowledgeStore for RecordingStore {
+        fn record_opened_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = self.result;
+            Box::pin(async move { result })
+        }
+
+        fn list_recent_projects(
+            &self,
+            _limit: RecentProjectLimit,
+        ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
     #[test]
     fn cancellation_never_inspects_an_ambient_directory() -> Result<(), Box<dyn std::error::Error>>
     {
-        let calls = Arc::new(AtomicUsize::new(0));
+        let inspection_calls = Arc::new(AtomicUsize::new(0));
+        let storage_calls = Arc::new(AtomicUsize::new(0));
         let use_case = OpenProject::new(
             Arc::new(FixedPicker(None)),
             Arc::new(FixedInspector {
-                calls: Arc::clone(&calls),
+                calls: Arc::clone(&inspection_calls),
                 project: fixture_project()?,
+            }),
+            Arc::new(RecordingStore {
+                calls: Arc::clone(&storage_calls),
+                result: Ok(ProjectId::from_bytes([3; 32])),
             }),
         );
 
-        assert_eq!(use_case.execute()?, OpenProjectOutcome::Cancelled);
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(block_on(use_case.execute())?, OpenProjectOutcome::Cancelled);
+        assert_eq!(inspection_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(storage_calls.load(Ordering::SeqCst), 0);
         Ok(())
     }
 
@@ -212,20 +271,53 @@ mod tests {
     fn selected_directory_is_inspected_exactly_once() -> Result<(), Box<dyn std::error::Error>> {
         let selected_root = std::env::current_dir()?;
         let project = fixture_project()?;
-        let calls = Arc::new(AtomicUsize::new(0));
+        let inspection_calls = Arc::new(AtomicUsize::new(0));
+        let storage_calls = Arc::new(AtomicUsize::new(0));
+        let project_id = ProjectId::from_bytes([3; 32]);
         let use_case = OpenProject::new(
             Arc::new(FixedPicker(Some(selected_root))),
             Arc::new(FixedInspector {
-                calls: Arc::clone(&calls),
+                calls: Arc::clone(&inspection_calls),
                 project: project.clone(),
+            }),
+            Arc::new(RecordingStore {
+                calls: Arc::clone(&storage_calls),
+                result: Ok(project_id),
             }),
         );
 
         assert_eq!(
-            use_case.execute()?,
-            OpenProjectOutcome::Opened(Box::new(project))
+            block_on(use_case.execute())?,
+            OpenProjectOutcome::Opened {
+                project: Box::new(project),
+                project_id,
+            }
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(inspection_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(storage_calls.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn storage_failure_prevents_a_false_opened_outcome() -> Result<(), Box<dyn std::error::Error>> {
+        let use_case = OpenProject::new(
+            Arc::new(FixedPicker(Some(std::env::current_dir()?))),
+            Arc::new(FixedInspector {
+                calls: Arc::new(AtomicUsize::new(0)),
+                project: fixture_project()?,
+            }),
+            Arc::new(RecordingStore {
+                calls: Arc::new(AtomicUsize::new(0)),
+                result: Err(KnowledgeStoreFailure::Unavailable),
+            }),
+        );
+
+        assert_eq!(
+            block_on(use_case.execute()),
+            Err(OpenProjectError::Storage(
+                KnowledgeStoreFailure::Unavailable
+            ))
+        );
         Ok(())
     }
 

@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
-import type { OpenProjectResponseV1 } from './lib/project';
+import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
+import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 
 const health: HealthResponseV1 = {
   applicationVersion: '0.1.0',
@@ -11,17 +12,34 @@ const health: HealthResponseV1 = {
   status: 'ready',
 };
 
+const projectSummary: ProjectSummaryV1 = {
+  head: { kind: 'unborn', reference: 'refs/heads/main' },
+  repositoryId: '1'.repeat(64),
+  worktreeId: '2'.repeat(64),
+  worktreeRootDisplay: 'C:\\worktree',
+};
+
 const openedProject: OpenProjectResponseV1 = {
   protocolVersion: 1,
   result: {
-    project: {
-      head: { kind: 'unborn', reference: 'refs/heads/main' },
-      repositoryId: '1'.repeat(64),
-      worktreeId: '2'.repeat(64),
-      worktreeRootDisplay: 'C:\\worktree',
-    },
+    project: projectSummary,
     status: 'opened',
   },
+};
+
+const emptyRecentProjects: RecentProjectsResponseV1 = {
+  projects: [],
+  protocolVersion: 1,
+};
+
+const recentProjects: RecentProjectsResponseV1 = {
+  projects: [
+    {
+      project: projectSummary,
+      projectId: '3'.repeat(64),
+    },
+  ],
+  protocolVersion: 1,
 };
 
 describe('A^3 desktop shell', () => {
@@ -29,6 +47,7 @@ describe('A^3 desktop shell', () => {
     render(App, {
       props: {
         healthLoader: async () => health,
+        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -50,7 +69,9 @@ describe('A^3 desktop shell', () => {
       .mockRejectedValueOnce(new Error('sensitive internal detail'))
       .mockResolvedValueOnce(health);
 
-    render(App, { props: { healthLoader } });
+    render(App, {
+      props: { healthLoader, recentProjectsLoader: async () => emptyRecentProjects },
+    });
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Die Health-Abfrage ist fehlgeschlagen.');
@@ -64,12 +85,17 @@ describe('A^3 desktop shell', () => {
     expect(healthLoader).toHaveBeenCalledTimes(2);
   });
 
-  it('opens a project only after explicit interaction and shows the validated identity', async () => {
+  it('persists a project after explicit interaction and refreshes the recent list', async () => {
     const projectOpener = vi.fn(async () => openedProject);
+    const recentProjectsLoader = vi
+      .fn<() => Promise<RecentProjectsResponseV1>>()
+      .mockResolvedValueOnce(emptyRecentProjects)
+      .mockResolvedValueOnce(recentProjects);
     render(App, {
       props: {
         healthLoader: async () => health,
         projectOpener,
+        recentProjectsLoader,
       },
     });
 
@@ -78,9 +104,10 @@ describe('A^3 desktop shell', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Worktree sicher geöffnet')).toBeTruthy();
+      expect(screen.getAllByText('C:\\worktree')).toHaveLength(2);
     });
-    expect(screen.getByText('C:\\worktree')).toBeTruthy();
     expect(projectOpener).toHaveBeenCalledTimes(1);
+    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
   });
 
   it('does not expose project-open adapter details in the UI error', async () => {
@@ -91,6 +118,7 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectOpener,
+        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -99,5 +127,55 @@ describe('A^3 desktop shell', () => {
 
     expect(alert.textContent).toContain('konnte nicht als sicherer Git-Worktree geöffnet werden');
     expect(alert.textContent).not.toContain('secret');
+  });
+
+  it('keeps recent-project storage details out of the UI and supports retry', async () => {
+    const recentProjectsLoader = vi
+      .fn<() => Promise<RecentProjectsResponseV1>>()
+      .mockRejectedValueOnce(new Error('D:\\private\\catalog.db is corrupt'))
+      .mockResolvedValueOnce(recentProjects);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        recentProjectsLoader,
+      },
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('lokale Projektliste konnte nicht geladen werden');
+    expect(alert.textContent).not.toContain('catalog.db');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
+    await waitFor(() => {
+      expect(screen.getByText('C:\\worktree')).toBeTruthy();
+    });
+    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders linked worktrees that share one catalog project identity', async () => {
+    const linkedRecentProjects: RecentProjectsResponseV1 = {
+      projects: [
+        recentProjects.projects[0],
+        {
+          project: {
+            ...projectSummary,
+            worktreeId: '4'.repeat(64),
+            worktreeRootDisplay: 'C:\\linked-worktree',
+          },
+          projectId: recentProjects.projects[0].projectId,
+        },
+      ],
+      protocolVersion: 1,
+    };
+
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        recentProjectsLoader: async () => linkedRecentProjects,
+      },
+    });
+
+    expect(await screen.findByText('C:\\worktree')).toBeTruthy();
+    expect(screen.getByText('C:\\linked-worktree')).toBeTruthy();
   });
 });

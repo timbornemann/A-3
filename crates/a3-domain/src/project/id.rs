@@ -39,6 +39,10 @@ macro_rules! stable_id {
 }
 
 stable_id!(
+    /// Stable identity of one catalog project across confirmed location changes.
+    ProjectId
+);
+stable_id!(
     /// Stable local identity of a logical Git repository.
     RepositoryId
 );
@@ -60,7 +64,7 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 
 #[cfg(test)]
 mod tests {
-    use super::{RemoteIdentity, RepositoryId, WorktreeId};
+    use super::{ProjectId, RemoteIdentity, RepositoryId, WorktreeId};
 
     #[test]
     fn stable_ids_have_fixed_lowercase_hex_representation() {
@@ -71,6 +75,7 @@ mod tests {
             "abababababababababababababababababababababababababababababababab"
         );
         assert_eq!(WorktreeId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(ProjectId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(RemoteIdentity::from_bytes(bytes).as_bytes(), &bytes);
     }
 }

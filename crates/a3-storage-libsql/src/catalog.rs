@@ -17,7 +17,7 @@ const BUSY_TIMEOUT_MILLISECONDS: i64 = 5_000;
 /// The adapter deliberately keeps its libSQL handles private so persistence
 /// rows and unrestricted SQL cannot escape the infrastructure boundary.
 pub struct CatalogDatabase {
-    _database: Database,
+    database: Database,
     connection: Connection,
     path: PathBuf,
     schema_version: CatalogSchemaVersion,
@@ -54,7 +54,7 @@ impl CatalogDatabase {
             .map_err(CatalogOpenError::Layout)?;
 
         let catalog = Self {
-            _database: database,
+            database,
             connection,
             path: layout.catalog_path().to_path_buf(),
             schema_version,
@@ -91,6 +91,16 @@ impl CatalogDatabase {
         Ok(CatalogVerification {
             schema_version: found,
         })
+    }
+
+    pub(crate) async fn connection_for_operation(&self) -> Result<Connection, CatalogOpenError> {
+        let connection = self.database.connect().map_err(classify_connect_error)?;
+        configure_connection(&connection)
+            .await
+            .map_err(classify_configuration_error)?;
+        verify_connection_policy(&connection).await?;
+        verify_integrity(&connection).await?;
+        Ok(connection)
     }
 }
 

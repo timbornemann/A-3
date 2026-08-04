@@ -13,7 +13,7 @@ pub use platform::Platform;
 pub use progress::{Progress, ProgressTransitionError, ProgressValueError};
 pub use project::{
     CanonicalDirectory, CanonicalDirectoryError, GitHead, GitObjectId, GitObjectIdError,
-    GitReferenceName, GitReferenceNameError, ProjectIdentity, ProjectIdentityError, RemoteIdentity,
-    RepositoryId, RepositoryIdentity, WorktreeId, WorktreeIdentity,
+    GitReferenceName, GitReferenceNameError, ProjectId, ProjectIdentity, ProjectIdentityError,
+    RemoteIdentity, RepositoryId, RepositoryIdentity, WorktreeId, WorktreeIdentity,
 };
 pub use version::{ApplicationVersion, ApplicationVersionError};

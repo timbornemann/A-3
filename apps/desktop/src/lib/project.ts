@@ -64,12 +64,12 @@ function parseResult(value: unknown): OpenProjectResultV1 {
     return { status: 'cancelled' };
   }
   if (value.status === 'opened' && hasExactKeys(value, ['project', 'status'])) {
-    return { project: parseProject(value.project), status: 'opened' };
+    return { project: parseProjectSummaryV1(value.project), status: 'opened' };
   }
   throw new Error('Project response contains an invalid result.');
 }
 
-function parseProject(value: unknown): ProjectSummaryV1 {
+export function parseProjectSummaryV1(value: unknown): ProjectSummaryV1 {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, ['head', 'repositoryId', 'worktreeId', 'worktreeRootDisplay']) ||

@@ -45,8 +45,12 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   außerhalb dieses Pfads.
 - Die WebView darf keinen Projektpfad an `open_project` übergeben. Nur der privilegierte Rust-Adapter
   öffnet den nativen Einzelauswahldialog und reicht dessen Ergebnis an den Use Case weiter.
-- Die Main-Capability erlaubt `open_project` und `query_health`, aber keine direkten Dialog-, Datei-,
-  Shell- oder SQL-Plugin-Commands. Der Rückgabevertrag enthält weder Handles noch Git Common Directory.
+- Die Main-Capability erlaubt `open_project`, `list_recent_projects` und `query_health`, aber keine
+  direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
+  Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
+- `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
+  Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
+  redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.
 
 ## Prozess-Policy
 

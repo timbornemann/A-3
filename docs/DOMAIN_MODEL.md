@@ -48,6 +48,16 @@ Jeder Worktree besitzt eine eigene Wissens- und Mutationsdomäne. Die spätere R
 einen geänderten Pfad gegen zuvor persistierte Identitäts- und Remote-Evidenz prüfen; sie darf eine
 Übereinstimmung nicht allein aus dem neuen Pfad behaupten.
 
+### Catalog Project Identity
+
+`ProjectId` identifiziert einen Eintrag im globalen lokalen Projektkatalog, während `RepositoryId` und
+`WorktreeId` die jeweils beobachtete Git- beziehungsweise Worktree-Identität beschreiben. Bei der ersten
+Aufnahme wird `ProjectId` mit der versionierten Ableitung `a3.catalog-project-id.v1` deterministisch aus
+der `RepositoryId` gebildet und anschließend persistiert. Linked Worktrees derselben `RepositoryId`
+teilen einen Katalogeintrag. Eine spätere Umzugs-Reconciliation darf eine bestehende `ProjectId` nur
+nach bestätigter Identitäts- und Remote-Evidenz beibehalten; die aktuelle Implementierung führt diese
+Reconciliation noch nicht durch.
+
 ### SnapshotId
 
 Ein Snapshot enthält:

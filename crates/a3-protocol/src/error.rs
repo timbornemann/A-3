@@ -19,6 +19,16 @@ pub enum ErrorCodeV1 {
     UnsupportedRepository,
     /// Required local Git metadata was malformed or inconsistent.
     InvalidRepositoryMetadata,
+    /// The private local database could not be reached or written.
+    LocalStorageUnavailable,
+    /// The private local database failed integrity checks.
+    LocalStorageCorrupt,
+    /// The private local database was created by a newer A^3 build.
+    LocalStorageUpgradeRequired,
+    /// The private local database violated its versioned logical schema.
+    LocalStorageInvalidData,
+    /// Stored and newly observed project identities conflict.
+    ProjectIdentityConflict,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -57,6 +67,19 @@ impl CommandErrorV1 {
             ErrorCodeV1::UnsupportedRepository => "This Git repository layout is not supported.",
             ErrorCodeV1::InvalidRepositoryMetadata => {
                 "The selected repository metadata could not be validated."
+            }
+            ErrorCodeV1::LocalStorageUnavailable => "Local A^3 storage is unavailable.",
+            ErrorCodeV1::LocalStorageCorrupt => {
+                "Local A^3 storage is damaged and was not modified."
+            }
+            ErrorCodeV1::LocalStorageUpgradeRequired => {
+                "Local A^3 storage was created by a newer application version."
+            }
+            ErrorCodeV1::LocalStorageInvalidData => {
+                "Local A^3 storage contains invalid project data."
+            }
+            ErrorCodeV1::ProjectIdentityConflict => {
+                "The selected worktree conflicts with its stored project identity."
             }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."

@@ -76,7 +76,7 @@ fn catalog_rejects_tampered_migration_history() -> Result<(), Box<dyn std::error
         assert!(matches!(
             CatalogDatabase::open(&layout).await,
             Err(CatalogOpenError::MigrationHistoryMismatch { version })
-                if version == CatalogSchemaVersion::CURRENT
+                if version == CatalogSchemaVersion::new(1)
         ));
         Ok::<(), Box<dyn std::error::Error>>(())
     })

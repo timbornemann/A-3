@@ -11,6 +11,7 @@ publish = false
 a3-application.workspace = true
 a3-domain.workspace = true
 a3-protocol.workspace = true
+a3-storage-libsql.workspace = true
 a3-workspace.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
@@ -19,6 +20,7 @@ tauri-plugin-dialog.workspace = true
 tauri-build.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 serde_json.workspace = true
 tauri = { workspace = true, features = ["test"] }
 

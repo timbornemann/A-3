@@ -142,11 +142,23 @@ Regeln:
 2. Der privilegierte Desktop-Adapter öffnet genau einen nativen Ordnerdialog; Abbruch beendet den Use Case ohne Inspektion.
 3. Rust kanonisiert und validiert ausschließlich den vom Betriebssystemdialog zurückgegebenen Pfad.
 4. RepositoryIdentity, WorktreeIdentity und HEAD-Zustand werden mit isolierter repository-lokaler Git-Konfiguration bestimmt.
-5. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common Directory oder Dateisystemzugriff.
-6. Katalog- und Projekt-DB werden geöffnet und migriert.
-7. Letzter Snapshot wird mit dem aktuellen Worktree verglichen.
-8. Ein inkrementeller Fast Index wird geplant.
-9. UI erhält Projektzustand und Fortschrittsereignisse.
+5. Der Application-Use-Case registriert die validierte Beobachtung über `KnowledgeStore` atomar im
+   globalen Katalog. Erst nach erfolgreicher Persistenz gilt das Projekt als geöffnet.
+6. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
+   Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
+
+Der folgende S2-/S3-Ausbau öffnet zusätzlich die `knowledge.db` des Worktrees, vergleicht den letzten
+Snapshot, plant den inkrementellen Fast Index und veröffentlicht Projektzustand sowie Fortschritt.
+
+### Zuletzt verwendete Projekte
+
+1. Die UI sendet über `list_recent_projects` ausschließlich die aktuelle Protokollversion.
+2. Der Application-Use-Case setzt das feste V1-Limit von zehn Einträgen; die WebView kann weder einen
+   Rohpfad noch ein unbeschränktes Limit vorgeben.
+3. Der libSQL-Adapter liest most-recent-first und rekonstruiert IDs sowie HEAD in typisierte Werte.
+4. Ungültige persistierte Werte werden am Adapterrand als stabiler Storagefehler abgelehnt.
+5. Der Composition-Root mappt nur `ProjectId`, `RepositoryId`, `WorktreeId`, HEAD und den begrenzten,
+   nicht-autoritativen Anzeigepfad auf V1-DTOs.
 
 ### Agentenlauf
 

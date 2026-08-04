@@ -6,12 +6,15 @@ fn main() -> Result<(), a3_desktop::DesktopRunError> {
 
 #[cfg(test)]
 mod tests {
-    use a3_application::{ProjectDirectoryPicker, ProjectDirectorySelectionError};
+    use a3_application::{
+        KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker,
+        ProjectDirectorySelectionError, RecentProject, RecentProjectLimit,
+    };
     use a3_desktop::CompositionRoot;
-    use a3_domain::{ApplicationVersion, Platform};
+    use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
         CommandErrorV1, ErrorCodeV1, HealthResponseV1, HealthStatusV1, OpenProjectResponseV1,
-        OpenProjectResultV1, PlatformV1, ProtocolVersion,
+        OpenProjectResultV1, PlatformV1, ProtocolVersion, RecentProjectsResponseV1,
     };
     use serde_json::json;
     use std::error::Error;
@@ -33,16 +36,37 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct EmptyStore;
+
+    impl KnowledgeStore for EmptyStore {
+        fn record_opened_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+        }
+
+        fn list_recent_projects(
+            &self,
+            _limit: RecentProjectLimit,
+        ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
     #[test]
     fn tauri_ipc_enforces_the_versioned_health_contract() -> Result<(), Box<dyn Error>> {
         let root = CompositionRoot::new(
             ApplicationVersion::try_from("1.2.3")?,
             Platform::Windows,
             Arc::new(CancelledPicker),
+            Arc::new(EmptyStore),
         )?;
         let app = mock_builder()
             .manage(root)
             .invoke_handler(tauri::generate_handler![
+                a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::query_health
             ])
@@ -92,6 +116,24 @@ mod tests {
             project_response.result(),
             OpenProjectResultV1::Cancelled
         ));
+
+        let recent_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "list_recent_projects".into(),
+                callback: CallbackFn(10),
+                error: CallbackFn(11),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<RecentProjectsResponseV1>()?;
+        assert!(recent_response.projects().is_empty());
 
         let untrusted_project_path = get_ipc_response(
             &webview,
@@ -167,7 +209,11 @@ mod tests {
 
         assert_eq!(
             capability.get("permissions"),
-            Some(&json!(["allow-open-project", "allow-query-health"]))
+            Some(&json!([
+                "allow-list-recent-projects",
+                "allow-open-project",
+                "allow-query-health"
+            ]))
         );
         Ok(())
     }

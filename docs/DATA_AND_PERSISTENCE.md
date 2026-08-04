@@ -16,7 +16,7 @@ Begründung:
 
 ## Implementierter Storage-Unterbau
 
-Der erste S2-Teilschnitt liegt im Infrastruktur-Crate `a3-storage-libsql`:
+Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 
 - Ein typisiertes `StorageLayout` nimmt ausschließlich einen absoluten, kanonisierten App-Data-Root an und begrenzt den globalen Katalog auf `catalog.db` innerhalb dieses Roots.
 - Der Adapter verwendet die stabile libSQL-Version 0.9.29 ausschließlich mit dem lokalen `core`-Feature. Remote-, Replikations- und Synchronisationsfunktionen sind nicht aktiviert.
@@ -24,8 +24,22 @@ Der erste S2-Teilschnitt liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - Schreibende Connections erzwingen `foreign_keys = ON`, WAL-Journaling, `synchronous = NORMAL`, einen Busy-Timeout von fünf Sekunden und `trusted_schema = OFF`; die Werte werden nach dem Setzen zurückgelesen.
 - `PRAGMA user_version` ist die monotone Schema-Version. `schema_migrations` hält zusätzlich Name und versionierten BLAKE3-Checksum jeder Migration fest.
 - Jede Migration läuft in einer eigenen `IMMEDIATE`-Transaktion. Ein fehlgeschlagener Migrationskörper wird explizit zurückgerollt.
+- Katalogschema V2 persistiert `projects` und `recent_worktrees`. Eine erfolgreiche Projekterkennung
+  aktualisiert Projekt, Worktree, Remote-Fingerprint, HEAD und Öffnungsreihenfolge in genau einer
+  `IMMEDIATE`-Transaktion; ein Storagefehler verhindert ein fälschlich erfolgreiches Open-Ergebnis.
+- `ProjectId`, `RepositoryId` und `WorktreeId` werden als 32-Byte-Werte gespeichert. Autoritative Pfade
+  werden auf Windows als UTF-16LE und auf Unix als rohe OS-Bytes gespeichert. Die separat gespeicherte
+  Anzeigeprojektion ist kontrollzeichenfrei und auf 32.768 Zeichen begrenzt.
+- Der aus den konkreten Open- und Recent-Project-Use-Cases abgeleitete `KnowledgeStore`-Port nimmt nur
+  Domain-/Application-Typen an. Er registriert ein inspiziertes Projekt atomar und liefert eine
+  typisierte, begrenzte Most-recent-first-Projektion; weder libSQL-Typen noch SQL verlassen den Adapter.
+- Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
+  denselben Store in beide Use Cases. Die WebView erhält keine DB-Verbindung und keinen autoritativen
+  gespeicherten Pfad.
 
-Dieser Teilschnitt enthält nur das Katalog-Bootstrap-Schema. Projekt-Repositories, `knowledge.db` und der `KnowledgeStore`-Port folgen aus den konkreten Use Cases; weder libSQL-Typen noch SQL werden dafür in die Application-Schicht verschoben.
+`knowledge.db`, Snapshot- und IndexRun-Repositories sowie die Umzugs-Reconciliation sind noch nicht
+implementiert. Die im Katalog gespeicherten exakten Pfad- und Remote-Evidenzen bereiten diese
+Reconciliation vor, entscheiden sie aber nicht selbstständig.
 
 Quellen:
 

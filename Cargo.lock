@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "a3-domain",
  "crossbeam-channel",
+ "futures",
 ]
 
 [[package]]
@@ -17,7 +18,9 @@ dependencies = [
  "a3-application",
  "a3-domain",
  "a3-protocol",
+ "a3-storage-libsql",
  "a3-workspace",
+ "futures",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -40,6 +43,8 @@ dependencies = [
 name = "a3-storage-libsql"
 version = "0.1.0"
 dependencies = [
+ "a3-application",
+ "a3-domain",
  "blake3",
  "futures",
  "libsql",

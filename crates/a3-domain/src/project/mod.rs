@@ -3,7 +3,7 @@ mod id;
 mod path;
 
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
-pub use id::{RemoteIdentity, RepositoryId, WorktreeId};
+pub use id::{ProjectId, RemoteIdentity, RepositoryId, WorktreeId};
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
 
 use std::error::Error;

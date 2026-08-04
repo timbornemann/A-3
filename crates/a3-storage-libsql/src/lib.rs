@@ -3,6 +3,7 @@
 mod catalog;
 mod layout;
 mod migration;
+mod project_catalog;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};
 pub use layout::{StorageLayout, StorageLayoutError};

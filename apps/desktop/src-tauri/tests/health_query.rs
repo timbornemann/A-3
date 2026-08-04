@@ -1,9 +1,13 @@
 //! Contract tests for the desktop health-query boundary.
 
-use a3_application::{ProjectDirectoryPicker, ProjectDirectorySelectionError};
+use a3_application::{
+    KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker, ProjectDirectorySelectionError,
+    RecentProject, RecentProjectLimit,
+};
 use a3_desktop::CompositionRoot;
-use a3_domain::{ApplicationVersion, Platform};
+use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
 use a3_protocol::{HealthStatusV1, OpenProjectResultV1, PlatformV1, ProtocolVersion};
+use futures::executor::block_on;
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
@@ -18,12 +22,32 @@ impl ProjectDirectoryPicker for FixedPicker {
     }
 }
 
+#[derive(Debug)]
+struct EmptyStore;
+
+impl KnowledgeStore for EmptyStore {
+    fn record_opened_project<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+    ) -> KnowledgeStoreFuture<'a, ProjectId> {
+        Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+    }
+
+    fn list_recent_projects(
+        &self,
+        _limit: RecentProjectLimit,
+    ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
+
 #[test]
 fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Error>> {
     let root = CompositionRoot::new(
         ApplicationVersion::try_from("1.2.3")?,
         Platform::Windows,
         Arc::new(FixedPicker(None)),
+        Arc::new(EmptyStore),
     )?;
 
     let response = root.query_health();
@@ -37,7 +61,8 @@ fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Er
 
 #[test]
 fn environment_builds_a_valid_composition_root() -> Result<(), Box<dyn Error>> {
-    let root = CompositionRoot::from_environment(Arc::new(FixedPicker(None)))?;
+    let root =
+        CompositionRoot::from_environment(Arc::new(FixedPicker(None)), Arc::new(EmptyStore))?;
 
     assert_eq!(root.query_health().application_version(), "0.1.0");
     Ok(())
@@ -51,10 +76,10 @@ fn composition_root_opens_the_explicit_checkout_root() -> Result<(), Box<dyn Err
         ApplicationVersion::try_from("1.2.3")?,
         Platform::Windows,
         Arc::new(FixedPicker(Some(checkout_root.clone()))),
+        Arc::new(EmptyStore),
     )?;
 
-    let response = root
-        .open_project()
+    let response = block_on(root.open_project())
         .map_err(|error| io::Error::other(error.message().to_owned()))?;
 
     let OpenProjectResultV1::Opened { project } = response.result() else {

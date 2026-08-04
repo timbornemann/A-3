@@ -253,6 +253,67 @@ h1 {
   font-size: 0.85rem;
 }
 
+.recent-projects {
+  margin-top: 1.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgb(22 63 54 / 14%);
+}
+
+.recent-projects h3 {
+  margin: 0;
+  color: #314b44;
+  font-size: 1rem;
+}
+
+.recent-project-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-project-list li {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border-radius: 0.9rem;
+  background: #eef3ef;
+}
+
+.recent-project-list span,
+.recent-project-list code {
+  overflow-wrap: anywhere;
+}
+
+.recent-project-list code {
+  color: #657770;
+  font-size: 0.72rem;
+}
+
+.recent-projects-error {
+  margin-top: 1rem;
+  color: #7b2929;
+}
+
+.recent-projects-error p {
+  margin-bottom: 0.65rem;
+}
+
+.recent-projects-error button {
+  padding: 0.6rem 0.85rem;
+  border: 1px solid #8e3939;
+  border-radius: 0.7rem;
+  color: #742828;
+  background: transparent;
+  cursor: pointer;
+}
+
+.recent-projects-error button:focus-visible {
+  outline: 3px solid rgb(142 57 57 / 20%);
+  outline-offset: 2px;
+}
+
 footer {
   display: flex;
   flex-wrap: wrap;

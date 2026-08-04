@@ -45,9 +45,11 @@ Ein lokaler Produktionsbuild ohne Installer wird so erzeugt:
 pnpm tauri build --no-bundle
 ```
 
-Die WebView ist unprivilegiert. Sie darf ausschließlich die typisierten Commands `query_health` und
-`open_project` aufrufen. `open_project` öffnet den nativen Ordnerdialog im Rust-Kern; die WebView sendet
-keinen Pfad und erhält keine Datei-, Dialog-, Shell- oder SQL-Plugin-Berechtigung.
+Die WebView ist unprivilegiert. Sie darf ausschließlich die typisierten Commands `query_health`,
+`open_project` und `list_recent_projects` aufrufen. `open_project` öffnet den nativen Ordnerdialog im
+Rust-Kern; `list_recent_projects` liefert höchstens zehn validierte Anzeigeprojektionen aus dem lokalen
+Katalog. Die WebView sendet keinen Pfad und erhält keine Datei-, Dialog-, Shell- oder
+SQL-Plugin-Berechtigung.
 
 ## Lokale Qualitätsgates
 

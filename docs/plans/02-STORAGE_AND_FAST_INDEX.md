@@ -28,7 +28,7 @@ Abhängigkeiten: S1
 
 Status: In Progress
 
-- [ ] KnowledgeStore-Port aus konkreten Use Cases ableiten
+- [x] KnowledgeStore-Port aus konkreten Use Cases ableiten
 - [ ] catalog.db und knowledge.db öffnen
 - [x] Migration Runner
 - [x] Foreign Keys und pragmatische sichere DB-Konfiguration
@@ -36,7 +36,7 @@ Status: In Progress
 - [ ] Storage-Contract-Suite
 - [ ] korrupte oder neuere DB sicher behandeln
 
-Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad, prüft bestehende Kataloge zunächst read-only, führt vorwärtsgerichtete Migrationen atomar aus und validiert die Connection-Policy. Leerer Start, Wiederöffnung, Rollback einer fehlgeschlagenen Migration, manipulierte Migrationshistorie, Katalogkorruption und eine neuere Katalogversion sind durch Tests abgedeckt. Die kombinierten Punkte für beide Datenbanken, die vollständige Contract-Suite und die allgemeine Fehlerbehandlung bleiben bis zur `knowledge.db`-Implementierung offen. Die Reconciliation aus S1 baut anschließend auf den noch zu implementierenden Katalog-Repositories für bekannte Projekt- und Worktree-Identitäten auf.
+Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad, prüft bestehende Kataloge zunächst read-only, führt vorwärtsgerichtete Migrationen atomar aus und validiert die Connection-Policy. Katalogschema V2 registriert ein erfolgreich inspiziertes Projekt samt Repository-, Worktree-, Remote-, HEAD- und Pfadevidenz atomar und liefert eine auf zehn Einträge begrenzte Most-recent-first-Projektion über den aus diesen Use Cases abgeleiteten `KnowledgeStore`-Port. Neustart, Öffnungsreihenfolge, HEAD-Aktualisierung, Linked Worktrees, Repositories ohne Remote, Unborn HEAD, ungültige persistierte Projektionen und widersprüchliche Worktree-Zuordnung sind durch Adapter-Contract-Tests abgedeckt. Leerer Start, Wiederöffnung, Rollback einer fehlgeschlagenen Migration, manipulierte Migrationshistorie, Katalogkorruption und eine neuere Katalogversion bleiben ebenfalls getestet. Die kombinierten Punkte für `catalog.db` und `knowledge.db`, Snapshot-/IndexRun-Repositories, die vollständige Storage-Contract-Suite und die allgemeine Fehlerbehandlung bleiben bis zur `knowledge.db`-Implementierung offen. Die Reconciliation aus S1 baut auf den Katalogevidenzen auf, bleibt aber bis zu einem expliziten Bestätigungsworkflow offen.
 
 Akzeptanz:
 

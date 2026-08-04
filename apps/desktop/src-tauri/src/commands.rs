@@ -1,7 +1,7 @@
 use crate::CompositionRoot;
 use a3_protocol::{
-    CommandErrorV1, HealthRequestV1, HealthResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProtocolVersion,
+    CommandErrorV1, HealthRequestV1, HealthResponseV1, ListRecentProjectsRequestV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProtocolVersion, RecentProjectsResponseV1,
 };
 use tauri::State;
 
@@ -11,7 +11,16 @@ pub async fn open_project(
     request: OpenProjectRequestV1,
     root: State<'_, CompositionRoot>,
 ) -> Result<OpenProjectResponseV1, CommandErrorV1> {
-    execute_open_project(request, root.inner())
+    execute_open_project(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns a bounded most-recent-first list without exposing authoritative paths.
+pub async fn list_recent_projects(
+    request: ListRecentProjectsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<RecentProjectsResponseV1, CommandErrorV1> {
+    execute_list_recent_projects(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -34,7 +43,7 @@ fn execute_query_health(
     Ok(root.query_health())
 }
 
-fn execute_open_project(
+async fn execute_open_project(
     request: OpenProjectRequestV1,
     root: &CompositionRoot,
 ) -> Result<OpenProjectResponseV1, CommandErrorV1> {
@@ -42,16 +51,34 @@ fn execute_open_project(
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
 
-    root.open_project()
+    root.open_project().await
+}
+
+async fn execute_list_recent_projects(
+    request: ListRecentProjectsRequestV1,
+    root: &CompositionRoot,
+) -> Result<RecentProjectsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.list_recent_projects().await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_open_project, execute_query_health};
+    use super::{execute_list_recent_projects, execute_open_project, execute_query_health};
     use crate::CompositionRoot;
-    use a3_application::{ProjectDirectoryPicker, ProjectDirectorySelectionError};
-    use a3_domain::{ApplicationVersion, Platform};
-    use a3_protocol::{ErrorCodeV1, HealthRequestV1, OpenProjectRequestV1, ProtocolVersion};
+    use a3_application::{
+        KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker,
+        ProjectDirectorySelectionError, RecentProject, RecentProjectLimit,
+    };
+    use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
+    use a3_protocol::{
+        ErrorCodeV1, HealthRequestV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
+        ProtocolVersion,
+    };
+    use futures::executor::block_on;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -66,11 +93,31 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct EmptyStore;
+
+    impl KnowledgeStore for EmptyStore {
+        fn record_opened_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+        }
+
+        fn list_recent_projects(
+            &self,
+            _limit: RecentProjectLimit,
+        ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
     fn root() -> Result<CompositionRoot, Box<dyn std::error::Error>> {
         Ok(CompositionRoot::new(
             ApplicationVersion::try_from("0.1.0")?,
             Platform::Windows,
             Arc::new(CancelledPicker),
+            Arc::new(EmptyStore),
         )?)
     }
 
@@ -93,8 +140,27 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let root = root()?;
 
-        let result =
-            execute_open_project(OpenProjectRequestV1::new(ProtocolVersion::new(999)), &root);
+        let result = block_on(execute_open_project(
+            OpenProjectRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recent_project_command_rejects_unsupported_version_before_storage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_list_recent_projects(
+            ListRecentProjectsRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
 
         assert_eq!(
             result.map_err(|error| error.code()),

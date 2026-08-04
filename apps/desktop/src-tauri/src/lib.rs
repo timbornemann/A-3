@@ -8,14 +8,18 @@ mod project_picker;
 
 use a3_application::{
     GetHealth, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, OpenProject, OpenProjectError,
-    OpenProjectOutcome, ProjectDirectoryPicker, ProjectInspectionFailure,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeStore, KnowledgeStoreFailure,
+    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
+    ProjectDirectoryPicker, ProjectInspectionFailure, RecentProject,
 };
-use a3_domain::{ApplicationVersion, ApplicationVersionError, GitHead, Health, Platform};
+use a3_domain::{
+    ApplicationVersion, ApplicationVersionError, GitHead, Health, Platform, ProjectIdentity,
+};
 use a3_protocol::{
     CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, OpenProjectResponseV1, PlatformV1,
-    ProjectSummaryV1,
+    ProjectSummaryV1, RecentProjectSummaryV1, RecentProjectsResponseV1,
 };
+use a3_storage_libsql::{CatalogDatabase, CatalogOpenError, StorageLayout, StorageLayoutError};
 use a3_workspace::RepositoryInspector;
 use clock::SystemJobClock;
 use platform::SystemPlatform;
@@ -33,6 +37,7 @@ const MAX_PROJECT_PATH_DISPLAY_CHARS: usize = 32_768;
 pub struct CompositionRoot {
     health_query: GetHealth,
     open_project: OpenProject,
+    recent_projects: ListRecentProjects,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
 }
@@ -43,16 +48,18 @@ impl CompositionRoot {
         application_version: ApplicationVersion,
         platform: Platform,
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
         CompositionBase::new(application_version, platform)
-            .map(|base| base.finish(project_directory_picker))
+            .map(|base| base.finish(project_directory_picker, store))
     }
 
     /// Wires the desktop application using package, platform, and native-picker adapters.
     pub fn from_environment(
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
-        CompositionBase::from_environment().map(|base| base.finish(project_directory_picker))
+        CompositionBase::from_environment().map(|base| base.finish(project_directory_picker, store))
     }
 
     /// Executes the health use case and maps its domain result to IPC V1.
@@ -62,11 +69,21 @@ impl CompositionRoot {
     }
 
     /// Executes one user-controlled native project selection and maps it to IPC V1.
-    pub fn open_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
+    pub async fn open_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
         self.open_project
             .execute()
+            .await
             .map(map_open_project_to_v1)
             .map_err(map_open_project_error_to_v1)
+    }
+
+    /// Queries the bounded recent-project list and maps it to IPC V1.
+    pub async fn list_recent_projects(&self) -> Result<RecentProjectsResponseV1, CommandErrorV1> {
+        self.recent_projects
+            .execute()
+            .await
+            .map(map_recent_projects_to_v1)
+            .map_err(map_recent_projects_error_to_v1)
     }
 }
 
@@ -101,13 +118,19 @@ impl CompositionBase {
         Self::new(version, SystemPlatform::current())
     }
 
-    fn finish(self, project_directory_picker: Arc<dyn ProjectDirectoryPicker>) -> CompositionRoot {
+    fn finish(
+        self,
+        project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        store: Arc<dyn KnowledgeStore>,
+    ) -> CompositionRoot {
         CompositionRoot {
             health_query: self.health_query,
             open_project: OpenProject::new(
                 project_directory_picker,
                 Arc::new(RepositoryInspector::new()),
+                Arc::clone(&store),
             ),
+            recent_projects: ListRecentProjects::new(store),
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
         }
@@ -121,12 +144,22 @@ pub fn run() -> Result<(), DesktopRunError> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
-            app.manage(base.finish(Arc::new(NativeProjectDirectoryPicker::new(
-                app.handle().clone(),
-            ))));
+            let app_data_root = app
+                .path()
+                .app_data_dir()
+                .map_err(CompositionRootError::AppDataPath)?;
+            let layout = StorageLayout::prepare(app_data_root)
+                .map_err(CompositionRootError::StorageLayout)?;
+            let catalog = tauri::async_runtime::block_on(CatalogDatabase::open(&layout))
+                .map_err(CompositionRootError::Catalog)?;
+            app.manage(base.finish(
+                Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
+                Arc::new(catalog),
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::list_recent_projects,
             commands::open_project,
             commands::query_health
         ])
@@ -153,28 +186,54 @@ const fn map_platform_to_v1(platform: Platform) -> PlatformV1 {
 fn map_open_project_to_v1(outcome: OpenProjectOutcome) -> OpenProjectResponseV1 {
     match outcome {
         OpenProjectOutcome::Cancelled => OpenProjectResponseV1::cancelled(),
-        OpenProjectOutcome::Opened(project) => {
-            let head = match project.head() {
-                GitHead::Born {
-                    object_id,
-                    reference,
-                } => GitHeadV1::Born {
-                    object_id: object_id.as_str().to_owned(),
-                    reference: reference
-                        .as_ref()
-                        .map(|reference| reference.as_str().to_owned()),
-                },
-                GitHead::Unborn { reference } => GitHeadV1::Unborn {
-                    reference: reference.as_str().to_owned(),
-                },
-            };
-            OpenProjectResponseV1::opened(ProjectSummaryV1::new(
-                project.repository().id().to_string(),
-                project.worktree().id().to_string(),
-                project_path_display(project.worktree().root().as_path()),
-                head,
-            ))
+        OpenProjectOutcome::Opened { project, .. } => {
+            OpenProjectResponseV1::opened(map_project_summary_to_v1(&project))
         }
+    }
+}
+
+fn map_recent_projects_to_v1(projects: Vec<RecentProject>) -> RecentProjectsResponseV1 {
+    RecentProjectsResponseV1::new(
+        projects
+            .into_iter()
+            .map(|recent| {
+                RecentProjectSummaryV1::new(
+                    recent.project_id().to_string(),
+                    ProjectSummaryV1::new(
+                        recent.repository_id().to_string(),
+                        recent.worktree_id().to_string(),
+                        recent.worktree_root_display().as_str().to_owned(),
+                        map_git_head_to_v1(recent.head()),
+                    ),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn map_project_summary_to_v1(project: &ProjectIdentity) -> ProjectSummaryV1 {
+    ProjectSummaryV1::new(
+        project.repository().id().to_string(),
+        project.worktree().id().to_string(),
+        project_path_display(project.worktree().root().as_path()),
+        map_git_head_to_v1(project.head()),
+    )
+}
+
+fn map_git_head_to_v1(head: &GitHead) -> GitHeadV1 {
+    match head {
+        GitHead::Born {
+            object_id,
+            reference,
+        } => GitHeadV1::Born {
+            object_id: object_id.as_str().to_owned(),
+            reference: reference
+                .as_ref()
+                .map(|reference| reference.as_str().to_owned()),
+        },
+        GitHead::Unborn { reference } => GitHeadV1::Unborn {
+            reference: reference.as_str().to_owned(),
+        },
     }
 }
 
@@ -210,8 +269,27 @@ fn map_open_project_error_to_v1(error: OpenProjectError) -> CommandErrorV1 {
         OpenProjectError::Inspection(ProjectInspectionFailure::InvalidRepositoryMetadata) => {
             ErrorCodeV1::InvalidRepositoryMetadata
         }
+        OpenProjectError::Storage(error) => map_storage_error_to_v1(error),
     };
     CommandErrorV1::project_open(code)
+}
+
+fn map_recent_projects_error_to_v1(error: ListRecentProjectsError) -> CommandErrorV1 {
+    match error {
+        ListRecentProjectsError::Storage(error) => {
+            CommandErrorV1::project_open(map_storage_error_to_v1(error))
+        }
+    }
+}
+
+const fn map_storage_error_to_v1(error: KnowledgeStoreFailure) -> ErrorCodeV1 {
+    match error {
+        KnowledgeStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+        KnowledgeStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+        KnowledgeStoreFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
+        KnowledgeStoreFailure::IdentityConflict => ErrorCodeV1::ProjectIdentityConflict,
+    }
 }
 
 /// Failure while constructing the desktop composition root.
@@ -223,6 +301,12 @@ pub enum CompositionRootError {
     InvalidJobSchedulerConfig(JobSchedulerConfigError),
     /// The operating system rejected an owned scheduler worker.
     JobScheduler(JobSchedulerCreateError),
+    /// Tauri could not resolve the private application-data directory.
+    AppDataPath(tauri::Error),
+    /// The private application-data storage boundary could not be established.
+    StorageLayout(StorageLayoutError),
+    /// The global project catalog could not be opened safely.
+    Catalog(CatalogOpenError),
 }
 
 impl fmt::Display for CompositionRootError {
@@ -235,6 +319,9 @@ impl fmt::Display for CompositionRootError {
                 write!(formatter, "invalid job scheduler configuration: {error}")
             }
             Self::JobScheduler(error) => write!(formatter, "job scheduler failed: {error}"),
+            Self::AppDataPath(_) => formatter.write_str("application data path is unavailable"),
+            Self::StorageLayout(error) => write!(formatter, "storage layout failed: {error}"),
+            Self::Catalog(error) => write!(formatter, "catalog open failed: {error}"),
         }
     }
 }
@@ -245,6 +332,9 @@ impl Error for CompositionRootError {
             Self::InvalidVersion(error) => Some(error),
             Self::InvalidJobSchedulerConfig(error) => Some(error),
             Self::JobScheduler(error) => Some(error),
+            Self::AppDataPath(error) => Some(error),
+            Self::StorageLayout(error) => Some(error),
+            Self::Catalog(error) => Some(error),
         }
     }
 }

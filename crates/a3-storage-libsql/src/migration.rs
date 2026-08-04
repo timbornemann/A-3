@@ -1,15 +1,61 @@
 use blake3::Hasher;
 use libsql::{Connection, TransactionBehavior, params};
+use std::error::Error;
+use std::fmt;
 
-const CATALOG_MIGRATIONS: &[Migration] = &[Migration {
-    version: CatalogSchemaVersion::new(1),
-    name: "bootstrap_catalog",
-    sql: "CREATE TABLE schema_migrations (\n\
+const CATALOG_MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: CatalogSchemaVersion::new(1),
+        name: "bootstrap_catalog",
+        sql: "CREATE TABLE schema_migrations (\n\
           version INTEGER PRIMARY KEY CHECK (version > 0),\n\
           name TEXT NOT NULL UNIQUE,\n\
           checksum BLOB NOT NULL CHECK (length(checksum) = 32)\n\
           ) STRICT;",
-}];
+    },
+    Migration {
+        version: CatalogSchemaVersion::new(2),
+        name: "project_catalog",
+        sql: "CREATE TABLE projects (\n\
+          project_id BLOB PRIMARY KEY NOT NULL CHECK (length(project_id) = 32),\n\
+          repository_id BLOB NOT NULL UNIQUE CHECK (length(repository_id) = 32),\n\
+          repository_common_directory BLOB NOT NULL\n\
+            CHECK (length(repository_common_directory) BETWEEN 1 AND 131072),\n\
+          repository_path_encoding TEXT NOT NULL\n\
+            CHECK (repository_path_encoding IN ('unix-bytes-v1', 'windows-utf16le-v1', 'utf8-lossy-v1')),\n\
+          main_remote_id BLOB CHECK (main_remote_id IS NULL OR length(main_remote_id) = 32),\n\
+          created_open_sequence INTEGER NOT NULL UNIQUE CHECK (created_open_sequence > 0),\n\
+          last_open_sequence INTEGER NOT NULL UNIQUE\n\
+            CHECK (last_open_sequence >= created_open_sequence),\n\
+          UNIQUE (project_id, repository_id)\n\
+          ) STRICT;\n\
+          CREATE INDEX projects_main_remote_id_idx\n\
+            ON projects (main_remote_id) WHERE main_remote_id IS NOT NULL;\n\
+          CREATE TABLE recent_worktrees (\n\
+          worktree_id BLOB PRIMARY KEY NOT NULL CHECK (length(worktree_id) = 32),\n\
+          project_id BLOB NOT NULL CHECK (length(project_id) = 32),\n\
+          repository_id BLOB NOT NULL CHECK (length(repository_id) = 32),\n\
+          worktree_root BLOB NOT NULL CHECK (length(worktree_root) BETWEEN 1 AND 131072),\n\
+          worktree_path_encoding TEXT NOT NULL\n\
+            CHECK (worktree_path_encoding IN ('unix-bytes-v1', 'windows-utf16le-v1', 'utf8-lossy-v1')),\n\
+          worktree_root_display TEXT NOT NULL\n\
+            CHECK (length(worktree_root_display) BETWEEN 1 AND 32768),\n\
+          head_kind TEXT NOT NULL CHECK (head_kind IN ('born', 'unborn')),\n\
+          head_object_id TEXT CHECK (head_object_id IS NULL OR length(head_object_id) IN (40, 64)),\n\
+          head_reference TEXT CHECK (head_reference IS NULL OR length(head_reference) BETWEEN 1 AND 1024),\n\
+          last_open_sequence INTEGER NOT NULL UNIQUE CHECK (last_open_sequence > 0),\n\
+          CHECK (\n\
+            (head_kind = 'born' AND head_object_id IS NOT NULL) OR\n\
+            (head_kind = 'unborn' AND head_object_id IS NULL AND head_reference IS NOT NULL)\n\
+          ),\n\
+          FOREIGN KEY (project_id, repository_id)\n\
+            REFERENCES projects(project_id, repository_id)\n\
+            ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+          ) STRICT;\n\
+          CREATE INDEX recent_worktrees_project_id_idx\n\
+            ON recent_worktrees (project_id);",
+    },
+];
 
 /// Monotone version of the global catalog schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -17,7 +63,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(1);
+    pub const CURRENT: Self = Self::new(2);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -249,6 +295,52 @@ pub(crate) enum MigrationError {
     },
 }
 
+impl fmt::Display for MigrationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadVersion(_) => formatter.write_str("could not read catalog schema version"),
+            Self::NewerSchema { current, supported } => write!(
+                formatter,
+                "catalog schema {} is newer than supported schema {}",
+                current.get(),
+                supported.get()
+            ),
+            Self::ReadHistory(_) => formatter.write_str("could not read migration history"),
+            Self::HistoryMismatch { version } => write!(
+                formatter,
+                "migration history differs at schema {}",
+                version.get()
+            ),
+            Self::Begin { version, .. } => {
+                write!(formatter, "could not begin migration {}", version.get())
+            }
+            Self::Apply { version, .. } => {
+                write!(formatter, "could not apply migration {}", version.get())
+            }
+            Self::Rollback { version, .. } => {
+                write!(formatter, "could not roll back migration {}", version.get())
+            }
+            Self::Commit { version, .. } => {
+                write!(formatter, "could not commit migration {}", version.get())
+            }
+        }
+    }
+}
+
+impl Error for MigrationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ReadVersion(source)
+            | Self::ReadHistory(source)
+            | Self::Begin { source, .. }
+            | Self::Apply { source, .. }
+            | Self::Rollback { source, .. }
+            | Self::Commit { source, .. } => Some(source),
+            Self::NewerSchema { .. } | Self::HistoryMismatch { .. } => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -269,6 +361,35 @@ mod tests {
             assert!(names.insert(migration.name));
             assert!(!migration.sql.trim().is_empty());
         }
+    }
+
+    #[test]
+    fn catalog_upgrades_from_every_supported_predecessor() -> Result<(), Box<dyn std::error::Error>>
+    {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+
+            migrate(
+                &connection,
+                &CATALOG_MIGRATIONS[..1],
+                CatalogSchemaVersion::new(1),
+            )
+            .await?;
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 1);
+
+            let version = super::migrate_catalog(&connection).await?;
+            assert_eq!(version, CatalogSchemaVersion::CURRENT);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('projects', 'recent_worktrees')",
+                )
+                .await?,
+                2
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
