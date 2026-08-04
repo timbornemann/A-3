@@ -1,7 +1,7 @@
 # Sicherheit und kontrollierte Ausführung
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-04
 
 ## Trust Boundary
 
@@ -37,6 +37,12 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Sonderdateien, Gerätepfade, Pipes und Sockets werden standardmäßig abgelehnt.
 - Große, binäre, generierte oder geheime Dateien werden über Klassifikationsregeln ausgeschlossen.
 - Schreibzugriff außerhalb des aktiven Worktree benötigt ausdrückliche Freigabe.
+- Eine ausgewählte Untermenge darf nicht implizit auf einen übergeordneten Git-Worktree erweitert werden.
+- Das Git Common Directory eines Linked Worktree darf für eng begrenzte Identitätsmetadaten gelesen
+  werden; es wird dadurch nicht zu einem erlaubten Workspace-Root.
+- Repository-Erkennung liest nur repository-lokale Git-Konfiguration in isoliertem Modus. Globale
+  Konfiguration, Includes, Credential Helper, Umgebungsüberschreibungen und Netzwerkzugriffe bleiben
+  außerhalb dieses Pfads.
 
 ## Prozess-Policy
 
@@ -185,4 +191,3 @@ Sicherheitsrelevante Aktionen speichern:
 - sichere Digests
 
 Nicht gespeichert werden rohe Secrets, vollständige Umgebungen oder uneingeschränkte Prozessausgaben.
-

@@ -1,7 +1,7 @@
 # Domänenmodell
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-04
 
 ## Ubiquitous Language
 
@@ -34,10 +34,19 @@ Besteht aus:
 - stabilem lokalem RepositoryId.
 
 Ein Repository ohne Remote ist vollständig unterstützt. Pfade allein sind keine portable Identität.
+Die lokale RepositoryId wird mit der versionierten Ableitung `a3.repository-id.v1` als BLAKE3-Digest
+des kanonischen Git Common Directory gebildet. Eine normalisierte Haupt-Remote wird separat und ohne
+Benutzername, Passwort, Query oder Fragment als Fingerprint erfasst; sie verändert die lokale
+RepositoryId nicht.
 
 ### WorktreeIdentity
 
-Besteht aus RepositoryId und kanonischem Worktree-Root. Jeder Worktree besitzt eine eigene Wissens- und Mutationsdomäne.
+Besteht aus RepositoryId und kanonischem Worktree-Root. Die WorktreeId wird mit der versionierten
+Ableitung `a3.worktree-id.v1` deterministisch aus beiden Werten gebildet. Dadurch bleibt sie bei
+wiederholter Erkennung und über Appneustarts stabil, ändert sich aber bei einem Worktree-Umzug.
+Jeder Worktree besitzt eine eigene Wissens- und Mutationsdomäne. Die spätere Reconciliation muss
+einen geänderten Pfad gegen zuvor persistierte Identitäts- und Remote-Evidenz prüfen; sie darf eine
+Übereinstimmung nicht allein aus dem neuen Pfad behaupten.
 
 ### SnapshotId
 
@@ -186,4 +195,3 @@ RunEvent ist ein append-only Audit-Eintrag. Mindestfelder:
 - optional ToolRunId oder EvidenceId
 
 Die Eventfolge ist kein vollständiges Event-Sourcing des Produkts. Fachzustand wird relational materialisiert; das Journal dient Audit, Debugging und reproduzierbarer Laufanalyse.
-

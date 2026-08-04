@@ -8,10 +8,12 @@ Relevante ADRs: 0004, 0005, 0006, 0015
 
 Abhängigkeiten: Gate M1
 
+Status: In Progress
+
 - [ ] Ordnerauswahl über schmalen Tauri-Command
-- [ ] PathPolicy mit Canonicalization und Symlinktests
-- [ ] Git Common Directory, Worktree Root, HEAD und Unborn erkennen
-- [ ] RepositoryId und WorktreeId erzeugen
+- [x] PathPolicy mit Canonicalization und Symlinktests
+- [x] Git Common Directory, Worktree Root, HEAD und Unborn erkennen
+- [x] RepositoryId und WorktreeId erzeugen
 - [ ] Worktree-Umzug erkennen und Reconciliation anbieten
 
 Akzeptanz:
@@ -177,4 +179,3 @@ Akzeptanz:
 - [ ] inkrementelle add, modify, delete und rename Szenarien grün
 - [ ] kein Secret-Fixture in DB oder Logs
 - [ ] Windows-, Linux- und macOS-Smoke für Watcher und Pfade
-
