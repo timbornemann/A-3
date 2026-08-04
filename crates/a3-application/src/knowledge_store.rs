@@ -1,3 +1,4 @@
+use crate::{ProjectOpenPreparation, ProjectReconciliationProposal};
 use a3_domain::{GitHead, ProjectId, ProjectIdentity, RepositoryId, WorktreeId};
 use std::error::Error;
 use std::fmt;
@@ -16,10 +17,23 @@ pub type KnowledgeStoreFuture<'a, T> =
 ///
 /// Concrete database handles, SQL, rows, and engine-specific errors remain in adapters.
 pub trait KnowledgeStore: fmt::Debug + Send + Sync {
+    /// Detects an exact move candidate without creating or mutating project storage.
+    fn prepare_project_open<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation>;
+
     /// Atomically records one safely inspected project as the most recently opened worktree.
     fn record_opened_project<'a>(
         &'a self,
         project: &'a ProjectIdentity,
+    ) -> KnowledgeStoreFuture<'a, ProjectId>;
+
+    /// Applies one natively confirmed, still-current reconciliation proposal.
+    fn reconcile_project<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        proposal: &'a ProjectReconciliationProposal,
     ) -> KnowledgeStoreFuture<'a, ProjectId>;
 
     /// Returns a bounded, most-recent-first projection without persistence rows or raw paths.

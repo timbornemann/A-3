@@ -6,12 +6,14 @@ use crate::{
 use crate::{index_repository, index_repository::IndexRepositoryError};
 use a3_application::{
     KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, KnowledgeStoreFuture, RecentProject, RecentProjectLimit,
+    KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
+    ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
     IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectId, ProjectIdentity,
     Snapshot,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Local libSQL implementation of the application knowledge-store boundary.
 ///
@@ -20,6 +22,7 @@ use a3_domain::{
 pub struct LibsqlKnowledgeStore {
     layout: StorageLayout,
     catalog: CatalogDatabase,
+    reconciliation_active: AtomicBool,
 }
 
 impl LibsqlKnowledgeStore {
@@ -30,6 +33,7 @@ impl LibsqlKnowledgeStore {
         Ok(Self {
             layout: layout.clone(),
             catalog,
+            reconciliation_active: AtomicBool::new(false),
         })
     }
 }
@@ -45,6 +49,72 @@ impl std::fmt::Debug for LibsqlKnowledgeStore {
 }
 
 impl KnowledgeStore for LibsqlKnowledgeStore {
+    fn prepare_project_open<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+        Box::pin(async move {
+            let preparation = self
+                .catalog
+                .prepare_project_open(project)
+                .await
+                .map_err(ProjectCatalogError::classify)?;
+            match &preparation {
+                ProjectOpenPreparation::Ready => Ok(preparation),
+                ProjectOpenPreparation::ConfirmationRequired(proposal) => {
+                    let source = self
+                        .layout
+                        .existing_project(proposal.previous_worktree_id())
+                        .map_err(classify_project_layout_error)?;
+                    let target = self
+                        .layout
+                        .existing_project(project.worktree().id())
+                        .map_err(classify_project_layout_error)?;
+                    match (source, target) {
+                        (Some(source), None) => {
+                            KnowledgeDatabase::preflight_reconciliation(
+                                &source,
+                                proposal.previous_repository_id(),
+                                proposal.previous_worktree_id(),
+                                project,
+                            )
+                            .await
+                            .map_err(classify_knowledge_open_error)?;
+                            Ok(preparation)
+                        }
+                        (None, None) => Ok(ProjectOpenPreparation::Ready),
+                        _ => Err(KnowledgeStoreFailure::IdentityConflict),
+                    }
+                }
+                ProjectOpenPreparation::ResumeConfirmed(proposal) => {
+                    let source = self
+                        .layout
+                        .existing_project(proposal.previous_worktree_id())
+                        .map_err(classify_project_layout_error)?;
+                    let target = self
+                        .layout
+                        .existing_project(project.worktree().id())
+                        .map_err(classify_project_layout_error)?;
+                    match (source, target) {
+                        (Some(layout), None) | (None, Some(layout)) => {
+                            KnowledgeDatabase::preflight_reconciliation(
+                                &layout,
+                                proposal.previous_repository_id(),
+                                proposal.previous_worktree_id(),
+                                project,
+                            )
+                            .await
+                            .map_err(classify_knowledge_open_error)?;
+                            Ok(preparation)
+                        }
+                        (Some(_), Some(_)) => Err(KnowledgeStoreFailure::IdentityConflict),
+                        (None, None) => Err(KnowledgeStoreFailure::InvalidStoredData),
+                    }
+                }
+            }
+        })
+    }
+
     fn record_opened_project<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -59,6 +129,57 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .map_err(classify_knowledge_open_error)?;
             self.catalog
                 .record_project(project)
+                .await
+                .map_err(ProjectCatalogError::classify)
+        })
+    }
+
+    fn reconcile_project<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        proposal: &'a ProjectReconciliationProposal,
+    ) -> KnowledgeStoreFuture<'a, ProjectId> {
+        Box::pin(async move {
+            let _permit = self.acquire_reconciliation()?;
+            let source = self
+                .layout
+                .existing_project(proposal.previous_worktree_id())
+                .map_err(classify_project_layout_error)?;
+            let target = self
+                .layout
+                .existing_project(project.worktree().id())
+                .map_err(classify_project_layout_error)?;
+            let existing = match (source, target) {
+                (Some(layout), None) | (None, Some(layout)) => layout,
+                (Some(_), Some(_)) => return Err(KnowledgeStoreFailure::IdentityConflict),
+                (None, None) => return Err(KnowledgeStoreFailure::InvalidStoredData),
+            };
+            KnowledgeDatabase::preflight_reconciliation(
+                &existing,
+                proposal.previous_repository_id(),
+                proposal.previous_worktree_id(),
+                project,
+            )
+            .await
+            .map_err(classify_knowledge_open_error)?;
+            self.catalog
+                .prepare_reconciliation(project, proposal)
+                .await
+                .map_err(ProjectCatalogError::classify)?;
+            let target_layout = self
+                .layout
+                .relocate_project(proposal.previous_worktree_id(), project.worktree())
+                .map_err(classify_project_layout_error)?;
+            let _knowledge = KnowledgeDatabase::reconcile_identity(
+                &target_layout,
+                proposal.previous_repository_id(),
+                proposal.previous_worktree_id(),
+                project,
+            )
+            .await
+            .map_err(classify_knowledge_open_error)?;
+            self.catalog
+                .complete_reconciliation(project, proposal)
                 .await
                 .map_err(ProjectCatalogError::classify)
         })
@@ -177,6 +298,15 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
 }
 
 impl LibsqlKnowledgeStore {
+    fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
+        self.reconciliation_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| KnowledgeStoreFailure::Unavailable)?;
+        Ok(ReconciliationPermit {
+            active: &self.reconciliation_active,
+        })
+    }
+
     async fn open_project_knowledge(
         &self,
         project: &ProjectIdentity,
@@ -193,6 +323,16 @@ impl LibsqlKnowledgeStore {
     }
 }
 
+struct ReconciliationPermit<'a> {
+    active: &'a AtomicBool,
+}
+
+impl Drop for ReconciliationPermit<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
 fn classify_project_layout_error(error: ProjectStorageLayoutError) -> KnowledgeStoreFailure {
     match error {
         ProjectStorageLayoutError::SymbolicLink { .. }
@@ -201,10 +341,16 @@ fn classify_project_layout_error(error: ProjectStorageLayoutError) -> KnowledgeS
         | ProjectStorageLayoutError::OutsideParent { .. } => {
             KnowledgeStoreFailure::InvalidStoredData
         }
+        ProjectStorageLayoutError::ReconciliationIdentityUnchanged
+        | ProjectStorageLayoutError::ReconciliationSourceMissing(_)
+        | ProjectStorageLayoutError::ReconciliationTargetExists(_) => {
+            KnowledgeStoreFailure::IdentityConflict
+        }
         ProjectStorageLayoutError::StorageInsideWorktree { .. }
         | ProjectStorageLayoutError::Create { .. }
         | ProjectStorageLayoutError::Inspect { .. }
-        | ProjectStorageLayoutError::Canonicalize { .. } => KnowledgeStoreFailure::Unavailable,
+        | ProjectStorageLayoutError::Canonicalize { .. }
+        | ProjectStorageLayoutError::Move { .. } => KnowledgeStoreFailure::Unavailable,
     }
 }
 
@@ -223,6 +369,10 @@ fn classify_knowledge_open_error(error: KnowledgeOpenError) -> KnowledgeStoreFai
             KnowledgeStoreFailure::InvalidStoredData
         }
         KnowledgeOpenError::IdentityConflict => KnowledgeStoreFailure::IdentityConflict,
+        KnowledgeOpenError::BeginReconciliation(_)
+        | KnowledgeOpenError::WriteReconciliation(_)
+        | KnowledgeOpenError::RollbackReconciliation(_)
+        | KnowledgeOpenError::CommitReconciliation(_) => KnowledgeStoreFailure::Unavailable,
         KnowledgeOpenError::Open(_)
         | KnowledgeOpenError::Connect(_)
         | KnowledgeOpenError::Configure(_)

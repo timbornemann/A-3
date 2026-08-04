@@ -10,7 +10,7 @@ use a3_domain::{
     IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
     LanguageAdapterRevision, LanguageAdapterVersion, ProjectIdentity, RankingPolicyVersion,
     RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind,
-    SnapshotId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    SnapshotId, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -409,7 +409,12 @@ impl ProjectFixture {
         let repository_id = RepositoryId::from_bytes(repository_bytes);
         let project = ProjectIdentity::new(
             RepositoryIdentity::new(repository_id, common, None),
-            WorktreeIdentity::new(WorktreeId::from_bytes(worktree_bytes), repository_id, root),
+            WorktreeIdentity::new(
+                WorktreeId::from_bytes(worktree_bytes),
+                WorktreeAnchorId::from_bytes(worktree_bytes),
+                repository_id,
+                root,
+            ),
             unborn_head()?,
         )?;
         Ok(Self {

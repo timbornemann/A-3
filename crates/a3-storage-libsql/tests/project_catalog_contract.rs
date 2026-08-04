@@ -2,10 +2,13 @@
 
 mod support;
 
-use a3_application::{KnowledgeStore, KnowledgeStoreFailure, RecentProjectLimit};
+use a3_application::{
+    KnowledgeStore, KnowledgeStoreFailure, ProjectOpenPreparation, ProjectReconciliationEvidence,
+    ProjectReconciliationProposal, RecentProjectLimit,
+};
 use a3_domain::{
     CanonicalDirectory, GitHead, GitObjectId, GitReferenceName, ProjectIdentity, RemoteIdentity,
-    RepositoryId, RepositoryIdentity, WorktreeId, WorktreeIdentity,
+    RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -184,6 +187,204 @@ fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error
     })
 }
 
+#[test]
+fn prepared_reconciliation_resumes_after_the_storage_directory_moved()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let common = create_directory(temporary.path().join("resume-common"))?;
+        let previous_root = create_directory(temporary.path().join("resume-previous"))?;
+        let target_root = create_directory(temporary.path().join("resume-target"))?;
+        let anchor = [91; 32];
+        let previous = project_fixture_with_anchor(
+            [90; 32],
+            [92; 32],
+            anchor,
+            &common,
+            &previous_root,
+            None,
+            unborn_head()?,
+        )?;
+        let target = project_fixture_with_anchor(
+            [90; 32],
+            [93; 32],
+            anchor,
+            &common,
+            &target_root,
+            None,
+            unborn_head()?,
+        )?;
+
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        let project_id = store.record_opened_project(&previous).await?;
+        let proposal = match store.prepare_project_open(&target).await? {
+            ProjectOpenPreparation::ConfirmationRequired(proposal) => proposal,
+            other => {
+                return Err(format!("expected confirmation proposal, received {other:?}").into());
+            }
+        };
+        drop(store);
+
+        insert_prepared_reconciliation(&layout, &target, &proposal).await?;
+        let previous_layout = layout.prepare_project(previous.worktree())?;
+        let target_storage = layout
+            .root()
+            .join("projects")
+            .join(target.worktree().id().to_string());
+        fs::rename(previous_layout.root(), &target_storage)?;
+
+        let reopened = LibsqlKnowledgeStore::open(&layout).await?;
+        let resumed = match reopened.prepare_project_open(&target).await? {
+            ProjectOpenPreparation::ResumeConfirmed(proposal) => proposal,
+            other => return Err(format!("expected confirmed resume, received {other:?}").into()),
+        };
+        assert_eq!(resumed, proposal);
+        assert_eq!(
+            reopened.reconcile_project(&target, &resumed).await?,
+            project_id
+        );
+        let recent = reopened
+            .list_recent_projects(RecentProjectLimit::DEFAULT)
+            .await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].project_id(), project_id);
+        assert_eq!(recent[0].worktree_id(), target.worktree().id());
+        assert_eq!(
+            reopened.prepare_project_open(&target).await?,
+            ProjectOpenPreparation::Ready
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn invalid_reconciliation_source_is_rejected_before_intent_or_move()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let common = create_directory(temporary.path().join("preflight-common"))?;
+        let previous_root = create_directory(temporary.path().join("preflight-previous"))?;
+        let target_root = create_directory(temporary.path().join("preflight-target"))?;
+        let anchor = [101; 32];
+        let previous = project_fixture_with_anchor(
+            [100; 32],
+            [102; 32],
+            anchor,
+            &common,
+            &previous_root,
+            None,
+            unborn_head()?,
+        )?;
+        let target = project_fixture_with_anchor(
+            [100; 32],
+            [103; 32],
+            anchor,
+            &common,
+            &target_root,
+            None,
+            unborn_head()?,
+        )?;
+
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        store.record_opened_project(&previous).await?;
+        let proposal = match store.prepare_project_open(&target).await? {
+            ProjectOpenPreparation::ConfirmationRequired(proposal) => proposal,
+            other => {
+                return Err(format!("expected confirmation proposal, received {other:?}").into());
+            }
+        };
+        drop(store);
+
+        let previous_layout = layout.prepare_project(previous.worktree())?;
+        mutate_knowledge(
+            previous_layout.knowledge_path(),
+            "UPDATE schema_migrations SET checksum = zeroblob(32) WHERE version = 1",
+        )
+        .await?;
+        let target_storage = layout
+            .root()
+            .join("projects")
+            .join(target.worktree().id().to_string());
+
+        let reopened = LibsqlKnowledgeStore::open(&layout).await?;
+        assert_eq!(
+            reopened.reconcile_project(&target, &proposal).await,
+            Err(KnowledgeStoreFailure::InvalidStoredData)
+        );
+        assert!(previous_layout.root().is_dir());
+        assert!(!target_storage.exists());
+        assert_eq!(reconciliation_intent_count(&layout).await?, 0);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn contradictory_prepared_intent_is_never_resumed() -> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let common = create_directory(temporary.path().join("intent-common"))?;
+        let previous_root = create_directory(temporary.path().join("intent-previous"))?;
+        let target_root = create_directory(temporary.path().join("intent-target"))?;
+        let anchor = [111; 32];
+        let previous = project_fixture_with_anchor(
+            [110; 32],
+            [112; 32],
+            anchor,
+            &common,
+            &previous_root,
+            None,
+            unborn_head()?,
+        )?;
+        let target = project_fixture_with_anchor(
+            [110; 32],
+            [113; 32],
+            anchor,
+            &common,
+            &target_root,
+            None,
+            unborn_head()?,
+        )?;
+
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        store.record_opened_project(&previous).await?;
+        let proposal = match store.prepare_project_open(&target).await? {
+            ProjectOpenPreparation::ConfirmationRequired(proposal) => proposal,
+            other => {
+                return Err(format!("expected confirmation proposal, received {other:?}").into());
+            }
+        };
+        drop(store);
+
+        insert_prepared_reconciliation(&layout, &target, &proposal).await?;
+        mutate_catalog(
+            &layout,
+            "UPDATE worktree_reconciliations SET target_repository_id = zeroblob(32)",
+        )
+        .await?;
+        let reopened = LibsqlKnowledgeStore::open(&layout).await?;
+
+        assert_eq!(
+            reopened.prepare_project_open(&target).await,
+            Err(KnowledgeStoreFailure::IdentityConflict)
+        );
+        assert!(layout.prepare_project(previous.worktree())?.root().is_dir());
+        assert!(
+            !layout
+                .root()
+                .join("projects")
+                .join(target.worktree().id().to_string())
+                .exists()
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 fn lock_project_catalog_test() -> Result<MutexGuard<'static, ()>, Box<dyn std::error::Error>> {
     PROJECT_CATALOG_TEST_LOCK.lock().map_err(|_| {
         Box::<dyn std::error::Error>::from(io::Error::other(
@@ -209,6 +410,26 @@ fn project_fixture(
     remote_bytes: Option<[u8; 32]>,
     head: GitHead,
 ) -> Result<ProjectIdentity, Box<dyn std::error::Error>> {
+    project_fixture_with_anchor(
+        repository_bytes,
+        worktree_bytes,
+        worktree_bytes,
+        common_directory,
+        worktree_root,
+        remote_bytes,
+        head,
+    )
+}
+
+fn project_fixture_with_anchor(
+    repository_bytes: [u8; 32],
+    worktree_bytes: [u8; 32],
+    anchor_bytes: [u8; 32],
+    common_directory: &CanonicalDirectory,
+    worktree_root: &CanonicalDirectory,
+    remote_bytes: Option<[u8; 32]>,
+    head: GitHead,
+) -> Result<ProjectIdentity, Box<dyn std::error::Error>> {
     let repository_id = RepositoryId::from_bytes(repository_bytes);
     Ok(ProjectIdentity::new(
         RepositoryIdentity::new(
@@ -218,11 +439,48 @@ fn project_fixture(
         ),
         WorktreeIdentity::new(
             WorktreeId::from_bytes(worktree_bytes),
+            WorktreeAnchorId::from_bytes(anchor_bytes),
             repository_id,
             worktree_root.clone(),
         ),
         head,
     )?)
+}
+
+async fn insert_prepared_reconciliation(
+    layout: &StorageLayout,
+    target: &ProjectIdentity,
+    proposal: &ProjectReconciliationProposal,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(layout.catalog_path())
+        .build()
+        .await?;
+    let connection = database.connect()?;
+    connection.execute("PRAGMA foreign_keys = ON", ()).await?;
+    let evidence = match proposal.evidence() {
+        ProjectReconciliationEvidence::RepositoryAndWorktreeAnchor => "repository-anchor",
+        ProjectReconciliationEvidence::RemoteAndWorktreeAnchor => "remote-anchor",
+    };
+    connection
+        .execute(
+            "INSERT INTO worktree_reconciliations (\n\
+             target_worktree_id, source_worktree_id, project_id, source_repository_id,\n\
+             target_repository_id, worktree_anchor_id, evidence_kind,\n\
+             source_last_open_sequence, status, completed_open_sequence\n\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'prepared', NULL)",
+            libsql::params![
+                target.worktree().id().as_bytes().to_vec(),
+                proposal.previous_worktree_id().as_bytes().to_vec(),
+                proposal.project_id().as_bytes().to_vec(),
+                proposal.previous_repository_id().as_bytes().to_vec(),
+                target.repository().id().as_bytes().to_vec(),
+                proposal.previous_worktree_anchor_id().as_bytes().to_vec(),
+                evidence,
+                i64::try_from(proposal.expected_revision().get())?
+            ],
+        )
+        .await?;
+    Ok(())
 }
 
 fn unborn_head() -> Result<GitHead, Box<dyn std::error::Error>> {
@@ -249,4 +507,29 @@ async fn mutate_catalog(
     connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
     connection.execute(sql, ()).await?;
     Ok(())
+}
+
+async fn mutate_knowledge(path: &Path, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(path).build().await?;
+    let connection = database.connect()?;
+    connection.execute(sql, ()).await?;
+    Ok(())
+}
+
+async fn reconciliation_intent_count(
+    layout: &StorageLayout,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(layout.catalog_path())
+        .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .build()
+        .await?;
+    let connection = database.connect()?;
+    let mut rows = connection
+        .query("SELECT COUNT(*) FROM worktree_reconciliations", ())
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or(libsql::Error::QueryReturnedNoRows)?;
+    Ok(row.get(0)?)
 }

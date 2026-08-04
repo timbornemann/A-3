@@ -57,6 +57,7 @@ dependencies = [
  "blake3",
  "futures",
  "libsql",
+ "rustix 1.1.4",
 ]
 
 [[package]]

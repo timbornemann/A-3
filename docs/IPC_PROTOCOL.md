@@ -49,9 +49,11 @@ Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_pr
 
 ## Open Project Response V1
 
-`open_project` öffnet genau einen nativen Ordnerdialog im privilegierten Prozess. Bei Abbruch lautet
-`result.kind` `cancelled`. Nach erfolgreicher Inspektion und atomarer Katalogregistrierung lautet es
-`opened` und enthält `project`:
+`open_project` öffnet genau einen nativen Ordnerdialog im privilegierten Prozess. Erkennt der Kern
+danach genau einen evidenzbasierten Umzugskandidaten, darf er zusätzlich einen nativen
+Bestätigungsdialog mit „reconciliieren“, „separat öffnen“ und „abbrechen“ anzeigen. Beide Abbruchpfade
+liefern `result.kind` `cancelled`. Nach erfolgreicher normaler Registrierung oder bestätigter
+Reconciliation lautet es `opened` und enthält `project`:
 
 | Feld | Typ | Invariante |
 | --- | --- | --- |
@@ -61,7 +63,8 @@ Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_pr
 | `head` | `GitHeadV1` | `born` mit Objekt-ID oder `unborn` mit vollständiger Referenz |
 
 Der bestehende V1-Vertrag enthält absichtlich keine `ProjectId`; seine JSON-Form bleibt durch die
-Katalogregistrierung unverändert.
+Katalogregistrierung und Reconciliation unverändert. Kandidat, Evidence, Katalogrevision und
+Bestätigungsentscheidung sind interne Application-/Adaptertypen und keine IPC-Felder oder Commands.
 
 ## Recent Projects Response V1
 

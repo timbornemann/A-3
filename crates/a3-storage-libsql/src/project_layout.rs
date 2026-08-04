@@ -48,6 +48,103 @@ impl StorageLayout {
         layout.validate_knowledge_target()?;
         Ok(layout)
     }
+
+    pub(crate) fn existing_project(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<Option<ProjectStorageLayout>, ProjectStorageLayoutError> {
+        let Some(projects) = existing_directory(
+            self.root(),
+            &self.root().join(PROJECTS_DIRECTORY_NAME),
+            ProjectStorageEntry::ProjectsDirectory,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(root) = existing_directory(
+            &projects,
+            &projects.join(worktree_id.to_string()),
+            ProjectStorageEntry::WorktreeDirectory,
+        )?
+        else {
+            return Ok(None);
+        };
+        let layout = ProjectStorageLayout {
+            knowledge: root.join(KNOWLEDGE_FILE_NAME),
+            root,
+            worktree_id,
+        };
+        layout.validate_knowledge_target()?;
+        Ok(Some(layout))
+    }
+
+    pub(crate) fn relocate_project(
+        &self,
+        source_worktree_id: WorktreeId,
+        target_worktree: &WorktreeIdentity,
+    ) -> Result<ProjectStorageLayout, ProjectStorageLayoutError> {
+        if source_worktree_id == target_worktree.id() {
+            return Err(ProjectStorageLayoutError::ReconciliationIdentityUnchanged);
+        }
+        if self.root().starts_with(target_worktree.root().as_path()) {
+            return Err(ProjectStorageLayoutError::StorageInsideWorktree {
+                storage_root: self.root().to_path_buf(),
+                worktree_root: target_worktree.root().as_path().to_path_buf(),
+            });
+        }
+
+        let projects = ensure_directory(
+            self.root(),
+            &self.root().join(PROJECTS_DIRECTORY_NAME),
+            ProjectStorageEntry::ProjectsDirectory,
+        )?;
+        let source = self.existing_project(source_worktree_id)?;
+        let target = self.existing_project(target_worktree.id())?;
+        match (source, target) {
+            (Some(source), None) => {
+                let requested_target = projects.join(target_worktree.id().to_string());
+                rename_no_replace(source.root(), &requested_target).map_err(|source_error| {
+                    ProjectStorageLayoutError::Move {
+                        source: source.root().to_path_buf(),
+                        target: requested_target.clone(),
+                        source_error,
+                    }
+                })?;
+                self.existing_project(target_worktree.id())?.ok_or(
+                    ProjectStorageLayoutError::ReconciliationSourceMissing(source_worktree_id),
+                )
+            }
+            (None, Some(target)) => Ok(target),
+            (Some(_), Some(_)) => Err(ProjectStorageLayoutError::ReconciliationTargetExists(
+                target_worktree.id(),
+            )),
+            (None, None) => Err(ProjectStorageLayoutError::ReconciliationSourceMissing(
+                source_worktree_id,
+            )),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn rename_no_replace(source: &Path, target: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, source, CWD, target, RenameFlags::NOREPLACE).map_err(io::Error::from)
+}
+
+#[cfg(windows)]
+fn rename_no_replace(source: &Path, target: &Path) -> io::Result<()> {
+    // Windows' standard rename refuses an existing destination. Unix needs
+    // renameat2/renameatx_np above because its basic rename may replace it.
+    fs::rename(source, target)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn rename_no_replace(_source: &Path, _target: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace directory rename is unsupported on this platform",
+    ))
 }
 
 impl ProjectStorageLayout {
@@ -155,6 +252,39 @@ fn ensure_directory(
         });
     }
     Ok(canonical)
+}
+
+fn existing_directory(
+    parent: &Path,
+    requested: &Path,
+    entry: ProjectStorageEntry,
+) -> Result<Option<PathBuf>, ProjectStorageLayoutError> {
+    let metadata = match fs::symlink_metadata(requested) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ProjectStorageLayoutError::Inspect {
+                entry,
+                path: requested.to_path_buf(),
+                source,
+            });
+        }
+    };
+    validate_directory_metadata(requested, entry, &metadata)?;
+    let canonical =
+        fs::canonicalize(requested).map_err(|source| ProjectStorageLayoutError::Canonicalize {
+            entry,
+            path: requested.to_path_buf(),
+            source,
+        })?;
+    if !canonical.starts_with(parent) {
+        return Err(ProjectStorageLayoutError::OutsideParent {
+            entry,
+            canonical,
+            parent: parent.to_path_buf(),
+        });
+    }
+    Ok(Some(canonical))
 }
 
 fn validate_directory_metadata(
@@ -265,6 +395,21 @@ pub enum ProjectStorageLayoutError {
         /// Canonical expected parent.
         parent: PathBuf,
     },
+    /// Source and target IDs were identical, so no move could be proven.
+    ReconciliationIdentityUnchanged,
+    /// The confirmed source directory no longer existed in private app storage.
+    ReconciliationSourceMissing(WorktreeId),
+    /// The target identity already owned a directory and must never be overwritten.
+    ReconciliationTargetExists(WorktreeId),
+    /// The operating system could not atomically rename the private project directory.
+    Move {
+        /// Exact validated source directory.
+        source: PathBuf,
+        /// Exact target child under the same private parent.
+        target: PathBuf,
+        /// Operating-system rename failure.
+        source_error: io::Error,
+    },
 }
 
 impl fmt::Display for ProjectStorageLayoutError {
@@ -288,6 +433,16 @@ impl fmt::Display for ProjectStorageLayoutError {
             Self::OutsideParent { entry, .. } => {
                 write!(formatter, "{entry} resolved outside its private parent")
             }
+            Self::ReconciliationIdentityUnchanged => {
+                formatter.write_str("reconciliation source and target identities are equal")
+            }
+            Self::ReconciliationSourceMissing(_) => {
+                formatter.write_str("reconciliation source storage is missing")
+            }
+            Self::ReconciliationTargetExists(_) => {
+                formatter.write_str("reconciliation target storage already exists")
+            }
+            Self::Move { .. } => formatter.write_str("could not move private worktree storage"),
         }
     }
 }
@@ -298,11 +453,15 @@ impl Error for ProjectStorageLayoutError {
             Self::Create { source, .. }
             | Self::Inspect { source, .. }
             | Self::Canonicalize { source, .. } => Some(source),
+            Self::Move { source_error, .. } => Some(source_error),
             Self::StorageInsideWorktree { .. }
             | Self::SymbolicLink { .. }
             | Self::NotDirectory { .. }
             | Self::NotRegularFile { .. }
-            | Self::OutsideParent { .. } => None,
+            | Self::OutsideParent { .. }
+            | Self::ReconciliationIdentityUnchanged
+            | Self::ReconciliationSourceMissing(_)
+            | Self::ReconciliationTargetExists(_) => None,
         }
     }
 }

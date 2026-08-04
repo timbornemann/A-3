@@ -51,6 +51,10 @@ stable_id!(
     WorktreeId
 );
 stable_id!(
+    /// Stable digest of Git's repository-local metadata anchor for one worktree.
+    WorktreeAnchorId
+);
+stable_id!(
     /// Credential-free fingerprint of a repository's normalized primary remote.
     RemoteIdentity
 );
@@ -72,7 +76,10 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeId};
+    use super::{
+        IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId,
+        WorktreeId,
+    };
 
     #[test]
     fn stable_ids_have_fixed_lowercase_hex_representation() {
@@ -83,6 +90,7 @@ mod tests {
             "abababababababababababababababababababababababababababababababab"
         );
         assert_eq!(WorktreeId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(WorktreeAnchorId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(ProjectId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(RemoteIdentity::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(SnapshotId::from_bytes(bytes).as_bytes(), &bytes);

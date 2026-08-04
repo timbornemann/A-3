@@ -56,8 +56,8 @@ impl Error for ListRecentProjectsError {
 mod tests {
     use super::ListRecentProjects;
     use crate::{
-        KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
-        RecentProject, RecentProjectLimit,
+        KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
+        ProjectPathDisplay, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
     };
     use a3_domain::{
         GitHead, GitReferenceName, ProjectId, ProjectIdentity, RepositoryId, WorktreeId,
@@ -69,9 +69,24 @@ mod tests {
     struct FixedStore(Vec<RecentProject>);
 
     impl KnowledgeStore for FixedStore {
+        fn prepare_project_open<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+            Box::pin(async { Ok(ProjectOpenPreparation::Ready) })
+        }
+
         fn record_opened_project<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Err(KnowledgeStoreFailure::Unavailable) })
+        }
+
+        fn reconcile_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _proposal: &'a ProjectReconciliationProposal,
         ) -> KnowledgeStoreFuture<'a, ProjectId> {
             Box::pin(async { Err(KnowledgeStoreFailure::Unavailable) })
         }

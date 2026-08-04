@@ -41,12 +41,19 @@ RepositoryId nicht.
 
 ### WorktreeIdentity
 
-Besteht aus RepositoryId und kanonischem Worktree-Root. Die WorktreeId wird mit der versionierten
-Ableitung `a3.worktree-id.v1` deterministisch aus beiden Werten gebildet. Dadurch bleibt sie bei
-wiederholter Erkennung und über Appneustarts stabil, ändert sich aber bei einem Worktree-Umzug.
-Jeder Worktree besitzt eine eigene Wissens- und Mutationsdomäne. Die spätere Reconciliation muss
-einen geänderten Pfad gegen zuvor persistierte Identitäts- und Remote-Evidenz prüfen; sie darf eine
-Übereinstimmung nicht allein aus dem neuen Pfad behaupten.
+Besteht aus RepositoryId, kanonischem Worktree-Root und `WorktreeAnchorId`. Die WorktreeId wird mit
+der versionierten Ableitung `a3.worktree-id.v1` deterministisch aus RepositoryId und Root gebildet.
+Dadurch bleibt sie bei wiederholter Erkennung und über Appneustarts stabil, ändert sich aber bei einem
+Worktree-Umzug. Die `WorktreeAnchorId` wird mit `a3.worktree-anchor-id.v1` aus dem relativen Pfad des
+Git-Metadatenverzeichnisses innerhalb des kanonischen Git Common Directory gebildet. Sie bleibt bei
+`git worktree move` sowie beim Umzug des gesamten Repositories stabil, ist aber allein kein
+Identitätsbeweis.
+
+Jeder Worktree besitzt eine eigene Wissens- und Mutationsdomäne. A^3 bietet eine Reconciliation nur
+für genau einen vorherigen Katalogeintrag mit derselben `WorktreeAnchorId` und entweder derselben
+`RepositoryId` oder demselben vorhandenen Remote-Fingerprint an. Pfad, HEAD oder Ähnlichkeit genügen
+nie. Erst die native Bestätigung erhält die vorhandene `ProjectId` und bindet die private
+Worktree-Datenbank an die neu inspizierten IDs; „separat öffnen“ erzeugt eine getrennte Identität.
 
 ### Catalog Project Identity
 
@@ -54,9 +61,9 @@ einen geänderten Pfad gegen zuvor persistierte Identitäts- und Remote-Evidenz 
 `WorktreeId` die jeweils beobachtete Git- beziehungsweise Worktree-Identität beschreiben. Bei der ersten
 Aufnahme wird `ProjectId` mit der versionierten Ableitung `a3.catalog-project-id.v1` deterministisch aus
 der `RepositoryId` gebildet und anschließend persistiert. Linked Worktrees derselben `RepositoryId`
-teilen einen Katalogeintrag. Eine spätere Umzugs-Reconciliation darf eine bestehende `ProjectId` nur
-nach bestätigter Identitäts- und Remote-Evidenz beibehalten; die aktuelle Implementierung führt diese
-Reconciliation noch nicht durch.
+teilen einen Katalogeintrag. Eine Umzugs-Reconciliation behält diese `ProjectId` nur nach eindeutiger
+Evidenz, nativer Bestätigung und erneuter Prüfung der exakten Katalogrevision bei. Mehrdeutige oder
+reine Pfad-/Remote-Treffer werden als separates Projekt geöffnet beziehungsweise nicht angeboten.
 
 ### SnapshotId
 

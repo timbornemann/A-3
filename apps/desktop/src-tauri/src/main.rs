@@ -7,8 +7,11 @@ fn main() -> Result<(), a3_desktop::DesktopRunError> {
 #[cfg(test)]
 mod tests {
     use a3_application::{
-        KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker,
-        ProjectDirectorySelectionError, RecentProject, RecentProjectLimit,
+        KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectDirectoryPicker,
+        ProjectDirectorySelectionError, ProjectOpenPreparation, ProjectPathDisplay,
+        ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
+        ProjectReconciliationConfirmer, ProjectReconciliationProposal, RecentProject,
+        RecentProjectLimit,
     };
     use a3_desktop::CompositionRoot;
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
@@ -40,11 +43,26 @@ mod tests {
     struct EmptyStore;
 
     impl KnowledgeStore for EmptyStore {
+        fn prepare_project_open<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+            Box::pin(async { Ok(ProjectOpenPreparation::Ready) })
+        }
+
         fn record_opened_project<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
         ) -> KnowledgeStoreFuture<'a, ProjectId> {
             Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+        }
+
+        fn reconcile_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _proposal: &'a ProjectReconciliationProposal,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Err(KnowledgeStoreFailure::IdentityConflict) })
         }
 
         fn list_recent_projects(
@@ -55,12 +73,26 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CancelledConfirmer;
+
+    impl ProjectReconciliationConfirmer for CancelledConfirmer {
+        fn choose_reconciliation(
+            &self,
+            _proposal: &ProjectReconciliationProposal,
+            _new_root_display: &ProjectPathDisplay,
+        ) -> Result<ProjectReconciliationChoice, ProjectReconciliationConfirmationError> {
+            Ok(ProjectReconciliationChoice::Cancel)
+        }
+    }
+
     #[test]
     fn tauri_ipc_enforces_the_versioned_health_contract() -> Result<(), Box<dyn Error>> {
         let root = CompositionRoot::new(
             ApplicationVersion::try_from("1.2.3")?,
             Platform::Windows,
             Arc::new(CancelledPicker),
+            Arc::new(CancelledConfirmer),
             Arc::new(EmptyStore),
         )?;
         let app = mock_builder()

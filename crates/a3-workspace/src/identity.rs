@@ -1,10 +1,12 @@
 use crate::platform_path;
-use a3_domain::{CanonicalDirectory, RemoteIdentity, RepositoryId, WorktreeId};
+use a3_domain::{CanonicalDirectory, RemoteIdentity, RepositoryId, WorktreeAnchorId, WorktreeId};
 use blake3::Hasher;
 use gix::url::Scheme;
+use std::path::Path;
 
 const REPOSITORY_ID_VERSION: &[u8] = b"a3.repository-id.v1";
 const WORKTREE_ID_VERSION: &[u8] = b"a3.worktree-id.v1";
+const WORKTREE_ANCHOR_ID_VERSION: &[u8] = b"a3.worktree-anchor-id.v1";
 const REMOTE_ID_VERSION: &[u8] = b"a3.remote-id.v1";
 
 pub(crate) fn repository_id(common_directory: &CanonicalDirectory) -> RepositoryId {
@@ -23,6 +25,13 @@ pub(crate) fn worktree_id(repository_id: RepositoryId, root: &CanonicalDirectory
     update_field(&mut hasher, repository_id.as_bytes());
     update_field(&mut hasher, &platform_path::bytes(root.as_path()));
     WorktreeId::from_bytes(*hasher.finalize().as_bytes())
+}
+
+pub(crate) fn worktree_anchor_id(relative_git_directory: &Path) -> WorktreeAnchorId {
+    let mut hasher = Hasher::new();
+    update_field(&mut hasher, WORKTREE_ANCHOR_ID_VERSION);
+    update_field(&mut hasher, &platform_path::bytes(relative_git_directory));
+    WorktreeAnchorId::from_bytes(*hasher.finalize().as_bytes())
 }
 
 pub(crate) fn remote_identity(url: &gix::Url) -> RemoteIdentity {

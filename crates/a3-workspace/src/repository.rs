@@ -44,12 +44,19 @@ impl RepositoryInspector {
         }
 
         let common_directory = canonicalize_directory(repository.common_dir())?;
+        let git_directory = canonicalize_directory(repository.git_dir())?;
+        let relative_git_directory = git_directory
+            .as_path()
+            .strip_prefix(common_directory.as_path())
+            .map_err(|_| RepositoryInspectionError::InvalidWorktreeMetadata)?;
+        let worktree_anchor_id = identity::worktree_anchor_id(relative_git_directory);
         let repository_id = identity::repository_id(&common_directory);
         let main_remote = inspect_main_remote(&repository)?;
         let repository_identity =
             RepositoryIdentity::new(repository_id, common_directory, main_remote);
         let worktree_identity = WorktreeIdentity::new(
             identity::worktree_id(repository_id, &worktree_root),
+            worktree_anchor_id,
             repository_id,
             worktree_root,
         );
@@ -87,6 +94,7 @@ fn classify_inspection_error(error: RepositoryInspectionError) -> ProjectInspect
             ProjectInspectionFailure::UnsupportedRepository
         }
         RepositoryInspectionError::InvalidHead
+        | RepositoryInspectionError::InvalidWorktreeMetadata
         | RepositoryInspectionError::InvalidRemoteConfiguration
         | RepositoryInspectionError::InvalidIdentity(_) => {
             ProjectInspectionFailure::InvalidRepositoryMetadata
@@ -152,6 +160,8 @@ pub enum RepositoryInspectionError {
     },
     /// HEAD metadata was invalid or inconsistent.
     InvalidHead,
+    /// Git's worktree metadata directory escaped its common directory.
+    InvalidWorktreeMetadata,
     /// The local repository's primary remote configuration was invalid.
     InvalidRemoteConfiguration,
     /// Derived domain identities were internally inconsistent.
@@ -173,6 +183,9 @@ impl fmt::Display for RepositoryInspectionError {
                 actual.display()
             ),
             Self::InvalidHead => formatter.write_str("repository HEAD metadata is invalid"),
+            Self::InvalidWorktreeMetadata => {
+                formatter.write_str("repository worktree metadata is invalid")
+            }
             Self::InvalidRemoteConfiguration => {
                 formatter.write_str("repository remote configuration is invalid")
             }
@@ -192,6 +205,7 @@ impl Error for RepositoryInspectionError {
             | Self::BareRepository
             | Self::SelectedPathIsNotWorktreeRoot { .. }
             | Self::InvalidHead
+            | Self::InvalidWorktreeMetadata
             | Self::InvalidRemoteConfiguration => None,
         }
     }

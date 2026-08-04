@@ -5,12 +5,14 @@ mod clock;
 pub mod commands;
 mod platform;
 mod project_picker;
+mod project_reconciliation_dialog;
 
 use a3_application::{
     GetHealth, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
     JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeStore, KnowledgeStoreFailure,
     ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
-    ProjectDirectoryPicker, ProjectInspectionFailure, RecentProject,
+    ProjectDirectoryPicker, ProjectInspectionFailure, ProjectReconciliationConfirmer,
+    RecentProject,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, GitHead, Health, Platform, ProjectIdentity,
@@ -26,6 +28,7 @@ use a3_workspace::RepositoryInspector;
 use clock::SystemJobClock;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
+use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -50,18 +53,31 @@ impl CompositionRoot {
         application_version: ApplicationVersion,
         platform: Platform,
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
-        CompositionBase::new(application_version, platform)
-            .map(|base| base.finish(project_directory_picker, store))
+        CompositionBase::new(application_version, platform).map(|base| {
+            base.finish(
+                project_directory_picker,
+                project_reconciliation_confirmer,
+                store,
+            )
+        })
     }
 
     /// Wires the desktop application using package, platform, and native-picker adapters.
     pub fn from_environment(
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
-        CompositionBase::from_environment().map(|base| base.finish(project_directory_picker, store))
+        CompositionBase::from_environment().map(|base| {
+            base.finish(
+                project_directory_picker,
+                project_reconciliation_confirmer,
+                store,
+            )
+        })
     }
 
     /// Executes the health use case and maps its domain result to IPC V1.
@@ -123,6 +139,7 @@ impl CompositionBase {
     fn finish(
         self,
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
     ) -> CompositionRoot {
         CompositionRoot {
@@ -130,6 +147,7 @@ impl CompositionBase {
             open_project: OpenProject::new(
                 project_directory_picker,
                 Arc::new(RepositoryInspector::new()),
+                project_reconciliation_confirmer,
                 Arc::clone(&store),
             ),
             recent_projects: ListRecentProjects::new(store),
@@ -156,6 +174,9 @@ pub fn run() -> Result<(), DesktopRunError> {
                 .map_err(CompositionRootError::Catalog)?;
             app.manage(base.finish(
                 Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
+                Arc::new(NativeProjectReconciliationConfirmer::new(
+                    app.handle().clone(),
+                )),
                 Arc::new(store),
             ));
             Ok(())
@@ -271,6 +292,7 @@ fn map_open_project_error_to_v1(error: OpenProjectError) -> CommandErrorV1 {
         OpenProjectError::Inspection(ProjectInspectionFailure::InvalidRepositoryMetadata) => {
             ErrorCodeV1::InvalidRepositoryMetadata
         }
+        OpenProjectError::ReconciliationConfirmation(_) => ErrorCodeV1::ProjectSelectionFailed,
         OpenProjectError::Storage(error) => map_storage_error_to_v1(error),
     };
     CommandErrorV1::project_open(code)

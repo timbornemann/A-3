@@ -47,9 +47,10 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die typisierten Commands `query_health`,
 `open_project` und `list_recent_projects` aufrufen. `open_project` öffnet den nativen Ordnerdialog im
-Rust-Kern; `list_recent_projects` liefert höchstens zehn validierte Anzeigeprojektionen aus dem lokalen
-Katalog. Die WebView sendet keinen Pfad und erhält keine Datei-, Dialog-, Shell- oder
-SQL-Plugin-Berechtigung.
+Rust-Kern und bietet bei einem eindeutig evidenzbasiert erkannten Worktree-Umzug eine zweite native
+Auswahl zum Reconciliieren, separaten Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens
+zehn validierte Anzeigeprojektionen aus dem lokalen Katalog. Die WebView sendet weder Pfad noch
+Reconciliation-Entscheidung und erhält keine Datei-, Dialog-, Shell- oder SQL-Plugin-Berechtigung.
 
 ## Lokale Qualitätsgates
 

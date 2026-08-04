@@ -5,7 +5,9 @@ mod path;
 mod snapshot;
 
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
-pub use id::{IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeId};
+pub use id::{
+    IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId, WorktreeId,
+};
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
@@ -67,6 +69,7 @@ impl RepositoryIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeIdentity {
     id: WorktreeId,
+    anchor_id: WorktreeAnchorId,
     repository_id: RepositoryId,
     root: CanonicalDirectory,
 }
@@ -76,11 +79,13 @@ impl WorktreeIdentity {
     #[must_use]
     pub const fn new(
         id: WorktreeId,
+        anchor_id: WorktreeAnchorId,
         repository_id: RepositoryId,
         root: CanonicalDirectory,
     ) -> Self {
         Self {
             id,
+            anchor_id,
             repository_id,
             root,
         }
@@ -90,6 +95,12 @@ impl WorktreeIdentity {
     #[must_use]
     pub const fn id(&self) -> WorktreeId {
         self.id
+    }
+
+    /// Returns the repository-local Git metadata anchor used only as move evidence.
+    #[must_use]
+    pub const fn anchor_id(&self) -> WorktreeAnchorId {
+        self.anchor_id
     }
 
     /// Returns the owning repository ID.
@@ -172,7 +183,7 @@ impl Error for ProjectIdentityError {}
 mod tests {
     use super::{
         CanonicalDirectory, GitHead, GitReferenceName, ProjectIdentity, ProjectIdentityError,
-        RepositoryId, RepositoryIdentity, WorktreeId, WorktreeIdentity,
+        RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
 
     #[test]
@@ -186,6 +197,7 @@ mod tests {
         );
         let worktree = WorktreeIdentity::new(
             WorktreeId::from_bytes([2; 32]),
+            WorktreeAnchorId::from_bytes([4; 32]),
             RepositoryId::from_bytes([3; 32]),
             CanonicalDirectory::from_canonicalized(path)?,
         );

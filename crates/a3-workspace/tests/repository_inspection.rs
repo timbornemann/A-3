@@ -63,6 +63,10 @@ fn linked_worktrees_share_repository_identity_but_not_worktree_identity()
         linked.repository().common_directory()
     );
     assert_ne!(primary.worktree().id(), linked.worktree().id());
+    assert_ne!(
+        primary.worktree().anchor_id(),
+        linked.worktree().anchor_id()
+    );
     assert_ne!(primary.worktree().root(), linked.worktree().root());
     assert!(matches!(
         linked.head(),
@@ -71,6 +75,62 @@ fn linked_worktrees_share_repository_identity_but_not_worktree_identity()
             ..
         }
     ));
+    Ok(())
+}
+
+#[test]
+fn linked_worktree_move_changes_location_id_but_retains_git_anchor() -> Result<(), Box<dyn Error>> {
+    let fixture = TempDirectory::new()?;
+    let repository_root = fixture.path().join("repository");
+    let linked_root = fixture.path().join("linked");
+    let moved_root = fixture.path().join("linked-moved");
+    fs::create_dir(&repository_root)?;
+    initialize_repository(&repository_root)?;
+    commit_fixture(&repository_root)?;
+    run_git(
+        &repository_root,
+        [
+            OsString::from("worktree"),
+            OsString::from("add"),
+            OsString::from("--detach"),
+            linked_root.as_os_str().to_owned(),
+            OsString::from("HEAD"),
+        ],
+    )?;
+    let before = RepositoryInspector::new().inspect(&linked_root)?;
+
+    run_git(
+        &repository_root,
+        [
+            OsString::from("worktree"),
+            OsString::from("move"),
+            linked_root.as_os_str().to_owned(),
+            moved_root.as_os_str().to_owned(),
+        ],
+    )?;
+    let after = RepositoryInspector::new().inspect(&moved_root)?;
+
+    assert_eq!(before.repository().id(), after.repository().id());
+    assert_eq!(before.worktree().anchor_id(), after.worktree().anchor_id());
+    assert_ne!(before.worktree().id(), after.worktree().id());
+    Ok(())
+}
+
+#[test]
+fn primary_repository_move_retains_anchor_but_changes_local_ids() -> Result<(), Box<dyn Error>> {
+    let fixture = TempDirectory::new()?;
+    let repository_root = fixture.path().join("repository");
+    let moved_root = fixture.path().join("repository-moved");
+    fs::create_dir(&repository_root)?;
+    initialize_repository(&repository_root)?;
+    let before = RepositoryInspector::new().inspect(&repository_root)?;
+
+    fs::rename(&repository_root, &moved_root)?;
+    let after = RepositoryInspector::new().inspect(&moved_root)?;
+
+    assert_eq!(before.worktree().anchor_id(), after.worktree().anchor_id());
+    assert_ne!(before.repository().id(), after.repository().id());
+    assert_ne!(before.worktree().id(), after.worktree().id());
     Ok(())
 }
 

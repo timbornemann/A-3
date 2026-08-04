@@ -5,6 +5,7 @@ mod jobs;
 mod knowledge_index_store;
 mod knowledge_store;
 mod open_project;
+mod project_reconciliation;
 mod recent_projects;
 
 pub use health_query::{GetHealth, HealthQuery};
@@ -23,5 +24,11 @@ pub use knowledge_store::{
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,
     ProjectDirectorySelectionError, ProjectInspectionFailure, ProjectInspector,
+    ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
+    ProjectReconciliationConfirmer,
+};
+pub use project_reconciliation::{
+    ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,
+    ProjectReconciliationEvidence, ProjectReconciliationProposal,
 };
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};

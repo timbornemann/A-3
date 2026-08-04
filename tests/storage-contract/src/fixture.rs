@@ -2,9 +2,9 @@ use crate::ContractResult;
 use a3_domain::{
     CanonicalDirectory, ContentHash, GitHead, GitObjectId, GitReferenceName, IndexLanguage,
     IndexRunId, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion,
-    ProjectIdentity, RankingPolicyVersion, RepositoryId, RepositoryIdentity, RepositoryPath,
-    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeGeneration, WorktreeId,
-    WorktreeIdentity,
+    ProjectIdentity, RankingPolicyVersion, RemoteIdentity, RepositoryId, RepositoryIdentity,
+    RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeAnchorId,
+    WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use std::fs;
 use std::io;
@@ -71,9 +71,44 @@ pub(crate) fn project(
     worktree_root: &CanonicalDirectory,
     head: GitHead,
 ) -> ContractResult<ProjectIdentity> {
+    project_with_evidence(
+        repository_id,
+        worktree_id,
+        ProjectEvidence {
+            worktree_anchor_id: WorktreeAnchorId::from_bytes(*worktree_id.as_bytes()),
+            main_remote: None,
+        },
+        common_directory,
+        worktree_root,
+        head,
+    )
+}
+
+pub(crate) struct ProjectEvidence {
+    pub(crate) worktree_anchor_id: WorktreeAnchorId,
+    pub(crate) main_remote: Option<RemoteIdentity>,
+}
+
+pub(crate) fn project_with_evidence(
+    repository_id: RepositoryId,
+    worktree_id: WorktreeId,
+    evidence: ProjectEvidence,
+    common_directory: &CanonicalDirectory,
+    worktree_root: &CanonicalDirectory,
+    head: GitHead,
+) -> ContractResult<ProjectIdentity> {
     Ok(ProjectIdentity::new(
-        RepositoryIdentity::new(repository_id, common_directory.clone(), None),
-        WorktreeIdentity::new(worktree_id, repository_id, worktree_root.clone()),
+        RepositoryIdentity::new(
+            repository_id,
+            common_directory.clone(),
+            evidence.main_remote,
+        ),
+        WorktreeIdentity::new(
+            worktree_id,
+            evidence.worktree_anchor_id,
+            repository_id,
+            worktree_root.clone(),
+        ),
         head,
     )?)
 }

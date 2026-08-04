@@ -2,19 +2,30 @@
 
 Ziel: A^3 kann einen Worktree sicher öffnen, einen transaktionalen deterministischen Index erstellen und Änderungen inkrementell übernehmen.
 
-Relevante ADRs: 0004, 0005, 0006, 0015
+Relevante ADRs: 0004, 0005, 0006, 0015, 0016
 
 ## S1 Projektpfad und Identität
 
 Abhängigkeiten: Gate M1
 
-Status: In Progress
+Status: Completed
 
 - [x] Ordnerauswahl über schmalen Tauri-Command
 - [x] PathPolicy mit Canonicalization und Symlinktests
 - [x] Git Common Directory, Worktree Root, HEAD und Unborn erkennen
 - [x] RepositoryId und WorktreeId erzeugen
-- [ ] Worktree-Umzug erkennen und Reconciliation anbieten
+- [x] Worktree-Umzug erkennen und Reconciliation anbieten
+
+Verifizierter Abschluss vom 2026-08-04: Die privilegierte Git-Inspektion leitet eine stabile
+`WorktreeAnchorId` aus dem repository-relativen Metadatenpfad ab. A^3 bietet ausschließlich einen
+eindeutigen Kandidaten mit gleichem Anchor und gleicher `RepositoryId` oder gleichem vorhandenen
+Remote-Fingerprint an. Ein nativer Dialog erlaubt Reconciliation, separates Öffnen oder Abbruch,
+ohne die WebView-Capability oder IPC V1 zu erweitern. Die bestätigte Übernahme persistiert einen
+crash-resumierbaren Intent, verschiebt die private Worktree-Ablage atomar ohne Überschreiben, schreibt
+Repository-/Worktree-Identität samt abhängigen Snapshots und IndexRuns transaktional um und schließt
+den Katalog zuletzt ab. Repository- und Linked-Worktree-Umzug, Restart/Resume, separate Öffnung,
+Mehrdeutigkeit, veraltete Vorschläge, belegte Ziele und Datenkontinuität sind durch Domain-,
+Workspace-, Application-, Adapter- und gemeinsame Storage-Contract-Tests abgedeckt.
 
 Akzeptanz:
 
@@ -36,7 +47,7 @@ Status: Completed
 - [x] Storage-Contract-Suite
 - [x] korrupte oder neuere DB sicher behandeln
 
-Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad und leitet `projects/<WorktreeId>/knowledge.db` ausschließlich aus der validierten Worktree-Identität ab. Beide Datenbanktypen werden bei Bestand zunächst read-only geprüft, vorwärtsgerichtet und transaktional migriert und mit derselben kontrollierten Connection-Policy betrieben. Knowledge-Schema V1 bindet jede Worktree-Datenbank dauerhaft an `RepositoryId` und `WorktreeId`; V2 normalisiert diese Identität in `repositories` und `worktrees` und ergänzt unveränderliche Snapshot-Ketten, geordnete Pfad-/Hash-Änderungen, Sprachadapterrevisionen und monotone IndexRun-Sequenzen. Linked Worktrees bleiben getrennt. Der zusammengesetzte `KnowledgeStore` prüft die Knowledge-Datenbank vor der atomaren Katalogregistrierung, sodass ein Knowledge-Fehler weder ein erfolgreiches Open-Ergebnis noch neue Recency erzeugt. Der ergänzende `KnowledgeIndexStore` akzeptiert nur die exakt nächste Snapshot-Generation mit unmittelbarem Parent, serialisiert einen `building`-IndexRun pro Worktree und erlaubt vor S10 nur `failed` oder `cancelled`. Katalogschema V2 persistiert Repository-, Worktree-, Remote-, HEAD- und Pfadevidenz und liefert eine auf zehn Einträge begrenzte Most-recent-first-Projektion. Neustart, Öffnungsreihenfolge, HEAD-Aktualisierung, Linked Worktrees, Repositories ohne Remote, Unborn HEAD, ungültige persistierte Projektionen, widersprüchliche Worktree-Zuordnung, Snapshot-Roundtrip, Generation-/Parent-Konflikte, nicht-UTF-8-Pfade, Run-Lifecycle und fehlgeschlagene V1→V2-Migration sind durch Adapter-Contract- und Regressionstests abgedeckt. Das dev-only Workspace-Crate `a3-storage-contract-tests` prüft dieselben Katalog-, Snapshot-, Worktree-Isolations- und IndexRun-Verträge ausschließlich über die Application-Ports; der libSQL-Adapter bindet es über eine schmale Factory an und behält engine-spezifische Negativtests separat. Die Reconciliation aus S1 baut auf den Katalogevidenzen auf, bleibt aber bis zu einem expliziten Bestätigungsworkflow offen.
+Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad und leitet `projects/<WorktreeId>/knowledge.db` ausschließlich aus der validierten Worktree-Identität ab. Beide Datenbanktypen werden bei Bestand zunächst read-only geprüft, vorwärtsgerichtet und transaktional migriert und mit derselben kontrollierten Connection-Policy betrieben. Knowledge-Schema V1 bindet jede Worktree-Datenbank an `RepositoryId` und `WorktreeId`; V2 normalisiert diese Identität in `repositories` und `worktrees` und ergänzt unveränderliche Snapshot-Ketten, geordnete Pfad-/Hash-Änderungen, Sprachadapterrevisionen und monotone IndexRun-Sequenzen. V3 erlaubt die kontrollierte Identitätsumschreibung über kaskadierende Fremdschlüssel. Linked Worktrees bleiben getrennt. Der zusammengesetzte `KnowledgeStore` prüft die Knowledge-Datenbank vor der atomaren Katalogregistrierung, sodass ein Knowledge-Fehler weder ein erfolgreiches Open-Ergebnis noch neue Recency erzeugt. Der ergänzende `KnowledgeIndexStore` akzeptiert nur die exakt nächste Snapshot-Generation mit unmittelbarem Parent, serialisiert einen `building`-IndexRun pro Worktree und erlaubt vor S10 nur `failed` oder `cancelled`. Katalogschema V3 trennt stabile Projekte, Repository-Beobachtungen und Worktrees, persistiert Anchor-, Remote-, HEAD- und Pfadevidenz sowie Reconciliation-Intents und liefert eine auf zehn Einträge begrenzte Most-recent-first-Projektion. Neustart, Öffnungsreihenfolge, HEAD-Aktualisierung, Linked Worktrees, Repositories ohne Remote, Unborn HEAD, ungültige persistierte Projektionen, widersprüchliche Worktree-Zuordnung, Snapshot-Roundtrip, Generation-/Parent-Konflikte, nicht-UTF-8-Pfade, Run-Lifecycle und fehlgeschlagene V1→V2-/V2→V3-Migrationen sind durch Adapter-Contract- und Regressionstests abgedeckt. Das dev-only Workspace-Crate `a3-storage-contract-tests` prüft dieselben Katalog-, Snapshot-, Worktree-Isolations-, Reconciliation- und IndexRun-Verträge ausschließlich über die Application-Ports; der libSQL-Adapter bindet es über eine schmale Factory an und behält engine-spezifische Negativtests separat.
 
 Akzeptanz:
 

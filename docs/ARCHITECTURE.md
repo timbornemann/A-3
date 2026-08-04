@@ -145,14 +145,23 @@ Regeln:
 1. UI fordert über den versionierten `open_project`-Command eine native Ordnerauswahl an und sendet keinen Pfad.
 2. Der privilegierte Desktop-Adapter öffnet genau einen nativen Ordnerdialog; Abbruch beendet den Use Case ohne Inspektion.
 3. Rust kanonisiert und validiert ausschließlich den vom Betriebssystemdialog zurückgegebenen Pfad.
-4. RepositoryIdentity, WorktreeIdentity und HEAD-Zustand werden mit isolierter repository-lokaler Git-Konfiguration bestimmt.
-5. Der zusammengesetzte libSQL-Adapter leitet aus der validierten `WorktreeId` ausschließlich unter
-   App-Data `projects/<WorktreeId>/knowledge.db` ab, öffnet beziehungsweise migriert sie und prüft die
-   persistierte Repository-/Worktree-Bindung.
-6. Erst nach erfolgreicher Knowledge-Prüfung registriert der Adapter die validierte Beobachtung über
-   `KnowledgeStore` atomar im globalen Katalog. Ein Fehler in einem der beiden Schritte verhindert das
-   erfolgreiche Open-Ergebnis; ein Knowledge-Fehler verändert auch die Katalog-Recency nicht.
-7. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
+4. RepositoryIdentity, WorktreeIdentity einschließlich `WorktreeAnchorId` und HEAD-Zustand werden mit
+   isolierter repository-lokaler Git-Konfiguration bestimmt.
+5. `KnowledgeStore` prüft read-only, ob das Ziel bereits bekannt ist oder genau ein früherer Worktree
+   dieselbe Anchor-ID und dieselbe Repository-ID beziehungsweise denselben vorhandenen
+   Remote-Fingerprint besitzt. Mehrdeutige Kandidaten werden nicht ausgewählt.
+6. Nur für einen eindeutigen Kandidaten fragt der Application-Use-Case über einen schmalen Port einen
+   privilegierten nativen Dialog ab. „Abbrechen“ mutiert nichts; „separat öffnen“ folgt dem normalen
+   Pfad; „reconciliieren“ bindet den bestätigten Bestand um. Die WebView erhält weder Kandidaten noch
+   eine Bestätigungs-Capability.
+7. Der libSQL-Adapter persistiert eine Reconciliation vor dem atomaren Verzeichnisumzug, migriert und
+   schreibt die Knowledge-Identität transaktional um und aktualisiert den Katalog zuletzt. Ein
+   Neustart setzt einen `prepared`-Zustand ohne zweite Bestätigung fort. Exakte Revisionen und
+   Quell-/Zielzustände werden erneut geprüft; bestehende Ziele werden nicht überschrieben.
+8. Ohne Reconciliation leitet der Adapter aus der validierten `WorktreeId` ausschließlich unter
+   App-Data `projects/<WorktreeId>/knowledge.db` ab, öffnet beziehungsweise migriert sie, prüft die
+   persistierte Bindung und registriert die Beobachtung erst danach atomar im globalen Katalog.
+9. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
    Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
 
 Der S2-Storage-Adapter stellt zusätzlich über den schmalen `KnowledgeIndexStore`-Port unveränderliche

@@ -6,6 +6,7 @@
 mod catalog;
 mod fixture;
 mod index;
+mod reconciliation;
 
 use a3_application::{KnowledgeIndexStore, KnowledgeStore};
 use std::error::Error;
@@ -44,5 +45,6 @@ where
 {
     let workspace = fixture::ContractWorkspace::new()?;
     catalog::verify(factory, &workspace).await?;
-    index::verify(factory, &workspace).await
+    index::verify(factory, &workspace).await?;
+    reconciliation::verify(factory, &workspace).await
 }

@@ -3,10 +3,11 @@ use crate::catalog::{
 };
 use crate::migration::{
     KnowledgeSchemaVersion, MigrationError, migrate_knowledge, read_user_version,
+    verify_knowledge_migration_history,
 };
 use crate::{ProjectStorageLayout, ProjectStorageLayoutError};
 use a3_domain::{ProjectIdentity, RepositoryId, WorktreeId};
-use libsql::{Connection, Database};
+use libsql::{Connection, Database, TransactionBehavior, params};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -74,6 +75,79 @@ impl KnowledgeDatabase {
         Ok(knowledge)
     }
 
+    pub(crate) async fn reconcile_identity(
+        layout: &ProjectStorageLayout,
+        source_repository_id: RepositoryId,
+        source_worktree_id: WorktreeId,
+        target: &ProjectIdentity,
+    ) -> Result<Self, KnowledgeOpenError> {
+        if layout.worktree_id() != target.worktree().id()
+            || source_worktree_id == target.worktree().id()
+        {
+            return Err(KnowledgeOpenError::IdentityConflict);
+        }
+        let stored = preflight_reconciliation_identity(
+            layout,
+            source_repository_id,
+            source_worktree_id,
+            target,
+        )
+        .await?;
+        let source = (source_repository_id, source_worktree_id);
+
+        let database = libsql::Builder::new_local(layout.knowledge_path())
+            .build()
+            .await
+            .map_err(classify_open_error)?;
+        let connection = database.connect().map_err(classify_connect_error)?;
+        reject_newer_schema(&connection).await?;
+        verify_integrity(&connection).await?;
+        configure_connection(&connection)
+            .await
+            .map_err(classify_configuration_error)?;
+        verify_connection_policy(&connection).await?;
+        let schema_version =
+            migrate_knowledge(&connection, stored.0.as_bytes(), stored.1.as_bytes())
+                .await
+                .map_err(classify_migration_error)?;
+        if stored == source {
+            rewrite_identity(
+                &connection,
+                source_repository_id,
+                source_worktree_id,
+                target.repository().id(),
+                target.worktree().id(),
+            )
+            .await?;
+        }
+        verify_identity(&connection, target).await?;
+        layout
+            .validate_knowledge_target()
+            .map_err(KnowledgeOpenError::Layout)?;
+
+        let knowledge = Self {
+            _database: database,
+            connection,
+            path: layout.knowledge_path().to_path_buf(),
+            schema_version,
+            repository_id: target.repository().id(),
+            worktree_id: target.worktree().id(),
+        };
+        knowledge.verify().await?;
+        Ok(knowledge)
+    }
+
+    pub(crate) async fn preflight_reconciliation(
+        layout: &ProjectStorageLayout,
+        source_repository_id: RepositoryId,
+        source_worktree_id: WorktreeId,
+        target: &ProjectIdentity,
+    ) -> Result<(), KnowledgeOpenError> {
+        preflight_reconciliation_identity(layout, source_repository_id, source_worktree_id, target)
+            .await
+            .map(|_| ())
+    }
+
     /// Returns the validated database path in this worktree's private storage directory.
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -126,6 +200,45 @@ impl KnowledgeDatabase {
             worktree_id: self.worktree_id,
         })
     }
+}
+
+async fn preflight_reconciliation_identity(
+    layout: &ProjectStorageLayout,
+    source_repository_id: RepositoryId,
+    source_worktree_id: WorktreeId,
+    target: &ProjectIdentity,
+) -> Result<(RepositoryId, WorktreeId), KnowledgeOpenError> {
+    layout
+        .validate_knowledge_target()
+        .map_err(KnowledgeOpenError::Layout)?;
+    if !layout.knowledge_path().exists() {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+
+    let database = libsql::Builder::new_local(layout.knowledge_path())
+        .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .build()
+        .await
+        .map_err(classify_open_error)?;
+    let connection = database.connect().map_err(classify_connect_error)?;
+    let version = reject_newer_schema(&connection).await?;
+    verify_integrity(&connection).await?;
+    if version == 0 {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+    verify_knowledge_migration_history(&connection, version)
+        .await
+        .map_err(classify_migration_error)?;
+    let stored = read_legacy_identity(&connection).await?;
+    if version >= 2 && read_project_repository_identity(&connection).await? != stored {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+    let source = (source_repository_id, source_worktree_id);
+    let target_identity = (target.repository().id(), target.worktree().id());
+    if stored != source && stored != target_identity {
+        return Err(KnowledgeOpenError::IdentityConflict);
+    }
+    Ok(stored)
 }
 
 impl fmt::Debug for KnowledgeDatabase {
@@ -255,6 +368,16 @@ async fn verify_legacy_identity(
     repository_id: RepositoryId,
     worktree_id: WorktreeId,
 ) -> Result<(), KnowledgeOpenError> {
+    let (stored_repository_id, stored_worktree_id) = read_legacy_identity(connection).await?;
+    if stored_repository_id != repository_id || stored_worktree_id != worktree_id {
+        return Err(KnowledgeOpenError::IdentityConflict);
+    }
+    Ok(())
+}
+
+async fn read_legacy_identity(
+    connection: &Connection,
+) -> Result<(RepositoryId, WorktreeId), KnowledgeOpenError> {
     let mut rows = connection
         .query(
             "SELECT repository_id, worktree_id FROM worktree_storage_identity\n\
@@ -270,9 +393,6 @@ async fn verify_legacy_identity(
         .ok_or(KnowledgeOpenError::InvalidStoredData)?;
     let stored_repository_id = RepositoryId::from_bytes(read_stable_id(&row, 0)?);
     let stored_worktree_id = WorktreeId::from_bytes(read_stable_id(&row, 1)?);
-    if stored_repository_id != repository_id || stored_worktree_id != worktree_id {
-        return Err(KnowledgeOpenError::IdentityConflict);
-    }
     if rows
         .next()
         .await
@@ -281,7 +401,7 @@ async fn verify_legacy_identity(
     {
         return Err(KnowledgeOpenError::InvalidStoredData);
     }
-    Ok(())
+    Ok((stored_repository_id, stored_worktree_id))
 }
 
 async fn verify_project_repository_identity(
@@ -289,6 +409,17 @@ async fn verify_project_repository_identity(
     repository_id: RepositoryId,
     worktree_id: WorktreeId,
 ) -> Result<(), KnowledgeOpenError> {
+    let (stored_repository_id, stored_worktree_id) =
+        read_project_repository_identity(connection).await?;
+    if stored_repository_id != repository_id || stored_worktree_id != worktree_id {
+        return Err(KnowledgeOpenError::IdentityConflict);
+    }
+    Ok(())
+}
+
+async fn read_project_repository_identity(
+    connection: &Connection,
+) -> Result<(RepositoryId, WorktreeId), KnowledgeOpenError> {
     let mut rows = connection
         .query(
             "SELECT\n\
@@ -314,11 +445,8 @@ async fn verify_project_repository_identity(
     if repository_count != 1 || worktree_count != 1 {
         return Err(KnowledgeOpenError::InvalidStoredData);
     }
-    if stored_repository_id != repository_id
-        || stored_worktree_id != worktree_id
-        || worktree_repository_id != repository_id
-    {
-        return Err(KnowledgeOpenError::IdentityConflict);
+    if worktree_repository_id != stored_repository_id {
+        return Err(KnowledgeOpenError::InvalidStoredData);
     }
     if rows
         .next()
@@ -326,6 +454,100 @@ async fn verify_project_repository_identity(
         .map_err(classify_identity_read_error)?
         .is_some()
     {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+    Ok((stored_repository_id, stored_worktree_id))
+}
+
+async fn rewrite_identity(
+    connection: &Connection,
+    source_repository_id: RepositoryId,
+    source_worktree_id: WorktreeId,
+    target_repository_id: RepositoryId,
+    target_worktree_id: WorktreeId,
+) -> Result<(), KnowledgeOpenError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(KnowledgeOpenError::BeginReconciliation)?;
+    transaction
+        .execute("PRAGMA defer_foreign_keys = ON", ())
+        .await
+        .map_err(KnowledgeOpenError::WriteReconciliation)?;
+
+    let result = rewrite_identity_in_transaction(
+        &transaction,
+        source_repository_id,
+        source_worktree_id,
+        target_repository_id,
+        target_worktree_id,
+    )
+    .await;
+    if let Err(error) = result {
+        return match transaction.rollback().await {
+            Ok(()) => Err(error),
+            Err(source) => Err(KnowledgeOpenError::RollbackReconciliation(source)),
+        };
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(KnowledgeOpenError::CommitReconciliation)
+}
+
+async fn rewrite_identity_in_transaction(
+    transaction: &libsql::Transaction,
+    source_repository_id: RepositoryId,
+    source_worktree_id: WorktreeId,
+    target_repository_id: RepositoryId,
+    target_worktree_id: WorktreeId,
+) -> Result<(), KnowledgeOpenError> {
+    if source_repository_id != target_repository_id {
+        let affected = transaction
+            .execute(
+                "UPDATE repositories SET repository_id = ?1 WHERE repository_id = ?2",
+                params![
+                    target_repository_id.as_bytes().to_vec(),
+                    source_repository_id.as_bytes().to_vec()
+                ],
+            )
+            .await
+            .map_err(KnowledgeOpenError::WriteReconciliation)?;
+        if affected != 1 {
+            return Err(KnowledgeOpenError::InvalidStoredData);
+        }
+    }
+
+    let affected = transaction
+        .execute(
+            "UPDATE worktrees SET worktree_id = ?1\n\
+             WHERE worktree_id = ?2 AND repository_id = ?3",
+            params![
+                target_worktree_id.as_bytes().to_vec(),
+                source_worktree_id.as_bytes().to_vec(),
+                target_repository_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(KnowledgeOpenError::WriteReconciliation)?;
+    if affected != 1 {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+
+    let affected = transaction
+        .execute(
+            "UPDATE worktree_storage_identity SET repository_id = ?1, worktree_id = ?2\n\
+             WHERE singleton = 1 AND repository_id = ?3 AND worktree_id = ?4",
+            params![
+                target_repository_id.as_bytes().to_vec(),
+                target_worktree_id.as_bytes().to_vec(),
+                source_repository_id.as_bytes().to_vec(),
+                source_worktree_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(KnowledgeOpenError::WriteReconciliation)?;
+    if affected != 1 {
         return Err(KnowledgeOpenError::InvalidStoredData);
     }
     Ok(())
@@ -500,6 +722,14 @@ pub enum KnowledgeOpenError {
     InvalidStoredData,
     /// The requested or stored worktree identity conflicts with this database path.
     IdentityConflict,
+    /// An immediate identity-reconciliation transaction could not begin.
+    BeginReconciliation(libsql::Error),
+    /// A confirmed identity rewrite failed before commit.
+    WriteReconciliation(libsql::Error),
+    /// A failed identity rewrite could not be rolled back.
+    RollbackReconciliation(libsql::Error),
+    /// A completed identity rewrite could not be committed.
+    CommitReconciliation(libsql::Error),
     /// The schema version changed after the database was opened.
     UnexpectedSchemaVersion {
         /// Version verified during open.
@@ -574,6 +804,18 @@ impl fmt::Display for KnowledgeOpenError {
             Self::InspectIdentity(_) => formatter.write_str("could not inspect worktree identity"),
             Self::InvalidStoredData => formatter.write_str("knowledge data is invalid"),
             Self::IdentityConflict => formatter.write_str("knowledge identity conflicts"),
+            Self::BeginReconciliation(_) => {
+                formatter.write_str("could not begin knowledge identity reconciliation")
+            }
+            Self::WriteReconciliation(_) => {
+                formatter.write_str("could not rewrite knowledge identity")
+            }
+            Self::RollbackReconciliation(_) => {
+                formatter.write_str("could not roll back knowledge identity reconciliation")
+            }
+            Self::CommitReconciliation(_) => {
+                formatter.write_str("could not commit knowledge identity reconciliation")
+            }
             Self::UnexpectedSchemaVersion { expected, found } => write!(
                 formatter,
                 "knowledge schema changed from version {} to {}",
@@ -599,7 +841,11 @@ impl Error for KnowledgeOpenError {
             | Self::ApplyMigration { source, .. }
             | Self::RollbackMigration { source, .. }
             | Self::CommitMigration { source, .. }
-            | Self::InspectIdentity(source) => Some(source),
+            | Self::InspectIdentity(source)
+            | Self::BeginReconciliation(source)
+            | Self::WriteReconciliation(source)
+            | Self::RollbackReconciliation(source)
+            | Self::CommitReconciliation(source) => Some(source),
             Self::ConnectionPolicyMismatch
             | Self::IntegrityCheckFailed
             | Self::CorruptDatabase

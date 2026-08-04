@@ -45,6 +45,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   außerhalb dieses Pfads.
 - Die WebView darf keinen Projektpfad an `open_project` übergeben. Nur der privilegierte Rust-Adapter
   öffnet den nativen Einzelauswahldialog und reicht dessen Ergebnis an den Use Case weiter.
+- Eine Worktree-Reconciliation darf nur nach einer zweiten privilegierten nativen Auswahl erfolgen.
+  Der Dialog zeigt ausschließlich begrenzte, kontrollzeichenfreie Pfadanzeigen und bietet
+  „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
+  Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects` und `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
@@ -55,6 +59,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `projects/<WorktreeId>`. Die `WorktreeId` stammt aus der privilegierten Repository-Inspektion und
   nicht aus der WebView. App-Data innerhalb des ausgewählten Worktrees, Symlinks sowie falsche
   Datei- oder Verzeichnistypen an diesen Grenzen werden abgelehnt.
+- Beim bestätigten Umzug werden nur zwei erneut validierte direkte Kinder desselben privaten
+  `projects`-Verzeichnisses atomar umbenannt. Quelle und Ziel müssen dem bestätigten Katalogzustand
+  entsprechen; ein vorhandenes Ziel, eine fehlende Quelle ohne vorbereitete Fortsetzung oder eine
+  geänderte Katalogrevision bricht ohne Überschreiben ab.
 - Eine bestehende `knowledge.db` wird vor schreibendem Öffnen read-only auf unterstützte Version,
   Integrität und – bei aktuellem Schema – ihre persistierte Repository-/Worktree-Bindung geprüft.
   Datenbankfehler werden nur als stabile redigierte Fehlercodes über IPC sichtbar.

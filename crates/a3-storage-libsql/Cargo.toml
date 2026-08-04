@@ -12,6 +12,9 @@ a3-domain.workspace = true
 blake3.workspace = true
 libsql.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 a3-storage-contract-tests.workspace = true
 futures.workspace = true

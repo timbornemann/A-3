@@ -70,8 +70,11 @@ mod tests {
     use super::{execute_list_recent_projects, execute_open_project, execute_query_health};
     use crate::CompositionRoot;
     use a3_application::{
-        KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker,
-        ProjectDirectorySelectionError, RecentProject, RecentProjectLimit,
+        KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectDirectoryPicker,
+        ProjectDirectorySelectionError, ProjectOpenPreparation, ProjectPathDisplay,
+        ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
+        ProjectReconciliationConfirmer, ProjectReconciliationProposal, RecentProject,
+        RecentProjectLimit,
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
@@ -97,11 +100,26 @@ mod tests {
     struct EmptyStore;
 
     impl KnowledgeStore for EmptyStore {
+        fn prepare_project_open<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+            Box::pin(async { Ok(ProjectOpenPreparation::Ready) })
+        }
+
         fn record_opened_project<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
         ) -> KnowledgeStoreFuture<'a, ProjectId> {
             Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+        }
+
+        fn reconcile_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _proposal: &'a ProjectReconciliationProposal,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Err(KnowledgeStoreFailure::IdentityConflict) })
         }
 
         fn list_recent_projects(
@@ -112,11 +130,25 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CancelledConfirmer;
+
+    impl ProjectReconciliationConfirmer for CancelledConfirmer {
+        fn choose_reconciliation(
+            &self,
+            _proposal: &ProjectReconciliationProposal,
+            _new_root_display: &ProjectPathDisplay,
+        ) -> Result<ProjectReconciliationChoice, ProjectReconciliationConfirmationError> {
+            Ok(ProjectReconciliationChoice::Cancel)
+        }
+    }
+
     fn root() -> Result<CompositionRoot, Box<dyn std::error::Error>> {
         Ok(CompositionRoot::new(
             ApplicationVersion::try_from("0.1.0")?,
             Platform::Windows,
             Arc::new(CancelledPicker),
+            Arc::new(CancelledConfirmer),
             Arc::new(EmptyStore),
         )?)
     }

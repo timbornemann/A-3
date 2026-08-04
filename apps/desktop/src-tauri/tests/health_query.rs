@@ -1,8 +1,11 @@
 //! Contract tests for the desktop health-query boundary.
 
 use a3_application::{
-    KnowledgeStore, KnowledgeStoreFuture, ProjectDirectoryPicker, ProjectDirectorySelectionError,
-    RecentProject, RecentProjectLimit,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectDirectoryPicker,
+    ProjectDirectorySelectionError, ProjectOpenPreparation, ProjectPathDisplay,
+    ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
+    ProjectReconciliationConfirmer, ProjectReconciliationProposal, RecentProject,
+    RecentProjectLimit,
 };
 use a3_desktop::CompositionRoot;
 use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
@@ -26,11 +29,26 @@ impl ProjectDirectoryPicker for FixedPicker {
 struct EmptyStore;
 
 impl KnowledgeStore for EmptyStore {
+    fn prepare_project_open<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+    ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+        Box::pin(async { Ok(ProjectOpenPreparation::Ready) })
+    }
+
     fn record_opened_project<'a>(
         &'a self,
         _project: &'a ProjectIdentity,
     ) -> KnowledgeStoreFuture<'a, ProjectId> {
         Box::pin(async { Ok(ProjectId::from_bytes([1; 32])) })
+    }
+
+    fn reconcile_project<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _proposal: &'a ProjectReconciliationProposal,
+    ) -> KnowledgeStoreFuture<'a, ProjectId> {
+        Box::pin(async { Err(KnowledgeStoreFailure::IdentityConflict) })
     }
 
     fn list_recent_projects(
@@ -41,12 +59,26 @@ impl KnowledgeStore for EmptyStore {
     }
 }
 
+#[derive(Debug)]
+struct CancelledConfirmer;
+
+impl ProjectReconciliationConfirmer for CancelledConfirmer {
+    fn choose_reconciliation(
+        &self,
+        _proposal: &ProjectReconciliationProposal,
+        _new_root_display: &ProjectPathDisplay,
+    ) -> Result<ProjectReconciliationChoice, ProjectReconciliationConfirmationError> {
+        Ok(ProjectReconciliationChoice::Cancel)
+    }
+}
+
 #[test]
 fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Error>> {
     let root = CompositionRoot::new(
         ApplicationVersion::try_from("1.2.3")?,
         Platform::Windows,
         Arc::new(FixedPicker(None)),
+        Arc::new(CancelledConfirmer),
         Arc::new(EmptyStore),
     )?;
 
@@ -61,8 +93,11 @@ fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Er
 
 #[test]
 fn environment_builds_a_valid_composition_root() -> Result<(), Box<dyn Error>> {
-    let root =
-        CompositionRoot::from_environment(Arc::new(FixedPicker(None)), Arc::new(EmptyStore))?;
+    let root = CompositionRoot::from_environment(
+        Arc::new(FixedPicker(None)),
+        Arc::new(CancelledConfirmer),
+        Arc::new(EmptyStore),
+    )?;
 
     assert_eq!(root.query_health().application_version(), "0.1.0");
     Ok(())
@@ -76,6 +111,7 @@ fn composition_root_opens_the_explicit_checkout_root() -> Result<(), Box<dyn Err
         ApplicationVersion::try_from("1.2.3")?,
         Platform::Windows,
         Arc::new(FixedPicker(Some(checkout_root.clone()))),
+        Arc::new(CancelledConfirmer),
         Arc::new(EmptyStore),
     )?;
 

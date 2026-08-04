@@ -19,7 +19,7 @@ pub use project::{
     LanguageAdapterRevision, LanguageAdapterVersion, LanguageAdapterVersionError, ProjectId,
     ProjectIdentity, ProjectIdentityError, RankingPolicyVersion, RankingPolicyVersionError,
     RemoteIdentity, RepositoryId, RepositoryIdentity, RepositoryPath, RepositoryPathError,
-    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotError, SnapshotId, WorktreeGeneration,
-    WorktreeGenerationError, WorktreeId, WorktreeIdentity,
+    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotError, SnapshotId, WorktreeAnchorId,
+    WorktreeGeneration, WorktreeGenerationError, WorktreeId, WorktreeIdentity,
 };
 pub use version::{ApplicationVersion, ApplicationVersionError};

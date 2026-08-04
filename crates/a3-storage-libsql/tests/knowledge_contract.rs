@@ -5,7 +5,7 @@ mod support;
 use a3_application::{KnowledgeStore, KnowledgeStoreFailure, RecentProjectLimit};
 use a3_domain::{
     CanonicalDirectory, GitHead, GitReferenceName, ProjectIdentity, RepositoryId,
-    RepositoryIdentity, WorktreeId, WorktreeIdentity,
+    RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{
     KnowledgeDatabase, KnowledgeOpenError, KnowledgeSchemaVersion, LibsqlKnowledgeStore,
@@ -295,7 +295,12 @@ fn project(
 ) -> Result<ProjectIdentity, Box<dyn std::error::Error>> {
     Ok(ProjectIdentity::new(
         RepositoryIdentity::new(repository_id, common_directory.clone(), None),
-        WorktreeIdentity::new(worktree_id, repository_id, worktree_root.clone()),
+        WorktreeIdentity::new(
+            worktree_id,
+            WorktreeAnchorId::from_bytes(*worktree_id.as_bytes()),
+            repository_id,
+            worktree_root.clone(),
+        ),
         GitHead::Unborn {
             reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
         },

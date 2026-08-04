@@ -27,15 +27,21 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - Knowledge-Schema V1 persistiert genau eine unveränderliche Bindung aus `RepositoryId` und
   `WorktreeId`. Knowledge-Schema V2 normalisiert diese Bindung vorwärtskompatibel in `repositories`
   und `worktrees` und ergänzt unveränderliche `snapshots`, `snapshot_adapter_revisions`,
-  `snapshot_changes` und `index_runs`. Jede Wiederöffnung prüft sowohl die V1-Bindung als auch die
-  normalisierte Projektion gegen die frisch inspizierte Projektidentität. Linked Worktrees erhalten
-  dadurch weiterhin getrennte Datenbanken, auch wenn sie dieselbe Repository-Identität besitzen.
-- Katalogschema V2 persistiert `projects` und `recent_worktrees`. Eine erfolgreiche Projekterkennung
-  aktualisiert Projekt, Worktree, Remote-Fingerprint, HEAD und Öffnungsreihenfolge in genau einer
-  `IMMEDIATE`-Transaktion; ein Storagefehler verhindert ein fälschlich erfolgreiches Open-Ergebnis.
-- `ProjectId`, `RepositoryId` und `WorktreeId` werden als 32-Byte-Werte gespeichert. Autoritative Pfade
-  werden auf Windows als UTF-16LE und auf Unix als rohe OS-Bytes gespeichert. Die separat gespeicherte
-  Anzeigeprojektion ist kontrollzeichenfrei und auf 32.768 Zeichen begrenzt.
+  `snapshot_changes` und `index_runs`. Knowledge-Schema V3 ersetzt die Identitäts-Fremdschlüssel durch
+  `ON UPDATE CASCADE`, damit ausschließlich der kontrollierte Reconciliation-Pfad Repository- und
+  Worktree-ID samt abhängigen Snapshots und IndexRuns transaktional umschreiben kann. Jede
+  Wiederöffnung prüft sowohl die V1-Bindung als auch die normalisierte Projektion gegen die frisch
+  inspizierte Projektidentität. Linked Worktrees erhalten weiterhin getrennte Datenbanken.
+- Katalogschema V3 normalisiert stabile `projects`, veränderliche `repository_observations` und
+  `recent_worktrees`. Letztere speichern außerdem die `WorktreeAnchorId`. Dauerhafte
+  `worktree_reconciliations` halten den exakt bestätigten Quell-/Zielzustand und den Status
+  `prepared` oder `completed`, sodass ein Abbruch zwischen Dateisystem- und DB-Schritt sicher
+  fortgesetzt wird. Eine normale Projekterkennung oder ein Reconciliation-Abschluss aktualisiert
+  Katalog und Öffnungsreihenfolge in genau einer `IMMEDIATE`-Transaktion.
+- `ProjectId`, `RepositoryId`, `WorktreeId`, `WorktreeAnchorId` und Remote-Fingerprints werden als
+  32-Byte-Werte gespeichert. Autoritative Pfade werden auf Windows als UTF-16LE und auf Unix als rohe
+  OS-Bytes gespeichert. Die separat gespeicherte Anzeigeprojektion ist kontrollzeichenfrei und auf
+  32.768 Zeichen begrenzt.
 - Der aus den konkreten Open- und Recent-Project-Use-Cases abgeleitete `KnowledgeStore`-Port nimmt nur
   Domain-/Application-Typen an. Der zusammengesetzte libSQL-Adapter öffnet und prüft zuerst die
   identitätsgebundene `knowledge.db` und aktualisiert erst danach den globalen Katalog atomar. Ein
@@ -59,10 +65,16 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
   dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen
   gespeicherten Pfad.
+- Für einen eindeutigen Umzugskandidaten zeigt der privilegierte Desktop-Adapter einen nativen Dialog
+  mit „reconciliieren“, „separat öffnen“ und „abbrechen“. Nach Bestätigung persistiert der Adapter
+  zuerst die exakte Absicht, verschiebt dann `projects/<alte WorktreeId>` atomar innerhalb des privaten
+  `projects`-Verzeichnisses, schreibt die Knowledge-Identität transaktional um und aktualisiert den
+  Katalog zuletzt. Vor jedem Schritt werden Kandidat, Revision, Quell- und Zielzustand erneut geprüft;
+  ein vorhandenes Ziel wird nie überschrieben.
 
-Die Umzugs-Reconciliation sowie Discovery, Hashing und die eigentlichen regenerierbaren Index- und
-Faktendaten sind noch nicht implementiert. Die im Katalog gespeicherten exakten Pfad- und
-Remote-Evidenzen bereiten die Reconciliation vor, entscheiden sie aber nicht selbstständig.
+Discovery, Hashing und die eigentlichen regenerierbaren Index- und Faktendaten sind noch nicht
+implementiert. Die Reconciliation entscheidet trotz persistierter Evidenz nie selbstständig: Sie
+benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:
 
@@ -119,7 +131,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - app_settings
 - model_profiles
 - projects
+- repository_observations
 - recent_worktrees
+- worktree_reconciliations
 
 ### Projektidentität und Snapshots
 
