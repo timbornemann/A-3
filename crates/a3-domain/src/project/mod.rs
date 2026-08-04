@@ -3,6 +3,7 @@ mod git;
 mod id;
 mod index_run;
 mod path;
+mod revision;
 mod snapshot;
 
 pub use discovery::{
@@ -19,6 +20,10 @@ pub use index_run::{
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
+pub use revision::{
+    FileDelta, FileRevision, RenameCandidate, RepositoryFileState, RepositoryFileStateError,
+    SnapshotDelta,
+};
 pub use snapshot::{
     ContentHash, IndexLanguage, IndexSchemaVersion, IndexSchemaVersionError,
     LanguageAdapterRevision, LanguageAdapterVersion, LanguageAdapterVersionError, RepositoryPath,

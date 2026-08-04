@@ -1,4 +1,4 @@
-use super::RepositoryPath;
+use super::{RepositoryPath, WorktreeId};
 use std::error::Error;
 use std::fmt;
 
@@ -341,6 +341,7 @@ impl DiscoveredFile {
 /// Complete deterministic output of one successful discovery run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryResult {
+    worktree_id: WorktreeId,
     policy_version: DiscoveryPolicyVersion,
     files: Vec<DiscoveredFile>,
     exclusions: DiscoveryExclusionCounts,
@@ -349,6 +350,7 @@ pub struct DiscoveryResult {
 impl DiscoveryResult {
     /// Sorts by lossless path bytes and rejects duplicate repository paths.
     pub fn new(
+        worktree_id: WorktreeId,
         policy_version: DiscoveryPolicyVersion,
         mut files: Vec<DiscoveredFile>,
         exclusions: DiscoveryExclusionCounts,
@@ -358,10 +360,17 @@ impl DiscoveryResult {
             return Err(DiscoveryResultError::DuplicatePath);
         }
         Ok(Self {
+            worktree_id,
             policy_version,
             files,
             exclusions,
         })
+    }
+
+    /// Returns the worktree whose privileged adapter produced this result.
+    #[must_use]
+    pub const fn worktree_id(&self) -> WorktreeId {
+        self.worktree_id
     }
 
     /// Returns the exact rules revision used by discovery.
@@ -406,7 +415,7 @@ mod tests {
         DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveryExclusionCounts,
         DiscoveryOrigin, DiscoveryPolicy, DiscoveryResult, DiscoveryResultError,
     };
-    use crate::RepositoryPath;
+    use crate::{RepositoryPath, WorktreeId};
 
     #[test]
     fn discovery_result_sorts_lossless_paths_and_rejects_duplicates()
@@ -416,6 +425,7 @@ mod tests {
         let file =
             |path, origin| DiscoveredFile::new(path, origin, 7, DiscoveredFileRoles::empty());
         let result = DiscoveryResult::new(
+            WorktreeId::from_bytes([9; 32]),
             DiscoveryPolicy::v1().version(),
             vec![
                 file(second, DiscoveryOrigin::Tracked),
@@ -427,6 +437,7 @@ mod tests {
         assert_eq!(result.files()[0].path(), &first);
         assert_eq!(
             DiscoveryResult::new(
+                WorktreeId::from_bytes([9; 32]),
                 DiscoveryPolicy::v1().version(),
                 vec![
                     file(first.clone(), DiscoveryOrigin::Tracked),

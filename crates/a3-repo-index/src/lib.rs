@@ -3,6 +3,10 @@
 mod classification;
 mod config;
 mod discovery;
+mod hashing;
 mod path;
+mod repository;
+mod snapshot;
 
 pub use discovery::GitRepositoryDiscoverer;
+pub use snapshot::Blake3RepositorySnapshotBuilder;

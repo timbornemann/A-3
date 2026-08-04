@@ -55,6 +55,22 @@ versionierten `LanguageAdapter` in S5 und ist nicht Teil der S3-Pfadklassifikati
 - unveränderte Content Hashes überspringen
 - Löschungen und Umbenennungskandidaten erfassen
 
+Snapshot V1 führt Discovery und Hashing als eine kohärente, abbrechbare Worktree-Beobachtung aus.
+Jeder relevante Dateiinhalt wird vollständig und gepuffert in Blöcken von höchstens 64 KiB gehasht;
+pro Datei gelten weiterhin 4 MiB und pro Lauf zusätzlich 8 GiB als feste Obergrenze. A^3 prüft den
+geöffneten Dateihandle vor und nach dem Lesen sowie HEAD und Git-Index vor und nach der Beobachtung.
+Eine zwischenzeitliche Änderung verwirft den gesamten Lauf statt einen gemischten Snapshot zu
+erzeugen.
+
+`RepositoryFileState` ordnet normalisierte Pfade byteweise ihren BLAKE3-Hashes zu. Das Delta zur
+persistierten Vorgängergeneration unterscheidet Add, Modify und Delete; genau ein gelöschter und ein
+hinzugefügter Pfad mit demselben Hash ergeben lediglich einen konservativen Rename-Kandidaten.
+Mehrdeutige gleiche Inhalte werden nicht als Rename behauptet. Unveränderte Pfad-/Hash-Paare
+erzeugen keinen Delta-Eintrag. Eine neue monotone Worktree-Generation entsteht nur, wenn sich
+Dateiinhalt, HEAD, Indexschema oder eine Adapterrevision ändert. Die Snapshot-ID ist ein
+domänengetrennter BLAKE3-Digest über Worktree, Parent, Generation, HEAD, Discovery-Policy,
+Indexschema, geordnete Adapterrevisionen und das kanonische Delta.
+
 ### Parse
 
 V1-Sprachen mit strukturellem Support:

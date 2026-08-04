@@ -1,6 +1,7 @@
 use crate::KnowledgeStoreFailure;
 use a3_domain::{
-    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectIdentity, Snapshot,
+    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectIdentity,
+    RepositoryFileState, Snapshot,
 };
 use std::error::Error;
 use std::fmt;
@@ -28,6 +29,12 @@ pub trait KnowledgeIndexStore: fmt::Debug + Send + Sync {
         &'a self,
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, Option<Snapshot>>;
+
+    /// Reconstructs the effective relevant file revisions at the latest snapshot.
+    fn current_file_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeIndexFuture<'a, RepositoryFileState>;
 
     /// Starts one index attempt for an existing immutable snapshot.
     fn start_index_run<'a>(

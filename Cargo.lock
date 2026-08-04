@@ -46,6 +46,7 @@ dependencies = [
  "a3-application",
  "a3-domain",
  "a3-workspace",
+ "blake3",
  "gix",
  "rustix 1.1.4",
  "serde",

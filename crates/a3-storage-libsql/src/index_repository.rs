@@ -1,10 +1,11 @@
 use crate::catalog::is_corruption;
 use a3_application::{KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
-    ContentHash, GitHead, GitObjectId, GitReferenceName, IndexLanguage, IndexRunId, IndexRunRecord,
-    IndexRunSequence, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
-    LanguageAdapterRevision, LanguageAdapterVersion, RankingPolicyVersion, RepositoryPath,
-    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeGeneration, WorktreeId,
+    ContentHash, FileRevision, GitHead, GitObjectId, GitReferenceName, IndexLanguage, IndexRunId,
+    IndexRunRecord, IndexRunSequence, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
+    IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion, RankingPolicyVersion,
+    RepositoryFileState, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
+    WorktreeGeneration, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -158,6 +159,52 @@ pub(crate) async fn latest_snapshot(
     )
     .map(Some)
     .map_err(|_| IndexRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn current_file_state(
+    connection: &Connection,
+    expected_worktree_id: WorktreeId,
+) -> Result<RepositoryFileState, IndexRepositoryError> {
+    validate_snapshot_chain(connection, expected_worktree_id).await?;
+    let mut rows = connection
+        .query(
+            "WITH ranked_changes AS (\n\
+             SELECT changes.repository_path, changes.change_kind, changes.content_hash,\n\
+                    ROW_NUMBER() OVER (\n\
+                      PARTITION BY changes.repository_path\n\
+                      ORDER BY snapshots.generation DESC\n\
+                    ) AS path_rank\n\
+             FROM snapshot_changes AS changes\n\
+             JOIN snapshots ON snapshots.snapshot_id = changes.snapshot_id\n\
+             WHERE snapshots.worktree_id = ?1\n\
+             )\n\
+             SELECT repository_path, change_kind, content_hash\n\
+             FROM ranked_changes WHERE path_rank = 1\n\
+             ORDER BY repository_path",
+            [expected_worktree_id.as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexRepositoryError::Read)?;
+    let mut revisions = Vec::new();
+    while let Some(row) = rows.next().await.map_err(IndexRepositoryError::Read)? {
+        let path: Vec<u8> = row.get(0).map_err(IndexRepositoryError::Read)?;
+        let kind: String = row.get(1).map_err(IndexRepositoryError::Read)?;
+        let content_hash = ContentHash::from_bytes(read_stable_id(&row, 2)?);
+        match SnapshotChangeKind::try_from_stored(&kind)
+            .map_err(|_| IndexRepositoryError::InvalidStoredData)?
+        {
+            SnapshotChangeKind::Upsert => revisions.push(FileRevision::new(
+                RepositoryPath::try_from_bytes(path)
+                    .map_err(|_| IndexRepositoryError::InvalidStoredData)?,
+                content_hash,
+            )),
+            SnapshotChangeKind::Delete => {
+                RepositoryPath::try_from_bytes(path)
+                    .map_err(|_| IndexRepositoryError::InvalidStoredData)?;
+            }
+        }
+    }
+    RepositoryFileState::new(revisions).map_err(|_| IndexRepositoryError::InvalidStoredData)
 }
 
 pub(crate) async fn start_index_run(

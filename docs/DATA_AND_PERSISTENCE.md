@@ -53,7 +53,10 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   IndexRun-Persistenz, ohne bestehende Project-Open-Verbraucher zu verbreitern. Snapshots werden nur
   als exakt nächste Worktree-Generation mit dem unmittelbaren Parent akzeptiert und samt kanonisch
   geordneten Adapterrevisionen und Pfadänderungen atomar angehängt. Repository-Pfade sind relative,
-  slash-separierte Rohbytes; sie müssen normalisiert, traversierungsfrei und verlustlos sein.
+  slash-separierte Rohbytes; sie müssen normalisiert, traversierungsfrei und verlustlos sein. Eine
+  read-only Projektion rekonstruiert den wirksamen aktuellen Pfad-/Content-Hash-Stand aus der
+  unveränderlichen Delta-Kette. Sie validiert die Generation-/Parent-Kette sowie Pfad-, Änderungsart-
+  und Hashwerte erneut an der Adaptergrenze und bleibt über einen Appneustart erhalten.
 - Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Der aktuelle Port kann diesen Lauf nur
   als `failed` oder `cancelled` beenden. Ein Übergang zu `published` ist bewusst nicht verfügbar, bis
   S10 Indexdaten und Sichtbarkeit in derselben Adaptertransaktion committen kann.
@@ -72,11 +75,15 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Katalog zuletzt. Vor jedem Schritt werden Kandidat, Revision, Quell- und Zielzustand erneut geprüft;
   ein vorhandenes Ziel wird nie überschrieben.
 
-Discovery ist als noch nicht persistierender Vorlauf des Fast Index implementiert. Sie liefert eine
-versionierte, deterministisch sortierte Projektion relevanter tracked und untracked Dateien; Hashing
-und die eigentlichen regenerierbaren Index- und Faktendaten sind noch nicht implementiert. Die
-Reconciliation entscheidet trotz persistierter Evidenz nie selbstständig: Sie benötigt einen
-eindeutigen Kandidaten und die privilegierte native Bestätigung.
+Discovery und Hashing bilden den noch nicht veröffentlichenden Vorlauf des Fast Index. Der lokale
+Adapter liefert eine versionierte, deterministisch sortierte Projektion relevanter tracked und
+untracked Dateien, liest deren Inhalt innerhalb fester Einzel- und Gesamtgrenzen vollständig und
+bildet BLAKE3-basierte `FileRevision`s. Der Snapshot-Builder vergleicht sie mit dem aus der
+persistierten Delta-Kette rekonstruierten Dateistand, erzeugt ausschließlich bei Inhalts-, HEAD-,
+Schema- oder Adapteränderungen die exakt nächste Generation und liefert sie für ein atomisches
+Append. Parser-, Graph-, FTS- und veröffentlichte Indexdaten folgen in S5 bis S10. Die Reconciliation
+entscheidet trotz persistierter Evidenz nie selbstständig: Sie benötigt einen eindeutigen Kandidaten
+und die privilegierte native Bestätigung.
 
 Quellen:
 
@@ -210,6 +217,8 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   Generation werden vor jedem Append gegen den letzten persistierten Snapshot geprüft.
 - Snapshot-Pfadänderungen und Adapterrevisionen sind innerhalb eines Snapshots eindeutig und werden
   in kanonischer Reihenfolge rekonstruiert.
+- Der wirksame Dateistand ist die jeweils jüngste Änderung pro Pfad; `Upsert` setzt den aktuellen
+  Content Hash, `Delete` entfernt den Pfad und behält den vorherigen Hash zur Invalidation.
 - Pro Worktree existiert höchstens ein laufender `building`-IndexRun; seine Sequenz ist lückenlos und
   worktree-lokal.
 - File Revision ist über WorktreeId, normalisierten Pfad und Content Hash eindeutig.

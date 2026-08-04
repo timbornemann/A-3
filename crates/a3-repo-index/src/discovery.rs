@@ -1,6 +1,7 @@
 use crate::classification::{classify_path, classify_prefix, roles_for_path};
 use crate::config::{ProjectConfigurationError, ProjectIgnore, load_project_ignore};
 use crate::path::{RepositoryPathObservation, observe_repository_path, open_regular_no_follow};
+use crate::repository::{RepositoryValidationError, open_validated};
 use a3_application::{
     RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryFailure,
 };
@@ -51,10 +52,8 @@ impl RepositoryDiscoverer for GitRepositoryDiscoverer {
         ensure_active(control)?;
         report(control, Progress::Indeterminate)?;
 
-        let root = validate_project_root(project)?;
-        let repository = gix::open_opts(root.to_path_buf(), gix::open::Options::isolated())
-            .map_err(|_| RepositoryDiscoveryFailure::InvalidRepository)?;
-        validate_repository_identity(project, &repository, root)?;
+        let root = project.worktree().root().as_path();
+        let repository = open_validated(project).map_err(map_repository_error)?;
         let project_ignore = load_project_ignore(root, policy).map_err(classify_config_error)?;
         let filesystem = repository
             .filesystem_options()
@@ -156,38 +155,18 @@ impl RepositoryDiscoverer for GitRepositoryDiscoverer {
             )?;
         }
 
-        DiscoveryResult::new(policy.version(), files, exclusions)
+        DiscoveryResult::new(project.worktree().id(), policy.version(), files, exclusions)
             .map_err(|_| RepositoryDiscoveryFailure::InvalidResult)
     }
 }
 
-fn validate_project_root(project: &ProjectIdentity) -> Result<&Path, RepositoryDiscoveryFailure> {
-    let expected = project.worktree().root().as_path();
-    let observed =
-        std::fs::canonicalize(expected).map_err(|_| RepositoryDiscoveryFailure::RootUnavailable)?;
-    if observed != expected {
-        return Err(RepositoryDiscoveryFailure::RootUnavailable);
+fn map_repository_error(error: RepositoryValidationError) -> RepositoryDiscoveryFailure {
+    match error {
+        RepositoryValidationError::RootUnavailable => RepositoryDiscoveryFailure::RootUnavailable,
+        RepositoryValidationError::InvalidRepository => {
+            RepositoryDiscoveryFailure::InvalidRepository
+        }
     }
-    Ok(expected)
-}
-
-fn validate_repository_identity(
-    project: &ProjectIdentity,
-    repository: &gix::Repository,
-    root: &Path,
-) -> Result<(), RepositoryDiscoveryFailure> {
-    let worktree = repository
-        .workdir()
-        .ok_or(RepositoryDiscoveryFailure::InvalidRepository)?;
-    let observed_root =
-        std::fs::canonicalize(worktree).map_err(|_| RepositoryDiscoveryFailure::RootUnavailable)?;
-    let observed_common = std::fs::canonicalize(repository.common_dir())
-        .map_err(|_| RepositoryDiscoveryFailure::InvalidRepository)?;
-    if observed_root != root || observed_common != project.repository().common_directory().as_path()
-    {
-        return Err(RepositoryDiscoveryFailure::InvalidRepository);
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

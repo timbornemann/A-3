@@ -2,8 +2,8 @@ use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_h
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStoreFailure};
 use a3_domain::{
-    IndexRunId, IndexRunStatus, IndexRunTerminalOutcome, RepositoryId, SnapshotChangeKind,
-    SnapshotId, WorktreeId,
+    ContentHash, FileRevision, IndexRunId, IndexRunStatus, IndexRunTerminalOutcome,
+    RepositoryFileState, RepositoryId, RepositoryPath, SnapshotChangeKind, SnapshotId, WorktreeId,
 };
 
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
@@ -35,6 +35,10 @@ where
 
     assert_eq!(store.latest_snapshot(&primary).await?, None);
     assert_eq!(store.latest_snapshot(&linked).await?, None);
+    assert_eq!(
+        store.current_file_state(&primary).await?,
+        RepositoryFileState::empty()
+    );
     let first = snapshot(
         [51; 32],
         primary_id,
@@ -47,6 +51,10 @@ where
     )?;
     store.append_snapshot(&primary, &first).await?;
     assert_eq!(store.latest_snapshot(&primary).await?, Some(first.clone()));
+    assert_eq!(
+        store.current_file_state(&primary).await?,
+        file_state(vec![(b"src/a.rs", [1; 32])])?
+    );
     assert_eq!(store.latest_snapshot(&linked).await?, None);
 
     let foreign = snapshot(
@@ -83,7 +91,28 @@ where
     );
     assert_eq!(store.latest_snapshot(&primary).await?, Some(first.clone()));
 
-    let second = snapshot([55; 32], primary_id, Some(first.id()), 2, Vec::new())?;
+    let modified = snapshot(
+        [55; 32],
+        primary_id,
+        Some(first.id()),
+        2,
+        vec![
+            change(b"src/a.rs", [8; 32], SnapshotChangeKind::Upsert)?,
+            change(b"src/b.rs", [9; 32], SnapshotChangeKind::Upsert)?,
+        ],
+    )?;
+    store.append_snapshot(&primary, &modified).await?;
+    assert_eq!(
+        store.current_file_state(&primary).await?,
+        file_state(vec![(b"src/a.rs", [8; 32]), (b"src/b.rs", [9; 32])])?
+    );
+    let second = snapshot(
+        [56; 32],
+        primary_id,
+        Some(modified.id()),
+        3,
+        vec![change(b"src/a.rs", [8; 32], SnapshotChangeKind::Delete)?],
+    )?;
     store.append_snapshot(&primary, &second).await?;
     drop(store);
 
@@ -91,6 +120,10 @@ where
     assert_eq!(
         reopened.latest_snapshot(&primary).await?,
         Some(second.clone())
+    );
+    assert_eq!(
+        reopened.current_file_state(&primary).await?,
+        file_state(vec![(b"src/b.rs", [9; 32])])?
     );
     assert_eq!(
         reopened.latest_snapshot(&linked).await?,
@@ -165,4 +198,17 @@ where
         None
     );
     Ok(())
+}
+
+fn file_state(entries: Vec<(&[u8], [u8; 32])>) -> ContractResult<RepositoryFileState> {
+    let revisions = entries
+        .into_iter()
+        .map(|(path, hash)| {
+            Ok(FileRevision::new(
+                RepositoryPath::try_from_bytes(path.to_vec())?,
+                ContentHash::from_bytes(hash),
+            ))
+        })
+        .collect::<Result<Vec<_>, a3_domain::RepositoryPathError>>()?;
+    Ok(RepositoryFileState::new(revisions)?)
 }

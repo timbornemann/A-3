@@ -61,8 +61,8 @@ Ein Nutzer kann:
 
 ### M3 Fast Index
 
-- [ ] Discovery und Ignore Engine
-- [ ] Content Hashing und Snapshots
+- [x] Discovery und Ignore Engine
+- [x] Content Hashing und Snapshots
 - [ ] Tree-sitter LanguageAdapter-Contract
 - [ ] Rust-Adapter
 - [ ] TypeScript-/JavaScript-Adapter

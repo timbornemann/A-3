@@ -94,11 +94,32 @@ Akzeptanz:
 
 Abhängigkeiten: S3
 
-- [ ] BLAKE3-Hashing
-- [ ] FileRevision und Snapshot
-- [ ] HEAD plus Worktree Generation
-- [ ] Delta für add, modify, delete und rename candidate
-- [ ] unveränderte Dateien überspringen
+Status: Completed
+
+- [x] BLAKE3-Hashing
+- [x] FileRevision und Snapshot
+- [x] HEAD plus Worktree Generation
+- [x] Delta für add, modify, delete und rename candidate
+- [x] unveränderte Dateien überspringen
+
+Verifizierter Abschluss vom 2026-08-04: `RepositoryFileState`, `FileRevision` und `SnapshotDelta`
+bilden im Domain-Layer eine kanonisch nach verlustfreien Repository-Pfadbytes sortierte
+Inhaltsprojektion. Der lokale `a3-repo-index`-Adapter validiert Repository und Worktree erneut, führt
+die versionierte Discovery aus und streamt jede zugelassene Datei in höchstens 64-KiB-Blöcken durch
+BLAKE3. Die Obergrenzen betragen 4 MiB pro Datei und 8 GiB pro Beobachtung; Cancellation wird vor
+jedem Read geprüft. Dateihandle-Metadaten, HEAD und Git-Index-Checksum werden vor und nach der
+Beobachtung verglichen, sodass ein währenddessen veränderter Worktree kontrolliert verworfen wird.
+Das Delta unterscheidet Add, Modify und Delete und meldet nur eindeutige contentgleiche
+Delete-/Add-Paare als Rename-Kandidaten. Eine domänengetrennte BLAKE3-ID bindet Worktree, Parent,
+monotone Generation, HEAD, Discovery-Policy, Indexschema, Adapterrevisionen und kanonische
+Änderungen. Ohne Inhalts-, HEAD-, Schema- oder Adapteränderung entsteht keine neue Generation. Der
+`KnowledgeIndexStore` rekonstruiert den aktuellen Dateistand aus der unveränderlichen Delta-Kette und
+validiert beschädigte persistierte Pfade erneut. Reale Git- und Dateisystemtests decken mtime-only,
+gleich große Inhaltsänderungen, HEAD-only, Add/Modify/Delete, eindeutige und mehrdeutige Renames,
+Indexänderung während des Hashings, Neustart und Cancellation ab. Die manuelle lokale S4-Baseline
+beobachtete 200 gemischte Dateien mit 100.000 LOC einschließlich Discovery und vollständigem Hashing
+in 481 ms; Parser, Graph, Ranking und Publish sind darin nicht enthalten und daraus wird kein
+allgemeiner Beschleunigungsclaim abgeleitet.
 
 Akzeptanz:
 

@@ -228,6 +228,18 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn current_file_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeIndexFuture<'a, a3_domain::RepositoryFileState> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            index_repository::current_file_state(knowledge.connection(), project.worktree().id())
+                .await
+                .map_err(IndexRepositoryError::classify)
+        })
+    }
+
     fn start_index_run<'a>(
         &'a self,
         project: &'a ProjectIdentity,

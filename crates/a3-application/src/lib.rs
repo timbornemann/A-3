@@ -8,6 +8,7 @@ mod open_project;
 mod project_reconciliation;
 mod recent_projects;
 mod repository_discovery;
+mod repository_snapshot;
 
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{
@@ -36,4 +37,9 @@ pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
 pub use repository_discovery::{
     RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,
     RepositoryDiscoveryFailure,
+};
+pub use repository_snapshot::{
+    RepositorySnapshotBuild, RepositorySnapshotBuilder, RepositorySnapshotControl,
+    RepositorySnapshotControlError, RepositorySnapshotFailure, RepositorySnapshotPolicy,
+    SnapshotBaseline, SnapshotBaselineError, SnapshotCompatibility, SnapshotCompatibilityError,
 };

@@ -328,6 +328,12 @@ fn malformed_persisted_repository_path_is_rejected_at_the_adapter_boundary()
                 KnowledgeStoreFailure::InvalidStoredData
             ))
         );
+        assert_eq!(
+            reopened.current_file_state(&fixture.project).await,
+            Err(KnowledgeIndexFailure::Storage(
+                KnowledgeStoreFailure::InvalidStoredData
+            ))
+        );
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
