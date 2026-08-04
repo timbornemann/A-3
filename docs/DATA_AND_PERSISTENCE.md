@@ -72,9 +72,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Katalog zuletzt. Vor jedem Schritt werden Kandidat, Revision, Quell- und Zielzustand erneut geprüft;
   ein vorhandenes Ziel wird nie überschrieben.
 
-Discovery, Hashing und die eigentlichen regenerierbaren Index- und Faktendaten sind noch nicht
-implementiert. Die Reconciliation entscheidet trotz persistierter Evidenz nie selbstständig: Sie
-benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
+Discovery ist als noch nicht persistierender Vorlauf des Fast Index implementiert. Sie liefert eine
+versionierte, deterministisch sortierte Projektion relevanter tracked und untracked Dateien; Hashing
+und die eigentlichen regenerierbaren Index- und Faktendaten sind noch nicht implementiert. Die
+Reconciliation entscheidet trotz persistierter Evidenz nie selbstständig: Sie benötigt einen
+eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:
 
@@ -109,6 +111,18 @@ Optional darf ein Repository folgende kontrollierte Dateien enthalten:
 ~~~
 
 Diese Dateien sind menschenlesbare Projektkonfiguration und keine Runtime-Datenbank.
+
+Discovery V1 liest optional ein strikt begrenztes Schema:
+
+~~~toml
+[discovery]
+ignore = ["private/**", "fixtures/generated/"]
+~~~
+
+Die Muster verwenden Gitignore-Syntax, sind aber nur ausschließend; `!`-Negationen und unbekannte
+Konfigurationsfelder sind ungültig. Eingebaute Secret-, Vendor-, Generated-, Binary- und
+Größenregeln können nicht aus dem Repository aufgehoben werden. Benutzerweite Git-Konfiguration
+außerhalb des ausgewählten Worktrees wird nicht automatisch gelesen.
 
 ## Datenklassifikation
 

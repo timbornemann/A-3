@@ -12,7 +12,10 @@ pub use job::{JobId, JobOwner, JobStatus};
 pub use platform::Platform;
 pub use progress::{Progress, ProgressTransitionError, ProgressValueError};
 pub use project::{
-    CanonicalDirectory, CanonicalDirectoryError, ContentHash, GitHead, GitObjectId,
+    CanonicalDirectory, CanonicalDirectoryError, ContentHash, DiscoveredFile, DiscoveredFileRole,
+    DiscoveredFileRoles, DiscoveredFileRolesError, DiscoveryExclusionCounts,
+    DiscoveryExclusionReason, DiscoveryOrigin, DiscoveryPolicy, DiscoveryPolicyVersion,
+    DiscoveryPolicyVersionError, DiscoveryResult, DiscoveryResultError, GitHead, GitObjectId,
     GitObjectIdError, GitReferenceName, GitReferenceNameError, IndexLanguage, IndexRunId,
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, IndexSchemaVersion, IndexSchemaVersionError,

@@ -7,6 +7,7 @@ mod knowledge_store;
 mod open_project;
 mod project_reconciliation;
 mod recent_projects;
+mod repository_discovery;
 
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{
@@ -32,3 +33,7 @@ pub use project_reconciliation::{
     ProjectReconciliationEvidence, ProjectReconciliationProposal,
 };
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
+pub use repository_discovery::{
+    RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,
+    RepositoryDiscoveryFailure,
+};

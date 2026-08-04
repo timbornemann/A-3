@@ -1,9 +1,15 @@
+mod discovery;
 mod git;
 mod id;
 mod index_run;
 mod path;
 mod snapshot;
 
+pub use discovery::{
+    DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveredFileRolesError,
+    DiscoveryExclusionCounts, DiscoveryExclusionReason, DiscoveryOrigin, DiscoveryPolicy,
+    DiscoveryPolicyVersion, DiscoveryPolicyVersionError, DiscoveryResult, DiscoveryResultError,
+};
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
 pub use id::{
     IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId, WorktreeId,

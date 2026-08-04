@@ -1,7 +1,7 @@
 # Indexierung und Projektkarte
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-04
 
 ## Grundsatz
 
@@ -39,6 +39,14 @@ DISCOVER → HASH → PARSE → LINK → RANK → PUBLISH
 - Sprache je Datei bestimmen
 
 Git-tracked Dateien werden standardmäßig berücksichtigt. Nicht getrackte Dateien können einbezogen werden, wenn sie nicht ignoriert sind. Secrets, bekannte Credential-Dateien und explizit ausgeschlossene Pfade werden nie indexiert.
+
+Discovery V1 ist durch ADR-0017 konkretisiert: Repository-lokale Git-Ignores, ausschließende Muster
+aus `.a3/project.toml` und nicht übersteuerbare sichere A^3-Defaults werden in einem begrenzten lokalen
+Adapter zusammengeführt. Benutzerweite Git-Excludes außerhalb des freigegebenen Worktrees sind aus
+Reproduzierbarkeits- und Pfadautoritätsgründen nicht implizit aktiv. Dateien oberhalb von 4 MiB werden
+nicht geöffnet; von kleineren Kandidaten werden höchstens 16 KiB für Binary- und Secret-Erkennung
+gelesen. Manifest-, Build-, Test- und CI-Rollen können überlappen. Die Sprachzuordnung folgt mit dem
+versionierten `LanguageAdapter` in S5 und ist nicht Teil der S3-Pfadklassifikation.
 
 ### Hash
 

@@ -2,7 +2,7 @@
 
 Ziel: A^3 kann einen Worktree sicher öffnen, einen transaktionalen deterministischen Index erstellen und Änderungen inkrementell übernehmen.
 
-Relevante ADRs: 0004, 0005, 0006, 0015, 0016
+Relevante ADRs: 0004, 0005, 0006, 0015, 0016, 0017
 
 ## S1 Projektpfad und Identität
 
@@ -59,11 +59,30 @@ Akzeptanz:
 
 Abhängigkeiten: S1, S2
 
-- [ ] Git tracked und untracked relevante Dateien erfassen
-- [ ] .gitignore, globale und .a3-Ignore-Regeln
-- [ ] Binary-, Secret-, Vendor-, Generated- und Größenklassifikation
-- [ ] Manifest-, Build-, Test- und CI-Dateien erkennen
-- [ ] deterministisch sortierte DiscoveryResult
+Status: Completed
+
+- [x] Git tracked und untracked relevante Dateien erfassen
+- [x] .gitignore, globale und .a3-Ignore-Regeln
+- [x] Binary-, Secret-, Vendor-, Generated- und Größenklassifikation
+- [x] Manifest-, Build-, Test- und CI-Dateien erkennen
+- [x] deterministisch sortierte DiscoveryResult
+
+Verifizierter Abschluss vom 2026-08-04: Der neue Feature-Adapter `a3-repo-index` vereinigt alle im
+Git-Index geführten vorhandenen regulären Dateien mit relevanten untracked Dateien aus einem
+isolierten `gix`-Dirwalk. Repository-lokale `.gitignore`- und `.git/info/exclude`-Regeln,
+ausschließende Gitignore-Muster aus dem strikt begrenzten `[discovery].ignore`-Schema in
+`.a3/project.toml` sowie versionierte, nicht übersteuerbare A^3-Sicherheitsdefaults werden mit klarer
+Priorität angewendet. Secret-Pfade und hochsichere Credential-Signaturen, Binärdateien, Vendor- und
+Generated-Bäume, Symlinks/Reparse-Points, Spezialdateien und Dateien über 4 MiB gelangen nicht in das
+Ergebnis. Zulässige Dateien werden für die Klassifikation höchstens bis 16 KiB gelesen; ein
+instrumentierter Reader-Test belegt, dass übergroße Dateien gar nicht geöffnet werden. Domain und
+Application bleiben frei von Git-, TOML- und OS-Typen, der Adapter revalidiert Worktree Root und Git
+Common Directory, prüft Cancellation und emittiert höchstens begrenzte monotone Fortschrittswerte.
+Reale Git-Fixtures decken tracked trotz Ignore, untracked, `.gitignore`, `info/exclude`, A^3-Ignore,
+alle Sicherheitsklassen, Rollen, deterministische Wiederholung, ungültige Negation und eine
+Windows-Junction außerhalb des Worktrees ab. Die reproduzierbare manuelle S3-Baseline entdeckte auf
+der lokalen Windows-Entwicklungsmaschine 200 gemischte Dateien mit 100.000 LOC in 416 ms; sie ist kein
+Messwert für den vollständigen Fast Index und begründet keinen Beschleunigungsclaim.
 
 Akzeptanz:
 
