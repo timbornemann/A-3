@@ -18,12 +18,17 @@ Begründung:
 
 Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 
-- Ein typisiertes `StorageLayout` nimmt ausschließlich einen absoluten, kanonisierten App-Data-Root an und begrenzt den globalen Katalog auf `catalog.db` innerhalb dieses Roots.
+- Ein typisiertes `StorageLayout` nimmt ausschließlich einen absoluten, kanonisierten App-Data-Root an und begrenzt den globalen Katalog auf `catalog.db` innerhalb dieses Roots. `ProjectStorageLayout` leitet daraus ausschließlich über die validierte `WorktreeId` den Pfad `projects/<WorktreeId>/knowledge.db` ab. Verzeichnisse, Datenbankdatei und kanonische Elternbeziehungen werden geprüft; Symlinks und falsche Dateitypen werden abgelehnt. App-Data innerhalb des ausgewählten Worktrees ist unzulässig.
 - Der Adapter verwendet die stabile libSQL-Version 0.9.29 ausschließlich mit dem lokalen `core`-Feature. Remote-, Replikations- und Synchronisationsfunktionen sind nicht aktiviert.
-- Ein vorhandener Katalog wird zunächst mit `SQLITE_OPEN_READ_ONLY` auf Schema-Version und Integrität geprüft. Eine unbekannt neuere Version wird vor Connection-Konfiguration oder Migration abgelehnt und nicht verändert.
+- Ein vorhandener Katalog oder eine vorhandene Worktree-Datenbank wird zunächst mit `SQLITE_OPEN_READ_ONLY` auf Schema-Version und Integrität geprüft. Eine unbekannt neuere Version wird vor Connection-Konfiguration oder Migration abgelehnt und nicht verändert.
 - Schreibende Connections erzwingen `foreign_keys = ON`, WAL-Journaling, `synchronous = NORMAL`, einen Busy-Timeout von fünf Sekunden und `trusted_schema = OFF`; die Werte werden nach dem Setzen zurückgelesen.
 - `PRAGMA user_version` ist die monotone Schema-Version. `schema_migrations` hält zusätzlich Name und versionierten BLAKE3-Checksum jeder Migration fest.
 - Jede Migration läuft in einer eigenen `IMMEDIATE`-Transaktion. Ein fehlgeschlagener Migrationskörper wird explizit zurückgerollt.
+- Knowledge-Schema V1 persistiert genau eine unveränderliche Bindung aus `RepositoryId` und
+  `WorktreeId`. Die Bootstrap-Migration schreibt Schema-Historie, Schema-Version und Bindung in
+  derselben `IMMEDIATE`-Transaktion; jede Wiederöffnung prüft die Bindung gegen die frisch inspizierte
+  Projektidentität. Linked Worktrees erhalten dadurch getrennte Datenbanken, auch wenn sie dieselbe
+  Repository-Identität besitzen.
 - Katalogschema V2 persistiert `projects` und `recent_worktrees`. Eine erfolgreiche Projekterkennung
   aktualisiert Projekt, Worktree, Remote-Fingerprint, HEAD und Öffnungsreihenfolge in genau einer
   `IMMEDIATE`-Transaktion; ein Storagefehler verhindert ein fälschlich erfolgreiches Open-Ergebnis.
@@ -31,15 +36,21 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   werden auf Windows als UTF-16LE und auf Unix als rohe OS-Bytes gespeichert. Die separat gespeicherte
   Anzeigeprojektion ist kontrollzeichenfrei und auf 32.768 Zeichen begrenzt.
 - Der aus den konkreten Open- und Recent-Project-Use-Cases abgeleitete `KnowledgeStore`-Port nimmt nur
-  Domain-/Application-Typen an. Er registriert ein inspiziertes Projekt atomar und liefert eine
-  typisierte, begrenzte Most-recent-first-Projektion; weder libSQL-Typen noch SQL verlassen den Adapter.
+  Domain-/Application-Typen an. Der zusammengesetzte libSQL-Adapter öffnet und prüft zuerst die
+  identitätsgebundene `knowledge.db` und aktualisiert erst danach den globalen Katalog atomar. Ein
+  Knowledge-Fehler erzeugt deshalb weder ein erfolgreiches Open-Ergebnis noch einen neuen
+  Recent-Eintrag. Scheitert erst der Katalogschreibvorgang, darf die bereits gebundene leere
+  Worktree-Datenbank bestehen bleiben; sie wird bei der nächsten Öffnung erneut vollständig geprüft.
+  Weder libSQL-Typen noch SQL verlassen den Adapter.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
-  denselben Store in beide Use Cases. Die WebView erhält keine DB-Verbindung und keinen autoritativen
+  denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
+  dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen
   gespeicherten Pfad.
 
-`knowledge.db`, Snapshot- und IndexRun-Repositories sowie die Umzugs-Reconciliation sind noch nicht
-implementiert. Die im Katalog gespeicherten exakten Pfad- und Remote-Evidenzen bereiten diese
-Reconciliation vor, entscheiden sie aber nicht selbstständig.
+Snapshot- und IndexRun-Repositories sowie die Umzugs-Reconciliation sind noch nicht implementiert.
+Die im Katalog gespeicherten exakten Pfad- und Remote-Evidenzen bereiten diese Reconciliation vor,
+entscheiden sie aber nicht selbstständig. Knowledge-Schema V1 ist bewusst nur die sichere
+per-Worktree-Grundlage; Index- oder Faktendaten gehören noch nicht dazu.
 
 Quellen:
 

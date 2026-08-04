@@ -7,7 +7,7 @@ use a3_domain::{
     CanonicalDirectory, GitHead, GitObjectId, GitReferenceName, ProjectIdentity, RemoteIdentity,
     RepositoryId, RepositoryIdentity, WorktreeId, WorktreeIdentity,
 };
-use a3_storage_libsql::{CatalogDatabase, StorageLayout};
+use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
 use std::fs;
 use std::io;
@@ -40,7 +40,7 @@ fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn 
             born_head("1111111111111111111111111111111111111111")?,
         )?;
 
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
         let first_project_id = catalog.record_opened_project(&first).await?;
         let second_project_id = catalog.record_opened_project(&second).await?;
         let recent = catalog
@@ -64,7 +64,7 @@ fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn 
         );
         drop(catalog);
 
-        let reopened = CatalogDatabase::open(&layout).await?;
+        let reopened = LibsqlKnowledgeStore::open(&layout).await?;
         let recent = reopened
             .list_recent_projects(RecentProjectLimit::DEFAULT)
             .await?;
@@ -105,7 +105,7 @@ fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error
             unborn_head()?,
         )?;
 
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
         let primary_id = catalog.record_opened_project(&primary).await?;
         let linked_id = catalog.record_opened_project(&linked).await?;
 
@@ -129,7 +129,7 @@ fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
         let common = create_directory(temporary.path().join("common-git"))?;
         let root = create_directory(temporary.path().join("worktree"))?;
         let project = project_fixture([4; 32], [41; 32], &common, &root, None, unborn_head()?)?;
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
         catalog.record_opened_project(&project).await?;
         drop(catalog);
 
@@ -138,7 +138,7 @@ fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
             "UPDATE recent_worktrees SET worktree_root_display = char(10)",
         )
         .await?;
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
 
         assert_eq!(
             catalog
@@ -159,7 +159,7 @@ fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error
         let common = create_directory(temporary.path().join("common-git"))?;
         let root = create_directory(temporary.path().join("worktree"))?;
         let project = project_fixture([5; 32], [51; 32], &common, &root, None, unborn_head()?)?;
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
         catalog.record_opened_project(&project).await?;
         drop(catalog);
 
@@ -168,7 +168,7 @@ fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error
             "UPDATE recent_worktrees SET repository_id = zeroblob(32)",
         )
         .await?;
-        let catalog = CatalogDatabase::open(&layout).await?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
 
         assert_eq!(
             catalog

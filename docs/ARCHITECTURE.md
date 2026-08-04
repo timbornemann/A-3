@@ -142,12 +142,16 @@ Regeln:
 2. Der privilegierte Desktop-Adapter öffnet genau einen nativen Ordnerdialog; Abbruch beendet den Use Case ohne Inspektion.
 3. Rust kanonisiert und validiert ausschließlich den vom Betriebssystemdialog zurückgegebenen Pfad.
 4. RepositoryIdentity, WorktreeIdentity und HEAD-Zustand werden mit isolierter repository-lokaler Git-Konfiguration bestimmt.
-5. Der Application-Use-Case registriert die validierte Beobachtung über `KnowledgeStore` atomar im
-   globalen Katalog. Erst nach erfolgreicher Persistenz gilt das Projekt als geöffnet.
-6. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
+5. Der zusammengesetzte libSQL-Adapter leitet aus der validierten `WorktreeId` ausschließlich unter
+   App-Data `projects/<WorktreeId>/knowledge.db` ab, öffnet beziehungsweise migriert sie und prüft die
+   persistierte Repository-/Worktree-Bindung.
+6. Erst nach erfolgreicher Knowledge-Prüfung registriert der Adapter die validierte Beobachtung über
+   `KnowledgeStore` atomar im globalen Katalog. Ein Fehler in einem der beiden Schritte verhindert das
+   erfolgreiche Open-Ergebnis; ein Knowledge-Fehler verändert auch die Katalog-Recency nicht.
+7. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
    Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
 
-Der folgende S2-/S3-Ausbau öffnet zusätzlich die `knowledge.db` des Worktrees, vergleicht den letzten
+Der folgende S2-/S3-Ausbau ergänzt Snapshot- und IndexRun-Repositories, vergleicht den letzten
 Snapshot, plant den inkrementellen Fast Index und veröffentlicht Projektzustand sowie Fortschritt.
 
 ### Zuletzt verwendete Projekte

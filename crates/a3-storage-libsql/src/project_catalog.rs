@@ -1,7 +1,6 @@
 use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
-    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay, RecentProject,
-    RecentProjectLimit,
+    KnowledgeStoreFailure, ProjectPathDisplay, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
     GitHead, GitObjectId, GitReferenceName, ProjectId, ProjectIdentity, RepositoryId, WorktreeId,
@@ -17,32 +16,8 @@ const SQLITE_CONSTRAINT: i32 = 19;
 const SQLITE_CORRUPT: i32 = 11;
 const SQLITE_NOT_A_DATABASE: i32 = 26;
 
-impl KnowledgeStore for CatalogDatabase {
-    fn record_opened_project<'a>(
-        &'a self,
-        project: &'a ProjectIdentity,
-    ) -> KnowledgeStoreFuture<'a, ProjectId> {
-        Box::pin(async move {
-            self.record_project(project)
-                .await
-                .map_err(ProjectCatalogError::classify)
-        })
-    }
-
-    fn list_recent_projects(
-        &self,
-        limit: RecentProjectLimit,
-    ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
-        Box::pin(async move {
-            self.read_recent_projects(limit)
-                .await
-                .map_err(ProjectCatalogError::classify)
-        })
-    }
-}
-
 impl CatalogDatabase {
-    async fn record_project(
+    pub(crate) async fn record_project(
         &self,
         project: &ProjectIdentity,
     ) -> Result<ProjectId, ProjectCatalogError> {
@@ -73,7 +48,7 @@ impl CatalogDatabase {
         Ok(project_id)
     }
 
-    async fn read_recent_projects(
+    pub(crate) async fn read_recent_projects(
         &self,
         limit: RecentProjectLimit,
     ) -> Result<Vec<RecentProject>, ProjectCatalogError> {
@@ -448,7 +423,7 @@ impl From<&GitHead> for HeadFields {
 }
 
 #[derive(Debug)]
-enum ProjectCatalogError {
+pub(crate) enum ProjectCatalogError {
     Open(CatalogOpenError),
     Begin(libsql::Error),
     Read(libsql::Error),
@@ -461,7 +436,7 @@ enum ProjectCatalogError {
 }
 
 impl ProjectCatalogError {
-    fn classify(self) -> KnowledgeStoreFailure {
+    pub(crate) fn classify(self) -> KnowledgeStoreFailure {
         match self {
             Self::Open(
                 CatalogOpenError::CorruptDatabase | CatalogOpenError::IntegrityCheckFailed,

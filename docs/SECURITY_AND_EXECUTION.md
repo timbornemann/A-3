@@ -51,6 +51,13 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
   Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
   redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.
+- Worktree-Laufzeitdaten liegen ausschließlich unter dem kanonischen App-Data-Root in
+  `projects/<WorktreeId>`. Die `WorktreeId` stammt aus der privilegierten Repository-Inspektion und
+  nicht aus der WebView. App-Data innerhalb des ausgewählten Worktrees, Symlinks sowie falsche
+  Datei- oder Verzeichnistypen an diesen Grenzen werden abgelehnt.
+- Eine bestehende `knowledge.db` wird vor schreibendem Öffnen read-only auf unterstützte Version,
+  Integrität und – bei aktuellem Schema – ihre persistierte Repository-/Worktree-Bindung geprüft.
+  Datenbankfehler werden nur als stabile redigierte Fehlercodes über IPC sichtbar.
 
 ## Prozess-Policy
 

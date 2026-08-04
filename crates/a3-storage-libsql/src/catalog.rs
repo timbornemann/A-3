@@ -81,6 +81,7 @@ impl CatalogDatabase {
         verify_integrity(&self.connection).await?;
         let found = read_user_version(&self.connection)
             .await
+            .map(CatalogSchemaVersion::new)
             .map_err(classify_schema_inspection_error)?;
         if found != self.schema_version {
             return Err(CatalogOpenError::UnexpectedSchemaVersion {
@@ -119,9 +120,9 @@ async fn reject_newer_schema(connection: &Connection) -> Result<(), CatalogOpenE
     let found = read_user_version(connection)
         .await
         .map_err(classify_schema_inspection_error)?;
-    if found > CatalogSchemaVersion::CURRENT {
+    if found > CatalogSchemaVersion::CURRENT.get() {
         return Err(CatalogOpenError::NewerSchema {
-            found,
+            found: CatalogSchemaVersion::new(found),
             supported: CatalogSchemaVersion::CURRENT,
         });
     }
@@ -152,7 +153,7 @@ impl CatalogVerification {
     }
 }
 
-async fn configure_connection(connection: &Connection) -> libsql::Result<()> {
+pub(crate) async fn configure_connection(connection: &Connection) -> libsql::Result<()> {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = ON;\n\
@@ -166,41 +167,43 @@ async fn configure_connection(connection: &Connection) -> libsql::Result<()> {
 }
 
 async fn verify_connection_policy(connection: &Connection) -> Result<(), CatalogOpenError> {
-    let foreign_keys = query_i64(connection, "PRAGMA foreign_keys")
+    if !connection_policy_is_valid(connection)
         .await
-        .map_err(classify_policy_inspection_error)?;
-    let journal_mode = query_string(connection, "PRAGMA journal_mode")
-        .await
-        .map_err(classify_policy_inspection_error)?;
-    let synchronous = query_i64(connection, "PRAGMA synchronous")
-        .await
-        .map_err(classify_policy_inspection_error)?;
-    let busy_timeout = query_i64(connection, "PRAGMA busy_timeout")
-        .await
-        .map_err(classify_policy_inspection_error)?;
-    let trusted_schema = query_i64(connection, "PRAGMA trusted_schema")
-        .await
-        .map_err(classify_policy_inspection_error)?;
-
-    if foreign_keys != 1
-        || !journal_mode.eq_ignore_ascii_case("wal")
-        || synchronous != 1
-        || busy_timeout != BUSY_TIMEOUT_MILLISECONDS
-        || trusted_schema != 0
+        .map_err(classify_policy_inspection_error)?
     {
         return Err(CatalogOpenError::ConnectionPolicyMismatch);
     }
     Ok(())
 }
 
+pub(crate) async fn connection_policy_is_valid(connection: &Connection) -> libsql::Result<bool> {
+    let foreign_keys = query_i64(connection, "PRAGMA foreign_keys").await?;
+    let journal_mode = query_string(connection, "PRAGMA journal_mode").await?;
+    let synchronous = query_i64(connection, "PRAGMA synchronous").await?;
+    let busy_timeout = query_i64(connection, "PRAGMA busy_timeout").await?;
+    let trusted_schema = query_i64(connection, "PRAGMA trusted_schema").await?;
+
+    Ok(foreign_keys == 1
+        && journal_mode.eq_ignore_ascii_case("wal")
+        && synchronous == 1
+        && busy_timeout == BUSY_TIMEOUT_MILLISECONDS
+        && trusted_schema == 0)
+}
+
 async fn verify_integrity(connection: &Connection) -> Result<(), CatalogOpenError> {
-    let result = query_string(connection, "PRAGMA quick_check(1)")
+    if !integrity_is_valid(connection)
         .await
-        .map_err(classify_integrity_error)?;
-    if result != "ok" {
+        .map_err(classify_integrity_error)?
+    {
         return Err(CatalogOpenError::IntegrityCheckFailed);
     }
     Ok(())
+}
+
+pub(crate) async fn integrity_is_valid(connection: &Connection) -> libsql::Result<bool> {
+    query_string(connection, "PRAGMA quick_check(1)")
+        .await
+        .map(|result| result == "ok")
 }
 
 fn sqlite_primary_code(error: &libsql::Error) -> Option<i32> {
@@ -210,7 +213,7 @@ fn sqlite_primary_code(error: &libsql::Error) -> Option<i32> {
     }
 }
 
-fn is_corruption(error: &libsql::Error) -> bool {
+pub(crate) fn is_corruption(error: &libsql::Error) -> bool {
     matches!(
         sqlite_primary_code(error),
         Some(SQLITE_CORRUPT | SQLITE_NOT_A_DATABASE)
@@ -269,28 +272,32 @@ fn classify_migration_error(error: MigrationError) -> CatalogOpenError {
     match error {
         MigrationError::ReadVersion(source) => classify_schema_inspection_error(source),
         MigrationError::NewerSchema { current, supported } => CatalogOpenError::NewerSchema {
-            found: current,
-            supported,
+            found: CatalogSchemaVersion::new(current),
+            supported: CatalogSchemaVersion::new(supported),
         },
         MigrationError::ReadHistory(source) if is_corruption(&source) => {
             CatalogOpenError::CorruptDatabase
         }
         MigrationError::ReadHistory(source) => CatalogOpenError::InspectMigrationHistory(source),
-        MigrationError::HistoryMismatch { version } => {
-            CatalogOpenError::MigrationHistoryMismatch { version }
-        }
-        MigrationError::Begin { version, source } => {
-            CatalogOpenError::BeginMigration { version, source }
-        }
-        MigrationError::Apply { version, source } => {
-            CatalogOpenError::ApplyMigration { version, source }
-        }
-        MigrationError::Rollback { version, source } => {
-            CatalogOpenError::RollbackMigration { version, source }
-        }
-        MigrationError::Commit { version, source } => {
-            CatalogOpenError::CommitMigration { version, source }
-        }
+        MigrationError::HistoryMismatch { version } => CatalogOpenError::MigrationHistoryMismatch {
+            version: CatalogSchemaVersion::new(version),
+        },
+        MigrationError::Begin { version, source } => CatalogOpenError::BeginMigration {
+            version: CatalogSchemaVersion::new(version),
+            source,
+        },
+        MigrationError::Apply { version, source } => CatalogOpenError::ApplyMigration {
+            version: CatalogSchemaVersion::new(version),
+            source,
+        },
+        MigrationError::Rollback { version, source } => CatalogOpenError::RollbackMigration {
+            version: CatalogSchemaVersion::new(version),
+            source,
+        },
+        MigrationError::Commit { version, source } => CatalogOpenError::CommitMigration {
+            version: CatalogSchemaVersion::new(version),
+            source,
+        },
     }
 }
 

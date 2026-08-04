@@ -19,7 +19,9 @@ use a3_protocol::{
     CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, OpenProjectResponseV1, PlatformV1,
     ProjectSummaryV1, RecentProjectSummaryV1, RecentProjectsResponseV1,
 };
-use a3_storage_libsql::{CatalogDatabase, CatalogOpenError, StorageLayout, StorageLayoutError};
+use a3_storage_libsql::{
+    CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
+};
 use a3_workspace::RepositoryInspector;
 use clock::SystemJobClock;
 use platform::SystemPlatform;
@@ -150,11 +152,11 @@ pub fn run() -> Result<(), DesktopRunError> {
                 .map_err(CompositionRootError::AppDataPath)?;
             let layout = StorageLayout::prepare(app_data_root)
                 .map_err(CompositionRootError::StorageLayout)?;
-            let catalog = tauri::async_runtime::block_on(CatalogDatabase::open(&layout))
+            let store = tauri::async_runtime::block_on(LibsqlKnowledgeStore::open(&layout))
                 .map_err(CompositionRootError::Catalog)?;
             app.manage(base.finish(
                 Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
-                Arc::new(catalog),
+                Arc::new(store),
             ));
             Ok(())
         })

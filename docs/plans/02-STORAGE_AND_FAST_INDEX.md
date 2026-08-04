@@ -29,14 +29,14 @@ Abhängigkeiten: S1
 Status: In Progress
 
 - [x] KnowledgeStore-Port aus konkreten Use Cases ableiten
-- [ ] catalog.db und knowledge.db öffnen
+- [x] catalog.db und knowledge.db öffnen
 - [x] Migration Runner
 - [x] Foreign Keys und pragmatische sichere DB-Konfiguration
 - [ ] Project-, Snapshot- und IndexRun-Repository
 - [ ] Storage-Contract-Suite
-- [ ] korrupte oder neuere DB sicher behandeln
+- [x] korrupte oder neuere DB sicher behandeln
 
-Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad, prüft bestehende Kataloge zunächst read-only, führt vorwärtsgerichtete Migrationen atomar aus und validiert die Connection-Policy. Katalogschema V2 registriert ein erfolgreich inspiziertes Projekt samt Repository-, Worktree-, Remote-, HEAD- und Pfadevidenz atomar und liefert eine auf zehn Einträge begrenzte Most-recent-first-Projektion über den aus diesen Use Cases abgeleiteten `KnowledgeStore`-Port. Neustart, Öffnungsreihenfolge, HEAD-Aktualisierung, Linked Worktrees, Repositories ohne Remote, Unborn HEAD, ungültige persistierte Projektionen und widersprüchliche Worktree-Zuordnung sind durch Adapter-Contract-Tests abgedeckt. Leerer Start, Wiederöffnung, Rollback einer fehlgeschlagenen Migration, manipulierte Migrationshistorie, Katalogkorruption und eine neuere Katalogversion bleiben ebenfalls getestet. Die kombinierten Punkte für `catalog.db` und `knowledge.db`, Snapshot-/IndexRun-Repositories, die vollständige Storage-Contract-Suite und die allgemeine Fehlerbehandlung bleiben bis zur `knowledge.db`-Implementierung offen. Die Reconciliation aus S1 baut auf den Katalogevidenzen auf, bleibt aber bis zu einem expliziten Bestätigungsworkflow offen.
+Verifizierter Teilstand vom 2026-08-04: Der lokale Adapter öffnet `catalog.db` an einem typisierten App-Data-Pfad und leitet `projects/<WorktreeId>/knowledge.db` ausschließlich aus der validierten Worktree-Identität ab. Beide Datenbanktypen werden bei Bestand zunächst read-only geprüft, vorwärtsgerichtet und transaktional migriert und mit derselben kontrollierten Connection-Policy betrieben. Knowledge-Schema V1 bindet jede Worktree-Datenbank dauerhaft an `RepositoryId` und `WorktreeId`; Linked Worktrees bleiben dadurch getrennt. Der zusammengesetzte `KnowledgeStore` prüft diese Datenbank vor der atomaren Katalogregistrierung, sodass ein Knowledge-Fehler weder ein erfolgreiches Open-Ergebnis noch neue Recency erzeugt. Katalogschema V2 persistiert Repository-, Worktree-, Remote-, HEAD- und Pfadevidenz und liefert eine auf zehn Einträge begrenzte Most-recent-first-Projektion. Neustart, Öffnungsreihenfolge, HEAD-Aktualisierung, Linked Worktrees, Repositories ohne Remote, Unborn HEAD, ungültige persistierte Projektionen und widersprüchliche Worktree-Zuordnung sind durch Adapter-Contract-Tests abgedeckt. Für Katalog und Knowledge sind leerer Start, Wiederöffnung, Migration, manipulierte Migrationshistorie, Korruption und neuere Versionen getestet; die Knowledge-Verträge decken außerdem Pfadtrennung, Identitätskonflikte, falsche Dateitypen, App-Data im Worktree und auf Unix Symlinks ab. Snapshot-/IndexRun-Repositories und die darauf aufbauende vollständige Storage-Contract-Suite bleiben offen. Die Reconciliation aus S1 baut auf den Katalogevidenzen auf, bleibt aber bis zu einem expliziten Bestätigungsworkflow offen.
 
 Akzeptanz:
 
