@@ -6,7 +6,7 @@ Der sichtbare Produktname besteht exakt aus den drei Zeichen **A^3**. In technis
 
 ## Entwicklungsstand
 
-Das Repository befindet sich im Foundation-Meilenstein. Die verbindliche Architektur- und Entwicklungsbaseline liegt unter [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und Qualitätsgates nicht widersprechen.
+Der Foundation-Meilenstein ist abgeschlossen. Die weitere Implementierung folgt dem Plan für Storage und Fast Index. Die verbindliche Architektur- und Entwicklungsbaseline liegt unter [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und Qualitätsgates nicht widersprechen.
 
 ## Projektmodell
 

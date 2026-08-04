@@ -49,7 +49,7 @@ Ein Nutzer kann:
 - [x] Cargo-Workspace und Desktop-App scaffolden
 - [x] Svelte-UI statisch in Tauri laden
 - [x] ersten versionierten IPC-Query implementieren
-- [ ] Plattform-CI für Compile und Unit Tests aktivieren
+- [x] Plattform-CI für Compile und Unit Tests aktivieren
 
 ### M2 Lokales Projekt
 

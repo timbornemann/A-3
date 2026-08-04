@@ -103,14 +103,14 @@ Prüfung:
 
 ## F5 CI baseline
 
-Status: In Progress
+Status: Completed
 
 Abhängigkeiten: F1 bis F4
 
 - [x] Rust fmt, Clippy und Tests
 - [x] Frontend format, lint, typecheck und tests
-- [ ] Builds auf Windows, Linux und macOS
-- [ ] Dependency- und Lizenzbericht als CI-Artefakt
+- [x] Builds auf Windows, Linux und macOS
+- [x] Dependency- und Lizenzbericht als CI-Artefakt
 - [x] Markdown-Linkprüfung für lokale Links
 
 Akzeptanz:
@@ -118,12 +118,12 @@ Akzeptanz:
 - ein absichtlicher Warning-, Test- oder Linkfehler macht CI rot;
 - Plattformmatrix baut den Walking Skeleton.
 
-Offener Nachweis: erster vollständig grüner GitHub-Actions-Lauf einschließlich Linux, macOS ARM64, macOS x86_64 und Artefakt-Upload.
+Nachweis: [GitHub-Actions-Lauf 30895965464](https://github.com/timbornemann/A-3/actions/runs/30895965464) baut und testet Linux x86_64, Windows x86_64, macOS ARM64 und macOS x86_64 erfolgreich und enthält das Artefakt `dependency-license-report`.
 
 ## Gate M1
 
-- [ ] alle F-Pakete abgeschlossen
-- [ ] QUALITY_GATES.md erfüllt
-- [ ] Architekturreview bestätigt unprivilegierte UI
-- [ ] README enthält lokale Startanleitung
-- [ ] keine Platzhalter-Panics oder unerreichbaren TODO-Pfade
+- [x] alle F-Pakete abgeschlossen
+- [x] QUALITY_GATES.md erfüllt
+- [x] Architekturreview bestätigt unprivilegierte UI
+- [x] README enthält lokale Startanleitung
+- [x] keine Platzhalter-Panics oder unerreichbaren TODO-Pfade

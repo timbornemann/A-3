@@ -53,4 +53,4 @@ pnpm report:dependencies
 pnpm --filter @a3/desktop tauri build --no-bundle
 ~~~
 
-Der Foundation-Plan bleibt bis zum ersten vollständig grünen öffentlichen Matrixlauf `In Progress`. Ein lokal erfolgreicher Windows-Build ist kein Ersatz für den Linux- oder macOS-Nachweis.
+Die Foundation-Baseline ist durch den vollständig grünen öffentlichen [GitHub-Actions-Lauf 30895965464](https://github.com/timbornemann/A-3/actions/runs/30895965464) einschließlich aller vier Plattformjobs und des Dependency-/Lizenzartefakts verifiziert. Ein lokal erfolgreicher Windows-Build bleibt kein Ersatz für den Linux- oder macOS-Nachweis.
