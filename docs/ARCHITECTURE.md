@@ -151,8 +151,12 @@ Regeln:
 7. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
    Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
 
-Der folgende S2-/S3-Ausbau ergänzt Snapshot- und IndexRun-Repositories, vergleicht den letzten
-Snapshot, plant den inkrementellen Fast Index und veröffentlicht Projektzustand sowie Fortschritt.
+Der S2-Storage-Adapter stellt zusätzlich über den schmalen `KnowledgeIndexStore`-Port unveränderliche
+Snapshot-Ketten und den nicht veröffentlichenden IndexRun-Lifecycle bereit. Diese Application-Grenze
+verwendet ausschließlich Domain-Typen; SQL, libSQL-Zeilen und Datenbankhandles bleiben im Adapter.
+Der folgende S3-/S4-Ausbau entdeckt und hasht Dateien, vergleicht den letzten Snapshot und plant den
+inkrementellen Fast Index. Erst S10 darf Indexdaten und den Zustand `published` gemeinsam in einer
+Transaktion sichtbar machen.
 
 ### Zuletzt verwendete Projekte
 

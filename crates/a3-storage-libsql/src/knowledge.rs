@@ -86,6 +86,10 @@ impl KnowledgeDatabase {
         self.schema_version
     }
 
+    pub(crate) const fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
     /// Re-runs connection, integrity, migration-history, schema, and identity checks.
     pub async fn verify(&self) -> Result<KnowledgeVerification, KnowledgeOpenError> {
         verify_connection_policy(&self.connection).await?;
@@ -113,7 +117,9 @@ impl KnowledgeDatabase {
                 found: verified,
             });
         }
-        verify_stored_identity(&self.connection, self.repository_id, self.worktree_id).await?;
+        verify_legacy_identity(&self.connection, self.repository_id, self.worktree_id).await?;
+        verify_project_repository_identity(&self.connection, self.repository_id, self.worktree_id)
+            .await?;
         Ok(KnowledgeVerification {
             schema_version: found,
             repository_id: self.repository_id,
@@ -174,8 +180,21 @@ async fn preflight_existing_knowledge(
     let connection = database.connect().map_err(classify_connect_error)?;
     let version = reject_newer_schema(&connection).await?;
     verify_integrity(&connection).await?;
-    if version == KnowledgeSchemaVersion::CURRENT.get() {
-        verify_identity(&connection, project).await?;
+    if version >= 1 {
+        verify_legacy_identity(
+            &connection,
+            project.repository().id(),
+            project.worktree().id(),
+        )
+        .await?;
+    }
+    if version >= 2 {
+        verify_project_repository_identity(
+            &connection,
+            project.repository().id(),
+            project.worktree().id(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -217,7 +236,13 @@ async fn verify_identity(
     connection: &Connection,
     project: &ProjectIdentity,
 ) -> Result<(), KnowledgeOpenError> {
-    verify_stored_identity(
+    verify_legacy_identity(
+        connection,
+        project.repository().id(),
+        project.worktree().id(),
+    )
+    .await?;
+    verify_project_repository_identity(
         connection,
         project.repository().id(),
         project.worktree().id(),
@@ -225,7 +250,7 @@ async fn verify_identity(
     .await
 }
 
-async fn verify_stored_identity(
+async fn verify_legacy_identity(
     connection: &Connection,
     repository_id: RepositoryId,
     worktree_id: WorktreeId,
@@ -246,6 +271,53 @@ async fn verify_stored_identity(
     let stored_repository_id = RepositoryId::from_bytes(read_stable_id(&row, 0)?);
     let stored_worktree_id = WorktreeId::from_bytes(read_stable_id(&row, 1)?);
     if stored_repository_id != repository_id || stored_worktree_id != worktree_id {
+        return Err(KnowledgeOpenError::IdentityConflict);
+    }
+    if rows
+        .next()
+        .await
+        .map_err(classify_identity_read_error)?
+        .is_some()
+    {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+    Ok(())
+}
+
+async fn verify_project_repository_identity(
+    connection: &Connection,
+    repository_id: RepositoryId,
+    worktree_id: WorktreeId,
+) -> Result<(), KnowledgeOpenError> {
+    let mut rows = connection
+        .query(
+            "SELECT\n\
+             (SELECT COUNT(*) FROM repositories),\n\
+             (SELECT COUNT(*) FROM worktrees),\n\
+             repositories.repository_id, worktrees.worktree_id, worktrees.repository_id\n\
+             FROM repositories\n\
+             JOIN worktrees ON worktrees.repository_id = repositories.repository_id",
+            (),
+        )
+        .await
+        .map_err(classify_identity_read_error)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(classify_identity_read_error)?
+        .ok_or(KnowledgeOpenError::InvalidStoredData)?;
+    let repository_count: i64 = row.get(0).map_err(classify_identity_read_error)?;
+    let worktree_count: i64 = row.get(1).map_err(classify_identity_read_error)?;
+    let stored_repository_id = RepositoryId::from_bytes(read_stable_id(&row, 2)?);
+    let stored_worktree_id = WorktreeId::from_bytes(read_stable_id(&row, 3)?);
+    let worktree_repository_id = RepositoryId::from_bytes(read_stable_id(&row, 4)?);
+    if repository_count != 1 || worktree_count != 1 {
+        return Err(KnowledgeOpenError::InvalidStoredData);
+    }
+    if stored_repository_id != repository_id
+        || stored_worktree_id != worktree_id
+        || worktree_repository_id != repository_id
+    {
         return Err(KnowledgeOpenError::IdentityConflict);
     }
     if rows

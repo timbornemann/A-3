@@ -2,6 +2,7 @@
 
 mod health_query;
 mod jobs;
+mod knowledge_index_store;
 mod knowledge_store;
 mod open_project;
 mod recent_projects;
@@ -14,6 +15,7 @@ pub use jobs::{
     JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobTask, JobTimestamp,
     ProgressReportError, ShutdownMode, ShutdownReport,
 };
+pub use knowledge_index_store::{KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore};
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
     ProjectPathDisplayError, RecentProject, RecentProjectLimit, RecentProjectLimitError,

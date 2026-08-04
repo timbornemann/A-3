@@ -1,10 +1,22 @@
 mod git;
 mod id;
+mod index_run;
 mod path;
+mod snapshot;
 
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
-pub use id::{ProjectId, RemoteIdentity, RepositoryId, WorktreeId};
+pub use id::{IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeId};
+pub use index_run::{
+    IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
+    IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
+};
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
+pub use snapshot::{
+    ContentHash, IndexLanguage, IndexSchemaVersion, IndexSchemaVersionError,
+    LanguageAdapterRevision, LanguageAdapterVersion, LanguageAdapterVersionError, RepositoryPath,
+    RepositoryPathError, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotError,
+    WorktreeGeneration, WorktreeGenerationError,
+};
 
 use std::error::Error;
 use std::fmt;

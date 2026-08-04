@@ -62,13 +62,26 @@ Reconciliation noch nicht durch.
 
 Ein Snapshot enthält:
 
+- eigene SnapshotId und optional die unmittelbare Parent-SnapshotId desselben Worktrees;
 - HEAD Object ID oder den Zustand Unborn;
 - monotone Worktree Generation;
 - geordnete Menge geänderter Pfade und ihrer Content Hashes;
 - Index Schema Version;
 - Sprachadapter-Versionen.
 
-Snapshots sind unveränderlich. Ein neuer beobachteter Dateizustand erzeugt eine neue Generation.
+Snapshots sind unveränderlich. Der erste Snapshot besitzt Generation eins und keinen Parent. Jeder
+weitere Snapshot verweist auf den unmittelbar vorherigen Snapshot und erhöht die Generation genau um
+eins. Repository-Pfade sind verlustlose, relative Git-artige Rohbytes mit `/` als Separator; leere
+Segmente, `.` und `..`, NUL sowie absolute oder nicht normalisierte Formen sind ungültig. Änderungen
+und Adapterrevisionen werden kanonisch sortiert und dürfen innerhalb eines Snapshots nicht doppelt
+vorkommen. Ein neuer beobachteter Dateizustand erzeugt eine neue Generation.
+
+### IndexRunId
+
+Ein IndexRun referenziert genau einen existierenden Snapshot desselben Worktrees, eine monotone
+worktree-lokale Sequenz und eine Ranking-Policy-Version. Pro Worktree darf höchstens ein Lauf den
+Zustand `building` besitzen. Der aktuelle S2-Port erlaubt nur die terminalen Übergänge `building` →
+`failed` oder `building` → `cancelled`; `published` bleibt dem atomaren S10-Publish vorbehalten.
 
 ### SymbolId
 

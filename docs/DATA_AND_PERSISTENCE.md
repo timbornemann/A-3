@@ -25,10 +25,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - `PRAGMA user_version` ist die monotone Schema-Version. `schema_migrations` hält zusätzlich Name und versionierten BLAKE3-Checksum jeder Migration fest.
 - Jede Migration läuft in einer eigenen `IMMEDIATE`-Transaktion. Ein fehlgeschlagener Migrationskörper wird explizit zurückgerollt.
 - Knowledge-Schema V1 persistiert genau eine unveränderliche Bindung aus `RepositoryId` und
-  `WorktreeId`. Die Bootstrap-Migration schreibt Schema-Historie, Schema-Version und Bindung in
-  derselben `IMMEDIATE`-Transaktion; jede Wiederöffnung prüft die Bindung gegen die frisch inspizierte
-  Projektidentität. Linked Worktrees erhalten dadurch getrennte Datenbanken, auch wenn sie dieselbe
-  Repository-Identität besitzen.
+  `WorktreeId`. Knowledge-Schema V2 normalisiert diese Bindung vorwärtskompatibel in `repositories`
+  und `worktrees` und ergänzt unveränderliche `snapshots`, `snapshot_adapter_revisions`,
+  `snapshot_changes` und `index_runs`. Jede Wiederöffnung prüft sowohl die V1-Bindung als auch die
+  normalisierte Projektion gegen die frisch inspizierte Projektidentität. Linked Worktrees erhalten
+  dadurch weiterhin getrennte Datenbanken, auch wenn sie dieselbe Repository-Identität besitzen.
 - Katalogschema V2 persistiert `projects` und `recent_worktrees`. Eine erfolgreiche Projekterkennung
   aktualisiert Projekt, Worktree, Remote-Fingerprint, HEAD und Öffnungsreihenfolge in genau einer
   `IMMEDIATE`-Transaktion; ein Storagefehler verhindert ein fälschlich erfolgreiches Open-Ergebnis.
@@ -42,15 +43,22 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Recent-Eintrag. Scheitert erst der Katalogschreibvorgang, darf die bereits gebundene leere
   Worktree-Datenbank bestehen bleiben; sie wird bei der nächsten Öffnung erneut vollständig geprüft.
   Weder libSQL-Typen noch SQL verlassen den Adapter.
+- Der schmale `KnowledgeIndexStore` ergänzt dieselbe Application-Grenze um Snapshot- und
+  IndexRun-Persistenz, ohne bestehende Project-Open-Verbraucher zu verbreitern. Snapshots werden nur
+  als exakt nächste Worktree-Generation mit dem unmittelbaren Parent akzeptiert und samt kanonisch
+  geordneten Adapterrevisionen und Pfadänderungen atomar angehängt. Repository-Pfade sind relative,
+  slash-separierte Rohbytes; sie müssen normalisiert, traversierungsfrei und verlustlos sein.
+- Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Der aktuelle Port kann diesen Lauf nur
+  als `failed` oder `cancelled` beenden. Ein Übergang zu `published` ist bewusst nicht verfügbar, bis
+  S10 Indexdaten und Sichtbarkeit in derselben Adaptertransaktion committen kann.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
   denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
   dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen
   gespeicherten Pfad.
 
-Snapshot- und IndexRun-Repositories sowie die Umzugs-Reconciliation sind noch nicht implementiert.
-Die im Katalog gespeicherten exakten Pfad- und Remote-Evidenzen bereiten diese Reconciliation vor,
-entscheiden sie aber nicht selbstständig. Knowledge-Schema V1 ist bewusst nur die sichere
-per-Worktree-Grundlage; Index- oder Faktendaten gehören noch nicht dazu.
+Die Umzugs-Reconciliation sowie Discovery, Hashing und die eigentlichen regenerierbaren Index- und
+Faktendaten sind noch nicht implementiert. Die im Katalog gespeicherten exakten Pfad- und
+Remote-Evidenzen bereiten die Reconciliation vor, entscheiden sie aber nicht selbstständig.
 
 Quellen:
 
@@ -114,6 +122,7 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - repositories
 - worktrees
 - snapshots
+- snapshot_adapter_revisions
 - snapshot_changes
 - index_runs
 
@@ -165,6 +174,12 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 
 - Fremdschlüssel sind aktiviert.
 - Jede projektspezifische Zeile ist einem Worktree zugeordnet.
+- Snapshots bilden pro Worktree eine lückenlose, unveränderliche Generationenkette; Parent und
+  Generation werden vor jedem Append gegen den letzten persistierten Snapshot geprüft.
+- Snapshot-Pfadänderungen und Adapterrevisionen sind innerhalb eines Snapshots eindeutig und werden
+  in kanonischer Reihenfolge rekonstruiert.
+- Pro Worktree existiert höchstens ein laufender `building`-IndexRun; seine Sequenz ist lückenlos und
+  worktree-lokal.
 - File Revision ist über WorktreeId, normalisierten Pfad und Content Hash eindeutig.
 - Veröffentlichte Indexdaten besitzen SnapshotId und IndexRunId.
 - EvidenceRef besitzt eine typabhängige, validierte Nutzlast.

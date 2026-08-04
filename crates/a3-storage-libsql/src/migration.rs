@@ -72,7 +72,89 @@ const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
       ) STRICT;",
 };
 
-const KNOWLEDGE_MIGRATIONS: &[Migration] = &[KNOWLEDGE_BOOTSTRAP_MIGRATION];
+const KNOWLEDGE_PROJECT_INDEX_MIGRATION: Migration = Migration {
+    version: 2,
+    name: "project_snapshot_index_runs",
+    sql: "CREATE TABLE repositories (\n\
+      repository_id BLOB PRIMARY KEY NOT NULL CHECK (length(repository_id) = 32)\n\
+      ) STRICT;\n\
+      CREATE TABLE worktrees (\n\
+      worktree_id BLOB PRIMARY KEY NOT NULL CHECK (length(worktree_id) = 32),\n\
+      repository_id BLOB NOT NULL CHECK (length(repository_id) = 32),\n\
+      UNIQUE (worktree_id, repository_id),\n\
+      FOREIGN KEY (repository_id) REFERENCES repositories(repository_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO repositories (repository_id)\n\
+        SELECT repository_id FROM worktree_storage_identity WHERE singleton = 1;\n\
+      INSERT INTO worktrees (worktree_id, repository_id)\n\
+        SELECT worktree_id, repository_id FROM worktree_storage_identity WHERE singleton = 1;\n\
+      CREATE TABLE snapshots (\n\
+      snapshot_id BLOB PRIMARY KEY NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      parent_snapshot_id BLOB CHECK (parent_snapshot_id IS NULL OR length(parent_snapshot_id) = 32),\n\
+      generation INTEGER NOT NULL CHECK (generation > 0),\n\
+      head_kind TEXT NOT NULL CHECK (head_kind IN ('born', 'unborn')),\n\
+      head_object_id TEXT CHECK (head_object_id IS NULL OR length(head_object_id) IN (40, 64)),\n\
+      head_reference TEXT CHECK (head_reference IS NULL OR length(head_reference) BETWEEN 1 AND 1024),\n\
+      index_schema_version INTEGER NOT NULL\n\
+        CHECK (index_schema_version BETWEEN 1 AND 4294967295),\n\
+      CHECK (parent_snapshot_id IS NULL OR parent_snapshot_id <> snapshot_id),\n\
+      CHECK (\n\
+        (head_kind = 'born' AND head_object_id IS NOT NULL) OR\n\
+        (head_kind = 'unborn' AND head_object_id IS NULL AND head_reference IS NOT NULL)\n\
+      ),\n\
+      UNIQUE (worktree_id, generation),\n\
+      UNIQUE (snapshot_id, worktree_id),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (parent_snapshot_id, worktree_id)\n\
+        REFERENCES snapshots(snapshot_id, worktree_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE snapshot_adapter_revisions (\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      language TEXT NOT NULL\n\
+        CHECK (language IN ('generic', 'rust', 'typescript-javascript', 'python')),\n\
+      adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),\n\
+      PRIMARY KEY (snapshot_id, language),\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE snapshot_changes (\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'delete')),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      PRIMARY KEY (snapshot_id, repository_path),\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE index_runs (\n\
+      index_run_id BLOB PRIMARY KEY NOT NULL CHECK (length(index_run_id) = 32),\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      run_sequence INTEGER NOT NULL CHECK (run_sequence > 0),\n\
+      ranking_policy_version INTEGER NOT NULL\n\
+        CHECK (ranking_policy_version BETWEEN 1 AND 4294967295),\n\
+      status TEXT NOT NULL CHECK (status IN ('building', 'published', 'failed', 'cancelled')),\n\
+      UNIQUE (worktree_id, run_sequence),\n\
+      FOREIGN KEY (snapshot_id, worktree_id)\n\
+        REFERENCES snapshots(snapshot_id, worktree_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE UNIQUE INDEX index_runs_one_building_per_worktree_idx\n\
+        ON index_runs (worktree_id) WHERE status = 'building';\n\
+      CREATE UNIQUE INDEX index_runs_one_publish_per_snapshot_policy_idx\n\
+        ON index_runs (snapshot_id, ranking_policy_version) WHERE status = 'published';\n\
+      CREATE INDEX index_runs_worktree_sequence_idx\n\
+        ON index_runs (worktree_id, run_sequence DESC);",
+};
+
+const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
+    KNOWLEDGE_BOOTSTRAP_MIGRATION,
+    KNOWLEDGE_PROJECT_INDEX_MIGRATION,
+];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
 const KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.knowledge-migration.v1";
@@ -104,7 +186,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(1);
+    pub const CURRENT: Self = Self::new(2);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -483,10 +565,86 @@ mod tests {
             assert_eq!(
                 query_i64(
                     &connection,
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schema_migrations', 'worktree_storage_identity')",
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\n\
+                     'schema_migrations', 'worktree_storage_identity', 'repositories', 'worktrees',\n\
+                     'snapshots', 'snapshot_adapter_revisions', 'snapshot_changes', 'index_runs'\n\
+                     )",
                 )
                 .await?,
-                2
+                8
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_upgrades_v1_identity_into_project_repositories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [7; 32];
+            let worktree_id = [8; 32];
+
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 1);
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM repositories").await?,
+                1
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM worktrees").await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v2_upgrade_preserves_the_v1_database()
+    -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [9; 32];
+            let worktree_id = [10; 32];
+
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            connection
+                .execute("CREATE TABLE repositories (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 2, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 1);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'worktrees'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name = 'conflict'",
+                )
+                .await?,
+                1
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

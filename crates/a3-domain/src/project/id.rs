@@ -54,6 +54,14 @@ stable_id!(
     /// Credential-free fingerprint of a repository's normalized primary remote.
     RemoteIdentity
 );
+stable_id!(
+    /// Stable identity of one immutable observed worktree snapshot.
+    SnapshotId
+);
+stable_id!(
+    /// Stable identity of one deterministic index attempt.
+    IndexRunId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -64,7 +72,7 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectId, RemoteIdentity, RepositoryId, WorktreeId};
+    use super::{IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeId};
 
     #[test]
     fn stable_ids_have_fixed_lowercase_hex_representation() {
@@ -77,5 +85,7 @@ mod tests {
         assert_eq!(WorktreeId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(ProjectId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(RemoteIdentity::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(SnapshotId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(IndexRunId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }

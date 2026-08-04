@@ -109,6 +109,11 @@ Ein Indexlauf wird erst sichtbar, wenn:
 - abgeleitete Claims invalidiert sind;
 - FTS und Graph dieselbe Snapshot-Version referenzieren.
 
+Die S2-Persistenz reserviert dafür bereits worktree-lokale, monotone IndexRun-Sequenzen und erzwingt
+höchstens einen `building`-Lauf pro Worktree. Vor S10 kann der Application-Port einen Lauf nur als
+`failed` oder `cancelled` abschließen. Es gibt absichtlich keinen separaten Publish-Aufruf, der den
+Status ohne die zugehörigen Indexdaten sichtbar machen könnte.
+
 ## Deep Map
 
 Phasen:
@@ -254,4 +259,3 @@ Jeder Treffer erklärt seine Herkunft:
 - Retrieval Recall auf Eval-Aufgaben
 - Indexlatenz cold und incremental
 - DB-Größe pro 100.000 LOC
-

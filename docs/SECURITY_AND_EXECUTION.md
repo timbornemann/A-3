@@ -58,6 +58,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Eine bestehende `knowledge.db` wird vor schreibendem Öffnen read-only auf unterstützte Version,
   Integrität und – bei aktuellem Schema – ihre persistierte Repository-/Worktree-Bindung geprüft.
   Datenbankfehler werden nur als stabile redigierte Fehlercodes über IPC sichtbar.
+- Persistierte Snapshot-Pfade sind keine freigegebenen Dateisystempfade. Der Storage-Adapter
+  rekonstruiert sie ausschließlich als begrenzte, relative, traversierungsfreie Repository-Rohbytes
+  und lehnt ungültige Daten an der Adaptergrenze ab. Snapshot- und IndexRun-Persistenz wird nicht als
+  neuer WebView-Command oder Datenbankzugriff exponiert.
 
 ## Prozess-Policy
 
