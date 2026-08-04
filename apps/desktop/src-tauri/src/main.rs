@@ -26,13 +26,14 @@ mod tests {
             .invoke_handler(tauri::generate_handler![a3_desktop::commands::query_health])
             .build(tauri::generate_context!())?;
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build()?;
+        let local_app_url = webview.url()?;
         let response = get_ipc_response(
             &webview,
             InvokeRequest {
                 cmd: "query_health".into(),
                 callback: CallbackFn(0),
                 error: CallbackFn(1),
-                url: "http://tauri.localhost".parse()?,
+                url: local_app_url.clone(),
                 body: InvokeBody::Json(json!({
                     "request": { "protocolVersion": 1 }
                 })),
@@ -54,7 +55,7 @@ mod tests {
                 cmd: "query_health".into(),
                 callback: CallbackFn(2),
                 error: CallbackFn(3),
-                url: "http://tauri.localhost".parse()?,
+                url: local_app_url.clone(),
                 body: InvokeBody::Json(json!({
                     "request": {
                         "protocolVersion": 1,
@@ -74,7 +75,7 @@ mod tests {
                 cmd: "query_health".into(),
                 callback: CallbackFn(4),
                 error: CallbackFn(5),
-                url: "http://tauri.localhost".parse()?,
+                url: local_app_url,
                 body: InvokeBody::Json(json!({
                     "request": { "protocolVersion": 999 }
                 })),
