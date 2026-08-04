@@ -10,12 +10,19 @@ use a3_domain::{
 use a3_storage_libsql::{CatalogDatabase, StorageLayout};
 use futures::executor::block_on;
 use std::fs;
+use std::io;
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use support::TempDirectory;
+
+// libSQL's Windows native test runtime is not safe when separate local database
+// fixtures are opened and torn down concurrently inside one process.
+static PROJECT_CATALOG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn std::error::Error>>
 {
+    let _test_lock = lock_project_catalog_test()?;
     block_on(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
@@ -74,6 +81,7 @@ fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn 
 
 #[test]
 fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
     block_on(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
@@ -114,6 +122,7 @@ fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error
 #[test]
 fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
 -> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
     block_on(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
@@ -143,6 +152,7 @@ fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
 
 #[test]
 fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
     block_on(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
@@ -171,6 +181,14 @@ fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error
             Err(KnowledgeStoreFailure::IdentityConflict)
         );
         Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+fn lock_project_catalog_test() -> Result<MutexGuard<'static, ()>, Box<dyn std::error::Error>> {
+    PROJECT_CATALOG_TEST_LOCK.lock().map_err(|_| {
+        Box::<dyn std::error::Error>::from(io::Error::other(
+            "project catalog test lock was poisoned",
+        ))
     })
 }
 
