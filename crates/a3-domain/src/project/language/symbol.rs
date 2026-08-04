@@ -146,6 +146,8 @@ pub enum SymbolKind {
     Interface,
     /// Class declaration.
     Class,
+    /// Language implementation block connecting a type and optional trait.
+    Implementation,
     /// Type alias.
     TypeAlias,
     /// Constant declaration.

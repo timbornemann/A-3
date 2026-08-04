@@ -64,7 +64,7 @@ Ein Nutzer kann:
 - [x] Discovery und Ignore Engine
 - [x] Content Hashing und Snapshots
 - [x] Tree-sitter LanguageAdapter-Contract
-- [ ] Rust-Adapter
+- [x] Rust-Adapter
 - [ ] TypeScript-/JavaScript-Adapter
 - [ ] Python-Adapter
 - [ ] Symbolgraph und atomisches Publish

@@ -166,12 +166,33 @@ Akzeptanz:
 
 Abhängigkeiten: S5
 
-- [ ] Module, Funktionen, Structs, Enums, Traits, Impls und Methoden
-- [ ] use, mod, pub und Re-Exports
-- [ ] syntaktische Calls
-- [ ] Tests und Cargo-Manifeste
-- [ ] main-, lib- und bin-Einstiegspunkte
-- [ ] Golden Fixtures
+Status: Completed
+
+- [x] Module, Funktionen, Structs, Enums, Traits, Impls und Methoden
+- [x] use, mod, pub und Re-Exports
+- [x] syntaktische Calls
+- [x] Tests und Cargo-Manifeste
+- [x] main-, lib- und bin-Einstiegspunkte
+- [x] Golden Fixtures
+
+Verifizierter Abschluss vom 2026-08-04: Der Produktadapter
+`rust-tree-sitter-0.24.2-cargo-v1-contract-v1` implementiert den unveränderten V1-Contract für
+Rust-Quelldateien und `Cargo.toml`. Er extrahiert Module, Funktionen, Methoden, Structs, Felder,
+Enums, Varianten, Traits, Implementierungen, Typaliase, Konstanten und Statics samt Sichtbarkeit,
+Signaturen, Dokumentationsbereichen und Test- beziehungsweise Einstiegspunktrollen. `mod`, `use`,
+öffentliche Deklarationen und Re-Exports sowie syntaktische Calls, Makroaufrufe, Trait-Bounds und
+Implementierungen erzeugen evidenzgebundene Beziehungen. Cargo-Pakete, Workspaces, explizite
+Targets, Abhängigkeiten und sichere relative Target-Pfade werden ohne Persistenz- oder
+Infrastrukturtypen außerhalb des Adapters abgebildet. Nicht expandierte Makro-Tokenbäume und nicht
+unterstützte Call-Target-Formen werden als partielle Coverage ausgewiesen; ein Makroname bleibt als
+syntaktischer Call erhalten. Cargo-Manifeste sind auf 256 KiB begrenzt, ungültiges TOML und ungültiges
+UTF-8 bleiben sichtbare partielle Ergebnisse. Gemeinsame Contract-Goldens, reale Rust-/Cargo-
+Fixtures sowie fokussierte Fehler-, Wiederverwendungs-, Rollen-, Pfad- und Grenztests sichern das
+Verhalten. Die reproduzierbare Release-Messung auf der lokalen Windows-Entwicklungsmaschine
+verarbeitete 100.000 strukturelle Rust-Zeilen beziehungsweise 1.480.000 Bytes mit 20.001 Symbolen
+und 60.001 Beziehungen: direktes Tree-sitter benötigte 249 ms, der vollständige Adapterpfad 445 ms.
+Die Messung ist kein Wert für den vollständigen Fast Index und begründet keinen allgemeinen
+Performanceclaim.
 
 ## S7 TypeScript-/JavaScript-Adapter
 

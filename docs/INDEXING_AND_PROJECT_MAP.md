@@ -105,6 +105,17 @@ Fortschrittsmeldungen gelten während Warten, Parsen und Baumprüfung. Jeder kon
 gemeinsame Golden-Contract-Suite bestehen; Sprachadapterrevisionen werden in der
 Snapshotkompatibilität erfasst.
 
+Der Rust-Adapter V1 bindet `tree-sitter-rust` 0.24.2 und verarbeitet `.rs`-Dateien sowie
+`Cargo.toml`. Er liefert Rust-Deklarationen einschließlich Traits, Implementierungen und Methoden,
+Sichtbarkeit, Dokumentationsbereiche, Test- und Einstiegspunktrollen sowie syntaktische Import-,
+Export-, Call-, Implements- und Extends-Kandidaten. Cargo-Pakete, Workspaces, explizite Targets und
+Abhängigkeiten ergänzen Manifestbeziehungen; relative Target-Pfade dürfen den Repository-Namensraum
+nicht verlassen. Cargo-Manifeste sind auf 256 KiB begrenzt. Tree-sitter expandiert keine Makros:
+Der Adapter erhält den Makronamen als syntaktischen Call, markiert den nicht strukturell analysierten
+Tokenbaum aber explizit als unvollständige Coverage. Unsupported Call-Target-Formen, Syntaxfehler und
+ungültige Kodierung werden ebenfalls sichtbar statt stillschweigend als vollständige Erkenntnis zu
+gelten.
+
 ### Link
 
 Kantentypen in V1:

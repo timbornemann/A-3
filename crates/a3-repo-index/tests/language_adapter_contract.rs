@@ -14,13 +14,16 @@ use a3_language_adapter_contract_tests::{
     ContractResult, LanguageAdapterContractFixture, verify_language_adapter_contract,
 };
 use a3_repo_index::{
-    ParserPoolSize, TreeSitterParserPool, source_range_for_node, verify_language_parse_input,
+    ParserPoolSize, RustLanguageAdapter, TreeSitterParserPool, source_range_for_node,
+    verify_language_parse_input,
 };
 use std::str;
 use tree_sitter::{Language, Node};
 
 const VALID_JSON: &[u8] = b"{\"alpha\":1,\"beta\":2}\n";
 const INVALID_JSON: &[u8] = b"{\"alpha\": }\n";
+const VALID_RUST: &[u8] = b"pub fn alpha() {\n    beta();\n}\n\nfn beta() {}\n";
+const INVALID_RUST: &[u8] = b"pub fn broken( {\n";
 
 #[derive(Debug)]
 struct JsonContractAdapter {
@@ -179,6 +182,31 @@ fn tree_sitter_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> 
                 "symbol id=2 kind=Field name=\"beta\" signature=None declaration=11..19@0:11..0:19 selection=11..17@0:11..0:17 documentation=- visibility=Unknown test=false entrypoint=false\n",
                 "relation source=File target=Symbol(LocalSymbolId(1)) kind=Defines provider=TreeSitter confidence=10000 evidence=1..10@0:1..0:10\n",
                 "relation source=File target=Symbol(LocalSymbolId(2)) kind=Defines provider=TreeSitter confidence=10000 evidence=11..19@0:11..0:19\n",
+            ),
+        },
+    )
+}
+
+#[test]
+fn rust_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
+    let adapter = RustLanguageAdapter::new(ParserPoolSize::new(2)?)?;
+    verify_language_adapter_contract(
+        &adapter,
+        LanguageAdapterContractFixture {
+            supported_path: b"src/lib.rs",
+            unsupported_path: b"src/lib.txt",
+            valid_source: VALID_RUST,
+            invalid_source: INVALID_RUST,
+            expected_golden: concat!(
+                "path=7372632f6c69622e7273 hash=c478091adfc0f68932a250d62387a2a921fd7d47b3faaec65e8e101e6a10550f language=rust adapter=rust-tree-sitter-0.24.2-cargo-v1-contract-v1 contract=1 coverage=45/45/0\n",
+                "symbol id=1 kind=Module name=\"lib\" signature=None declaration=0..45@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=true\n",
+                "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"pub fn alpha()\") declaration=0..30@0:0..2:1 selection=7..12@0:7..0:12 documentation=- visibility=Public test=false entrypoint=false\n",
+                "symbol id=3 kind=Function name=\"beta\" signature=Some(\"fn beta()\") declaration=32..44@4:0..4:12 selection=35..39@4:3..4:7 documentation=- visibility=Private test=false entrypoint=false\n",
+                "relation source=File target=Symbol(LocalSymbolId(1)) kind=Defines provider=TreeSitter confidence=10000 evidence=0..45@0:0..5:0\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Contains provider=TreeSitter confidence=10000 evidence=0..30@0:0..2:1\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Exports provider=TreeSitter confidence=10000 evidence=7..12@0:7..0:12\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Contains provider=TreeSitter confidence=10000 evidence=32..44@4:0..4:12\n",
+                "relation source=Symbol(LocalSymbolId(2)) target=Unresolved(SymbolReference(\"beta\")) kind=Calls provider=TreeSitter confidence=7500 evidence=21..25@1:4..1:8\n",
             ),
         },
     )

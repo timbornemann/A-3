@@ -382,13 +382,7 @@ fn inspect_tree(
         }
     }
     ensure_active(control)?;
-    diagnostics.sort();
-    diagnostics.dedup();
-    let (incomplete_bytes, incomplete_regions) = incomplete_summary(&diagnostics)?;
-    let covered_bytes = source_bytes.saturating_sub(incomplete_bytes);
-    let coverage = ParseCoverage::new(source_bytes, covered_bytes, incomplete_regions)
-        .map_err(|_| LanguageParseFailure::InvalidResult)?;
-    Ok((coverage, diagnostics))
+    normalize_parse_diagnostics(source_bytes, policy.max_diagnostics(), diagnostics)
 }
 
 fn syntax_diagnostic(node: Node<'_>) -> Result<ParseDiagnostic, LanguageParseFailure> {
@@ -426,6 +420,24 @@ pub fn source_range_for_node(node: Node<'_>) -> Result<SourceRange, LanguagePars
         ),
     )
     .map_err(|_| LanguageParseFailure::InvalidResult)
+}
+
+/// Canonicalizes bounded diagnostics and derives visible structural coverage.
+pub fn normalize_parse_diagnostics(
+    source_bytes: usize,
+    max_diagnostics: usize,
+    mut diagnostics: Vec<ParseDiagnostic>,
+) -> Result<(ParseCoverage, Vec<ParseDiagnostic>), LanguageParseFailure> {
+    diagnostics.sort();
+    diagnostics.dedup();
+    if diagnostics.len() > max_diagnostics {
+        return Err(LanguageParseFailure::ResourceLimitExceeded);
+    }
+    let (incomplete_bytes, incomplete_regions) = incomplete_summary(&diagnostics)?;
+    let covered_bytes = source_bytes.saturating_sub(incomplete_bytes);
+    let coverage = ParseCoverage::new(source_bytes, covered_bytes, incomplete_regions)
+        .map_err(|_| LanguageParseFailure::InvalidResult)?;
+    Ok((coverage, diagnostics))
 }
 
 fn incomplete_summary(

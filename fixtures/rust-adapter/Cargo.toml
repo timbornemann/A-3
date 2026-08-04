@@ -1,0 +1,25 @@
+[package]
+name = "rust-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["support"]
+
+[dependencies]
+serde = "1"
+
+[dev-dependencies]
+proptest = "1"
+
+[lib]
+name = "fixture_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fixture-cli"
+path = "src/main.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
