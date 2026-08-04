@@ -97,58 +97,9 @@ impl HealthResponseV1 {
     }
 }
 
-/// Stable error codes exposed by V1 IPC commands.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ErrorCodeV1 {
-    /// The request used a protocol version this build does not support.
-    UnsupportedProtocolVersion,
-}
-
-/// Safe, versioned error returned across the IPC boundary.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct CommandErrorV1 {
-    protocol_version: ProtocolVersion,
-    code: ErrorCodeV1,
-    message: String,
-}
-
-impl CommandErrorV1 {
-    /// Creates the stable response for an unsupported request version.
-    #[must_use]
-    pub fn unsupported_protocol_version() -> Self {
-        Self {
-            protocol_version: ProtocolVersion::CURRENT,
-            code: ErrorCodeV1::UnsupportedProtocolVersion,
-            message: "The requested protocol version is not supported.".to_owned(),
-        }
-    }
-
-    /// Returns the protocol version used to encode this error.
-    #[must_use]
-    pub const fn protocol_version(&self) -> ProtocolVersion {
-        self.protocol_version
-    }
-
-    /// Returns the stable, localizable error code.
-    #[must_use]
-    pub const fn code(&self) -> ErrorCodeV1 {
-        self.code
-    }
-
-    /// Returns the safe error message.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        CommandErrorV1, ErrorCodeV1, HealthRequestV1, HealthResponseV1, HealthStatusV1, PlatformV1,
-    };
+    use super::{HealthRequestV1, HealthResponseV1, HealthStatusV1, PlatformV1};
     use crate::ProtocolVersion;
     use serde_json::json;
 
@@ -180,22 +131,5 @@ mod tests {
         }));
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn unsupported_version_error_has_stable_safe_shape() -> Result<(), serde_json::Error> {
-        let error = CommandErrorV1::unsupported_protocol_version();
-
-        assert_eq!(error.protocol_version(), ProtocolVersion::V1);
-        assert_eq!(error.code(), ErrorCodeV1::UnsupportedProtocolVersion);
-        assert_eq!(
-            serde_json::to_value(&error)?,
-            json!({
-                "code": "unsupportedProtocolVersion",
-                "message": "The requested protocol version is not supported.",
-                "protocolVersion": 1
-            })
-        );
-        Ok(())
     }
 }

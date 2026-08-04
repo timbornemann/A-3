@@ -10,7 +10,7 @@ Abhängigkeiten: Gate M1
 
 Status: In Progress
 
-- [ ] Ordnerauswahl über schmalen Tauri-Command
+- [x] Ordnerauswahl über schmalen Tauri-Command
 - [x] PathPolicy mit Canonicalization und Symlinktests
 - [x] Git Common Directory, Worktree Root, HEAD und Unborn erkennen
 - [x] RepositoryId und WorktreeId erzeugen

@@ -43,6 +43,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Repository-Erkennung liest nur repository-lokale Git-Konfiguration in isoliertem Modus. Globale
   Konfiguration, Includes, Credential Helper, Umgebungsüberschreibungen und Netzwerkzugriffe bleiben
   außerhalb dieses Pfads.
+- Die WebView darf keinen Projektpfad an `open_project` übergeben. Nur der privilegierte Rust-Adapter
+  öffnet den nativen Einzelauswahldialog und reicht dessen Ergebnis an den Use Case weiter.
+- Die Main-Capability erlaubt `open_project` und `query_health`, aber keine direkten Dialog-, Datei-,
+  Shell- oder SQL-Plugin-Commands. Der Rückgabevertrag enthält weder Handles noch Git Common Directory.
 
 ## Prozess-Policy
 

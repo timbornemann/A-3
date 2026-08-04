@@ -45,7 +45,9 @@ Ein lokaler Produktionsbuild ohne Installer wird so erzeugt:
 pnpm tauri build --no-bundle
 ```
 
-Die WebView ist unprivilegiert. Im aktuellen Walking Skeleton darf sie ausschließlich den typisierten `query_health`-Command aufrufen; Datei-, Shell- und SQL-Zugriffe sind nicht freigegeben.
+Die WebView ist unprivilegiert. Sie darf ausschließlich die typisierten Commands `query_health` und
+`open_project` aufrufen. `open_project` öffnet den nativen Ordnerdialog im Rust-Kern; die WebView sendet
+keinen Pfad und erhält keine Datei-, Dialog-, Shell- oder SQL-Plugin-Berechtigung.
 
 ## Lokale Qualitätsgates
 

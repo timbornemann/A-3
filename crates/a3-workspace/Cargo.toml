@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+a3-application.workspace = true
 a3-domain.workspace = true
 blake3.workspace = true
 gix.workspace = true

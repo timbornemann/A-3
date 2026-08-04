@@ -6,24 +6,46 @@ fn main() -> Result<(), a3_desktop::DesktopRunError> {
 
 #[cfg(test)]
 mod tests {
+    use a3_application::{ProjectDirectoryPicker, ProjectDirectorySelectionError};
     use a3_desktop::CompositionRoot;
     use a3_domain::{ApplicationVersion, Platform};
     use a3_protocol::{
-        CommandErrorV1, ErrorCodeV1, HealthResponseV1, HealthStatusV1, PlatformV1, ProtocolVersion,
+        CommandErrorV1, ErrorCodeV1, HealthResponseV1, HealthStatusV1, OpenProjectResponseV1,
+        OpenProjectResultV1, PlatformV1, ProtocolVersion,
     };
     use serde_json::json;
     use std::error::Error;
     use std::io;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use tauri::ipc::{CallbackFn, InvokeBody};
     use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder};
     use tauri::webview::InvokeRequest;
 
+    #[derive(Debug)]
+    struct CancelledPicker;
+
+    impl ProjectDirectoryPicker for CancelledPicker {
+        fn pick_project_directory(
+            &self,
+        ) -> Result<Option<PathBuf>, ProjectDirectorySelectionError> {
+            Ok(None)
+        }
+    }
+
     #[test]
     fn tauri_ipc_enforces_the_versioned_health_contract() -> Result<(), Box<dyn Error>> {
-        let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows)?;
+        let root = CompositionRoot::new(
+            ApplicationVersion::try_from("1.2.3")?,
+            Platform::Windows,
+            Arc::new(CancelledPicker),
+        )?;
         let app = mock_builder()
             .manage(root)
-            .invoke_handler(tauri::generate_handler![a3_desktop::commands::query_health])
+            .invoke_handler(tauri::generate_handler![
+                a3_desktop::commands::open_project,
+                a3_desktop::commands::query_health
+            ])
             .build(tauri::generate_context!())?;
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build()?;
         let local_app_url = webview.url()?;
@@ -48,6 +70,47 @@ mod tests {
         assert_eq!(response.application_version(), "1.2.3");
         assert_eq!(response.platform(), PlatformV1::Windows);
         assert_eq!(response.status(), HealthStatusV1::Ready);
+
+        let project_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "open_project".into(),
+                callback: CallbackFn(6),
+                error: CallbackFn(7),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<OpenProjectResponseV1>()?;
+        assert_eq!(project_response.protocol_version(), ProtocolVersion::V1);
+        assert!(matches!(
+            project_response.result(),
+            OpenProjectResultV1::Cancelled
+        ));
+
+        let untrusted_project_path = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "open_project".into(),
+                callback: CallbackFn(8),
+                error: CallbackFn(9),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "selectedPath": "C:\\untrusted"
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        );
+        assert!(untrusted_project_path.is_err());
 
         let invalid_payload = get_ipc_response(
             &webview,
@@ -93,6 +156,19 @@ mod tests {
         assert_eq!(error.protocol_version(), ProtocolVersion::V1);
         assert_eq!(error.code(), ErrorCodeV1::UnsupportedProtocolVersion);
 
+        Ok(())
+    }
+
+    #[test]
+    fn main_capability_exposes_no_direct_dialog_or_filesystem_permission()
+    -> Result<(), Box<dyn Error>> {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main.json"))?;
+
+        assert_eq!(
+            capability.get("permissions"),
+            Some(&json!(["allow-open-project", "allow-query-health"]))
+        );
         Ok(())
     }
 }

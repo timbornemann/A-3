@@ -1,5 +1,6 @@
 use crate::identity;
 use crate::path_policy::{PathPolicy, PathPolicyError, canonicalize_directory};
+use a3_application::{ProjectInspectionFailure, ProjectInspector};
 use a3_domain::{
     GitHead, GitObjectId, GitReferenceName, ProjectIdentity, ProjectIdentityError,
     RepositoryIdentity, WorktreeIdentity,
@@ -55,6 +56,41 @@ impl RepositoryInspector {
         let head = inspect_head(&repository)?;
 
         ProjectIdentity::new(repository_identity, worktree_identity, head).map_err(Into::into)
+    }
+}
+
+impl ProjectInspector for RepositoryInspector {
+    fn inspect_project(
+        &self,
+        selected_root: &Path,
+    ) -> Result<ProjectIdentity, ProjectInspectionFailure> {
+        self.inspect(selected_root)
+            .map_err(classify_inspection_error)
+    }
+}
+
+fn classify_inspection_error(error: RepositoryInspectionError) -> ProjectInspectionFailure {
+    match error {
+        RepositoryInspectionError::PathPolicy(
+            PathPolicyError::Canonicalize { .. }
+            | PathPolicyError::Metadata { .. }
+            | PathPolicyError::NotDirectory(_)
+            | PathPolicyError::UnsupportedFileType(_)
+            | PathPolicyError::InvalidCanonicalPath(_),
+        ) => ProjectInspectionFailure::SelectionUnavailable,
+        RepositoryInspectionError::PathPolicy(PathPolicyError::OutsideRoot { .. })
+        | RepositoryInspectionError::SelectedPathIsNotWorktreeRoot { .. } => {
+            ProjectInspectionFailure::NotWorktreeRoot
+        }
+        RepositoryInspectionError::GitRepositoryOpen => ProjectInspectionFailure::NotRepository,
+        RepositoryInspectionError::BareRepository => {
+            ProjectInspectionFailure::UnsupportedRepository
+        }
+        RepositoryInspectionError::InvalidHead
+        | RepositoryInspectionError::InvalidRemoteConfiguration
+        | RepositoryInspectionError::InvalidIdentity(_) => {
+            ProjectInspectionFailure::InvalidRepositoryMetadata
+        }
     }
 }
 

@@ -1,13 +1,30 @@
 //! Contract tests for the desktop health-query boundary.
 
+use a3_application::{ProjectDirectoryPicker, ProjectDirectorySelectionError};
 use a3_desktop::CompositionRoot;
 use a3_domain::{ApplicationVersion, Platform};
-use a3_protocol::{HealthStatusV1, PlatformV1, ProtocolVersion};
+use a3_protocol::{HealthStatusV1, OpenProjectResultV1, PlatformV1, ProtocolVersion};
 use std::error::Error;
+use std::io;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+#[derive(Debug)]
+struct FixedPicker(Option<PathBuf>);
+
+impl ProjectDirectoryPicker for FixedPicker {
+    fn pick_project_directory(&self) -> Result<Option<PathBuf>, ProjectDirectorySelectionError> {
+        Ok(self.0.clone())
+    }
+}
 
 #[test]
 fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Error>> {
-    let root = CompositionRoot::new(ApplicationVersion::try_from("1.2.3")?, Platform::Windows)?;
+    let root = CompositionRoot::new(
+        ApplicationVersion::try_from("1.2.3")?,
+        Platform::Windows,
+        Arc::new(FixedPicker(None)),
+    )?;
 
     let response = root.query_health();
 
@@ -20,8 +37,34 @@ fn composition_root_maps_domain_health_to_protocol_v1() -> Result<(), Box<dyn Er
 
 #[test]
 fn environment_builds_a_valid_composition_root() -> Result<(), Box<dyn Error>> {
-    let root = CompositionRoot::from_environment()?;
+    let root = CompositionRoot::from_environment(Arc::new(FixedPicker(None)))?;
 
     assert_eq!(root.query_health().application_version(), "0.1.0");
+    Ok(())
+}
+
+#[test]
+fn composition_root_opens_the_explicit_checkout_root() -> Result<(), Box<dyn Error>> {
+    let checkout_root =
+        std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))?;
+    let root = CompositionRoot::new(
+        ApplicationVersion::try_from("1.2.3")?,
+        Platform::Windows,
+        Arc::new(FixedPicker(Some(checkout_root.clone()))),
+    )?;
+
+    let response = root
+        .open_project()
+        .map_err(|error| io::Error::other(error.message().to_owned()))?;
+
+    let OpenProjectResultV1::Opened { project } = response.result() else {
+        return Err("explicit checkout selection was cancelled".into());
+    };
+    assert_eq!(project.repository_id().len(), 64);
+    assert_eq!(project.worktree_id().len(), 64);
+    assert_eq!(
+        project.worktree_root_display(),
+        checkout_root.to_string_lossy()
+    );
     Ok(())
 }

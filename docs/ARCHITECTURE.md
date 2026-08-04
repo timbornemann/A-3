@@ -1,7 +1,7 @@
 # A^3 Systemarchitektur
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-04
 
 ## Architekturziele
 
@@ -138,13 +138,15 @@ Regeln:
 
 ### Projekt öffnen
 
-1. UI sendet einen gewählten Pfad.
-2. Rust kanonisiert und validiert den Pfad.
-3. RepositoryIdentity und WorktreeIdentity werden bestimmt.
-4. Katalog- und Projekt-DB werden geöffnet und migriert.
-5. Letzter Snapshot wird mit dem aktuellen Worktree verglichen.
-6. Ein inkrementeller Fast Index wird geplant.
-7. UI erhält Projektzustand und Fortschrittsereignisse.
+1. UI fordert über den versionierten `open_project`-Command eine native Ordnerauswahl an und sendet keinen Pfad.
+2. Der privilegierte Desktop-Adapter öffnet genau einen nativen Ordnerdialog; Abbruch beendet den Use Case ohne Inspektion.
+3. Rust kanonisiert und validiert ausschließlich den vom Betriebssystemdialog zurückgegebenen Pfad.
+4. RepositoryIdentity, WorktreeIdentity und HEAD-Zustand werden mit isolierter repository-lokaler Git-Konfiguration bestimmt.
+5. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common Directory oder Dateisystemzugriff.
+6. Katalog- und Projekt-DB werden geöffnet und migriert.
+7. Letzter Snapshot wird mit dem aktuellen Worktree verglichen.
+8. Ein inkrementeller Fast Index wird geplant.
+9. UI erhält Projektzustand und Fortschrittsereignisse.
 
 ### Agentenlauf
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "description": "Allows the main window to invoke only the typed health query.",
+  "description": "Allows the main window to invoke only typed A^3 health and project-open commands.",
   "windows": ["main"],
-  "permissions": ["allow-query-health"]
+  "permissions": ["allow-open-project", "allow-query-health"]
 }
