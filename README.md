@@ -11,8 +11,9 @@ Repository-Discovery, inhaltsbasierte Worktree-Snapshots und der versionierte Tr
 LanguageAdapter-Contract sowie die Rust-/Cargo-, TypeScript-/JavaScript-/Package- und
 Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker, die versionierte
 Rankingprojektion, das atomische Publish und der plattformneutrale inkrementelle File-Watcher des
-Fast Index sowie die snapshotgebundene exakte Pfad-, Symbol-, Signatur- und Rollensuche sind
-abgeschlossen. Die weitere Implementierung folgt dem Plan für FTS, Retrieval und Project Map. Die
+Fast Index sowie die snapshotgebundene exakte und fehlertolerante lexikalische Pfad-, Symbol- und
+Signatursuche sind abgeschlossen. Die weitere Implementierung folgt dem Plan für Graph Retrieval,
+Fusion und Project Map. Die
 verbindliche Architektur- und
 Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

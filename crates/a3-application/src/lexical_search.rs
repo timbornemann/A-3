@@ -1,49 +1,51 @@
 use crate::{KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchStore};
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ProjectIdentity,
+    LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery,
+    ProjectIdentity,
 };
 use std::sync::Arc;
 
-/// Inbound use case for deterministic retrieval from one published repository snapshot.
+/// Inbound use case for bounded typo-tolerant retrieval from one published snapshot.
 #[derive(Debug)]
-pub struct SearchExactIndex {
+pub struct SearchLexicalIndex {
     store: Arc<dyn KnowledgeSearchStore>,
 }
 
-impl SearchExactIndex {
+impl SearchLexicalIndex {
     /// Wires the read-only retrieval port.
     #[must_use]
     pub fn new(store: Arc<dyn KnowledgeSearchStore>) -> Self {
         Self { store }
     }
 
-    /// Returns one stable page without exposing persistence rows or engine capabilities.
+    /// Returns one deterministic weighted page without exposing FTS or storage details.
     pub async fn execute(
         &self,
         project: &ProjectIdentity,
-        query: &ExactSearchQuery,
-        page_size: ExactSearchPageSize,
-        cursor: Option<&ExactSearchCursor>,
+        query: &LexicalSearchQuery,
+        page_size: LexicalSearchPageSize,
+        cursor: Option<&LexicalSearchCursor>,
         control: &dyn KnowledgeSearchControl,
-    ) -> Result<ExactSearchPage, KnowledgeSearchFailure> {
+    ) -> Result<LexicalSearchPage, KnowledgeSearchFailure> {
         if control.is_cancelled() {
             return Err(KnowledgeSearchFailure::Cancelled);
         }
         self.store
-            .search_exact(project, query, page_size, cursor, control)
+            .search_lexical(project, query, page_size, cursor, control)
             .await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SearchExactIndex;
+    use super::SearchLexicalIndex;
     use crate::{
         KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     };
     use a3_domain::{
-        ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchTerm,
-        GitHead, GitReferenceName, ProjectIdentity, RepositoryId, RepositoryIdentity,
+        ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GitHead,
+        GitReferenceName, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
+        LexicalSearchQuery, LexicalSearchTerm, ProjectIdentity, RepositoryId, RepositoryIdentity,
         WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
     use futures::executor::block_on;
@@ -76,11 +78,11 @@ mod tests {
         fn search_lexical<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
-            _query: &'a a3_domain::LexicalSearchQuery,
-            _page_size: a3_domain::LexicalSearchPageSize,
-            _cursor: Option<&'a a3_domain::LexicalSearchCursor>,
+            _query: &'a LexicalSearchQuery,
+            _page_size: LexicalSearchPageSize,
+            _cursor: Option<&'a LexicalSearchCursor>,
             _control: &'a dyn KnowledgeSearchControl,
-        ) -> KnowledgeSearchFuture<'a, a3_domain::LexicalSearchPage> {
+        ) -> KnowledgeSearchFuture<'a, LexicalSearchPage> {
             Box::pin(async { Err(KnowledgeSearchFailure::InvalidStoredProjection) })
         }
     }
@@ -89,14 +91,15 @@ mod tests {
     fn cancelled_query_never_crosses_the_storage_boundary() -> Result<(), Box<dyn std::error::Error>>
     {
         let project = project()?;
-        let query = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string("main".to_owned())?);
-        let search = SearchExactIndex::new(Arc::new(MustNotRunStore));
+        let query =
+            LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launcj".to_owned())?);
+        let search = SearchLexicalIndex::new(Arc::new(MustNotRunStore));
 
         assert_eq!(
             block_on(search.execute(
                 &project,
                 &query,
-                ExactSearchPageSize::DEFAULT,
+                LexicalSearchPageSize::DEFAULT,
                 None,
                 &CancelledControl,
             )),

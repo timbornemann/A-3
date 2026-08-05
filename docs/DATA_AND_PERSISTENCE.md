@@ -94,8 +94,8 @@ Schema- oder Adapteränderungen die exakt nächste Generation und liefert sie f�
 Append. Im inkrementellen Pfad übernimmt der Snapshot-Builder unveränderte Revisionen aus der
 persistierten Baseline und hasht nur neue oder vom Watcher gemeldete Pfade; ein sichtbares
 Eventverlustsignal erzwingt den Vollscan. Parser und Graph erzeugen den vollständigen
-deterministischen Publish-Input; Knowledge-Schema V4 veröffentlicht die daraus abgeleiteten Datei-,
-Symbol-, Kanten-, Kandidaten- und Rankprojektionen atomar. FTS folgt in Plan 03. Die Reconciliation entscheidet trotz persistierter Evidenz nie
+deterministischen Publish-Input; Knowledge-Schema V6 veröffentlicht die daraus abgeleiteten Datei-,
+Symbol-, Kanten-, Kandidaten-, Rank-, Exact- und FTS-Projektionen atomar. Die Reconciliation entscheidet trotz persistierter Evidenz nie
 selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:
@@ -198,7 +198,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - exact_search_projections
 - exact_search_symbols
 - exact_search_manifests
+- lexical_search_projections
 - symbol_fts
+- path_fts
 - card_fts
 - semantic_cards
 - embeddings
@@ -243,6 +245,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - Die Exact-Search-Projektion besitzt pro veröffentlichtem Run genau einen Versionsmarker mit
   erwarteter Symbol- und Manifestanzahl. Qualifizierte Namen decken exakt alle veröffentlichten
   Symbole ab; Manifestzeilen referenzieren die aktuelle File Revision desselben Runs.
+- Die Lexical-Search-Projektion besitzt pro veröffentlichtem Run genau einen Versionsmarker mit
+  erwarteter Symbol-, Pfad- und Card-Anzahl. `symbol_fts` und `path_fts` decken exakt die aktuelle
+  Run-Projektion ab; `card_fts` bleibt bis zur evidenzgebundenen Card-Erzeugung leer.
 - EvidenceRef besitzt eine typabhängige, validierte Nutzlast.
 - Claim-Evidence ist many-to-many.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
@@ -274,6 +279,13 @@ FTS indiziert getrennte Felder und gewichtet Namen und Signaturen höher als fre
 
 Rohcode wird nicht pauschal vollständig in FTS dupliziert. Für gezielte Textsuche bleibt ein schneller Repository-Searcher zuständig.
 
+Knowledge-Schema V6 verwendet den eingebetteten FTS5-Trigram-Tokenizer. Untrusted Querytext wird
+zuerst in begrenzte alphanumerische Tokens und daraus in ausschließlich abgeleitete, gequotete
+Trigram-Klauseln transformiert; der vollständige Ausdruck bleibt ein gebundener Parameter. FTS
+liefert nur den Kandidatenkorridor. Die finale Gewichtung, Mindestschwelle und stabile Reihenfolge
+erfolgen deterministisch im Adapter. Pfade bleiben im Treffer als verlustlose Bytes erhalten; nur
+ihre Suchprojektion ist UTF-8 beziehungsweise eine deterministische Prozentkodierung.
+
 ## Vektoren
 
 Embeddings werden nur für normalisierte Semantic Cards und ausgewählte Symbole gespeichert.
@@ -291,13 +303,13 @@ Der Vektorindex ist optional. Bei fehlender Unterstützung bleibt die Funktion �
 
 ## Migrationen
 
-Das implementierte Knowledge-Schema V5 ergänzt die regenerierbaren Tabellen
-`exact_search_projections`, `exact_search_symbols` und `exact_search_manifests` sowie binäre Indizes
-für einfachen Namen, Signatur und qualifizierten Namen. Die Projektion wird gemeinsam mit
-File Revisions, Graph und Ranking in derselben Publish-Transaktion sichtbar. Ein aus V4 migrierter,
-bereits veröffentlichter Run besitzt absichtlich noch keinen Projektionsmarker und liefert bis zum
-nächsten Index-Schema-V2-Publish den typisierten Zustand `ProjectionUnavailable`, statt
-unvollständige Treffer vorzutäuschen.
+Das implementierte Knowledge-Schema V6 ergänzt V5 um `lexical_search_projections`, `symbol_fts`,
+`path_fts` und das für R5 vorbereitete, noch leere `card_fts`. Exact- und Lexical-Projektion werden
+gemeinsam mit File Revisions, Graph und Ranking in derselben Publish-Transaktion sichtbar. Ein aus
+einem älteren Schema migrierter, bereits veröffentlichter Run besitzt absichtlich keinen neueren
+Projektionsmarker und liefert den kanalbezogenen Zustand `ProjectionUnavailable`, statt
+unvollständige Treffer vorzutäuschen. Index-Schema V3 erzwingt beim nächsten Compilerlauf eine
+Neupublikation der lexikalischen Projektion.
 
 - Nur Vorwärtsmigrationen
 - monotone ganzzahlige Schema-Version

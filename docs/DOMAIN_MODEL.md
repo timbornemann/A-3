@@ -115,6 +115,21 @@ Snapshot. Er kann deshalb weder für eine andere Query noch nach einem neueren P
 werden. Exakte qualifizierte Namen stehen vor exakten einfachen Namen und Signaturen; danach folgen
 deren Präfixtreffer. Pfadsuche vergleicht normalisierte Rohbytes und erzeugt keinen Textpfad.
 
+### Lexical Retrieval
+
+Eine `LexicalSearchQuery` enthält höchstens 4 KiB einzeiligen, untrusted Text und zwischen einem und
+32 jeweils mindestens drei Zeichen lange alphanumerische oder `_`-Tokens. Sie ist niemals selbst
+FTS-Syntax. Der Adapter
+erzeugt daraus eine begrenzte Trigram-Abfrage, bindet sie als SQL-Parameter und bewertet höchstens
+512 vorselektierte Kandidaten je Resultatklasse nochmals deterministisch. Symbolname,
+qualifizierter Name, Signatur und Pfad tragen die Gewichte 10, 8, 6 und 4; der stärkste Anteil wird
+als `LexicalSearchExplanation` mit ausgegeben.
+
+Jeder `LexicalSearchHit` trägt `SourceChannel::Lexical`, einen ganzzahligen Score und eine aktuelle
+`FileRevision`. Die stabile Reihenfolge ist absteigender Score, Zielklasse, rohe Pfadbytes,
+qualifizierter Name und `SymbolId`. `LexicalSearchCursor` bindet diesen vollständigen Schlüssel an
+Query, `IndexRunId` und `SnapshotId`; ein Replacement-Publish macht ihn dadurch ungültig.
+
 ## Aggregate
 
 ### Project

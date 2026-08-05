@@ -1,7 +1,7 @@
 use crate::catalog::is_corruption;
 use crate::index_codec;
 use crate::index_publication::{IndexPublicationRepositoryError, read_stable_id};
-use a3_application::{ExactSearchControl, KnowledgeSearchFailure, KnowledgeStoreFailure};
+use a3_application::{KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeStoreFailure};
 use a3_domain::{
     ContentHash, ExactSearchCursor, ExactSearchExplanation, ExactSearchHit, ExactSearchPage,
     ExactSearchPageSize, ExactSearchPosition, ExactSearchQuery, ExactSearchRole, ExactSearchSymbol,
@@ -30,7 +30,7 @@ pub(crate) async fn search_exact(
     query: &ExactSearchQuery,
     page_size: ExactSearchPageSize,
     cursor: Option<&ExactSearchCursor>,
-    control: &dyn ExactSearchControl,
+    control: &dyn KnowledgeSearchControl,
 ) -> Result<ExactSearchPage, ExactSearchRepositoryError> {
     let guard = SearchGuard::new(control)?;
     let transaction = connection
@@ -778,12 +778,12 @@ fn map_decode_error(error: IndexPublicationRepositoryError) -> ExactSearchReposi
 }
 
 struct SearchGuard<'a> {
-    control: &'a dyn ExactSearchControl,
+    control: &'a dyn KnowledgeSearchControl,
     started: Instant,
 }
 
 impl<'a> SearchGuard<'a> {
-    fn new(control: &'a dyn ExactSearchControl) -> Result<Self, ExactSearchRepositoryError> {
+    fn new(control: &'a dyn KnowledgeSearchControl) -> Result<Self, ExactSearchRepositoryError> {
         let guard = Self {
             control,
             started: Instant::now(),
@@ -832,7 +832,9 @@ impl ExactSearchRepositoryError {
         match self {
             Self::IndexUnavailable => KnowledgeSearchFailure::IndexUnavailable,
             Self::InvalidCursor => KnowledgeSearchFailure::InvalidCursor,
-            Self::ProjectionUnavailable => KnowledgeSearchFailure::ProjectionUnavailable,
+            Self::ProjectionUnavailable => {
+                KnowledgeSearchFailure::ProjectionUnavailable(a3_domain::SourceChannel::Exact)
+            }
             Self::InvalidStoredProjection => KnowledgeSearchFailure::InvalidStoredProjection,
             Self::Cancelled => KnowledgeSearchFailure::Cancelled,
             Self::TimedOut => KnowledgeSearchFailure::TimedOut,

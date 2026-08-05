@@ -3,13 +3,14 @@
 mod support;
 
 use a3_application::{
-    ExactSearchControl, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
     RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
     RepositoryIndexControlError, RepositoryIndexMode, RepositoryRescanReason,
 };
 use a3_domain::{
     ExactSearchPageSize, ExactSearchQuery, ExactSearchRole, ExactSearchTerm, IndexSchemaVersion,
-    Progress, RepositoryPath, SnapshotChangeKind,
+    LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm, Progress, RepositoryPath,
+    SnapshotChangeKind,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -43,7 +44,7 @@ impl RepositoryIndexControl for RecordingControl {
     }
 }
 
-impl ExactSearchControl for RecordingControl {
+impl KnowledgeSearchControl for RecordingControl {
     fn is_cancelled(&self) -> bool {
         false
     }
@@ -109,7 +110,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
         assert_eq!(initial.compilation().mode(), RepositoryIndexMode::Full);
         assert_eq!(
             initial.snapshot().index_schema_version(),
-            IndexSchemaVersion::v2()
+            IndexSchemaVersion::v3()
         );
         assert_eq!(initial.compilation().parsed_paths().len(), 4);
         assert_eq!(
@@ -168,6 +169,22 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
                     &project,
                     &omega_query,
                     ExactSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .search_lexical(
+                    &project,
+                    &LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
+                        "omeha".to_owned(),
+                    )?),
+                    LexicalSearchPageSize::DEFAULT,
                     None,
                     &control,
                 )

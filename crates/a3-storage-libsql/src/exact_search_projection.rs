@@ -16,6 +16,10 @@ pub(crate) struct ExactSearchProjection {
 }
 
 impl ExactSearchProjection {
+    pub(crate) fn symbols(&self) -> &[(SymbolId, QualifiedSymbolName)] {
+        &self.symbols
+    }
+
     pub(crate) fn work_units(&self) -> Result<u64, IndexPublicationRepositoryError> {
         [self.symbols.len(), self.manifests.len()]
             .into_iter()

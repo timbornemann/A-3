@@ -523,12 +523,39 @@ const KNOWLEDGE_EXACT_SEARCH_MIGRATION: Migration = Migration {
         ON symbols (index_run_id, signature, symbol_id) WHERE signature IS NOT NULL;",
 };
 
+const KNOWLEDGE_LEXICAL_SEARCH_MIGRATION: Migration = Migration {
+    version: 6,
+    name: "lexical_search_projection",
+    sql: "CREATE TABLE lexical_search_projections (\n\
+      index_run_id BLOB PRIMARY KEY NOT NULL CHECK (length(index_run_id) = 32),\n\
+      projection_version INTEGER NOT NULL CHECK (projection_version = 1),\n\
+      symbol_count INTEGER NOT NULL CHECK (symbol_count BETWEEN 0 AND 1000000),\n\
+      path_count INTEGER NOT NULL CHECK (path_count BETWEEN 0 AND 250000),\n\
+      card_count INTEGER NOT NULL CHECK (card_count BETWEEN 0 AND 1000000),\n\
+      FOREIGN KEY (index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE VIRTUAL TABLE symbol_fts USING fts5(\n\
+        index_run_id UNINDEXED, symbol_id UNINDEXED, repository_path,\n\
+        qualified_name, name, signature, tokenize='trigram case_sensitive 0'\n\
+      );\n\
+      CREATE VIRTUAL TABLE path_fts USING fts5(\n\
+        index_run_id UNINDEXED, repository_path UNINDEXED, path,\n\
+        tokenize='trigram case_sensitive 0'\n\
+      );\n\
+      CREATE VIRTUAL TABLE card_fts USING fts5(\n\
+        index_run_id UNINDEXED, card_id UNINDEXED, title, purpose, body,\n\
+        tokenize='trigram case_sensitive 0'\n\
+      );",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
     KNOWLEDGE_RECONCILIABLE_IDENTITIES_MIGRATION,
     KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION,
     KNOWLEDGE_EXACT_SEARCH_MIGRATION,
+    KNOWLEDGE_LEXICAL_SEARCH_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -561,7 +588,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(5);
+    pub const CURRENT: Self = Self::new(6);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -959,11 +986,12 @@ mod tests {
                      'snapshots', 'snapshot_adapter_revisions', 'snapshot_changes', 'index_runs',\n\
                      'file_revisions', 'symbols', 'symbol_edges', 'unresolved_edges',\n\
                      'ranking_projections', 'exact_search_projections', 'exact_search_symbols',\n\
-                     'exact_search_manifests'\n\
+                     'exact_search_manifests', 'lexical_search_projections', 'symbol_fts',\n\
+                     'path_fts', 'card_fts'\n\
                      )",
                 )
                 .await?,
-                16
+                20
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -1242,6 +1270,54 @@ mod tests {
                 )
                 .await?,
                 0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v6_upgrade_preserves_v5_schema() -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [36; 32];
+            let worktree_id = [37; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..5],
+                5,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE symbol_fts (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 6, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 5);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'lexical_search_projections'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('symbol_fts')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

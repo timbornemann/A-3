@@ -1,4 +1,4 @@
-use crate::{exact_search_projection, index_codec};
+use crate::{exact_search_projection, index_codec, lexical_search_projection};
 use a3_application::{IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
     FileRevision, IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus,
@@ -28,7 +28,9 @@ pub(crate) async fn publish_index(
 ) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
     validate_resource_limits(publication)?;
     let search_projection = exact_search_projection::build_projection(publication)?;
-    let total = publication_work_units(publication, &search_projection)?;
+    let lexical_projection =
+        lexical_search_projection::build_projection(publication, &search_projection)?;
+    let total = publication_work_units(publication, &search_projection, &lexical_projection)?;
     let mut progress = MutationProgress::new(control, total)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -40,6 +42,7 @@ pub(crate) async fn publish_index(
         run_id,
         publication,
         &search_projection,
+        &lexical_projection,
         &mut progress,
     )
     .await;
@@ -60,6 +63,7 @@ async fn publish_index_in_transaction(
     run_id: IndexRunId,
     publication: &IndexPublication,
     search_projection: &exact_search_projection::ExactSearchProjection,
+    lexical_projection: &lexical_search_projection::LexicalSearchProjection,
     progress: &mut MutationProgress<'_>,
 ) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
     progress.checkpoint()?;
@@ -92,6 +96,8 @@ async fn publish_index_in_transaction(
     progress.advance(1)?;
     index_codec::write_publication_rows(transaction, run_id, publication, progress).await?;
     exact_search_projection::write_projection(transaction, run_id, search_projection, progress)
+        .await?;
+    lexical_search_projection::write_projection(transaction, run_id, lexical_projection, progress)
         .await?;
     delete_superseded_publication_rows(transaction, worktree_id, run_id, progress).await?;
 
@@ -127,6 +133,10 @@ async fn delete_superseded_publication_rows(
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
+        "symbol_fts",
+        "path_fts",
+        "card_fts",
+        "lexical_search_projections",
         "exact_search_symbols",
         "exact_search_manifests",
         "exact_search_projections",
@@ -267,6 +277,10 @@ pub(crate) async fn rebuild_regenerable_index(
             "ranking_projections",
             "unresolved_edges",
             "symbol_edges",
+            "symbol_fts",
+            "path_fts",
+            "card_fts",
+            "lexical_search_projections",
             "exact_search_symbols",
             "exact_search_manifests",
             "exact_search_projections",
@@ -292,6 +306,7 @@ pub(crate) async fn rebuild_regenerable_index(
 fn publication_work_units(
     publication: &IndexPublication,
     search_projection: &exact_search_projection::ExactSearchProjection,
+    lexical_projection: &lexical_search_projection::LexicalSearchProjection,
 ) -> Result<u64, IndexPublicationRepositoryError> {
     let publication_units = [
         publication.graph().symbols().len(),
@@ -306,8 +321,11 @@ fn publication_work_units(
             .and_then(|length| total.checked_add(length))
             .ok_or(IndexPublicationRepositoryError::ResourceLimit)
     })?;
+    let exact_units = search_projection.work_units()?;
+    let lexical_units = lexical_projection.work_units()?;
     publication_units
-        .checked_add(search_projection.work_units()?)
+        .checked_add(exact_units)
+        .and_then(|total| total.checked_add(lexical_units))
         .ok_or(IndexPublicationRepositoryError::ResourceLimit)
 }
 
@@ -351,6 +369,10 @@ async fn rebuild_row_count(
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
+        "symbol_fts",
+        "path_fts",
+        "card_fts",
+        "lexical_search_projections",
         "exact_search_symbols",
         "exact_search_manifests",
         "exact_search_projections",
@@ -537,6 +559,10 @@ async fn publication_rows_exist(
         "symbol_edges",
         "unresolved_edges",
         "ranking_projections",
+        "lexical_search_projections",
+        "symbol_fts",
+        "path_fts",
+        "card_fts",
         "exact_search_projections",
         "exact_search_symbols",
         "exact_search_manifests",

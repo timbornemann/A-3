@@ -172,6 +172,12 @@ impl IndexSchemaVersion {
         Self(2)
     }
 
+    /// Returns the weighted lexical-retrieval projection schema revision.
+    #[must_use]
+    pub const fn v3() -> Self {
+        Self(3)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

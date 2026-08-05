@@ -236,6 +236,12 @@ Projektionszeilen älterer Runs in Batches von höchstens 1.024 Zeilen. Leser se
 alten vollständigen Run und danach nur den neuen; Run-Metadaten und Snapshots bleiben historisch
 erhalten. Ein Fehler oder Crash rollt auch die Retention zurück.
 
+Knowledge-Schema V6 ergänzt denselben atomaren Sichtbarkeitswechsel um die versionierte
+Lexical-Search-Projektion. Marker, Symbol-, Pfad- und derzeit leere Card-FTS-Zeilen werden vor dem
+Statuswechsel geschrieben. Replacement-Publish und Rebuild entfernen FTS-Zeilen in denselben
+begrenzten Batches wie Graph- und Exact-Projektionen; ein Leser kann deshalb nie Graph und FTS aus
+verschiedenen Runs kombinieren.
+
 Publish und vollständiges Lesen übernehmen Cancellation und Progress vom besitzenden Job, prüfen
 spätestens nach 1.024 Zeilen erneut, emittieren höchstens 64 monotone Fortschrittswerte und brechen
 nach fünf Minuten kontrolliert ab. Der Rebuild verweigert einen aktiven `building`-Run und entfernt
@@ -402,6 +408,26 @@ Seite begrenzt. Jede Seite prüft Projektionsversion und Zeilenzahlen. Cancellat
 Zwei-Sekunden-Read-Limit werden vor und zwischen Ergebniszeilen geprüft. Der Adapter hält höchstens
 vier bereits vollständig verifizierte, identitätsgebundene Projektdatenbanken offen; rohe Handles
 verlassen ihn nicht.
+
+### Implementierter Lexical-Kanal
+
+Index-Schema V3 materialisiert `symbol_fts` für Pfad, qualifizierten Namen, einfachen Namen und
+Signatur sowie `path_fts` für jede aktuelle File Revision. `card_fts` und sein Zähler sind bereits
+versioniert vorhanden, bleiben aber bis zur evidenzgebundenen Card-Erzeugung in R5 leer. Nicht-UTF-8-
+Pfade behalten im Ergebnis ihre Originalbytes und erhalten nur für FTS eine deterministische
+Prozentkodierung.
+
+Eine validierte Query wird nicht als FTS-Syntax interpretiert. Der Adapter extrahiert aus höchstens
+4 KiB Text maximal 32 alphanumerische beziehungsweise `_`-Tokens, erzeugt daraus gequotete Trigramme und bindet
+den Ausdruck als Parameter. Für längere Tokens begrenzen höchstens acht verteilte Trigramme mit
+einer begrenzten Ein-Fehler-Klausel den Kandidatenraum; pro Symbol- und Pfadklasse werden höchstens 512
+`bm25`-Kandidaten vollständig dekodiert. Die finale ganzzahlige Gewichtung lautet Symbolname 10,
+qualifizierter Name 8, Signatur 6 und Pfad 4. Treffer unter der festen Mindestschwelle entfallen.
+
+Die Sortierung verwendet absteigenden Score, Zielklasse, verlustlose Pfadbytes, qualifizierten Namen
+und `SymbolId`. Der Cursor bindet den vollständigen Schlüssel an Query, Run und Snapshot.
+Projektionsmarker und tatsächliche Zeilenzahlen werden vor jeder Suche verglichen; Cancellation und
+das Zwei-Sekunden-Limit werden vor und zwischen Zeilen geprüft.
 
 Suche erzeugt getrennte Kandidatenlisten für exakt, FTS, Graph, Tests, Memory und Vektor. Die Listen werden normalisiert, über stabile IDs dedupliziert und mit einer versionierten Fusion zusammengeführt.
 

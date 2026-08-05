@@ -1,20 +1,20 @@
-//! Reproducible manual R1 exact-retrieval baseline; excluded from default tests.
+//! Reproducible manual R1/R2 fast-retrieval baseline; excluded from default tests.
 
 mod support;
 
 use a3_application::{
-    ExactSearchControl, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
-    KnowledgeSearchStore,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchStore,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, ContentHash, ExactSearchPageSize, ExactSearchQuery,
     ExactSearchTerm, FileRevision, GitHead, GitReferenceName, GraphSymbol, IndexPublication,
     IndexRunId, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion,
-    LinkedGraph, LocalSymbolId, ParsedSymbol, ProjectIdentity, RankProjection, RankScore,
-    RankingPolicyVersion, RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot,
-    SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
-    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, WorktreeAnchorId, WorktreeGeneration,
-    WorktreeId, WorktreeIdentity,
+    LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTarget, LexicalSearchTerm, LinkedGraph,
+    LocalSymbolId, ParsedSymbol, ProjectIdentity, RankProjection, RankScore, RankingPolicyVersion,
+    RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind,
+    SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
+    SymbolRankSignals, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -27,12 +27,14 @@ const STRUCTURAL_LINES: usize = 100_000;
 const SYMBOL_COUNT: usize = STRUCTURAL_LINES / 2;
 const BASELINE_SAMPLES: usize = 5;
 const EXACT_SAMPLES: usize = 30;
+const LEXICAL_SAMPLES: usize = 30;
 const EXACT_P95_TARGET: Duration = Duration::from_millis(100);
+const LEXICAL_P95_TARGET: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 struct SilentControl;
 
-impl ExactSearchControl for SilentControl {
+impl KnowledgeSearchControl for SilentControl {
     fn is_cancelled(&self) -> bool {
         false
     }
@@ -52,7 +54,7 @@ impl IndexPersistenceControl for SilentControl {
 }
 
 #[test]
-#[ignore = "manual 100,000-structural-line exact-search P95 baseline"]
+#[ignore = "manual 100,000-structural-line exact/FTS-search P95 baseline"]
 fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let temporary = TempDirectory::new()?;
@@ -82,11 +84,24 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
 
         let target = format!("function_{:05}", SYMBOL_COUNT - 1);
         let query = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(target.clone())?);
+        let lexical_query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(format!(
+            "function_{:04}x",
+            (SYMBOL_COUNT - 1) / 10
+        ))?);
         let _warm_exact = store
             .search_exact(
                 &project,
                 &query,
                 ExactSearchPageSize::DEFAULT,
+                None,
+                &SilentControl,
+            )
+            .await?;
+        let _warm_lexical = store
+            .search_lexical(
+                &project,
+                &lexical_query,
+                LexicalSearchPageSize::DEFAULT,
                 None,
                 &SilentControl,
             )
@@ -128,14 +143,40 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
             exact_samples.push(started.elapsed());
             assert_eq!(page.hits().len(), 1);
         }
+        let mut lexical_samples = Vec::with_capacity(LEXICAL_SAMPLES);
+        for _ in 0..LEXICAL_SAMPLES {
+            let started = Instant::now();
+            let page = store
+                .search_lexical(
+                    &project,
+                    &lexical_query,
+                    LexicalSearchPageSize::DEFAULT,
+                    None,
+                    &SilentControl,
+                )
+                .await?;
+            lexical_samples.push(started.elapsed());
+            assert!(page.hits().iter().any(|hit| matches!(
+                hit.target(),
+                LexicalSearchTarget::Symbol(symbol)
+                    if symbol.symbol().parsed().name().as_str() == target
+            )));
+        }
         baseline_samples.sort_unstable();
         exact_samples.sort_unstable();
+        lexical_samples.sort_unstable();
         let baseline_p50 = baseline_samples[BASELINE_SAMPLES / 2];
         let baseline_p95 = baseline_samples[percentile_index(BASELINE_SAMPLES)];
         let exact_p50 = exact_samples[EXACT_SAMPLES / 2];
         let exact_p95 = exact_samples[percentile_index(EXACT_SAMPLES)];
+        let lexical_p50 = lexical_samples[LEXICAL_SAMPLES / 2];
+        let lexical_p95 = lexical_samples[percentile_index(LEXICAL_SAMPLES)];
         println!(
-            "A^3 R1 exact-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols; pre-R1 full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}"
+            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}"
+        );
+        assert!(
+            lexical_p95 <= LEXICAL_P95_TARGET,
+            "lexical-search P95 {lexical_p95:?} exceeded {LEXICAL_P95_TARGET:?}"
         );
         assert!(
             exact_p95 <= EXACT_P95_TARGET,
@@ -187,7 +228,7 @@ fn fixture(worktree_id: WorktreeId) -> Result<(Snapshot, IndexPublication), Box<
         GitHead::Unborn {
             reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
         },
-        IndexSchemaVersion::v2(),
+        IndexSchemaVersion::v3(),
         vec![LanguageAdapterRevision::new(
             a3_domain::IndexLanguage::Rust,
             LanguageAdapterVersion::try_from_string("performance-rust-1".to_owned())?,

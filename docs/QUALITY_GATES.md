@@ -117,6 +117,14 @@ verifizierter, identitätsgebundener Datenbankhandles P50 37,0 ms und P95 39,7 m
 mit erneutem Open, Migration und Integritätsprüfung pro Query lag bei P50 554,0 ms und P95 570,5 ms.
 Auch diese lokale Messung ersetzt nicht die abschließende V1-Referenzmessung.
 
+R2 verwendet dasselbe Fixture und denselben Release-Test für eine absichtlich falsch geschriebene
+FTS-Query. Die erste breite Trigram-`OR`-Messung lag bei P50 194,1 ms und P95 195,9 ms; eine reine
+Reduktion auf 512 nachbewertete Kandidaten erreichte P50 169,1 ms und P95 201,8 ms und verfehlte das
+Gate weiterhin. Die begrenzte Ein-Fehler-Abfrage mit zusätzlichem Endanker erreichte am 2026-08-05
+über 30 Samples P50 34,9 ms und P95 35,3 ms. Der unveränderte vollständige Index-Load plus Scan lag
+in diesem Lauf über fünf Samples bei P50 1,145 s und P95 1,189 s; Exact Search erreichte P50 38,3 ms
+und P95 41,5 ms.
+
 Modellmetriken werden separat erfasst:
 
 - Time to First Token

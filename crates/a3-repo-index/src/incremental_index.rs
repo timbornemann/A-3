@@ -111,7 +111,7 @@ impl BuiltinIncrementalIndexCompiler {
 impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     fn compatibility(&self) -> Result<SnapshotCompatibility, RepositoryIndexCompilerFailure> {
         SnapshotCompatibility::new(
-            IndexSchemaVersion::v2(),
+            IndexSchemaVersion::v3(),
             self.adapters()
                 .into_iter()
                 .map(|adapter| adapter.revision().clone())

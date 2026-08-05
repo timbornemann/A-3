@@ -1,23 +1,24 @@
 use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{
-    ExactSearchControl, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
-    KnowledgeSearchFailure, KnowledgeSearchStore,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchStore,
 };
 use a3_domain::{
     Centrality, Confidence, ContentHash, EvidenceRef, ExactSearchExplanation, ExactSearchPageSize,
     ExactSearchQuery, ExactSearchRole, ExactSearchTarget, ExactSearchTerm, FileRevision, GraphEdge,
-    GraphEndpoint, GraphSymbol, IndexPublication, LinkResolution, LinkedGraph, LocalSymbolId,
-    ParsedSymbol, RankProjection, RankScore, RankingPolicyVersion, RepositoryId, RepositoryPath,
-    SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName,
-    SymbolRank, SymbolRankSignals, SymbolRole, SymbolSignature, SyntaxProvider, SyntaxRelationKind,
-    WorktreeId,
+    GraphEndpoint, GraphSymbol, IndexPublication, LexicalSearchExplanation, LexicalSearchPageSize,
+    LexicalSearchQuery, LexicalSearchTarget, LexicalSearchTerm, LinkResolution, LinkedGraph,
+    LocalSymbolId, ParsedSymbol, RankProjection, RankScore, RankingPolicyVersion, RepositoryId,
+    RepositoryPath, SnapshotChangeKind, SnapshotId, SourceChannel, SourcePosition, SourceRange,
+    SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SymbolSignature,
+    SyntaxProvider, SyntaxRelationKind, WorktreeId,
 };
 
 #[derive(Debug)]
 struct SearchControl;
 
-impl ExactSearchControl for SearchControl {
+impl KnowledgeSearchControl for SearchControl {
     fn is_cancelled(&self) -> bool {
         false
     }
@@ -26,7 +27,7 @@ impl ExactSearchControl for SearchControl {
 #[derive(Debug)]
 struct CancelledSearchControl;
 
-impl ExactSearchControl for CancelledSearchControl {
+impl KnowledgeSearchControl for CancelledSearchControl {
     fn is_cancelled(&self) -> bool {
         true
     }
@@ -64,12 +65,26 @@ where
     let store = factory.open(&app_data).await?;
     let launch_query =
         ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string("launch".to_owned())?);
+    let typo_query =
+        LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launcj".to_owned())?);
     assert_eq!(
         store
             .search_exact(
                 &project,
                 &launch_query,
                 ExactSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::IndexUnavailable)
+    );
+    assert_eq!(
+        store
+            .search_lexical(
+                &project,
+                &typo_query,
+                LexicalSearchPageSize::DEFAULT,
                 None,
                 &control,
             )
@@ -85,10 +100,11 @@ where
         vec![
             change(b"Cargo.toml", [1; 32], SnapshotChangeKind::Upsert)?,
             change(b"src/lib.rs", [2; 32], SnapshotChangeKind::Upsert)?,
+            change(b"obsolete.rs", [4; 32], SnapshotChangeKind::Upsert)?,
         ],
     )?;
     store.append_snapshot(&project, &first_snapshot).await?;
-    let first_publication = publication(first_snapshot.id(), [2; 32], 10)?;
+    let first_publication = publication(first_snapshot.id(), [2; 32], 10, true)?;
     let first_run = store
         .start_index_run(&project, run([83; 32], first_snapshot.id(), 1)?)
         .await?;
@@ -101,6 +117,18 @@ where
                 &project,
                 &launch_query,
                 ExactSearchPageSize::DEFAULT,
+                None,
+                &CancelledSearchControl,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::Cancelled)
+    );
+    assert_eq!(
+        store
+            .search_lexical(
+                &project,
+                &typo_query,
+                LexicalSearchPageSize::DEFAULT,
                 None,
                 &CancelledSearchControl,
             )
@@ -218,17 +246,124 @@ where
             .is_empty()
     );
 
+    let lexical_one = LexicalSearchPageSize::new(1)?;
+    let lexical_first = store
+        .search_lexical(&project, &typo_query, lexical_one, None, &control)
+        .await?;
+    assert_eq!(lexical_first.index_run_id(), first_run.id());
+    assert_eq!(lexical_first.snapshot_id(), first_snapshot.id());
+    assert_eq!(lexical_first.hits().len(), 1);
+    assert_eq!(
+        lexical_first.hits()[0].source_channel(),
+        SourceChannel::Lexical
+    );
+    assert_eq!(
+        lexical_first.hits()[0].explanation(),
+        LexicalSearchExplanation::SymbolName
+    );
+    assert_eq!(lexical_first.hits()[0].score().get(), 75_000);
+    let lexical_cursor = lexical_first
+        .next_cursor()
+        .cloned()
+        .ok_or("first lexical-search page has no continuation")?;
+    assert_eq!(
+        store
+            .search_lexical(&project, &typo_query, lexical_one, None, &control)
+            .await?,
+        lexical_first
+    );
+    let lexical_second = store
+        .search_lexical(
+            &project,
+            &typo_query,
+            lexical_one,
+            Some(&lexical_cursor),
+            &control,
+        )
+        .await?;
+    assert_eq!(lexical_second.hits().len(), 1);
+    assert!(lexical_second.next_cursor().is_none());
+    let signature_page = store
+        .search_lexical(
+            &project,
+            &LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("nested".to_owned())?),
+            LexicalSearchPageSize::DEFAULT,
+            None,
+            &control,
+        )
+        .await?;
+    assert_eq!(signature_page.hits().len(), 1);
+    assert_eq!(
+        signature_page.hits()[0].explanation(),
+        LexicalSearchExplanation::Signature
+    );
+    let injection = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
+        "zzzinjection' OR 1=1 --".to_owned(),
+    )?);
+    assert!(
+        store
+            .search_lexical(
+                &project,
+                &injection,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?
+            .hits()
+            .is_empty()
+    );
+    let obsolete_query =
+        LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("obsolete".to_owned())?);
+    let obsolete = store
+        .search_lexical(
+            &project,
+            &obsolete_query,
+            LexicalSearchPageSize::DEFAULT,
+            None,
+            &control,
+        )
+        .await?;
+    assert!(obsolete.hits().iter().any(|hit| matches!(
+        hit.target(),
+        LexicalSearchTarget::File(revision)
+            if revision.path().as_bytes() == b"obsolete.rs"
+    )));
+    let removed_symbol_query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
+        "removed_symbol".to_owned(),
+    )?);
+    assert!(
+        store
+            .search_lexical(
+                &project,
+                &removed_symbol_query,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?
+            .hits()
+            .iter()
+            .any(
+                |hit| matches!(hit.target(), LexicalSearchTarget::Symbol(symbol)
+            if symbol.symbol().parsed().name().as_str() == "removed_symbol")
+            )
+    );
+
     let replacement_snapshot = snapshot(
         [84; 32],
         worktree_id,
         Some(first_snapshot.id()),
         2,
-        vec![change(b"src/lib.rs", [3; 32], SnapshotChangeKind::Upsert)?],
+        vec![
+            change(b"src/lib.rs", [3; 32], SnapshotChangeKind::Upsert)?,
+            change(b"obsolete.rs", [4; 32], SnapshotChangeKind::Delete)?,
+        ],
     )?;
     store
         .append_snapshot(&project, &replacement_snapshot)
         .await?;
-    let replacement_publication = publication(replacement_snapshot.id(), [3; 32], 20)?;
+    let replacement_publication = publication(replacement_snapshot.id(), [3; 32], 20, false)?;
     let replacement_run = store
         .start_index_run(&project, run([85; 32], replacement_snapshot.id(), 1)?)
         .await?;
@@ -256,6 +391,57 @@ where
         )
         .await?;
     assert_file_hit(&current_path, b"src/lib.rs", [3; 32])?;
+    assert_eq!(
+        store
+            .search_lexical(
+                &project,
+                &typo_query,
+                lexical_one,
+                Some(&lexical_cursor),
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::InvalidCursor)
+    );
+    assert!(
+        store
+            .search_lexical(
+                &project,
+                &obsolete_query,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?
+            .hits()
+            .is_empty()
+    );
+    assert!(
+        store
+            .search_lexical(
+                &project,
+                &removed_symbol_query,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?
+            .hits()
+            .is_empty()
+    );
+    store.rebuild_regenerable_index(&project, &control).await?;
+    assert_eq!(
+        store
+            .search_lexical(
+                &project,
+                &typo_query,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::IndexUnavailable)
+    );
     Ok(())
 }
 
@@ -332,6 +518,7 @@ fn publication(
     snapshot_id: SnapshotId,
     source_hash: [u8; 32],
     id_base: u8,
+    include_obsolete: bool,
 ) -> ContractResult<IndexPublication> {
     let manifest = FileRevision::new(
         RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?,
@@ -345,6 +532,7 @@ fn publication(
     let root_id = SymbolId::from_bytes([id_base; 32]);
     let module_id = SymbolId::from_bytes([id_base + 1; 32]);
     let nested_id = SymbolId::from_bytes([id_base + 2; 32]);
+    let obsolete_id = SymbolId::from_bytes([id_base + 3; 32]);
     let root = GraphSymbol::new(
         root_id,
         source.clone(),
@@ -408,14 +596,30 @@ fn publication(
             &evidence,
         ),
     ];
-    let graph = LinkedGraph::new(
-        snapshot_id,
-        vec![manifest.clone(), source],
-        vec![root, module, nested],
-        edges,
-        Vec::new(),
-    )?;
-    let ranks = [root_id, module_id, nested_id]
+    let obsolete = FileRevision::new(
+        RepositoryPath::try_from_bytes(b"obsolete.rs".to_vec())?,
+        ContentHash::from_bytes([4; 32]),
+    );
+    let mut files = vec![manifest.clone(), source];
+    let mut symbols = vec![root, module, nested];
+    let mut rank_ids = vec![root_id, module_id, nested_id];
+    if include_obsolete {
+        files.push(obsolete.clone());
+        symbols.push(GraphSymbol::new(
+            obsolete_id,
+            obsolete,
+            ParsedSymbol::new(
+                LocalSymbolId::new(4)?,
+                SymbolKind::Function,
+                SymbolName::try_from_string("removed_symbol".to_owned())?,
+                range,
+                range,
+            )?,
+        ));
+        rank_ids.push(obsolete_id);
+    }
+    let graph = LinkedGraph::new(snapshot_id, files, symbols, edges, Vec::new())?;
+    let ranks = rank_ids
         .into_iter()
         .map(|symbol_id| {
             Ok(SymbolRank::new(

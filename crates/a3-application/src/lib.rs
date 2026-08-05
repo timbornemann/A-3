@@ -7,6 +7,7 @@ mod knowledge_index_store;
 mod knowledge_search_store;
 mod knowledge_store;
 mod language_adapter;
+mod lexical_search;
 mod open_project;
 mod project_reconciliation;
 mod recent_projects;
@@ -29,7 +30,7 @@ pub use knowledge_index_store::{
     KnowledgeIndexFuture, KnowledgeIndexStore,
 };
 pub use knowledge_search_store::{
-    ExactSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
 };
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
@@ -39,6 +40,7 @@ pub use language_adapter::{
     LanguageAdapter, LanguageParseControl, LanguageParseControlError, LanguageParseFailure,
     LanguageParseInput, LanguageParsePolicy,
 };
+pub use lexical_search::SearchLexicalIndex;
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,
     ProjectDirectorySelectionError, ProjectInspectionFailure, ProjectInspector,

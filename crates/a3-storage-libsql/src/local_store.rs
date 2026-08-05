@@ -5,17 +5,18 @@ use crate::{
 };
 use crate::{
     exact_search_repository, index_publication, index_repository,
-    index_repository::IndexRepositoryError,
+    index_repository::IndexRepositoryError, lexical_search_repository,
 };
 use a3_application::{
-    ExactSearchControl, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
-    KnowledgeIndexStore, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
+    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
     ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, IndexPublication,
-    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectId, ProjectIdentity,
+    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor,
+    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity,
     PublishedIndex, RepositoryId, Snapshot, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -382,11 +383,34 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
         query: &'a ExactSearchQuery,
         page_size: ExactSearchPageSize,
         cursor: Option<&'a ExactSearchCursor>,
-        control: &'a dyn ExactSearchControl,
+        control: &'a dyn KnowledgeSearchControl,
     ) -> KnowledgeSearchFuture<'a, ExactSearchPage> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_search(project).await?;
             exact_search_repository::search_exact(
+                knowledge.connection(),
+                project.worktree().id(),
+                query,
+                page_size,
+                cursor,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn search_lexical<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a LexicalSearchQuery,
+        page_size: LexicalSearchPageSize,
+        cursor: Option<&'a LexicalSearchCursor>,
+        control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, LexicalSearchPage> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_search(project).await?;
+            lexical_search_repository::search_lexical(
                 knowledge.connection(),
                 project.worktree().id(),
                 query,

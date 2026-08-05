@@ -8,6 +8,8 @@ mod index_publication;
 mod index_repository;
 mod knowledge;
 mod layout;
+mod lexical_search_projection;
+mod lexical_search_repository;
 mod local_store;
 mod migration;
 mod project_catalog;

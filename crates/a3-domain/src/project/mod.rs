@@ -4,6 +4,7 @@ mod graph;
 mod id;
 mod index_run;
 mod language;
+mod lexical_retrieval;
 mod path;
 mod retrieval;
 mod revision;
@@ -38,6 +39,12 @@ pub use language::{
     SourceRangeError, SymbolKind, SymbolName, SymbolReference, SymbolReferenceError, SymbolRole,
     SymbolRoles, SymbolSignature, SymbolTextError, SymbolVisibility, SyntaxProvider,
     SyntaxRelation, SyntaxRelationKind, SyntaxSource, SyntaxTarget,
+};
+pub use lexical_retrieval::{
+    LexicalScore, LexicalScoreError, LexicalSearchCursor, LexicalSearchExplanation,
+    LexicalSearchHit, LexicalSearchPage, LexicalSearchPageError, LexicalSearchPageSize,
+    LexicalSearchPageSizeError, LexicalSearchPosition, LexicalSearchQuery, LexicalSearchSymbol,
+    LexicalSearchTarget, LexicalSearchTerm, LexicalSearchTermError,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
 pub use retrieval::{

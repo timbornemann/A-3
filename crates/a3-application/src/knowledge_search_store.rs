@@ -1,6 +1,7 @@
 use crate::{JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ProjectIdentity,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, LexicalSearchCursor,
+    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ProjectIdentity, SourceChannel,
 };
 use std::error::Error;
 use std::fmt;
@@ -12,12 +13,12 @@ pub type KnowledgeSearchFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, KnowledgeSearchFailure>> + Send + 'a>>;
 
 /// Cooperative cancellation boundary for bounded local retrieval.
-pub trait ExactSearchControl: fmt::Debug + Send + Sync {
+pub trait KnowledgeSearchControl: fmt::Debug + Send + Sync {
     /// Returns whether the owning operation requested cancellation.
     fn is_cancelled(&self) -> bool;
 }
 
-impl ExactSearchControl for JobContext {
+impl KnowledgeSearchControl for JobContext {
     fn is_cancelled(&self) -> bool {
         self.cancellation_token().is_cancelled()
     }
@@ -34,8 +35,18 @@ pub trait KnowledgeSearchStore: fmt::Debug + Send + Sync {
         query: &'a ExactSearchQuery,
         page_size: ExactSearchPageSize,
         cursor: Option<&'a ExactSearchCursor>,
-        control: &'a dyn ExactSearchControl,
+        control: &'a dyn KnowledgeSearchControl,
     ) -> KnowledgeSearchFuture<'a, ExactSearchPage>;
+
+    /// Searches weighted lexical candidates from exactly one atomically published index.
+    fn search_lexical<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a LexicalSearchQuery,
+        page_size: LexicalSearchPageSize,
+        cursor: Option<&'a LexicalSearchCursor>,
+        control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, LexicalSearchPage>;
 }
 
 /// Stable application classification of deterministic retrieval failures.
@@ -47,8 +58,8 @@ pub enum KnowledgeSearchFailure {
     IndexUnavailable,
     /// The supplied cursor belongs to another query, snapshot, or published run.
     InvalidCursor,
-    /// The published run predates the required exact-search projection.
-    ProjectionUnavailable,
+    /// The published run predates the required channel-specific projection.
+    ProjectionUnavailable(SourceChannel),
     /// Durable retrieval rows violated a domain or publication invariant.
     InvalidStoredProjection,
     /// The owning operation cancelled retrieval.
@@ -63,15 +74,17 @@ impl fmt::Display for KnowledgeSearchFailure {
             Self::Storage(error) => write!(formatter, "knowledge search storage failed: {error}"),
             Self::IndexUnavailable => formatter.write_str("no published index is available"),
             Self::InvalidCursor => {
-                formatter.write_str("exact-search cursor is stale or does not match the query")
+                formatter.write_str("search cursor is stale or does not match the query")
             }
-            Self::ProjectionUnavailable => formatter
-                .write_str("exact-search projection is not available for the published run"),
+            Self::ProjectionUnavailable(channel) => write!(
+                formatter,
+                "{channel:?} search projection is not available for the published run"
+            ),
             Self::InvalidStoredProjection => {
-                formatter.write_str("stored exact-search projection is invalid")
+                formatter.write_str("stored search projection is invalid")
             }
-            Self::Cancelled => formatter.write_str("exact search was cancelled"),
-            Self::TimedOut => formatter.write_str("exact search timed out"),
+            Self::Cancelled => formatter.write_str("knowledge search was cancelled"),
+            Self::TimedOut => formatter.write_str("knowledge search timed out"),
         }
     }
 }
@@ -82,7 +95,7 @@ impl Error for KnowledgeSearchFailure {
             Self::Storage(source) => Some(source),
             Self::IndexUnavailable
             | Self::InvalidCursor
-            | Self::ProjectionUnavailable
+            | Self::ProjectionUnavailable(_)
             | Self::InvalidStoredProjection
             | Self::Cancelled
             | Self::TimedOut => None,

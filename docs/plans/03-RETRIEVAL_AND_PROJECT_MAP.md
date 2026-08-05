@@ -48,11 +48,37 @@ Akzeptanz:
 
 Abhängigkeiten: R1
 
-- [ ] FTS-Schema für Namen, Signaturen, Pfade und Cards
-- [ ] gewichtete Felder
-- [ ] transaktionale Aktualisierung mit Index Publish
-- [ ] Queryescaping und Limits
-- [ ] Delete- und Rebuildtests
+Status: Completed
+
+- [x] FTS-Schema für Namen, Signaturen, Pfade und Cards
+- [x] gewichtete Felder
+- [x] transaktionale Aktualisierung mit Index Publish
+- [x] Queryescaping und Limits
+- [x] Delete- und Rebuildtests
+
+Verifizierter Abschluss vom 2026-08-05: Index-Schema V3 und Knowledge-Schema V6 materialisieren
+eine versionierte FTS5-Trigram-Projektion für einfachen und qualifizierten Symbolnamen, Signatur und
+Pfad im selben atomaren Publish wie File Revisions, Graph, Ranking und Exact Search. Das
+evidenzgebundene Card-Schema ist bereits vorhanden und über `card_count = 0` vollständig geprüft;
+inhaltliche Card-Zeilen folgen erst mit R5 und werden nicht vorgetäuscht. Replacement-Publish und
+Rebuild entfernen alle Symbol-, Pfad- und Card-FTS-Zeilen begrenzt und transaktional.
+
+Der infra-freie Domain-Vertrag begrenzt untrusted Querytext auf 4 KiB und höchstens 32 mindestens
+drei Zeichen lange Suchtokens und bindet Treffer und Cursor an Source Channel, Erklärung, Score,
+aktuelle `FileRevision`, Query, Run und Snapshot. Der Adapter transformiert niemals Rohtext in SQL,
+sondern ausschließlich normalisierte Tokens in gequotete Trigramme und übergibt auch den daraus
+gebildeten FTS-Ausdruck als Parameter. FTS ist nur Kandidatengenerierung; die finale deterministische
+Gewichtung lautet Name 10, qualifizierter Name 8, Signatur 6 und Pfad 4. Je Klasse werden höchstens
+512 Kandidaten unter Cancellation und festem Zwei-Sekunden-Limit geprüft.
+
+Der gemeinsame Storage-Vertrag belegt Identifier- und Signatur-Top-Treffer, Tippfehlertoleranz,
+identische Wiederholung, Mehrseitenabfrage, SQL-Injection als Daten, Cancellation, stale Cursor,
+aktuelle Revisionen, das Verschwinden eines gelöschten Pfads nach Replacement-Publish und einen
+leeren Index nach Rebuild. Migrationsleerstand, alle Vorgängerversionen und der Rollback einer
+fehlgeschlagenen V6-Migration sind getestet. Die reproduzierbare Release-Messung mit 50.000
+Symbolen aus 100.000 strukturellen Zeilen erreichte über 30 Tippfehler-Queries P50 34,9 ms und
+P95 35,3 ms. Die dokumentierten verworfenen breiten Kandidatenabfragen lagen bei P95 195,9 ms und
+201,8 ms; der vollständige Index-Load plus Scan des finalen Laufs lag bei P95 1,189 s.
 
 Akzeptanz:
 
