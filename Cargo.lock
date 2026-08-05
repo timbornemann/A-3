@@ -32,6 +32,9 @@ dependencies = [
 [[package]]
 name = "a3-domain"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "a3-language-adapter-contract-tests"

@@ -195,6 +195,28 @@ Invarianten:
 - Ein ungültiger EvidenceRef macht abhängige Claims stale.
 - Embeddings sind abgeleitete Beschleunigungsdaten, keine Evidenz.
 
+### Optionale Semantik
+
+`NormalizedSemanticCard` gehört genau einem `SnapshotId`, besitzt eine logische
+`SemanticCardId`, eine `SemanticCardNormalizationVersion` und einen aus dem kanonischen Körper
+domänensepariert abgeleiteten `BodyHash`. Normalisierung V1 vereinheitlicht Zeilenenden und
+Whitespace, entfernt leere Ränder, begrenzt Rohinput auf 64 KiB sowie den kanonischen Körper auf
+16 KiB und lehnt sonstige Steuerzeichen ab. Ein `SemanticCardBatch` enthält höchstens 512 Karten
+desselben Snapshots und keine doppelte logische ID.
+
+`EmbeddingModelProfile` ist die embedding-spezifische Capability-Projektion vor dem späteren
+allgemeinen LLM-`ModelProfile`. V1 bindet Provider-ID, opaque Modell-ID, 1 bis 8.192 Dimensionen,
+Float32, keine Quantisierung und L2-Einheitsnormalisierung an eine abgeleitete `ModelProfileId`.
+Provider-Batchgröße und Requesttimeout sind Betriebsgrenzen und ändern diese
+Vektorkompatibilitäts-ID nicht. `EmbeddingVector` kann nur mit exakt passender Dimension,
+endlichen Komponenten und von null verschiedener Norm entstehen; seine Komponenten werden in
+Debugausgaben nicht offengelegt.
+
+Der regenerierbare Cache-Schlüssel ist exakt `(SemanticCardId, ModelProfileId, BodyHash)`.
+`VectorHit` trägt Card-, Body- und Profilidentität sowie normalisierte Similarity, aber keine
+`EvidenceRef`; sein einziger `SourceChannel` ist `Semantic`. `VectorSearchResult` bindet Treffer an
+Snapshot, Profil, Capability und Resultlimit und kanonisiert Gleichstände über Card- und Body-ID.
+
 ### Task
 
 Verwaltet Goal Contract, Akzeptanzkriterien, Schritte, Entscheidungen, Runs und Abschluss.

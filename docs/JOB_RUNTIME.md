@@ -55,3 +55,18 @@ Der Shutdown-Report enthält die Anzahl gejointer Worker, geordnete finale Job-S
 ## Zeit und deterministische Prüfung
 
 `a3-application` hängt ausschließlich vom `JobClock`-Port ab. Der Desktop injiziert eine monotone, auf `Instant` basierende Systemuhr. Tests verwenden eine atomar steuerbare `FakeClock`, damit Ereignisreihenfolge und Zeitstempel unabhängig von der Wanduhr reproduzierbar bleiben.
+
+## Optionaler Embedding-Batchjob
+
+`SemanticEmbeddingBatchJob` ist ein Scheduler-eigener, lokaler und regenerierbarer Job. Im
+Defaultzustand `GenerateSemanticEmbeddings::disabled()` existiert weder eine Provider- noch eine
+Cache-Capability. Der aktivierte Zustand besitzt beide Ports zusammen mit einer injizierten
+Creation-Clock und einem positiven, höchstens zweiminütigen Provider-Requesttimeout.
+
+Ein Job verarbeitet höchstens 512 kanonische Cards desselben Snapshots. Cachelookup verwendet nur
+den exakten Card-/Profil-/BodyHash-Schlüssel; Misses werden in Providerbatches von höchstens 64
+Karten verarbeitet. Cancellation wird vor Cachezugriff, vor und nach jedem Providerrequest sowie
+vor dem persistierenden Batchcommit beobachtet. Progress zählt bereits vorhandene und erfolgreich
+persistierte Cards gegen ein unveränderliches Total. Falsche Ergebnisanzahl, Dimension, NaN,
+Unendlichkeit oder Nullvektor beendet den Job vor Storage als `Failed`; kooperative Cancellation
+endet als `Cancelled`. Kein Worker wird detached.

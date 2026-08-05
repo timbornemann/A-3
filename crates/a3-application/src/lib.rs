@@ -1,5 +1,6 @@
 //! Application use cases and ports for A^3.
 
+mod embedding_provider;
 mod exact_search;
 mod graph_traversal;
 mod health_query;
@@ -17,7 +18,14 @@ mod repository_index;
 mod repository_snapshot;
 mod repository_watcher;
 mod retrieval_fusion;
+mod semantic_embedding_store;
+mod semantic_embeddings;
 
+pub use embedding_provider::{
+    EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
+    EmbeddingProviderFuture, EmbeddingRequestTimeout, EmbeddingRequestTimeoutError,
+    RawEmbeddingBatch, RawEmbeddingBatchError,
+};
 pub use exact_search::SearchExactIndex;
 pub use graph_traversal::TraverseKnowledgeGraph;
 pub use health_query::{GetHealth, HealthQuery};
@@ -75,3 +83,11 @@ pub use repository_watcher::{
     RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,
 };
 pub use retrieval_fusion::FuseRetrievalCandidates;
+pub use semantic_embedding_store::{
+    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+};
+pub use semantic_embeddings::{
+    EmbeddingClock, EmbeddingClockFailure, EmbeddingExecutionMode, EmbeddingProgressError,
+    GenerateSemanticEmbeddings, GenerateSemanticEmbeddingsError, GenerateSemanticEmbeddingsOutcome,
+    SemanticEmbeddingBatchJob, SemanticEmbeddingJobControl,
+};

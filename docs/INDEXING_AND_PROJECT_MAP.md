@@ -474,6 +474,22 @@ Evalbaseline aus Gate M4/M5.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.
 
+### R5 Semantic- und Providervertrag
+
+Die implementierte R5-Vorstufe normalisiert bounded Semantic Cards deterministisch und verwendet
+ihren `BodyHash` zusammen mit `SemanticCardId` und der aus allen vektorformenden Profilfeldern
+abgeleiteten `ModelProfileId` als einzig zulässigen Cacheschlüssel. Modellnamen steuern keine
+Capability; Dimension, Float32-Datentyp, Quantisierung und L2-Normalisierung sind explizit
+validierte Profilfelder. Provideroutput wird begrenzt, dimensionsgeprüft und normalisiert, bevor
+der Storage-Port ihn sehen kann.
+
+Embeddings sind konstruktiv optional: Der deaktivierte Use Case besitzt keine Provider- oder
+Cacheobjekte. Der aktivierte lokale Batchjob arbeitet snapshotgebunden, cancellable, mit
+monotonem Progress und einem expliziten Requesttimeout. `VectorHit` enthält Similarity und
+Cacheprovenienz, aber keine Evidence. Das persistente libSQL-Schema, die native Vector-Capability
+und der lineare Fallback werden im folgenden R5-Slice ergänzt; bis dahin wird keine Verfügbarkeit
+dieser Adapterfunktion behauptet.
+
 Jeder Treffer erklärt seine Herkunft:
 
 - exact identifier

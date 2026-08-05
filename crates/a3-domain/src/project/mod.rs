@@ -1,4 +1,5 @@
 mod discovery;
+mod embedding;
 mod git;
 mod graph;
 mod graph_retrieval;
@@ -10,12 +11,22 @@ mod path;
 mod retrieval;
 mod retrieval_fusion;
 mod revision;
+mod semantic_card;
 mod snapshot;
 
 pub use discovery::{
     DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveredFileRolesError,
     DiscoveryExclusionCounts, DiscoveryExclusionReason, DiscoveryOrigin, DiscoveryPolicy,
     DiscoveryPolicyVersion, DiscoveryPolicyVersionError, DiscoveryResult, DiscoveryResultError,
+};
+pub use embedding::{
+    EmbeddingBatchSize, EmbeddingBatchSizeError, EmbeddingCacheKey, EmbeddingDataType,
+    EmbeddingDimension, EmbeddingDimensionError, EmbeddingModelId, EmbeddingModelProfile,
+    EmbeddingProfileTextError, EmbeddingProfileTextKind, EmbeddingProviderId,
+    EmbeddingQuantization, EmbeddingTimestamp, EmbeddingTimestampError, EmbeddingVector,
+    EmbeddingVectorError, EmbeddingVectorNormalization, ModelProfileId, SemanticEmbedding,
+    VectorHit, VectorSearchCapability, VectorSearchLimit, VectorSearchLimitError,
+    VectorSearchResult, VectorSearchResultError,
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
 pub use graph::{
@@ -75,6 +86,10 @@ pub use retrieval_fusion::{
 pub use revision::{
     FileDelta, FileRevision, RenameCandidate, RepositoryFileState, RepositoryFileStateError,
     SnapshotDelta,
+};
+pub use semantic_card::{
+    BodyHash, NormalizedSemanticCard, SemanticCardBatch, SemanticCardBatchError, SemanticCardId,
+    SemanticCardNormalizationError, SemanticCardNormalizationVersion,
 };
 pub use snapshot::{
     ContentHash, IndexLanguage, IndexSchemaVersion, IndexSchemaVersionError,

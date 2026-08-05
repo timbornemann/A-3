@@ -9,8 +9,6 @@ license.workspace = true
 [dependencies]
 a3-domain.workspace = true
 crossbeam-channel.workspace = true
-
-[dev-dependencies]
 futures.workspace = true
 
 [lints]

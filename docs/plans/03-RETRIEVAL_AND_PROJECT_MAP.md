@@ -169,13 +169,36 @@ Akzeptanz:
 
 Abhängigkeiten: R4
 
-- [ ] EmbeddingProvider-Port
-- [ ] ModelProfile und Dimensionvalidierung
-- [ ] Semantic-Card-Normalisierung
+Status: In Progress
+
+- [x] EmbeddingProvider-Port
+- [x] ModelProfile und Dimensionvalidierung
+- [x] Semantic-Card-Normalisierung
 - [ ] BodyHash-basierter Cache
-- [ ] lokaler Batchjob mit Cancellation
+- [x] lokaler Batchjob mit Cancellation
 - [ ] libSQL-Vector-Capability
 - [ ] Fallback ohne Vektorindex
+
+Verifizierter erster Slice vom 2026-08-05: Der Domainkern normalisiert Semantic Cards mit
+versionierter Whitespace-Policy, begrenzt Rohinput auf 64 KiB und den kanonischen Kartentext auf
+16 KiB und leitet daraus einen domänenseparierten BLAKE3-`BodyHash` ab. Ein snapshotgebundener Job
+akzeptiert höchstens 512 logisch eindeutige Karten. Weder Karten- noch Vektor-Debugausgaben geben
+Inhalte oder Komponenten aus.
+
+Das embedding-spezifische `EmbeddingModelProfile` validiert Provider, opaque Modell-ID,
+Dimension, Batchgröße, Float32-Datentyp, fehlende Quantisierung und L2-Normalisierung. Seine
+`ModelProfileId` wird aus allen vektorformenden Feldern abgeleitet; Betriebswerte wie Batchgröße
+ändern die Vektorkompatibilität nicht. Providerantworten bleiben auf 64 Vektoren mit je höchstens
+8.192 Komponenten begrenzt und werden vor Persistenz auf exakte Dimension, endliche Werte und
+nicht leere L2-Norm geprüft. `VectorHit` besitzt ausschließlich `SourceChannel::Semantic` und kann
+keine `EvidenceRef` tragen.
+
+Der Application-Slice trennt `EmbeddingProvider` und `SemanticEmbeddingStore` als schmale Ports.
+`GenerateSemanticEmbeddings::disabled()` besitzt konstruktiv weder Provider noch Cache;
+`enabled(...)` verlangt alle Capabilities gemeinsam. Der lokale Scheduler-Job prüft Cancellation
+vor und nach jeder Boundary, erzwingt einen Provider-Timeoutvertrag, meldet monotone Card-Progress
+und batched nur exakte `(SemanticCardId, ModelProfileId, BodyHash)`-Misses. Persistenter Cache,
+libSQL-Capability und Suchfallback bleiben bis zum zweiten R5-Slice bewusst offen.
 
 Akzeptanz:
 
