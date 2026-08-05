@@ -3,15 +3,15 @@ use crate::{
     CatalogDatabase, CatalogOpenError, KnowledgeDatabase, KnowledgeOpenError,
     ProjectStorageLayoutError, StorageLayout,
 };
-use crate::{index_repository, index_repository::IndexRepositoryError};
+use crate::{index_publication, index_repository, index_repository::IndexRepositoryError};
 use a3_application::{
-    KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
+    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
-    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectId, ProjectIdentity,
-    Snapshot,
+    IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome,
+    ProjectId, ProjectIdentity, PublishedIndex, Snapshot,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -276,6 +276,27 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn publish_index<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: IndexRunId,
+        publication: &'a IndexPublication,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            index_publication::publish_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                publication,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn latest_index_run<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -305,6 +326,40 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(IndexRepositoryError::classify)
+        })
+    }
+
+    fn latest_published_index<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, Option<PublishedIndex>> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            index_publication::latest_published_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn rebuild_regenerable_index<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            index_publication::rebuild_regenerable_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
         })
     }
 }

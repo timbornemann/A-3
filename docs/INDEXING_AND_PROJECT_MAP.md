@@ -223,10 +223,24 @@ Ein Indexlauf wird erst sichtbar, wenn:
 - abgeleitete Claims invalidiert sind;
 - FTS und Graph dieselbe Snapshot-Version referenzieren.
 
-Die S2-Persistenz reserviert dafür bereits worktree-lokale, monotone IndexRun-Sequenzen und erzwingt
-höchstens einen `building`-Lauf pro Worktree. Vor S10 kann der Application-Port einen Lauf nur als
-`failed` oder `cancelled` abschließen. Es gibt absichtlich keinen separaten Publish-Aufruf, der den
-Status ohne die zugehörigen Indexdaten sichtbar machen könnte.
+Knowledge-Schema V4 speichert die vollständige effektive Dateiprojektion, Symbole, aufgelöste
+Kanten, ungelöste Kandidaten und erklärbare Rankzeilen unter der jeweiligen `IndexRunId`. Der
+Adapter rekonstruiert den Dateistand innerhalb derselben Transaktion aus der unveränderlichen
+Snapshot-Delta-Kette und verlangt exakte Übereinstimmung mit dem vorbereiteten `LinkedGraph`.
+Graphsnapshot, Ranking-Snapshot, RankingPolicy-Version und der aktive `building`-Run müssen ebenfalls
+identisch sein. Erst nachdem alle run-gebundenen Zeilen geschrieben wurden, wechselt der letzte
+Transaktionsschritt den Run auf `published`. Leser wählen ausschließlich den jüngsten veröffentlichten
+Run und rekonstruieren dessen vollständiges typisiertes `PublishedIndex` in einer konsistenten
+Read-Transaktion. Ältere Zeilen sind durch ihre Run-ID superseded und können nicht als Teil des neuen
+Index erscheinen.
+
+Publish und vollständiges Lesen übernehmen Cancellation und Progress vom besitzenden Job, prüfen
+spätestens nach 1.024 Zeilen erneut, emittieren höchstens 64 monotone Fortschrittswerte und brechen
+nach fünf Minuten kontrolliert ab. Der Rebuild verweigert einen aktiven `building`-Run und entfernt
+ausschließlich run-gebundene regenerierbare Indexzeilen in Batches von 4.096 Zeilen sowie anschließend
+die IndexRun-Historie. Snapshots, Worktree-Identität und nicht regenerierbare Task-, Decision- oder
+User-Evidence-Tabellen bleiben erhalten. Fehler, Cancellation, Timeout oder ein Crash vor dem finalen
+Statuswechsel rollen die gesamte Mutation zurück; der zuvor veröffentlichte Index bleibt sichtbar.
 
 ## Deep Map
 

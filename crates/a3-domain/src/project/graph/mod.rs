@@ -1,10 +1,12 @@
 mod id;
+mod publication;
 mod rank;
 mod relation;
 mod result;
 mod symbol;
 
 pub use id::SymbolId;
+pub use publication::{IndexPublication, IndexPublicationError, PublishedIndex};
 pub use rank::{
     Centrality, CentralityError, RankProjection, RankProjectionError, RankScore, RankScoreError,
     SymbolRank, SymbolRankSignals,

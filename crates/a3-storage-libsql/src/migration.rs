@@ -338,10 +338,156 @@ const KNOWLEDGE_RECONCILIABLE_IDENTITIES_MIGRATION: Migration = Migration {
         ON index_runs (worktree_id, run_sequence DESC);",
 };
 
+const KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION: Migration = Migration {
+    version: 4,
+    name: "atomic_index_publication",
+    sql: "CREATE TABLE file_revisions (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      PRIMARY KEY (index_run_id, repository_path),\n\
+      UNIQUE (index_run_id, repository_path, content_hash),\n\
+      FOREIGN KEY (index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE symbols (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      local_symbol_id INTEGER NOT NULL CHECK (local_symbol_id BETWEEN 1 AND 4294967295),\n\
+      kind TEXT NOT NULL CHECK (kind IN (\n\
+        'module', 'namespace', 'function', 'method', 'struct', 'enum', 'trait', 'interface',\n\
+        'class', 'implementation', 'type-alias', 'constant', 'static', 'variable', 'field',\n\
+        'variant', 'parameter'\n\
+      )),\n\
+      name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 1024),\n\
+      signature TEXT CHECK (signature IS NULL OR length(CAST(signature AS BLOB)) BETWEEN 1 AND 16384),\n\
+      declaration_start_byte INTEGER NOT NULL CHECK (declaration_start_byte BETWEEN 0 AND 4294967295),\n\
+      declaration_end_byte INTEGER NOT NULL CHECK (declaration_end_byte BETWEEN declaration_start_byte AND 4294967295),\n\
+      declaration_start_row INTEGER NOT NULL CHECK (declaration_start_row BETWEEN 0 AND 4294967295),\n\
+      declaration_start_column INTEGER NOT NULL CHECK (declaration_start_column BETWEEN 0 AND 4294967295),\n\
+      declaration_end_row INTEGER NOT NULL CHECK (declaration_end_row BETWEEN 0 AND 4294967295),\n\
+      declaration_end_column INTEGER NOT NULL CHECK (declaration_end_column BETWEEN 0 AND 4294967295),\n\
+      selection_start_byte INTEGER NOT NULL CHECK (selection_start_byte BETWEEN 0 AND 4294967295),\n\
+      selection_end_byte INTEGER NOT NULL CHECK (selection_end_byte BETWEEN selection_start_byte AND 4294967295),\n\
+      selection_start_row INTEGER NOT NULL CHECK (selection_start_row BETWEEN 0 AND 4294967295),\n\
+      selection_start_column INTEGER NOT NULL CHECK (selection_start_column BETWEEN 0 AND 4294967295),\n\
+      selection_end_row INTEGER NOT NULL CHECK (selection_end_row BETWEEN 0 AND 4294967295),\n\
+      selection_end_column INTEGER NOT NULL CHECK (selection_end_column BETWEEN 0 AND 4294967295),\n\
+      documentation_start_byte INTEGER CHECK (documentation_start_byte IS NULL OR documentation_start_byte BETWEEN 0 AND 4294967295),\n\
+      documentation_end_byte INTEGER CHECK (documentation_end_byte IS NULL OR documentation_end_byte BETWEEN documentation_start_byte AND 4294967295),\n\
+      documentation_start_row INTEGER CHECK (documentation_start_row IS NULL OR documentation_start_row BETWEEN 0 AND 4294967295),\n\
+      documentation_start_column INTEGER CHECK (documentation_start_column IS NULL OR documentation_start_column BETWEEN 0 AND 4294967295),\n\
+      documentation_end_row INTEGER CHECK (documentation_end_row IS NULL OR documentation_end_row BETWEEN 0 AND 4294967295),\n\
+      documentation_end_column INTEGER CHECK (documentation_end_column IS NULL OR documentation_end_column BETWEEN 0 AND 4294967295),\n\
+      visibility TEXT NOT NULL CHECK (visibility IN ('public', 'protected', 'private', 'internal', 'local', 'unknown')),\n\
+      roles INTEGER NOT NULL CHECK (roles BETWEEN 0 AND 3),\n\
+      CHECK ((documentation_start_byte IS NULL) = (documentation_end_byte IS NULL)),\n\
+      CHECK ((documentation_start_byte IS NULL) = (documentation_start_row IS NULL)),\n\
+      CHECK ((documentation_start_byte IS NULL) = (documentation_start_column IS NULL)),\n\
+      CHECK ((documentation_start_byte IS NULL) = (documentation_end_row IS NULL)),\n\
+      CHECK ((documentation_start_byte IS NULL) = (documentation_end_column IS NULL)),\n\
+      PRIMARY KEY (index_run_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id, repository_path, content_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE symbol_edges (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      edge_sequence INTEGER NOT NULL CHECK (edge_sequence > 0),\n\
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'symbol')),\n\
+      source_value BLOB NOT NULL,\n\
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('file', 'symbol')),\n\
+      target_value BLOB NOT NULL,\n\
+      relation_kind TEXT NOT NULL CHECK (relation_kind IN (\n\
+        'contains', 'defines', 'imports', 'exports', 'calls', 'implements', 'extends', 'reads',\n\
+        'writes', 'configures', 'tests', 'builds', 'documents'\n\
+      )),\n\
+      provider TEXT NOT NULL CHECK (provider IN ('tree-sitter', 'manifest', 'language-heuristic')),\n\
+      confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 10000),\n\
+      resolution TEXT NOT NULL CHECK (resolution IN (\n\
+        'adapter-local-symbol', 'adapter-file', 'exact-module-reference',\n\
+        'unique-file-local-name', 'unique-qualified-name'\n\
+      )),\n\
+      evidence_path BLOB NOT NULL CHECK (length(evidence_path) BETWEEN 1 AND 131072),\n\
+      evidence_hash BLOB NOT NULL CHECK (length(evidence_hash) = 32),\n\
+      evidence_start_byte INTEGER NOT NULL CHECK (evidence_start_byte BETWEEN 0 AND 4294967295),\n\
+      evidence_end_byte INTEGER NOT NULL CHECK (evidence_end_byte BETWEEN evidence_start_byte AND 4294967295),\n\
+      evidence_start_row INTEGER NOT NULL CHECK (evidence_start_row BETWEEN 0 AND 4294967295),\n\
+      evidence_start_column INTEGER NOT NULL CHECK (evidence_start_column BETWEEN 0 AND 4294967295),\n\
+      evidence_end_row INTEGER NOT NULL CHECK (evidence_end_row BETWEEN 0 AND 4294967295),\n\
+      evidence_end_column INTEGER NOT NULL CHECK (evidence_end_column BETWEEN 0 AND 4294967295),\n\
+      CHECK ((source_kind = 'symbol' AND length(source_value) = 32) OR\n\
+             (source_kind = 'file' AND length(source_value) BETWEEN 1 AND 131072)),\n\
+      CHECK ((target_kind = 'symbol' AND length(target_value) = 32) OR\n\
+             (target_kind = 'file' AND length(target_value) BETWEEN 1 AND 131072)),\n\
+      PRIMARY KEY (index_run_id, edge_sequence),\n\
+      FOREIGN KEY (index_run_id, evidence_path, evidence_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE unresolved_edges (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      candidate_sequence INTEGER NOT NULL CHECK (candidate_sequence > 0),\n\
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'symbol')),\n\
+      source_value BLOB NOT NULL,\n\
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('file', 'reference')),\n\
+      target_value BLOB NOT NULL,\n\
+      relation_kind TEXT NOT NULL CHECK (relation_kind IN (\n\
+        'contains', 'defines', 'imports', 'exports', 'calls', 'implements', 'extends', 'reads',\n\
+        'writes', 'configures', 'tests', 'builds', 'documents'\n\
+      )),\n\
+      provider TEXT NOT NULL CHECK (provider IN ('tree-sitter', 'manifest', 'language-heuristic')),\n\
+      confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 10000),\n\
+      reason TEXT NOT NULL CHECK (reason IN (\n\
+        'no-deterministic-match', 'ambiguous-match', 'dynamic-reference', 'missing-file'\n\
+      )),\n\
+      evidence_path BLOB NOT NULL CHECK (length(evidence_path) BETWEEN 1 AND 131072),\n\
+      evidence_hash BLOB NOT NULL CHECK (length(evidence_hash) = 32),\n\
+      evidence_start_byte INTEGER NOT NULL CHECK (evidence_start_byte BETWEEN 0 AND 4294967295),\n\
+      evidence_end_byte INTEGER NOT NULL CHECK (evidence_end_byte BETWEEN evidence_start_byte AND 4294967295),\n\
+      evidence_start_row INTEGER NOT NULL CHECK (evidence_start_row BETWEEN 0 AND 4294967295),\n\
+      evidence_start_column INTEGER NOT NULL CHECK (evidence_start_column BETWEEN 0 AND 4294967295),\n\
+      evidence_end_row INTEGER NOT NULL CHECK (evidence_end_row BETWEEN 0 AND 4294967295),\n\
+      evidence_end_column INTEGER NOT NULL CHECK (evidence_end_column BETWEEN 0 AND 4294967295),\n\
+      CHECK ((source_kind = 'symbol' AND length(source_value) = 32) OR\n\
+             (source_kind = 'file' AND length(source_value) BETWEEN 1 AND 131072)),\n\
+      CHECK ((target_kind = 'reference' AND length(target_value) BETWEEN 1 AND 4096) OR\n\
+             (target_kind = 'file' AND length(target_value) BETWEEN 1 AND 131072)),\n\
+      PRIMARY KEY (index_run_id, candidate_sequence),\n\
+      FOREIGN KEY (index_run_id, evidence_path, evidence_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE ranking_projections (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      rank_order INTEGER NOT NULL CHECK (rank_order > 0),\n\
+      score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 4294967295),\n\
+      in_degree INTEGER NOT NULL CHECK (in_degree BETWEEN 0 AND 4294967295),\n\
+      out_degree INTEGER NOT NULL CHECK (out_degree BETWEEN 0 AND 4294967295),\n\
+      centrality INTEGER NOT NULL CHECK (centrality BETWEEN 0 AND 10000),\n\
+      degree_contribution INTEGER NOT NULL CHECK (degree_contribution BETWEEN 0 AND 4294967295),\n\
+      centrality_contribution INTEGER NOT NULL CHECK (centrality_contribution BETWEEN 0 AND 4294967295),\n\
+      entrypoint_contribution INTEGER NOT NULL CHECK (entrypoint_contribution BETWEEN 0 AND 4294967295),\n\
+      public_export_contribution INTEGER NOT NULL CHECK (public_export_contribution BETWEEN 0 AND 4294967295),\n\
+      manifest_contribution INTEGER NOT NULL CHECK (manifest_contribution BETWEEN 0 AND 4294967295),\n\
+      test_contribution INTEGER NOT NULL CHECK (test_contribution BETWEEN 0 AND 4294967295),\n\
+      PRIMARY KEY (index_run_id, symbol_id),\n\
+      UNIQUE (index_run_id, rank_order),\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX symbol_edges_source_idx ON symbol_edges (index_run_id, source_kind, source_value);\n\
+      CREATE INDEX symbol_edges_target_idx ON symbol_edges (index_run_id, target_kind, target_value);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
     KNOWLEDGE_RECONCILIABLE_IDENTITIES_MIGRATION,
+    KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -374,7 +520,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(3);
+    pub const CURRENT: Self = Self::new(4);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -769,11 +915,13 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\n\
                      'schema_migrations', 'worktree_storage_identity', 'repositories', 'worktrees',\n\
-                     'snapshots', 'snapshot_adapter_revisions', 'snapshot_changes', 'index_runs'\n\
+                     'snapshots', 'snapshot_adapter_revisions', 'snapshot_changes', 'index_runs',\n\
+                     'file_revisions', 'symbols', 'symbol_edges', 'unresolved_edges',\n\
+                     'ranking_projections'\n\
                      )",
                 )
                 .await?,
-                8
+                13
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -943,6 +1091,67 @@ mod tests {
                 )
                 .await?,
                 1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v4_upgrade_preserves_v3_data_and_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [31; 32];
+            let worktree_id = [32; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..3],
+                3,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "INSERT INTO snapshots (\n\
+                     snapshot_id, worktree_id, parent_snapshot_id, generation, head_kind,\n\
+                     head_object_id, head_reference, index_schema_version\n\
+                     ) VALUES (?1, ?2, NULL, 1, 'unborn', NULL, 'refs/heads/main', 1)",
+                    params![vec![33; 32], worktree_id.to_vec()],
+                )
+                .await?;
+            connection
+                .execute("CREATE TABLE symbols (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 4, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 3);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM snapshots").await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('symbols') WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'file_revisions'",
+                )
+                .await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

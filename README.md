@@ -9,9 +9,10 @@ Der sichtbare Produktname besteht exakt aus den drei Zeichen **A^3**. In technis
 Der Foundation-Meilenstein sowie Projektidentität, lokale Storage-Grundlage, begrenzte
 Repository-Discovery, inhaltsbasierte Worktree-Snapshots und der versionierte Tree-sitter-
 LanguageAdapter-Contract sowie die Rust-/Cargo-, TypeScript-/JavaScript-/Package- und
-Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker und die versionierte
-Rankingprojektion des Fast Index sind abgeschlossen. Die weitere Implementierung folgt dem Plan für
-Storage und Fast Index. Die verbindliche Architektur- und Entwicklungsbaseline liegt unter
+Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker, die versionierte
+Rankingprojektion und das atomische Publish des Fast Index sind abgeschlossen. Die weitere
+Implementierung folgt dem Plan für Storage und Fast Index. Die verbindliche Architektur- und
+Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
 

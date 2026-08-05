@@ -67,7 +67,7 @@ Ein Nutzer kann:
 - [x] Rust-Adapter
 - [x] TypeScript-/JavaScript-Adapter
 - [x] Python-Adapter
-- [ ] Symbolgraph und atomisches Publish
+- [x] Symbolgraph und atomisches Publish
 - [ ] File Watcher und inkrementeller Delta-Lauf
 
 ### M4 Retrieval

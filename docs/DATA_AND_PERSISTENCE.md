@@ -57,13 +57,16 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   read-only Projektion rekonstruiert den wirksamen aktuellen Pfad-/Content-Hash-Stand aus der
   unveränderlichen Delta-Kette. Sie validiert die Generation-/Parent-Kette sowie Pfad-, Änderungsart-
   und Hashwerte erneut an der Adaptergrenze und bleibt über einen Appneustart erhalten.
-- Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Der aktuelle Port kann diesen Lauf nur
-  als `failed` oder `cancelled` beenden. Ein Übergang zu `published` ist bewusst nicht verfügbar, bis
-  S10 Indexdaten und Sichtbarkeit in derselben Adaptertransaktion committen kann.
+- Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Er kann ohne Veröffentlichung als
+  `failed` oder `cancelled` enden oder ausschließlich zusammen mit einem vollständigen, exakt
+  passenden `IndexPublication` atomar auf `published` wechseln. Die run-gebundenen Datei-, Symbol-,
+  Kanten-, Kandidaten- und Rankzeilen werden vor dem Statuswechsel in derselben Transaktion geschrieben.
+  Leser rekonstruieren nur den jüngsten veröffentlichten Run in einer konsistenten Read-Transaktion.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
-  Isolation und IndexRun-Übergänge ausschließlich über die Application-Ports. Der libSQL-Adapter
-  liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-, Korruptions-
-  und Schema-Negativtests bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
+  Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
+  libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
+  Crash-, Korruptions- und Schema-Negativtests bleiben getrennt. Jeder weitere Storageadapter muss
+  dieselbe Suite ausführen.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
   denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
   dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen
@@ -81,9 +84,10 @@ untracked Dateien, liest deren Inhalt innerhalb fester Einzel- und Gesamtgrenzen
 bildet BLAKE3-basierte `FileRevision`s. Der Snapshot-Builder vergleicht sie mit dem aus der
 persistierten Delta-Kette rekonstruierten Dateistand, erzeugt ausschließlich bei Inhalts-, HEAD-,
 Schema- oder Adapteränderungen die exakt nächste Generation und liefert sie für ein atomisches
-Append. Parser-, Graph-, FTS- und veröffentlichte Indexdaten folgen in S5 bis S10. Die Reconciliation
-entscheidet trotz persistierter Evidenz nie selbstständig: Sie benötigt einen eindeutigen Kandidaten
-und die privilegierte native Bestätigung.
+Append. Parser und Graph erzeugen den vollständigen deterministischen Publish-Input; Knowledge-Schema
+V4 veröffentlicht die daraus abgeleiteten Datei-, Symbol-, Kanten-, Kandidaten- und Rankprojektionen
+atomar. FTS folgt in Plan 03. Die Reconciliation entscheidet trotz persistierter Evidenz nie
+selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:
 
@@ -171,6 +175,7 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - file_revisions
 - symbols
 - symbol_edges
+- unresolved_edges
 - modules
 - module_members
 - entrypoints

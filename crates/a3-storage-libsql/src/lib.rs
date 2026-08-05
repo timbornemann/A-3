@@ -1,6 +1,8 @@
 //! Local-only libSQL storage adapters for A^3 catalog and project data.
 
 mod catalog;
+mod index_codec;
+mod index_publication;
 mod index_repository;
 mod knowledge;
 mod layout;

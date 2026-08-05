@@ -87,12 +87,17 @@ vorkommen. Ein neuer beobachteter Dateizustand erzeugt eine neue Generation.
 
 Ein IndexRun referenziert genau einen existierenden Snapshot desselben Worktrees, eine monotone
 worktree-lokale Sequenz und eine Ranking-Policy-Version. Pro Worktree darf höchstens ein Lauf den
-Zustand `building` besitzen. Der aktuelle S2-Port erlaubt nur die terminalen Übergänge `building` →
-`failed` oder `building` → `cancelled`; `published` bleibt dem atomaren S10-Publish vorbehalten.
+Zustand `building` besitzen. Ein Lauf kann ohne Veröffentlichung über `building` → `failed` oder
+`building` → `cancelled` enden. `building` → `published` ist ausschließlich der letzte Schritt der
+S10-Transaktion, die den vollständigen, exakt passenden Index gemeinsam sichtbar macht.
 
 ### SymbolId
 
-Ein SymbolId wird deterministisch aus Sprache, normalisiertem Pfad, Symbolart, qualifiziertem Namen und Signaturfingerprint gebildet. Zeilennummern sind kein Teil der Identität. Umbenennung oder fachliche Signaturänderung kann eine neue Identität erzeugen und muss alte Evidenz invalidieren.
+Ein `SymbolId` ist ein domänengetrennter BLAKE3-Digest über verlustfreie Repository-Pfadbytes,
+Content Hash, Sprache, Adapterversion, LanguageAdapter-Contract-Version und die dateilokale Symbol-ID.
+Snapshot-, Rankingversion und Zeilennummern sind kein Teil der Identität. Identische Parse-Evidenz
+behält ihre ID beim Re-Rank; Inhalts-, Pfad- oder Adapteränderungen erzeugen absichtlich neue IDs und
+invalidieren alte Evidenz.
 
 ## Aggregate
 

@@ -343,11 +343,41 @@ Akzeptanz:
 
 Abhängigkeiten: S2, S9
 
-- [ ] File Delta transaktional schreiben
-- [ ] alte Symbole und Kanten entfernen oder superseden
-- [ ] IndexRun erst nach vollständigem Commit veröffentlichen
-- [ ] Crash vor Publish simulieren
-- [ ] Rebuild regenerierbarer Tabellen
+Status: Completed
+
+- [x] File Delta transaktional schreiben
+- [x] alte Symbole und Kanten entfernen oder superseden
+- [x] IndexRun erst nach vollständigem Commit veröffentlichen
+- [x] Crash vor Publish simulieren
+- [x] Rebuild regenerierbarer Tabellen
+
+Verifizierter Abschluss vom 2026-08-05: Der neue domänenreine `IndexPublication`-Vertrag akzeptiert
+nur einen `LinkedGraph` und eine `RankProjection` desselben Snapshots mit exakt derselben Symbolmenge.
+Knowledge-Schema V4 ergänzt run-gebundene `file_revisions`, `symbols`, `symbol_edges`,
+`unresolved_edges` und `ranking_projections`. Der libSQL-Adapter rekonstruiert den effektiven
+Dateistand innerhalb einer `IMMEDIATE`-Transaktion aus der unveränderlichen Snapshot-Delta-Kette,
+vergleicht Pfad und Content Hash mit dem vollständigen Graph und prüft Run-Snapshot sowie
+RankingPolicy-Version. Erst nachdem alle Datei-, Symbol-, Evidenz-, Kandidaten- und erklärbaren
+Rankzeilen geschrieben wurden, setzt das letzte Statement den aktiven Run von `building` auf
+`published`. Der vollständige Leser wählt den jüngsten veröffentlichten Run und rekonstruiert den
+typisierten Graph samt Ranking in einer konsistenten Read-Transaktion.
+
+Jede Zeile trägt ihre `IndexRunId`; ältere veröffentlichte Graphen bleiben damit vollständig
+superseded und können nicht mit dem neuen Sichtstand vermischt werden. Publish und vollständiges
+Lesen sind auf die bestehenden S9-Ressourcengrenzen begrenzt, prüfen Cancellation spätestens nach
+1.024 Zeilen, melden höchstens 64 monotone Progressereignisse und haben ein festes Fünf-Minuten-
+Timeout. Der Rebuild verweigert einen aktiven `building`-Run und löscht ausschließlich
+run-gebundene, regenerierbare Indexzeilen in 4.096-Zeilen-Batches sowie anschließend die IndexRuns.
+Snapshots, Worktree-Bindung und fremde nicht regenerierbare Tabellen bleiben unangetastet.
+
+Die gemeinsame Storage-Contract-Suite deckt vollständigen Roundtrip über die Application-Grenze,
+Appneustart, File-Modify und Delete, Supersede, falsche Snapshot-/Policy-Bindung, Linked-Worktree-
+Isolation, Rebuild und den Erhalt der Snapshotkette ab. Engine-spezifische Tests erzwingen per
+abbrechendem Datenbanktrigger einen Fehler unmittelbar vor dem sichtbaren Statuswechsel und belegen,
+dass alle neuen Zeilen zurückgerollt werden, der letzte veröffentlichte Index lesbar bleibt und der
+fehlgeschlagene Run weiterhin kontrolliert abgeschlossen werden kann. Weitere Negativtests sichern
+Cancellation vor Mutation, Progress-Ausfall, höchstens 64 Progresswerte, den Erhalt einer simulierten
+Tasktabelle beim Rebuild sowie atomare V3→V4-Migration und Rollback bei einem Schemakonflikt.
 
 Akzeptanz:
 

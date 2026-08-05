@@ -19,7 +19,10 @@ pub use jobs::{
     JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobTask, JobTimestamp,
     ProgressReportError, ShutdownMode, ShutdownReport,
 };
-pub use knowledge_index_store::{KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore};
+pub use knowledge_index_store::{
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    KnowledgeIndexFuture, KnowledgeIndexStore,
+};
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
     ProjectPathDisplayError, RecentProject, RecentProjectLimit, RecentProjectLimitError,

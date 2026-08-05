@@ -164,12 +164,13 @@ Regeln:
 9. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
    Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
 
-Der S2-Storage-Adapter stellt zusätzlich über den schmalen `KnowledgeIndexStore`-Port unveränderliche
-Snapshot-Ketten und den nicht veröffentlichenden IndexRun-Lifecycle bereit. Diese Application-Grenze
-verwendet ausschließlich Domain-Typen; SQL, libSQL-Zeilen und Datenbankhandles bleiben im Adapter.
-Der folgende S3-/S4-Ausbau entdeckt und hasht Dateien, vergleicht den letzten Snapshot und plant den
-inkrementellen Fast Index. Erst S10 darf Indexdaten und den Zustand `published` gemeinsam in einer
-Transaktion sichtbar machen.
+Der schmale `KnowledgeIndexStore`-Port stellt unveränderliche Snapshot-Ketten, den serialisierten
+IndexRun-Lifecycle und das atomische Publish bereit. Diese Application-Grenze verwendet ausschließlich
+Domain-Typen; SQL, libSQL-Zeilen und Datenbankhandles bleiben im Adapter. Discovery und Hashing
+erzeugen die Snapshot-Deltas, Parser, Linker und Ranker den vollständigen `IndexPublication`-Input.
+Der libSQL-Adapter schreibt die run-gebundenen Datei-, Symbol-, Kanten-, Kandidaten- und Rankzeilen
+und den Zustand `published` in genau einer Transaktion. Leser arbeiten ausschließlich auf dem
+jüngsten vollständig veröffentlichten Run; Rebuild entfernt nur regenerierbare Indexzeilen.
 
 ### Zuletzt verwendete Projekte
 

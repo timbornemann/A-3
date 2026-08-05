@@ -1,16 +1,18 @@
-//! Contract tests for immutable snapshots and non-publishing index-run lifecycle persistence.
+//! Contract tests for immutable snapshots and atomic index publication persistence.
 
 mod support;
 
 use a3_application::{
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
 };
 use a3_domain::{
-    CanonicalDirectory, ContentHash, GitHead, GitReferenceName, IndexLanguage, IndexRunId,
-    IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
-    LanguageAdapterRevision, LanguageAdapterVersion, ProjectIdentity, RankingPolicyVersion,
-    RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind,
-    SnapshotId, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    CanonicalDirectory, ContentHash, GitHead, GitReferenceName, IndexLanguage, IndexPublication,
+    IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
+    LanguageAdapterRevision, LanguageAdapterVersion, LinkedGraph, ProjectIdentity, RankProjection,
+    RankingPolicyVersion, RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot,
+    SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeAnchorId, WorktreeGeneration,
+    WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -23,6 +25,60 @@ use support::TempDirectory;
 // libSQL's Windows native test runtime is not safe when separate local database
 // fixtures are opened and torn down concurrently inside one process.
 static INDEX_REPOSITORY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, Default)]
+struct TestIndexControl {
+    progress: Mutex<Vec<a3_domain::Progress>>,
+}
+
+impl IndexPersistenceControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), IndexPersistenceControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| IndexPersistenceControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct CancelledIndexControl;
+
+impl IndexPersistenceControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct UnavailableProgressControl;
+
+impl IndexPersistenceControl for UnavailableProgressControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), IndexPersistenceControlError> {
+        Err(IndexPersistenceControlError::Unavailable)
+    }
+}
 
 #[test]
 fn snapshot_roundtrip_retains_canonical_reproducibility_state()
@@ -397,6 +453,260 @@ fn broken_snapshot_parent_chain_is_rejected_after_reopen() -> Result<(), Box<dyn
     })
 }
 
+#[test]
+fn persistence_control_cancels_before_mutation_and_bounds_progress()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    block_on(async {
+        let fixture = ProjectFixture::new([22; 32], [32; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [43; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [53; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([63; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = file_only_publication(snapshot.id(), b"src/lib.rs", [53; 32])?;
+
+        assert_eq!(
+            store
+                .publish_index(
+                    &fixture.project,
+                    run.id(),
+                    &publication,
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(KnowledgeIndexFailure::Cancelled)
+        );
+        assert_eq!(
+            store
+                .publish_index(
+                    &fixture.project,
+                    run.id(),
+                    &publication,
+                    &UnavailableProgressControl,
+                )
+                .await,
+            Err(KnowledgeIndexFailure::ProgressUnavailable)
+        );
+        assert_eq!(store.latest_index_run(&fixture.project).await?, Some(run));
+
+        let control = TestIndexControl::default();
+        let published = store
+            .publish_index(&fixture.project, run.id(), &publication, &control)
+            .await?;
+        {
+            let progress = control
+                .progress
+                .lock()
+                .map_err(|_| io::Error::other("progress lock was poisoned"))?;
+            assert!(progress.len() <= 64);
+            assert_eq!(
+                progress.first().and_then(|value| value.completed()),
+                Some(0)
+            );
+            assert_eq!(progress.last().map(|value| value.is_complete()), Some(true));
+        }
+
+        assert_eq!(
+            store
+                .latest_published_index(&fixture.project, &CancelledIndexControl)
+                .await,
+            Err(KnowledgeIndexFailure::Cancelled)
+        );
+        assert_eq!(
+            store
+                .rebuild_regenerable_index(&fixture.project, &CancelledIndexControl)
+                .await,
+            Err(KnowledgeIndexFailure::Cancelled)
+        );
+        assert_eq!(
+            store.latest_published_index_run(&fixture.project).await?,
+            Some(published)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+// Keep this trigger-abort case last: the Windows libSQL test runtime is unstable if another
+// local database fixture is torn down in the same process after an aborting native trigger.
+fn zz_crash_before_visible_publish_rolls_back_new_rows_and_keeps_previous_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    block_on(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([20; 32], [30; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let first_snapshot = snapshot(
+            [40; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [50; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([60; 32], first_snapshot.id(), 1)?)
+            .await?;
+        let first_publication =
+            file_only_publication(first_snapshot.id(), b"src/lib.rs", [50; 32])?;
+        let first_run = store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &first_publication,
+                &control,
+            )
+            .await?;
+
+        let second_snapshot = snapshot(
+            [41; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            vec![change(b"src/lib.rs", [51; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &second_snapshot)
+            .await?;
+        let second_run = store
+            .start_index_run(&fixture.project, run([61; 32], second_snapshot.id(), 1)?)
+            .await?;
+        let second_publication =
+            file_only_publication(second_snapshot.id(), b"src/lib.rs", [51; 32])?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "CREATE TRIGGER simulate_crash_before_publish\n\
+             BEFORE UPDATE OF status ON index_runs\n\
+             WHEN NEW.status = 'published'\n\
+             BEGIN SELECT RAISE(ABORT, 'simulated crash'); END",
+        )
+        .await?;
+
+        assert!(matches!(
+            store
+                .publish_index(
+                    &fixture.project,
+                    second_run.id(),
+                    &second_publication,
+                    &control,
+                )
+                .await,
+            Err(KnowledgeIndexFailure::Storage(
+                KnowledgeStoreFailure::Unavailable
+            ))
+        ));
+        mutate_knowledge(
+            &knowledge_path,
+            "DROP TRIGGER simulate_crash_before_publish",
+        )
+        .await?;
+
+        let visible = store
+            .latest_published_index(&fixture.project, &control)
+            .await?
+            .ok_or("previous published index is missing")?;
+        assert_eq!(visible.run(), first_run);
+        assert_eq!(visible.publication(), &first_publication);
+        assert_eq!(
+            read_run_count(&knowledge_path, "file_revisions", second_run.id()).await?,
+            0
+        );
+        assert_eq!(
+            store.latest_index_run(&fixture.project).await?,
+            Some(second_run)
+        );
+        store
+            .finish_index_run(
+                &fixture.project,
+                second_run.id(),
+                IndexRunTerminalOutcome::Failed,
+            )
+            .await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn rebuild_removes_only_regenerable_index_state() -> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    block_on(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([21; 32], [31; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [42; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(
+                b"src/main.rs",
+                [52; 32],
+                SnapshotChangeKind::Upsert,
+            )?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([62; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = file_only_publication(snapshot.id(), b"src/main.rs", [52; 32])?;
+        store
+            .publish_index(&fixture.project, run.id(), &publication, &control)
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "CREATE TABLE task_state_probe (\n\
+             id INTEGER PRIMARY KEY, body TEXT NOT NULL\n\
+             ) STRICT",
+        )
+        .await?;
+        mutate_knowledge(
+            &knowledge_path,
+            "INSERT INTO task_state_probe (id, body) VALUES (1, 'durable task')",
+        )
+        .await?;
+
+        store
+            .rebuild_regenerable_index(&fixture.project, &control)
+            .await?;
+
+        assert_eq!(read_count(&knowledge_path, "index_runs").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "file_revisions").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "snapshots").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "task_state_probe").await?, 1);
+        assert_eq!(
+            store
+                .latest_published_index(&fixture.project, &control)
+                .await?,
+            None
+        );
+        assert_eq!(
+            store.latest_snapshot(&fixture.project).await?,
+            Some(snapshot)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 struct ProjectFixture {
     _temporary: TempDirectory,
     layout: StorageLayout,
@@ -483,6 +793,26 @@ fn run(
     ))
 }
 
+fn file_only_publication(
+    snapshot_id: SnapshotId,
+    path: &[u8],
+    hash: [u8; 32],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let revision = a3_domain::FileRevision::new(
+        RepositoryPath::try_from_bytes(path.to_vec())?,
+        ContentHash::from_bytes(hash),
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        vec![revision],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+    Ok(IndexPublication::new(graph, ranking)?)
+}
+
 fn unborn_head() -> Result<GitHead, Box<dyn std::error::Error>> {
     Ok(GitHead::Unborn {
         reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
@@ -519,11 +849,34 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         "repositories" => "SELECT COUNT(*) FROM repositories",
         "worktrees" => "SELECT COUNT(*) FROM worktrees",
         "snapshot_changes" => "SELECT COUNT(*) FROM snapshot_changes",
+        "snapshots" => "SELECT COUNT(*) FROM snapshots",
+        "index_runs" => "SELECT COUNT(*) FROM index_runs",
+        "file_revisions" => "SELECT COUNT(*) FROM file_revisions",
+        "task_state_probe" => "SELECT COUNT(*) FROM task_state_probe",
         _ => return Err(Box::from(io::Error::other("unsupported test table"))),
     };
     let database = libsql::Builder::new_local(path).build().await?;
     let connection = database.connect()?;
     let mut rows = connection.query(sql, ()).await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or(libsql::Error::QueryReturnedNoRows)?;
+    Ok(row.get(0)?)
+}
+
+async fn read_run_count(
+    path: &Path,
+    table: &str,
+    run_id: IndexRunId,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    let sql = match table {
+        "file_revisions" => "SELECT COUNT(*) FROM file_revisions WHERE index_run_id = ?1",
+        _ => return Err(Box::from(io::Error::other("unsupported run-scoped table"))),
+    };
+    let database = libsql::Builder::new_local(path).build().await?;
+    let connection = database.connect()?;
+    let mut rows = connection.query(sql, [run_id.as_bytes().to_vec()]).await?;
     let row = rows
         .next()
         .await?

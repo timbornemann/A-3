@@ -176,7 +176,7 @@ impl fmt::Display for IndexRunStatusError {
 
 impl Error for IndexRunStatusError {}
 
-/// Non-publishing terminal outcome available before atomic index publication exists.
+/// Non-publishing terminal outcome for a failed or cancelled index attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexRunTerminalOutcome {
     /// Indexing failed and no new index became visible.
