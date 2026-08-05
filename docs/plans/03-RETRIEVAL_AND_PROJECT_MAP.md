@@ -276,12 +276,36 @@ Akzeptanz:
 
 Abhängigkeiten: R6
 
-- [ ] versioniertes ModuleCard-Schema
-- [ ] Coverage-Ziele
-- [ ] Seed Ranking
-- [ ] Token-, Zeit- und Toolbudgets
-- [ ] Informationsgewinn für nächste Expansion
-- [ ] Stopbedingungen
+Status: Completed
+
+- [x] versioniertes ModuleCard-Schema
+- [x] Coverage-Ziele
+- [x] Seed Ranking
+- [x] Token-, Zeit- und Toolbudgets
+- [x] Informationsgewinn für nächste Expansion
+- [x] Stopbedingungen
+
+Verifizierter Abschluss vom 2026-08-05: `ModuleCardSchemaVersion::V1` definiert zwölf begrenzte
+Detailfelder, sieben Pflichtmetadaten, feldgenaue Evidence-Pflicht, ein Dokumentlimit von 64 KiB
+und höchstens 512 Evidence IDs. Muss- und Soll-Coverage sind explizit; Coverage bleibt an Snapshot
+und Schemaversion gebunden und lehnt unbekannte oder doppelte Module ab.
+
+`DeepMapPlanner::v1` erzeugt ausschließlich aus einem veröffentlichten Index und der aktuellen
+Coverage einen kanonischen `ExplorePlan`. Manifest, Entrypoint, Zentralsymbol, Testwurzel,
+Graphcommunity und offene Modulgrenze bilden die versionierten Seeds. Kandidaten werden lokal
+dedupliziert, stabil bewertet und auf 16.384 Einträge begrenzt. Bereits vollständig durch
+Muss-Felder abgedeckte Module erzeugen keine Schritte.
+
+Token-, Zeit- und Toolkosten werden vor jeder Reservierung mit geprüfter Arithmetik gegen alle
+drei Budgetdimensionen getestet. Jeder Schritt enthält Outcome, Evidence-Anforderung,
+Verifikationsmethode und Status. Statische Planung und Laufzeit unterscheiden Coverage-, Budget-,
+Cancellation-, Stagnations-, Mindestgewinn- und fehlende-Seed-Stopgründe. Modellaufrufe,
+Read-only-Exploration, Proposal-Prüfung und Persistenz bleiben bewusst R8 beziehungsweise R9.
+
+Golden-, Schema-, Snapshot-, Unknown-Module-, Coverage-, Budgetgrenzen- und Stoptests sind grün.
+Abschlussgates: `cargo fmt --all -- --check`, Workspace-Clippy mit allen Targets/Features und
+Warnings denied, `cargo test --workspace --all-features`, Rustdoc mit Warnings denied,
+Frontend-CI, Markdown-Linkcheck, Dependency-/Lizenzreport und Tauri-Release-Build ohne Bundle.
 
 Akzeptanz:
 

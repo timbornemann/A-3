@@ -116,6 +116,12 @@ impl TempDirectory {
 
 impl Drop for TempDirectory {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if std::env::var_os("A3_LIBSQL_RETAIN_TEMP_DIRECTORY").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
         if let Err(error) = fs::remove_dir_all(&self.path) {
             eprintln!(
                 "could not remove temporary storage test directory {}: {error}",

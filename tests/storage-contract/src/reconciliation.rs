@@ -17,7 +17,7 @@ where
     verify_remote_match_can_be_opened_separately(factory, workspace).await
 }
 
-async fn verify_confirmed_same_repository_move<F>(
+pub(crate) async fn verify_confirmed_same_repository_move<F>(
     factory: &F,
     workspace: &ContractWorkspace,
 ) -> ContractResult<()>
@@ -94,7 +94,7 @@ where
     assert_eq!(moved_snapshot.id(), previous_snapshot.id());
     assert_eq!(moved_snapshot.worktree_id(), moved_worktree_id);
     assert_eq!(moved_snapshot.changes(), previous_snapshot.changes());
-    drop(store);
+    crate::release_contract_store(store);
 
     let reopened = factory.open(&app_data).await?;
     assert_eq!(
@@ -108,10 +108,10 @@ where
             .map(|snapshot| snapshot.worktree_id()),
         Some(moved_worktree_id)
     );
-    Ok(())
+    crate::complete_contract_phase()
 }
 
-async fn verify_confirmed_repository_move<F>(
+pub(crate) async fn verify_confirmed_repository_move<F>(
     factory: &F,
     workspace: &ContractWorkspace,
 ) -> ContractResult<()>
@@ -203,17 +203,17 @@ where
         )]
     );
 
-    drop(store);
+    crate::release_contract_store(store);
     let reopened = factory.open(&app_data).await?;
     assert_eq!(
         reopened.prepare_project_open(&target).await?,
         ProjectOpenPreparation::Ready
     );
     assert!(reopened.latest_snapshot(&target).await?.is_some());
-    Ok(())
+    crate::complete_contract_phase()
 }
 
-async fn verify_remote_match_can_be_opened_separately<F>(
+pub(crate) async fn verify_remote_match_can_be_opened_separately<F>(
     factory: &F,
     workspace: &ContractWorkspace,
 ) -> ContractResult<()>
@@ -303,5 +303,5 @@ where
         ProjectOpenPreparation::Ready,
         "multiple remote-and-anchor matches must never select a candidate"
     );
-    Ok(())
+    crate::complete_contract_phase()
 }

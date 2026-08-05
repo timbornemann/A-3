@@ -11,7 +11,7 @@ where
     verify_linked_worktrees(factory, workspace).await
 }
 
-async fn verify_recency_and_reopen<F>(
+pub(crate) async fn verify_recency_and_reopen<F>(
     factory: &F,
     workspace: &ContractWorkspace,
 ) -> ContractResult<()>
@@ -65,7 +65,7 @@ where
         first_project_id,
         "re-observing one repository must retain its catalog identity"
     );
-    drop(store);
+    crate::release_contract_store(store);
 
     let reopened = factory.open(&app_data).await?;
     let recent = reopened
@@ -77,10 +77,10 @@ where
     assert_eq!(recent[0].worktree_id(), worktree_a);
     assert_eq!(recent[0].head(), &updated_head);
     assert_eq!(recent[1].project_id(), second_project_id);
-    Ok(())
+    crate::complete_contract_phase()
 }
 
-async fn verify_linked_worktrees<F>(
+pub(crate) async fn verify_linked_worktrees<F>(
     factory: &F,
     workspace: &ContractWorkspace,
 ) -> ContractResult<()>
@@ -120,5 +120,5 @@ where
     assert_eq!(recent[0].worktree_id(), linked_id);
     assert_eq!(recent[1].project_id(), project_id);
     assert_eq!(recent[1].worktree_id(), primary_id);
-    Ok(())
+    crate::complete_contract_phase()
 }

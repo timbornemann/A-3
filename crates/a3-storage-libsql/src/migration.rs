@@ -1138,7 +1138,6 @@ mod tests {
         KNOWLEDGE_MIGRATIONS, KnowledgeSchemaVersion, Migration, MigrationError, migrate,
         query_i64,
     };
-    use futures::executor::block_on;
     use libsql::params;
     use std::collections::HashSet;
 
@@ -1164,7 +1163,7 @@ mod tests {
 
     #[test]
     fn empty_knowledge_schema_migrates_to_current() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
 
@@ -1193,7 +1192,7 @@ mod tests {
     #[test]
     fn knowledge_upgrades_v1_identity_into_project_repositories()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [7; 32];
@@ -1221,7 +1220,7 @@ mod tests {
     #[test]
     fn knowledge_upgrades_from_every_supported_predecessor()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             for predecessor in 1..KnowledgeSchemaVersion::CURRENT.get() {
                 let database = libsql::Builder::new_local(":memory:").build().await?;
                 let connection = database.connect()?;
@@ -1257,7 +1256,7 @@ mod tests {
     #[test]
     fn failed_knowledge_v2_upgrade_preserves_the_v1_database()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [9; 32];
@@ -1302,7 +1301,7 @@ mod tests {
     #[test]
     fn failed_knowledge_v3_upgrade_preserves_v2_data_and_schema()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [11; 32];
@@ -1362,7 +1361,7 @@ mod tests {
     #[test]
     fn failed_knowledge_v4_upgrade_preserves_v3_data_and_schema()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [31; 32];
@@ -1422,7 +1421,7 @@ mod tests {
 
     #[test]
     fn failed_knowledge_v5_upgrade_preserves_v4_schema() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [34; 32];
@@ -1470,7 +1469,7 @@ mod tests {
 
     #[test]
     fn failed_knowledge_v6_upgrade_preserves_v5_schema() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [36; 32];
@@ -1518,7 +1517,7 @@ mod tests {
 
     #[test]
     fn failed_knowledge_v7_upgrade_preserves_v6_schema() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [38; 32];
@@ -1566,7 +1565,7 @@ mod tests {
 
     #[test]
     fn failed_knowledge_v8_upgrade_preserves_v7_schema() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let repository_id = [40; 32];
@@ -1615,7 +1614,7 @@ mod tests {
     #[test]
     fn failed_knowledge_bootstrap_rolls_back_schema_history_and_version()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             connection
@@ -1652,7 +1651,7 @@ mod tests {
     #[test]
     fn catalog_upgrades_from_every_supported_predecessor() -> Result<(), Box<dyn std::error::Error>>
     {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             for predecessor in 1..CatalogSchemaVersion::CURRENT.get() {
                 let database = libsql::Builder::new_local(":memory:").build().await?;
                 let connection = database.connect()?;
@@ -1693,7 +1692,7 @@ mod tests {
     #[test]
     fn failed_catalog_v3_upgrade_preserves_v2_data_and_schema()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             migrate(
@@ -1775,7 +1774,7 @@ mod tests {
 
     #[test]
     fn failed_migration_rolls_back_schema_and_version() -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let database = libsql::Builder::new_local(":memory:").build().await?;
             let connection = database.connect()?;
             let migrations = [Migration {

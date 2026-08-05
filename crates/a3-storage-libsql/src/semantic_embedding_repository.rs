@@ -1055,7 +1055,6 @@ mod tests {
         EmbeddingProviderId, EmbeddingVector, NormalizedRetrievalSignal, SemanticCardId,
         SnapshotId, VectorSearchCapability, VectorSearchLimit,
     };
-    use futures::executor::block_on;
     use std::time::Duration;
 
     #[test]
@@ -1080,7 +1079,7 @@ mod tests {
     #[test]
     fn bundled_libsql_exposes_the_bounded_native_vector_projection()
     -> Result<(), Box<dyn std::error::Error>> {
-        block_on(async {
+        crate::run_native_libsql_test(async {
             let control = TestControl;
             let dimension = EmbeddingDimension::new(2)?;
             assert_eq!(

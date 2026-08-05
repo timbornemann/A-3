@@ -1,5 +1,6 @@
 //! Application use cases and ports for A^3.
 
+mod deep_map_planner;
 mod embedding_provider;
 mod exact_search;
 mod graph_traversal;
@@ -21,6 +22,7 @@ mod retrieval_fusion;
 mod semantic_embedding_store;
 mod semantic_embeddings;
 
+pub use deep_map_planner::PlanDeepMap;
 pub use embedding_provider::{
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
     EmbeddingProviderFuture, EmbeddingRequestTimeout, EmbeddingRequestTimeoutError,

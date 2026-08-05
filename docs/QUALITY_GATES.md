@@ -32,6 +32,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Rollback des Appstarts bei fehlgeschlagener Migration ohne Datenverlust
 - Contract-Tests gegen temporäre DB
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
+- Der Windows-libSQL-Test-Harness führt native In-Memory-Tests und jede unabhängige
+  Storage-Contract-Phase in einem eigenen Worker aus. Erfolg gilt erst nach dem Abschlussmarker
+  hinter der letzten Assertion; nur `STATUS_ACCESS_VIOLATION` darf höchstens zweimal mit einem
+  frischen Worker wiederholt werden. Assertion- und Vertragsfehler werden nie wiederholt.
 
 ### Index und Retrieval
 
@@ -152,6 +156,13 @@ Modellmetriken werden separat erfasst:
 - Taskerfolg
 
 ## Retrieval- und Agentenevaluation
+
+Der R7-Contract erzeugt aus derselben veröffentlichten Index- und Coverage-Projektion zweimal den
+identischen vollständigen `ExplorePlan` und fixiert Manifest → Entrypoint/Zentralsymbol → offene
+Modul-Coverage als V1-Golden-Reihenfolge. Separate Grenzfälle belegen Snapshot-/Schemaschutz,
+Unknown-Module-Ablehnung, das Überspringen bereits vollständig abgedeckter Module, alle drei
+Budgetdimensionen sowie Cancellation, Budget-, Coverage-, Stagnations- und Gain-Stopgründe. Kein
+Test ersetzt einen Index durch Modelloutput.
 
 Ein versioniertes Eval-Set enthält:
 

@@ -55,6 +55,12 @@ impl ContractWorkspace {
 
 impl Drop for ContractWorkspace {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if std::env::var_os("A3_STORAGE_CONTRACT_RETAIN_WORKSPACE").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
         if let Err(error) = fs::remove_dir_all(&self.path) {
             eprintln!(
                 "could not remove storage contract workspace {}: {error}",

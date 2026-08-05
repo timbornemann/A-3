@@ -47,14 +47,54 @@ impl IndexPersistenceControl for SearchControl {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchContractPhase {
+    Availability,
+    Cancellation,
+    Exact,
+    Lexical,
+    Graph,
+    Replacement,
+}
+
+impl SearchContractPhase {
+    fn scenario(self) -> &'static str {
+        match self {
+            Self::Availability => "search-availability",
+            Self::Cancellation => "search-cancellation",
+            Self::Exact => "search-exact",
+            Self::Lexical => "search-lexical",
+            Self::Graph => "search-graph",
+            Self::Replacement => "search-replacement",
+        }
+    }
+}
+
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
 where
     F: KnowledgeStoreContractFactory,
 {
+    verify_phase(factory, workspace, SearchContractPhase::Availability).await?;
+    verify_phase(factory, workspace, SearchContractPhase::Cancellation).await?;
+    verify_phase(factory, workspace, SearchContractPhase::Exact).await?;
+    verify_phase(factory, workspace, SearchContractPhase::Lexical).await?;
+    verify_phase(factory, workspace, SearchContractPhase::Graph).await?;
+    verify_phase(factory, workspace, SearchContractPhase::Replacement).await
+}
+
+pub(crate) async fn verify_phase<F>(
+    factory: &F,
+    workspace: &ContractWorkspace,
+    phase: SearchContractPhase,
+) -> ContractResult<()>
+where
+    F: KnowledgeStoreContractFactory,
+{
     let control = SearchControl;
-    let app_data = workspace.app_data_root("search");
-    let common = workspace.create_directory("search-common")?;
-    let root = workspace.create_directory("search-primary")?;
+    let scenario = phase.scenario();
+    let app_data = workspace.app_data_root(scenario);
+    let common = workspace.create_directory(&format!("{scenario}-common"))?;
+    let root = workspace.create_directory(&format!("{scenario}-primary"))?;
     let worktree_id = WorktreeId::from_bytes([81; 32]);
     let project = project(
         RepositoryId::from_bytes([8; 32]),
@@ -76,36 +116,39 @@ where
         TraversalDepth::INTERACTIVE_MAX,
         TraversalResultLimit::DEFAULT,
     );
-    assert_eq!(
-        store
-            .search_exact(
-                &project,
-                &launch_query,
-                ExactSearchPageSize::DEFAULT,
-                None,
-                &control,
-            )
-            .await,
-        Err(KnowledgeSearchFailure::IndexUnavailable)
-    );
-    assert_eq!(
-        store
-            .search_lexical(
-                &project,
-                &typo_query,
-                LexicalSearchPageSize::DEFAULT,
-                None,
-                &control,
-            )
-            .await,
-        Err(KnowledgeSearchFailure::IndexUnavailable)
-    );
-    assert_eq!(
-        store
-            .traverse_graph(&project, &call_graph_query, &control)
-            .await,
-        Err(KnowledgeSearchFailure::IndexUnavailable)
-    );
+    if phase == SearchContractPhase::Availability {
+        assert_eq!(
+            store
+                .search_exact(
+                    &project,
+                    &launch_query,
+                    ExactSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await,
+            Err(KnowledgeSearchFailure::IndexUnavailable)
+        );
+        assert_eq!(
+            store
+                .search_lexical(
+                    &project,
+                    &typo_query,
+                    LexicalSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await,
+            Err(KnowledgeSearchFailure::IndexUnavailable)
+        );
+        assert_eq!(
+            store
+                .traverse_graph(&project, &call_graph_query, &control)
+                .await,
+            Err(KnowledgeSearchFailure::IndexUnavailable)
+        );
+        return crate::complete_contract_phase();
+    }
 
     let first_snapshot = snapshot(
         [82; 32],
@@ -126,361 +169,398 @@ where
     let first_run = store
         .publish_index(&project, first_run.id(), &first_publication, &control)
         .await?;
-    assert_eq!(
-        store
+    if phase == SearchContractPhase::Cancellation {
+        assert_eq!(
+            store
+                .search_exact(
+                    &project,
+                    &launch_query,
+                    ExactSearchPageSize::DEFAULT,
+                    None,
+                    &CancelledSearchControl,
+                )
+                .await,
+            Err(KnowledgeSearchFailure::Cancelled)
+        );
+        assert_eq!(
+            store
+                .search_lexical(
+                    &project,
+                    &typo_query,
+                    LexicalSearchPageSize::DEFAULT,
+                    None,
+                    &CancelledSearchControl,
+                )
+                .await,
+            Err(KnowledgeSearchFailure::Cancelled)
+        );
+        assert_eq!(
+            store
+                .traverse_graph(&project, &call_graph_query, &CancelledSearchControl)
+                .await,
+            Err(KnowledgeSearchFailure::Cancelled)
+        );
+        return crate::complete_contract_phase();
+    }
+
+    if phase == SearchContractPhase::Exact {
+        let one = ExactSearchPageSize::new(1)?;
+        let first_page = store
+            .search_exact(&project, &launch_query, one, None, &control)
+            .await?;
+        assert_eq!(first_page.index_run_id(), first_run.id());
+        assert_eq!(first_page.snapshot_id(), first_snapshot.id());
+        assert_eq!(first_page.hits().len(), 1);
+        assert_eq!(
+            first_page.hits()[0].explanation(),
+            ExactSearchExplanation::QualifiedNameExact
+        );
+        assert_symbol_hit(&first_page.hits()[0], "launch", [2; 32])?;
+        let first_cursor = first_page
+            .next_cursor()
+            .cloned()
+            .ok_or("first exact-search page has no continuation")?;
+
+        let repeated = store
+            .search_exact(&project, &launch_query, one, None, &control)
+            .await?;
+        assert_eq!(repeated, first_page);
+        let second_page = store
+            .search_exact(&project, &launch_query, one, Some(&first_cursor), &control)
+            .await?;
+        assert_eq!(second_page.hits().len(), 1);
+        assert_eq!(
+            second_page.hits()[0].explanation(),
+            ExactSearchExplanation::SymbolNameExact
+        );
+        assert_symbol_hit(&second_page.hits()[0], "module::launch", [2; 32])?;
+        assert!(second_page.next_cursor().is_none());
+
+        assert_single_symbol(
+            &store,
+            &project,
+            ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+                "module::launch".to_owned(),
+            )?),
+            "module::launch",
+            ExactSearchExplanation::QualifiedNameExact,
+            &control,
+        )
+        .await?;
+        assert_single_symbol(
+            &store,
+            &project,
+            ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+                "fn nested_launch()".to_owned(),
+            )?),
+            "module::launch",
+            ExactSearchExplanation::SignatureExact,
+            &control,
+        )
+        .await?;
+
+        let path_query =
+            ExactSearchQuery::Path(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?);
+        let path_page = store
             .search_exact(
                 &project,
-                &launch_query,
+                &path_query,
                 ExactSearchPageSize::DEFAULT,
                 None,
-                &CancelledSearchControl,
+                &control,
             )
-            .await,
-        Err(KnowledgeSearchFailure::Cancelled)
-    );
-    assert_eq!(
-        store
+            .await?;
+        assert_file_hit(&path_page, b"src/lib.rs", [2; 32])?;
+        let manifest_page = store
+            .search_exact(
+                &project,
+                &ExactSearchQuery::Role(ExactSearchRole::Manifest),
+                ExactSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?;
+        assert_file_hit(&manifest_page, b"Cargo.toml", [1; 32])?;
+        assert_single_role_symbol(
+            &store,
+            &project,
+            ExactSearchRole::Entrypoint,
+            "launch",
+            &control,
+        )
+        .await?;
+        assert_single_role_symbol(
+            &store,
+            &project,
+            ExactSearchRole::Test,
+            "module::launch",
+            &control,
+        )
+        .await?;
+        let injection = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+            "launch' OR 1=1 --".to_owned(),
+        )?);
+        assert!(
+            store
+                .search_exact(
+                    &project,
+                    &injection,
+                    ExactSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .is_empty()
+        );
+        return crate::complete_contract_phase();
+    }
+
+    if phase == SearchContractPhase::Lexical {
+        let lexical_one = LexicalSearchPageSize::new(1)?;
+        let lexical_first = store
+            .search_lexical(&project, &typo_query, lexical_one, None, &control)
+            .await?;
+        assert_eq!(lexical_first.index_run_id(), first_run.id());
+        assert_eq!(lexical_first.snapshot_id(), first_snapshot.id());
+        assert_eq!(lexical_first.hits().len(), 1);
+        assert_eq!(
+            lexical_first.hits()[0].source_channel(),
+            SourceChannel::Lexical
+        );
+        assert_eq!(
+            lexical_first.hits()[0].explanation(),
+            LexicalSearchExplanation::SymbolName
+        );
+        assert_eq!(lexical_first.hits()[0].score().get(), 75_000);
+        let lexical_cursor = lexical_first
+            .next_cursor()
+            .cloned()
+            .ok_or("first lexical-search page has no continuation")?;
+        assert_eq!(
+            store
+                .search_lexical(&project, &typo_query, lexical_one, None, &control)
+                .await?,
+            lexical_first
+        );
+        let lexical_second = store
             .search_lexical(
                 &project,
                 &typo_query,
+                lexical_one,
+                Some(&lexical_cursor),
+                &control,
+            )
+            .await?;
+        assert_eq!(lexical_second.hits().len(), 1);
+        assert!(lexical_second.next_cursor().is_none());
+        let signature_page = store
+            .search_lexical(
+                &project,
+                &LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("nested".to_owned())?),
                 LexicalSearchPageSize::DEFAULT,
                 None,
-                &CancelledSearchControl,
+                &control,
             )
-            .await,
-        Err(KnowledgeSearchFailure::Cancelled)
-    );
-    assert_eq!(
-        store
-            .traverse_graph(&project, &call_graph_query, &CancelledSearchControl)
-            .await,
-        Err(KnowledgeSearchFailure::Cancelled)
-    );
+            .await?;
+        assert_eq!(signature_page.hits().len(), 1);
+        assert_eq!(
+            signature_page.hits()[0].explanation(),
+            LexicalSearchExplanation::Signature
+        );
+        let injection = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
+            "zzzinjection' OR 1=1 --".to_owned(),
+        )?);
+        assert!(
+            store
+                .search_lexical(
+                    &project,
+                    &injection,
+                    LexicalSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .is_empty()
+        );
+        let obsolete_query =
+            LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("obsolete".to_owned())?);
+        let obsolete = store
+            .search_lexical(
+                &project,
+                &obsolete_query,
+                LexicalSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?;
+        assert!(obsolete.hits().iter().any(|hit| matches!(
+            hit.target(),
+            LexicalSearchTarget::File(revision)
+                if revision.path().as_bytes() == b"obsolete.rs"
+        )));
+        let removed_symbol_query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
+            "removed_symbol".to_owned(),
+        )?);
+        assert!(
+            store
+                .search_lexical(
+                    &project,
+                    &removed_symbol_query,
+                    LexicalSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .iter()
+                .any(
+                    |hit| matches!(hit.target(), LexicalSearchTarget::Symbol(symbol)
+            if symbol.symbol().parsed().name().as_str() == "removed_symbol")
+                )
+        );
+        return crate::complete_contract_phase();
+    }
+
+    if phase == SearchContractPhase::Graph {
+        let graph_result = store
+            .traverse_graph(&project, &call_graph_query, &control)
+            .await?;
+        assert_eq!(graph_result.index_run_id(), first_run.id());
+        assert_eq!(graph_result.snapshot_id(), first_snapshot.id());
+        assert_eq!(graph_result.hits().len(), 2);
+        assert!(!graph_result.truncated());
+        assert_eq!(
+            store
+                .traverse_graph(&project, &call_graph_query, &control)
+                .await?,
+            graph_result
+        );
+        let module_id = SymbolId::from_bytes([11; 32]);
+        let nested_id = SymbolId::from_bytes([12; 32]);
+        let mut graph_targets = graph_result
+            .hits()
+            .iter()
+            .map(|hit| (target_endpoint(hit.target()), hit.path().len()))
+            .collect::<Vec<_>>();
+        graph_targets.sort();
+        assert_eq!(
+            graph_targets,
+            vec![
+                (GraphEndpoint::Symbol(module_id), 1),
+                (GraphEndpoint::Symbol(nested_id), 1),
+            ]
+        );
+        for hit in graph_result.hits() {
+            assert_eq!(hit.source_channel(), SourceChannel::Graph);
+            assert!(hit.path().iter().all(|edge| {
+                edge.kind() == SyntaxRelationKind::Calls
+                    && edge.snapshot_id() == first_snapshot.id()
+                    && edge.evidence().revision().content_hash() == ContentHash::from_bytes([2; 32])
+            }));
+        }
+
+        assert_single_graph_target(
+            &store
+                .traverse_graph(
+                    &project,
+                    &TraversalQuery::callers(first_root_id, TraversalResultLimit::DEFAULT),
+                    &control,
+                )
+                .await?,
+            GraphEndpoint::Symbol(nested_id),
+            SourceChannel::Graph,
+        )?;
+        assert_single_graph_target(
+            &store
+                .traverse_graph(
+                    &project,
+                    &TraversalQuery::imports(
+                        GraphEndpoint::File(RepositoryPath::try_from_bytes(
+                            b"src/lib.rs".to_vec(),
+                        )?),
+                        TraversalResultLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await?,
+            GraphEndpoint::File(RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?),
+            SourceChannel::Graph,
+        )?;
+        assert_single_graph_target(
+            &store
+                .traverse_graph(
+                    &project,
+                    &TraversalQuery::exports(
+                        GraphEndpoint::File(RepositoryPath::try_from_bytes(
+                            b"src/lib.rs".to_vec(),
+                        )?),
+                        TraversalResultLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await?,
+            GraphEndpoint::Symbol(first_root_id),
+            SourceChannel::Graph,
+        )?;
+        assert_single_graph_target(
+            &store
+                .traverse_graph(
+                    &project,
+                    &TraversalQuery::tests(
+                        GraphEndpoint::Symbol(first_root_id),
+                        TraversalResultLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await?,
+            GraphEndpoint::Symbol(nested_id),
+            SourceChannel::Test,
+        )?;
+        let limited_query = TraversalQuery::callees(first_root_id, TraversalResultLimit::new(1)?);
+        let limited = store
+            .traverse_graph(&project, &limited_query, &control)
+            .await?;
+        assert_eq!(limited.hits().len(), 1);
+        assert!(limited.truncated());
+        assert_eq!(
+            store
+                .traverse_graph(
+                    &project,
+                    &TraversalQuery::callees(
+                        SymbolId::from_bytes([99; 32]),
+                        TraversalResultLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await,
+            Err(KnowledgeSearchFailure::SeedUnavailable)
+        );
+        return crate::complete_contract_phase();
+    }
 
     let one = ExactSearchPageSize::new(1)?;
-    let first_page = store
+    let first_cursor = store
         .search_exact(&project, &launch_query, one, None, &control)
-        .await?;
-    assert_eq!(first_page.index_run_id(), first_run.id());
-    assert_eq!(first_page.snapshot_id(), first_snapshot.id());
-    assert_eq!(first_page.hits().len(), 1);
-    assert_eq!(
-        first_page.hits()[0].explanation(),
-        ExactSearchExplanation::QualifiedNameExact
-    );
-    assert_symbol_hit(&first_page.hits()[0], "launch", [2; 32])?;
-    let first_cursor = first_page
+        .await?
         .next_cursor()
         .cloned()
         .ok_or("first exact-search page has no continuation")?;
-
-    let repeated = store
-        .search_exact(&project, &launch_query, one, None, &control)
-        .await?;
-    assert_eq!(repeated, first_page);
-    let second_page = store
-        .search_exact(&project, &launch_query, one, Some(&first_cursor), &control)
-        .await?;
-    assert_eq!(second_page.hits().len(), 1);
-    assert_eq!(
-        second_page.hits()[0].explanation(),
-        ExactSearchExplanation::SymbolNameExact
-    );
-    assert_symbol_hit(&second_page.hits()[0], "module::launch", [2; 32])?;
-    assert!(second_page.next_cursor().is_none());
-
-    assert_single_symbol(
-        &store,
-        &project,
-        ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
-            "module::launch".to_owned(),
-        )?),
-        "module::launch",
-        ExactSearchExplanation::QualifiedNameExact,
-        &control,
-    )
-    .await?;
-    assert_single_symbol(
-        &store,
-        &project,
-        ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
-            "fn nested_launch()".to_owned(),
-        )?),
-        "module::launch",
-        ExactSearchExplanation::SignatureExact,
-        &control,
-    )
-    .await?;
-
     let path_query =
         ExactSearchQuery::Path(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?);
-    let path_page = store
-        .search_exact(
-            &project,
-            &path_query,
-            ExactSearchPageSize::DEFAULT,
-            None,
-            &control,
-        )
-        .await?;
-    assert_file_hit(&path_page, b"src/lib.rs", [2; 32])?;
-    let manifest_page = store
-        .search_exact(
-            &project,
-            &ExactSearchQuery::Role(ExactSearchRole::Manifest),
-            ExactSearchPageSize::DEFAULT,
-            None,
-            &control,
-        )
-        .await?;
-    assert_file_hit(&manifest_page, b"Cargo.toml", [1; 32])?;
-    assert_single_role_symbol(
-        &store,
-        &project,
-        ExactSearchRole::Entrypoint,
-        "launch",
-        &control,
-    )
-    .await?;
-    assert_single_role_symbol(
-        &store,
-        &project,
-        ExactSearchRole::Test,
-        "module::launch",
-        &control,
-    )
-    .await?;
-    let injection = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
-        "launch' OR 1=1 --".to_owned(),
-    )?);
-    assert!(
-        store
-            .search_exact(
-                &project,
-                &injection,
-                ExactSearchPageSize::DEFAULT,
-                None,
-                &control,
-            )
-            .await?
-            .hits()
-            .is_empty()
-    );
-
     let lexical_one = LexicalSearchPageSize::new(1)?;
-    let lexical_first = store
+    let lexical_cursor = store
         .search_lexical(&project, &typo_query, lexical_one, None, &control)
-        .await?;
-    assert_eq!(lexical_first.index_run_id(), first_run.id());
-    assert_eq!(lexical_first.snapshot_id(), first_snapshot.id());
-    assert_eq!(lexical_first.hits().len(), 1);
-    assert_eq!(
-        lexical_first.hits()[0].source_channel(),
-        SourceChannel::Lexical
-    );
-    assert_eq!(
-        lexical_first.hits()[0].explanation(),
-        LexicalSearchExplanation::SymbolName
-    );
-    assert_eq!(lexical_first.hits()[0].score().get(), 75_000);
-    let lexical_cursor = lexical_first
+        .await?
         .next_cursor()
         .cloned()
         .ok_or("first lexical-search page has no continuation")?;
-    assert_eq!(
-        store
-            .search_lexical(&project, &typo_query, lexical_one, None, &control)
-            .await?,
-        lexical_first
-    );
-    let lexical_second = store
-        .search_lexical(
-            &project,
-            &typo_query,
-            lexical_one,
-            Some(&lexical_cursor),
-            &control,
-        )
-        .await?;
-    assert_eq!(lexical_second.hits().len(), 1);
-    assert!(lexical_second.next_cursor().is_none());
-    let signature_page = store
-        .search_lexical(
-            &project,
-            &LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("nested".to_owned())?),
-            LexicalSearchPageSize::DEFAULT,
-            None,
-            &control,
-        )
-        .await?;
-    assert_eq!(signature_page.hits().len(), 1);
-    assert_eq!(
-        signature_page.hits()[0].explanation(),
-        LexicalSearchExplanation::Signature
-    );
-    let injection = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
-        "zzzinjection' OR 1=1 --".to_owned(),
-    )?);
-    assert!(
-        store
-            .search_lexical(
-                &project,
-                &injection,
-                LexicalSearchPageSize::DEFAULT,
-                None,
-                &control,
-            )
-            .await?
-            .hits()
-            .is_empty()
-    );
     let obsolete_query =
         LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("obsolete".to_owned())?);
-    let obsolete = store
-        .search_lexical(
-            &project,
-            &obsolete_query,
-            LexicalSearchPageSize::DEFAULT,
-            None,
-            &control,
-        )
-        .await?;
-    assert!(obsolete.hits().iter().any(|hit| matches!(
-        hit.target(),
-        LexicalSearchTarget::File(revision)
-            if revision.path().as_bytes() == b"obsolete.rs"
-    )));
     let removed_symbol_query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string(
         "removed_symbol".to_owned(),
     )?);
-    assert!(
-        store
-            .search_lexical(
-                &project,
-                &removed_symbol_query,
-                LexicalSearchPageSize::DEFAULT,
-                None,
-                &control,
-            )
-            .await?
-            .hits()
-            .iter()
-            .any(
-                |hit| matches!(hit.target(), LexicalSearchTarget::Symbol(symbol)
-            if symbol.symbol().parsed().name().as_str() == "removed_symbol")
-            )
-    );
-
-    let graph_result = store
-        .traverse_graph(&project, &call_graph_query, &control)
-        .await?;
-    assert_eq!(graph_result.index_run_id(), first_run.id());
-    assert_eq!(graph_result.snapshot_id(), first_snapshot.id());
-    assert_eq!(graph_result.hits().len(), 2);
-    assert!(!graph_result.truncated());
-    assert_eq!(
-        store
-            .traverse_graph(&project, &call_graph_query, &control)
-            .await?,
-        graph_result
-    );
-    let module_id = SymbolId::from_bytes([11; 32]);
-    let nested_id = SymbolId::from_bytes([12; 32]);
-    let mut graph_targets = graph_result
-        .hits()
-        .iter()
-        .map(|hit| (target_endpoint(hit.target()), hit.path().len()))
-        .collect::<Vec<_>>();
-    graph_targets.sort();
-    assert_eq!(
-        graph_targets,
-        vec![
-            (GraphEndpoint::Symbol(module_id), 1),
-            (GraphEndpoint::Symbol(nested_id), 1),
-        ]
-    );
-    for hit in graph_result.hits() {
-        assert_eq!(hit.source_channel(), SourceChannel::Graph);
-        assert!(hit.path().iter().all(|edge| {
-            edge.kind() == SyntaxRelationKind::Calls
-                && edge.snapshot_id() == first_snapshot.id()
-                && edge.evidence().revision().content_hash() == ContentHash::from_bytes([2; 32])
-        }));
-    }
-
-    assert_single_graph_target(
-        &store
-            .traverse_graph(
-                &project,
-                &TraversalQuery::callers(first_root_id, TraversalResultLimit::DEFAULT),
-                &control,
-            )
-            .await?,
-        GraphEndpoint::Symbol(nested_id),
-        SourceChannel::Graph,
-    )?;
-    assert_single_graph_target(
-        &store
-            .traverse_graph(
-                &project,
-                &TraversalQuery::imports(
-                    GraphEndpoint::File(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?),
-                    TraversalResultLimit::DEFAULT,
-                ),
-                &control,
-            )
-            .await?,
-        GraphEndpoint::File(RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?),
-        SourceChannel::Graph,
-    )?;
-    assert_single_graph_target(
-        &store
-            .traverse_graph(
-                &project,
-                &TraversalQuery::exports(
-                    GraphEndpoint::File(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?),
-                    TraversalResultLimit::DEFAULT,
-                ),
-                &control,
-            )
-            .await?,
-        GraphEndpoint::Symbol(first_root_id),
-        SourceChannel::Graph,
-    )?;
-    assert_single_graph_target(
-        &store
-            .traverse_graph(
-                &project,
-                &TraversalQuery::tests(
-                    GraphEndpoint::Symbol(first_root_id),
-                    TraversalResultLimit::DEFAULT,
-                ),
-                &control,
-            )
-            .await?,
-        GraphEndpoint::Symbol(nested_id),
-        SourceChannel::Test,
-    )?;
-    let limited_query = TraversalQuery::callees(first_root_id, TraversalResultLimit::new(1)?);
-    let limited = store
-        .traverse_graph(&project, &limited_query, &control)
-        .await?;
-    assert_eq!(limited.hits().len(), 1);
-    assert!(limited.truncated());
-    assert_eq!(
-        store
-            .traverse_graph(
-                &project,
-                &TraversalQuery::callees(
-                    SymbolId::from_bytes([99; 32]),
-                    TraversalResultLimit::DEFAULT,
-                ),
-                &control,
-            )
-            .await,
-        Err(KnowledgeSearchFailure::SeedUnavailable)
-    );
-
     let replacement_snapshot = snapshot(
         [84; 32],
         worktree_id,
@@ -599,7 +679,7 @@ where
             .await,
         Err(KnowledgeSearchFailure::IndexUnavailable)
     );
-    Ok(())
+    crate::complete_contract_phase()
 }
 
 fn assert_single_graph_target(

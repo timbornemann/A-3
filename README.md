@@ -15,7 +15,9 @@ Fast Index sowie die snapshotgebundene exakte und fehlertolerante lexikalische P
 Signatursuche, die begrenzte evidenzgebundene Graphabfrage und die versionierte deterministische
 Retrieval Fusion, optionale profilisolierte Embeddings sowie die LLM-freie Manifest-/Pfad-
 Modulbildung mit ergänzenden Graphcommunities und deterministischer Repository Card sind
-abgeschlossen. Die weitere Implementierung folgt dem Plan für Deep Map und Task Lens. Die
+abgeschlossen. Auch das versionierte Module-Card-Schema und der veröffentlichungsgebundene,
+LLM-freie Deep-Map-Planner mit Coverage-, Budget-, Informationsgewinn- und Stopverträgen sind
+implementiert. Als Nächstes folgt der typisierte Read-only Explorer. Die
 verbindliche Architektur- und
 Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

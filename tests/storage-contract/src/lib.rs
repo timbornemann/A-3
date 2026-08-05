@@ -30,6 +30,25 @@ pub type ContractError = Box<dyn Error + Send + Sync + 'static>;
 /// Result returned by the shared contract harness.
 pub type ContractResult<T> = Result<T, ContractError>;
 
+pub(crate) fn complete_contract_phase() -> ContractResult<()> {
+    #[cfg(windows)]
+    if let Some(marker) = std::env::var_os("A3_STORAGE_CONTRACT_SUCCESS_MARKER") {
+        std::fs::write(marker, b"complete")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn release_contract_store<S>(store: S) {
+    #[cfg(windows)]
+    if std::env::var_os("A3_STORAGE_CONTRACT_RETAIN_WORKSPACE").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        std::mem::forget(store);
+        return;
+    }
+    drop(store);
+}
+
 /// Borrowing future returned by a storage-adapter factory.
 pub type ContractFactoryFuture<'a, S> = Pin<Box<dyn Future<Output = ContractResult<S>> + 'a>>;
 
@@ -176,6 +195,148 @@ pub trait KnowledgeStoreContractFactory {
     fn open<'a>(&'a self, app_data_root: &'a Path) -> ContractFactoryFuture<'a, Self::Store>;
 }
 
+/// Independently executable adapter-neutral contract group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnowledgeStoreContractGroup {
+    /// Catalog recency and reopen behavior.
+    CatalogRecency,
+    /// Catalog identity behavior for linked worktrees.
+    CatalogLinkedWorktrees,
+    /// Snapshot ordering, identity validation, and worktree isolation.
+    IndexSnapshotValidation,
+    /// Snapshot state projection and reopen behavior.
+    IndexSnapshotReopen,
+    /// Index-run sequencing, transitions, and reopen behavior.
+    IndexRuns,
+    /// Atomic index publication and preservation across reopen.
+    IndexPublicationVisibility,
+    /// Rejection of a duplicate publication.
+    IndexDuplicatePublicationRejection,
+    /// Rejection of a mismatched publication and a concurrent rebuild.
+    IndexMismatchedPublicationRejection,
+    /// Replacement of the visible index by a newer snapshot publication.
+    IndexReplacementPublication,
+    /// Regenerable-index rebuild and authoritative snapshot retention.
+    IndexRebuild,
+    /// Retrieval behavior before an index is published.
+    SearchAvailability,
+    /// Cancellation behavior across all retrieval channels.
+    SearchCancellation,
+    /// Exact retrieval, pagination, role, path, and injection behavior.
+    SearchExact,
+    /// Lexical retrieval, pagination, scoring, and injection behavior.
+    SearchLexical,
+    /// Graph traversal presets, bounds, provenance, and missing seeds.
+    SearchGraph,
+    /// Cursor invalidation and visibility after replacement and rebuild.
+    SearchReplacement,
+    /// Semantic-card, profile, vector, and cache behavior.
+    Semantic,
+    /// Confirmed worktree movement within the same repository.
+    ReconciliationWorktreeMove,
+    /// Confirmed repository movement using durable evidence.
+    ReconciliationRepositoryMove,
+    /// Explicitly separate opening of a remote-matched repository.
+    ReconciliationSeparateOpen,
+}
+
+/// Runs one shared group in a fresh contract-owned workspace.
+pub async fn verify_knowledge_store_contract_group<F>(
+    factory: &F,
+    group: KnowledgeStoreContractGroup,
+) -> ContractResult<()>
+where
+    F: KnowledgeStoreContractFactory,
+{
+    let workspace = fixture::ContractWorkspace::new()?;
+    let result = match group {
+        KnowledgeStoreContractGroup::CatalogRecency => {
+            catalog::verify_recency_and_reopen(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::CatalogLinkedWorktrees => {
+            catalog::verify_linked_worktrees(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexSnapshotValidation => {
+            index::verify_snapshot_validation(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexSnapshotReopen => {
+            index::verify_snapshot_reopen(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexRuns => index::verify_runs(factory, &workspace).await,
+        KnowledgeStoreContractGroup::IndexPublicationVisibility => {
+            index::verify_publication_visibility(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexDuplicatePublicationRejection => {
+            index::verify_duplicate_publication_rejection(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexMismatchedPublicationRejection => {
+            index::verify_mismatched_publication_rejection(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexReplacementPublication => {
+            index::verify_replacement_publication(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::IndexRebuild => {
+            index::verify_rebuild(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::SearchAvailability => {
+            search::verify_phase(
+                factory,
+                &workspace,
+                search::SearchContractPhase::Availability,
+            )
+            .await
+        }
+        KnowledgeStoreContractGroup::SearchCancellation => {
+            search::verify_phase(
+                factory,
+                &workspace,
+                search::SearchContractPhase::Cancellation,
+            )
+            .await
+        }
+        KnowledgeStoreContractGroup::SearchExact => {
+            search::verify_phase(factory, &workspace, search::SearchContractPhase::Exact).await
+        }
+        KnowledgeStoreContractGroup::SearchLexical => {
+            search::verify_phase(factory, &workspace, search::SearchContractPhase::Lexical).await
+        }
+        KnowledgeStoreContractGroup::SearchGraph => {
+            search::verify_phase(factory, &workspace, search::SearchContractPhase::Graph).await
+        }
+        KnowledgeStoreContractGroup::SearchReplacement => {
+            search::verify_phase(
+                factory,
+                &workspace,
+                search::SearchContractPhase::Replacement,
+            )
+            .await
+        }
+        KnowledgeStoreContractGroup::Semantic => semantic::verify(factory, &workspace).await,
+        KnowledgeStoreContractGroup::ReconciliationWorktreeMove => {
+            reconciliation::verify_confirmed_same_repository_move(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::ReconciliationRepositoryMove => {
+            reconciliation::verify_confirmed_repository_move(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::ReconciliationSeparateOpen => {
+            reconciliation::verify_remote_match_can_be_opened_separately(factory, &workspace).await
+        }
+    };
+    retain_workspace_during_native_teardown();
+    result
+}
+
+fn retain_workspace_during_native_teardown() {
+    // libSQL's Windows worker teardown can finish just after the adapter drops.
+    // Keep its database files alive until that owned teardown has completed.
+    #[cfg(windows)]
+    if std::env::var_os("A3_STORAGE_CONTRACT_RETAIN_WORKSPACE").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+    {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// Runs every shared catalog, snapshot, and index-run contract sequentially.
 ///
 /// A fresh temporary workspace is owned for the entire run. Individual
@@ -186,8 +347,14 @@ where
 {
     let workspace = fixture::ContractWorkspace::new()?;
     catalog::verify(factory, &workspace).await?;
+    retain_workspace_during_native_teardown();
     index::verify(factory, &workspace).await?;
+    retain_workspace_during_native_teardown();
     search::verify(factory, &workspace).await?;
+    retain_workspace_during_native_teardown();
     semantic::verify(factory, &workspace).await?;
-    reconciliation::verify(factory, &workspace).await
+    retain_workspace_during_native_teardown();
+    let result = reconciliation::verify(factory, &workspace).await;
+    retain_workspace_during_native_teardown();
+    result
 }

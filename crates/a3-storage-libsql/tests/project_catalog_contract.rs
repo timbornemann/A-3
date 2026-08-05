@@ -13,6 +13,7 @@ use a3_domain::{
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -26,7 +27,7 @@ static PROJECT_CATALOG_TEST_LOCK: Mutex<()> = Mutex::new(());
 fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn std::error::Error>>
 {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common_a = create_directory(temporary.path().join("repository-a-git"))?;
@@ -85,7 +86,7 @@ fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn 
 #[test]
 fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("common-git"))?;
@@ -126,7 +127,7 @@ fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error
 fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("common-git"))?;
@@ -156,7 +157,7 @@ fn invalid_persisted_projection_is_rejected_at_the_adapter_boundary()
 #[test]
 fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("common-git"))?;
@@ -191,7 +192,7 @@ fn conflicting_worktree_ownership_is_rejected() -> Result<(), Box<dyn std::error
 fn prepared_reconciliation_resumes_after_the_storage_directory_moved()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("resume-common"))?;
@@ -263,7 +264,7 @@ fn prepared_reconciliation_resumes_after_the_storage_directory_moved()
 fn invalid_reconciliation_source_is_rejected_before_intent_or_move()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("preflight-common"))?;
@@ -325,7 +326,7 @@ fn invalid_reconciliation_source_is_rejected_before_intent_or_move()
 #[test]
 fn contradictory_prepared_intent_is_never_resumed() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_project_catalog_test()?;
-    block_on(async {
+    run_project_catalog_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("intent-common"))?;
@@ -391,6 +392,102 @@ fn lock_project_catalog_test() -> Result<MutexGuard<'static, ()>, Box<dyn std::e
             "project catalog test lock was poisoned",
         ))
     })
+}
+
+fn run_project_catalog_test<F>(future: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    #[cfg(windows)]
+    let current_thread = std::thread::current();
+    #[cfg(windows)]
+    let test_name = current_thread
+        .name()
+        .ok_or_else(|| io::Error::other("project catalog test has no harness thread name"))?;
+    #[cfg(windows)]
+    if std::env::var_os("A3_LIBSQL_ISOLATED_TEST").as_deref()
+        != Some(std::ffi::OsStr::new(test_name))
+    {
+        let success_marker = project_catalog_success_marker(test_name);
+        remove_project_catalog_success_marker(&success_marker)?;
+        let mut child = std::process::Command::new(std::env::current_exe()?)
+            .arg(test_name)
+            .arg("--exact")
+            .arg("--test-threads=1")
+            .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+            .env("A3_LIBSQL_RETAIN_TEMP_DIRECTORY", "1")
+            .env("A3_LIBSQL_SUCCESS_MARKER", &success_marker)
+            .spawn()?;
+        let child_id = child.id();
+        let status = child.wait()?;
+        cleanup_project_catalog_workspaces(child_id)?;
+        let contract_completed = success_marker.is_file();
+        remove_project_catalog_success_marker(&success_marker)?;
+        if contract_completed {
+            return Ok(());
+        }
+        return Err(io::Error::other(format!(
+            "isolated project catalog test {test_name} failed with {status}"
+        ))
+        .into());
+    }
+    let result = block_on(future);
+    #[cfg(windows)]
+    match result {
+        Ok(()) => {
+            let marker = std::env::var_os("A3_LIBSQL_SUCCESS_MARKER")
+                .ok_or_else(|| io::Error::other("project catalog success marker is missing"))?;
+            fs::write(marker, b"complete")?;
+            std::process::exit(0);
+        }
+        Err(error) => {
+            eprintln!("project catalog contract failed: {error}");
+            std::process::exit(1);
+        }
+    }
+    #[cfg(not(windows))]
+    result
+}
+
+#[cfg(windows)]
+fn project_catalog_success_marker(test_name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "a3-storage-project-catalog-parent-{}-{test_name}.complete",
+        std::process::id()
+    ))
+}
+
+#[cfg(windows)]
+fn remove_project_catalog_success_marker(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_project_catalog_workspaces(child_id: u32) -> io::Result<()> {
+    let temporary_root = std::env::temp_dir();
+    let expected_prefix = format!("a3-storage-test-{child_id}-");
+    for entry in fs::read_dir(&temporary_root)? {
+        let entry = entry?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&expected_prefix)
+        {
+            continue;
+        }
+        let target = entry.path();
+        if target.parent() != Some(temporary_root.as_path()) {
+            return Err(io::Error::other(
+                "project catalog workspace escaped the temporary root",
+            ));
+        }
+        fs::remove_dir_all(target)?;
+    }
+    Ok(())
 }
 
 fn create_directory(

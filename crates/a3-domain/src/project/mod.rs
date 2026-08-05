@@ -1,3 +1,4 @@
+mod deep_map;
 mod discovery;
 mod embedding;
 mod git;
@@ -15,6 +16,16 @@ mod revision;
 mod semantic_card;
 mod snapshot;
 
+pub use deep_map::{
+    CoverageRequirement, DeepMapPlanError, DeepMapPlanner, ExpectedInformationGain,
+    ExpectedInformationGainError, ExplorationStopPolicy, ExplorationStopReason,
+    ExplorationStopState, ExploreBudget, ExploreBudgetError, ExploreCost, ExploreCostError,
+    ExploreEvidenceRequirement, ExplorePlan, ExplorePlanStopReason, ExplorePolicyVersion,
+    ExploreSeedReason, ExploreStep, ExploreStepStatus, ExploreTarget, ExploreVerificationMethod,
+    MapperProfileVersion, ModuleCardEvidenceId, ModuleCardField, ModuleCardFieldSpec, ModuleCardId,
+    ModuleCardMetadataField, ModuleCardSchema, ModuleCardSchemaVersion, ModuleCardStatus,
+    ModuleCoverage, ModuleCoverageSnapshot,
+};
 pub use discovery::{
     DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveredFileRolesError,
     DiscoveryExclusionCounts, DiscoveryExclusionReason, DiscoveryOrigin, DiscoveryPolicy,

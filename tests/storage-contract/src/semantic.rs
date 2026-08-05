@@ -163,7 +163,7 @@ where
             .await?,
         keys
     );
-    drop(store);
+    crate::release_contract_store(store);
 
     let reopened = factory.open(&app_data_root).await?;
     assert_eq!(
@@ -194,7 +194,7 @@ where
             .map(|value| value.id()),
         Some(second_snapshot.id())
     );
-    Ok(())
+    crate::complete_contract_phase()
 }
 
 fn build_profile(model: &str, dimensions: u16) -> ContractResult<EmbeddingModelProfile> {

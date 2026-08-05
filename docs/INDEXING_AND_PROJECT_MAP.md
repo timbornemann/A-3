@@ -307,6 +307,24 @@ Der deterministische Planner wählt:
 - stark gekoppelte oder ungewöhnliche Bereiche
 - noch nicht beschriebene Module
 
+Der implementierte V1-Planner läuft vollständig ohne Modell und akzeptiert konstruktiv nur einen
+`PublishedIndex`. Sein `ModuleCoverageSnapshot` muss exakt dieselbe Snapshot- und
+`ModuleCardSchemaVersion` tragen; unbekannte oder doppelte Module werden abgelehnt. Module mit
+vollständiger Muss-Coverage werden auch dann übersprungen, wenn andere Module noch offen sind.
+
+Manifestrevisionen, Entrypoints, zentrale Symbole, Test-Roots, Graphcommunities und offene Module
+werden mit einer ganzzahligen, versionierten Kombination aus Seed-Priorität, Muss-/Soll-Coverage
+und erwarteter Informationsbreite geordnet. Überlappende Symbolseeds werden vor dem Ranking
+vereinigt. Ein deterministisches Top-K hält höchstens 16.384 Kandidaten; stabile Module-, Ziel- und
+Reason-Schlüssel lösen Gleichstände auf.
+
+Jeder `ExploreStep` enthält das erwartete Coverage-Ergebnis, die genaue aktuelle Modul-, Manifest-
+oder Symbolevidenz, die spätere feldgenaue Verifikationsmethode, `Planned`-Status sowie vorab
+reservierte Token-, Zeit- und Toolkosten. Die Summen werden checked addiert und nur aufgenommen,
+wenn alle drei Dimensionen innerhalb des `ExploreBudget` bleiben. V1 verwendet als interaktiven
+Standard 32.000 Tokens, 120 Sekunden und 64 Read-only-Toolaufrufe; globale Grenzen verhindern
+unbegrenzte Rekonstruktionen.
+
 ### Exploration
 
 Das LLM darf nur über typisierte Read-only-Werkzeuge explorieren. Jeder nächste Leseschritt benötigt einen erwarteten Informationsgewinn. Vollständiges rekursives Lesen ist verboten.
@@ -318,6 +336,12 @@ Eine Exploration endet, wenn zuerst eine Bedingung erfüllt ist:
 - drei aufeinanderfolgende Expansionen liefern keinen neuen hoch bewerteten Knoten;
 - verbleibende Bereiche liegen unter dem Relevanzschwellwert;
 - Benutzerabbruch.
+
+`ExplorationStopPolicy::v1` bildet diese Fälle typisiert als Cancellation, Budget Exhaustion,
+erreichte Muss-Coverage, drei aufeinanderfolgende Expansionen unterhalb des Nutzens und
+verbleibenden Informationsgewinn unter 100 Basispunkten ab. Der statische Plan weist getrennt aus,
+ob Coverage vollständig eingeplant, das Budget erschöpft, der Gain-Schwellwert unterschritten oder
+kein geeigneter Seed vorhanden ist.
 
 ### Module Card
 
@@ -344,6 +368,13 @@ ModuleCard
 ~~~
 
 Jedes nicht leere fachliche Feld muss seine Evidence IDs behalten. Ein Summary-Feld ohne Quellen wird verworfen.
+
+Das implementierte Schema V1 begrenzt das gesamte strukturierte Dokument vor Validierung auf 64
+KiB, die vereinigte Evidenzmenge auf 512 IDs und alle zwölf Fachfelder zusätzlich separat nach
+Itemzahl und UTF-8-Bytes. `ModuleCardId`, `ModuleId`, `SnapshotId`, Confidence,
+`MapperProfileVersion` und Status sind verpflichtende Envelope-Daten. Der Planner erzeugt noch
+keine Card-Inhalte; strukturierte Explorer-Ausgabe, Repair und Proposalbildung beginnen erst mit
+R8, deterministische Claim-Verifikation und Publish erst mit R9.
 
 ### Verify
 

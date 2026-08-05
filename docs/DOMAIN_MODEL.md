@@ -125,6 +125,28 @@ Symbolzahlen. Ihr Entrypoint-Präfix darf nur bei sichtbarer Trunkierung eine ec
 primären Moduleinträge sein. `IndexPublication` prüft Graph-, Rank-, Manifest- und Modulprojektion
 gemeinsam, bevor der Storageadapter sie atomar veröffentlichen darf.
 
+### ModuleCardSchema und ExplorePlan
+
+`ModuleCardSchemaVersion::V1` beschreibt zwölf begrenzte Fachfelder sowie die verpflichtende
+Envelope aus `ModuleCardId`, `ModuleId`, `SnapshotId`, Evidence-IDs, Confidence,
+`MapperProfileVersion` und `ModuleCardStatus`. Jedes nicht leere Fachfeld verlangt Evidenz. Das
+Gesamtdokument ist vor strukturierter Validierung auf 64 KiB, die kanonische Evidenzmenge auf 512
+IDs und jedes Feld zusätzlich auf eine eigene Item- und Bytezahl begrenzt. Confidence bleibt von
+Proposal-, Verified-, Published-, Stale- und NeedsReview-Status getrennt.
+
+`ModuleCoverageSnapshot` bindet bereits verifizierte Feld-Coverage an Snapshot und Schemaversion.
+Der `DeepMapPlanner` akzeptiert ausschließlich einen `PublishedIndex` und überspringt Module, deren
+Muss-Felder bereits vollständig belegt sind. Ein `ExplorePlan` behält IndexRun, Snapshot, Schema,
+Plannerpolicy, Hartbudget, reservierte Gesamtkosten, geordnete Schritte und den abschließenden
+Stopgrund. Jeder Schritt nennt Ziel, erwartetes Ergebnis als Feldmenge, exakte Evidenzanforderung,
+Verifikationsmethode, Status und positive Token-, Zeit- und Toolkosten.
+
+Seed-Ranking und erwarteter Informationsgewinn verwenden ausschließlich Manifestrevisionen,
+Entrypoints, rankgeordnete zentrale Symbole, Test-Roots, Graphcommunities und fehlende Coverage aus
+der veröffentlichten Modulprojektion. Höchstens 16.384 Kandidaten bleiben nach deterministischem
+Top-K erhalten. Addition und Auswahl erfolgen geprüft in allen drei Budgetdimensionen; ein Plan
+kann daher sein eigenes Budget konstruktiv nicht überschreiten.
+
 ### Exact Retrieval
 
 Eine `ExactSearchQuery` wählt entweder einen normalisierten Repository-Pfad, einen begrenzten
