@@ -1,0 +1,8 @@
+{
+  "name": "@a3-fixture/web",
+  "type": "module",
+  "main": "./dist/App.js",
+  "dependencies": {
+    "@a3-fixture/core": "workspace:*"
+  }
+}

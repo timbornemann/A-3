@@ -65,7 +65,7 @@ Ein Nutzer kann:
 - [x] Content Hashing und Snapshots
 - [x] Tree-sitter LanguageAdapter-Contract
 - [x] Rust-Adapter
-- [ ] TypeScript-/JavaScript-Adapter
+- [x] TypeScript-/JavaScript-Adapter
 - [ ] Python-Adapter
 - [ ] Symbolgraph und atomisches Publish
 - [ ] File Watcher und inkrementeller Delta-Lauf

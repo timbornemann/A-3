@@ -198,12 +198,43 @@ Performanceclaim.
 
 Abhängigkeiten: S5
 
-- [ ] Funktionen, Klassen, Interfaces, Types und Methoden
-- [ ] imports, exports und Re-Exports
-- [ ] Calls und Konstruktoren, soweit syntaktisch bestimmbar
-- [ ] Testframework-Heuristiken
-- [ ] package.json und Workspace-Manifeste
-- [ ] Golden Fixtures
+Status: Completed
+
+- [x] Funktionen, Klassen, Interfaces, Types und Methoden
+- [x] imports, exports und Re-Exports
+- [x] Calls und Konstruktoren, soweit syntaktisch bestimmbar
+- [x] Testframework-Heuristiken
+- [x] package.json und Workspace-Manifeste
+- [x] Golden Fixtures
+
+Verifizierter Abschluss vom 2026-08-05: Der Produktadapter
+`typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-contract-v1` verwendet die
+dedizierten Tree-sitter-Grammatiken für JavaScript/JSX, TypeScript und TSX und verarbeitet `.js`,
+`.jsx`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` und `.tsx`. Er extrahiert Funktionen, Generatoren,
+Klassen, Interfaces, Typaliase, Enums, Namespaces, Variablen, Methoden, Felder und Varianten samt
+Sichtbarkeit, Signaturen, JSDoc-Bereichen sowie Test- und Einstiegspunktrollen. ES-Imports,
+ES-Exports, Re-Exports, CommonJS-`require` und -Exports, Heritage-Kanten sowie statisch bestimmbare
+Calls und Konstruktoren bleiben mit Quellbereichevidenz erhalten; dynamische Ziele werden nur mit
+reduzierter Confidence und sichtbarer partieller Coverage ausgegeben. Heuristiken für Jest, Vitest,
+Mocha, Node, Bun und Deno erkennen Suites und Tests, ohne aus Dateinamen außerhalb einer von der
+Discovery gelieferten Testrolle Fakten abzuleiten.
+
+Der Manifestpfad parst `package.json` mit einer dedizierten JSON-Grammatik und erzeugt begrenzte
+Beziehungen für Dependencies, Dev-Dependencies, Scripts, Workspaces, Exports, Browser-Mappings,
+Binärziele und sichere repository-relative Einstiegspfade. Export-Patterns bleiben ungelöste
+Build-Kandidaten; Pfadtraversal, falsche JSON-Formen und ungültige Kodierung erzeugen partielle
+Coverage. `pnpm-workspace.yaml` unterstützt bewusst nur die begrenzte skalare Top-Level-
+`packages`-Sequenz und kennzeichnet komplexe YAML-Formen als nicht unterstützt. `package.json` ist
+auf 512 KiB, das pnpm-Manifest auf 256 KiB begrenzt. Gemeinsame Contract-Goldens, ein lizenziertes
+TypeScript-Monorepo-Fixture sowie Dialekt-, Syntaxfehler-, CommonJS-, TSX-, Rollen-, Manifest-,
+Pfad-, Größen- und Wiederverwendungstests sichern das Verhalten.
+
+Die reproduzierbare Release-Messung auf der lokalen Windows-Entwicklungsmaschine verarbeitete
+100.000 strukturelle TypeScript-Zeilen beziehungsweise 1.740.000 Bytes mit 20.001 Symbolen und
+60.001 Beziehungen. Ein Zwischenstand mit quadratischer globaler Contains-Duplikatsuche benötigte
+1.782 ms über den Adapterpfad; nach deren Entfernung benötigte direktes Tree-sitter 197 ms und der
+vollständige begrenzte Adapterpfad 399 ms. Die Messung ist kein Wert für den vollständigen Fast Index
+und begründet keinen allgemeinen Performanceclaim.
 
 ## S8 Python-Adapter
 

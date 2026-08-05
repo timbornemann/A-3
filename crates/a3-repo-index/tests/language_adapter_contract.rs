@@ -14,8 +14,8 @@ use a3_language_adapter_contract_tests::{
     ContractResult, LanguageAdapterContractFixture, verify_language_adapter_contract,
 };
 use a3_repo_index::{
-    ParserPoolSize, RustLanguageAdapter, TreeSitterParserPool, source_range_for_node,
-    verify_language_parse_input,
+    ParserPoolSize, RustLanguageAdapter, TreeSitterParserPool, TypeScriptJavaScriptLanguageAdapter,
+    source_range_for_node, verify_language_parse_input,
 };
 use std::str;
 use tree_sitter::{Language, Node};
@@ -24,6 +24,8 @@ const VALID_JSON: &[u8] = b"{\"alpha\":1,\"beta\":2}\n";
 const INVALID_JSON: &[u8] = b"{\"alpha\": }\n";
 const VALID_RUST: &[u8] = b"pub fn alpha() {\n    beta();\n}\n\nfn beta() {}\n";
 const INVALID_RUST: &[u8] = b"pub fn broken( {\n";
+const VALID_TYPESCRIPT: &[u8] = b"export function alpha(): number {\n  return beta();\n}\n\nfunction beta(): number { return 1; }\n";
+const INVALID_TYPESCRIPT: &[u8] = b"export function broken( {\n";
 
 #[derive(Debug)]
 struct JsonContractAdapter {
@@ -207,6 +209,31 @@ fn rust_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
                 "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Exports provider=TreeSitter confidence=10000 evidence=7..12@0:7..0:12\n",
                 "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Contains provider=TreeSitter confidence=10000 evidence=32..44@4:0..4:12\n",
                 "relation source=Symbol(LocalSymbolId(2)) target=Unresolved(SymbolReference(\"beta\")) kind=Calls provider=TreeSitter confidence=7500 evidence=21..25@1:4..1:8\n",
+            ),
+        },
+    )
+}
+
+#[test]
+fn typescript_javascript_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
+    let adapter = TypeScriptJavaScriptLanguageAdapter::new(ParserPoolSize::new(2)?)?;
+    verify_language_adapter_contract(
+        &adapter,
+        LanguageAdapterContractFixture {
+            supported_path: b"src/index.ts",
+            unsupported_path: b"src/index.txt",
+            valid_source: VALID_TYPESCRIPT,
+            invalid_source: INVALID_TYPESCRIPT,
+            expected_golden: concat!(
+                "path=7372632f696e6465782e7473 hash=e594b82bec6b1823c4e94d3e239ff3d7f5a0230c97798c146434655c96de8e79 language=typescript-javascript adapter=typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-contract-v1 contract=1 coverage=92/92/0\n",
+                "symbol id=1 kind=Module name=\"index\" signature=None declaration=0..92@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=true\n",
+                "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"function alpha(): number\") declaration=7..52@0:7..2:1 selection=16..21@0:16..0:21 documentation=- visibility=Public test=false entrypoint=false\n",
+                "symbol id=3 kind=Function name=\"beta\" signature=Some(\"function beta(): number\") declaration=54..91@4:0..4:37 selection=63..67@4:9..4:13 documentation=- visibility=Internal test=false entrypoint=false\n",
+                "relation source=File target=Symbol(LocalSymbolId(1)) kind=Defines provider=TreeSitter confidence=10000 evidence=0..92@0:0..5:0\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Contains provider=TreeSitter confidence=10000 evidence=7..52@0:7..2:1\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Exports provider=TreeSitter confidence=10000 evidence=16..21@0:16..0:21\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Contains provider=TreeSitter confidence=10000 evidence=54..91@4:0..4:37\n",
+                "relation source=Symbol(LocalSymbolId(2)) target=Unresolved(SymbolReference(\"beta\")) kind=Calls provider=TreeSitter confidence=7500 evidence=43..47@1:9..1:13\n",
             ),
         },
     )

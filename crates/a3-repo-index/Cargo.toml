@@ -14,14 +14,17 @@ crossbeam-channel.workspace = true
 gix = { workspace = true, features = ["dirwalk"] }
 rustix.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 tree-sitter.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
+tree-sitter-typescript.workspace = true
 
 [dev-dependencies]
 a3-language-adapter-contract-tests.workspace = true
 a3-workspace.workspace = true
-tree-sitter-json.workspace = true
 
 [lints]
 workspace = true

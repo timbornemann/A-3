@@ -10,6 +10,7 @@ mod path;
 mod repository;
 mod rust_adapter;
 mod snapshot;
+mod typescript_javascript_adapter;
 
 pub use discovery::GitRepositoryDiscoverer;
 pub use language_input::verify_language_parse_input;
@@ -19,3 +20,6 @@ pub use parser_pool::{
 };
 pub use rust_adapter::{RustLanguageAdapter, RustLanguageAdapterCreateError};
 pub use snapshot::Blake3RepositorySnapshotBuilder;
+pub use typescript_javascript_adapter::{
+    TypeScriptJavaScriptLanguageAdapter, TypeScriptJavaScriptLanguageAdapterCreateError,
+};

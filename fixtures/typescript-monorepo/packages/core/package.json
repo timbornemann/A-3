@@ -1,0 +1,6 @@
+{
+  "name": "@a3-fixture/core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
+}

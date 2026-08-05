@@ -1,0 +1,31 @@
+{
+  "name": "@a3-fixture/root",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "a3-fixture": "./bin/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "nanoid": "5.1.6"
+  },
+  "devDependencies": {
+    "vitest": "4.1.0"
+  }
+}

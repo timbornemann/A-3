@@ -1,7 +1,7 @@
 # Indexierung und Projektkarte
 
 Status: verbindliche Baseline  
-Stand: 2026-08-04
+Stand: 2026-08-05
 
 ## Grundsatz
 
@@ -115,6 +115,23 @@ Der Adapter erhält den Makronamen als syntaktischen Call, markiert den nicht st
 Tokenbaum aber explizit als unvollständige Coverage. Unsupported Call-Target-Formen, Syntaxfehler und
 ungültige Kodierung werden ebenfalls sichtbar statt stillschweigend als vollständige Erkenntnis zu
 gelten.
+
+Der TypeScript-/JavaScript-Adapter V1 bindet die offiziellen Tree-sitter-Grammatiken für
+JavaScript/JSX 0.25.0 sowie TypeScript/TSX 0.23.2 und erkennt die üblichen JS-, JSX-, MJS-, CJS-,
+TS-, MTS-, CTS- und TSX-Endungen. Deklarationen einschließlich Interfaces, Typaliasen, Namespaces,
+Klassenmitgliedern und Enumvarianten tragen Signatur-, Sichtbarkeits-, JSDoc-, Test- und
+Einstiegspunktevidenz. ES- und CommonJS-Modulbeziehungen, Heritage sowie syntaktisch bestimmbare
+Calls und Konstruktoren werden als Kandidaten ausgegeben; dynamische Formen bleiben mit reduzierter
+Confidence und partieller Coverage sichtbar. Jest-, Vitest-, Mocha-, Node-, Bun- und Deno-Formen
+werden über begrenzte Syntaxheuristiken erkannt.
+
+`package.json` wird strukturell mit `tree-sitter-json` 0.24.8 bis 512 KiB analysiert. Dependencies,
+Scripts, Workspaces, Binärziele, Exports und Browser-Mappings liefern Manifestbeziehungen, wobei nur
+sichere repository-relative Dateiziele zu File-Kanten werden. Export-Patterns bleiben ungelöste
+Build-Kandidaten. Für `pnpm-workspace.yaml` gilt eine absichtlich schmale Obergrenze von 256 KiB und
+ein dokumentierter Teilparser für die skalare Top-Level-`packages`-Sequenz. Komplexere YAML-Formen,
+ungültige Wertformen, Kodierungsfehler und unsichere Pfade erzeugen partielle Coverage statt
+vermeintlich vollständiger Fakten.
 
 ### Link
 

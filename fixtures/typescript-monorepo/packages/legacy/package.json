@@ -1,0 +1,5 @@
+{
+  "name": "@a3-fixture/legacy",
+  "type": "commonjs",
+  "main": "./src/index.cjs"
+}
