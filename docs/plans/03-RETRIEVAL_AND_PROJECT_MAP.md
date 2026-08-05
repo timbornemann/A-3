@@ -8,12 +8,35 @@ Relevante ADRs: 0006, 0007, 0008, 0009
 
 Abhängigkeiten: Gate M3
 
-- [ ] Suche nach normalisiertem Pfad
-- [ ] exakter und präfixbasierter Symbolname
-- [ ] qualifizierter Name und Signatur
-- [ ] Manifest, Einstiegspunkt und Test
-- [ ] paginierte, stabil sortierte Resultate
-- [ ] SourceChannel und Ergebnisbegründung
+Status: Completed
+
+- [x] Suche nach normalisiertem Pfad
+- [x] exakter und präfixbasierter Symbolname
+- [x] qualifizierter Name und Signatur
+- [x] Manifest, Einstiegspunkt und Test
+- [x] paginierte, stabil sortierte Resultate
+- [x] SourceChannel und Ergebnisbegründung
+
+Verifizierter Abschluss vom 2026-08-05: Der infra-freie Domänenkern begrenzt Querytext und
+Seitengröße, bindet jeden Treffer an `SourceChannel::Exact`, eine typisierte Erklärung und die
+aktuelle `FileRevision` und macht Cursor über Query, `IndexRunId`, `SnapshotId` und den letzten
+vollständigen Sortierschlüssel stale-sicher. Der Application-Port `KnowledgeSearchStore` bleibt
+read-only, cancellable und frei von SQL- oder libSQL-Typen.
+
+Index-Schema V2 übernimmt Manifestrollen aus der bestätigten Discovery und erzeugt qualifizierte
+Namen ausschließlich aus eindeutigen, azyklischen `Contains`-Kanten. Knowledge-Schema V5 speichert
+Marker, erwartete Zeilenzahlen, qualifizierte Namen und Manifestrevisionen atomar mit File
+Revisions, Graph und Ranking. Exakte qualifizierte Namen, Simple Names und Signaturen stehen in
+dieser Reihenfolge vor ihren Präfixtreffern; rohe Pfadbytes, qualifizierter Name und `SymbolId`
+bilden danach eine stabile Keyset-Reihenfolge. Entrypoint und Test verwenden belegte Symbolrollen.
+
+Der gemeinsame Storage-Vertrag belegt Reopen, identische Wiederholung, Mehrseitenabfrage ohne
+Duplikate, Path/Manifest/Entrypoint/Test/Signatur, SQL-Parameterbindung, Cancellation, aktuelle
+Revisionen und die Ablehnung eines Cursors nach Replacement-Publish. Migrations-, Zyklen- und
+Mehrfach-Eltern-Regressionstests sind grün. Die reproduzierbare Release-Messung mit 50.000 Symbolen
+aus 100.000 strukturellen Zeilen erreichte über 30 Exact-Query-Samples P50 37,0 ms und P95 39,7 ms;
+der vorher notwendige vollständige Index-Load plus Scan lag über fünf Samples bei P50 652,8 ms und
+P95 656,8 ms.
 
 Akzeptanz:
 
@@ -196,4 +219,3 @@ Akzeptanz:
 - [ ] Task Lens bleibt innerhalb des konfigurierten Budgets
 - [ ] App funktioniert vollständig ohne Embeddings
 - [ ] Performanceziele für Search und Context-Vorstufe gemessen
-

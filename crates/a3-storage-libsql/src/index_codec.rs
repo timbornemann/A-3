@@ -397,54 +397,68 @@ async fn read_symbols(
         .await
         .map_err(IndexPublicationRepositoryError::Read)?
     {
-        let id = SymbolId::from_bytes(read_stable_id(&row, 0)?);
-        let revision = FileRevision::new(
-            read_path(&row, 1)?,
-            ContentHash::from_bytes(read_stable_id(&row, 2)?),
-        );
-        let local_id = LocalSymbolId::new(read_u32(&row, 3)?)
-            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
-        let kind: String = row.get(4).map_err(IndexPublicationRepositoryError::Read)?;
-        let name: String = row.get(5).map_err(IndexPublicationRepositoryError::Read)?;
-        let signature: Option<String> =
-            row.get(6).map_err(IndexPublicationRepositoryError::Read)?;
-        let declaration = read_range(&row, 7)?;
-        let selection = read_range(&row, 13)?;
-        let documentation = read_optional_range(&row, 19)?;
-        let visibility: String = row.get(25).map_err(IndexPublicationRepositoryError::Read)?;
-        let roles = read_u8(&row, 26)?;
-        let mut parsed = ParsedSymbol::new(
-            local_id,
-            symbol_kind_from_stored(&kind)?,
-            SymbolName::try_from_string(name)
-                .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?,
-            declaration,
-            selection,
-        )
-        .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?
-        .with_visibility(visibility_from_stored(&visibility)?);
-        if let Some(signature) = signature {
-            parsed = parsed.with_signature(
-                SymbolSignature::try_from_string(signature)
-                    .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?,
-            );
-        }
-        if roles & 1 != 0 {
-            parsed = parsed.with_role(SymbolRole::Test);
-        }
-        if roles & 2 != 0 {
-            parsed = parsed.with_role(SymbolRole::Entrypoint);
-        }
-        if roles & !3 != 0 {
-            return Err(IndexPublicationRepositoryError::InvalidStoredData);
-        }
-        if let Some(documentation) = documentation {
-            parsed = parsed.with_documentation_range(documentation);
-        }
-        symbols.push(GraphSymbol::new(id, revision, parsed));
+        symbols.push(graph_symbol_from_row(&row, 0)?);
         progress.advance(1)?;
     }
     Ok(symbols)
+}
+
+pub(crate) fn graph_symbol_from_row(
+    row: &libsql::Row,
+    offset: i32,
+) -> Result<GraphSymbol, IndexPublicationRepositoryError> {
+    let id = SymbolId::from_bytes(read_stable_id(row, offset)?);
+    let revision = FileRevision::new(
+        read_path(row, offset + 1)?,
+        ContentHash::from_bytes(read_stable_id(row, offset + 2)?),
+    );
+    let local_id = LocalSymbolId::new(read_u32(row, offset + 3)?)
+        .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+    let kind: String = row
+        .get(offset + 4)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let name: String = row
+        .get(offset + 5)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let signature: Option<String> = row
+        .get(offset + 6)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let declaration = read_range(row, offset + 7)?;
+    let selection = read_range(row, offset + 13)?;
+    let documentation = read_optional_range(row, offset + 19)?;
+    let visibility: String = row
+        .get(offset + 25)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let roles = read_u8(row, offset + 26)?;
+    let mut parsed = ParsedSymbol::new(
+        local_id,
+        symbol_kind_from_stored(&kind)?,
+        SymbolName::try_from_string(name)
+            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?,
+        declaration,
+        selection,
+    )
+    .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?
+    .with_visibility(visibility_from_stored(&visibility)?);
+    if let Some(signature) = signature {
+        parsed = parsed.with_signature(
+            SymbolSignature::try_from_string(signature)
+                .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?,
+        );
+    }
+    if roles & 1 != 0 {
+        parsed = parsed.with_role(SymbolRole::Test);
+    }
+    if roles & 2 != 0 {
+        parsed = parsed.with_role(SymbolRole::Entrypoint);
+    }
+    if roles & !3 != 0 {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    if let Some(documentation) = documentation {
+        parsed = parsed.with_documentation_range(documentation);
+    }
+    Ok(GraphSymbol::new(id, revision, parsed))
 }
 
 async fn read_edges(

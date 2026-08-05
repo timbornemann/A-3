@@ -16,9 +16,9 @@ use a3_application::{
     RepositoryIndexControl, RepositoryIndexMode, SnapshotCompatibility,
 };
 use a3_domain::{
-    DiscoveryResult, FileRevision, IndexPublication, IndexRunId, IndexSchemaVersion,
-    LanguageParseResult, Progress, ProjectIdentity, RankingPolicyVersion, RepositoryFileState,
-    RepositoryPath, Snapshot, SnapshotDelta,
+    DiscoveredFileRole, DiscoveryResult, FileRevision, IndexPublication, IndexRunId,
+    IndexSchemaVersion, LanguageParseResult, Progress, ProjectIdentity, RankingPolicyVersion,
+    RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -111,7 +111,7 @@ impl BuiltinIncrementalIndexCompiler {
 impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     fn compatibility(&self) -> Result<SnapshotCompatibility, RepositoryIndexCompilerFailure> {
         SnapshotCompatibility::new(
-            IndexSchemaVersion::v1(),
+            IndexSchemaVersion::v2(),
             self.adapters()
                 .into_iter()
                 .map(|adapter| adapter.revision().clone())
@@ -233,7 +233,18 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
             .rank(&graph, RankingPolicy::v1(), &graph_control)
             .map_err(map_rank_failure)?;
         ensure_active(control, started)?;
+        let manifest_files = files_by_path
+            .iter()
+            .filter_map(|(path, revision)| {
+                roles_by_path
+                    .get(path)
+                    .copied()
+                    .filter(|roles| roles.contains(DiscoveredFileRole::Manifest))
+                    .map(|_| revision.clone())
+            })
+            .collect();
         let publication = IndexPublication::new(graph, ranking)
+            .and_then(|publication| publication.with_manifest_files(manifest_files))
             .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
         report(control, 4)?;
 

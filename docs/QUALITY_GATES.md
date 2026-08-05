@@ -107,6 +107,16 @@ P95 15,286 s, ein erster 900-Parameter-Batch bei 14,493 s. Erst höchstens 30.00
 erreichten das Budget. Diese lokale Messung ersetzt nicht die abschließende V1-Referenzmessung auf
 der oben definierten 8-Core-Maschine.
 
+R1 besitzt den reproduzierbaren ignorierten Release-Test
+`exact_search_performance::exact_symbol_search_meets_the_100_millisecond_p95_target`. Das Fixture
+enthält 50.000 Symbole als Projektion von 100.000 strukturellen Zeilen. Auf derselben lokalen
+Windows-11-Maschine wurden am 2026-08-05 für den vor R1 notwendigen vollständigen Index-Load mit
+anschließendem Namensscan über fünf Samples P50 652,8 ms und P95 656,8 ms gemessen. Die
+indexgestützte Exact Query über 30 Samples erreichte nach begrenztem Wiederverwenden vollständig
+verifizierter, identitätsgebundener Datenbankhandles P50 37,0 ms und P95 39,7 ms. Die erste Messung
+mit erneutem Open, Migration und Integritätsprüfung pro Query lag bei P50 554,0 ms und P95 570,5 ms.
+Auch diese lokale Messung ersetzt nicht die abschließende V1-Referenzmessung.
+
 Modellmetriken werden separat erfasst:
 
 - Time to First Token

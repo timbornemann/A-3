@@ -3,17 +3,25 @@ use crate::{
     CatalogDatabase, CatalogOpenError, KnowledgeDatabase, KnowledgeOpenError,
     ProjectStorageLayoutError, StorageLayout,
 };
-use crate::{index_publication, index_repository, index_repository::IndexRepositoryError};
+use crate::{
+    exact_search_repository, index_publication, index_repository,
+    index_repository::IndexRepositoryError,
+};
 use a3_application::{
-    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    ExactSearchControl, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
+    KnowledgeIndexStore, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
-    IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome,
-    ProjectId, ProjectIdentity, PublishedIndex, Snapshot,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, IndexPublication,
+    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, ProjectId, ProjectIdentity,
+    PublishedIndex, RepositoryId, Snapshot, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+const MAX_SEARCH_DATABASES: usize = 4;
 
 /// Local libSQL implementation of the application knowledge-store boundary.
 ///
@@ -23,6 +31,7 @@ pub struct LibsqlKnowledgeStore {
     layout: StorageLayout,
     catalog: CatalogDatabase,
     reconciliation_active: AtomicBool,
+    search_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
 }
 
 impl LibsqlKnowledgeStore {
@@ -34,6 +43,7 @@ impl LibsqlKnowledgeStore {
             layout: layout.clone(),
             catalog,
             reconciliation_active: AtomicBool::new(false),
+            search_databases: Mutex::new(Vec::new()),
         })
     }
 }
@@ -141,6 +151,7 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
     ) -> KnowledgeStoreFuture<'a, ProjectId> {
         Box::pin(async move {
             let _permit = self.acquire_reconciliation()?;
+            self.clear_search_databases();
             let source = self
                 .layout
                 .existing_project(proposal.previous_worktree_id())
@@ -364,6 +375,31 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     }
 }
 
+impl KnowledgeSearchStore for LibsqlKnowledgeStore {
+    fn search_exact<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ExactSearchQuery,
+        page_size: ExactSearchPageSize,
+        cursor: Option<&'a ExactSearchCursor>,
+        control: &'a dyn ExactSearchControl,
+    ) -> KnowledgeSearchFuture<'a, ExactSearchPage> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_search(project).await?;
+            exact_search_repository::search_exact(
+                knowledge.connection(),
+                project.worktree().id(),
+                query,
+                page_size,
+                cursor,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl LibsqlKnowledgeStore {
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
@@ -387,6 +423,71 @@ impl LibsqlKnowledgeStore {
             .await
             .map_err(classify_knowledge_open_error)
             .map_err(KnowledgeIndexFailure::Storage)
+    }
+
+    async fn open_project_knowledge_for_search(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, KnowledgeSearchFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(KnowledgeSearchFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeSearchFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    fn cached_search_database(
+        &self,
+        repository_id: RepositoryId,
+        worktree_id: WorktreeId,
+    ) -> Option<Arc<KnowledgeDatabase>> {
+        let mut databases = lock_recovering_poison(&self.search_databases);
+        let position = databases.iter().position(|database| {
+            database.repository_id() == repository_id && database.worktree_id() == worktree_id
+        })?;
+        let database = databases.remove(position);
+        databases.push(Arc::clone(&database));
+        Some(database)
+    }
+
+    fn cache_search_database(&self, database: Arc<KnowledgeDatabase>) -> Arc<KnowledgeDatabase> {
+        let mut databases = lock_recovering_poison(&self.search_databases);
+        if let Some(position) = databases.iter().position(|cached| {
+            cached.repository_id() == database.repository_id()
+                && cached.worktree_id() == database.worktree_id()
+        }) {
+            let cached = databases.remove(position);
+            databases.push(Arc::clone(&cached));
+            return cached;
+        }
+        if databases.len() == MAX_SEARCH_DATABASES {
+            databases.remove(0);
+        }
+        databases.push(Arc::clone(&database));
+        database
+    }
+
+    fn clear_search_databases(&self) {
+        lock_recovering_poison(&self.search_databases).clear();
+    }
+}
+
+fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 

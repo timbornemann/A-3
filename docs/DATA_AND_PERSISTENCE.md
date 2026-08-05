@@ -195,6 +195,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 
 ### Suche und Semantik
 
+- exact_search_projections
+- exact_search_symbols
+- exact_search_manifests
 - symbol_fts
 - card_fts
 - semantic_cards
@@ -237,6 +240,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   worktree-lokal.
 - File Revision ist über WorktreeId, normalisierten Pfad und Content Hash eindeutig.
 - Veröffentlichte Indexdaten besitzen SnapshotId und IndexRunId.
+- Die Exact-Search-Projektion besitzt pro veröffentlichtem Run genau einen Versionsmarker mit
+  erwarteter Symbol- und Manifestanzahl. Qualifizierte Namen decken exakt alle veröffentlichten
+  Symbole ab; Manifestzeilen referenzieren die aktuelle File Revision desselben Runs.
 - EvidenceRef besitzt eine typabhängige, validierte Nutzlast.
 - Claim-Evidence ist many-to-many.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
@@ -284,6 +290,14 @@ Pflichtmetadaten:
 Der Vektorindex ist optional. Bei fehlender Unterstützung bleibt die Funktion über exakte Suche, FTS und Graph vollständig nutzbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V5 ergänzt die regenerierbaren Tabellen
+`exact_search_projections`, `exact_search_symbols` und `exact_search_manifests` sowie binäre Indizes
+für einfachen Namen, Signatur und qualifizierten Namen. Die Projektion wird gemeinsam mit
+File Revisions, Graph und Ranking in derselben Publish-Transaktion sichtbar. Ein aus V4 migrierter,
+bereits veröffentlichter Run besitzt absichtlich noch keinen Projektionsmarker und liefert bis zum
+nächsten Index-Schema-V2-Publish den typisierten Zustand `ProjectionUnavailable`, statt
+unvollständige Treffer vorzutäuschen.
 
 - Nur Vorwärtsmigrationen
 - monotone ganzzahlige Schema-Version

@@ -1,0 +1,459 @@
+use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
+use crate::{ContractResult, KnowledgeStoreContractFactory};
+use a3_application::{
+    ExactSearchControl, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
+    KnowledgeSearchFailure, KnowledgeSearchStore,
+};
+use a3_domain::{
+    Centrality, Confidence, ContentHash, EvidenceRef, ExactSearchExplanation, ExactSearchPageSize,
+    ExactSearchQuery, ExactSearchRole, ExactSearchTarget, ExactSearchTerm, FileRevision, GraphEdge,
+    GraphEndpoint, GraphSymbol, IndexPublication, LinkResolution, LinkedGraph, LocalSymbolId,
+    ParsedSymbol, RankProjection, RankScore, RankingPolicyVersion, RepositoryId, RepositoryPath,
+    SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName,
+    SymbolRank, SymbolRankSignals, SymbolRole, SymbolSignature, SyntaxProvider, SyntaxRelationKind,
+    WorktreeId,
+};
+
+#[derive(Debug)]
+struct SearchControl;
+
+impl ExactSearchControl for SearchControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug)]
+struct CancelledSearchControl;
+
+impl ExactSearchControl for CancelledSearchControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+}
+
+impl IndexPersistenceControl for SearchControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
+pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
+where
+    F: KnowledgeStoreContractFactory,
+{
+    let control = SearchControl;
+    let app_data = workspace.app_data_root("search");
+    let common = workspace.create_directory("search-common")?;
+    let root = workspace.create_directory("search-primary")?;
+    let worktree_id = WorktreeId::from_bytes([81; 32]);
+    let project = project(
+        RepositoryId::from_bytes([8; 32]),
+        worktree_id,
+        &common,
+        &root,
+        unborn_head()?,
+    )?;
+    let store = factory.open(&app_data).await?;
+    let launch_query =
+        ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string("launch".to_owned())?);
+    assert_eq!(
+        store
+            .search_exact(
+                &project,
+                &launch_query,
+                ExactSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::IndexUnavailable)
+    );
+
+    let first_snapshot = snapshot(
+        [82; 32],
+        worktree_id,
+        None,
+        1,
+        vec![
+            change(b"Cargo.toml", [1; 32], SnapshotChangeKind::Upsert)?,
+            change(b"src/lib.rs", [2; 32], SnapshotChangeKind::Upsert)?,
+        ],
+    )?;
+    store.append_snapshot(&project, &first_snapshot).await?;
+    let first_publication = publication(first_snapshot.id(), [2; 32], 10)?;
+    let first_run = store
+        .start_index_run(&project, run([83; 32], first_snapshot.id(), 1)?)
+        .await?;
+    let first_run = store
+        .publish_index(&project, first_run.id(), &first_publication, &control)
+        .await?;
+    assert_eq!(
+        store
+            .search_exact(
+                &project,
+                &launch_query,
+                ExactSearchPageSize::DEFAULT,
+                None,
+                &CancelledSearchControl,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::Cancelled)
+    );
+
+    let one = ExactSearchPageSize::new(1)?;
+    let first_page = store
+        .search_exact(&project, &launch_query, one, None, &control)
+        .await?;
+    assert_eq!(first_page.index_run_id(), first_run.id());
+    assert_eq!(first_page.snapshot_id(), first_snapshot.id());
+    assert_eq!(first_page.hits().len(), 1);
+    assert_eq!(
+        first_page.hits()[0].explanation(),
+        ExactSearchExplanation::QualifiedNameExact
+    );
+    assert_symbol_hit(&first_page.hits()[0], "launch", [2; 32])?;
+    let first_cursor = first_page
+        .next_cursor()
+        .cloned()
+        .ok_or("first exact-search page has no continuation")?;
+
+    let repeated = store
+        .search_exact(&project, &launch_query, one, None, &control)
+        .await?;
+    assert_eq!(repeated, first_page);
+    let second_page = store
+        .search_exact(&project, &launch_query, one, Some(&first_cursor), &control)
+        .await?;
+    assert_eq!(second_page.hits().len(), 1);
+    assert_eq!(
+        second_page.hits()[0].explanation(),
+        ExactSearchExplanation::SymbolNameExact
+    );
+    assert_symbol_hit(&second_page.hits()[0], "module::launch", [2; 32])?;
+    assert!(second_page.next_cursor().is_none());
+
+    assert_single_symbol(
+        &store,
+        &project,
+        ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+            "module::launch".to_owned(),
+        )?),
+        "module::launch",
+        ExactSearchExplanation::QualifiedNameExact,
+        &control,
+    )
+    .await?;
+    assert_single_symbol(
+        &store,
+        &project,
+        ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+            "fn nested_launch()".to_owned(),
+        )?),
+        "module::launch",
+        ExactSearchExplanation::SignatureExact,
+        &control,
+    )
+    .await?;
+
+    let path_query =
+        ExactSearchQuery::Path(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?);
+    let path_page = store
+        .search_exact(
+            &project,
+            &path_query,
+            ExactSearchPageSize::DEFAULT,
+            None,
+            &control,
+        )
+        .await?;
+    assert_file_hit(&path_page, b"src/lib.rs", [2; 32])?;
+    let manifest_page = store
+        .search_exact(
+            &project,
+            &ExactSearchQuery::Role(ExactSearchRole::Manifest),
+            ExactSearchPageSize::DEFAULT,
+            None,
+            &control,
+        )
+        .await?;
+    assert_file_hit(&manifest_page, b"Cargo.toml", [1; 32])?;
+    assert_single_role_symbol(
+        &store,
+        &project,
+        ExactSearchRole::Entrypoint,
+        "launch",
+        &control,
+    )
+    .await?;
+    assert_single_role_symbol(
+        &store,
+        &project,
+        ExactSearchRole::Test,
+        "module::launch",
+        &control,
+    )
+    .await?;
+    let injection = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(
+        "launch' OR 1=1 --".to_owned(),
+    )?);
+    assert!(
+        store
+            .search_exact(
+                &project,
+                &injection,
+                ExactSearchPageSize::DEFAULT,
+                None,
+                &control,
+            )
+            .await?
+            .hits()
+            .is_empty()
+    );
+
+    let replacement_snapshot = snapshot(
+        [84; 32],
+        worktree_id,
+        Some(first_snapshot.id()),
+        2,
+        vec![change(b"src/lib.rs", [3; 32], SnapshotChangeKind::Upsert)?],
+    )?;
+    store
+        .append_snapshot(&project, &replacement_snapshot)
+        .await?;
+    let replacement_publication = publication(replacement_snapshot.id(), [3; 32], 20)?;
+    let replacement_run = store
+        .start_index_run(&project, run([85; 32], replacement_snapshot.id(), 1)?)
+        .await?;
+    store
+        .publish_index(
+            &project,
+            replacement_run.id(),
+            &replacement_publication,
+            &control,
+        )
+        .await?;
+    assert_eq!(
+        store
+            .search_exact(&project, &launch_query, one, Some(&first_cursor), &control,)
+            .await,
+        Err(KnowledgeSearchFailure::InvalidCursor)
+    );
+    let current_path = store
+        .search_exact(
+            &project,
+            &path_query,
+            ExactSearchPageSize::DEFAULT,
+            None,
+            &control,
+        )
+        .await?;
+    assert_file_hit(&current_path, b"src/lib.rs", [3; 32])?;
+    Ok(())
+}
+
+async fn assert_single_symbol<S: KnowledgeSearchStore>(
+    store: &S,
+    project: &a3_domain::ProjectIdentity,
+    query: ExactSearchQuery,
+    qualified_name: &str,
+    explanation: ExactSearchExplanation,
+    control: &SearchControl,
+) -> ContractResult<()> {
+    let page = store
+        .search_exact(project, &query, ExactSearchPageSize::DEFAULT, None, control)
+        .await?;
+    assert_eq!(page.hits().len(), 1);
+    assert_eq!(page.hits()[0].explanation(), explanation);
+    assert_symbol_hit(&page.hits()[0], qualified_name, [2; 32])
+}
+
+async fn assert_single_role_symbol<S: KnowledgeSearchStore>(
+    store: &S,
+    project: &a3_domain::ProjectIdentity,
+    role: ExactSearchRole,
+    qualified_name: &str,
+    control: &SearchControl,
+) -> ContractResult<()> {
+    let page = store
+        .search_exact(
+            project,
+            &ExactSearchQuery::Role(role),
+            ExactSearchPageSize::DEFAULT,
+            None,
+            control,
+        )
+        .await?;
+    assert_eq!(page.hits().len(), 1);
+    assert_symbol_hit(&page.hits()[0], qualified_name, [2; 32])
+}
+
+fn assert_symbol_hit(
+    hit: &a3_domain::ExactSearchHit,
+    qualified_name: &str,
+    expected_hash: [u8; 32],
+) -> ContractResult<()> {
+    let ExactSearchTarget::Symbol(symbol) = hit.target() else {
+        return Err("expected a symbol search hit".into());
+    };
+    assert_eq!(symbol.qualified_name().as_str(), qualified_name);
+    assert_eq!(
+        symbol.symbol().revision().content_hash(),
+        ContentHash::from_bytes(expected_hash)
+    );
+    Ok(())
+}
+
+fn assert_file_hit(
+    page: &a3_domain::ExactSearchPage,
+    path: &[u8],
+    expected_hash: [u8; 32],
+) -> ContractResult<()> {
+    assert_eq!(page.hits().len(), 1);
+    let ExactSearchTarget::File(revision) = page.hits()[0].target() else {
+        return Err("expected a file search hit".into());
+    };
+    assert_eq!(revision.path().as_bytes(), path);
+    assert_eq!(
+        revision.content_hash(),
+        ContentHash::from_bytes(expected_hash)
+    );
+    Ok(())
+}
+
+fn publication(
+    snapshot_id: SnapshotId,
+    source_hash: [u8; 32],
+    id_base: u8,
+) -> ContractResult<IndexPublication> {
+    let manifest = FileRevision::new(
+        RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?,
+        ContentHash::from_bytes([1; 32]),
+    );
+    let source = FileRevision::new(
+        RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
+        ContentHash::from_bytes(source_hash),
+    );
+    let range = SourceRange::new(0, 20, SourcePosition::new(0, 0), SourcePosition::new(0, 20))?;
+    let root_id = SymbolId::from_bytes([id_base; 32]);
+    let module_id = SymbolId::from_bytes([id_base + 1; 32]);
+    let nested_id = SymbolId::from_bytes([id_base + 2; 32]);
+    let root = GraphSymbol::new(
+        root_id,
+        source.clone(),
+        ParsedSymbol::new(
+            LocalSymbolId::new(1)?,
+            SymbolKind::Function,
+            SymbolName::try_from_string("launch".to_owned())?,
+            range,
+            range,
+        )?
+        .with_signature(SymbolSignature::try_from_string("fn launch()".to_owned())?)
+        .with_role(SymbolRole::Entrypoint),
+    );
+    let module = GraphSymbol::new(
+        module_id,
+        source.clone(),
+        ParsedSymbol::new(
+            LocalSymbolId::new(2)?,
+            SymbolKind::Module,
+            SymbolName::try_from_string("module".to_owned())?,
+            range,
+            range,
+        )?,
+    );
+    let nested = GraphSymbol::new(
+        nested_id,
+        source.clone(),
+        ParsedSymbol::new(
+            LocalSymbolId::new(3)?,
+            SymbolKind::Function,
+            SymbolName::try_from_string("launch".to_owned())?,
+            range,
+            range,
+        )?
+        .with_signature(SymbolSignature::try_from_string(
+            "fn nested_launch()".to_owned(),
+        )?)
+        .with_role(SymbolRole::Test),
+    );
+    let evidence = EvidenceRef::new(source.clone(), range);
+    let edges = vec![
+        edge(
+            GraphEndpoint::File(source.path().clone()),
+            GraphEndpoint::Symbol(root_id),
+            SyntaxRelationKind::Defines,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::File(source.path().clone()),
+            GraphEndpoint::Symbol(module_id),
+            SyntaxRelationKind::Defines,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(module_id),
+            GraphEndpoint::Symbol(nested_id),
+            SyntaxRelationKind::Contains,
+            snapshot_id,
+            &evidence,
+        ),
+    ];
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        vec![manifest.clone(), source],
+        vec![root, module, nested],
+        edges,
+        Vec::new(),
+    )?;
+    let ranks = [root_id, module_id, nested_id]
+        .into_iter()
+        .map(|symbol_id| {
+            Ok(SymbolRank::new(
+                symbol_id,
+                RankScore::try_from_sum(0)?,
+                SymbolRankSignals {
+                    in_degree: 0,
+                    out_degree: 0,
+                    centrality: Centrality::from_basis_points(0)?,
+                    degree_contribution: 0,
+                    centrality_contribution: 0,
+                    entrypoint_contribution: 0,
+                    public_export_contribution: 0,
+                    manifest_contribution: 0,
+                    test_contribution: 0,
+                },
+            ))
+        })
+        .collect::<ContractResult<Vec<_>>>()?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
+    Ok(IndexPublication::new(graph, ranking)?.with_manifest_files(vec![manifest])?)
+}
+
+fn edge(
+    source: GraphEndpoint,
+    target: GraphEndpoint,
+    kind: SyntaxRelationKind,
+    snapshot_id: SnapshotId,
+    evidence: &EvidenceRef,
+) -> GraphEdge {
+    GraphEdge::new(
+        source,
+        target,
+        kind,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterLocalSymbol,
+        snapshot_id,
+        evidence.clone(),
+    )
+}

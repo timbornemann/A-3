@@ -7,8 +7,9 @@ mod catalog;
 mod fixture;
 mod index;
 mod reconciliation;
+mod search;
 
-use a3_application::{KnowledgeIndexStore, KnowledgeStore};
+use a3_application::{KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore};
 use std::error::Error;
 use std::future::Future;
 use std::path::Path;
@@ -29,7 +30,7 @@ pub type ContractFactoryFuture<'a, S> = Pin<Box<dyn Future<Output = ContractResu
 /// layout type, but must not change the contract scenarios.
 pub trait KnowledgeStoreContractFactory {
     /// Concrete adapter that implements both current storage capabilities.
-    type Store: KnowledgeStore + KnowledgeIndexStore;
+    type Store: KnowledgeStore + KnowledgeIndexStore + KnowledgeSearchStore;
 
     /// Opens the store at `app_data_root`, preserving data across repeated calls.
     fn open<'a>(&'a self, app_data_root: &'a Path) -> ContractFactoryFuture<'a, Self::Store>;
@@ -46,5 +47,6 @@ where
     let workspace = fixture::ContractWorkspace::new()?;
     catalog::verify(factory, &workspace).await?;
     index::verify(factory, &workspace).await?;
+    search::verify(factory, &workspace).await?;
     reconciliation::verify(factory, &workspace).await
 }

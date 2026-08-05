@@ -1,5 +1,5 @@
 use super::{LinkedGraph, RankProjection};
-use crate::{IndexRunRecord, IndexRunStatus};
+use crate::{FileRevision, IndexRunRecord, IndexRunStatus};
 use std::error::Error;
 use std::fmt;
 
@@ -8,6 +8,7 @@ use std::fmt;
 pub struct IndexPublication {
     graph: LinkedGraph,
     ranking: RankProjection,
+    manifest_files: Vec<FileRevision>,
 }
 
 impl IndexPublication {
@@ -32,7 +33,37 @@ impl IndexPublication {
             return Err(IndexPublicationError::RankingCoverageMismatch);
         }
 
-        Ok(Self { graph, ranking })
+        Ok(Self {
+            graph,
+            ranking,
+            manifest_files: Vec::new(),
+        })
+    }
+
+    /// Attaches the complete canonical set of discovery-proven manifest revisions.
+    pub fn with_manifest_files(
+        mut self,
+        mut manifest_files: Vec<FileRevision>,
+    ) -> Result<Self, IndexPublicationError> {
+        manifest_files.sort_by(|left, right| left.path().cmp(right.path()));
+        if manifest_files
+            .windows(2)
+            .any(|pair| pair[0].path() == pair[1].path())
+        {
+            return Err(IndexPublicationError::DuplicateManifestPath);
+        }
+        for manifest in &manifest_files {
+            let position = self
+                .graph
+                .files()
+                .binary_search_by(|revision| revision.path().cmp(manifest.path()))
+                .map_err(|_| IndexPublicationError::ManifestRevisionMissing)?;
+            if &self.graph.files()[position] != manifest {
+                return Err(IndexPublicationError::ManifestRevisionMissing);
+            }
+        }
+        self.manifest_files = manifest_files;
+        Ok(self)
     }
 
     /// Returns the complete snapshot-bound linked graph.
@@ -45,6 +76,12 @@ impl IndexPublication {
     #[must_use]
     pub const fn ranking(&self) -> &RankProjection {
         &self.ranking
+    }
+
+    /// Returns discovery-proven manifest files in canonical path order.
+    #[must_use]
+    pub fn manifest_files(&self) -> &[FileRevision] {
+        &self.manifest_files
     }
 }
 
@@ -93,6 +130,10 @@ pub enum IndexPublicationError {
     SnapshotMismatch,
     /// Ranking rows do not cover exactly the graph symbols.
     RankingCoverageMismatch,
+    /// Two manifest entries targeted the same normalized path.
+    DuplicateManifestPath,
+    /// A manifest was not the exact current revision in the linked graph.
+    ManifestRevisionMissing,
     /// A reconstructed visible index did not have published run state.
     RunNotPublished,
     /// The run and graph refer to different snapshots.
@@ -106,6 +147,10 @@ impl fmt::Display for IndexPublicationError {
         let message = match self {
             Self::SnapshotMismatch => "graph and ranking snapshots differ",
             Self::RankingCoverageMismatch => "ranking does not cover exactly the graph symbols",
+            Self::DuplicateManifestPath => "manifest projection contains a duplicate path",
+            Self::ManifestRevisionMissing => {
+                "manifest projection does not reference a current graph file revision"
+            }
             Self::RunNotPublished => "visible index run is not published",
             Self::RunSnapshotMismatch => "published run and graph snapshots differ",
             Self::RunRankingPolicyMismatch => "published run and ranking policies differ",
@@ -194,6 +239,28 @@ mod tests {
             IndexPublication::new(graph, ranking),
             Err(IndexPublicationError::RankingCoverageMismatch)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_projection_requires_a_current_graph_revision()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot_id = SnapshotId::from_bytes([5; 32]);
+        let manifest = crate::FileRevision::new(
+            crate::RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?,
+            crate::ContentHash::from_bytes([6; 32]),
+        );
+        let graph = LinkedGraph::new(
+            snapshot_id,
+            vec![manifest.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+        let publication =
+            IndexPublication::new(graph, ranking)?.with_manifest_files(vec![manifest.clone()])?;
+        assert_eq!(publication.manifest_files(), &[manifest]);
         Ok(())
     }
 }

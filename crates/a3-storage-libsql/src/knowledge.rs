@@ -164,6 +164,14 @@ impl KnowledgeDatabase {
         &self.connection
     }
 
+    pub(crate) const fn repository_id(&self) -> RepositoryId {
+        self.repository_id
+    }
+
+    pub(crate) const fn worktree_id(&self) -> WorktreeId {
+        self.worktree_id
+    }
+
     /// Re-runs connection, integrity, migration-history, schema, and identity checks.
     pub async fn verify(&self) -> Result<KnowledgeVerification, KnowledgeOpenError> {
         verify_connection_policy(&self.connection).await?;

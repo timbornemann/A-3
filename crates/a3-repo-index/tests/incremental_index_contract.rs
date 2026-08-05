@@ -3,11 +3,14 @@
 mod support;
 
 use a3_application::{
-    KnowledgeIndexStore, KnowledgeStore, RefreshRepositoryIndex, RepositoryChangeBatch,
-    RepositoryIndexControl, RepositoryIndexControlError, RepositoryIndexMode,
-    RepositoryRescanReason,
+    ExactSearchControl, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
+    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
+    RepositoryIndexControlError, RepositoryIndexMode, RepositoryRescanReason,
 };
-use a3_domain::{Progress, RepositoryPath, SnapshotChangeKind};
+use a3_domain::{
+    ExactSearchPageSize, ExactSearchQuery, ExactSearchRole, ExactSearchTerm, IndexSchemaVersion,
+    Progress, RepositoryPath, SnapshotChangeKind,
+};
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
     ParserPoolSize,
@@ -37,6 +40,12 @@ impl RepositoryIndexControl for RecordingControl {
             .map_err(|_| RepositoryIndexControlError::Unavailable)?
             .push(progress);
         Ok(())
+    }
+}
+
+impl ExactSearchControl for RecordingControl {
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
@@ -98,7 +107,21 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
             )
             .await?;
         assert_eq!(initial.compilation().mode(), RepositoryIndexMode::Full);
+        assert_eq!(
+            initial.snapshot().index_schema_version(),
+            IndexSchemaVersion::v2()
+        );
         assert_eq!(initial.compilation().parsed_paths().len(), 4);
+        assert_eq!(
+            initial.compilation().publication().manifest_files().len(),
+            1
+        );
+        assert_eq!(
+            initial.compilation().publication().manifest_files()[0]
+                .path()
+                .as_bytes(),
+            b"Cargo.toml"
+        );
         assert!(
             initial
                 .compilation()
@@ -136,6 +159,36 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
                 .symbols()
                 .iter()
                 .any(|symbol| symbol.parsed().name().as_str() == "omega")
+        );
+        let omega_query =
+            ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string("omega".to_owned())?);
+        assert_eq!(
+            store
+                .search_exact(
+                    &project,
+                    &omega_query,
+                    ExactSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .search_exact(
+                    &project,
+                    &ExactSearchQuery::Role(ExactSearchRole::Manifest),
+                    ExactSearchPageSize::DEFAULT,
+                    None,
+                    &control,
+                )
+                .await?
+                .hits()
+                .len(),
+            1
         );
         let published = store
             .latest_published_index_run(&project)

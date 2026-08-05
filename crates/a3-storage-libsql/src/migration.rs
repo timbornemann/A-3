@@ -483,11 +483,52 @@ const KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION: Migration = Migration {
       CREATE INDEX symbol_edges_target_idx ON symbol_edges (index_run_id, target_kind, target_value);",
 };
 
+const KNOWLEDGE_EXACT_SEARCH_MIGRATION: Migration = Migration {
+    version: 5,
+    name: "exact_search_projection",
+    sql: "CREATE TABLE exact_search_projections (\n\
+      index_run_id BLOB PRIMARY KEY NOT NULL CHECK (length(index_run_id) = 32),\n\
+      projection_version INTEGER NOT NULL CHECK (projection_version = 1),\n\
+      symbol_count INTEGER NOT NULL CHECK (symbol_count BETWEEN 0 AND 1000000),\n\
+      manifest_count INTEGER NOT NULL CHECK (manifest_count BETWEEN 0 AND 250000),\n\
+      FOREIGN KEY (index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE exact_search_symbols (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      qualified_name TEXT NOT NULL\n\
+        CHECK (length(CAST(qualified_name AS BLOB)) BETWEEN 1 AND 16384),\n\
+      PRIMARY KEY (index_run_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id) REFERENCES exact_search_projections(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE exact_search_manifests (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      PRIMARY KEY (index_run_id, repository_path),\n\
+      FOREIGN KEY (index_run_id) REFERENCES exact_search_projections(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE,\n\
+      FOREIGN KEY (index_run_id, repository_path, content_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX exact_search_symbols_qualified_name_idx\n\
+        ON exact_search_symbols (index_run_id, qualified_name, symbol_id);\n\
+      CREATE INDEX symbols_exact_name_idx ON symbols (index_run_id, name, symbol_id);\n\
+      CREATE INDEX symbols_exact_signature_idx\n\
+        ON symbols (index_run_id, signature, symbol_id) WHERE signature IS NOT NULL;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
     KNOWLEDGE_RECONCILIABLE_IDENTITIES_MIGRATION,
     KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION,
+    KNOWLEDGE_EXACT_SEARCH_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -520,7 +561,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(4);
+    pub const CURRENT: Self = Self::new(5);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -917,11 +958,12 @@ mod tests {
                      'schema_migrations', 'worktree_storage_identity', 'repositories', 'worktrees',\n\
                      'snapshots', 'snapshot_adapter_revisions', 'snapshot_changes', 'index_runs',\n\
                      'file_revisions', 'symbols', 'symbol_edges', 'unresolved_edges',\n\
-                     'ranking_projections'\n\
+                     'ranking_projections', 'exact_search_projections', 'exact_search_symbols',\n\
+                     'exact_search_manifests'\n\
                      )",
                 )
                 .await?,
-                13
+                16
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -1149,6 +1191,54 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'file_revisions'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v5_upgrade_preserves_v4_schema() -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [34; 32];
+            let worktree_id = [35; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..4],
+                4,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE exact_search_symbols (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 5, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 4);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('exact_search_symbols')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'exact_search_projections'",
                 )
                 .await?,
                 0

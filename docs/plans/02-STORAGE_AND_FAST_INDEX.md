@@ -418,8 +418,8 @@ die vorhandene begrenzte Scheduler-Queue, ohne die WebView-Capability zu erweite
 Reale Git-/Filesystem-/libSQL-Tests belegen genau einen Hash und Parse bei einer Ein-Datei-Änderung,
 einen konsistenten gemeinsamen Add-/Modify-/Delete-/Rename-Burst, gleich große Inhaltsänderungen,
 Secret-Ausschluss, Restart/Warmup, Eventverlust-Fallback, Progress, Cancellation unter 500 ms und
-Watcher-Shutdown unter 500 ms. Die bestehende CI-Matrix ist für native Läufe auf Windows, Linux und
-macOS konfiguriert; verifizierte Ergebnisse für diesen Commit stehen noch aus. Die reproduzierbare
+Watcher-Shutdown unter 500 ms. Die bestehende CI-Matrix lief für diesen Commit nativ auf Windows,
+Linux und macOS ohne Fehler durch. Die reproduzierbare
 30-Sample-Release-Messung auf Windows 11, Ryzen 9 5900XT und
 NVMe verwendete 200 Rust-Dateien mit 100.000 LOC und maß den gesamten Pfad vom Write über Debounce,
 Discovery, Hash, Parse, Link, Rank bis libSQL-Publish: P50 1.202 ms, P95 1.305 ms, Watcher-P95 389 ms
@@ -439,4 +439,4 @@ Akzeptanz:
 - [x] 100.000-LOC-Fixture gemessen
 - [x] inkrementelle add, modify, delete und rename Szenarien grün
 - [x] kein Secret-Fixture in DB oder Logs
-- [ ] Windows-, Linux- und macOS-Smoke für Watcher und Pfade
+- [x] Windows-, Linux- und macOS-Smoke für Watcher und Pfade

@@ -1,8 +1,10 @@
 //! Application use cases and ports for A^3.
 
+mod exact_search;
 mod health_query;
 mod jobs;
 mod knowledge_index_store;
+mod knowledge_search_store;
 mod knowledge_store;
 mod language_adapter;
 mod open_project;
@@ -13,6 +15,7 @@ mod repository_index;
 mod repository_snapshot;
 mod repository_watcher;
 
+pub use exact_search::SearchExactIndex;
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,
@@ -24,6 +27,9 @@ pub use jobs::{
 pub use knowledge_index_store::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
     KnowledgeIndexFuture, KnowledgeIndexStore,
+};
+pub use knowledge_search_store::{
+    ExactSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
 };
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,

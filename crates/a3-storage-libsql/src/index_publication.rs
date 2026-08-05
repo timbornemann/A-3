@@ -1,4 +1,4 @@
-use crate::index_codec;
+use crate::{exact_search_projection, index_codec};
 use a3_application::{IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
     FileRevision, IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus,
@@ -27,7 +27,8 @@ pub(crate) async fn publish_index(
     control: &dyn IndexPersistenceControl,
 ) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
     validate_resource_limits(publication)?;
-    let total = publication_work_units(publication)?;
+    let search_projection = exact_search_projection::build_projection(publication)?;
+    let total = publication_work_units(publication, &search_projection)?;
     let mut progress = MutationProgress::new(control, total)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -38,6 +39,7 @@ pub(crate) async fn publish_index(
         worktree_id,
         run_id,
         publication,
+        &search_projection,
         &mut progress,
     )
     .await;
@@ -57,6 +59,7 @@ async fn publish_index_in_transaction(
     worktree_id: WorktreeId,
     run_id: IndexRunId,
     publication: &IndexPublication,
+    search_projection: &exact_search_projection::ExactSearchProjection,
     progress: &mut MutationProgress<'_>,
 ) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
     progress.checkpoint()?;
@@ -88,6 +91,8 @@ async fn publish_index_in_transaction(
     write_file_delta_projection(transaction, worktree_id, run).await?;
     progress.advance(1)?;
     index_codec::write_publication_rows(transaction, run_id, publication, progress).await?;
+    exact_search_projection::write_projection(transaction, run_id, search_projection, progress)
+        .await?;
     delete_superseded_publication_rows(transaction, worktree_id, run_id, progress).await?;
 
     let affected = transaction
@@ -122,6 +127,9 @@ async fn delete_superseded_publication_rows(
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
+        "exact_search_symbols",
+        "exact_search_manifests",
+        "exact_search_projections",
         "symbols",
         "file_revisions",
     ] {
@@ -206,6 +214,12 @@ pub(crate) async fn latest_published_index(
         let mut progress = MutationProgress::new(control, total)?;
         let publication =
             index_codec::read_publication_rows(&transaction, run, &mut progress).await?;
+        let manifests =
+            exact_search_projection::read_manifest_files(&transaction, run.id(), &mut progress)
+                .await?;
+        let publication = publication
+            .with_manifest_files(manifests)
+            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
         progress.complete_if_empty()?;
         a3_domain::PublishedIndex::new(run, publication)
             .map(Some)
@@ -253,6 +267,9 @@ pub(crate) async fn rebuild_regenerable_index(
             "ranking_projections",
             "unresolved_edges",
             "symbol_edges",
+            "exact_search_symbols",
+            "exact_search_manifests",
+            "exact_search_projections",
             "symbols",
             "file_revisions",
         ] {
@@ -274,8 +291,9 @@ pub(crate) async fn rebuild_regenerable_index(
 
 fn publication_work_units(
     publication: &IndexPublication,
+    search_projection: &exact_search_projection::ExactSearchProjection,
 ) -> Result<u64, IndexPublicationRepositoryError> {
-    [
+    let publication_units = [
         publication.graph().symbols().len(),
         publication.graph().edges().len(),
         publication.graph().unresolved().len(),
@@ -287,7 +305,10 @@ fn publication_work_units(
             .ok()
             .and_then(|length| total.checked_add(length))
             .ok_or(IndexPublicationRepositoryError::ResourceLimit)
-    })
+    })?;
+    publication_units
+        .checked_add(search_projection.work_units()?)
+        .ok_or(IndexPublicationRepositoryError::ResourceLimit)
 }
 
 async fn publication_row_count(
@@ -301,6 +322,8 @@ async fn publication_row_count(
         ("symbol_edges", MAX_EDGES),
         ("unresolved_edges", MAX_UNRESOLVED),
         ("ranking_projections", MAX_SYMBOLS),
+        ("exact_search_projections", 1),
+        ("exact_search_manifests", MAX_FILES),
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE index_run_id = ?1");
         let count = count_rows(transaction, &sql, run_id.as_bytes().to_vec()).await?;
@@ -328,6 +351,9 @@ async fn rebuild_row_count(
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
+        "exact_search_symbols",
+        "exact_search_manifests",
+        "exact_search_projections",
         "symbols",
         "file_revisions",
     ] {
@@ -511,6 +537,9 @@ async fn publication_rows_exist(
         "symbol_edges",
         "unresolved_edges",
         "ranking_projections",
+        "exact_search_projections",
+        "exact_search_symbols",
+        "exact_search_manifests",
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE index_run_id = ?1");
         if count_rows(transaction, &sql, run_id.as_bytes().to_vec()).await? != 0 {

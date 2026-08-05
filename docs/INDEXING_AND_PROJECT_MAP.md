@@ -383,6 +383,26 @@ Invalidierungsradius:
 
 ## Hybride Suche
 
+### Implementierter Exact-Kanal
+
+Index-Schema V2 materialisiert während desselben atomaren Publishes einen versionierten
+Exact-Search-Marker, discovery-bestätigte Manifestrevisionen und genau einen qualifizierten Namen pro
+Symbol. Qualifizierte Namen werden ausschließlich aus eindeutigen, azyklischen
+`Contains`-Beziehungen gebildet. Mehrfach-Eltern, Zyklen, fehlende Symbole oder ein Überschreiten der
+16-KiB-Textgrenze brechen den Publish typisiert ab. Entrypoint und Test stammen aus den
+adapterbelegten `SymbolRoles`; Manifest wird aus der bereits begrenzten Discovery-Rolle übernommen.
+
+Der read-only Application-Port `KnowledgeSearchStore` liefert Pfad-, Name-, Signatur- und
+Rollentreffer über eine Deferred-Read-Transaktion. Identifier werden case-sensitiv zuerst nach
+qualifiziertem Namen, dann Simple Name und Signatur exakt sowie anschließend in derselben Reihenfolge
+als Präfix verglichen. SQL-Parameter bleiben Daten; der Präfixbereich verwendet den nächsten gültigen
+Unicode-Skalargrenzwert. Resultate sind über Matchklasse, verlustlose Pfadbytes, qualifizierten Namen
+und `SymbolId` stabil sortiert und per snapshotgebundenem Keyset-Cursor auf höchstens 100 Treffer pro
+Seite begrenzt. Jede Seite prüft Projektionsversion und Zeilenzahlen. Cancellation und ein fixes
+Zwei-Sekunden-Read-Limit werden vor und zwischen Ergebniszeilen geprüft. Der Adapter hält höchstens
+vier bereits vollständig verifizierte, identitätsgebundene Projektdatenbanken offen; rohe Handles
+verlassen ihn nicht.
+
 Suche erzeugt getrennte Kandidatenlisten für exakt, FTS, Graph, Tests, Memory und Vektor. Die Listen werden normalisiert, über stabile IDs dedupliziert und mit einer versionierten Fusion zusammengeführt.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.

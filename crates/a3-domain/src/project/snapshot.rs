@@ -166,6 +166,12 @@ impl IndexSchemaVersion {
         Self(1)
     }
 
+    /// Returns the exact-retrieval projection schema revision.
+    #[must_use]
+    pub const fn v2() -> Self {
+        Self(2)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

@@ -1,7 +1,7 @@
 # Domänenmodell
 
 Status: verbindliche Baseline  
-Stand: 2026-08-04
+Stand: 2026-08-05
 
 ## Ubiquitous Language
 
@@ -22,6 +22,7 @@ Stand: 2026-08-04
 | Run | Ein kontrollierter Agentenlauf für eine Aufgabe |
 | Context Pack | Tokenbegrenzter, reproduzierbarer Modelleingang für genau einen Turn |
 | Tool Action | Typisierte, durch Policy geprüfte Interaktion mit Workspace oder Prozessen |
+| Source Channel | Explizite Herkunft eines Retrievaltreffers, etwa Exact, Lexical oder Graph |
 
 ## Identitäten
 
@@ -98,6 +99,21 @@ Content Hash, Sprache, Adapterversion, LanguageAdapter-Contract-Version und die 
 Snapshot-, Rankingversion und Zeilennummern sind kein Teil der Identität. Identische Parse-Evidenz
 behält ihre ID beim Re-Rank; Inhalts-, Pfad- oder Adapteränderungen erzeugen absichtlich neue IDs und
 invalidieren alte Evidenz.
+
+### Exact Retrieval
+
+Eine `ExactSearchQuery` wählt entweder einen normalisierten Repository-Pfad, einen begrenzten
+Identifier-/Signaturtext oder die strukturelle Rolle Manifest, Entrypoint beziehungsweise Test. Ein
+Treffer enthält stets `SourceChannel::Exact`, eine maschinenlesbare `ExactSearchExplanation` und die
+aktuelle `FileRevision`; Symboltreffer tragen zusätzlich die containment-abgeleitete
+`QualifiedSymbolName` und den `GraphSymbol`.
+
+Resultate gehören exakt zu einer atomisch veröffentlichten Kombination aus `IndexRunId` und
+`SnapshotId`. Die Reihenfolge ist Matchklasse, rohe Repository-Pfadbytes, qualifizierter Name und
+`SymbolId`. Ein `ExactSearchCursor` enthält diesen letzten Keyset-Schlüssel sowie Query, Run und
+Snapshot. Er kann deshalb weder für eine andere Query noch nach einem neueren Publish weitergenutzt
+werden. Exakte qualifizierte Namen stehen vor exakten einfachen Namen und Signaturen; danach folgen
+deren Präfixtreffer. Pfadsuche vergleicht normalisierte Rohbytes und erzeugt keinen Textpfad.
 
 ## Aggregate
 

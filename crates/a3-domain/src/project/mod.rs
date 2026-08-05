@@ -5,6 +5,7 @@ mod id;
 mod index_run;
 mod language;
 mod path;
+mod retrieval;
 mod revision;
 mod snapshot;
 
@@ -39,6 +40,13 @@ pub use language::{
     SyntaxRelation, SyntaxRelationKind, SyntaxSource, SyntaxTarget,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
+pub use retrieval::{
+    ExactSearchCursor, ExactSearchCursorError, ExactSearchExplanation, ExactSearchHit,
+    ExactSearchHitError, ExactSearchPage, ExactSearchPageError, ExactSearchPageSize,
+    ExactSearchPageSizeError, ExactSearchPosition, ExactSearchQuery, ExactSearchRole,
+    ExactSearchSymbol, ExactSearchTarget, ExactSearchTerm, ExactSearchTextError,
+    QualifiedSymbolName, SourceChannel,
+};
 pub use revision::{
     FileDelta, FileRevision, RenameCandidate, RepositoryFileState, RepositoryFileStateError,
     SnapshotDelta,
