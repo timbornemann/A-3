@@ -94,7 +94,7 @@ pub(crate) fn roles_for_path(path: &[u8]) -> DiscoveredFileRoles {
     let basename = lower.rsplit(|byte| *byte == b'/').next().unwrap_or(&lower);
     let mut roles = DiscoveredFileRoles::empty();
 
-    if is_manifest(basename) {
+    if is_manifest(&lower, basename) {
         roles = roles.with(DiscoveredFileRole::Manifest);
     }
     if is_build_file(&lower, basename) {
@@ -220,7 +220,7 @@ fn contains_token_with_tail(
     })
 }
 
-fn is_manifest(basename: &[u8]) -> bool {
+fn is_manifest(path: &[u8], basename: &[u8]) -> bool {
     [
         b"cargo.toml".as_slice(),
         b"cargo.lock",
@@ -247,7 +247,12 @@ fn is_manifest(basename: &[u8]) -> bool {
     ]
     .contains(&basename)
         || basename.starts_with(b"dockerfile.")
-        || (basename.starts_with(b"requirements") && basename.ends_with(b".txt"))
+        || (basename.starts_with(b"requirements")
+            && (basename.ends_with(b".txt") || basename.ends_with(b".in")))
+        || (path
+            .split(|byte| *byte == b'/')
+            .any(|component| component == b"requirements")
+            && (basename.ends_with(b".txt") || basename.ends_with(b".in")))
 }
 
 fn is_build_file(path: &[u8], basename: &[u8]) -> bool {
@@ -293,7 +298,7 @@ fn is_test_file(path: &[u8], basename: &[u8]) -> bool {
         || basename
             .split(|byte| *byte == b'.')
             .next()
-            .is_some_and(|stem| stem.ends_with(b"_test"))
+            .is_some_and(|stem| stem.starts_with(b"test_") || stem.ends_with(b"_test"))
 }
 
 fn is_ci_file(path: &[u8], basename: &[u8]) -> bool {
@@ -349,6 +354,8 @@ mod tests {
         assert!(roles.contains(DiscoveredFileRole::Manifest));
         assert!(roles.contains(DiscoveredFileRole::Test));
         assert!(roles_for_path(b"build.rs").contains(DiscoveredFileRole::Build));
+        assert!(roles_for_path(b"test_feature.py").contains(DiscoveredFileRole::Test));
+        assert!(roles_for_path(b"requirements/base.in").contains(DiscoveredFileRole::Manifest));
         assert!(
             roles_for_path(b".github/workflows/ci.yml")
                 .contains(DiscoveredFileRole::ContinuousIntegration)

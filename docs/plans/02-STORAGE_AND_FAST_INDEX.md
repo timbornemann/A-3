@@ -240,12 +240,47 @@ und begründet keinen allgemeinen Performanceclaim.
 
 Abhängigkeiten: S5
 
-- [ ] Module, Funktionen, Klassen und Methoden
-- [ ] imports und Exports
-- [ ] Calls mit sichtbarer Unsicherheitskennzeichnung
-- [ ] pytest- und unittest-Erkennung
-- [ ] pyproject-, setup- und requirements-Metadaten
-- [ ] Golden Fixtures
+Status: Completed
+
+- [x] Module, Funktionen, Klassen und Methoden
+- [x] imports und Exports
+- [x] Calls mit sichtbarer Unsicherheitskennzeichnung
+- [x] pytest- und unittest-Erkennung
+- [x] pyproject-, setup- und requirements-Metadaten
+- [x] Golden Fixtures
+
+Verifizierter Abschluss vom 2026-08-05: Der Produktadapter
+`python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-contract-v1` bindet die offizielle
+Tree-sitter-Python-Grammatik 0.25.0 und verarbeitet `.py`- und `.pyi`-Dateien. Er extrahiert Module,
+synchrone und asynchrone Funktionen, Klassen, Methoden und PEP-695-Typaliase samt Signaturen,
+konventionsbasierter Sichtbarkeit, Docstring-Bereichen sowie Test- und Einstiegspunktrollen. Direkte,
+aliasierte, relative, Future- und From-Imports, explizites statisches `__all__`, konventionell
+öffentliche Moduldeklarationen und Basisklassen erzeugen evidenzgebundene Kandidaten. Da Python
+Aufrufziele laufzeitdynamisch sind, tragen direkte Calls höchstens 7.000, Attribut-Calls 6.000 und
+Subscript- beziehungsweise dynamische Attribut-Calls 4.000 Confidence-Basispunkte. Nicht stabil
+darstellbare verschachtelte Call-Ziele und Wildcard-Bindungen erzeugen sichtbare partielle Coverage.
+pytest-Fixtures, Marks, `test_`-Deklarationen und -Klassen sowie `unittest.TestCase`-Klassen und deren
+Testmethoden werden über begrenzte Syntax- und Pfadheuristiken erkannt.
+
+`pyproject.toml` unterstützt PEP-621-Abhängigkeiten, optionale Gruppen, Build-Systeme, Scripts,
+Plugin-Entrypoints, pytest-Konfiguration und statische Poetry-Abhängigkeiten, Gruppen und Scripts.
+`setup.py` bleibt ausführbarer, nicht autoritativer Python-Code; nur statische Argumente eines
+sichtbaren `setup`-Calls werden mit 8.500 Confidence als Projekt-, Dependency-, Package- und
+Entrypoint-Metadaten interpretiert. Ein begrenzter `setup.cfg`-Teilparser verarbeitet die entsprechenden
+Metadata-, Options-, Extras- und Entrypoint-Sektionen. Requirements-Dateien unterstützen PEP-508-
+Paketnamen, Test-/Dev-Rollen, credential-freie Direct-Reference-Namen sowie sichere lokale Include-
+und Constraint-Pfade, ohne Index-URLs oder Zugangsdaten in Artefakte zu übernehmen. Dynamische oder
+komplexere Formen bleiben explizit partiell. `pyproject.toml` und Requirements sind auf 512 KiB,
+`setup.cfg` auf 256 KiB begrenzt; Python-Quellen verwenden das gemeinsame 4-MiB-Contract-Limit.
+Gemeinsame Contract-Goldens, ein lizenziertes Python-Package-Fixture sowie Syntax-, Import-, Export-,
+Confidence-, pytest-, unittest-, Manifest-, Traversal-, Kodierungs-, Abbruch-, Fortschritts- und
+Größentests sichern das Verhalten.
+
+Die reproduzierbare Release-Messung auf der lokalen Windows-Entwicklungsmaschine verarbeitete
+100.000 strukturelle Python-Zeilen beziehungsweise 1.750.000 Bytes mit 50.001 Symbolen und 150.001
+Beziehungen. Direktes Tree-sitter benötigte 308 ms, der vollständige begrenzte Adapterpfad 620 ms.
+Die Messung ist kein Wert für den vollständigen Fast Index und begründet keinen allgemeinen
+Performanceclaim.
 
 ## S9 Graph Linker und Rank
 
@@ -300,8 +335,8 @@ Akzeptanz:
 ## Gate M2/M3
 
 - [ ] Project Open funktioniert nach Neustart
-- [ ] alle drei strukturellen Sprachadapter bestehen Contract und Golden Tests
-- [ ] 100.000-LOC-Fixture gemessen
+- [x] alle drei strukturellen Sprachadapter bestehen Contract und Golden Tests
+- [x] 100.000-LOC-Fixture gemessen
 - [ ] inkrementelle add, modify, delete und rename Szenarien grün
 - [ ] kein Secret-Fixture in DB oder Logs
 - [ ] Windows-, Linux- und macOS-Smoke für Watcher und Pfade

@@ -14,8 +14,8 @@ use a3_language_adapter_contract_tests::{
     ContractResult, LanguageAdapterContractFixture, verify_language_adapter_contract,
 };
 use a3_repo_index::{
-    ParserPoolSize, RustLanguageAdapter, TreeSitterParserPool, TypeScriptJavaScriptLanguageAdapter,
-    source_range_for_node, verify_language_parse_input,
+    ParserPoolSize, PythonLanguageAdapter, RustLanguageAdapter, TreeSitterParserPool,
+    TypeScriptJavaScriptLanguageAdapter, source_range_for_node, verify_language_parse_input,
 };
 use std::str;
 use tree_sitter::{Language, Node};
@@ -26,6 +26,8 @@ const VALID_RUST: &[u8] = b"pub fn alpha() {\n    beta();\n}\n\nfn beta() {}\n";
 const INVALID_RUST: &[u8] = b"pub fn broken( {\n";
 const VALID_TYPESCRIPT: &[u8] = b"export function alpha(): number {\n  return beta();\n}\n\nfunction beta(): number { return 1; }\n";
 const INVALID_TYPESCRIPT: &[u8] = b"export function broken( {\n";
+const VALID_PYTHON: &[u8] = b"def alpha():\n    return beta()\n\ndef beta():\n    return 1\n";
+const INVALID_PYTHON: &[u8] = b"def broken(\n    return value\n";
 
 #[derive(Debug)]
 struct JsonContractAdapter {
@@ -234,6 +236,32 @@ fn typescript_javascript_adapter_satisfies_the_shared_v1_contract() -> ContractR
                 "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Exports provider=TreeSitter confidence=10000 evidence=16..21@0:16..0:21\n",
                 "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Contains provider=TreeSitter confidence=10000 evidence=54..91@4:0..4:37\n",
                 "relation source=Symbol(LocalSymbolId(2)) target=Unresolved(SymbolReference(\"beta\")) kind=Calls provider=TreeSitter confidence=7500 evidence=43..47@1:9..1:13\n",
+            ),
+        },
+    )
+}
+
+#[test]
+fn python_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
+    let adapter = PythonLanguageAdapter::new(ParserPoolSize::new(2)?)?;
+    verify_language_adapter_contract(
+        &adapter,
+        LanguageAdapterContractFixture {
+            supported_path: b"src/core.py",
+            unsupported_path: b"src/core.txt",
+            valid_source: VALID_PYTHON,
+            invalid_source: INVALID_PYTHON,
+            expected_golden: concat!(
+                "path=7372632f636f72652e7079 hash=d44fbff365fa31cd6a340a24582b052ce1fd773a69b87626569e03cbe6ef6701 language=python adapter=python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-contract-v1 contract=1 coverage=57/57/0\n",
+                "symbol id=1 kind=Module name=\"core\" signature=None declaration=0..57@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=false\n",
+                "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"def alpha()\") declaration=0..30@0:0..1:17 selection=4..9@0:4..0:9 documentation=- visibility=Public test=false entrypoint=false\n",
+                "symbol id=3 kind=Function name=\"beta\" signature=Some(\"def beta()\") declaration=32..56@3:0..4:12 selection=36..40@3:4..3:8 documentation=- visibility=Public test=false entrypoint=false\n",
+                "relation source=File target=Symbol(LocalSymbolId(1)) kind=Defines provider=TreeSitter confidence=10000 evidence=0..57@0:0..5:0\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Contains provider=TreeSitter confidence=10000 evidence=0..30@0:0..1:17\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(2)) kind=Exports provider=LanguageHeuristic confidence=8500 evidence=4..9@0:4..0:9\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Contains provider=TreeSitter confidence=10000 evidence=32..56@3:0..4:12\n",
+                "relation source=Symbol(LocalSymbolId(1)) target=Symbol(LocalSymbolId(3)) kind=Exports provider=LanguageHeuristic confidence=8500 evidence=36..40@3:4..3:8\n",
+                "relation source=Symbol(LocalSymbolId(2)) target=Unresolved(SymbolReference(\"beta\")) kind=Calls provider=TreeSitter confidence=7000 evidence=24..28@1:11..1:15\n",
             ),
         },
     )

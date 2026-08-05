@@ -66,7 +66,7 @@ Ein Nutzer kann:
 - [x] Tree-sitter LanguageAdapter-Contract
 - [x] Rust-Adapter
 - [x] TypeScript-/JavaScript-Adapter
-- [ ] Python-Adapter
+- [x] Python-Adapter
 - [ ] Symbolgraph und atomisches Publish
 - [ ] File Watcher und inkrementeller Delta-Lauf
 

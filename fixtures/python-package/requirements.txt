@@ -1,0 +1,4 @@
+requests>=2.32
+typing-extensions; python_version < "3.11"
+-r requirements-dev.txt
+local-package @ https://example.invalid/local-package.whl

@@ -133,6 +133,21 @@ ein dokumentierter Teilparser für die skalare Top-Level-`packages`-Sequenz. Kom
 ungültige Wertformen, Kodierungsfehler und unsichere Pfade erzeugen partielle Coverage statt
 vermeintlich vollständiger Fakten.
 
+Der Python-Adapter V1 bindet `tree-sitter-python` 0.25.0 und verarbeitet `.py` sowie `.pyi`.
+Funktionen, Klassen, Methoden und Typaliase tragen Signatur-, Sichtbarkeits-, Docstring-, Test- und
+Einstiegspunktevidenz. Imports, statisches `__all__`, konventionell öffentliche Moduldeklarationen
+und Basisklassen werden strukturell erfasst. Python-Calls bleiben grundsätzlich Kandidaten: direkte
+Namen, Attributzugriffe und dynamische Subscripts erhalten abgestufte Confidence; nicht stabil
+darstellbare Ziele erzeugen partielle Coverage. pytest-Fixtures, Marks und Namenskonventionen sowie
+`unittest.TestCase`-Vererbung liefern begrenzte Testrollen und -beziehungen.
+
+`pyproject.toml` wird bis 512 KiB als PEP-621-/Poetry-/Build-/pytest-Metadatenquelle verarbeitet.
+Statische `setup.py`-Argumente sind bewusst nur heuristische Kandidaten, weil die Datei ausführbarer
+Python-Code bleibt. `setup.cfg` erhält einen 256-KiB-Teilparser für Package-, Dependency-, Extras- und
+Entrypoint-Sektionen. Requirements-Dateien bis 512 KiB liefern Paket- und sichere lokale
+Include-Beziehungen; Indexoptionen, dynamische Formen, unsichere Pfade und ungültige Kodierung werden
+ohne Übernahme potentieller Credentials als partielle Coverage ausgewiesen.
+
 ### Link
 
 Kantentypen in V1:

@@ -7,6 +7,7 @@ mod hashing;
 mod language_input;
 mod parser_pool;
 mod path;
+mod python_adapter;
 mod repository;
 mod rust_adapter;
 mod snapshot;
@@ -18,6 +19,7 @@ pub use parser_pool::{
     ParserPoolCreateError, ParserPoolSize, ParserPoolSizeError, TreeSitterParse,
     TreeSitterParserPool, normalize_parse_diagnostics, source_range_for_node,
 };
+pub use python_adapter::{PythonLanguageAdapter, PythonLanguageAdapterCreateError};
 pub use rust_adapter::{RustLanguageAdapter, RustLanguageAdapterCreateError};
 pub use snapshot::Blake3RepositorySnapshotBuilder;
 pub use typescript_javascript_adapter::{
