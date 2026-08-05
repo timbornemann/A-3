@@ -445,7 +445,32 @@ Kantenbegrenzung wird als `truncated` sichtbar. Seed, Ziele, qualifizierte Symbo
 Evidenz stammen aus derselben konsistenten Deferred-Read-Transaktion. Jeder Treffer gibt seinen
 vollständigen `GraphEdge`-Pfad als maschinenlesbare Begründung zurück.
 
-Suche erzeugt getrennte Kandidatenlisten für exakt, FTS, Graph, Tests, Memory und Vektor. Die Listen werden normalisiert, über stabile IDs dedupliziert und mit einer versionierten Fusion zusammengeführt.
+### Implementierte Retrieval Fusion
+
+Exact, Lexical, Graph, Tests sowie künftig Memory und Semantic gelangen als getrennte, auf denselben
+Run und Snapshot geprüfte `RetrievalCandidateSet`s in die Fusion. Höchstens sechs Kanäle mit je 100
+Zielen halten die Vorstufe begrenzt. Dateien verwenden innerhalb des veröffentlichten Runs den
+verlustfreien Pfad und Symbole ihre `SymbolId` als Deduplizierungsschlüssel. Mehrere Kanäle für
+dasselbe Ziel werden zusammengeführt; widersprüchliche Revisionen, Symbolprojektionen oder
+Zielsignale werden nicht still ausgewählt, sondern abgelehnt. Exact-/Lexical-Cursor und
+Graphtrunkierung werden als typisierter Mengenstatus in das Fusionsergebnis fortgepflanzt.
+Memory gelangt nur mit mindestens einer und höchstens 16 zuvor als fresh aufgelösten
+`EvidenceRef`s in das Evidence-Band; Semantic Similarity bleibt auch bei Maximalscore nicht
+beweisend.
+
+Policy V1 normalisiert die bestehenden nativen Scores, Graphdistanzen und Confidencewerte und
+wendet vor jedem Score die Bänder Exact → Evidence → Semantic an. Innerhalb eines Bands gewichtet
+sie Kanal 30.000, Goal 20.000, Step 20.000, Freshness 10.000, inverse Tokenkosten 10.000 und
+nicht-semantische Mehrkanalbestätigung 10.000 Punkte; Redundanz kann bis zu 20.000 Punkte abziehen.
+Die Berechnung ist ganzzahlig, auf 100.000 Punkte begrenzt und verwendet die stabile Ziel-ID als
+letzten Tie-Breaker. Jeder Treffer gibt Quellgründe, normalisierte Eingaben, Einzelbeiträge,
+Redundanzabzug und Endscore zurück. Der Ergebniscontainer behält Policyversion, Run und Snapshot.
+
+Der versionierte Golden-Eval-Runner führt dieselben Fixtures zweimal aus und fixiert Deduplizierung,
+Graph- und Testkanal, Goal-/Step-/Freshness-/Token-/Redundanzbeiträge, Stable Tie-Breaking,
+Resultlimit sowie den Vorrang eines schwach gewichteten Exact-Treffers vor einem maximal
+gewichteten Semantic-Treffer. Dies ist die R4-Policy-Golden, noch nicht die breitere Retrieval-
+Evalbaseline aus Gate M4/M5.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.
 

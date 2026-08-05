@@ -39,6 +39,7 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - deterministische Wiederholung ergibt identische normalisierte Resultate
 - Löschung, Umbenennung und Syntaxfehler getestet
 - Graphzyklen terminieren; kürzeste Pfade, Hopgrenze, Resultlimit und Beziehungsevidenz sind getestet
+- Fusion-Golden fixiert Policyversion, Stable-ID-Deduplizierung, alle Signale und Exact-vor-Semantic
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 

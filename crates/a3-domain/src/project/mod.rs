@@ -8,6 +8,7 @@ mod language;
 mod lexical_retrieval;
 mod path;
 mod retrieval;
+mod retrieval_fusion;
 mod revision;
 mod snapshot;
 
@@ -59,6 +60,17 @@ pub use retrieval::{
     ExactSearchPageSizeError, ExactSearchPosition, ExactSearchQuery, ExactSearchRole,
     ExactSearchSymbol, ExactSearchTarget, ExactSearchTerm, ExactSearchTextError,
     QualifiedSymbolName, SourceChannel,
+};
+pub use retrieval_fusion::{
+    CandidateFreshness, CandidateSetCompleteness, CandidateTokenCost, CandidateTokenCostError,
+    FusedRetrievalHit, FusedRetrievalResult, FusionContribution, FusionError, FusionPolicy,
+    FusionPolicyVersion, FusionPriority, FusionResultLimit, FusionResultLimitError, FusionScore,
+    FusionSignalExplanation, FusionTokenExplanation, MemoryCandidateExplanation,
+    MemoryCandidateExplanationError, NormalizedRetrievalSignal, NormalizedRetrievalSignalError,
+    RelationshipCandidateExplanation, ResultExplanation, ResultSourceExplanation,
+    RetrievalCandidate, RetrievalCandidateReason, RetrievalCandidateSet,
+    RetrievalCandidateSetError, RetrievalCandidateSets, RetrievalCandidateSetsError,
+    RetrievalCandidateSignals, RetrievalTargetId,
 };
 pub use revision::{
     FileDelta, FileRevision, RenameCandidate, RepositoryFileState, RepositoryFileStateError,

@@ -147,6 +147,14 @@ Muss-Signale:
 
 Die konkrete Gewichtung ist als RetrievalPolicy versioniert und wird mit Eval-Daten kalibriert. Eine Änderung an Gewichten ist keine versteckte Codeänderung.
 
+Die implementierte Vorstufe `FusionPolicy::v1` verwendet drei harte Provenienzbänder: Exact vor
+sonstiger Evidence vor rein semantischen Kandidaten. Innerhalb eines Bands gelten die versionierten
+Integergewichte Kanal 30 %, Goal 20 %, Step 20 %, Freshness 10 %, Token-Effizienz 10 % und
+kanalübergreifende nicht-semantische Bestätigung 10 %; Redundanz kann bis zu 20 % abziehen. Diese
+Vorstufe packt noch keinen Kontext und berechnet Goal-/Step- oder Overlapsignale nicht selbst. Sie
+verlangt sie als validierte, zielgleiche Eingaben vom späteren Goal-/Ledger- und Context-Compiler
+und gibt sämtliche Beiträge in `ResultExplanation` zurück.
+
 ### Pack
 
 Standard bei einem Modellkontext von 16.384 Tokens:
@@ -230,4 +238,3 @@ Compaction löscht keine Audit-Events. Sie verändert nur den nächsten Context 
 - Anzahl unnötiger Wiederholungslesungen
 - Toolerfolg beim ersten Versuch
 - Taskabschluss mit aktueller Verifikation
-

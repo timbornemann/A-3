@@ -146,6 +146,32 @@ Tiefe die kanonische Kantenreihenfolge. Ein `GraphTraversalResult` gehört genau
 `IndexRunId`-/`SnapshotId`-Kombination, enthält keine doppelten Ziele und weist ein abgeschnittenes
 Resultat explizit aus.
 
+### Retrieval Fusion
+
+`RetrievalCandidateSet` trennt Exact, Lexical, Graph, Test, Memory und Semantic bereits vor der
+Fusion und bindet jede Menge an genau eine `IndexRunId`-/`SnapshotId`-Kombination. Pro Kanal sind
+höchstens 100 eindeutige Ziele zulässig. `RetrievalCandidateSets` akzeptiert höchstens eine Menge je
+Kanal und lehnt gemischte Publikationen ab. Dateien werden innerhalb eines Runs über ihre
+verlustfreien `RepositoryPath`-Bytes, Symbole über `SymbolId` dedupliziert; abweichende Revisionen,
+Projektionen oder Signale für dieselbe stabile ID sind ein typisierter Fehler. Der typisierte
+Mengenstatus `Complete` oder `Truncated` übernimmt vorgelagerte Cursor und Graphlimits; kein
+Endergebnis darf eine bereits abgeschnittene Quelle als vollständig darstellen.
+
+Jeder Kandidat trägt getrennte normalisierte Goal- und Step-Relevanz, ausschließlich `Current` oder
+explizit `Compatible` Freshness, eine positive begrenzte Tokenkostenschätzung und ein
+Redundanzsignal. Die kanalnative Begründung bleibt erhalten: Exact-Erklärung, Lexical-Feld und
+-Score, vollständiger Graph-/Testpfad, fresh Memory-Relevanz mit einer nicht leeren auf 16
+begrenzten `EvidenceRef`-Menge oder ausdrücklich nicht beweisende Semantic Similarity.
+
+`FusionPolicy::v1` ordnet zuerst das unverhandelbare Provenienzband `Exact`, dann `Evidence` und
+zuletzt `Semantic`. Kein gewichteter Semantic-Score kann deshalb einen Exact-Treffer verdrängen.
+Innerhalb eines Bands berechnet die Policy ausschließlich mit Integerarithmetik einen Score aus
+Kanal 30 %, Goal 20 %, Step 20 %, Freshness 10 %, Token-Effizienz 10 % und unabhängiger
+nicht-semantischer Bestätigung 10 %; Redundanz zieht bis zu 20 % ab. Gleichstände löst die stabile
+Ziel-ID auf. `ResultExplanation` bewahrt jeden Normalwert, Beitrag, Abzug und Quellgrund;
+`FusedRetrievalResult` speichert außerdem Run, Snapshot, `FusionPolicyVersion`, Trunkierung und die
+finale Reihenfolge.
+
 ## Aggregate
 
 ### Project

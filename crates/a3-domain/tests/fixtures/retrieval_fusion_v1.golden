@@ -1,0 +1,9 @@
+case=mixed-channels policy=1 truncated=false
+rank=1 priority=exact target=file:src/exact.rs score=52824 source_points=30000 sources=exact:10000,lexical:9000 goal=100/200 step=100/200 freshness=10000/10000 token=500/9924/9924 corroboration=2500/2500 redundancy=0/0
+rank=2 priority=evidence target=file:src/dependency.rs score=81978 source_points=30000 sources=graph:10000 goal=7000/14000 step=9000/18000 freshness=10000/10000 token=150/9978/9978 corroboration=0/0 redundancy=0/0
+rank=3 priority=evidence target=file:tests/exact_test.rs score=81970 source_points=30000 sources=test:10000 goal=8000/16000 step=8000/16000 freshness=10000/10000 token=200/9970/9970 corroboration=0/0 redundancy=0/0
+rank=4 priority=evidence target=file:src/goal.rs score=79985 source_points=24000 sources=lexical:8000 goal=9000/18000 step=9000/18000 freshness=10000/10000 token=100/9985/9985 corroboration=0/0 redundancy=0/0
+rank=5 priority=evidence target=file:src/redundant.rs score=64000 source_points=24000 sources=lexical:8000 goal=10000/20000 step=10000/20000 freshness=10000/10000 token=1/10000/10000 corroboration=0/0 redundancy=10000/20000
+rank=6 priority=semantic target=file:src/popular.rs score=90000 source_points=30000 sources=semantic:10000 goal=10000/20000 step=10000/20000 freshness=10000/10000 token=1/10000/10000 corroboration=0/0 redundancy=0/0
+case=stable-tie-limit policy=1 truncated=true
+rank=1 priority=evidence target=file:src/a.rs score=54848 source_points=18000 sources=memory:6000 goal=5000/10000 step=5000/10000 freshness=7000/7000 token=1000/9848/9848 corroboration=0/0 redundancy=0/0

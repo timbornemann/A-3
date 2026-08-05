@@ -16,6 +16,7 @@ mod repository_discovery;
 mod repository_index;
 mod repository_snapshot;
 mod repository_watcher;
+mod retrieval_fusion;
 
 pub use exact_search::SearchExactIndex;
 pub use graph_traversal::TraverseKnowledgeGraph;
@@ -73,3 +74,4 @@ pub use repository_snapshot::{
 pub use repository_watcher::{
     RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,
 };
+pub use retrieval_fusion::FuseRetrievalCandidates;

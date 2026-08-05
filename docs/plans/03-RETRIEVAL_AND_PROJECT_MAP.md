@@ -127,12 +127,37 @@ Akzeptanz:
 
 Abhängigkeiten: R1 bis R3
 
-- [ ] getrennte Candidate Sets
-- [ ] Normalisierung und Stable-ID-Deduplizierung
-- [ ] versionierte FusionPolicy
-- [ ] Goal-, Step-, Freshness-, Token- und Redundanzsignale
-- [ ] ResultExplanation
-- [ ] Golden Eval Runner
+Status: Completed
+
+- [x] getrennte Candidate Sets
+- [x] Normalisierung und Stable-ID-Deduplizierung
+- [x] versionierte FusionPolicy
+- [x] Goal-, Step-, Freshness-, Token- und Redundanzsignale
+- [x] ResultExplanation
+- [x] Golden Eval Runner
+
+Verifizierter Abschluss vom 2026-08-05: Der infra-freie Domainvertrag bindet höchstens eine
+Candidate-Menge je Exact-, Lexical-, Graph-, Test-, Memory- und Semantic-Kanal an denselben
+veröffentlichten Run und Snapshot. Pro Kanal gelten 100 Kandidaten. Dateien werden über
+verlustfreie aktuelle Pfade, Symbole über `SymbolId` dedupliziert; widersprüchliche Revisionen,
+Projektionen oder Signale derselben stabilen ID werden abgelehnt statt implizit ausgewählt.
+Vorgelagerte Exact-/Lexical-Cursor und Graphlimits bleiben als `Truncated` sichtbar.
+Memory benötigt eine nicht leere, auf 16 begrenzte Menge zuvor als fresh aufgelöster
+`EvidenceRef`s; Semantic Similarity kann keinen Evidence-Status erzeugen.
+
+`FusionPolicy::v1` normalisiert kanalnative Erklärungen und Scores und verwendet vor der
+gewichteten Bewertung die unverhandelbaren Bänder Exact, Evidence und Semantic. Damit kann selbst
+ein maximal bewerteter rein semantischer Kandidat keinen Exact-Treffer verdrängen. Innerhalb eines
+Bands fließen Kanal mit 30 %, Goal und Step mit je 20 %, Freshness, inverse Tokenkosten und
+nicht-semantische Mehrkanalbestätigung mit je 10 % ein; Redundanz zieht bis zu 20 % ab. Die
+Berechnung ist begrenzt, ganzzahlig und über stabile Ziel-IDs vollständig determiniert.
+
+Jede `ResultExplanation` enthält sämtliche kanalnativen Gründe, normalisierten Signale,
+Einzelbeiträge, den Redundanzabzug und Endscore. Das Ergebnis speichert Run, Snapshot,
+`FusionPolicyVersion` und Trunkierung. Der versionierte Golden-Eval-Runner belegt in zwei
+identischen Durchläufen Deduplizierung, Graph/Test/Memory/Semantic, alle fünf geforderten Signale,
+Stable Tie-Breaking, Resultlimit und Exact-vor-Semantic. Die breitere Retrieval-Evalbaseline des
+Gates M4/M5 bleibt bewusst ein späteres, weiterhin offenes Arbeitspaket.
 
 Akzeptanz:
 
