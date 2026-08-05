@@ -1,6 +1,7 @@
 //! Application use cases and ports for A^3.
 
 mod exact_search;
+mod graph_traversal;
 mod health_query;
 mod jobs;
 mod knowledge_index_store;
@@ -17,6 +18,7 @@ mod repository_snapshot;
 mod repository_watcher;
 
 pub use exact_search::SearchExactIndex;
+pub use graph_traversal::TraverseKnowledgeGraph;
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,

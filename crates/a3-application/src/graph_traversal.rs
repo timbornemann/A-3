@@ -1,52 +1,46 @@
 use crate::{KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchStore};
-use a3_domain::{
-    LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery,
-    ProjectIdentity,
-};
+use a3_domain::{GraphTraversalResult, ProjectIdentity, TraversalQuery};
 use std::sync::Arc;
 
-/// Inbound use case for bounded typo-tolerant retrieval from one published snapshot.
+/// Inbound use case for bounded evidence-graph traversal.
 #[derive(Debug)]
-pub struct SearchLexicalIndex {
+pub struct TraverseKnowledgeGraph {
     store: Arc<dyn KnowledgeSearchStore>,
 }
 
-impl SearchLexicalIndex {
+impl TraverseKnowledgeGraph {
     /// Wires the read-only retrieval port.
     #[must_use]
     pub fn new(store: Arc<dyn KnowledgeSearchStore>) -> Self {
         Self { store }
     }
 
-    /// Returns one deterministic weighted page without exposing FTS or storage details.
+    /// Returns deterministic shortest evidence paths without exposing storage details.
     pub async fn execute(
         &self,
         project: &ProjectIdentity,
-        query: &LexicalSearchQuery,
-        page_size: LexicalSearchPageSize,
-        cursor: Option<&LexicalSearchCursor>,
+        query: &TraversalQuery,
         control: &dyn KnowledgeSearchControl,
-    ) -> Result<LexicalSearchPage, KnowledgeSearchFailure> {
+    ) -> Result<GraphTraversalResult, KnowledgeSearchFailure> {
         if control.is_cancelled() {
             return Err(KnowledgeSearchFailure::Cancelled);
         }
-        self.store
-            .search_lexical(project, query, page_size, cursor, control)
-            .await
+        self.store.traverse_graph(project, query, control).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SearchLexicalIndex;
+    use super::TraverseKnowledgeGraph;
     use crate::{
         KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     };
     use a3_domain::{
         ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GitHead,
-        GitReferenceName, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
-        LexicalSearchQuery, LexicalSearchTerm, ProjectIdentity, RepositoryId, RepositoryIdentity,
-        WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+        GitReferenceName, GraphTraversalResult, LexicalSearchCursor, LexicalSearchPage,
+        LexicalSearchPageSize, LexicalSearchQuery, ProjectIdentity, RepositoryId,
+        RepositoryIdentity, SymbolId, TraversalQuery, TraversalResultLimit, WorktreeAnchorId,
+        WorktreeId, WorktreeIdentity,
     };
     use futures::executor::block_on;
     use std::sync::Arc;
@@ -89,9 +83,9 @@ mod tests {
         fn traverse_graph<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
-            _query: &'a a3_domain::TraversalQuery,
+            _query: &'a TraversalQuery,
             _control: &'a dyn KnowledgeSearchControl,
-        ) -> KnowledgeSearchFuture<'a, a3_domain::GraphTraversalResult> {
+        ) -> KnowledgeSearchFuture<'a, GraphTraversalResult> {
             Box::pin(async { Err(KnowledgeSearchFailure::InvalidStoredProjection) })
         }
     }
@@ -101,17 +95,11 @@ mod tests {
     {
         let project = project()?;
         let query =
-            LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launcj".to_owned())?);
-        let search = SearchLexicalIndex::new(Arc::new(MustNotRunStore));
+            TraversalQuery::callees(SymbolId::from_bytes([4; 32]), TraversalResultLimit::DEFAULT);
+        let traversal = TraverseKnowledgeGraph::new(Arc::new(MustNotRunStore));
 
         assert_eq!(
-            block_on(search.execute(
-                &project,
-                &query,
-                LexicalSearchPageSize::DEFAULT,
-                None,
-                &CancelledControl,
-            )),
+            block_on(traversal.execute(&project, &query, &CancelledControl)),
             Err(KnowledgeSearchFailure::Cancelled)
         );
         Ok(())

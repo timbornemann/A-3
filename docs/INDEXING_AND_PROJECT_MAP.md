@@ -429,6 +429,22 @@ und `SymbolId`. Der Cursor bindet den vollständigen Schlüssel an Query, Run un
 Projektionsmarker und tatsächliche Zeilenzahlen werden vor jeder Suche verglichen; Cancellation und
 das Zwei-Sekunden-Limit werden vor und zwischen Zeilen geprüft.
 
+### Implementierter Graph-Kanal
+
+Der read-only `KnowledgeSearchStore` traversiert ausschließlich `symbol_edges` des jüngsten
+atomar veröffentlichten Runs. Eine typisierte Query legt Seed, Richtung, genau eine Relation,
+maximal ein oder zwei Hops sowie höchstens 100 Resultate fest. Für Callers, Callees, Imports,
+Exports und Tests existieren eindeutige Presets; Testkanten bleiben durch
+`SourceChannel::Test` von allgemeinen Graphkandidaten getrennt.
+
+Der Adapter führt eine levelweise Breitensuche in kanonischer `edge_sequence` aus, merkt besuchte
+Datei- und Symbolendpunkte und behält deshalb pro Ziel den ersten kürzesten Pfad. Ein Zyklus kann
+weder den Seed erneut ausliefern noch die Suche verlängern. Pro Query werden höchstens 4.096 Kanten
+unter kooperativer Cancellation und einem festen Zwei-Sekunden-Limit dekodiert; Result- oder
+Kantenbegrenzung wird als `truncated` sichtbar. Seed, Ziele, qualifizierte Symbolnamen, Kanten und
+Evidenz stammen aus derselben konsistenten Deferred-Read-Transaktion. Jeder Treffer gibt seinen
+vollständigen `GraphEdge`-Pfad als maschinenlesbare Begründung zurück.
+
 Suche erzeugt getrennte Kandidatenlisten für exakt, FTS, Graph, Tests, Memory und Vektor. Die Listen werden normalisiert, über stabile IDs dedupliziert und mit einer versionierten Fusion zusammengeführt.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.

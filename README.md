@@ -12,8 +12,8 @@ LanguageAdapter-Contract sowie die Rust-/Cargo-, TypeScript-/JavaScript-/Package
 Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker, die versionierte
 Rankingprojektion, das atomische Publish und der plattformneutrale inkrementelle File-Watcher des
 Fast Index sowie die snapshotgebundene exakte und fehlertolerante lexikalische Pfad-, Symbol- und
-Signatursuche sind abgeschlossen. Die weitere Implementierung folgt dem Plan für Graph Retrieval,
-Fusion und Project Map. Die
+Signatursuche und die begrenzte, evidenzgebundene Graphabfrage sind abgeschlossen. Die weitere
+Implementierung folgt dem Plan für Retrieval Fusion und Project Map. Die
 verbindliche Architektur- und
 Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

@@ -11,6 +11,10 @@ use libsql::{Transaction, Value, params_from_iter};
 
 const MAX_BATCH_PARAMETERS: usize = 30_000;
 const MAX_BATCH_ROWS: usize = 1_024;
+pub(crate) const EDGE_COLUMNS: &str = "source_kind, source_value, target_kind, target_value,\n\
+ relation_kind, provider, confidence, resolution, evidence_path, evidence_hash,\n\
+ evidence_start_byte, evidence_end_byte, evidence_start_row, evidence_start_column,\n\
+ evidence_end_row, evidence_end_column";
 
 pub(crate) async fn write_publication_rows(
     transaction: &Transaction,
@@ -466,14 +470,12 @@ async fn read_edges(
     run: IndexRunRecord,
     progress: &mut MutationProgress<'_>,
 ) -> Result<Vec<GraphEdge>, IndexPublicationRepositoryError> {
+    let sql = format!(
+        "SELECT {EDGE_COLUMNS} FROM symbol_edges\n\
+         WHERE index_run_id = ?1 ORDER BY edge_sequence"
+    );
     let mut rows = transaction
-        .query(
-            "SELECT source_kind, source_value, target_kind, target_value, relation_kind, provider,\n\
-             confidence, resolution, evidence_path, evidence_hash, evidence_start_byte,\n\
-             evidence_end_byte, evidence_start_row, evidence_start_column, evidence_end_row,\n\
-             evidence_end_column FROM symbol_edges WHERE index_run_id = ?1 ORDER BY edge_sequence",
-            [run.id().as_bytes().to_vec()],
-        )
+        .query(&sql, [run.id().as_bytes().to_vec()])
         .await
         .map_err(IndexPublicationRepositoryError::Read)?;
     let mut edges = Vec::new();
@@ -482,29 +484,51 @@ async fn read_edges(
         .await
         .map_err(IndexPublicationRepositoryError::Read)?
     {
-        let source_kind: String = row.get(0).map_err(IndexPublicationRepositoryError::Read)?;
-        let source_value: Vec<u8> = row.get(1).map_err(IndexPublicationRepositoryError::Read)?;
-        let target_kind: String = row.get(2).map_err(IndexPublicationRepositoryError::Read)?;
-        let target_value: Vec<u8> = row.get(3).map_err(IndexPublicationRepositoryError::Read)?;
-        let relation: String = row.get(4).map_err(IndexPublicationRepositoryError::Read)?;
-        let provider: String = row.get(5).map_err(IndexPublicationRepositoryError::Read)?;
-        let confidence = Confidence::from_basis_points(read_u16(&row, 6)?)
-            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
-        let resolution: String = row.get(7).map_err(IndexPublicationRepositoryError::Read)?;
-        let evidence = read_evidence(&row, 8, 9, 10)?;
-        edges.push(GraphEdge::new(
-            endpoint_from_stored(&source_kind, source_value)?,
-            endpoint_from_stored(&target_kind, target_value)?,
-            relation_kind_from_stored(&relation)?,
-            provider_from_stored(&provider)?,
-            confidence,
-            resolution_from_stored(&resolution)?,
-            run.snapshot_id(),
-            evidence,
-        ));
+        edges.push(graph_edge_from_row(&row, 0, run.snapshot_id())?);
         progress.advance(1)?;
     }
     Ok(edges)
+}
+
+pub(crate) fn graph_edge_from_row(
+    row: &libsql::Row,
+    offset: i32,
+    snapshot_id: a3_domain::SnapshotId,
+) -> Result<GraphEdge, IndexPublicationRepositoryError> {
+    let source_kind: String = row
+        .get(offset)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let source_value: Vec<u8> = row
+        .get(offset + 1)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let target_kind: String = row
+        .get(offset + 2)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let target_value: Vec<u8> = row
+        .get(offset + 3)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let relation: String = row
+        .get(offset + 4)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let provider: String = row
+        .get(offset + 5)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let confidence = Confidence::from_basis_points(read_u16(row, offset + 6)?)
+        .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+    let resolution: String = row
+        .get(offset + 7)
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let evidence = read_evidence(row, offset + 8, offset + 9, offset + 10)?;
+    Ok(GraphEdge::new(
+        endpoint_from_stored(&source_kind, source_value)?,
+        endpoint_from_stored(&target_kind, target_value)?,
+        relation_kind_from_stored(&relation)?,
+        provider_from_stored(&provider)?,
+        confidence,
+        resolution_from_stored(&resolution)?,
+        snapshot_id,
+        evidence,
+    ))
 }
 
 async fn read_candidates(
@@ -741,7 +765,7 @@ fn optional_range_values(range: Option<SourceRange>) -> [Option<i64>; 6] {
         .map_or([None; 6], |values| values.map(Some))
 }
 
-fn endpoint_to_stored(endpoint: &GraphEndpoint) -> (&'static str, Vec<u8>) {
+pub(crate) fn endpoint_to_stored(endpoint: &GraphEndpoint) -> (&'static str, Vec<u8>) {
     match endpoint {
         GraphEndpoint::File(path) => ("file", path.as_bytes().to_vec()),
         GraphEndpoint::Symbol(id) => ("symbol", id.as_bytes().to_vec()),
@@ -868,7 +892,7 @@ fn roles_to_stored(roles: SymbolRoles) -> u8 {
         | (u8::from(roles.contains(SymbolRole::Entrypoint)) << 1)
 }
 
-fn relation_kind_to_stored(kind: SyntaxRelationKind) -> &'static str {
+pub(crate) fn relation_kind_to_stored(kind: SyntaxRelationKind) -> &'static str {
     match kind {
         SyntaxRelationKind::Contains => "contains",
         SyntaxRelationKind::Defines => "defines",

@@ -12,7 +12,8 @@ use a3_domain::{
     LocalSymbolId, ParsedSymbol, RankProjection, RankScore, RankingPolicyVersion, RepositoryId,
     RepositoryPath, SnapshotChangeKind, SnapshotId, SourceChannel, SourcePosition, SourceRange,
     SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SymbolSignature,
-    SyntaxProvider, SyntaxRelationKind, WorktreeId,
+    SyntaxProvider, SyntaxRelationKind, TraversalDepth, TraversalDirection, TraversalQuery,
+    TraversalResultLimit, WorktreeId,
 };
 
 #[derive(Debug)]
@@ -67,6 +68,14 @@ where
         ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string("launch".to_owned())?);
     let typo_query =
         LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launcj".to_owned())?);
+    let first_root_id = SymbolId::from_bytes([10; 32]);
+    let call_graph_query = TraversalQuery::new(
+        GraphEndpoint::Symbol(first_root_id),
+        TraversalDirection::Outgoing,
+        SyntaxRelationKind::Calls,
+        TraversalDepth::INTERACTIVE_MAX,
+        TraversalResultLimit::DEFAULT,
+    );
     assert_eq!(
         store
             .search_exact(
@@ -88,6 +97,12 @@ where
                 None,
                 &control,
             )
+            .await,
+        Err(KnowledgeSearchFailure::IndexUnavailable)
+    );
+    assert_eq!(
+        store
+            .traverse_graph(&project, &call_graph_query, &control)
             .await,
         Err(KnowledgeSearchFailure::IndexUnavailable)
     );
@@ -132,6 +147,12 @@ where
                 None,
                 &CancelledSearchControl,
             )
+            .await,
+        Err(KnowledgeSearchFailure::Cancelled)
+    );
+    assert_eq!(
+        store
+            .traverse_graph(&project, &call_graph_query, &CancelledSearchControl)
             .await,
         Err(KnowledgeSearchFailure::Cancelled)
     );
@@ -350,6 +371,116 @@ where
             )
     );
 
+    let graph_result = store
+        .traverse_graph(&project, &call_graph_query, &control)
+        .await?;
+    assert_eq!(graph_result.index_run_id(), first_run.id());
+    assert_eq!(graph_result.snapshot_id(), first_snapshot.id());
+    assert_eq!(graph_result.hits().len(), 2);
+    assert!(!graph_result.truncated());
+    assert_eq!(
+        store
+            .traverse_graph(&project, &call_graph_query, &control)
+            .await?,
+        graph_result
+    );
+    let module_id = SymbolId::from_bytes([11; 32]);
+    let nested_id = SymbolId::from_bytes([12; 32]);
+    let mut graph_targets = graph_result
+        .hits()
+        .iter()
+        .map(|hit| (target_endpoint(hit.target()), hit.path().len()))
+        .collect::<Vec<_>>();
+    graph_targets.sort();
+    assert_eq!(
+        graph_targets,
+        vec![
+            (GraphEndpoint::Symbol(module_id), 1),
+            (GraphEndpoint::Symbol(nested_id), 1),
+        ]
+    );
+    for hit in graph_result.hits() {
+        assert_eq!(hit.source_channel(), SourceChannel::Graph);
+        assert!(hit.path().iter().all(|edge| {
+            edge.kind() == SyntaxRelationKind::Calls
+                && edge.snapshot_id() == first_snapshot.id()
+                && edge.evidence().revision().content_hash() == ContentHash::from_bytes([2; 32])
+        }));
+    }
+
+    assert_single_graph_target(
+        &store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::callers(first_root_id, TraversalResultLimit::DEFAULT),
+                &control,
+            )
+            .await?,
+        GraphEndpoint::Symbol(nested_id),
+        SourceChannel::Graph,
+    )?;
+    assert_single_graph_target(
+        &store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::imports(
+                    GraphEndpoint::File(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?),
+                    TraversalResultLimit::DEFAULT,
+                ),
+                &control,
+            )
+            .await?,
+        GraphEndpoint::File(RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?),
+        SourceChannel::Graph,
+    )?;
+    assert_single_graph_target(
+        &store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::exports(
+                    GraphEndpoint::File(RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?),
+                    TraversalResultLimit::DEFAULT,
+                ),
+                &control,
+            )
+            .await?,
+        GraphEndpoint::Symbol(first_root_id),
+        SourceChannel::Graph,
+    )?;
+    assert_single_graph_target(
+        &store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::tests(
+                    GraphEndpoint::Symbol(first_root_id),
+                    TraversalResultLimit::DEFAULT,
+                ),
+                &control,
+            )
+            .await?,
+        GraphEndpoint::Symbol(nested_id),
+        SourceChannel::Test,
+    )?;
+    let limited_query = TraversalQuery::callees(first_root_id, TraversalResultLimit::new(1)?);
+    let limited = store
+        .traverse_graph(&project, &limited_query, &control)
+        .await?;
+    assert_eq!(limited.hits().len(), 1);
+    assert!(limited.truncated());
+    assert_eq!(
+        store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::callees(
+                    SymbolId::from_bytes([99; 32]),
+                    TraversalResultLimit::DEFAULT,
+                ),
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::SeedUnavailable)
+    );
+
     let replacement_snapshot = snapshot(
         [84; 32],
         worktree_id,
@@ -429,6 +560,22 @@ where
             .hits()
             .is_empty()
     );
+    assert_eq!(
+        store
+            .traverse_graph(&project, &call_graph_query, &control)
+            .await,
+        Err(KnowledgeSearchFailure::SeedUnavailable)
+    );
+    let replacement_root_id = SymbolId::from_bytes([20; 32]);
+    let replacement_graph = store
+        .traverse_graph(
+            &project,
+            &TraversalQuery::callees(replacement_root_id, TraversalResultLimit::DEFAULT),
+            &control,
+        )
+        .await?;
+    assert_eq!(replacement_graph.snapshot_id(), replacement_snapshot.id());
+    assert_eq!(replacement_graph.hits().len(), 2);
     store.rebuild_regenerable_index(&project, &control).await?;
     assert_eq!(
         store
@@ -442,7 +589,39 @@ where
             .await,
         Err(KnowledgeSearchFailure::IndexUnavailable)
     );
+    assert_eq!(
+        store
+            .traverse_graph(
+                &project,
+                &TraversalQuery::callees(replacement_root_id, TraversalResultLimit::DEFAULT,),
+                &control,
+            )
+            .await,
+        Err(KnowledgeSearchFailure::IndexUnavailable)
+    );
     Ok(())
+}
+
+fn assert_single_graph_target(
+    result: &a3_domain::GraphTraversalResult,
+    expected: GraphEndpoint,
+    channel: SourceChannel,
+) -> ContractResult<()> {
+    assert_eq!(result.hits().len(), 1);
+    let hit = &result.hits()[0];
+    assert_eq!(target_endpoint(hit.target()), expected);
+    assert_eq!(hit.source_channel(), channel);
+    assert_eq!(hit.path().len(), 1);
+    assert_eq!(hit.path()[0].kind(), result.query().relation());
+    assert_eq!(hit.path()[0].snapshot_id(), result.snapshot_id());
+    Ok(())
+}
+
+fn target_endpoint(target: &ExactSearchTarget) -> GraphEndpoint {
+    match target {
+        ExactSearchTarget::File(revision) => GraphEndpoint::File(revision.path().clone()),
+        ExactSearchTarget::Symbol(symbol) => GraphEndpoint::Symbol(symbol.symbol().id()),
+    }
 }
 
 async fn assert_single_symbol<S: KnowledgeSearchStore>(
@@ -592,6 +771,55 @@ fn publication(
             GraphEndpoint::Symbol(module_id),
             GraphEndpoint::Symbol(nested_id),
             SyntaxRelationKind::Contains,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(root_id),
+            GraphEndpoint::Symbol(module_id),
+            SyntaxRelationKind::Calls,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(root_id),
+            GraphEndpoint::Symbol(nested_id),
+            SyntaxRelationKind::Calls,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(module_id),
+            GraphEndpoint::Symbol(nested_id),
+            SyntaxRelationKind::Calls,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(nested_id),
+            GraphEndpoint::Symbol(root_id),
+            SyntaxRelationKind::Calls,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::File(source.path().clone()),
+            GraphEndpoint::File(manifest.path().clone()),
+            SyntaxRelationKind::Imports,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::File(source.path().clone()),
+            GraphEndpoint::Symbol(root_id),
+            SyntaxRelationKind::Exports,
+            snapshot_id,
+            &evidence,
+        ),
+        edge(
+            GraphEndpoint::Symbol(nested_id),
+            GraphEndpoint::Symbol(root_id),
+            SyntaxRelationKind::Tests,
             snapshot_id,
             &evidence,
         ),

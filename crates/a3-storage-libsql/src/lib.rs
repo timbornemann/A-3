@@ -3,6 +3,7 @@
 mod catalog;
 mod exact_search_projection;
 mod exact_search_repository;
+mod graph_traversal_repository;
 mod index_codec;
 mod index_publication;
 mod index_repository;

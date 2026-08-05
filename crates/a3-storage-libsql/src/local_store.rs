@@ -4,7 +4,7 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    exact_search_repository, index_publication, index_repository,
+    exact_search_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository,
 };
 use a3_application::{
@@ -14,10 +14,11 @@ use a3_application::{
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, IndexPublication,
-    IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor,
-    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity,
-    PublishedIndex, RepositoryId, Snapshot, WorktreeId,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
+    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
+    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
+    LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, Snapshot,
+    TraversalQuery, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -420,6 +421,25 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+
+    fn traverse_graph<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a TraversalQuery,
+        control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, GraphTraversalResult> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_search(project).await?;
+            graph_traversal_repository::traverse_graph(
+                knowledge.connection(),
+                project.worktree().id(),
+                query,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify(query))
         })
     }
 }

@@ -130,6 +130,22 @@ Jeder `LexicalSearchHit` trägt `SourceChannel::Lexical`, einen ganzzahligen Sco
 qualifizierter Name und `SymbolId`. `LexicalSearchCursor` bindet diesen vollständigen Schlüssel an
 Query, `IndexRunId` und `SnapshotId`; ein Replacement-Publish macht ihn dadurch ungültig.
 
+### Graph Retrieval
+
+Eine `TraversalQuery` bindet genau einen aktuellen Datei- oder Symbolendpunkt an Richtung,
+`SyntaxRelationKind`, positive maximale Tiefe und Resultlimit. V1 erlaubt ausschließlich ein oder
+zwei Hops und höchstens 100 Treffer; die Presets `callers`, `callees`, `imports`, `exports` und
+`tests` setzen die jeweilige Richtung und Beziehung explizit. Testbeziehungen liefern
+`SourceChannel::Test`, alle übrigen Traversals `SourceChannel::Graph`.
+
+Ein `GraphTraversalHit` enthält das aktuelle `ExactSearchTarget` und den vollständigen geordneten
+`GraphEdge`-Pfad vom Seed zum Ziel. Jede Kante muss Relation und `SnapshotId` der Query entsprechen,
+an die vorige Kante anschließen und darf keinen Endpunkt erneut besuchen. Der Adapter ermittelt
+Treffer levelweise; damit gewinnt bei mehreren Wegen der kürzeste Pfad und innerhalb derselben
+Tiefe die kanonische Kantenreihenfolge. Ein `GraphTraversalResult` gehört genau zu einer
+`IndexRunId`-/`SnapshotId`-Kombination, enthält keine doppelten Ziele und weist ein abgeschnittenes
+Resultat explizit aus.
+
 ## Aggregate
 
 ### Project

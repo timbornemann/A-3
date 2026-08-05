@@ -38,6 +38,7 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Golden Fixture für Parseränderungen
 - deterministische Wiederholung ergibt identische normalisierte Resultate
 - Löschung, Umbenennung und Syntaxfehler getestet
+- Graphzyklen terminieren; kürzeste Pfade, Hopgrenze, Resultlimit und Beziehungsevidenz sind getestet
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 

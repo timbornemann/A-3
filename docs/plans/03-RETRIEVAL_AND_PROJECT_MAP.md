@@ -90,11 +90,32 @@ Akzeptanz:
 
 Abhängigkeiten: R1
 
-- [ ] typisierte TraversalQuery
-- [ ] Richtung, Kantentyp und maximale Tiefe
-- [ ] Cycle Detection und Resultlimit
-- [ ] kürzeste Evidence-Pfade
-- [ ] Callers, Callees, Imports, Exports und Tests
+Status: Completed
+
+- [x] typisierte TraversalQuery
+- [x] Richtung, Kantentyp und maximale Tiefe
+- [x] Cycle Detection und Resultlimit
+- [x] kürzeste Evidence-Pfade
+- [x] Callers, Callees, Imports, Exports und Tests
+
+Verifizierter Abschluss vom 2026-08-05: Der infra-freie Domainvertrag begrenzt Graphabfragen auf
+einen typisierten Datei- oder Symbolseed, genau eine Richtung und Relation, ein oder zwei Hops und
+höchstens 100 Treffer. Callers, Callees, Imports, Exports und Tests besitzen explizite Presets;
+Testtreffer verwenden `SourceChannel::Test`, alle übrigen `SourceChannel::Graph`. Jeder Treffer
+enthält ein aktuelles Datei- oder Symbolziel und den vollständigen, zusammenhängenden
+`GraphEdge`-Evidenzpfad derselben Snapshot-Version.
+
+Der libSQL-Adapter liest nur den jüngsten atomar veröffentlichten Run in einer konsistenten
+Deferred-Transaktion. Eine levelweise Breitensuche in kanonischer Kantenreihenfolge erkennt Zyklen,
+liefert pro Ziel den ersten kürzesten Pfad und prüft Seed sowie jedes Ziel gegen die aktuelle
+Run-Projektion. Resultate sind auf 100 Ziele, zwei Hops, 4.096 geprüfte Kanten und zwei Sekunden
+begrenzt; Cancellation, Timeout und abgeschnittene Ergebnisse bleiben typisiert sichtbar.
+
+Der gemeinsame Storage-Vertrag belegt Indexleerstand, Cancellation, fehlende und nach Replacement
+stale Seeds, deterministische Wiederholung, Cycle-Terminierung, direkten Vorrang vor einem
+alternativen Zwei-Hop-Pfad, Resultlimit sowie Callers, Callees, Imports, Exports und Tests. Jede
+Beziehung wird auf Relation, Snapshot und aktuelle Evidence-Revision geprüft; Rebuild entfernt auch
+die abfragbare Graphprojektion.
 
 Akzeptanz:
 

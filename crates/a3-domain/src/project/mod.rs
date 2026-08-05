@@ -1,6 +1,7 @@
 mod discovery;
 mod git;
 mod graph;
+mod graph_retrieval;
 mod id;
 mod index_run;
 mod language;
@@ -22,6 +23,11 @@ pub use graph::{
     PublishedIndex, RankProjection, RankProjectionError, RankScore, RankScoreError, SymbolId,
     SymbolRank, SymbolRankSignals, UnresolvedEdgeCandidate, UnresolvedGraphTarget,
     UnresolvedReason,
+};
+pub use graph_retrieval::{
+    GraphTraversalHit, GraphTraversalHitError, GraphTraversalResult, GraphTraversalResultError,
+    GraphTraversalTarget, TraversalDepth, TraversalDepthError, TraversalDirection, TraversalQuery,
+    TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
     IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId, WorktreeId,

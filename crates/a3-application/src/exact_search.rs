@@ -83,6 +83,15 @@ mod tests {
         ) -> KnowledgeSearchFuture<'a, a3_domain::LexicalSearchPage> {
             Box::pin(async { Err(KnowledgeSearchFailure::InvalidStoredProjection) })
         }
+
+        fn traverse_graph<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a a3_domain::TraversalQuery,
+            _control: &'a dyn KnowledgeSearchControl,
+        ) -> KnowledgeSearchFuture<'a, a3_domain::GraphTraversalResult> {
+            Box::pin(async { Err(KnowledgeSearchFailure::InvalidStoredProjection) })
+        }
     }
 
     #[test]

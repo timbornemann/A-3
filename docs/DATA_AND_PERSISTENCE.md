@@ -248,6 +248,10 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - Die Lexical-Search-Projektion besitzt pro veröffentlichtem Run genau einen Versionsmarker mit
   erwarteter Symbol-, Pfad- und Card-Anzahl. `symbol_fts` und `path_fts` decken exakt die aktuelle
   Run-Projektion ab; `card_fts` bleibt bis zur evidenzgebundenen Card-Erzeugung leer.
+- Graphabfragen lesen ausschließlich `file_revisions`, `symbols`, `symbol_edges` und qualifizierte
+  Namen desselben jüngsten veröffentlichten Runs. Seeds und jedes erreichte Ziel müssen in dieser
+  vollständigen Run-Projektion vorhanden sein; historische oder gelöschte IDs werden nicht
+  aufgelöst.
 - EvidenceRef besitzt eine typabhängige, validierte Nutzlast.
 - Claim-Evidence ist many-to-many.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
@@ -310,6 +314,11 @@ einem älteren Schema migrierter, bereits veröffentlichter Run besitzt absichtl
 Projektionsmarker und liefert den kanalbezogenen Zustand `ProjectionUnavailable`, statt
 unvollständige Treffer vorzutäuschen. Index-Schema V3 erzwingt beim nächsten Compilerlauf eine
 Neupublikation der lexikalischen Projektion.
+
+R3 benötigt keine zusätzliche Migration: Knowledge-Schema V4 speichert bereits jede aufgelöste
+Kante mit kanonischer Sequenz, typisierten Endpunkten, Relation, Provider, Confidence, Resolution,
+Snapshot und `EvidenceRef`. Der Graph-Reader validiert zusätzlich den Exact-Projektionsmarker des
+Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Domainobjekt tragen.
 
 - Nur Vorwärtsmigrationen
 - monotone ganzzahlige Schema-Version

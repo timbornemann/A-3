@@ -1,7 +1,8 @@
 use crate::{JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, LexicalSearchCursor,
-    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ProjectIdentity, SourceChannel,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
+    GraphTraversalResult, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
+    LexicalSearchQuery, ProjectIdentity, SourceChannel, TraversalQuery,
 };
 use std::error::Error;
 use std::fmt;
@@ -47,6 +48,14 @@ pub trait KnowledgeSearchStore: fmt::Debug + Send + Sync {
         cursor: Option<&'a LexicalSearchCursor>,
         control: &'a dyn KnowledgeSearchControl,
     ) -> KnowledgeSearchFuture<'a, LexicalSearchPage>;
+
+    /// Traverses typed relationships in exactly one atomically published evidence graph.
+    fn traverse_graph<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a TraversalQuery,
+        control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, GraphTraversalResult>;
 }
 
 /// Stable application classification of deterministic retrieval failures.
@@ -56,6 +65,8 @@ pub enum KnowledgeSearchFailure {
     Storage(KnowledgeStoreFailure),
     /// The worktree has no atomically published index yet.
     IndexUnavailable,
+    /// The requested file or symbol seed is not part of the current published graph.
+    SeedUnavailable,
     /// The supplied cursor belongs to another query, snapshot, or published run.
     InvalidCursor,
     /// The published run predates the required channel-specific projection.
@@ -73,6 +84,9 @@ impl fmt::Display for KnowledgeSearchFailure {
         match self {
             Self::Storage(error) => write!(formatter, "knowledge search storage failed: {error}"),
             Self::IndexUnavailable => formatter.write_str("no published index is available"),
+            Self::SeedUnavailable => {
+                formatter.write_str("graph traversal seed is unavailable in the published index")
+            }
             Self::InvalidCursor => {
                 formatter.write_str("search cursor is stale or does not match the query")
             }
@@ -94,6 +108,7 @@ impl Error for KnowledgeSearchFailure {
         match self {
             Self::Storage(source) => Some(source),
             Self::IndexUnavailable
+            | Self::SeedUnavailable
             | Self::InvalidCursor
             | Self::ProjectionUnavailable(_)
             | Self::InvalidStoredProjection
