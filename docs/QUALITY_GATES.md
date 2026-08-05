@@ -32,10 +32,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Rollback des Appstarts bei fehlgeschlagener Migration ohne Datenverlust
 - Contract-Tests gegen temporäre DB
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
-- Der Windows-libSQL-Test-Harness führt native In-Memory-Tests und jede unabhängige
-  Storage-Contract-Phase in einem eigenen Worker aus. Erfolg gilt erst nach dem Abschlussmarker
-  hinter der letzten Assertion; nur `STATUS_ACCESS_VIOLATION` darf höchstens zweimal mit einem
-  frischen Worker wiederholt werden. Assertion- und Vertragsfehler werden nie wiederholt.
+- Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
+  Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
+  Worker aus. Erfolg gilt erst nach dem Abschlussmarker hinter der letzten Assertion; nur
+  `STATUS_ACCESS_VIOLATION` darf höchstens zweimal mit einem frischen Worker wiederholt werden.
+  Assertion- und Vertragsfehler werden nie wiederholt. Verwaiste, exakt mit der Worker-PID
+  präfixierte Testverzeichnisse werden nach dessen Prozessende entfernt.
 
 ### Index und Retrieval
 
