@@ -1,13 +1,14 @@
 use crate::discovery::GitRepositoryDiscoverer;
-use crate::hashing::hash_discovery;
+use crate::hashing::{hash_discovery, hash_incremental_discovery};
 use crate::repository::{
     RepositoryValidationError, inspect_head, inspect_index_checksum, open_validated,
 };
 use a3_application::{
-    RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,
-    RepositoryDiscoveryFailure, RepositorySnapshotBuild, RepositorySnapshotBuilder,
-    RepositorySnapshotControl, RepositorySnapshotFailure, RepositorySnapshotPolicy,
-    SnapshotBaseline, SnapshotCompatibility,
+    IncrementalRepositorySnapshotBuild, IncrementalRepositorySnapshotBuilder,
+    RepositoryChangeBatch, RepositoryDiscoverer, RepositoryDiscoveryControl,
+    RepositoryDiscoveryControlError, RepositoryDiscoveryFailure, RepositorySnapshotBuild,
+    RepositorySnapshotBuilder, RepositorySnapshotControl, RepositorySnapshotFailure,
+    RepositorySnapshotPolicy, SnapshotBaseline, SnapshotCompatibility,
 };
 use a3_domain::{
     DiscoveryPolicyVersion, GitHead, Snapshot, SnapshotDelta, SnapshotId, WorktreeGeneration,
@@ -38,6 +39,44 @@ impl RepositorySnapshotBuilder for Blake3RepositorySnapshotBuilder {
         policy: RepositorySnapshotPolicy,
         control: &dyn RepositorySnapshotControl,
     ) -> Result<RepositorySnapshotBuild, RepositorySnapshotFailure> {
+        self.build_snapshot_internal(project, baseline, compatibility, policy, control, None)
+            .map(|result| result.0)
+    }
+}
+
+impl IncrementalRepositorySnapshotBuilder for Blake3RepositorySnapshotBuilder {
+    fn build_incremental_snapshot(
+        &self,
+        project: &a3_domain::ProjectIdentity,
+        baseline: &SnapshotBaseline,
+        compatibility: &SnapshotCompatibility,
+        changes: &RepositoryChangeBatch,
+        policy: RepositorySnapshotPolicy,
+        control: &dyn RepositorySnapshotControl,
+    ) -> Result<IncrementalRepositorySnapshotBuild, RepositorySnapshotFailure> {
+        let (observation, hashed_paths) = self.build_snapshot_internal(
+            project,
+            baseline,
+            compatibility,
+            policy,
+            control,
+            Some(changes),
+        )?;
+        IncrementalRepositorySnapshotBuild::new(observation, hashed_paths)
+    }
+}
+
+impl Blake3RepositorySnapshotBuilder {
+    fn build_snapshot_internal(
+        &self,
+        project: &a3_domain::ProjectIdentity,
+        baseline: &SnapshotBaseline,
+        compatibility: &SnapshotCompatibility,
+        policy: RepositorySnapshotPolicy,
+        control: &dyn RepositorySnapshotControl,
+        changes: Option<&RepositoryChangeBatch>,
+    ) -> Result<(RepositorySnapshotBuild, Vec<a3_domain::RepositoryPath>), RepositorySnapshotFailure>
+    {
         ensure_active(control)?;
         report_indeterminate(control)?;
         validate_baseline(project, baseline)?;
@@ -55,12 +94,34 @@ impl RepositorySnapshotBuilder for Blake3RepositorySnapshotBuilder {
         {
             return Err(RepositorySnapshotFailure::IdentityMismatch);
         }
-        let files = hash_discovery(
-            project.worktree().root().as_path(),
-            &discovery,
-            policy,
-            control,
-        )?;
+        let (files, hashed_paths) = match changes {
+            Some(changes) => {
+                let result = hash_incremental_discovery(
+                    project.worktree().root().as_path(),
+                    &discovery,
+                    baseline.files(),
+                    changes.paths(),
+                    changes.requires_full_rescan(),
+                    policy,
+                    control,
+                )?;
+                (result.files, result.hashed_paths)
+            }
+            None => {
+                let files = hash_discovery(
+                    project.worktree().root().as_path(),
+                    &discovery,
+                    policy,
+                    control,
+                )?;
+                let hashed_paths = files
+                    .revisions()
+                    .iter()
+                    .map(|revision| revision.path().clone())
+                    .collect();
+                (files, hashed_paths)
+            }
+        };
 
         let head_after = inspect_head(&repository).map_err(map_repository_error)?;
         let index_after = inspect_index_checksum(&repository).map_err(map_repository_error)?;
@@ -75,7 +136,10 @@ impl RepositorySnapshotBuilder for Blake3RepositorySnapshotBuilder {
                 && latest.index_schema_version() == compatibility.index_schema_version()
                 && latest.adapter_revisions() == compatibility.adapter_revisions()
         }) {
-            return Ok(RepositorySnapshotBuild::Unchanged { discovery, files });
+            return Ok((
+                RepositorySnapshotBuild::Unchanged { discovery, files },
+                hashed_paths,
+            ));
         }
 
         let (parent_id, generation) = match baseline.latest_snapshot() {
@@ -113,12 +177,15 @@ impl RepositorySnapshotBuilder for Blake3RepositorySnapshotBuilder {
             changes,
         )
         .map_err(|_| RepositorySnapshotFailure::InvalidSnapshot)?;
-        Ok(RepositorySnapshotBuild::Created {
-            discovery,
-            files,
-            delta,
-            snapshot: Box::new(snapshot),
-        })
+        Ok((
+            RepositorySnapshotBuild::Created {
+                discovery,
+                files,
+                delta,
+                snapshot: Box::new(snapshot),
+            },
+            hashed_paths,
+        ))
     }
 }
 

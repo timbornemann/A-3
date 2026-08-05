@@ -68,7 +68,7 @@ Ein Nutzer kann:
 - [x] TypeScript-/JavaScript-Adapter
 - [x] Python-Adapter
 - [x] Symbolgraph und atomisches Publish
-- [ ] File Watcher und inkrementeller Delta-Lauf
+- [x] File Watcher und inkrementeller Delta-Lauf
 
 ### M4 Retrieval
 

@@ -250,6 +250,48 @@ pub struct JobScheduler {
     runtime: Option<SchedulerRuntime>,
 }
 
+/// Cloneable non-owning capability for submitting and observing bounded jobs.
+///
+/// The scheduler remains the sole worker owner and joins every worker on shutdown.
+#[derive(Clone)]
+pub struct JobSubmitter {
+    shared: Arc<SchedulerShared>,
+}
+
+impl JobSubmitter {
+    /// Accepts a task when the scheduler and its bounded event stream have capacity.
+    pub fn submit<T>(
+        &self,
+        job_id: JobId,
+        owner: JobOwner,
+        task: T,
+    ) -> Result<(), JobSchedulerSubmitError>
+    where
+        T: JobTask,
+    {
+        self.shared.submit(job_id, owner, Box::new(task))
+    }
+
+    /// Requests cooperative cancellation for an accepted job.
+    pub fn cancel(&self, job_id: JobId) -> Result<JobCancelResult, JobCancellationError> {
+        self.shared.cancel(job_id)
+    }
+
+    /// Returns the latest state for one accepted job.
+    #[must_use]
+    pub fn snapshot(&self, job_id: JobId) -> Option<JobSnapshot> {
+        self.shared.snapshot(job_id)
+    }
+}
+
+impl fmt::Debug for JobSubmitter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JobSubmitter")
+            .finish_non_exhaustive()
+    }
+}
+
 impl JobScheduler {
     /// Starts the configured number of owned workers and returns its event stream.
     pub fn new(
@@ -315,6 +357,17 @@ impl JobScheduler {
             .as_ref()
             .ok_or(JobSchedulerSubmitError::ShuttingDown)?;
         runtime.shared.submit(job_id, owner, Box::new(task))
+    }
+
+    /// Returns a non-owning capability suitable for an owned coordinator thread.
+    pub fn submitter(&self) -> Result<JobSubmitter, JobSchedulerSubmitError> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(JobSchedulerSubmitError::ShuttingDown)?;
+        Ok(JobSubmitter {
+            shared: Arc::clone(&runtime.shared),
+        })
     }
 
     /// Requests cooperative cancellation without detaching the owned task.

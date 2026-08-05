@@ -10,8 +10,9 @@ Der Foundation-Meilenstein sowie Projektidentität, lokale Storage-Grundlage, be
 Repository-Discovery, inhaltsbasierte Worktree-Snapshots und der versionierte Tree-sitter-
 LanguageAdapter-Contract sowie die Rust-/Cargo-, TypeScript-/JavaScript-/Package- und
 Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker, die versionierte
-Rankingprojektion und das atomische Publish des Fast Index sind abgeschlossen. Die weitere
-Implementierung folgt dem Plan für Storage und Fast Index. Die verbindliche Architektur- und
+Rankingprojektion, das atomische Publish und der plattformneutrale inkrementelle File-Watcher des
+Fast Index sind abgeschlossen. Die weitere Implementierung folgt dem Plan für Retrieval und
+Project Map. Die verbindliche Architektur- und
 Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -59,6 +60,9 @@ Rust-Kern und bietet bei einem eindeutig evidenzbasiert erkannten Worktree-Umzug
 Auswahl zum Reconciliieren, separaten Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens
 zehn validierte Anzeigeprojektionen aus dem lokalen Katalog. Die WebView sendet weder Pfad noch
 Reconciliation-Entscheidung und erhält keine Datei-, Dialog-, Shell- oder SQL-Plugin-Berechtigung.
+Nach einem erfolgreichen Open startet der Rust-Composition-Root einen besitzenden, begrenzten
+Repository-Watcher und aktualisiert den lokalen Index im Hintergrund. Dieser Pfad erweitert die
+WebView-Capabilities nicht.
 
 ## Lokale Qualitätsgates
 

@@ -1,7 +1,7 @@
 # Daten und Persistenz
 
 Status: verbindliche Baseline  
-Stand: 2026-08-04
+Stand: 2026-08-05
 
 ## Entscheidung
 
@@ -62,15 +62,22 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   passenden `IndexPublication` atomar auf `published` wechseln. Die run-gebundenen Datei-, Symbol-,
   Kanten-, Kandidaten- und Rankzeilen werden vor dem Statuswechsel in derselben Transaktion geschrieben.
   Leser rekonstruieren nur den jüngsten veröffentlichten Run in einer konsistenten Read-Transaktion.
+  Ein erfolgreicher Ersatz entfernt die regenerierbaren Projektionszeilen älterer Runs noch in
+  derselben Transaktion in Batches von höchstens 1.024 Zeilen. Ein Rollback stellt damit auch die
+  vorherige Projektion wieder her; Snapshot- und IndexRun-Metadaten bleiben erhalten.
+  Breite Symbol-, Kanten-, Kandidaten- und Rankzeilen werden über parametrisierte Mehrzeilen-Inserts
+  mit höchstens 30.000 SQL-Parametern und 1.024 Zeilen pro Cancellation-Checkpoint geschrieben.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
   Crash-, Korruptions- und Schema-Negativtests bleiben getrennt. Jeder weitere Storageadapter muss
   dieselbe Suite ausführen.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
-  denselben Store in beide Use Cases. Beim Project Open wird die zugehörige `knowledge.db` innerhalb
-  dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und keinen autoritativen
-  gespeicherten Pfad.
+  denselben Store in Open-, Recent- und Index-Use-Case. Nach einem erfolgreichen Project Open besitzt
+  ein begrenzter Koordinator den Worktree-Watcher, reicht serialisierte Refresh-Jobs an den
+  Scheduler weiter und leert dessen begrenzten Ereigniskanal. Beim Project Open wird die zugehörige
+  `knowledge.db` innerhalb dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und
+  keinen autoritativen gespeicherten Pfad.
 - Für einen eindeutigen Umzugskandidaten zeigt der privilegierte Desktop-Adapter einen nativen Dialog
   mit „reconciliieren“, „separat öffnen“ und „abbrechen“. Nach Bestätigung persistiert der Adapter
   zuerst die exakte Absicht, verschiebt dann `projects/<alte WorktreeId>` atomar innerhalb des privaten
@@ -78,15 +85,17 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Katalog zuletzt. Vor jedem Schritt werden Kandidat, Revision, Quell- und Zielzustand erneut geprüft;
   ein vorhandenes Ziel wird nie überschrieben.
 
-Discovery und Hashing bilden den noch nicht veröffentlichenden Vorlauf des Fast Index. Der lokale
+Discovery und Hashing bilden den bestätigenden Vorlauf des Fast Index. Der lokale
 Adapter liefert eine versionierte, deterministisch sortierte Projektion relevanter tracked und
 untracked Dateien, liest deren Inhalt innerhalb fester Einzel- und Gesamtgrenzen vollständig und
 bildet BLAKE3-basierte `FileRevision`s. Der Snapshot-Builder vergleicht sie mit dem aus der
 persistierten Delta-Kette rekonstruierten Dateistand, erzeugt ausschließlich bei Inhalts-, HEAD-,
 Schema- oder Adapteränderungen die exakt nächste Generation und liefert sie für ein atomisches
-Append. Parser und Graph erzeugen den vollständigen deterministischen Publish-Input; Knowledge-Schema
-V4 veröffentlicht die daraus abgeleiteten Datei-, Symbol-, Kanten-, Kandidaten- und Rankprojektionen
-atomar. FTS folgt in Plan 03. Die Reconciliation entscheidet trotz persistierter Evidenz nie
+Append. Im inkrementellen Pfad übernimmt der Snapshot-Builder unveränderte Revisionen aus der
+persistierten Baseline und hasht nur neue oder vom Watcher gemeldete Pfade; ein sichtbares
+Eventverlustsignal erzwingt den Vollscan. Parser und Graph erzeugen den vollständigen
+deterministischen Publish-Input; Knowledge-Schema V4 veröffentlicht die daraus abgeleiteten Datei-,
+Symbol-, Kanten-, Kandidaten- und Rankprojektionen atomar. FTS folgt in Plan 03. Die Reconciliation entscheidet trotz persistierter Evidenz nie
 selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:

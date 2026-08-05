@@ -535,6 +535,87 @@ fn persistence_control_cancels_before_mutation_and_bounds_progress()
 }
 
 #[test]
+fn superseded_projection_rows_are_retired_without_deleting_run_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    block_on(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([23; 32], [33; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let first_snapshot = snapshot(
+            [44; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [54; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([64; 32], first_snapshot.id(), 1)?)
+            .await?;
+        let first_publication =
+            file_only_publication(first_snapshot.id(), b"src/lib.rs", [54; 32])?;
+        let first_run = store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &first_publication,
+                &control,
+            )
+            .await?;
+
+        let second_snapshot = snapshot(
+            [45; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            vec![change(b"src/lib.rs", [55; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &second_snapshot)
+            .await?;
+        let second_run = store
+            .start_index_run(&fixture.project, run([65; 32], second_snapshot.id(), 1)?)
+            .await?;
+        let second_publication =
+            file_only_publication(second_snapshot.id(), b"src/lib.rs", [55; 32])?;
+        let second_run = store
+            .publish_index(
+                &fixture.project,
+                second_run.id(),
+                &second_publication,
+                &control,
+            )
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+
+        assert_eq!(
+            read_run_count(&knowledge_path, "file_revisions", first_run.id()).await?,
+            0
+        );
+        assert_eq!(
+            read_run_count(&knowledge_path, "file_revisions", second_run.id()).await?,
+            1
+        );
+        assert_eq!(read_count(&knowledge_path, "index_runs").await?, 2);
+        assert_eq!(read_count(&knowledge_path, "snapshots").await?, 2);
+        let visible = store
+            .latest_published_index(&fixture.project, &control)
+            .await?
+            .ok_or("latest published index is missing")?;
+        assert_eq!(visible.run(), second_run);
+        assert_eq!(visible.publication(), &second_publication);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
 // Keep this trigger-abort case last: the Windows libSQL test runtime is unstable if another
 // local database fixture is torn down in the same process after an aborting native trigger.
 fn zz_crash_before_visible_publish_rolls_back_new_rows_and_keeps_previous_index()

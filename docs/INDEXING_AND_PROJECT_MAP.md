@@ -231,8 +231,10 @@ Graphsnapshot, Ranking-Snapshot, RankingPolicy-Version und der aktive `building`
 identisch sein. Erst nachdem alle run-gebundenen Zeilen geschrieben wurden, wechselt der letzte
 Transaktionsschritt den Run auf `published`. Leser wählen ausschließlich den jüngsten veröffentlichten
 Run und rekonstruieren dessen vollständiges typisiertes `PublishedIndex` in einer konsistenten
-Read-Transaktion. Ältere Zeilen sind durch ihre Run-ID superseded und können nicht als Teil des neuen
-Index erscheinen.
+Read-Transaktion. Vor dem finalen Statuswechsel entfernt dieselbe Transaktion die regenerierbaren
+Projektionszeilen älterer Runs in Batches von höchstens 1.024 Zeilen. Leser sehen bis zum Commit den
+alten vollständigen Run und danach nur den neuen; Run-Metadaten und Snapshots bleiben historisch
+erhalten. Ein Fehler oder Crash rollt auch die Retention zurück.
 
 Publish und vollständiges Lesen übernehmen Cancellation und Progress vom besitzenden Job, prüfen
 spätestens nach 1.024 Zeilen erneut, emittieren höchstens 64 monotone Fortschrittswerte und brechen
@@ -335,7 +337,25 @@ Ergebnis ist ein kleiner, priorisierter Subgraph mit Module Cards und Quellenaus
 
 ## Inkrementelle Aktualisierung
 
-File-Watcher-Ereignisse werden entprellt und anschließend durch einen Git-Status-Scan bestätigt. Ereignisse allein sind nicht zuverlässig genug.
+Der implementierte V1-Watcher verwendet keine neue Plattform- oder Netzwerkabhängigkeit. Ein
+besitzender Rust-Thread beobachtet über isolierte Git-Discovery den tracked/untracked Kandidatensatz,
+HEAD, Index-Checksum und plattformspezifische, aber gekapselte Dateimetadaten. Er pollt alle 100 ms,
+wartet 200 ms Ruhe, schließt einen dauernden Burst spätestens nach 750 ms und hält höchstens einen
+fertigen Batch. Pfade werden byteweise sortiert und dedupliziert. Initialisierung, Queue-Überlauf,
+HEAD-/Indexwechsel und unvollständige Beobachtung tragen einen typisierten Full-Rescan-Grund.
+
+Der Application-Use-Case behandelt Pfadhinweise niemals als Fakten. Git-Discovery bestätigt den
+aktuellen relevanten Pfadsatz, BLAKE3 bestätigt neue und gemeldete Inhalte; ein Full-Rescan hasht alle
+relevanten Dateien. Ein exakter Cache des Parent-Snapshots behält unveränderte
+`LanguageParseResult`s, entfernt gelöschte Pfade und parst nur geänderte oder neue von Rust,
+TypeScript/JavaScript oder Python unterstützte Dateien. Fehlt der Cache nach einem Neustart, wird er
+einmal begrenzt aus dem aktuellen Snapshot aufgewärmt, ohne einen bereits identisch veröffentlichten
+Run zu duplizieren. Erst Link, Rank und atomisches Publish aktualisieren die sichtbare Sicht.
+
+Der Desktop-Koordinator serialisiert diese Refreshes pro aktivem Worktree über die bestehende
+begrenzte Jobqueue. Backpressure wird in einen Full Rescan umgewandelt; Cancellation und Fortschritt
+laufen über den Job-Kontext. Projektwechsel und Shutdown beenden den Watcher, canceln einen aktiven
+Job kooperativ und joinen alle besitzenden Threads.
 
 ~~~mermaid
 flowchart TD

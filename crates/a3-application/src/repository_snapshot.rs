@@ -1,4 +1,5 @@
 use crate::JobContext;
+use crate::RepositoryChangeBatch;
 use a3_domain::{
     DiscoveryPolicy, DiscoveryResult, IndexSchemaVersion, LanguageAdapterRevision, Progress,
     ProjectIdentity, RepositoryFileState, Snapshot, SnapshotDelta,
@@ -252,6 +253,62 @@ pub trait RepositorySnapshotBuilder: fmt::Debug + Send + Sync {
         policy: RepositorySnapshotPolicy,
         control: &dyn RepositorySnapshotControl,
     ) -> Result<RepositorySnapshotBuild, RepositorySnapshotFailure>;
+}
+
+/// One incrementally confirmed observation and the exact files that were rehashed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncrementalRepositorySnapshotBuild {
+    observation: RepositorySnapshotBuild,
+    hashed_paths: Vec<a3_domain::RepositoryPath>,
+}
+
+impl IncrementalRepositorySnapshotBuild {
+    /// Creates adapter evidence after canonical path hashing.
+    pub fn new(
+        observation: RepositorySnapshotBuild,
+        mut hashed_paths: Vec<a3_domain::RepositoryPath>,
+    ) -> Result<Self, RepositorySnapshotFailure> {
+        hashed_paths.sort();
+        if hashed_paths.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(RepositorySnapshotFailure::InvalidSnapshot);
+        }
+        Ok(Self {
+            observation,
+            hashed_paths,
+        })
+    }
+
+    /// Returns the confirmed immutable snapshot observation.
+    #[must_use]
+    pub const fn observation(&self) -> &RepositorySnapshotBuild {
+        &self.observation
+    }
+
+    /// Consumes the wrapper and returns the snapshot observation.
+    #[must_use]
+    pub fn into_observation(self) -> RepositorySnapshotBuild {
+        self.observation
+    }
+
+    /// Returns only paths whose complete bytes were read during confirmation.
+    #[must_use]
+    pub fn hashed_paths(&self) -> &[a3_domain::RepositoryPath] {
+        &self.hashed_paths
+    }
+}
+
+/// Outbound port for hint-driven hashing with an authoritative full-rescan fallback.
+pub trait IncrementalRepositorySnapshotBuilder: RepositorySnapshotBuilder {
+    /// Confirms a coalesced watcher batch through Git discovery and exact BLAKE3 hashes.
+    fn build_incremental_snapshot(
+        &self,
+        project: &ProjectIdentity,
+        baseline: &SnapshotBaseline,
+        compatibility: &SnapshotCompatibility,
+        changes: &RepositoryChangeBatch,
+        policy: RepositorySnapshotPolicy,
+        control: &dyn RepositorySnapshotControl,
+    ) -> Result<IncrementalRepositorySnapshotBuild, RepositorySnapshotFailure>;
 }
 
 /// Stable application classification of repository snapshot failures.

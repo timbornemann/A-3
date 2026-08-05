@@ -6,13 +6,14 @@ pub mod commands;
 mod platform;
 mod project_picker;
 mod project_reconciliation_dialog;
+mod repository_index_manager;
 
 use a3_application::{
     GetHealth, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeStore, KnowledgeStoreFailure,
-    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
-    ProjectDirectoryPicker, ProjectInspectionFailure, ProjectReconciliationConfirmer,
-    RecentProject,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexStore, KnowledgeStore,
+    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, OpenProject,
+    OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker, ProjectInspectionFailure,
+    ProjectReconciliationConfirmer, RecentProject,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, GitHead, Health, Platform, ProjectIdentity,
@@ -29,6 +30,7 @@ use clock::SystemJobClock;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
+use repository_index_manager::RepositoryIndexManager;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -43,6 +45,7 @@ pub struct CompositionRoot {
     health_query: GetHealth,
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
+    index_manager: Option<RepositoryIndexManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
 }
@@ -56,7 +59,7 @@ impl CompositionRoot {
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
-        CompositionBase::new(application_version, platform).map(|base| {
+        CompositionBase::new(application_version, platform).and_then(|base| {
             base.finish(
                 project_directory_picker,
                 project_reconciliation_confirmer,
@@ -71,7 +74,7 @@ impl CompositionRoot {
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
     ) -> Result<Self, CompositionRootError> {
-        CompositionBase::from_environment().map(|base| {
+        CompositionBase::from_environment().and_then(|base| {
             base.finish(
                 project_directory_picker,
                 project_reconciliation_confirmer,
@@ -88,11 +91,19 @@ impl CompositionRoot {
 
     /// Executes one user-controlled native project selection and maps it to IPC V1.
     pub async fn open_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
-        self.open_project
+        let outcome = self
+            .open_project
             .execute()
             .await
-            .map(map_open_project_to_v1)
-            .map_err(map_open_project_error_to_v1)
+            .map_err(map_open_project_error_to_v1)?;
+        if let OpenProjectOutcome::Opened { project, .. } = &outcome
+            && let Some(manager) = &self.index_manager
+        {
+            manager
+                .activate_project(project.as_ref().clone())
+                .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageUnavailable))?;
+        }
+        Ok(map_open_project_to_v1(outcome))
     }
 
     /// Queries the bounded recent-project list and maps it to IPC V1.
@@ -141,8 +152,48 @@ impl CompositionBase {
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
-    ) -> CompositionRoot {
-        CompositionRoot {
+    ) -> Result<CompositionRoot, CompositionRootError> {
+        self.finish_internal(
+            project_directory_picker,
+            project_reconciliation_confirmer,
+            store,
+            None,
+        )
+    }
+
+    fn finish_with_indexing(
+        self,
+        project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
+        store: Arc<dyn KnowledgeStore>,
+        index_store: Arc<dyn KnowledgeIndexStore>,
+    ) -> Result<CompositionRoot, CompositionRootError> {
+        self.finish_internal(
+            project_directory_picker,
+            project_reconciliation_confirmer,
+            store,
+            Some(index_store),
+        )
+    }
+
+    fn finish_internal(
+        self,
+        project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
+        project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
+        store: Arc<dyn KnowledgeStore>,
+        index_store: Option<Arc<dyn KnowledgeIndexStore>>,
+    ) -> Result<CompositionRoot, CompositionRootError> {
+        let index_manager = index_store
+            .map(|store| {
+                let submitter = self
+                    .job_scheduler
+                    .submitter()
+                    .map_err(|_| CompositionRootError::IndexManagerUnavailable)?;
+                RepositoryIndexManager::start(submitter, self.job_events.clone(), store)
+                    .map_err(|_| CompositionRootError::IndexManager)
+            })
+            .transpose()?;
+        Ok(CompositionRoot {
             health_query: self.health_query,
             open_project: OpenProject::new(
                 project_directory_picker,
@@ -151,9 +202,10 @@ impl CompositionBase {
                 Arc::clone(&store),
             ),
             recent_projects: ListRecentProjects::new(store),
+            index_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
-        }
+        })
     }
 }
 
@@ -170,15 +222,20 @@ pub fn run() -> Result<(), DesktopRunError> {
                 .map_err(CompositionRootError::AppDataPath)?;
             let layout = StorageLayout::prepare(app_data_root)
                 .map_err(CompositionRootError::StorageLayout)?;
-            let store = tauri::async_runtime::block_on(LibsqlKnowledgeStore::open(&layout))
-                .map_err(CompositionRootError::Catalog)?;
-            app.manage(base.finish(
+            let store = Arc::new(
+                tauri::async_runtime::block_on(LibsqlKnowledgeStore::open(&layout))
+                    .map_err(CompositionRootError::Catalog)?,
+            );
+            let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
+            let index_store: Arc<dyn KnowledgeIndexStore> = store;
+            app.manage(base.finish_with_indexing(
                 Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
                 Arc::new(NativeProjectReconciliationConfirmer::new(
                     app.handle().clone(),
                 )),
-                Arc::new(store),
-            ));
+                catalog_store,
+                index_store,
+            )?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -325,6 +382,10 @@ pub enum CompositionRootError {
     InvalidJobSchedulerConfig(JobSchedulerConfigError),
     /// The operating system rejected an owned scheduler worker.
     JobScheduler(JobSchedulerCreateError),
+    /// The scheduler stopped before the index coordinator could acquire a submit capability.
+    IndexManagerUnavailable,
+    /// The owned repository-index coordinator could not be started.
+    IndexManager,
     /// Tauri could not resolve the private application-data directory.
     AppDataPath(tauri::Error),
     /// The private application-data storage boundary could not be established.
@@ -343,6 +404,10 @@ impl fmt::Display for CompositionRootError {
                 write!(formatter, "invalid job scheduler configuration: {error}")
             }
             Self::JobScheduler(error) => write!(formatter, "job scheduler failed: {error}"),
+            Self::IndexManagerUnavailable => {
+                formatter.write_str("repository index manager is unavailable")
+            }
+            Self::IndexManager => formatter.write_str("repository index manager failed"),
             Self::AppDataPath(_) => formatter.write_str("application data path is unavailable"),
             Self::StorageLayout(error) => write!(formatter, "storage layout failed: {error}"),
             Self::Catalog(error) => write!(formatter, "catalog open failed: {error}"),
@@ -356,6 +421,8 @@ impl Error for CompositionRootError {
             Self::InvalidVersion(error) => Some(error),
             Self::InvalidJobSchedulerConfig(error) => Some(error),
             Self::JobScheduler(error) => Some(error),
+            Self::IndexManagerUnavailable => None,
+            Self::IndexManager => None,
             Self::AppDataPath(error) => Some(error),
             Self::StorageLayout(error) => Some(error),
             Self::Catalog(error) => Some(error),

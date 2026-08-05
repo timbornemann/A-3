@@ -2,7 +2,10 @@ use crate::path::{RepositoryPathObservation, observe_repository_path, open_regul
 use a3_application::{
     RepositorySnapshotControl, RepositorySnapshotFailure, RepositorySnapshotPolicy,
 };
-use a3_domain::{ContentHash, DiscoveryResult, FileRevision, Progress, RepositoryFileState};
+use a3_domain::{
+    ContentHash, DiscoveryResult, FileRevision, Progress, RepositoryFileState, RepositoryPath,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, Metadata};
 use std::io::{self, Read};
 use std::path::Path;
@@ -13,9 +16,69 @@ pub(crate) fn hash_discovery(
     policy: RepositorySnapshotPolicy,
     control: &dyn RepositorySnapshotControl,
 ) -> Result<RepositoryFileState, RepositorySnapshotFailure> {
+    hash_discovery_selection(root, discovery, policy, control, None).map(|result| result.files)
+}
+
+pub(crate) struct IncrementalHashResult {
+    pub(crate) files: RepositoryFileState,
+    pub(crate) hashed_paths: Vec<RepositoryPath>,
+}
+
+struct HashSelection<'a> {
+    baseline: &'a BTreeMap<RepositoryPath, FileRevision>,
+    selected: Option<&'a BTreeSet<RepositoryPath>>,
+}
+
+pub(crate) fn hash_incremental_discovery(
+    root: &Path,
+    discovery: &DiscoveryResult,
+    baseline: &RepositoryFileState,
+    hinted_paths: &[RepositoryPath],
+    full_rescan: bool,
+    policy: RepositorySnapshotPolicy,
+    control: &dyn RepositorySnapshotControl,
+) -> Result<IncrementalHashResult, RepositorySnapshotFailure> {
+    let baseline = baseline
+        .revisions()
+        .iter()
+        .map(|revision| (revision.path().clone(), revision.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let selected = if full_rescan {
+        None
+    } else {
+        Some(hinted_paths.iter().cloned().collect::<BTreeSet<_>>())
+    };
+    hash_discovery_selection(
+        root,
+        discovery,
+        policy,
+        control,
+        Some(HashSelection {
+            baseline: &baseline,
+            selected: selected.as_ref(),
+        }),
+    )
+}
+
+fn hash_discovery_selection(
+    root: &Path,
+    discovery: &DiscoveryResult,
+    policy: RepositorySnapshotPolicy,
+    control: &dyn RepositorySnapshotControl,
+    incremental: Option<HashSelection<'_>>,
+) -> Result<IncrementalHashResult, RepositorySnapshotFailure> {
     let total_bytes = discovery.files().iter().try_fold(0u64, |total, file| {
         if file.size_bytes() > policy.max_file_bytes() {
             return Err(RepositorySnapshotFailure::ResourceLimitExceeded);
+        }
+        let should_hash = incremental.as_ref().is_none_or(|selection| {
+            !selection.baseline.contains_key(file.path())
+                || selection
+                    .selected
+                    .is_none_or(|paths| paths.contains(file.path()))
+        });
+        if !should_hash {
+            return Ok(total);
         }
         total
             .checked_add(file.size_bytes())
@@ -24,10 +87,20 @@ pub(crate) fn hash_discovery(
     })?;
     let mut progress = HashProgress::new(total_bytes, control)?;
     let mut revisions = Vec::with_capacity(discovery.files().len());
+    let mut hashed_paths = Vec::new();
     let mut buffer = vec![0u8; policy.read_buffer_bytes()];
 
     for discovered in discovery.files() {
         ensure_active(control)?;
+        if let Some(selection) = incremental.as_ref()
+            && let Some(revision) = selection.baseline.get(discovered.path())
+            && selection
+                .selected
+                .is_some_and(|paths| !paths.contains(discovered.path()))
+        {
+            revisions.push(revision.clone());
+            continue;
+        }
         let observation = observe_repository_path(root, discovered.path())
             .map_err(|_| RepositorySnapshotFailure::Filesystem)?;
         let (path, observed_metadata) = match observation {
@@ -48,9 +121,15 @@ pub(crate) fn hash_discovery(
             &mut buffer,
         )?;
         revisions.push(FileRevision::new(discovered.path().clone(), content_hash));
+        hashed_paths.push(discovered.path().clone());
     }
     progress.finish()?;
-    RepositoryFileState::new(revisions).map_err(|_| RepositorySnapshotFailure::InvalidSnapshot)
+    let files = RepositoryFileState::new(revisions)
+        .map_err(|_| RepositorySnapshotFailure::InvalidSnapshot)?;
+    Ok(IncrementalHashResult {
+        files,
+        hashed_paths,
+    })
 }
 
 fn hash_file(

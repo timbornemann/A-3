@@ -9,6 +9,6 @@ pub use event::{JobEvent, JobEventKind, JobEventSequence, JobEventStream, JobEve
 pub use scheduler::{
     JobCancelResult, JobCancellationError, JobCompletion, JobContext, JobScheduler,
     JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
-    JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobTask, ProgressReportError,
-    ShutdownMode, ShutdownReport,
+    JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobSubmitter, JobTask,
+    ProgressReportError, ShutdownMode, ShutdownReport,
 };

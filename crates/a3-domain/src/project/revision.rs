@@ -210,6 +210,15 @@ pub struct SnapshotDelta {
 }
 
 impl SnapshotDelta {
+    /// Returns a content-empty transition, used for HEAD-only observations and cache warmup.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            files: Vec::new(),
+            rename_candidates: Vec::new(),
+        }
+    }
+
     /// Computes added, modified, deleted, and unambiguous content-equal rename candidates.
     #[must_use]
     pub fn between(previous: &RepositoryFileState, current: &RepositoryFileState) -> Self {

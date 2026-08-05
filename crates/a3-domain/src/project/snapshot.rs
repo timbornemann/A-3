@@ -160,6 +160,12 @@ impl Error for WorktreeGenerationError {}
 pub struct IndexSchemaVersion(u32);
 
 impl IndexSchemaVersion {
+    /// Returns the initial deterministic index schema revision.
+    #[must_use]
+    pub const fn v1() -> Self {
+        Self(1)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

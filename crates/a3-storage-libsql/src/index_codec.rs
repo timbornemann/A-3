@@ -7,7 +7,10 @@ use a3_domain::{
     SymbolRole, SymbolRoles, SymbolSignature, SymbolVisibility, SyntaxProvider, SyntaxRelationKind,
     UnresolvedEdgeCandidate, UnresolvedGraphTarget, UnresolvedReason,
 };
-use libsql::{Transaction, params};
+use libsql::{Transaction, Value, params_from_iter};
+
+const MAX_BATCH_PARAMETERS: usize = 30_000;
+const MAX_BATCH_ROWS: usize = 1_024;
 
 pub(crate) async fn write_publication_rows(
     transaction: &Transaction,
@@ -15,22 +18,22 @@ pub(crate) async fn write_publication_rows(
     publication: &IndexPublication,
     progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
-    for symbol in publication.graph().symbols() {
-        write_symbol(transaction, run_id, symbol).await?;
-        progress.advance(1)?;
-    }
-    for (index, edge) in publication.graph().edges().iter().enumerate() {
-        write_edge(transaction, run_id, sequence(index)?, edge).await?;
-        progress.advance(1)?;
-    }
-    for (index, candidate) in publication.graph().unresolved().iter().enumerate() {
-        write_candidate(transaction, run_id, sequence(index)?, candidate).await?;
-        progress.advance(1)?;
-    }
-    for (index, rank) in publication.ranking().symbols().iter().enumerate() {
-        write_rank(transaction, run_id, sequence(index)?, *rank).await?;
-        progress.advance(1)?;
-    }
+    write_symbols(transaction, run_id, publication.graph().symbols(), progress).await?;
+    write_edges(transaction, run_id, publication.graph().edges(), progress).await?;
+    write_candidates(
+        transaction,
+        run_id,
+        publication.graph().unresolved(),
+        progress,
+    )
+    .await?;
+    write_ranks(
+        transaction,
+        run_id,
+        publication.ranking().symbols(),
+        progress,
+    )
+    .await?;
     Ok(())
 }
 
@@ -52,18 +55,14 @@ pub(crate) async fn read_publication_rows(
         .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)
 }
 
-async fn write_symbol(
+async fn write_symbols(
     transaction: &Transaction,
     run_id: IndexRunId,
-    symbol: &GraphSymbol,
+    symbols: &[GraphSymbol],
+    progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
-    let parsed = symbol.parsed();
-    let declaration = range_values(parsed.declaration_range());
-    let selection = range_values(parsed.selection_range());
-    let documentation = optional_range_values(parsed.documentation_range());
-    transaction
-        .execute(
-            "INSERT INTO symbols (\n\
+    const COLUMNS: usize = 28;
+    const PREFIX: &str = "INSERT INTO symbols (\n\
              index_run_id, symbol_id, repository_path, content_hash, local_symbol_id, kind, name,\n\
              signature, declaration_start_byte, declaration_end_byte, declaration_start_row,\n\
              declaration_start_column, declaration_end_row, declaration_end_column,\n\
@@ -71,151 +70,278 @@ async fn write_symbol(
              selection_end_row, selection_end_column, documentation_start_byte,\n\
              documentation_end_byte, documentation_start_row, documentation_start_column,\n\
              documentation_end_row, documentation_end_column, visibility, roles\n\
-             ) VALUES (\n\
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,\n\
-             ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28\n\
-             )",
-            params![
-                run_id.as_bytes().to_vec(),
-                symbol.id().as_bytes().to_vec(),
-                symbol.revision().path().as_bytes().to_vec(),
-                symbol.revision().content_hash().as_bytes().to_vec(),
-                i64::from(parsed.id().get()),
-                symbol_kind_to_stored(parsed.kind()),
-                parsed.name().as_str(),
-                parsed.signature().map(SymbolSignature::as_str),
-                declaration[0], declaration[1], declaration[2], declaration[3], declaration[4],
-                declaration[5], selection[0], selection[1], selection[2], selection[3], selection[4],
-                selection[5], documentation[0], documentation[1], documentation[2], documentation[3],
-                documentation[4], documentation[5], visibility_to_stored(parsed.visibility()),
-                i64::from(roles_to_stored(parsed.roles()))
-            ],
-        )
-        .await
-        .map_err(IndexPublicationRepositoryError::Write)?;
-    Ok(())
+             ) VALUES ";
+    write_batches(
+        transaction,
+        symbols,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |symbol, _| {
+            let parsed = symbol.parsed();
+            let declaration = range_values(parsed.declaration_range());
+            let selection = range_values(parsed.selection_range());
+            let documentation = optional_range_values(parsed.documentation_range());
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                blob(symbol.id().as_bytes()),
+                blob(symbol.revision().path().as_bytes()),
+                blob(symbol.revision().content_hash().as_bytes()),
+                integer(i64::from(parsed.id().get())),
+                text(symbol_kind_to_stored(parsed.kind())),
+                text(parsed.name().as_str()),
+                optional_text(parsed.signature().map(SymbolSignature::as_str)),
+                integer(declaration[0]),
+                integer(declaration[1]),
+                integer(declaration[2]),
+                integer(declaration[3]),
+                integer(declaration[4]),
+                integer(declaration[5]),
+                integer(selection[0]),
+                integer(selection[1]),
+                integer(selection[2]),
+                integer(selection[3]),
+                integer(selection[4]),
+                integer(selection[5]),
+                optional_integer(documentation[0]),
+                optional_integer(documentation[1]),
+                optional_integer(documentation[2]),
+                optional_integer(documentation[3]),
+                optional_integer(documentation[4]),
+                optional_integer(documentation[5]),
+                text(visibility_to_stored(parsed.visibility())),
+                integer(i64::from(roles_to_stored(parsed.roles()))),
+            ])
+        },
+    )
+    .await
 }
 
-async fn write_edge(
+async fn write_edges(
     transaction: &Transaction,
     run_id: IndexRunId,
-    edge_sequence: i64,
-    edge: &GraphEdge,
+    edges: &[GraphEdge],
+    progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
-    let (source_kind, source_value) = endpoint_to_stored(edge.source());
-    let (target_kind, target_value) = endpoint_to_stored(edge.target());
-    let evidence = edge.evidence();
-    let range = range_values(evidence.range());
-    transaction
-        .execute(
-            "INSERT INTO symbol_edges (\n\
+    const COLUMNS: usize = 18;
+    const PREFIX: &str = "INSERT INTO symbol_edges (\n\
              index_run_id, edge_sequence, source_kind, source_value, target_kind, target_value,\n\
              relation_kind, provider, confidence, resolution, evidence_path, evidence_hash,\n\
              evidence_start_byte, evidence_end_byte, evidence_start_row, evidence_start_column,\n\
              evidence_end_row, evidence_end_column\n\
-             ) VALUES (\n\
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18\n\
-             )",
-            params![
-                run_id.as_bytes().to_vec(),
-                edge_sequence,
-                source_kind,
-                source_value,
-                target_kind,
-                target_value,
-                relation_kind_to_stored(edge.kind()),
-                provider_to_stored(edge.provider()),
-                i64::from(edge.confidence().basis_points()),
-                resolution_to_stored(edge.resolution()),
-                evidence.revision().path().as_bytes().to_vec(),
-                evidence.revision().content_hash().as_bytes().to_vec(),
-                range[0],
-                range[1],
-                range[2],
-                range[3],
-                range[4],
-                range[5]
-            ],
-        )
-        .await
-        .map_err(IndexPublicationRepositoryError::Write)?;
-    Ok(())
+             ) VALUES ";
+    write_batches(
+        transaction,
+        edges,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |edge, index| {
+            let (source_kind, source_value) = endpoint_to_stored(edge.source());
+            let (target_kind, target_value) = endpoint_to_stored(edge.target());
+            let evidence = edge.evidence();
+            let range = range_values(evidence.range());
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                integer(sequence(index)?),
+                text(source_kind),
+                Value::Blob(source_value),
+                text(target_kind),
+                Value::Blob(target_value),
+                text(relation_kind_to_stored(edge.kind())),
+                text(provider_to_stored(edge.provider())),
+                integer(i64::from(edge.confidence().basis_points())),
+                text(resolution_to_stored(edge.resolution())),
+                blob(evidence.revision().path().as_bytes()),
+                blob(evidence.revision().content_hash().as_bytes()),
+                integer(range[0]),
+                integer(range[1]),
+                integer(range[2]),
+                integer(range[3]),
+                integer(range[4]),
+                integer(range[5]),
+            ])
+        },
+    )
+    .await
 }
 
-async fn write_candidate(
+async fn write_candidates(
     transaction: &Transaction,
     run_id: IndexRunId,
-    candidate_sequence: i64,
-    candidate: &UnresolvedEdgeCandidate,
+    candidates: &[UnresolvedEdgeCandidate],
+    progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
-    let (source_kind, source_value) = endpoint_to_stored(candidate.source());
-    let (target_kind, target_value) = unresolved_target_to_stored(candidate.target());
-    let evidence = candidate.evidence();
-    let range = range_values(evidence.range());
-    transaction
-        .execute(
-            "INSERT INTO unresolved_edges (\n\
+    const COLUMNS: usize = 18;
+    const PREFIX: &str = "INSERT INTO unresolved_edges (\n\
              index_run_id, candidate_sequence, source_kind, source_value, target_kind, target_value,\n\
              relation_kind, provider, confidence, reason, evidence_path, evidence_hash,\n\
              evidence_start_byte, evidence_end_byte, evidence_start_row, evidence_start_column,\n\
              evidence_end_row, evidence_end_column\n\
-             ) VALUES (\n\
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18\n\
-             )",
-            params![
-                run_id.as_bytes().to_vec(),
-                candidate_sequence,
-                source_kind,
-                source_value,
-                target_kind,
-                target_value,
-                relation_kind_to_stored(candidate.kind()),
-                provider_to_stored(candidate.provider()),
-                i64::from(candidate.confidence().basis_points()),
-                unresolved_reason_to_stored(candidate.reason()),
-                evidence.revision().path().as_bytes().to_vec(),
-                evidence.revision().content_hash().as_bytes().to_vec(),
-                range[0], range[1], range[2], range[3], range[4], range[5]
-            ],
-        )
-        .await
-        .map_err(IndexPublicationRepositoryError::Write)?;
-    Ok(())
+             ) VALUES ";
+    write_batches(
+        transaction,
+        candidates,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |candidate, index| {
+            let (source_kind, source_value) = endpoint_to_stored(candidate.source());
+            let (target_kind, target_value) = unresolved_target_to_stored(candidate.target());
+            let evidence = candidate.evidence();
+            let range = range_values(evidence.range());
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                integer(sequence(index)?),
+                text(source_kind),
+                Value::Blob(source_value),
+                text(target_kind),
+                Value::Blob(target_value),
+                text(relation_kind_to_stored(candidate.kind())),
+                text(provider_to_stored(candidate.provider())),
+                integer(i64::from(candidate.confidence().basis_points())),
+                text(unresolved_reason_to_stored(candidate.reason())),
+                blob(evidence.revision().path().as_bytes()),
+                blob(evidence.revision().content_hash().as_bytes()),
+                integer(range[0]),
+                integer(range[1]),
+                integer(range[2]),
+                integer(range[3]),
+                integer(range[4]),
+                integer(range[5]),
+            ])
+        },
+    )
+    .await
 }
 
-async fn write_rank(
+async fn write_ranks(
     transaction: &Transaction,
     run_id: IndexRunId,
-    rank_order: i64,
-    rank: SymbolRank,
+    ranks: &[SymbolRank],
+    progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
-    let signals = rank.signals();
-    transaction
-        .execute(
-            "INSERT INTO ranking_projections (\n\
+    const COLUMNS: usize = 13;
+    const PREFIX: &str = "INSERT INTO ranking_projections (\n\
              index_run_id, symbol_id, rank_order, score, in_degree, out_degree, centrality,\n\
              degree_contribution, centrality_contribution, entrypoint_contribution,\n\
              public_export_contribution, manifest_contribution, test_contribution\n\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                run_id.as_bytes().to_vec(),
-                rank.symbol_id().as_bytes().to_vec(),
-                rank_order,
-                i64::from(rank.score().get()),
-                i64::from(signals.in_degree),
-                i64::from(signals.out_degree),
-                i64::from(signals.centrality.basis_points()),
-                i64::from(signals.degree_contribution),
-                i64::from(signals.centrality_contribution),
-                i64::from(signals.entrypoint_contribution),
-                i64::from(signals.public_export_contribution),
-                i64::from(signals.manifest_contribution),
-                i64::from(signals.test_contribution)
-            ],
-        )
-        .await
-        .map_err(IndexPublicationRepositoryError::Write)?;
+             ) VALUES ";
+    write_batches(
+        transaction,
+        ranks,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |rank, index| {
+            let signals = rank.signals();
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                blob(rank.symbol_id().as_bytes()),
+                integer(sequence(index)?),
+                integer(i64::from(rank.score().get())),
+                integer(i64::from(signals.in_degree)),
+                integer(i64::from(signals.out_degree)),
+                integer(i64::from(signals.centrality.basis_points())),
+                integer(i64::from(signals.degree_contribution)),
+                integer(i64::from(signals.centrality_contribution)),
+                integer(i64::from(signals.entrypoint_contribution)),
+                integer(i64::from(signals.public_export_contribution)),
+                integer(i64::from(signals.manifest_contribution)),
+                integer(i64::from(signals.test_contribution)),
+            ])
+        },
+    )
+    .await
+}
+
+async fn write_batches<T, F>(
+    transaction: &Transaction,
+    items: &[T],
+    column_count: usize,
+    prefix: &str,
+    progress: &mut MutationProgress<'_>,
+    values: F,
+) -> Result<(), IndexPublicationRepositoryError>
+where
+    F: Fn(&T, usize) -> Result<Vec<Value>, IndexPublicationRepositoryError>,
+{
+    let rows_per_batch = MAX_BATCH_PARAMETERS
+        .checked_div(column_count)
+        .filter(|rows| *rows > 0)
+        .ok_or(IndexPublicationRepositoryError::ResourceLimit)?
+        .min(MAX_BATCH_ROWS);
+    for (batch_index, chunk) in items.chunks(rows_per_batch).enumerate() {
+        progress.checkpoint()?;
+        let start = batch_index
+            .checked_mul(rows_per_batch)
+            .ok_or(IndexPublicationRepositoryError::ResourceLimit)?;
+        let mut sql = String::with_capacity(
+            prefix
+                .len()
+                .saturating_add(chunk.len().saturating_mul(column_count.saturating_mul(2))),
+        );
+        sql.push_str(prefix);
+        append_value_groups(&mut sql, chunk.len(), column_count);
+        let mut parameters = Vec::with_capacity(chunk.len().saturating_mul(column_count));
+        for (offset, item) in chunk.iter().enumerate() {
+            let index = start
+                .checked_add(offset)
+                .ok_or(IndexPublicationRepositoryError::ResourceLimit)?;
+            let row = values(item, index)?;
+            if row.len() != column_count {
+                return Err(IndexPublicationRepositoryError::InvalidStoredData);
+            }
+            parameters.extend(row);
+        }
+        let affected = transaction
+            .execute(&sql, params_from_iter(parameters))
+            .await
+            .map_err(IndexPublicationRepositoryError::Write)?;
+        let expected = u64::try_from(chunk.len())
+            .map_err(|_| IndexPublicationRepositoryError::ResourceLimit)?;
+        if affected != expected {
+            return Err(IndexPublicationRepositoryError::InvalidStoredData);
+        }
+        progress.advance(affected)?;
+    }
     Ok(())
+}
+
+fn append_value_groups(sql: &mut String, rows: usize, columns: usize) {
+    for row in 0..rows {
+        if row > 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for column in 0..columns {
+            if column > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+        }
+        sql.push(')');
+    }
+}
+
+fn blob(bytes: &[u8]) -> Value {
+    Value::Blob(bytes.to_vec())
+}
+
+fn text(value: &str) -> Value {
+    Value::Text(value.to_owned())
+}
+
+const fn integer(value: i64) -> Value {
+    Value::Integer(value)
+}
+
+fn optional_text(value: Option<&str>) -> Value {
+    value.map_or(Value::Null, text)
+}
+
+fn optional_integer(value: Option<i64>) -> Value {
+    value.map_or(Value::Null, Value::Integer)
 }
 
 async fn read_files(

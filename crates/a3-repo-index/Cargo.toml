@@ -25,7 +25,9 @@ tree-sitter-typescript.workspace = true
 
 [dev-dependencies]
 a3-language-adapter-contract-tests.workspace = true
+a3-storage-libsql.workspace = true
 a3-workspace.workspace = true
+futures.workspace = true
 
 [lints]
 workspace = true

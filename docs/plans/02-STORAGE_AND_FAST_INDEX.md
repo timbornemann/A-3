@@ -389,12 +389,42 @@ Akzeptanz:
 
 Abhängigkeiten: S10
 
-- [ ] plattformneutraler Watcher
-- [ ] Debounce und Change Coalescing
-- [ ] Bestätigung über Status und Hash
-- [ ] begrenzte Jobqueue
-- [ ] Indexprogress und Cancellation
-- [ ] Full-Rescan-Fallback bei Eventverlust
+Status: Completed
+
+- [x] plattformneutraler Watcher
+- [x] Debounce und Change Coalescing
+- [x] Bestätigung über Status und Hash
+- [x] begrenzte Jobqueue
+- [x] Indexprogress und Cancellation
+- [x] Full-Rescan-Fallback bei Eventverlust
+
+Verifizierter Abschluss vom 2026-08-05: Ein besitzender, standardbibliotheksbasierter Polling-Watcher
+verwendet die isolierte Git-Discovery und vergleicht Kandidatensatz, HEAD, Index-Checksum sowie
+plattformgekapselte Dateimetadaten. Er pollt im V1-Profil alle 100 ms, entprellt 200 ms, schließt
+Bursts spätestens nach 750 ms und hält höchstens einen fertigen Batch. Pfade werden kanonisch
+koalesziert. Initialbeobachtung, Repository-Metadatenwechsel, Beobachtungsfehler und Queue-Überlauf
+werden als typisierte Full-Rescan-Gründe sichtbar; der Worker besitzt Shutdown und Join.
+
+Der inkrementelle Snapshot-Builder bestätigt jeden Batch erneut über den vollständigen
+Git-Discovery-Pfadsatz und BLAKE3, übernimmt aber unveränderte Revisionen aus der dauerhaften
+Baseline. Der zustandsbehaftete Drei-Sprachen-Compiler behält nur einen exakt zum Parent passenden
+Parse-Cache, entfernt Deletes und parst ausschließlich geänderte oder neue unterstützte Dateien.
+Nach Neustart wird der Cache einmal vollständig aufgewärmt; ein bereits identischer Publish wird
+nicht dupliziert. Link und Rank bleiben vollständig deterministisch. Der Application-Use-Case führt
+Snapshot-Append, eindeutigen IndexRun, Failure/Cancel-Abschluss und atomisches Publish zusammen.
+Der Desktop-Composition-Root startet ihn nach Project Open über einen besitzenden Koordinator und
+die vorhandene begrenzte Scheduler-Queue, ohne die WebView-Capability zu erweitern.
+
+Reale Git-/Filesystem-/libSQL-Tests belegen genau einen Hash und Parse bei einer Ein-Datei-Änderung,
+einen konsistenten gemeinsamen Add-/Modify-/Delete-/Rename-Burst, gleich große Inhaltsänderungen,
+Secret-Ausschluss, Restart/Warmup, Eventverlust-Fallback, Progress, Cancellation unter 500 ms und
+Watcher-Shutdown unter 500 ms. Die bestehende CI-Matrix ist für native Läufe auf Windows, Linux und
+macOS konfiguriert; verifizierte Ergebnisse für diesen Commit stehen noch aus. Die reproduzierbare
+30-Sample-Release-Messung auf Windows 11, Ryzen 9 5900XT und
+NVMe verwendete 200 Rust-Dateien mit 100.000 LOC und maß den gesamten Pfad vom Write über Debounce,
+Discovery, Hash, Parse, Link, Rank bis libSQL-Publish: P50 1.202 ms, P95 1.305 ms, Watcher-P95 389 ms
+und Refresh-/Publish-P95 922 ms. Die zunächst gemessenen 15.286 ms wurden durch begrenzte
+Mehrzeilen-Inserts und transaktionale Retention supersedeter Indexprojektionen reduziert.
 
 Akzeptanz:
 
@@ -404,9 +434,9 @@ Akzeptanz:
 
 ## Gate M2/M3
 
-- [ ] Project Open funktioniert nach Neustart
+- [x] Project Open funktioniert nach Neustart
 - [x] alle drei strukturellen Sprachadapter bestehen Contract und Golden Tests
 - [x] 100.000-LOC-Fixture gemessen
-- [ ] inkrementelle add, modify, delete und rename Szenarien grün
-- [ ] kein Secret-Fixture in DB oder Logs
+- [x] inkrementelle add, modify, delete und rename Szenarien grün
+- [x] kein Secret-Fixture in DB oder Logs
 - [ ] Windows-, Linux- und macOS-Smoke für Watcher und Pfade

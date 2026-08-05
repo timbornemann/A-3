@@ -17,6 +17,7 @@ const MAX_MUTATION_DURATION: Duration = Duration::from_secs(300);
 const MAX_PROGRESS_EVENTS: u64 = 64;
 const CANCELLATION_POLL_INTERVAL: u64 = 1_024;
 const REBUILD_DELETE_BATCH: i64 = 4_096;
+const SUPERSEDED_DELETE_BATCH: i64 = 1_024;
 
 pub(crate) async fn publish_index(
     connection: &Connection,
@@ -87,6 +88,7 @@ async fn publish_index_in_transaction(
     write_file_delta_projection(transaction, worktree_id, run).await?;
     progress.advance(1)?;
     index_codec::write_publication_rows(transaction, run_id, publication, progress).await?;
+    delete_superseded_publication_rows(transaction, worktree_id, run_id, progress).await?;
 
     let affected = transaction
         .execute(
@@ -108,6 +110,47 @@ async fn publish_index_in_transaction(
         run.sequence(),
         IndexRunStatus::Published,
     ))
+}
+
+async fn delete_superseded_publication_rows(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    current_run_id: IndexRunId,
+    progress: &MutationProgress<'_>,
+) -> Result<(), IndexPublicationRepositoryError> {
+    for table in [
+        "ranking_projections",
+        "unresolved_edges",
+        "symbol_edges",
+        "symbols",
+        "file_revisions",
+    ] {
+        loop {
+            progress.checkpoint()?;
+            let sql = format!(
+                "DELETE FROM {table} WHERE rowid IN (\n\
+                 SELECT rows.rowid FROM {table} AS rows\n\
+                 JOIN index_runs AS runs ON runs.index_run_id = rows.index_run_id\n\
+                 WHERE runs.worktree_id = ?1 AND rows.index_run_id <> ?2\n\
+                 LIMIT {SUPERSEDED_DELETE_BATCH}\n\
+                 )"
+            );
+            let affected = transaction
+                .execute(
+                    &sql,
+                    params![
+                        worktree_id.as_bytes().to_vec(),
+                        current_run_id.as_bytes().to_vec()
+                    ],
+                )
+                .await
+                .map_err(IndexPublicationRepositoryError::Write)?;
+            if affected == 0 {
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn published_snapshot_policy_exists(

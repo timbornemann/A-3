@@ -9,15 +9,17 @@ mod open_project;
 mod project_reconciliation;
 mod recent_projects;
 mod repository_discovery;
+mod repository_index;
 mod repository_snapshot;
+mod repository_watcher;
 
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,
     JobEvent, JobEventKind, JobEventSequence, JobEventStream, JobEventStreamClosed, JobScheduler,
     JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
-    JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobTask, JobTimestamp,
-    ProgressReportError, ShutdownMode, ShutdownReport,
+    JobSchedulerShutdownError, JobSchedulerSubmitError, JobSnapshot, JobSubmitter, JobTask,
+    JobTimestamp, ProgressReportError, ShutdownMode, ShutdownReport,
 };
 pub use knowledge_index_store::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
@@ -46,8 +48,18 @@ pub use repository_discovery::{
     RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,
     RepositoryDiscoveryFailure,
 };
+pub use repository_index::{
+    IndexRunIdFactory, IndexRunIdFactoryFailure, RefreshRepositoryIndex,
+    RefreshRepositoryIndexError, RepositoryIndexCompilation, RepositoryIndexCompiler,
+    RepositoryIndexCompilerFailure, RepositoryIndexControl, RepositoryIndexControlError,
+    RepositoryIndexMode, RepositoryIndexRefresh,
+};
 pub use repository_snapshot::{
+    IncrementalRepositorySnapshotBuild, IncrementalRepositorySnapshotBuilder,
     RepositorySnapshotBuild, RepositorySnapshotBuilder, RepositorySnapshotControl,
     RepositorySnapshotControlError, RepositorySnapshotFailure, RepositorySnapshotPolicy,
     SnapshotBaseline, SnapshotBaselineError, SnapshotCompatibility, SnapshotCompatibilityError,
+};
+pub use repository_watcher::{
+    RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,
 };

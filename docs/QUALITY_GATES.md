@@ -1,7 +1,7 @@
 # Qualitätsgates und Definition of Done
 
 Status: verbindliche Baseline  
-Stand: 2026-08-03
+Stand: 2026-08-05
 
 ## Grundsatz
 
@@ -95,6 +95,18 @@ Die Budgets gelten auf einer dokumentierten Referenzmaschine mit 8 CPU-Kernen, 3
 
 Diese Zahlen sind Releaseziele. Wird ein Ziel nicht erreicht, braucht der Release eine dokumentierte Abweichung, Messdaten und einen konkreten Folgetask.
 
+S11 besitzt dafür den reproduzierbaren ignorierten Release-Test
+`incremental_index_performance::one_file_delta_meets_the_two_second_p95_target`. Das Fixture umfasst
+200 Rust-Dateien und 100.000 LOC; jede der 30 Stichproben misst vom gleich großen Ein-Datei-Write über
+Watcher-Debounce, Git-Discovery, BLAKE3-Bestätigung, Ein-Datei-Parse, vollständiges Link/Rank und
+atomisches libSQL-Publish. Auf Windows 11 Pro, AMD Ryzen 9 5900XT, 32 GiB RAM und Samsung 970 EVO
+Plus NVMe wurden am 2026-08-05 P50 1,202 s und P95 1,305 s gemessen; Watcher-P95 betrug 389 ms und
+Refresh-/Publish-P95 922 ms. Die gemessene Ausgangsversion mit zeilenweisen SQL-Aufrufen lag bei
+P95 15,286 s, ein erster 900-Parameter-Batch bei 14,493 s. Erst höchstens 30.000 Parameter,
+1.024 Zeilen pro Cancellation-Checkpoint und transaktionale Retention supersedeter Projektionen
+erreichten das Budget. Diese lokale Messung ersetzt nicht die abschließende V1-Referenzmessung auf
+der oben definierten 8-Core-Maschine.
+
 Modellmetriken werden separat erfasst:
 
 - Time to First Token
@@ -150,4 +162,3 @@ Ein Arbeitspaket ist Done, wenn:
 - Restunsicherheiten offen dokumentiert sind.
 
 Ein Checklistenpunkt darf erst danach abgehakt werden.
-

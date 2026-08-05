@@ -1,7 +1,7 @@
 # A^3 Systemarchitektur
 
 Status: verbindliche Baseline  
-Stand: 2026-08-04
+Stand: 2026-08-05
 
 ## Architekturziele
 
@@ -170,7 +170,16 @@ Domain-Typen; SQL, libSQL-Zeilen und Datenbankhandles bleiben im Adapter. Discov
 erzeugen die Snapshot-Deltas, Parser, Linker und Ranker den vollständigen `IndexPublication`-Input.
 Der libSQL-Adapter schreibt die run-gebundenen Datei-, Symbol-, Kanten-, Kandidaten- und Rankzeilen
 und den Zustand `published` in genau einer Transaktion. Leser arbeiten ausschließlich auf dem
-jüngsten vollständig veröffentlichten Run; Rebuild entfernt nur regenerierbare Indexzeilen.
+jüngsten vollständig veröffentlichten Run. Beim erfolgreichen Ersatz werden die regenerierbaren
+Zeilen älterer Runs innerhalb derselben Transaktion entfernt; Run-Metadaten und Snapshotkette bleiben
+für monotone Historie erhalten. Rebuild entfernt nur regenerierbare Indexzeilen.
+
+Der Desktop-Composition-Root aktiviert nach einem erfolgreichen Project Open genau einen
+`RepositoryIndexManager`. Sein besitzender Koordinator hält Watcher, Parse-Cache und einen
+nicht-besitzenden Scheduler-Submitter. Watcher- und Scheduler-Channels sind begrenzt; ein aktiver
+Refresh serialisiert Snapshot-Append und Publish für den Worktree. Projektwechsel fordert den alten
+Job kooperativ ab und wartet vor einem neuen Refresh auf dessen terminalen Zustand. Manager,
+Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 
 ### Zuletzt verwendete Projekte
 
@@ -195,12 +204,19 @@ jüngsten vollständig veröffentlichten Run; Rebuild entfernt nur regenerierbar
 
 ### Repositoryänderung
 
-1. File Watcher erzeugt ein gebündeltes Change Set.
-2. Betroffene Dateien werden neu gehasht und geparst.
-3. Symbole und Kanten werden als Delta aktualisiert.
-4. Abhängige Evidenz und Claims werden invalidiert.
-5. Betroffene Modul- und Task-Lenses werden neu berechnet.
-6. Ein laufender Agent darf erst nach Zustandsabgleich weiter mutieren.
+1. Der Git-gestützte Polling-Watcher erzeugt nach Debounce ein kanonisch gebündeltes Change Set.
+2. Queue-Verlust, Initialisierung, Repository-Metadatenänderung oder Beobachtungsfehler erzwingen
+   sichtbar einen Full Rescan.
+3. Git-Discovery bestätigt den relevanten Pfadsatz; nur Hinweise und neue Pfade werden vollständig
+   gehasht, beim Full Rescan alle relevanten Dateien.
+4. Ein exakter Parent-Snapshot-Cache wird kopiert; nur hinzugefügte oder geänderte unterstützte
+   Dateien werden neu gelesen und geparst. Ohne kohärenten Cache erfolgt ein begrenzter Vollparse.
+5. Der vollständige kanonische Graph wird neu gelinkt und gerankt und über den bestehenden
+   `IndexRun` atomar veröffentlicht.
+6. Symbole und Kanten der alten Sicht werden erst mit dem erfolgreichen Commit unsichtbar.
+7. Abhängige Evidenz und Claims werden invalidiert.
+8. Betroffene Modul- und Task-Lenses werden neu berechnet.
+9. Ein laufender Agent darf erst nach Zustandsabgleich weiter mutieren.
 
 ## Parallelität
 
