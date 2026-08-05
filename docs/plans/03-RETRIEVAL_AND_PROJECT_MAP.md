@@ -231,11 +231,40 @@ Akzeptanz:
 
 Abhängigkeiten: R4
 
-- [ ] Manifest- und Pfadgrenzen als Primärsignal
-- [ ] Graphcommunities als Ergänzung
-- [ ] Modul-IDs und Membership Evidence
-- [ ] zentrale Symbole, Entry Points und Tests pro Modul
-- [ ] deterministische Repository Card
+Status: Completed
+
+- [x] Manifest- und Pfadgrenzen als Primärsignal
+- [x] Graphcommunities als Ergänzung
+- [x] Modul-IDs und Membership Evidence
+- [x] zentrale Symbole, Entry Points und Tests pro Modul
+- [x] deterministische Repository Card
+
+Verifizierter Abschluss vom 2026-08-05: `ModuleFormationPolicy::v1` ordnet jedes indexierte Symbol
+genau einem Primärmodul zu. Der jeweils tiefste bestätigte Paketmanifest-Vorfahre gewinnt;
+mehrere Deskriptoren desselben Verzeichnisses werden konsolidiert. Ohne Manifest entsteht eine
+deterministische Grenze aus der ersten Pfadkomponente, während Dateien an der Wurzel einem
+expliziten Repository-Modul angehören. Verschachtelte Monorepo-Pakete bleiben dadurch getrennt.
+
+Iterativ berechnete stark zusammenhängende Komponenten aus nicht strukturellen Symbolkanten
+ergänzen Primärmodule als optionale Graphcommunities, ohne sie zu überschreiben. Domänenseparierte
+BLAKE3-`ModuleId`s, aktuelle Symbol-/Manifestrevisionen und konkrete Graph-`EvidenceRef`s machen
+jede Membership reproduzierbar und prüfbar. Die Publikationsgrenze lehnt fehlende, veraltete oder
+nur durch `Contains`/`Defines` gestützte Communitybelege ab.
+
+Zentrale Symbole folgen dem versionierten Rank, Entry Points und Tests den bestätigten Dateirollen.
+Alle Mengen sind kanonisch sortiert und sichtbar begrenzt. Die snapshotgebundene L0-
+`RepositoryCard` enthält Paketmodule, Sprachen, Entry Points sowie Datei-, Symbol- und
+Modulanzahlen. Bildung und Karte sind vollständig deterministisch und benötigen kein LLM.
+
+Knowledge-Schema V8 veröffentlicht Graph, Ranking, Manifestbelege, Module, Memberships, Features
+und Repository Card atomar. Der gemeinsame Storage Contract belegt Reopen, Retention und Rebuild;
+Upgrade und fehlgeschlagener V7→V8-Upgradepfad sind getestet. Die reproduzierbare 50.000-Symbol-
+Messung ergab Exact P95 60,6 ms und FTS P95 39,5 ms; beide bleiben unter dem 100-ms-Gate.
+
+Abschlussgates: `cargo fmt --all -- --check`, Workspace-Clippy mit allen Targets/Features und
+Warnings denied, `cargo test --workspace --all-features -- --test-threads=1`, Rustdoc mit Warnings
+denied, Frontend-CI, Markdown-Linkcheck, Dependency-/Lizenzreport und Tauri-Release-Build ohne
+Bundle sind grün.
 
 Akzeptanz:
 

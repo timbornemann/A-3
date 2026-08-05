@@ -1,8 +1,10 @@
-use crate::{exact_search_projection, index_codec, lexical_search_projection};
+use crate::{
+    exact_search_projection, index_codec, lexical_search_projection, module_projection_codec,
+};
 use a3_application::{IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
     FileRevision, IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus,
-    Progress, RankingPolicyVersion, RepositoryPath, SnapshotId, WorktreeId,
+    IndexSchemaVersion, Progress, RankingPolicyVersion, RepositoryPath, SnapshotId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -13,6 +15,10 @@ const MAX_FILES: usize = 250_000;
 const MAX_SYMBOLS: usize = 1_000_000;
 const MAX_EDGES: usize = 2_000_000;
 const MAX_UNRESOLVED: usize = 2_000_000;
+const MAX_MODULES: usize = 250_000;
+const MAX_MEMBERSHIPS: usize = 2_000_000;
+const MAX_MEMBERSHIP_EVIDENCE: usize = 4_000_000;
+const MAX_MODULE_FEATURES: usize = 4_000_000;
 const MAX_MUTATION_DURATION: Duration = Duration::from_secs(300);
 const MAX_PROGRESS_EVENTS: u64 = 64;
 const CANCELLATION_POLL_INTERVAL: u64 = 1_024;
@@ -130,6 +136,15 @@ async fn delete_superseded_publication_rows(
     progress: &MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
     for table in [
+        "repository_card_entrypoints",
+        "module_tests",
+        "module_entrypoints",
+        "module_central_symbols",
+        "module_membership_evidence",
+        "module_members",
+        "module_manifests",
+        "modules",
+        "module_projections",
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
@@ -220,16 +235,19 @@ pub(crate) async fn latest_published_index(
         let Some(run) = read_latest_published_run(&transaction, worktree_id).await? else {
             return Ok(None);
         };
+        if !module_projection_exists(&transaction, run.id()).await? {
+            if snapshot_predates_module_projection(&transaction, run.snapshot_id()).await? {
+                return Ok(None);
+            }
+            return Err(IndexPublicationRepositoryError::InvalidStoredData);
+        }
         let total = publication_row_count(&transaction, run.id()).await?.max(1);
         let mut progress = MutationProgress::new(control, total)?;
-        let publication =
-            index_codec::read_publication_rows(&transaction, run, &mut progress).await?;
         let manifests =
             exact_search_projection::read_manifest_files(&transaction, run.id(), &mut progress)
                 .await?;
-        let publication = publication
-            .with_manifest_files(manifests)
-            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+        let publication =
+            index_codec::read_publication_rows(&transaction, run, manifests, &mut progress).await?;
         progress.complete_if_empty()?;
         a3_domain::PublishedIndex::new(run, publication)
             .map(Some)
@@ -246,6 +264,53 @@ pub(crate) async fn latest_published_index(
         }
         Err(error) => rollback(transaction, error).await,
     }
+}
+
+async fn module_projection_exists(
+    transaction: &Transaction,
+    run_id: IndexRunId,
+) -> Result<bool, IndexPublicationRepositoryError> {
+    match count_rows(
+        transaction,
+        "SELECT COUNT(*) FROM module_projections WHERE index_run_id = ?1",
+        run_id.as_bytes().to_vec(),
+    )
+    .await?
+    {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(IndexPublicationRepositoryError::InvalidStoredData),
+    }
+}
+
+async fn snapshot_predates_module_projection(
+    transaction: &Transaction,
+    snapshot_id: SnapshotId,
+) -> Result<bool, IndexPublicationRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT index_schema_version FROM snapshots WHERE snapshot_id = ?1",
+            [snapshot_id.as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+        .ok_or(IndexPublicationRepositoryError::InvalidStoredData)?;
+    let version: i64 = row.get(0).map_err(IndexPublicationRepositoryError::Read)?;
+    if rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    let version =
+        u32::try_from(version).map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+    Ok(version < IndexSchemaVersion::v4().get())
 }
 
 pub(crate) async fn rebuild_regenerable_index(
@@ -274,6 +339,15 @@ pub(crate) async fn rebuild_regenerable_index(
             .ok_or(IndexPublicationRepositoryError::ResourceLimit)?;
         let mut progress = MutationProgress::new(control, total)?;
         for table in [
+            "repository_card_entrypoints",
+            "module_tests",
+            "module_entrypoints",
+            "module_central_symbols",
+            "module_membership_evidence",
+            "module_members",
+            "module_manifests",
+            "modules",
+            "module_projections",
             "ranking_projections",
             "unresolved_edges",
             "symbol_edges",
@@ -323,9 +397,11 @@ fn publication_work_units(
     })?;
     let exact_units = search_projection.work_units()?;
     let lexical_units = lexical_projection.work_units()?;
+    let module_units = module_projection_codec::work_units(publication.modules())?;
     publication_units
         .checked_add(exact_units)
         .and_then(|total| total.checked_add(lexical_units))
+        .and_then(|total| total.checked_add(module_units))
         .ok_or(IndexPublicationRepositoryError::ResourceLimit)
 }
 
@@ -342,6 +418,15 @@ async fn publication_row_count(
         ("ranking_projections", MAX_SYMBOLS),
         ("exact_search_projections", 1),
         ("exact_search_manifests", MAX_FILES),
+        ("module_projections", 1),
+        ("modules", MAX_MODULES),
+        ("module_manifests", MAX_FILES),
+        ("module_members", MAX_MEMBERSHIPS),
+        ("module_membership_evidence", MAX_MEMBERSHIP_EVIDENCE),
+        ("module_central_symbols", MAX_MODULE_FEATURES),
+        ("module_entrypoints", MAX_MEMBERSHIPS),
+        ("module_tests", MAX_MEMBERSHIPS),
+        ("repository_card_entrypoints", 256),
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE index_run_id = ?1");
         let count = count_rows(transaction, &sql, run_id.as_bytes().to_vec()).await?;
@@ -366,6 +451,15 @@ async fn rebuild_row_count(
 ) -> Result<u64, IndexPublicationRepositoryError> {
     let mut total = 0_u64;
     for table in [
+        "repository_card_entrypoints",
+        "module_tests",
+        "module_entrypoints",
+        "module_central_symbols",
+        "module_membership_evidence",
+        "module_members",
+        "module_manifests",
+        "modules",
+        "module_projections",
         "ranking_projections",
         "unresolved_edges",
         "symbol_edges",
@@ -543,6 +637,16 @@ fn validate_resource_limits(
         || graph.symbols().len() > MAX_SYMBOLS
         || graph.edges().len() > MAX_EDGES
         || graph.unresolved().len() > MAX_UNRESOLVED
+        || publication.modules().modules().len() > MAX_MODULES
+        || publication.modules().memberships().len() > MAX_MEMBERSHIPS
+        || publication
+            .modules()
+            .memberships()
+            .iter()
+            .try_fold(0usize, |total, membership| {
+                total.checked_add(membership.evidence().relationships().len())
+            })
+            .is_none_or(|total| total > MAX_MEMBERSHIP_EVIDENCE)
     {
         return Err(IndexPublicationRepositoryError::ResourceLimit);
     }
@@ -559,6 +663,15 @@ async fn publication_rows_exist(
         "symbol_edges",
         "unresolved_edges",
         "ranking_projections",
+        "module_projections",
+        "modules",
+        "module_manifests",
+        "module_members",
+        "module_membership_evidence",
+        "module_central_symbols",
+        "module_entrypoints",
+        "module_tests",
+        "repository_card_entrypoints",
         "lexical_search_projections",
         "symbol_fts",
         "path_fts",

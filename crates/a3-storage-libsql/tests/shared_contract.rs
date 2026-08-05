@@ -30,7 +30,12 @@ impl KnowledgeStoreContractFactory for LibsqlContractFactory {
 #[test]
 fn libsql_satisfies_the_shared_storage_contract() -> Result<(), ContractError> {
     let _test_lock = lock_shared_contract_test()?;
-    block_on(verify_knowledge_store_contract(&LibsqlContractFactory))
+    let result = block_on(verify_knowledge_store_contract(&LibsqlContractFactory));
+    // The Windows native backend finishes worker teardown just after the final store drops.
+    // Give that owned teardown a bounded grace period before the test process exits.
+    #[cfg(windows)]
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    result
 }
 
 fn lock_shared_contract_test() -> Result<MutexGuard<'static, ()>, ContractError> {

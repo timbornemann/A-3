@@ -338,8 +338,10 @@ mod tests {
     use crate::index_publication::IndexPublicationRepositoryError;
     use a3_domain::{
         Centrality, Confidence, ContentHash, EvidenceRef, FileRevision, GraphEdge, GraphEndpoint,
-        GraphSymbol, IndexPublication, LinkResolution, LinkedGraph, LocalSymbolId, ParsedSymbol,
-        RankProjection, RankScore, RankingPolicyVersion, RepositoryPath, SnapshotId,
+        GraphSymbol, IndexLanguage, IndexPublication, LinkResolution, LinkedGraph, LocalSymbolId,
+        ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion,
+        ModuleProjection, ModuleRoot, ModuleSymbolSet, ParsedSymbol, RankProjection, RankScore,
+        RankingPolicyVersion, RepositoryCard, RepositoryModule, RepositoryPath, SnapshotId,
         SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
         SymbolRankSignals, SyntaxProvider, SyntaxRelationKind,
     };
@@ -424,6 +426,43 @@ mod tests {
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
         let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
-        Ok(IndexPublication::new(graph, ranking)?)
+        let module_id = ModuleId::from_bytes([9; 32]);
+        let members = graph
+            .symbols()
+            .iter()
+            .map(|symbol| {
+                ModuleMembership::new(
+                    module_id,
+                    symbol.id(),
+                    ModuleMembershipEvidence::path(symbol.revision().clone()),
+                )
+            })
+            .collect();
+        let ranked = ranking
+            .symbols()
+            .iter()
+            .map(|rank| rank.symbol_id())
+            .collect::<Vec<_>>();
+        let module = RepositoryModule::new(
+            module_id,
+            ModuleKind::PathBoundary,
+            Some(ModuleRoot::Repository),
+            Vec::new(),
+            ModuleSymbolSet::new(ranked, false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?;
+        let policy = ModulePolicyVersion::v1();
+        let card = RepositoryCard::new(
+            snapshot_id,
+            policy,
+            vec![module_id],
+            vec![IndexLanguage::Generic],
+            ModuleSymbolSet::empty(),
+            1,
+            3,
+        )?;
+        let modules = ModuleProjection::new(snapshot_id, policy, vec![module], members, card)?;
+        Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
     }
 }

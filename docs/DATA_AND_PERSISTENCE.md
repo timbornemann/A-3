@@ -60,7 +60,8 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - Pro Worktree darf höchstens ein `building`-IndexRun bestehen. Er kann ohne Veröffentlichung als
   `failed` oder `cancelled` enden oder ausschließlich zusammen mit einem vollständigen, exakt
   passenden `IndexPublication` atomar auf `published` wechseln. Die run-gebundenen Datei-, Symbol-,
-  Kanten-, Kandidaten- und Rankzeilen werden vor dem Statuswechsel in derselben Transaktion geschrieben.
+  Kanten-, Kandidaten-, Rank-, Modul-, Membership- und Repository-Card-Zeilen werden vor dem
+  Statuswechsel in derselben Transaktion geschrieben.
   Leser rekonstruieren nur den jüngsten veröffentlichten Run in einer konsistenten Read-Transaktion.
   Ein erfolgreicher Ersatz entfernt die regenerierbaren Projektionszeilen älterer Runs noch in
   derselben Transaktion in Batches von höchstens 1.024 Zeilen. Ein Rollback stellt damit auch die
@@ -94,8 +95,9 @@ Schema- oder Adapteränderungen die exakt nächste Generation und liefert sie f�
 Append. Im inkrementellen Pfad übernimmt der Snapshot-Builder unveränderte Revisionen aus der
 persistierten Baseline und hasht nur neue oder vom Watcher gemeldete Pfade; ein sichtbares
 Eventverlustsignal erzwingt den Vollscan. Parser und Graph erzeugen den vollständigen
-deterministischen Publish-Input; Knowledge-Schema V6 veröffentlicht die daraus abgeleiteten Datei-,
-Symbol-, Kanten-, Kandidaten-, Rank-, Exact- und FTS-Projektionen atomar. Die Reconciliation entscheidet trotz persistierter Evidenz nie
+deterministischen Publish-Input; Knowledge-Schema V8 veröffentlicht die daraus abgeleiteten Datei-,
+Symbol-, Kanten-, Kandidaten-, Rank-, Exact-, FTS-, Modul- und Repository-Card-Projektionen atomar.
+Die Reconciliation entscheidet trotz persistierter Evidenz nie
 selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
 Quellen:
@@ -185,11 +187,15 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - symbols
 - symbol_edges
 - unresolved_edges
+- module_projections
 - modules
+- module_manifests
 - module_members
-- entrypoints
-- test_links
-- manifests
+- module_membership_evidence
+- module_central_symbols
+- module_entrypoints
+- module_tests
+- repository_card_entrypoints
 - parse_diagnostics
 - ranking_projections
 
@@ -328,6 +334,25 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V8 ergänzt V7 um die vollständige run-gebundene
+`ModuleProjection`. Ein Marker hält `ModulePolicyVersion`, Datei-/Symbol-/Modul-/Membershipzahlen,
+Sprachmaske und Repository-Card-Trunkierung. Primärmodule, Manifestrevisionen, genau eine primäre
+Membership pro Symbol, zusätzliche Graph-Memberships mit aktuellen `EvidenceRef`s sowie begrenzte
+Zentral-, Entrypoint- und Testlisten werden in strikt typisierten Tabellen gespeichert. Reader
+rekonstruieren die Domainaggregate und prüfen Snapshot, Counts, Symbolabdeckung, aktuelle
+File Revisions und die Zugehörigkeit jeder Graph-Evidence erneut.
+
+V8 verwendet für seine Projektionshierarchie absichtlich keine tiefen Delete-Cascades. Replacement
+und Rebuild löschen die Kindtabellen in referenziell sicherer Reihenfolge und begrenzten Batches,
+bevor Modulmarker, Symbole oder File Revisions entfernt werden. Migration aus jeder unterstützten
+Vorgängerversion, fehlgeschlagener V7→V8-Upgrade, atomarer Rollback, Replacement, Reopen und Rebuild
+sind getestet. Index-Schema V4 erzwingt beim nächsten Compilerlauf die neue vollständige Projektion;
+ein Publisher kann Graph und Ranking nicht mehr ohne passende Module und Repository Card sichtbar
+machen. Ein aus V7 migrierter veröffentlichter Run mit Index-Schema V1 bis V3 bleibt für seine
+vorhandenen Exact-/FTS-/Graphkanäle lesbar, wird aber nicht als vollständiger `PublishedIndex`
+ausgegeben; erst der erzwungene V4-Rebuild liefert wieder die vollständige Projektion. Fehlt der
+Modulmarker dagegen bei einem V4-Snapshot, gilt die Datenbank als inkonsistent.
 
 Das implementierte Knowledge-Schema V7 ergänzt V6 um `semantic_cards`,
 `semantic_card_snapshots`, `embedding_profiles` und `embeddings`. Alle Tabellen sind strikt,

@@ -1,7 +1,8 @@
 use crate::graph::{
-    DeterministicGraphLinker, DeterministicGraphRanker, GraphComputationControl,
-    GraphComputationControlError, GraphLinkFailure, GraphLinkInput, GraphLinkPolicy,
-    GraphRankFailure, RankingPolicy,
+    DeterministicGraphLinker, DeterministicGraphRanker, DeterministicModuleFormer,
+    GraphComputationControl, GraphComputationControlError, GraphLinkFailure, GraphLinkInput,
+    GraphLinkPolicy, GraphRankFailure, ModuleFormationFailure, ModuleFormationInput,
+    ModuleFormationPolicy, RankingPolicy,
 };
 use crate::path::{RepositoryPathObservation, observe_repository_path, open_regular_no_follow};
 use crate::{
@@ -16,7 +17,7 @@ use a3_application::{
     RepositoryIndexControl, RepositoryIndexMode, SnapshotCompatibility,
 };
 use a3_domain::{
-    DiscoveredFileRole, DiscoveryResult, FileRevision, IndexPublication, IndexRunId,
+    DiscoveredFileRole, DiscoveryResult, FileRevision, IndexLanguage, IndexPublication, IndexRunId,
     IndexSchemaVersion, LanguageParseResult, Progress, ProjectIdentity, RankingPolicyVersion,
     RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
 };
@@ -111,7 +112,7 @@ impl BuiltinIncrementalIndexCompiler {
 impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     fn compatibility(&self) -> Result<SnapshotCompatibility, RepositoryIndexCompilerFailure> {
         SnapshotCompatibility::new(
-            IndexSchemaVersion::v3(),
+            IndexSchemaVersion::v4(),
             self.adapters()
                 .into_iter()
                 .map(|adapter| adapter.revision().clone())
@@ -242,11 +243,26 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
                     .filter(|roles| roles.contains(DiscoveredFileRole::Manifest))
                     .map(|_| revision.clone())
             })
-            .collect();
-        let publication = IndexPublication::new(graph, ranking)
-            .and_then(|publication| publication.with_manifest_files(manifest_files))
-            .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
+            .collect::<Vec<_>>();
+        let mut languages = next_parses
+            .values()
+            .map(LanguageParseResult::language)
+            .collect::<BTreeSet<_>>();
+        if supported.len() != files_by_path.len() {
+            languages.insert(IndexLanguage::Generic);
+        }
+        let languages = languages.into_iter().collect::<Vec<_>>();
+        let modules = DeterministicModuleFormer
+            .form(
+                ModuleFormationInput::new(&graph, &ranking, &manifest_files, &languages),
+                ModuleFormationPolicy::v1(),
+                &graph_control,
+            )
+            .map_err(map_module_failure)?;
         report(control, 4)?;
+        let publication = IndexPublication::new(graph, ranking, manifest_files, modules)
+            .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
+        report(control, 5)?;
 
         self.cached_snapshot = Some(snapshot.id());
         self.parses = next_parses;
@@ -334,7 +350,7 @@ fn report(
 ) -> Result<(), RepositoryIndexCompilerFailure> {
     control
         .report_progress(
-            Progress::determinate(completed, 4)
+            Progress::determinate(completed, 5)
                 .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?,
         )
         .map_err(|_| RepositoryIndexCompilerFailure::ProgressUnavailable)
@@ -416,6 +432,22 @@ fn map_rank_failure(failure: GraphRankFailure) -> RepositoryIndexCompilerFailure
             RepositoryIndexCompilerFailure::ProgressUnavailable
         }
         GraphRankFailure::InvalidGraph | GraphRankFailure::InvalidProjection => {
+            RepositoryIndexCompilerFailure::InvalidResult
+        }
+    }
+}
+
+fn map_module_failure(failure: ModuleFormationFailure) -> RepositoryIndexCompilerFailure {
+    match failure {
+        ModuleFormationFailure::Cancelled => RepositoryIndexCompilerFailure::Cancelled,
+        ModuleFormationFailure::TimedOut => RepositoryIndexCompilerFailure::TimedOut,
+        ModuleFormationFailure::ResourceLimitExceeded => {
+            RepositoryIndexCompilerFailure::ResourceLimitExceeded
+        }
+        ModuleFormationFailure::ProgressUnavailable => {
+            RepositoryIndexCompilerFailure::ProgressUnavailable
+        }
+        ModuleFormationFailure::InvalidInput | ModuleFormationFailure::InvalidProjection => {
             RepositoryIndexCompilerFailure::InvalidResult
         }
     }

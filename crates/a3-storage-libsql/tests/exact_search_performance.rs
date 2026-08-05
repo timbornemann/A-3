@@ -1,4 +1,4 @@
-//! Reproducible manual R1/R2 fast-retrieval baseline; excluded from default tests.
+//! Reproducible manual R1/R2/R6 retrieval and module-load baseline; excluded from default tests.
 
 mod support;
 
@@ -172,7 +172,7 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         let lexical_p50 = lexical_samples[LEXICAL_SAMPLES / 2];
         let lexical_p95 = lexical_samples[percentile_index(LEXICAL_SAMPLES)];
         println!(
-            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}"
+            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols and primary module memberships; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}"
         );
         assert!(
             lexical_p95 <= LEXICAL_P95_TARGET,
@@ -228,7 +228,7 @@ fn fixture(worktree_id: WorktreeId) -> Result<(Snapshot, IndexPublication), Box<
         GitHead::Unborn {
             reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
         },
-        IndexSchemaVersion::v3(),
+        IndexSchemaVersion::v4(),
         vec![LanguageAdapterRevision::new(
             a3_domain::IndexLanguage::Rust,
             LanguageAdapterVersion::try_from_string("performance-rust-1".to_owned())?,
@@ -273,7 +273,11 @@ fn fixture(worktree_id: WorktreeId) -> Result<(Snapshot, IndexPublication), Box<
     }
     let graph = LinkedGraph::new(snapshot_id, vec![revision], symbols, Vec::new(), Vec::new())?;
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
-    Ok((snapshot, IndexPublication::new(graph, ranking)?))
+    let modules = support::module_projection(&graph, &ranking, &[])?;
+    Ok((
+        snapshot,
+        IndexPublication::new(graph, ranking, Vec::new(), modules)?,
+    ))
 }
 
 fn symbol_id(index: usize) -> Result<SymbolId, Box<dyn Error>> {

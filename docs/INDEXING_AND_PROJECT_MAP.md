@@ -214,6 +214,37 @@ Manifest-/Buildnähe und Testbezug, 200 je eingehender sowie 100 je ausgehender 
 stabile `SymbolId` aufgelöst. Ein Ranklauf akzeptiert höchstens 1.000.000 Symbole und 2.000.000
 aufgelöste Kanten, läuft höchstens fünf Sekunden und meldet höchstens 64 Fortschrittsereignisse.
 
+### Deterministische Modulbildung
+
+Index-Schema V4 ergänzt den Rank-Schritt vor dem atomischen Publish um eine LLM-freie
+`ModuleProjection`. `ModuleFormationPolicy::v1` verwendet als Primärsignal den jeweils nächsten
+bestätigten Paketmanifest-Root. Als Paketgrenzen gelten die bekannten Descriptoren für Rust,
+TypeScript/JavaScript, Python und den generischen Manifest-Support; Lockfiles,
+`pnpm-workspace.yaml`, Requirements-Dateien und Dockerfiles erzeugen dagegen keine künstlichen
+Paketgrenzen. Mehrere Descriptoren im selben Verzeichnis bilden eine gemeinsame Grenze. Liegt für
+ein Symbol kein Manifest-Root auf seinem Pfad, wird die erste Pfadkomponente verwendet; Dateien im
+Repository-Root gehören zur expliziten Repository-Root-Grenze. Dadurch gewinnt in Monorepos stets
+das tiefste verschachtelte Paket, während manifestlose Repositories weiter vollständig abgedeckt
+bleiben.
+
+Jedes Symbol erhält genau eine primäre Membership. Ihre Evidence enthält immer die aktuelle
+`FileRevision` des Symbols und bei manifestbasierten Modulen zusätzlich eine aktuelle bestätigte
+Manifestrevision. Primäre `ModuleId`s werden mit `a3.module.primary.v1` allein aus dem kanonischen
+Root abgeleitet. Für alle gerichteten Symbolkanten außer `Contains` und `Defines` berechnet der
+Former ohne Rekursion die stark zusammenhängenden Komponenten. Komponenten mit mindestens zwei
+Symbolen werden ergänzende Graphcommunities; ihr `ModuleId` entsteht mit
+`a3.module.community.v1` aus den sortierten `SymbolId`s. Jede zusätzliche Membership bewahrt
+mindestens einen aktuellen ein- oder ausgehenden Kantenbeleg innerhalb derselben Community und
+ersetzt niemals die primäre Zugehörigkeit.
+
+Pro Modul werden höchstens 16 zentrale Symbole sowie jeweils 256 belegte Entrypoints und Tests in
+der bestehenden Rankreihenfolge gespeichert. Trunkierung bleibt typisiert sichtbar. Die
+deterministische L0-Repository-Card enthält Primärmodule/Pakete, beobachtete Sprachfamilien,
+höchstens 256 globale Entrypoints sowie exakte Datei- und Symbolzahlen. Formation ist auf 250.000
+Module und 2.000.000 Memberships begrenzt, prüft Cancellation spätestens alle 1.024
+Arbeitseinheiten, besitzt ein Fünf-Sekunden-Limit und meldet determinierten Phasenfortschritt.
+Identische Eingaben ergeben identische Modul-IDs, Memberships, Evidence-Auswahl und Card.
+
 ### Publish
 
 Ein Indexlauf wird erst sichtbar, wenn:
@@ -241,6 +272,13 @@ Lexical-Search-Projektion. Marker, Symbol-, Pfad- und derzeit leere Card-FTS-Zei
 Statuswechsel geschrieben. Replacement-Publish und Rebuild entfernen FTS-Zeilen in denselben
 begrenzten Batches wie Graph- und Exact-Projektionen; ein Leser kann deshalb nie Graph und FTS aus
 verschiedenen Runs kombinieren.
+
+Knowledge-Schema V8 nimmt Modulmarker, Module, Manifestbelege, primäre und zusätzliche
+Memberships, Graph-Evidence sowie Zentral-/Entrypoint-/Test- und Repository-Card-Projektionen in
+denselben Sichtbarkeitswechsel auf. Ein Read rekonstruiert die vollständige `ModuleProjection` und
+prüft Snapshot, Counts, Symbolabdeckung, Manifestrevisionen und Graphbeziehungen erneut.
+Replacement und Rebuild entfernen die neuen regenerierbaren Tabellen in expliziter FK-sicherer
+Kind-vor-Eltern-Reihenfolge; tiefe Delete-Cascades gehören nicht zur V8-Löschsemantik.
 
 Publish und vollständiges Lesen übernehmen Cancellation und Progress vom besitzenden Job, prüfen
 spätestens nach 1.024 Zeilen erneut, emittieren höchstens 64 monotone Fortschrittswerte und brechen

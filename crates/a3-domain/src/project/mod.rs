@@ -7,6 +7,7 @@ mod id;
 mod index_run;
 mod language;
 mod lexical_retrieval;
+mod module_map;
 mod path;
 mod retrieval;
 mod retrieval_fusion;
@@ -63,6 +64,11 @@ pub use lexical_retrieval::{
     LexicalSearchHit, LexicalSearchPage, LexicalSearchPageError, LexicalSearchPageSize,
     LexicalSearchPageSizeError, LexicalSearchPosition, LexicalSearchQuery, LexicalSearchSymbol,
     LexicalSearchTarget, LexicalSearchTerm, LexicalSearchTermError,
+};
+pub use module_map::{
+    ModuleId, ModuleKind, ModuleMapError, ModuleMembership, ModuleMembershipEvidence,
+    ModuleMembershipKind, ModulePolicyVersion, ModulePolicyVersionError, ModuleProjection,
+    ModuleRoot, ModuleSymbolSet, RepositoryCard, RepositoryModule,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
 pub use retrieval::{

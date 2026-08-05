@@ -598,6 +598,148 @@ const KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION: Migration = Migration {
         ON embeddings (profile_id, card_id, body_hash);",
 };
 
+const KNOWLEDGE_MODULE_PROJECTION_MIGRATION: Migration = Migration {
+    version: 8,
+    name: "deterministic_module_projection",
+    sql: "CREATE TABLE module_projections (\n\
+      index_run_id BLOB PRIMARY KEY NOT NULL CHECK (length(index_run_id) = 32),\n\
+      policy_version INTEGER NOT NULL CHECK (policy_version > 0),\n\
+      file_count INTEGER NOT NULL CHECK (file_count BETWEEN 0 AND 250000),\n\
+      symbol_count INTEGER NOT NULL CHECK (symbol_count BETWEEN 0 AND 1000000),\n\
+      module_count INTEGER NOT NULL CHECK (module_count BETWEEN 0 AND 250000),\n\
+      membership_count INTEGER NOT NULL CHECK (membership_count BETWEEN 0 AND 2000000),\n\
+      language_mask INTEGER NOT NULL CHECK (language_mask BETWEEN 0 AND 15),\n\
+      repository_entrypoints_truncated INTEGER NOT NULL\n\
+        CHECK (repository_entrypoints_truncated IN (0, 1)),\n\
+      FOREIGN KEY (index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE modules (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      kind TEXT NOT NULL CHECK (kind IN ('manifest', 'path', 'graph-community')),\n\
+      root_kind TEXT NOT NULL CHECK (root_kind IN ('repository', 'directory', 'none')),\n\
+      root_path BLOB CHECK (root_path IS NULL OR length(root_path) BETWEEN 1 AND 131072),\n\
+      central_symbols_truncated INTEGER NOT NULL CHECK (central_symbols_truncated IN (0, 1)),\n\
+      entrypoints_truncated INTEGER NOT NULL CHECK (entrypoints_truncated IN (0, 1)),\n\
+      tests_truncated INTEGER NOT NULL CHECK (tests_truncated IN (0, 1)),\n\
+      CHECK ((root_kind = 'directory') = (root_path IS NOT NULL)),\n\
+      CHECK ((kind = 'graph-community') = (root_kind = 'none')),\n\
+      PRIMARY KEY (index_run_id, module_id),\n\
+      FOREIGN KEY (index_run_id) REFERENCES module_projections(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_manifests (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      manifest_order INTEGER NOT NULL CHECK (manifest_order > 0),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      PRIMARY KEY (index_run_id, module_id, manifest_order),\n\
+      UNIQUE (index_run_id, module_id, repository_path),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, repository_path, content_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_members (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      membership_kind TEXT NOT NULL CHECK (membership_kind IN ('manifest', 'path', 'graph-community')),\n\
+      member_path BLOB NOT NULL CHECK (length(member_path) BETWEEN 1 AND 131072),\n\
+      member_hash BLOB NOT NULL CHECK (length(member_hash) = 32),\n\
+      manifest_path BLOB CHECK (manifest_path IS NULL OR length(manifest_path) BETWEEN 1 AND 131072),\n\
+      manifest_hash BLOB CHECK (manifest_hash IS NULL OR length(manifest_hash) = 32),\n\
+      CHECK ((manifest_path IS NULL) = (manifest_hash IS NULL)),\n\
+      CHECK ((membership_kind = 'manifest') = (manifest_path IS NOT NULL)),\n\
+      PRIMARY KEY (index_run_id, module_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, member_path, member_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, manifest_path, manifest_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE UNIQUE INDEX module_members_one_primary_idx\n\
+        ON module_members (index_run_id, symbol_id)\n\
+        WHERE membership_kind IN ('manifest', 'path');\n\
+      CREATE TABLE module_membership_evidence (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      evidence_order INTEGER NOT NULL CHECK (evidence_order > 0),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      start_byte INTEGER NOT NULL CHECK (start_byte BETWEEN 0 AND 4294967295),\n\
+      end_byte INTEGER NOT NULL CHECK (end_byte BETWEEN start_byte AND 4294967295),\n\
+      start_row INTEGER NOT NULL CHECK (start_row BETWEEN 0 AND 4294967295),\n\
+      start_column INTEGER NOT NULL CHECK (start_column BETWEEN 0 AND 4294967295),\n\
+      end_row INTEGER NOT NULL CHECK (end_row BETWEEN 0 AND 4294967295),\n\
+      end_column INTEGER NOT NULL CHECK (end_column BETWEEN 0 AND 4294967295),\n\
+      PRIMARY KEY (index_run_id, module_id, symbol_id, evidence_order),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, repository_path, content_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_central_symbols (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      rank_order INTEGER NOT NULL CHECK (rank_order BETWEEN 1 AND 16),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      PRIMARY KEY (index_run_id, module_id, rank_order),\n\
+      UNIQUE (index_run_id, module_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_entrypoints (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      rank_order INTEGER NOT NULL CHECK (rank_order BETWEEN 1 AND 256),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      PRIMARY KEY (index_run_id, module_id, rank_order),\n\
+      UNIQUE (index_run_id, module_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_tests (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      rank_order INTEGER NOT NULL CHECK (rank_order BETWEEN 1 AND 256),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      PRIMARY KEY (index_run_id, module_id, rank_order),\n\
+      UNIQUE (index_run_id, module_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id, module_id) REFERENCES modules(index_run_id, module_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE repository_card_entrypoints (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      rank_order INTEGER NOT NULL CHECK (rank_order BETWEEN 1 AND 256),\n\
+      symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),\n\
+      PRIMARY KEY (index_run_id, rank_order),\n\
+      UNIQUE (index_run_id, symbol_id),\n\
+      FOREIGN KEY (index_run_id) REFERENCES module_projections(index_run_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -606,6 +748,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_EXACT_SEARCH_MIGRATION,
     KNOWLEDGE_LEXICAL_SEARCH_MIGRATION,
     KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION,
+    KNOWLEDGE_MODULE_PROJECTION_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -638,7 +781,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(7);
+    pub const CURRENT: Self = Self::new(8);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1413,6 +1556,54 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'embeddings'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v8_upgrade_preserves_v7_schema() -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [40; 32];
+            let worktree_id = [41; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..7],
+                7,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE module_projections (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 8, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 7);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('module_projections')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'modules'",
                 )
                 .await?,
                 0

@@ -1,5 +1,5 @@
 use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
-use crate::{ContractResult, KnowledgeStoreContractFactory};
+use crate::{ContractResult, KnowledgeStoreContractFactory, fixture_modules};
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
     KnowledgeIndexStore, KnowledgeStoreFailure,
@@ -455,7 +455,8 @@ fn publication(
             },
         )],
     )?;
-    Ok(IndexPublication::new(graph, ranking)?)
+    let modules = fixture_modules(&graph, &ranking, &[])?;
+    Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
 }
 
 fn file_state(entries: Vec<(&[u8], [u8; 32])>) -> ContractResult<RepositoryFileState> {

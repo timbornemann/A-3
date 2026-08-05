@@ -1,4 +1,5 @@
 use crate::index_publication::{IndexPublicationRepositoryError, MutationProgress, read_stable_id};
+use crate::module_projection_codec;
 use a3_domain::{
     Centrality, Confidence, ContentHash, EvidenceRef, FileRevision, GraphEdge, GraphEndpoint,
     GraphSymbol, IndexPublication, IndexRunId, IndexRunRecord, LinkResolution, LinkedGraph,
@@ -38,12 +39,15 @@ pub(crate) async fn write_publication_rows(
         progress,
     )
     .await?;
+    module_projection_codec::write_projection(transaction, run_id, publication.modules(), progress)
+        .await?;
     Ok(())
 }
 
 pub(crate) async fn read_publication_rows(
     transaction: &Transaction,
     run: IndexRunRecord,
+    manifest_files: Vec<FileRevision>,
     progress: &mut MutationProgress<'_>,
 ) -> Result<IndexPublication, IndexPublicationRepositoryError> {
     let files = read_files(transaction, run.id(), progress).await?;
@@ -55,7 +59,14 @@ pub(crate) async fn read_publication_rows(
     let ranks = read_ranks(transaction, run.id(), progress).await?;
     let ranking = RankProjection::new(run.snapshot_id(), run.ranking_policy_version(), ranks)
         .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
-    IndexPublication::new(graph, ranking)
+    let modules = module_projection_codec::read_projection(
+        transaction,
+        run.id(),
+        run.snapshot_id(),
+        progress,
+    )
+    .await?;
+    IndexPublication::new(graph, ranking, manifest_files, modules)
         .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)
 }
 
@@ -259,7 +270,7 @@ async fn write_ranks(
     .await
 }
 
-async fn write_batches<T, F>(
+pub(crate) async fn write_batches<T, F>(
     transaction: &Transaction,
     items: &[T],
     column_count: usize,
@@ -328,15 +339,15 @@ fn append_value_groups(sql: &mut String, rows: usize, columns: usize) {
     }
 }
 
-fn blob(bytes: &[u8]) -> Value {
+pub(crate) fn blob(bytes: &[u8]) -> Value {
     Value::Blob(bytes.to_vec())
 }
 
-fn text(value: &str) -> Value {
+pub(crate) fn text(value: &str) -> Value {
     Value::Text(value.to_owned())
 }
 
-const fn integer(value: i64) -> Value {
+pub(crate) const fn integer(value: i64) -> Value {
     Value::Integer(value)
 }
 
@@ -741,7 +752,7 @@ fn checked_usize(value: i64) -> Result<usize, IndexPublicationRepositoryError> {
     usize::try_from(value).map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)
 }
 
-fn sequence(index: usize) -> Result<i64, IndexPublicationRepositoryError> {
+pub(crate) fn sequence(index: usize) -> Result<i64, IndexPublicationRepositoryError> {
     index
         .checked_add(1)
         .and_then(|value| i64::try_from(value).ok())

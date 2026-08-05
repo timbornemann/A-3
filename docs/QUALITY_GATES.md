@@ -40,6 +40,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Löschung, Umbenennung und Syntaxfehler getestet
 - Graphzyklen terminieren; kürzeste Pfade, Hopgrenze, Resultlimit und Beziehungsevidenz sind getestet
 - Fusion-Golden fixiert Policyversion, Stable-ID-Deduplizierung, alle Signale und Exact-vor-Semantic
+- Modulbildungs-Contracts prüfen verschachtelte Monorepo-Manifeste, manifestlose Pfadgrenzen,
+  deterministische Wiederholung, SCC-Communities, genau eine primäre Membership, aktuelle
+  Membership-Evidence, zentrale Symbole, Entrypoints, Tests, Repository Card, Cancellation und
+  abgelehnte Progressausgabe
 - Semantic-Card-/Embedding-Contracts prüfen BodyHash-Kanonik, Profil-/Dimensionsisolation,
   Redaction, Cancellation, Disabled ohne Adapterzugriff, persistentes Reopen, native
   dimensionsgebundene Vector-Capability, begrenzten linearen Fallback und semantikexklusiven Rebuild
@@ -129,6 +133,14 @@ Gate weiterhin. Die begrenzte Ein-Fehler-Abfrage mit zusätzlichem Endanker erre
 über 30 Samples P50 34,9 ms und P95 35,3 ms. Der unveränderte vollständige Index-Load plus Scan lag
 in diesem Lauf über fünf Samples bei P50 1,145 s und P95 1,189 s; Exact Search erreichte P50 38,3 ms
 und P95 41,5 ms.
+
+R6 erweitert dasselbe reproduzierbare Fixture um eine primäre Membership für alle 50.000 Symbole
+und lädt beim alten Full-Index-Vergleich zusätzlich die vollständige V8-Modulprojektion. Der Lauf
+vom 2026-08-05 ergab über fünf Full-Load-/Scan-Samples P50 1,425 s und P95 1,452 s gegenüber
+P50 1,145 s und P95 1,189 s vor R6. Über jeweils 30 Querysamples lagen Exact Search bei
+P50 38,9 ms und P95 60,6 ms sowie FTS bei P50 36,2 ms und P95 39,5 ms; beide bleiben unter dem
+100-ms-Gate. Die Messung dokumentiert damit den zusätzlichen vollständigen Loadaufwand der
+evidenzgebundenen Membershipzeilen, ohne daraus eine Geschwindigkeitsverbesserung abzuleiten.
 
 Modellmetriken werden separat erfasst:
 

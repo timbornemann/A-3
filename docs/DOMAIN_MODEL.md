@@ -13,6 +13,7 @@ Stand: 2026-08-05
 | File Revision | Dateiinhalt, identifiziert durch einen kryptografischen Content Hash |
 | Symbol | Sprachabhängige semantische Einheit wie Funktion, Typ oder Methode |
 | Edge | Typisierte Beziehung zwischen Symbolen, Dateien, Modulen, Tests oder Claims |
+| Module | Deterministischer primärer Pfadbereich oder zusätzliche graphbelegte Community |
 | Evidence | Prüffähiger Verweis auf echten Code, Konfiguration oder Werkzeugausgabe |
 | Claim | Persistierte Aussage mit Typ, Evidenz, Status und Aktualität |
 | Module Card | Kompakte, evidenzgebundene Beschreibung eines Projektbereichs |
@@ -99,6 +100,30 @@ Content Hash, Sprache, Adapterversion, LanguageAdapter-Contract-Version und die 
 Snapshot-, Rankingversion und Zeilennummern sind kein Teil der Identität. Identische Parse-Evidenz
 behält ihre ID beim Re-Rank; Inhalts-, Pfad- oder Adapteränderungen erzeugen absichtlich neue IDs und
 invalidieren alte Evidenz.
+
+### ModuleId und ModuleProjection
+
+Eine `ModuleId` ist ein BLAKE3-Digest mit getrennter V1-Domäne. Primärmodule leiten ihn nur aus
+ihrem kanonischen Repository- oder Verzeichnisroot ab; dadurch bleibt dieselbe Grenze bei
+Inhaltsänderungen stabil. Eine zusätzliche Graphcommunity leitet ihn aus der sortierten Menge ihrer
+content- und adaptergebundenen `SymbolId`s ab. Die `ModulePolicyVersion` ist unabhängig von der
+Rankingversion und wird mit Projektion und Repository Card gespeichert.
+
+`ModuleProjection` gehört genau zu einem `SnapshotId` und enthält `RepositoryModule`s,
+`ModuleMembership`s und eine deterministische L0-`RepositoryCard`. Ein Modul ist entweder eine
+Manifestgrenze mit mindestens einer aktuellen Manifestrevision, eine Pfadgrenze oder eine
+rootlose Graphcommunity. Jedes Graphsymbol besitzt genau eine primäre Manifest- oder
+Pfadmembership; weitere Memberships dürfen ausschließlich Graphcommunities betreffen. Primäre
+Evidence enthält die aktuelle Symbol-File-Revision und bei Manifestgrenzen zusätzlich eine
+bestätigte Manifestrevision. Community-Evidence ist nicht leer und muss zu einer aktuellen,
+symbolincidenten Graphkante innerhalb derselben Community auflösbar sein.
+
+Zentrale Symbole, Entrypoints und Tests sind rankgeordnet, ID-eindeutig und begrenzt; ausgelassene
+Tails bleiben durch `truncated` sichtbar. Die Repository Card enthält die kanonische Menge der
+Primärmodule als Pakete, beobachtete Sprachfamilien, globale Entrypoints sowie Datei- und
+Symbolzahlen. Ihr Entrypoint-Präfix darf nur bei sichtbarer Trunkierung eine echte Teilmenge der
+primären Moduleinträge sein. `IndexPublication` prüft Graph-, Rank-, Manifest- und Modulprojektion
+gemeinsam, bevor der Storageadapter sie atomar veröffentlichen darf.
 
 ### Exact Retrieval
 

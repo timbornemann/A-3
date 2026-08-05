@@ -18,9 +18,10 @@ mod watcher;
 
 pub use discovery::GitRepositoryDiscoverer;
 pub use graph::{
-    DeterministicGraphLinker, DeterministicGraphRanker, GraphComputationControl,
-    GraphComputationControlError, GraphLinkFailure, GraphLinkInput, GraphLinkPolicy,
-    GraphRankFailure, RankingPolicy,
+    DeterministicGraphLinker, DeterministicGraphRanker, DeterministicModuleFormer,
+    GraphComputationControl, GraphComputationControlError, GraphLinkFailure, GraphLinkInput,
+    GraphLinkPolicy, GraphRankFailure, ModuleFormationFailure, ModuleFormationInput,
+    ModuleFormationPolicy, RankingPolicy,
 };
 pub use incremental_index::{
     Blake3IndexRunIdFactory, BuiltinIncrementalIndexCompiler,

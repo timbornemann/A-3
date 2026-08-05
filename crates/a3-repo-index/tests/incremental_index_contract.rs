@@ -21,6 +21,7 @@ use a3_workspace::RepositoryInspector;
 use futures::executor::block_on;
 use std::error::Error;
 use std::fs;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use support::TempDirectory;
@@ -66,7 +67,7 @@ impl RepositoryIndexControl for CancelledControl {
 #[test]
 fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<(), Box<dyn Error>>
 {
-    block_on(async {
+    run_incremental_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write(
@@ -110,7 +111,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
         assert_eq!(initial.compilation().mode(), RepositoryIndexMode::Full);
         assert_eq!(
             initial.snapshot().index_schema_version(),
-            IndexSchemaVersion::v3()
+            IndexSchemaVersion::v4()
         );
         assert_eq!(initial.compilation().parsed_paths().len(), 4);
         assert_eq!(
@@ -263,7 +264,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
 #[test]
 fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<(), Box<dyn Error>>
 {
-    block_on(async {
+    run_incremental_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write("src/rename_me.rs", b"pub fn retained() {}\n")?;
@@ -345,7 +346,7 @@ fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<
 
 #[test]
 fn cancellation_is_observed_within_the_quality_gate() -> Result<(), Box<dyn Error>> {
-    block_on(async {
+    run_incremental_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write("src/lib.rs", b"pub fn value() {}\n")?;
@@ -376,4 +377,40 @@ fn cancellation_is_observed_within_the_quality_gate() -> Result<(), Box<dyn Erro
         assert!(started.elapsed() <= Duration::from_millis(500));
         Ok::<(), Box<dyn Error>>(())
     })
+}
+
+fn run_incremental_test<F>(future: F) -> Result<(), Box<dyn Error>>
+where
+    F: Future<Output = Result<(), Box<dyn Error>>>,
+{
+    #[cfg(windows)]
+    let current_thread = std::thread::current();
+    #[cfg(windows)]
+    let test_name = current_thread.name().ok_or_else(|| {
+        std::io::Error::other("libSQL incremental contract test has no harness thread name")
+    })?;
+    #[cfg(windows)]
+    if std::env::var_os("A3_LIBSQL_ISOLATED_TEST").as_deref()
+        != Some(std::ffi::OsStr::new(test_name))
+    {
+        let status = std::process::Command::new(std::env::current_exe()?)
+            .arg(test_name)
+            .arg("--exact")
+            .arg("--test-threads=1")
+            .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+            .status()?;
+        if !status.success() {
+            return Err(std::io::Error::other(format!(
+                "isolated libSQL incremental contract {test_name} failed with {status}"
+            ))
+            .into());
+        }
+        return Ok(());
+    }
+    let result = block_on(future);
+    // The Windows native libSQL backend finishes worker teardown just after a store drops.
+    // Give each owned fixture a bounded grace period before the next test begins.
+    #[cfg(windows)]
+    std::thread::sleep(Duration::from_millis(500));
+    result
 }

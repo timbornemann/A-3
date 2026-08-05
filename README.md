@@ -13,8 +13,9 @@ Python-/Packaging-Produktadapter sowie der deterministische Graph-Linker, die ve
 Rankingprojektion, das atomische Publish und der plattformneutrale inkrementelle File-Watcher des
 Fast Index sowie die snapshotgebundene exakte und fehlertolerante lexikalische Pfad-, Symbol- und
 Signatursuche, die begrenzte evidenzgebundene Graphabfrage und die versionierte deterministische
-Retrieval Fusion sind abgeschlossen. Die weitere Implementierung folgt dem Plan für optionale
-Embeddings und Project Map. Die
+Retrieval Fusion, optionale profilisolierte Embeddings sowie die LLM-freie Manifest-/Pfad-
+Modulbildung mit ergänzenden Graphcommunities und deterministischer Repository Card sind
+abgeschlossen. Die weitere Implementierung folgt dem Plan für Deep Map und Task Lens. Die
 verbindliche Architektur- und
 Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

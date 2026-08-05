@@ -178,6 +178,12 @@ impl IndexSchemaVersion {
         Self(3)
     }
 
+    /// Returns the deterministic module and repository-card projection revision.
+    #[must_use]
+    pub const fn v4() -> Self {
+        Self(4)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

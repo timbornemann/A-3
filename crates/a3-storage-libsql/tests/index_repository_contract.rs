@@ -17,6 +17,7 @@ use a3_domain::{
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -84,7 +85,7 @@ impl IndexPersistenceControl for UnavailableProgressControl {
 fn snapshot_roundtrip_retains_canonical_reproducibility_state()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([1; 32], [11; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         store.record_opened_project(&fixture.project).await?;
@@ -127,7 +128,7 @@ fn snapshot_roundtrip_retains_canonical_reproducibility_state()
 fn stale_snapshot_generation_rolls_back_without_changing_latest()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([2; 32], [12; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let first = snapshot(
@@ -172,7 +173,7 @@ fn stale_snapshot_generation_rolls_back_without_changing_latest()
 fn snapshot_for_another_worktree_is_rejected_before_writing()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([3; 32], [13; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let foreign = snapshot(
@@ -198,7 +199,7 @@ fn snapshot_for_another_worktree_is_rejected_before_writing()
 fn index_run_lifecycle_serializes_mutation_and_never_false_publishes()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([4; 32], [14; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let snapshot = snapshot(
@@ -278,7 +279,7 @@ fn index_run_lifecycle_serializes_mutation_and_never_false_publishes()
 fn index_run_requires_a_snapshot_from_the_same_worktree() -> Result<(), Box<dyn std::error::Error>>
 {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([5; 32], [15; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
 
@@ -300,7 +301,7 @@ fn index_run_requires_a_snapshot_from_the_same_worktree() -> Result<(), Box<dyn 
 fn broken_index_run_sequence_blocks_reads_and_further_mutation()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([8; 32], [18; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let snapshot = snapshot(
@@ -354,7 +355,7 @@ fn broken_index_run_sequence_blocks_reads_and_further_mutation()
 fn malformed_persisted_repository_path_is_rejected_at_the_adapter_boundary()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([6; 32], [16; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let snapshot = snapshot(
@@ -398,7 +399,7 @@ fn malformed_persisted_repository_path_is_rejected_at_the_adapter_boundary()
 fn broken_snapshot_parent_chain_is_rejected_after_reopen() -> Result<(), Box<dyn std::error::Error>>
 {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([7; 32], [17; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let first = snapshot(
@@ -457,7 +458,7 @@ fn broken_snapshot_parent_chain_is_rejected_after_reopen() -> Result<(), Box<dyn
 fn persistence_control_cancels_before_mutation_and_bounds_progress()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let fixture = ProjectFixture::new([22; 32], [32; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
         let snapshot = snapshot(
@@ -538,7 +539,7 @@ fn persistence_control_cancels_before_mutation_and_bounds_progress()
 fn superseded_projection_rows_are_retired_without_deleting_run_history()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let control = TestIndexControl::default();
         let fixture = ProjectFixture::new([23; 32], [33; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
@@ -616,12 +617,10 @@ fn superseded_projection_rows_are_retired_without_deleting_run_history()
 }
 
 #[test]
-// Keep this trigger-abort case last: the Windows libSQL test runtime is unstable if another
-// local database fixture is torn down in the same process after an aborting native trigger.
 fn zz_crash_before_visible_publish_rolls_back_new_rows_and_keeps_previous_index()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let control = TestIndexControl::default();
         let fixture = ProjectFixture::new([20; 32], [30; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
@@ -725,7 +724,7 @@ fn zz_crash_before_visible_publish_rolls_back_new_rows_and_keeps_previous_index(
 #[test]
 fn rebuild_removes_only_regenerable_index_state() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
-    block_on(async {
+    run_index_test(async {
         let control = TestIndexControl::default();
         let fixture = ProjectFixture::new([21; 32], [31; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
@@ -891,7 +890,8 @@ fn file_only_publication(
         Vec::new(),
     )?;
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
-    Ok(IndexPublication::new(graph, ranking)?)
+    let modules = support::module_projection(&graph, &ranking, &[])?;
+    Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
 }
 
 fn unborn_head() -> Result<GitHead, Box<dyn std::error::Error>> {
@@ -915,6 +915,42 @@ fn lock_index_repository_test() -> Result<MutexGuard<'static, ()>, Box<dyn std::
             "index repository test lock was poisoned",
         ))
     })
+}
+
+fn run_index_test<F>(future: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    #[cfg(windows)]
+    let current_thread = std::thread::current();
+    #[cfg(windows)]
+    let test_name = current_thread
+        .name()
+        .ok_or_else(|| io::Error::other("libSQL contract test has no harness thread name"))?;
+    #[cfg(windows)]
+    if std::env::var_os("A3_LIBSQL_ISOLATED_TEST").as_deref()
+        != Some(std::ffi::OsStr::new(test_name))
+    {
+        let status = std::process::Command::new(std::env::current_exe()?)
+            .arg(test_name)
+            .arg("--exact")
+            .arg("--test-threads=1")
+            .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other(format!(
+                "isolated libSQL contract {test_name} failed with {status}"
+            ))
+            .into());
+        }
+        return Ok(());
+    }
+    let result = block_on(future);
+    // The Windows native backend finishes worker teardown just after a store drops.
+    // Keep fixture lifetimes serial and give each owned teardown a bounded grace period.
+    #[cfg(windows)]
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    result
 }
 
 async fn mutate_knowledge(path: &Path, sql: &str) -> Result<(), Box<dyn std::error::Error>> {

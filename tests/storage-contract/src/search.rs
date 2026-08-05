@@ -1,5 +1,5 @@
 use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
-use crate::{ContractResult, KnowledgeStoreContractFactory};
+use crate::{ContractResult, KnowledgeStoreContractFactory, fixture_modules};
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchStore,
@@ -868,7 +868,9 @@ fn publication(
         })
         .collect::<ContractResult<Vec<_>>>()?;
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
-    Ok(IndexPublication::new(graph, ranking)?.with_manifest_files(vec![manifest])?)
+    let manifests = vec![manifest];
+    let modules = fixture_modules(&graph, &ranking, &manifests)?;
+    Ok(IndexPublication::new(graph, ranking, manifests, modules)?)
 }
 
 fn edge(
