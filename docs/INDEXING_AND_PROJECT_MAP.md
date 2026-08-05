@@ -376,6 +376,45 @@ Itemzahl und UTF-8-Bytes. `ModuleCardId`, `ModuleId`, `SnapshotId`, Confidence,
 keine Card-Inhalte; strukturierte Explorer-Ausgabe, Repair und Proposalbildung beginnen erst mit
 R8, deterministische Claim-Verifikation und Publish erst mit R9.
 
+### Read-only Explorer V1
+
+Der R8-Explorer konsumiert ausschließlich einen unveränderlichen `ExplorePlan`. Sein eingebettetes
+JSON Schema `deep-map-explorer-action-v1` erlaubt nur Inspect, Search und Propose, setzt auf jeder
+Objektebene `additionalProperties: false` und kennt weder Schreib- noch Execute-Aktionen. Der
+Runtime-Decoder ist zusätzlich bytegenau: Er akzeptiert genau ein JSON-Dokument bis 64 KiB,
+kanonische 256-Bit-IDs in Lowercase-Hex, passende Querytypen, alle feldspezifischen Card-Grenzen und
+keinen Text außerhalb des Dokuments. `serde_json` wird dafür als bereits workspaceweit exakt
+gepinntes Parserfundament nun direkt in `a3-application` verwendet; die Standardbibliothek besitzt
+keinen JSON-Parser, und es wurde keine neue externe Version in den Lockfile-Graph aufgenommen.
+
+`ExplorerModelProvider` ist der für R8 vorgezogene neutrale Stub-Port der späteren
+Providergrundlage. Er erhält die Schemafassung, das statische JSON Schema, Run, Snapshot, aktuellen
+Schritt, erwartete Felder und höchstens ein normalisiertes Werkzeugresultat. Er kennt keine
+Ollama-Payload, keinen Endpoint und keine Credentials. Der vollständige allgemeine ModelProvider
+mit `ModelProfile`, Streaming, Capability Probe, Endpoint Policy und Ollama-Adapter bleibt in H4
+und H5 offen.
+
+Die Capability `DeepMapReadTools` besitzt konstruktiv nur `inspect` und `search`. Ein Planschritt
+darf genau den bereits reservierten einen Werkzeugaufruf ausführen. Inspect verwendet ausschließlich
+das planbestimmte Ziel; Search ist auf Exact, Lexical und typisierte Graphpresets mit höchstens 100
+Treffern begrenzt. Adapter müssen jedes Ergebnis auf einen kontrollierten Preview von höchstens 16
+KiB und höchstens 100 kanonische Evidence IDs normalisieren. Es existiert an diesem Port keine
+Methode zum Schreiben, Ausführen, Starten eines Prozesses oder Ändern von Git.
+
+Jede Modellausgabe wird vollständig dekodiert und gegen aktuellen Schritt, Gain-Schwelle,
+Werkzeugbudget und vorhandene Observation autorisiert, bevor ein Read stattfinden kann. Ein
+Proposal muss alle vom Schritt erwarteten Felder enthalten; sämtliche Feld-Evidence-IDs müssen aus
+dem tatsächlich zurückgegebenen aktuellen Werkzeugresultat stammen. Über den gesamten R8-Aufruf
+ist höchstens eine Repair-Anfrage mit einer inhaltsfreien Fehlerklasse zulässig. Das ungültige
+Original wird nie ausgeführt; auch eine ungültige Reparatur beendet den Lauf typisiert.
+
+Cancellation wird vor und nach jeder Provider- und Werkzeuggrenze geprüft. Das Ergebnis enthält
+auch bei Abbruch den run-, snapshot-, schema- und policygebundenen `ExplorerCheckpoint`. Darin
+stehen ausschließlich lückenlos bestätigte Schritte. Resume startet anhand seiner Länge beim
+ersten unbestätigten Schritt und wiederholt deshalb keine bestätigte Exploration. Vorschläge werden
+in R8 weder persistiert noch veröffentlicht; Evidence-Auflösung, Claimstatus und Publish bleiben
+R9 vorbehalten.
+
 ### Verify
 
 Der Verifier prüft:

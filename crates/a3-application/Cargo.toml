@@ -10,6 +10,7 @@ license.workspace = true
 a3-domain.workspace = true
 crossbeam-channel.workspace = true
 futures.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

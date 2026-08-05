@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a3.local/schemas/deep-map-explorer-action-v1.schema.json",
+  "title": "A^3 Deep Map Explorer Action V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "action"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "action": {
+      "oneOf": [
+        { "$ref": "#/$defs/inspect" },
+        { "$ref": "#/$defs/search" },
+        { "$ref": "#/$defs/propose" }
+      ]
+    }
+  },
+  "$defs": {
+    "gain": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "rationale": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "hexId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "inspect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "expected_gain_basis_points", "gain_rationale"],
+      "properties": {
+        "kind": { "const": "inspect" },
+        "expected_gain_basis_points": { "$ref": "#/$defs/gain" },
+        "gain_rationale": { "$ref": "#/$defs/rationale" }
+      }
+    },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "search_kind", "query", "limit", "expected_gain_basis_points", "gain_rationale"],
+      "properties": {
+        "kind": { "const": "search" },
+        "search_kind": { "enum": ["exact", "lexical", "callers", "callees", "imports", "exports", "tests"] },
+        "query": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "expected_gain_basis_points": { "$ref": "#/$defs/gain" },
+        "gain_rationale": { "$ref": "#/$defs/rationale" }
+      }
+    },
+    "proposalField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "values", "evidence_ids"],
+      "properties": {
+        "field": { "enum": ["title", "paths", "purpose", "responsibilities", "public_surface", "entrypoints", "dependencies", "data_flows", "invariants", "tests", "risks", "open_questions"] },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/hexId" }
+        }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card_id", "module_id", "snapshot_id", "schema_version", "mapper_profile_version", "confidence_basis_points", "fields"],
+      "properties": {
+        "card_id": { "$ref": "#/$defs/hexId" },
+        "module_id": { "$ref": "#/$defs/hexId" },
+        "snapshot_id": { "$ref": "#/$defs/hexId" },
+        "schema_version": { "const": 1 },
+        "mapper_profile_version": { "const": 1 },
+        "confidence_basis_points": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/proposalField" }
+        }
+      }
+    },
+    "propose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "proposal"],
+      "properties": {
+        "kind": { "const": "propose" },
+        "proposal": { "$ref": "#/$defs/proposal" }
+      }
+    }
+  }
+}

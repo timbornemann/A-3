@@ -1,4 +1,5 @@
 mod deep_map;
+mod deep_map_explorer;
 mod discovery;
 mod embedding;
 mod git;
@@ -25,6 +26,13 @@ pub use deep_map::{
     MapperProfileVersion, ModuleCardEvidenceId, ModuleCardField, ModuleCardFieldSpec, ModuleCardId,
     ModuleCardMetadataField, ModuleCardSchema, ModuleCardSchemaVersion, ModuleCardStatus,
     ModuleCoverage, ModuleCoverageSnapshot,
+};
+pub use deep_map_explorer::{
+    ExplorerAction, ExplorerActionSchemaVersion, ExplorerCheckpoint, ExplorerCheckpointError,
+    ExplorerInspectAction, ExplorerSearchAction, ExplorerSearchActionError, ExplorerSearchKind,
+    ExplorerSearchLimit, ExplorerSearchQuery, InformationGainRationale,
+    InformationGainRationaleError, ModuleCardProposal, ModuleCardProposalEnvelope,
+    ModuleCardProposalError, ProposedModuleCardField,
 };
 pub use discovery::{
     DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveredFileRolesError,

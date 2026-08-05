@@ -72,6 +72,11 @@ Akzeptanz:
 - Streamingabbruch beendet Request;
 - nicht lokaler Endpoint benötigt Policyfreigabe.
 
+R8 zieht ausschließlich den neutralen, request-/timeout-/cancellation-fähigen
+`ExplorerModelProvider` samt Stubprovider für Explorer-Vertragstests vor. Dieser schmale Port kennt
+keine Providerpayloads oder Endpoints, erfüllt aber bewusst noch nicht H4: allgemeiner
+`ModelProvider`, Streaming-Events, Endpoint Policy und Ollama-Adapter bleiben offen.
+
 ## H5 ModelProfile und Capability Probe
 
 Abhängigkeiten: H4
@@ -106,6 +111,10 @@ Akzeptanz:
 - unbekannte Toolnamen und Felder werden abgelehnt;
 - Text außerhalb des Schemas wird nicht ausgeführt;
 - Prompt bleibt unter statischem Budget.
+
+Das in R8 vorgezogene `deep-map-explorer-action-v1`-Schema und sein Strict Validator decken nur die
+read-only Deep-Map-Union Inspect, Search und Propose ab. Die allgemeine AgentAction-Union mit
+Ledger- und Finish-Aktionen sowie ihre Promptintegration bleibt Teil von H6.
 
 ## H7 Context Compiler Core
 
@@ -205,4 +214,3 @@ Akzeptanz:
 - [ ] Resume nach simuliertem Crash
 - [ ] Context Compile P95 innerhalb Budget
 - [ ] Provider bleibt austauschbar durch Contract-Suite
-

@@ -147,6 +147,28 @@ der veröffentlichten Modulprojektion. Höchstens 16.384 Kandidaten bleiben nach
 Top-K erhalten. Addition und Auswahl erfolgen geprüft in allen drei Budgetdimensionen; ein Plan
 kann daher sein eigenes Budget konstruktiv nicht überschreiten.
 
+### ExplorerAction, ModuleCardProposal und ExplorerCheckpoint
+
+`ExplorerActionSchemaVersion::V1` begrenzt die Modellausgabe auf die geschlossene Union
+`Inspect`, `Search` und `Propose`. `Inspect` kann ausschließlich das vom aktuellen Planschritt
+vorgegebene Ziel lesen. `Search` unterscheidet typseitig Exact-/Lexical-Text von den
+symbolgebundenen Graphpresets Callers, Callees, Imports, Exports und Tests; jede Leseanforderung
+trägt einen begrenzten erwarteten Informationsgewinn und eine kontrollzeichenfreie Begründung.
+Schreib-, Prozess-, Shell-, Git- oder generische Toolaktionen sind in dieser Union nicht
+darstellbar.
+
+Ein `ModuleCardProposal` besteht aus einer typisierten Envelope und kanonisch geordneten
+`ProposedModuleCardField`s. Leere Felder werden nicht dargestellt; jedes vorhandene Feld benötigt
+mindestens eine eigene `ModuleCardEvidenceId`, und Werte, Duplikate, UTF-8-Bytes sowie die
+vereinigte Evidenzmenge werden gegen `ModuleCardSchema::V1` geprüft. Der Typ liefert ausschließlich
+`ModuleCardStatus::Proposed`; er kann weder Verification noch Fact-, Observation- oder
+Hypothesis-Status vergeben. Erst R9 darf Evidenz auflösen und einen verifizierten Zustand erzeugen.
+
+`ExplorerCheckpoint` bindet Run, Snapshot, Card-Schema und Plannerpolicy an ein lückenloses Präfix
+bestätigter Vorschläge. Eine Bestätigung ist nur für den nächsten Planschritt möglich und muss
+Modul, Snapshot, Schema und alle erwarteten Felder treffen. Deshalb beginnt Resume exakt beim
+ersten unbestätigten Schritt, während ein Checkpoint eines anderen Plans abgelehnt wird.
+
 ### Exact Retrieval
 
 Eine `ExactSearchQuery` wählt entweder einen normalisierten Repository-Pfad, einen begrenzten

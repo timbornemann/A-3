@@ -180,6 +180,16 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 - unbekannte Felder werden standardmäßig abgelehnt.
 - Reparaturversuch maximal einmal und ohne Ausführung des ungültigen Originals.
 
+Der Deep-Map-Explorer konkretisiert diese Regeln mit dem versionierten
+`deep-map-explorer-action-v1`-JSON-Schema und einem davon unabhängig strikt prüfenden
+Runtime-Decoder. Nur Inspect, Search und ein nicht autoritatives Proposal sind darstellbar. Vor
+jedem Toolaufruf prüft der Controller Planschritt, erwarteten Informationsgewinn und das reservierte
+Read-Budget. Vor einer Bestätigung prüft er Modul, Snapshot, Schemaversion, erwartete Felder und ob
+jede angegebene Evidence ID im unmittelbar zuvor normalisierten Read-Ergebnis vorkam. Der
+Capability-Port bietet keine Write-, Shell-, Prozess- oder Git-Methode. Raw Model Output ist auf 64
+KiB, normalisierter Toolpreview auf 16 KiB und Tool-Evidenz auf 100 IDs begrenzt; Debugausgaben
+enthalten weder Proposalwerte noch Preview- oder Rohoutput.
+
 ## Netzwerk und Datenschutz
 
 V1 ist offline-first:

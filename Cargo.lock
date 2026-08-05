@@ -9,6 +9,7 @@ dependencies = [
  "a3-domain",
  "crossbeam-channel",
  "futures",
+ "serde_json",
 ]
 
 [[package]]

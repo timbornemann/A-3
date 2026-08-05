@@ -1,8 +1,12 @@
 //! Application use cases and ports for A^3.
 
+mod deep_map_action_codec;
+mod deep_map_explorer;
 mod deep_map_planner;
+mod deep_map_read_tools;
 mod embedding_provider;
 mod exact_search;
+mod explorer_model_provider;
 mod graph_traversal;
 mod health_query;
 mod jobs;
@@ -22,13 +26,30 @@ mod retrieval_fusion;
 mod semantic_embedding_store;
 mod semantic_embeddings;
 
+pub use deep_map_action_codec::{
+    DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
+};
+pub use deep_map_explorer::{
+    DeepMapExplorerFailure, DeepMapExplorerFuture, DeepMapExplorerOutcome, DeepMapExplorerStatus,
+    ExploreDeepMap,
+};
 pub use deep_map_planner::PlanDeepMap;
+pub use deep_map_read_tools::{
+    DeepMapReadControl, DeepMapReadFailure, DeepMapReadFuture, DeepMapReadTimeout,
+    DeepMapReadTools, ExplorerObservation, ExplorerObservationError, ExplorerObservationStatus,
+};
 pub use embedding_provider::{
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
     EmbeddingProviderFuture, EmbeddingRequestTimeout, EmbeddingRequestTimeoutError,
     RawEmbeddingBatch, RawEmbeddingBatchError,
 };
 pub use exact_search::SearchExactIndex;
+pub use explorer_model_provider::{
+    ExplorerModelControl, ExplorerModelFailure, ExplorerModelFuture, ExplorerModelProvider,
+    ExplorerModelRequest, ExplorerModelRequestPhase, ExplorerModelTimeout,
+    ExplorerModelTimeoutError, ExplorerRepairReason, RawExplorerModelOutput,
+    RawExplorerModelOutputError,
+};
 pub use graph_traversal::TraverseKnowledgeGraph;
 pub use health_query::{GetHealth, HealthQuery};
 pub use jobs::{

@@ -317,12 +317,53 @@ Akzeptanz:
 
 Abhängigkeiten: R7, Providergrundlage aus Plan 04 darf als Stub vorgezogen werden
 
-- [ ] typisierte Inspect- und Search-Aktionen
-- [ ] strukturierte Modelausgabe
-- [ ] Schema Validation
-- [ ] maximal eine Repair-Anfrage
-- [ ] ModuleCard-Proposal mit feldgenauen Evidence IDs
-- [ ] Cancellation und Resume
+Status: Completed
+
+- [x] typisierte Inspect- und Search-Aktionen
+- [x] strukturierte Modelausgabe
+- [x] Schema Validation
+- [x] maximal eine Repair-Anfrage
+- [x] ModuleCard-Proposal mit feldgenauen Evidence IDs
+- [x] Cancellation und Resume
+
+Der Explorer-Action-Vertrag V1 ist eine geschlossene Domain-Union aus Inspect, Search und Propose.
+Inspect liest ausschließlich das aktuelle planbestimmte Modul-, Manifest- oder Symbolziel. Search
+trennt Exact-/Lexical-Text konstruktiv von symbolgebundenen Callers-, Callees-, Imports-, Exports-
+und Tests-Graphpresets; Query, Limit, Informationsgewinn und Begründung sind begrenzt. Schreib-,
+Shell-, Prozess-, Git- oder generische Execute-Aktionen existieren im Capability-Port nicht.
+
+Das eingebettete `deep-map-explorer-action-v1`-JSON-Schema verwendet
+`additionalProperties: false`; der unabhängige Runtime-Decoder akzeptiert genau ein Dokument bis
+64 KiB, lehnt unbekannte Felder und Text außerhalb des Schemas ab und validiert IDs, Versionen,
+Querytypen sowie alle ModuleCard-Feldgrenzen. `serde_json` war bereits exakt im Workspace gepinnt
+und wird als direkte Application-Abhängigkeit verwendet, weil die Rust-Standardbibliothek keinen
+JSON-Parser bereitstellt; der externe Dependency-Graph erhielt keine neue Version.
+
+`ModuleCardProposal` kann ausschließlich den Status Proposed tragen. Jedes nicht leere Feld besitzt
+eigene, kanonische Evidence IDs. Der Controller bestätigt einen Vorschlag erst, wenn Modul,
+Snapshot, Schemaversion, sämtliche vom Planschritt erwarteten Felder und jede Evidence ID mit dem
+unmittelbar zuvor normalisierten Read-Ergebnis übereinstimmen. Deterministische Evidence-Auflösung,
+Claimstatus, Persistenz und Publish bleiben R9 vorbehalten.
+
+Der neutrale `ExplorerModelProvider`-Stub erhält das statische JSON Schema, plan- und
+snapshotgebundene Metadaten, feste Timeouts und Cancellation, aber keine Ollama-Payload oder
+Netzwerkfähigkeit. Er ist bewusst nur die für R8 benötigte Teilgrundlage; der allgemeine
+ModelProvider, Streaming, `ModelProfile`, Capability Probe, Endpoint Policy und ein echter Adapter
+bleiben H4/H5. Providerrohoutput, Toolpreview und Tool-Evidenz sind auf 64 KiB, 16 KiB und 100 IDs
+begrenzt und in Debugausgaben redigiert.
+
+Über einen kompletten Explorer-Aufruf ist höchstens eine inhaltsfreie Repair-Anfrage erlaubt. Erst
+vollständig dekodierte und zustandsautorisierte Aktionen erreichen den Read-Port; ein ungültiges
+Original und eine ungültige Reparatur werden nie ausgeführt. Der run-, snapshot-, schema- und
+policygebundene `ExplorerCheckpoint` speichert nur ein lückenloses Präfix bestätigter Schritte.
+Cancellation gibt diesen Zustand zurück, und Resume startet exakt beim ersten unbestätigten Schritt.
+
+Contract-Tests belegen genau einen Read je Planschritt, Resume ohne Wiederholung, Cancellation vor
+Provider und Tool, genau einen erfolgreichen Repair sowie zwei ungültige Modellantworten mit null
+Werkzeugaufrufen. Abschlussgates: `cargo fmt --all -- --check`,
+`cargo test --workspace --all-features`, Workspace-Clippy mit allen Targets/Features und Warnings
+denied, Rustdoc mit Warnings denied, Frontend-CI, Markdown-Linkcheck,
+Dependency-/Lizenzbericht und Tauri-Release-Build ohne Bundle.
 
 Akzeptanz:
 
