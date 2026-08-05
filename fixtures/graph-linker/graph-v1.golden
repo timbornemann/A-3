@@ -1,0 +1,34 @@
+snapshot=4242424242424242424242424242424242424242424242424242424242424242 files=11 symbols=35 edges=64 unresolved=14 ranking=1
+symbol_digest=de7c1e048558953e69bbf5ed310c2ab1943f1c82e6a2642381aa34307d84a352
+edge_digest=ca7b518cec0ccfd16e23030fa246ef14a58e06347a05bf63942bf6e21c817588
+candidate_digest=24849d8cbb55914537a8b756a71235caef95c187371b01fa7f0bb63c01ea13a8
+rank_digest=48a821dcf974788a9d1a5b0c8c482b70226f0c2c8b726293b826336f3db1d332
+edge_kind Contains=24
+edge_kind Defines=11
+edge_kind Imports=6
+edge_kind Exports=15
+edge_kind Calls=5
+edge_kind Extends=1
+edge_kind Configures=1
+edge_kind Builds=1
+resolution AdapterLocalSymbol=49
+resolution AdapterFile=1
+resolution ExactModuleReference=9
+resolution UniqueFileLocalName=4
+resolution UniqueQualifiedName=1
+candidate_kind Imports=1
+candidate_kind Exports=1
+candidate_kind Calls=10
+candidate_kind Tests=2
+candidate_reason NoDeterministicMatch=9
+candidate_reason DynamicReference=5
+top label=python/pyproject.toml::fixture-python#2 score=9400 centrality=2000 entry=5000 export=2000 manifest=1500 test=0
+top label=src/lib.rs::lib#1 score=8300 centrality=8000 entry=5000 export=0 manifest=0 test=0
+top label=python/pyproject.toml::graph-linker-fixture#1 score=7400 centrality=2000 entry=5000 export=0 manifest=1500 test=0
+top label=Cargo.toml::fixture-app#2 score=7400 centrality=2000 entry=5000 export=0 manifest=1500 test=0
+top label=python/sample/service.py::main#5 score=7200 centrality=10000 entry=0 export=2000 manifest=1500 test=0
+top label=web/main.ts::main#1 score=6300 centrality=2000 entry=5000 export=0 manifest=0 test=0
+top label=python/sample/service.py::Service#2 score=6200 centrality=10000 entry=0 export=2000 manifest=0 test=0
+top label=src/main.rs::main#1 score=5900 centrality=2000 entry=5000 export=0 manifest=0 test=0
+top label=python/sample/__init__.py::sample#1 score=5900 centrality=2000 entry=5000 export=0 manifest=0 test=0
+top label=src/main.rs::main#2 score=5800 centrality=2000 entry=5000 export=0 manifest=0 test=0

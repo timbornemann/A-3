@@ -286,12 +286,52 @@ Performanceclaim.
 
 Abhängigkeiten: S6 bis S8
 
-- [ ] stabile SymbolIds
-- [ ] Contains, Defines, Imports, Exports, Calls und Tests
-- [ ] Manifest-, Config- und Buildbeziehungen
-- [ ] unresolved Edge Candidates
-- [ ] Einstiegspunkt- und Zentralitätsprojektion
-- [ ] RankingPolicy-Version
+Status: Completed
+
+- [x] stabile SymbolIds
+- [x] Contains, Defines, Imports, Exports, Calls und Tests
+- [x] Manifest-, Config- und Buildbeziehungen
+- [x] unresolved Edge Candidates
+- [x] Einstiegspunkt- und Zentralitätsprojektion
+- [x] RankingPolicy-Version
+
+Verifizierter Abschluss vom 2026-08-05: `SymbolId` V1 ist ein domänengetrennter BLAKE3-Digest über
+verlustfreie Pfadbytes, Content Hash, Sprache, Adapterrevision, Contract-Version und lokale Symbol-ID.
+Er bleibt damit bei identischer Parse-Evidenz und jedem Re-Rank stabil, wechselt aber bei geändertem
+Inhalt oder Adaptervertrag. Der Linker akzeptiert nur Parse-Ergebnisse, deren Dateirevision im
+effektiven Snapshotzustand und deren Adapterrevision im Snapshot exakt vorhanden ist. Jede kanonische
+Kante bindet ihren Snapshot sowie eine `EvidenceRef` aus Pfad, Content Hash und Quellbereich und
+behält Relationstyp, ursprünglichen Provider, gekappte Confidence und die sichtbare Auflösungsart.
+
+Direkte lokale Symbole und vorhandene Adapter-Dateiziele werden exakt aufgelöst. Eindeutige relative
+TypeScript-/JavaScript-Module, Python-Pakete, relative Python-Imports und Entrypoints sowie
+Rust-`crate`-, `self`-, `super`- und Modulpfade erhalten eine konservative sprachspezifische
+Auflösung. Einfache Calls dürfen nur ein eindeutiges Symbol derselben Datei treffen; globale
+Eindeutigkeit wird nur für `Extends` und `Implements` verwendet. Linkerauflösungen sind je nach
+Evidenzklasse auf 9.500, 9.000 oder 8.500 Confidence-Basispunkte begrenzt. Fehlende, mehrdeutige,
+externe oder laufzeitdynamische Ziele werden nicht als Graphkante ausgegeben, sondern bleiben als
+getrennter `UnresolvedEdgeCandidate` mit Grund und vollständiger Evidenz erhalten. Manifest-, Test-,
+Config- und Buildbeziehungen durchlaufen denselben Vertrag.
+
+RankingPolicy V1 benötigt ausschließlich den fertigen `LinkedGraph`; ein Re-Rank liest oder parst
+keine Quelldatei. Die ganzzahlige, reproduzierbare Projektion kombiniert Einstiegspunkt-, Export-,
+Test-, Manifest-/Build-, In-/Out-Degree- und modulübergreifende Zentralitätssignale und löst
+Scoregleichstände über `SymbolId` auf. Linken ist auf 250.000 Dateien/Parses, 1.000.000 Symbole,
+jeweils 2.000.000 Kanten und Kandidaten, zehn Sekunden und 64 Progressereignisse begrenzt; Rank ist
+auf 1.000.000 Symbole, 2.000.000 Kanten, fünf Sekunden und ebenfalls 64 Ereignisse begrenzt. Beide
+Pfade prüfen Cancellation spätestens nach 1.024 Arbeitseinheiten.
+
+Ein selbst erstelltes gemischtes Rust-/Cargo-, TypeScript- und Python-/pyproject-Fixture sichert den
+normalisierten Graph- und Rank-Golden-Digest, Struktur-, Import-, Export-, Call-, Test-, Config- und
+Buildbeziehungen, sprachspezifische Auflösung,
+dynamische und mehrdeutige Kandidaten, deterministische Wiederholung bei geänderter Eingabereihenfolge,
+stale Hashes, falsche Adapterrevisionen, Evidenzzugehörigkeit, leere Eingaben, Ressourcenlimits,
+Cancellation und Progressfehler. Die reproduzierbare Release-Messung auf der lokalen
+Windows-Entwicklungsmaschine verwendete das 100.000 strukturelle Zeilen beziehungsweise 1.750.000
+Bytes große Python-Fixture mit 50.001 Symbolen, 100.001 aufgelösten Kanten und 50.000 ungelösten
+Kandidaten. Link benötigte 299 ms und Rank 57 ms. Parsing war nicht Teil dieser beiden Messwerte;
+die Messung ist kein Wert für den vollständigen Fast Index und begründet keinen allgemeinen
+Performanceclaim.
 
 Akzeptanz:
 

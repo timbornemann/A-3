@@ -3,6 +3,7 @@
 mod classification;
 mod config;
 mod discovery;
+mod graph;
 mod hashing;
 mod language_input;
 mod parser_pool;
@@ -14,6 +15,11 @@ mod snapshot;
 mod typescript_javascript_adapter;
 
 pub use discovery::GitRepositoryDiscoverer;
+pub use graph::{
+    DeterministicGraphLinker, DeterministicGraphRanker, GraphComputationControl,
+    GraphComputationControlError, GraphLinkFailure, GraphLinkInput, GraphLinkPolicy,
+    GraphRankFailure, RankingPolicy,
+};
 pub use language_input::verify_language_parse_input;
 pub use parser_pool::{
     ParserPoolCreateError, ParserPoolSize, ParserPoolSizeError, TreeSitterParse,

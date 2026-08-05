@@ -168,6 +168,29 @@ Kantentypen in V1:
 
 Jede Kante trägt Provider, Confidence, Snapshot und EvidenceRef. Syntaktisch unsichere Calls bleiben als Kandidaten gekennzeichnet.
 
+Graph Linker V1 erzeugt für jedes Adaptersymbol eine domänengetrennte BLAKE3-`SymbolId` aus den
+verlustfreien Pfadbytes, dem Content Hash, Sprache, Adapterrevision, Contract-Version und lokaler
+Symbol-ID. Die Identität ist damit für dieselbe Parse-Evidenz stabil und unabhängig von Snapshot-
+und Rankingversion; geänderte Inhalte oder Adaptersemantik erzeugen absichtlich neue IDs. Vor dem
+Linken müssen Parse-Revision, effektiver Dateistand und im Snapshot erfasste Adapterrevision exakt
+übereinstimmen.
+
+Direkte lokale Symbol- und vorhandene Adapter-Dateiziele werden unverändert übernommen. Der
+konservative Resolver unterstützt eindeutige relative TypeScript-/JavaScript-Module, Python-Pakete,
+relative Imports und `module:symbol`-Entrypoints sowie Rust-`crate`-, `self`-, `super`- und
+Modulpfade. Ein einfacher Name darf nur auf ein eindeutiges Symbol derselben Datei zeigen; ein
+global eindeutiger Name wird ausschließlich für `Extends` und `Implements` verwendet. Linkerbasierte
+Auflösung kappt Confidence je nach Evidenzklasse bei 9.500, 9.000 oder 8.500 Basispunkten. Fehlende,
+mehrdeutige und laufzeitdynamische Ziele bleiben als eigener `UnresolvedEdgeCandidate` mit Grund,
+Provider, ursprünglicher Confidence, Snapshot und `EvidenceRef` erhalten. Dieser Typ kann nicht als
+aufgelöste `GraphEdge` verwendet werden.
+
+V1 begrenzt einen Linklauf auf 250.000 Dateien und Parse-Ergebnisse, 1.000.000 Symbole, jeweils
+2.000.000 aufgelöste Kanten und ungelöste Kandidaten, zehn Sekunden sowie 64 Fortschrittsereignisse.
+Cancellation und Timeout werden spätestens nach 1.024 Arbeitseinheiten erneut geprüft. Die
+kanonische Ausgabe validiert alle Endpunkte, Dateihashes, Snapshotbindungen und die Zugehörigkeit der
+Evidenz zum Quellknoten.
+
 ### Rank
 
 Deterministische Signale:
@@ -181,6 +204,15 @@ Deterministische Signale:
 - Modulzentralität
 
 Die Rankingversion wird gespeichert. Änderungen am Algorithmus erzwingen keine Neu-Parse, aber eine neue Rank-Projektion.
+
+RankingPolicy V1 arbeitet ausschließlich auf dem kanonischen `LinkedGraph` und verwendet keine
+Parse-Ergebnisse. Sie projiziert Datei- und Symbolendpunkte über die `Defines`-Wurzel auf Module und
+berechnet Modulzentralität mit plattformstabiler ganzzahliger Arithmetik. Der erklärbare Score addiert
+5.000 Punkte für Einstiegspunkte, 2.000 für öffentliche oder exportierte Symbole, jeweils 1.500 für
+Manifest-/Buildnähe und Testbezug, 200 je eingehender sowie 100 je ausgehender Kante bis maximal
+4.000 Degree-Punkte und bis zu 3.000 Punkte aus der Modulzentralität. Gleichstände werden über die
+stabile `SymbolId` aufgelöst. Ein Ranklauf akzeptiert höchstens 1.000.000 Symbole und 2.000.000
+aufgelöste Kanten, läuft höchstens fünf Sekunden und meldet höchstens 64 Fortschrittsereignisse.
 
 ### Publish
 

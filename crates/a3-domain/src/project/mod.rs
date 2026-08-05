@@ -1,5 +1,6 @@
 mod discovery;
 mod git;
+mod graph;
 mod id;
 mod index_run;
 mod language;
@@ -13,6 +14,12 @@ pub use discovery::{
     DiscoveryPolicyVersion, DiscoveryPolicyVersionError, DiscoveryResult, DiscoveryResultError,
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
+pub use graph::{
+    Centrality, CentralityError, EvidenceRef, GraphEdge, GraphEndpoint, GraphSymbol,
+    LinkResolution, LinkedGraph, LinkedGraphError, RankProjection, RankProjectionError, RankScore,
+    RankScoreError, SymbolId, SymbolRank, SymbolRankSignals, UnresolvedEdgeCandidate,
+    UnresolvedGraphTarget, UnresolvedReason,
+};
 pub use id::{
     IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId, WorktreeId,
 };

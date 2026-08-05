@@ -17,6 +17,12 @@ impl RankingPolicyVersion {
         Ok(Self(value))
     }
 
+    /// Returns the initial deterministic graph-ranking policy.
+    #[must_use]
+    pub const fn v1() -> Self {
+        Self(1)
+    }
+
     /// Returns the durable integer representation.
     #[must_use]
     pub const fn get(self) -> u32 {

@@ -1,0 +1,10 @@
+[project]
+name = "graph-linker-fixture"
+version = "0.1.0"
+dependencies = ["external-package>=1"]
+
+[project.scripts]
+fixture-python = "sample.service:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
