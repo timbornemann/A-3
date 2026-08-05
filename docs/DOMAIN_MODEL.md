@@ -216,6 +216,10 @@ Der regenerierbare Cache-Schlüssel ist exakt `(SemanticCardId, ModelProfileId, 
 `VectorHit` trägt Card-, Body- und Profilidentität sowie normalisierte Similarity, aber keine
 `EvidenceRef`; sein einziger `SourceChannel` ist `Semantic`. `VectorSearchResult` bindet Treffer an
 Snapshot, Profil, Capability und Resultlimit und kanonisiert Gleichstände über Card- und Body-ID.
+`VectorSearchCapability::Indexed` bedeutet, dass eine dimensionskompatible libSQL-DiskANN-
+Projektion alle Kandidaten des begrenzten Korridors erzeugt hat; `LinearFallback` kennzeichnet die
+deterministische direkte Cosine-Berechnung. Beide Pfade erzeugen denselben nicht beweisenden
+Treffertyp und markieren ausgelassene Kandidaten explizit als Trunkierung.
 
 ### Task
 

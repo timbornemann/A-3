@@ -84,7 +84,8 @@ pub use repository_watcher::{
 };
 pub use retrieval_fusion::FuseRetrievalCandidates;
 pub use semantic_embedding_store::{
-    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    SemanticCacheRebuildControl, SemanticCacheRebuildProgressError, SemanticEmbeddingStore,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
 };
 pub use semantic_embeddings::{
     EmbeddingClock, EmbeddingClockFailure, EmbeddingExecutionMode, EmbeddingProgressError,

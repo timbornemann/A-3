@@ -169,15 +169,15 @@ Akzeptanz:
 
 Abhängigkeiten: R4
 
-Status: In Progress
+Status: Completed
 
 - [x] EmbeddingProvider-Port
 - [x] ModelProfile und Dimensionvalidierung
 - [x] Semantic-Card-Normalisierung
-- [ ] BodyHash-basierter Cache
+- [x] BodyHash-basierter Cache
 - [x] lokaler Batchjob mit Cancellation
-- [ ] libSQL-Vector-Capability
-- [ ] Fallback ohne Vektorindex
+- [x] libSQL-Vector-Capability
+- [x] Fallback ohne Vektorindex
 
 Verifizierter erster Slice vom 2026-08-05: Der Domainkern normalisiert Semantic Cards mit
 versionierter Whitespace-Policy, begrenzt Rohinput auf 64 KiB und den kanonischen Kartentext auf
@@ -197,8 +197,29 @@ Der Application-Slice trennt `EmbeddingProvider` und `SemanticEmbeddingStore` al
 `GenerateSemanticEmbeddings::disabled()` besitzt konstruktiv weder Provider noch Cache;
 `enabled(...)` verlangt alle Capabilities gemeinsam. Der lokale Scheduler-Job prüft Cancellation
 vor und nach jeder Boundary, erzwingt einen Provider-Timeoutvertrag, meldet monotone Card-Progress
-und batched nur exakte `(SemanticCardId, ModelProfileId, BodyHash)`-Misses. Persistenter Cache,
-libSQL-Capability und Suchfallback bleiben bis zum zweiten R5-Slice bewusst offen.
+und batched nur exakte `(SemanticCardId, ModelProfileId, BodyHash)`-Misses.
+
+Verifizierter Abschluss vom 2026-08-05: Knowledge-Schema V7 persistiert kanonische Cards,
+Snapshotzuordnungen, vollständige vektorformende Profilmetadaten und normalisierte
+Little-Endian-Float32-Vektoren. Lookup und Store sind transaktional; der Rebuild arbeitet in
+referenziell sicheren, resumierbaren 4.096-Zeilen-Transaktionen mit determiniertem Row-Progress.
+Alle Operationen sind cancellable und zeitbegrenzt und validieren Profil, Bodyrevision, Dimension
+und L2-Norm erneut beim Lesen. Upgrade
+aus jeder unterstützten Knowledge-Version sowie der fehlgeschlagene V6→V7-Upgradepfad sind
+getestet.
+
+Die native libSQL-Capability wird für die konkrete Profildimension in einer isolierten
+In-Memory-DiskANN-Projektion geprüft. Native und lineare Suche verwenden denselben stabilen,
+snapshot- und profilgebundenen Korridor von höchstens 4.096 Karten; Similarity, Stable Tie-Breaking
+und sichtbare Trunkierung bleiben im Rust-Adapter deterministisch. Die gemeinsame Storage-
+Contract-Suite verifiziert persistentes Reopen, Bodyrevisionen über zwei Snapshots,
+Profil-/Dimensionsisolation, Cancellation und einen Rebuild, der Snapshot- und deterministische
+Retrievaldaten erhält.
+
+Abschlussgates: `cargo fmt --all -- --check`, Workspace-Clippy mit allen Targets/Features und
+Warnings denied, `cargo test --workspace --all-features -- --test-threads=1`, Rustdoc mit Warnings
+denied, Frontend-CI, Markdown-Linkcheck, Dependency-/Lizenzreport und Tauri-Release-Build ohne
+Bundle sind grün.
 
 Akzeptanz:
 

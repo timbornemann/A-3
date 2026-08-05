@@ -565,7 +565,7 @@ mod tests {
         fn rebuild_semantic_cache<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
-            _control: &'a dyn EmbeddingOperationControl,
+            _control: &'a dyn crate::SemanticCacheRebuildControl,
         ) -> SemanticEmbeddingStoreFuture<'a, ()> {
             Box::pin(async { Ok(()) })
         }

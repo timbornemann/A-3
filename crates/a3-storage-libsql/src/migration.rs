@@ -549,6 +549,55 @@ const KNOWLEDGE_LEXICAL_SEARCH_MIGRATION: Migration = Migration {
       );",
 };
 
+const KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION: Migration = Migration {
+    version: 7,
+    name: "semantic_embedding_cache",
+    sql: "CREATE TABLE semantic_cards (\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      body_hash BLOB NOT NULL CHECK (length(body_hash) = 32),\n\
+      normalization_version INTEGER NOT NULL CHECK (normalization_version = 1),\n\
+      normalized_body TEXT NOT NULL\n\
+        CHECK (length(CAST(normalized_body AS BLOB)) BETWEEN 1 AND 16384),\n\
+      PRIMARY KEY (card_id, body_hash)\n\
+      ) STRICT;\n\
+      CREATE TABLE semantic_card_snapshots (\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      body_hash BLOB NOT NULL CHECK (length(body_hash) = 32),\n\
+      PRIMARY KEY (snapshot_id, card_id),\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE,\n\
+      FOREIGN KEY (card_id, body_hash) REFERENCES semantic_cards(card_id, body_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE embedding_profiles (\n\
+      profile_id BLOB PRIMARY KEY NOT NULL CHECK (length(profile_id) = 32),\n\
+      provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),\n\
+      model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),\n\
+      dimensions INTEGER NOT NULL CHECK (dimensions BETWEEN 1 AND 8192),\n\
+      data_type TEXT NOT NULL CHECK (data_type = 'float32'),\n\
+      quantization TEXT NOT NULL CHECK (quantization = 'none'),\n\
+      normalization TEXT NOT NULL CHECK (normalization = 'l2_unit')\n\
+      ) STRICT;\n\
+      CREATE TABLE embeddings (\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      body_hash BLOB NOT NULL CHECK (length(body_hash) = 32),\n\
+      profile_id BLOB NOT NULL CHECK (length(profile_id) = 32),\n\
+      vector_bytes BLOB NOT NULL\n\
+        CHECK (length(vector_bytes) BETWEEN 4 AND 32768 AND length(vector_bytes) % 4 = 0),\n\
+      created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),\n\
+      PRIMARY KEY (card_id, profile_id, body_hash),\n\
+      FOREIGN KEY (card_id, body_hash) REFERENCES semantic_cards(card_id, body_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE,\n\
+      FOREIGN KEY (profile_id) REFERENCES embedding_profiles(profile_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX semantic_card_snapshots_revision_idx\n\
+        ON semantic_card_snapshots (card_id, body_hash, snapshot_id);\n\
+      CREATE INDEX embeddings_profile_card_idx\n\
+        ON embeddings (profile_id, card_id, body_hash);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -556,6 +605,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_ATOMIC_INDEX_PUBLICATION_MIGRATION,
     KNOWLEDGE_EXACT_SEARCH_MIGRATION,
     KNOWLEDGE_LEXICAL_SEARCH_MIGRATION,
+    KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -588,7 +638,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(6);
+    pub const CURRENT: Self = Self::new(7);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1318,6 +1368,54 @@ mod tests {
                 )
                 .await?,
                 1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v7_upgrade_preserves_v6_schema() -> Result<(), Box<dyn std::error::Error>> {
+        block_on(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [38; 32];
+            let worktree_id = [39; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..6],
+                6,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE semantic_cards (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 7, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 6);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('semantic_cards')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'embeddings'",
+                )
+                .await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

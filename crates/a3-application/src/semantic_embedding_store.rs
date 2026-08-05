@@ -1,7 +1,7 @@
-use crate::{EmbeddingOperationControl, KnowledgeStoreFailure};
+use crate::{EmbeddingOperationControl, JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ProjectIdentity, SemanticEmbedding,
-    SnapshotId, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, Progress, ProjectIdentity,
+    SemanticEmbedding, SnapshotId, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
 };
 use std::error::Error;
 use std::fmt;
@@ -11,6 +11,34 @@ use std::pin::Pin;
 /// Owned future returned by the object-safe semantic-cache storage port.
 pub type SemanticEmbeddingStoreFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, SemanticEmbeddingStoreFailure>> + Send + 'a>>;
+
+/// Cancellation and monotone progress required by the long-running semantic-cache rebuild.
+pub trait SemanticCacheRebuildControl: EmbeddingOperationControl {
+    /// Reports determinate rows removed from the regenerable cache.
+    fn report_progress(&self, progress: Progress) -> Result<(), SemanticCacheRebuildProgressError>;
+}
+
+impl SemanticCacheRebuildControl for JobContext {
+    fn report_progress(&self, progress: Progress) -> Result<(), SemanticCacheRebuildProgressError> {
+        JobContext::report_progress(self, progress)
+            .map_err(|_| SemanticCacheRebuildProgressError::Unavailable)
+    }
+}
+
+/// Owning job can no longer accept semantic-cache rebuild progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticCacheRebuildProgressError {
+    /// Scheduler event or lifecycle boundary is unavailable.
+    Unavailable,
+}
+
+impl fmt::Display for SemanticCacheRebuildProgressError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("semantic-cache rebuild progress is unavailable")
+    }
+}
+
+impl Error for SemanticCacheRebuildProgressError {}
 
 /// Optional semantic-cache capability kept separate from deterministic index storage.
 ///
@@ -57,7 +85,7 @@ pub trait SemanticEmbeddingStore: fmt::Debug + Send + Sync {
     fn rebuild_semantic_cache<'a>(
         &'a self,
         project: &'a ProjectIdentity,
-        control: &'a dyn EmbeddingOperationControl,
+        control: &'a dyn SemanticCacheRebuildControl,
     ) -> SemanticEmbeddingStoreFuture<'a, ()>;
 }
 
@@ -74,6 +102,8 @@ pub enum SemanticEmbeddingStoreFailure {
     TimedOut,
     /// The owning job cancelled before the operation completed.
     Cancelled,
+    /// The owning job could not accept mandatory rebuild progress.
+    ProgressUnavailable,
 }
 
 impl fmt::Display for SemanticEmbeddingStoreFailure {
@@ -88,6 +118,9 @@ impl fmt::Display for SemanticEmbeddingStoreFailure {
             }
             Self::TimedOut => formatter.write_str("semantic cache operation timed out"),
             Self::Cancelled => formatter.write_str("semantic cache operation was cancelled"),
+            Self::ProgressUnavailable => {
+                formatter.write_str("semantic cache rebuild progress is unavailable")
+            }
         }
     }
 }
@@ -96,9 +129,11 @@ impl Error for SemanticEmbeddingStoreFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Storage(source) => Some(source),
-            Self::ProfileConflict | Self::InvalidStoredData | Self::TimedOut | Self::Cancelled => {
-                None
-            }
+            Self::ProfileConflict
+            | Self::InvalidStoredData
+            | Self::TimedOut
+            | Self::Cancelled
+            | Self::ProgressUnavailable => None,
         }
     }
 }

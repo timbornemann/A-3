@@ -70,3 +70,12 @@ vor dem persistierenden Batchcommit beobachtet. Progress zählt bereits vorhande
 persistierte Cards gegen ein unveränderliches Total. Falsche Ergebnisanzahl, Dimension, NaN,
 Unendlichkeit oder Nullvektor beendet den Job vor Storage als `Failed`; kooperative Cancellation
 endet als `Cancelled`. Kein Worker wird detached.
+
+Der libSQL-Cache führt Lookup und Suche in höchstens zwei Sekunden aus; persistierende Batches und
+der ausschließlich regenerierbare Semantic-Rebuild besitzen eine Fünf-Minuten-Obergrenze. Jede
+Zeile beziehungsweise jeder Delete-Batch beobachtet Cancellation. Store-Batches werden atomar
+zurückgerollt. Der Rebuild löscht ausschließlich regenerierbare Tabellen in referenziell sicherer
+Reihenfolge und einzeln committeten 4.096-Zeilen-Batches; dadurch bleibt auch ein abgebrochener
+Lauf gültig und kann idempotent fortgesetzt werden. `SemanticCacheRebuildControl` erhält
+deterministischen Row-Progress. Weder Snapshot- noch deterministische Retrievalprojektionen werden
+verändert.

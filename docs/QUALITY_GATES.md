@@ -40,7 +40,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Löschung, Umbenennung und Syntaxfehler getestet
 - Graphzyklen terminieren; kürzeste Pfade, Hopgrenze, Resultlimit und Beziehungsevidenz sind getestet
 - Fusion-Golden fixiert Policyversion, Stable-ID-Deduplizierung, alle Signale und Exact-vor-Semantic
-- Semantic-Card-/Embedding-Contracts prüfen BodyHash-Kanonik, Profil-/Dimensionsisolation, Redaction, Cancellation und Disabled ohne Adapterzugriff
+- Semantic-Card-/Embedding-Contracts prüfen BodyHash-Kanonik, Profil-/Dimensionsisolation,
+  Redaction, Cancellation, Disabled ohne Adapterzugriff, persistentes Reopen, native
+  dimensionsgebundene Vector-Capability, begrenzten linearen Fallback und semantikexklusiven Rebuild
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 

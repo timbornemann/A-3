@@ -203,6 +203,8 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - path_fts
 - card_fts
 - semantic_cards
+- semantic_card_snapshots
+- embedding_profiles
 - embeddings
 - retrieval_policies
 
@@ -255,6 +257,10 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - EvidenceRef besitzt eine typabhängige, validierte Nutzlast.
 - Claim-Evidence ist many-to-many.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
+- Eine Semantic Card besitzt pro Snapshot genau eine Body-Revision; derselbe Body darf über
+  Snapshots hinweg denselben regenerierbaren Cacheeintrag wiederverwenden.
+- Persistierte Profilmetadaten müssen vollständig zur abgeleiteten ModelProfileId passen; ein
+  Provider-, Modell- oder Dimensionswechsel erzeugt daher einen getrennten Cachekorridor.
 - RunEvent ist über RunId und Sequenz eindeutig und append-only.
 - Context Pack speichert keine Secrets und kann nach Retention-Policy komprimiert werden.
 
@@ -303,11 +309,35 @@ Pflichtmetadaten:
 - Body Hash
 - Erstellzeit
 
-Der Vektorindex ist optional. Bei fehlender Unterstützung bleibt die Funktion über exakte Suche, FTS und Graph vollständig nutzbar.
+Knowledge-Schema V7 speichert den kanonischen Cardkörper, seine Snapshot-Zuordnung, alle
+vektorformenden Profilfelder und den normalisierten Float32-Vektor in portabler
+Little-Endian-Darstellung. Der exakte Cachelookup verwendet ausschließlich
+`(SemanticCardId, ModelProfileId, BodyHash)` und validiert Dimension, Endlichkeit und L2-Norm auch
+beim Lesen erneut.
+
+Die libSQL-Capability wird für die konkrete Profildimension mit einer isolierten In-Memory-
+`FLOAT32(dim)`-Tabelle und einem `libsql_vector_idx(..., 'metric=cosine')` geprüft. Bei verfügbarer
+Erweiterung werden höchstens 4.096 snapshot- und profilgebundene Cachezeilen in eine kurzlebige
+DiskANN-Kandidatenprojektion übernommen. Die Projektion liefert ausschließlich Kandidaten; die
+endgültige Cosine-Normalisierung, Reihenfolge und Trunkierung erfolgen deterministisch im Rust-
+Adapter. Schlägt Capability oder Projektion fehl, vergleicht derselbe begrenzte Korridor linear.
+Ein abgeschnittener Korridor oder ein Resultlimit wird im `VectorSearchResult` sichtbar markiert.
+
+Der Vektorindex ist optional. Bei fehlender Unterstützung bleiben Exact Search, FTS und Graph
+unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten linearen Fallback
+verfügbar.
 
 ## Migrationen
 
-Das implementierte Knowledge-Schema V6 ergänzt V5 um `lexical_search_projections`, `symbol_fts`,
+Das implementierte Knowledge-Schema V7 ergänzt V6 um `semantic_cards`,
+`semantic_card_snapshots`, `embedding_profiles` und `embeddings`. Alle Tabellen sind strikt,
+referenzieren existierende Snapshots und trennen Cachezeilen durch Card-, Body- und Profil-ID.
+V7 besitzt einen getesteten Vorwärtsupgrade- und Rollbackpfad; der Rebuild löscht ausschließlich
+diese regenerierbaren Tabellen in referenziell sicherer Reihenfolge, einzeln committeten begrenzten
+Batches und mit determiniertem Row-Progress. Ein Abbruch kann damit ohne ungültigen Zwischenzustand
+idempotent fortgesetzt werden.
+
+Knowledge-Schema V6 ergänzt V5 um `lexical_search_projections`, `symbol_fts`,
 `path_fts` und das für R5 vorbereitete, noch leere `card_fts`. Exact- und Lexical-Projektion werden
 gemeinsam mit File Revisions, Graph und Ranking in derselben Publish-Transaktion sichtbar. Ein aus
 einem älteren Schema migrierter, bereits veröffentlichter Run besitzt absichtlich keinen neueren

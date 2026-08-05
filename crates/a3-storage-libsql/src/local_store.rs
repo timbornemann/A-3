@@ -6,19 +6,23 @@ use crate::{
 use crate::{
     exact_search_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository,
+    semantic_embedding_repository,
 };
 use a3_application::{
-    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
-    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectOpenPreparation,
-    ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
+    EmbeddingOperationControl, IndexPersistenceControl, KnowledgeIndexFailure,
+    KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
+    KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
+    KnowledgeStoreFuture, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
+    RecentProjectLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
 };
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
-    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
-    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
-    LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, Snapshot,
-    TraversalQuery, WorktreeId,
+    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
+    ExactSearchPageSize, ExactSearchQuery, GraphTraversalResult, IndexPublication, IndexRunId,
+    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex,
+    RepositoryId, SemanticEmbedding, Snapshot, SnapshotId, TraversalQuery, VectorSearchCapability,
+    VectorSearchLimit, VectorSearchResult, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -444,6 +448,103 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     }
 }
 
+impl SemanticEmbeddingStore for LibsqlKnowledgeStore {
+    fn find_cached<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        profile: &'a EmbeddingModelProfile,
+        keys: &'a [EmbeddingCacheKey],
+        control: &'a dyn EmbeddingOperationControl,
+    ) -> SemanticEmbeddingStoreFuture<'a, Vec<EmbeddingCacheKey>> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_semantic(project).await?;
+            semantic_embedding_repository::find_cached(
+                knowledge.connection(),
+                profile,
+                keys,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn store_batch<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        profile: &'a EmbeddingModelProfile,
+        embeddings: &'a [SemanticEmbedding],
+        control: &'a dyn EmbeddingOperationControl,
+    ) -> SemanticEmbeddingStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_semantic(project).await?;
+            semantic_embedding_repository::store_batch(
+                knowledge.connection(),
+                project.worktree().id(),
+                profile,
+                embeddings,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn vector_search_capability<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        profile: &'a EmbeddingModelProfile,
+        control: &'a dyn EmbeddingOperationControl,
+    ) -> SemanticEmbeddingStoreFuture<'a, VectorSearchCapability> {
+        Box::pin(async move {
+            if !profile.has_compatible_identity() {
+                return Err(SemanticEmbeddingStoreFailure::ProfileConflict);
+            }
+            let _knowledge = self.open_project_knowledge_for_semantic(project).await?;
+            self.semantic_vector_capability(profile, control).await
+        })
+    }
+
+    fn search_similar<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        snapshot_id: SnapshotId,
+        profile: &'a EmbeddingModelProfile,
+        query: &'a EmbeddingVector,
+        limit: VectorSearchLimit,
+        control: &'a dyn EmbeddingOperationControl,
+    ) -> SemanticEmbeddingStoreFuture<'a, VectorSearchResult> {
+        Box::pin(async move {
+            let capability = self.semantic_vector_capability(profile, control).await?;
+            let knowledge = self.open_project_knowledge_for_semantic(project).await?;
+            semantic_embedding_repository::search_similar(
+                knowledge.connection(),
+                snapshot_id,
+                profile,
+                query,
+                limit,
+                capability,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn rebuild_semantic_cache<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn SemanticCacheRebuildControl,
+    ) -> SemanticEmbeddingStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_semantic(project).await?;
+            semantic_embedding_repository::rebuild_semantic_cache(knowledge.connection(), control)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl LibsqlKnowledgeStore {
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
@@ -490,6 +591,39 @@ impl LibsqlKnowledgeStore {
                 .map_err(KnowledgeSearchFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_semantic(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, SemanticEmbeddingStoreFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(SemanticEmbeddingStoreFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(SemanticEmbeddingStoreFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    async fn semantic_vector_capability(
+        &self,
+        profile: &EmbeddingModelProfile,
+        control: &dyn EmbeddingOperationControl,
+    ) -> Result<VectorSearchCapability, SemanticEmbeddingStoreFailure> {
+        semantic_embedding_repository::probe_vector_capability(profile.dimension(), control)
+            .await
+            .map_err(|error| error.classify())
     }
 
     fn cached_search_database(

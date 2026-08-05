@@ -15,6 +15,7 @@ mod local_store;
 mod migration;
 mod project_catalog;
 mod project_layout;
+mod semantic_embedding_repository;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};
 pub use knowledge::{KnowledgeDatabase, KnowledgeOpenError, KnowledgeVerification};

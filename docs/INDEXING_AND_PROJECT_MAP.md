@@ -474,9 +474,9 @@ Evalbaseline aus Gate M4/M5.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.
 
-### R5 Semantic- und Providervertrag
+### R5 Semantic-, Provider- und Cachevertrag
 
-Die implementierte R5-Vorstufe normalisiert bounded Semantic Cards deterministisch und verwendet
+R5 normalisiert bounded Semantic Cards deterministisch und verwendet
 ihren `BodyHash` zusammen mit `SemanticCardId` und der aus allen vektorformenden Profilfeldern
 abgeleiteten `ModelProfileId` als einzig zulässigen Cacheschlüssel. Modellnamen steuern keine
 Capability; Dimension, Float32-Datentyp, Quantisierung und L2-Normalisierung sind explizit
@@ -486,9 +486,20 @@ der Storage-Port ihn sehen kann.
 Embeddings sind konstruktiv optional: Der deaktivierte Use Case besitzt keine Provider- oder
 Cacheobjekte. Der aktivierte lokale Batchjob arbeitet snapshotgebunden, cancellable, mit
 monotonem Progress und einem expliziten Requesttimeout. `VectorHit` enthält Similarity und
-Cacheprovenienz, aber keine Evidence. Das persistente libSQL-Schema, die native Vector-Capability
-und der lineare Fallback werden im folgenden R5-Slice ergänzt; bis dahin wird keine Verfügbarkeit
-dieser Adapterfunktion behauptet.
+Cacheprovenienz, aber keine Evidence.
+
+Knowledge-Schema V7 persistiert kanonische Cards, Snapshotzuordnungen, vollständige
+vektorformende Profilmetadaten und normalisierte Float32-Vektoren. Cachehits sind nur bei exakter
+Card-/Body-/Profilidentität zulässig und werden beim Lesen erneut validiert. Provider-, Modell- und
+Dimensionswechsel können deshalb keine Vektoren vermischen.
+
+Der libSQL-Adapter prüft die native DiskANN-Capability dimensionsspezifisch in einer isolierten,
+kurzlebigen In-Memory-Projektion. Native und lineare Suche lesen denselben stabil sortierten,
+snapshot- und profilgebundenen Korridor von höchstens 4.096 Karten. Die native Erweiterung ist nur
+Kandidatengenerator; Similarity, Stable Tie-Breaking, Resultlimit und sichtbare Trunkierung bleiben
+im Adapter deterministisch. Ohne Vector-Erweiterung arbeitet der lineare Fallback, während Exact,
+FTS und Graph unverändert bleiben. Der gemeinsame Storage-Contract prüft Cache-Reopen,
+Bodyrevisionen über Snapshots, Profilisolation, Cancellation und einen semantikexklusiven Rebuild.
 
 Jeder Treffer erklärt seine Herkunft:
 
