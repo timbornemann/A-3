@@ -91,8 +91,8 @@ Ein Nutzer kann:
 
 ### M6 Durable Harness
 
-- [ ] Goal Contract
-- [ ] Task Ledger
+- [x] Goal Contract
+- [x] Task Ledger
 - [ ] Run Journal
 - [ ] Context Compiler
 - [ ] Ollama-kompatibler Provider

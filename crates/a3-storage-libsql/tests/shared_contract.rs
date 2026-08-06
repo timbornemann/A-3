@@ -88,6 +88,11 @@ fn libsql_satisfies_shared_goal_contract() -> Result<(), ContractError> {
 }
 
 #[test]
+fn libsql_satisfies_shared_task_ledger_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::TaskLedgers)
+}
+
+#[test]
 fn libsql_satisfies_shared_search_availability_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::SearchAvailability)
 }

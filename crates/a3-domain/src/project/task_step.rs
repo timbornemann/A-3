@@ -477,6 +477,51 @@ pub struct TaskStepAttempt {
 }
 
 impl TaskStepAttempt {
+    /// Reconstructs one persisted attempt after validating timing, outcome, evidence, and verification.
+    pub fn reconstruct(
+        number: TaskStepAttemptNumber,
+        run_id: AgentRunId,
+        timing: TaskStepAttemptTiming,
+        details: TaskStepAttemptDetails,
+    ) -> Result<Self, TaskStepTransitionError> {
+        validate_attempt_evidence(&details.evidence_ids)?;
+        if timing
+            .finished_at
+            .is_some_and(|finished_at| finished_at < timing.started_at)
+        {
+            return Err(TaskStepTransitionError::TimestampRegressed);
+        }
+        let is_active = matches!(details.outcome, TaskStepAttemptOutcome::Active);
+        if is_active != timing.finished_at.is_none() {
+            return Err(TaskStepTransitionError::InvalidRestoredState);
+        }
+        match (&details.outcome, &details.verification) {
+            (TaskStepAttemptOutcome::Completed, Some(verification))
+                if verification.passed()
+                    && verification.run_id() == run_id
+                    && Some(verification.verified_at()) == timing.finished_at => {}
+            (TaskStepAttemptOutcome::VerificationFailed, Some(verification))
+                if !verification.passed()
+                    && verification.run_id() == run_id
+                    && Some(verification.verified_at()) == timing.finished_at => {}
+            (TaskStepAttemptOutcome::Active, None)
+            | (TaskStepAttemptOutcome::Blocked { .. }, None)
+            | (TaskStepAttemptOutcome::Failed { .. }, None)
+            | (TaskStepAttemptOutcome::Cancelled { .. }, None) => {}
+            _ => return Err(TaskStepTransitionError::InvalidRestoredState),
+        }
+        Ok(Self {
+            number,
+            run_id,
+            started_at: timing.started_at,
+            finished_at: timing.finished_at,
+            outcome: details.outcome,
+            result_summary: details.result_summary,
+            evidence_ids: details.evidence_ids,
+            verification: details.verification,
+        })
+    }
+
     /// Returns the one-based attempt number.
     #[must_use]
     pub const fn number(&self) -> TaskStepAttemptNumber {
@@ -523,6 +568,54 @@ impl TaskStepAttempt {
     #[must_use]
     pub const fn verification(&self) -> Option<&StepVerification> {
         self.verification.as_ref()
+    }
+}
+
+/// Persisted timing projection used to reconstruct one attempt without exposing its fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskStepAttemptTiming {
+    started_at: TaskLedgerTimestamp,
+    finished_at: Option<TaskLedgerTimestamp>,
+}
+
+impl TaskStepAttemptTiming {
+    /// Creates a timing projection; full ordering is validated during attempt reconstruction.
+    #[must_use]
+    pub const fn new(
+        started_at: TaskLedgerTimestamp,
+        finished_at: Option<TaskLedgerTimestamp>,
+    ) -> Self {
+        Self {
+            started_at,
+            finished_at,
+        }
+    }
+}
+
+/// Persisted non-timing projection used to reconstruct one immutable attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskStepAttemptDetails {
+    outcome: TaskStepAttemptOutcome,
+    result_summary: Option<TaskStepResultSummary>,
+    evidence_ids: Vec<TaskEvidenceId>,
+    verification: Option<StepVerification>,
+}
+
+impl TaskStepAttemptDetails {
+    /// Creates an untrusted persistence projection validated by `TaskStepAttempt::reconstruct`.
+    #[must_use]
+    pub fn new(
+        outcome: TaskStepAttemptOutcome,
+        result_summary: Option<TaskStepResultSummary>,
+        evidence_ids: Vec<TaskEvidenceId>,
+        verification: Option<StepVerification>,
+    ) -> Self {
+        Self {
+            outcome,
+            result_summary,
+            evidence_ids,
+            verification,
+        }
     }
 }
 
@@ -577,6 +670,63 @@ impl TaskStep {
             introduced_in_revision,
             retired_in_revision: None,
         }
+    }
+
+    /// Reconstructs one materialized current or historical step from normalized persistence rows.
+    pub fn reconstruct(
+        definition: TaskStepDefinition,
+        introduced_in_revision: TaskLedgerRevision,
+        state: TaskStepMaterializedState,
+        attempts: Vec<TaskStepAttempt>,
+    ) -> Result<Self, TaskStepTransitionError> {
+        for (index, attempt) in attempts.iter().enumerate() {
+            let expected_number = u32::try_from(index)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or(TaskStepTransitionError::AttemptOverflow)?;
+            if attempt.number().get() != expected_number {
+                return Err(TaskStepTransitionError::InvalidRestoredState);
+            }
+            if index + 1 < attempts.len()
+                && matches!(attempt.outcome(), TaskStepAttemptOutcome::Active)
+            {
+                return Err(TaskStepTransitionError::InvalidRestoredState);
+            }
+            if index > 0 {
+                let previous = &attempts[index - 1];
+                let Some(previous_finished) = previous.finished_at() else {
+                    return Err(TaskStepTransitionError::InvalidRestoredState);
+                };
+                if matches!(
+                    previous.outcome(),
+                    TaskStepAttemptOutcome::Failed { .. }
+                        | TaskStepAttemptOutcome::Cancelled { .. }
+                ) {
+                    return Err(TaskStepTransitionError::InvalidRestoredState);
+                }
+                if attempt.started_at() < previous_finished {
+                    return Err(TaskStepTransitionError::TimestampRegressed);
+                }
+            }
+            if attempt.verification().is_some_and(|verification| {
+                verification.spec_id() != definition.verification_spec().id()
+            }) {
+                return Err(TaskStepTransitionError::VerificationSpecMismatch);
+            }
+        }
+        validate_materialized_state(&definition, &state, &attempts)?;
+        if state.retired_in_revision.is_some() && state.status.owns_active_attempt() {
+            return Err(TaskStepTransitionError::InvalidRestoredState);
+        }
+        Ok(Self {
+            definition,
+            status: state.status,
+            attempts,
+            blocking_reason: state.blocking_reason,
+            stale_cause: state.stale_cause,
+            introduced_in_revision,
+            retired_in_revision: state.retired_in_revision,
+        })
     }
 
     /// Returns the immutable step definition.
@@ -917,6 +1067,33 @@ impl TaskStep {
     }
 }
 
+/// Current persistence projection paired with immutable attempts during step reconstruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskStepMaterializedState {
+    status: TaskStepStatus,
+    blocking_reason: Option<TaskStepBlockingReason>,
+    stale_cause: Option<TaskStepStaleCause>,
+    retired_in_revision: Option<TaskLedgerRevision>,
+}
+
+impl TaskStepMaterializedState {
+    /// Creates an untrusted state projection validated by `TaskStep::reconstruct`.
+    #[must_use]
+    pub const fn new(
+        status: TaskStepStatus,
+        blocking_reason: Option<TaskStepBlockingReason>,
+        stale_cause: Option<TaskStepStaleCause>,
+        retired_in_revision: Option<TaskLedgerRevision>,
+    ) -> Self {
+        Self {
+            status,
+            blocking_reason,
+            stale_cause,
+            retired_in_revision,
+        }
+    }
+}
+
 impl fmt::Debug for TaskStep {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -944,6 +1121,84 @@ fn validate_attempt_evidence(
     Ok(())
 }
 
+fn validate_materialized_state(
+    definition: &TaskStepDefinition,
+    state: &TaskStepMaterializedState,
+    attempts: &[TaskStepAttempt],
+) -> Result<(), TaskStepTransitionError> {
+    let latest = attempts.last();
+    let blocking_is_valid = match state.status {
+        TaskStepStatus::Blocked | TaskStepStatus::AwaitingApproval => {
+            state.blocking_reason.is_some()
+        }
+        _ => state.blocking_reason.is_none(),
+    };
+    let stale_is_valid = if state.status == TaskStepStatus::Stale {
+        match state.stale_cause.as_ref() {
+            Some(TaskStepStaleCause::VerificationEvidence(evidence_ids)) => {
+                !evidence_ids.is_empty()
+                    && evidence_ids.len() <= MAX_ATTEMPT_EVIDENCE
+                    && evidence_ids.iter().copied().collect::<BTreeSet<_>>().len()
+                        == evidence_ids.len()
+                    && latest
+                        .and_then(TaskStepAttempt::verification)
+                        .is_some_and(|verification| {
+                            evidence_ids.iter().all(|evidence_id| {
+                                verification.evidence_ids().contains(evidence_id)
+                            })
+                        })
+            }
+            Some(TaskStepStaleCause::Dependency(step_id)) => *step_id != definition.id(),
+            None => false,
+        }
+    } else {
+        state.stale_cause.is_none()
+    };
+    if !blocking_is_valid || !stale_is_valid {
+        return Err(TaskStepTransitionError::InvalidRestoredState);
+    }
+    let status_is_valid = match state.status {
+        TaskStepStatus::InProgress | TaskStepStatus::AwaitingApproval => {
+            latest.is_some_and(|attempt| {
+                matches!(attempt.outcome(), TaskStepAttemptOutcome::Active)
+                    && attempt.result_summary().is_none()
+                    && attempt.evidence_ids().is_empty()
+                    && attempt.verification().is_none()
+            })
+        }
+        TaskStepStatus::Verifying => latest.is_some_and(|attempt| {
+            matches!(attempt.outcome(), TaskStepAttemptOutcome::Active)
+                && attempt.verification().is_none()
+        }),
+        TaskStepStatus::Blocked => latest.is_some_and(|attempt| {
+            matches!(
+                (attempt.outcome(), state.blocking_reason.as_ref()),
+                (
+                    TaskStepAttemptOutcome::Blocked { reason: attempt_reason },
+                    Some(current_reason)
+                ) if attempt_reason == current_reason
+            )
+        }),
+        TaskStepStatus::Completed | TaskStepStatus::Stale => latest.is_some_and(|attempt| {
+            matches!(attempt.outcome(), TaskStepAttemptOutcome::Completed)
+                && attempt.verification().is_some_and(|verification| {
+                    verification.passed()
+                        && verification.spec_id() == definition.verification_spec().id()
+                })
+        }),
+        TaskStepStatus::Failed => latest.is_some_and(|attempt| {
+            matches!(attempt.outcome(), TaskStepAttemptOutcome::Failed { .. })
+        }),
+        TaskStepStatus::Pending | TaskStepStatus::Ready | TaskStepStatus::Cancelled => latest
+            .is_none_or(|attempt| !matches!(attempt.outcome(), TaskStepAttemptOutcome::Active)),
+    };
+    if status_is_valid {
+        Ok(())
+    } else {
+        Err(TaskStepTransitionError::InvalidRestoredState)
+    }
+}
+
 /// Rejected state transition for one materialized task step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStepTransitionError {
@@ -967,6 +1222,8 @@ pub enum TaskStepTransitionError {
     DuplicateEvidence,
     /// Replan attempted to retire a completed, stale, or executing step.
     CannotRetireHistoricalStep,
+    /// Persisted materialized state contradicted its immutable attempt history.
+    InvalidRestoredState,
 }
 
 impl fmt::Display for TaskStepTransitionError {
@@ -994,6 +1251,9 @@ impl fmt::Display for TaskStepTransitionError {
             }
             Self::CannotRetireHistoricalStep => {
                 formatter.write_str("replan may retire only future task steps")
+            }
+            Self::InvalidRestoredState => {
+                formatter.write_str("persisted task-step state contradicts its attempts")
             }
         }
     }

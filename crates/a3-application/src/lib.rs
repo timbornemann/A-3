@@ -29,6 +29,7 @@ mod repository_watcher;
 mod retrieval_fusion;
 mod semantic_embedding_store;
 mod semantic_embeddings;
+mod task_ledger;
 mod task_lens;
 
 pub use deep_map_action_codec::{
@@ -141,6 +142,10 @@ pub use semantic_embeddings::{
     EmbeddingClock, EmbeddingClockFailure, EmbeddingExecutionMode, EmbeddingProgressError,
     GenerateSemanticEmbeddings, GenerateSemanticEmbeddingsError, GenerateSemanticEmbeddingsOutcome,
     SemanticEmbeddingBatchJob, SemanticEmbeddingJobControl,
+};
+pub use task_ledger::{
+    CreateTaskLedger, SaveTaskLedger, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
+    TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,
 };
 pub use task_lens::{
     CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimResult,

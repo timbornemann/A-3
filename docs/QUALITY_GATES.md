@@ -34,6 +34,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Goal-Contract-Contracts prüfen atomare initiale Erstellung, Linked-Worktree-Isolation,
   lückenlose Compare-and-Append-Revisionen, Konflikte konkurrierender Writer, unveränderte
   Auditstände und exakte Wiederherstellung nach Reopen.
+- Task-Ledger-Contracts prüfen atomare Erstellung und Compare-and-Swap-Ersetzung,
+  Linked-Worktree-Isolation, unveränderliche Definitionen sowie Versuchs- und Replan-Historie,
+  fehlgeschlagene und erfolgreiche Verifikation, transitive Evidence-Invalidierung und exakte
+  Wiederherstellung des vollständigen Aggregats nach Reopen.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen

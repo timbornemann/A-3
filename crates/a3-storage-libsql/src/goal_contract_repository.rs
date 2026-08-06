@@ -249,7 +249,7 @@ async fn write_text_items<'a>(
     Ok(())
 }
 
-async fn load_revision_from_transaction(
+pub(crate) async fn load_revision_from_transaction(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     task_id: TaskId,

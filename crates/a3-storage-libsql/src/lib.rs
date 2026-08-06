@@ -21,6 +21,7 @@ mod module_remap_queue_repository;
 mod project_catalog;
 mod project_layout;
 mod semantic_embedding_repository;
+mod task_ledger_repository;
 mod task_lens_claim_repository;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};

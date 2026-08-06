@@ -83,6 +83,13 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Erstellung und jede Compare-and-Append-Revision laufen in einer `IMMEDIATE`-Transaktion. Der
   Adapter rekonstruiert beim Lesen ausschließlich Domain-Typen, validiert Sequenzen und Grenzen
   erneut und gibt weder Rows noch SQL an Application oder UI weiter.
+- Knowledge-Schema V12 ergänzt pro Task genau ein materialisiertes, revisionsgebundenes Task Ledger.
+  Schrittdefinitionen, Abhängigkeiten, erwartete Evidenz, Versuche, Verifikationen, Stale-Ursachen
+  und Replan-Historie liegen in normalisierten relationalen Tabellen. Jede Ersetzung läuft in einer
+  `IMMEDIATE`-Transaktion mit monotoner Store-Version; ein veralteter Writer oder der Versuch,
+  bestehende Definitionen, terminale Versuche oder Replans umzuschreiben, wird vor Mutation
+  abgelehnt. Leser rekonstruieren und validieren den vollständigen Domain-Aggregatzustand innerhalb
+  einer konsistenten Read-Transaktion.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -251,8 +258,18 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - goal_contract_constraints
 - goal_contract_non_goals
 - goal_contract_user_decisions
+- task_ledgers
 - task_steps
-- step_dependencies
+- task_step_dependencies
+- task_step_expected_evidence
+- task_step_attempts
+- task_step_attempt_evidence
+- task_step_verifications
+- task_step_verification_evidence
+- task_step_stale_evidence
+- task_ledger_replans
+- task_ledger_replan_retirements
+- task_ledger_replan_additions
 - agent_runs
 - run_events
 - context_packs
@@ -367,6 +384,15 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V12 ergänzt V11 um die relationale Task-Ledger-Projektion.
+Strikte Checks und Fremdschlüssel begrenzen IDs, Texte, Sequenzen, Statuswerte und
+Verifikationsformen. Create und Replace schreiben immer die vollständige Projektion atomar; Replace
+verwendet Compare-and-Swap auf einer separaten Store-Version und bewahrt die append-only
+Versuchs- und Replan-Historie. Der gemeinsame Adaptervertrag prüft Worktree-Isolation,
+Konfliktablehnung, fehlgeschlagene und erfolgreiche Verifikation, transitive Evidence-Invalidierung,
+Replan sowie die exakte Rekonstruktion nach Reopen. Der getestete V11→V12-Fehlerfall rollt
+vollständig auf V11 zurück.
 
 Das implementierte Knowledge-Schema V11 ergänzt V10 um `tasks`, `goal_contract_revisions`,
 `acceptance_criteria`, `goal_contract_constraints`, `goal_contract_non_goals` und

@@ -129,6 +129,14 @@ Regeln:
 - Ein fehlgeschlagener Versuch wird nicht überschrieben.
 - Replan verändert zukünftige Schritte und erhält die Historie.
 
+Der implementierte Ledger-Aggregat erzwingt diese Regeln bereits ohne Infrastrukturabhängigkeit:
+Statuswechsel erfolgen nur über typisierte Methoden, `Completed` benötigt eine erfolgreiche,
+lauf- und spezifikationsgleiche Verifikation, und invalidierte Verifikationsevidenz setzt direkte
+sowie transitive abhängige Abschlüsse auf `Stale`. Das libSQL-Knowledge-Schema V12 persistiert den
+vollständigen materialisierten Zustand samt unveränderlichen Versuchen und Replan-Historie. Eine
+separate monotone Store-Version verhindert verlorene Updates; jeder Reopen rekonstruiert und
+validiert das Domain-Aggregat erneut.
+
 ## Context Compiler
 
 Der Compiler arbeitet deterministisch in fünf Phasen:

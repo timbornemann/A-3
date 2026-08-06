@@ -1106,6 +1106,201 @@ const KNOWLEDGE_GOAL_CONTRACT_MIGRATION: Migration = Migration {
         ON goal_contract_revisions(task_id, created_at_unix_millis, revision);",
 };
 
+const KNOWLEDGE_TASK_LEDGER_MIGRATION: Migration = Migration {
+    version: 12,
+    name: "materialized_task_ledger",
+    sql: "CREATE TABLE task_ledgers (\n\
+      task_id BLOB PRIMARY KEY NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      plan_revision INTEGER NOT NULL CHECK (plan_revision BETWEEN 1 AND 4294967295),\n\
+      store_version INTEGER NOT NULL CHECK (store_version >= 1),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      updated_at_unix_millis INTEGER NOT NULL\n\
+        CHECK (updated_at_unix_millis >= created_at_unix_millis),\n\
+      FOREIGN KEY (task_id) REFERENCES tasks(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE task_steps (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      parent_step_id BLOB CHECK (parent_step_id IS NULL OR length(parent_step_id) = 32),\n\
+      intended_outcome TEXT NOT NULL\n\
+        CHECK (length(CAST(intended_outcome AS BLOB)) BETWEEN 1 AND 8192),\n\
+      rationale TEXT NOT NULL CHECK (length(CAST(rationale AS BLOB)) BETWEEN 1 AND 8192),\n\
+      verification_spec_id BLOB NOT NULL CHECK (length(verification_spec_id) = 32),\n\
+      verification_method TEXT NOT NULL\n\
+        CHECK (verification_method IN ('command', 'test', 'diff_invariant',\n\
+          'diagnostic', 'user_confirm')),\n\
+      verification_requirement TEXT NOT NULL\n\
+        CHECK (length(CAST(verification_requirement AS BLOB)) BETWEEN 1 AND 8192),\n\
+      introduced_plan_revision INTEGER NOT NULL\n\
+        CHECK (introduced_plan_revision BETWEEN 1 AND 4294967295),\n\
+      retired_plan_revision INTEGER\n\
+        CHECK (retired_plan_revision IS NULL OR\n\
+          retired_plan_revision BETWEEN 2 AND 4294967295),\n\
+      status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'in_progress', 'blocked',\n\
+        'awaiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'stale')),\n\
+      blocking_reason TEXT\n\
+        CHECK (blocking_reason IS NULL OR length(CAST(blocking_reason AS BLOB)) BETWEEN 1 AND 4096),\n\
+      stale_kind TEXT CHECK (stale_kind IS NULL OR stale_kind IN ('verification_evidence',\n\
+        'dependency')),\n\
+      stale_dependency_step_id BLOB\n\
+        CHECK (stale_dependency_step_id IS NULL OR length(stale_dependency_step_id) = 32),\n\
+      CHECK (parent_step_id IS NULL OR parent_step_id <> step_id),\n\
+      CHECK (retired_plan_revision IS NULL OR\n\
+        retired_plan_revision > introduced_plan_revision),\n\
+      CHECK ((status IN ('blocked', 'awaiting_approval')) = (blocking_reason IS NOT NULL)),\n\
+      CHECK ((status = 'stale') = (stale_kind IS NOT NULL)),\n\
+      CHECK ((stale_kind = 'dependency') = (stale_dependency_step_id IS NOT NULL)),\n\
+      PRIMARY KEY (task_id, step_id),\n\
+      UNIQUE (task_id, step_id, verification_spec_id),\n\
+      UNIQUE (task_id, verification_spec_id),\n\
+      FOREIGN KEY (task_id) REFERENCES task_ledgers(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, parent_step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_dependencies (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      prerequisite_step_id BLOB NOT NULL CHECK (length(prerequisite_step_id) = 32),\n\
+      CHECK (step_id <> prerequisite_step_id),\n\
+      PRIMARY KEY (task_id, step_id, item_sequence),\n\
+      UNIQUE (task_id, step_id, prerequisite_step_id),\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, prerequisite_step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_expected_evidence (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 32),\n\
+      description TEXT NOT NULL\n\
+        CHECK (length(CAST(description AS BLOB)) BETWEEN 1 AND 4096),\n\
+      PRIMARY KEY (task_id, step_id, item_sequence),\n\
+      UNIQUE (task_id, step_id, description),\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_attempts (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      attempt_number INTEGER NOT NULL CHECK (attempt_number BETWEEN 1 AND 4294967295),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      started_at_unix_millis INTEGER NOT NULL CHECK (started_at_unix_millis >= 0),\n\
+      finished_at_unix_millis INTEGER\n\
+        CHECK (finished_at_unix_millis IS NULL OR\n\
+          finished_at_unix_millis >= started_at_unix_millis),\n\
+      outcome TEXT NOT NULL CHECK (outcome IN ('active', 'blocked', 'verification_failed',\n\
+        'completed', 'failed', 'cancelled')),\n\
+      outcome_reason TEXT\n\
+        CHECK (outcome_reason IS NULL OR length(CAST(outcome_reason AS BLOB)) BETWEEN 1 AND 4096),\n\
+      result_summary TEXT\n\
+        CHECK (result_summary IS NULL OR length(CAST(result_summary AS BLOB)) BETWEEN 1 AND 8192),\n\
+      CHECK ((outcome = 'active') = (finished_at_unix_millis IS NULL)),\n\
+      CHECK ((outcome IN ('blocked', 'failed', 'cancelled')) = (outcome_reason IS NOT NULL)),\n\
+      PRIMARY KEY (task_id, step_id, attempt_number),\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_attempt_evidence (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      attempt_number INTEGER NOT NULL CHECK (attempt_number BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      PRIMARY KEY (task_id, step_id, attempt_number, item_sequence),\n\
+      UNIQUE (task_id, step_id, attempt_number, evidence_id),\n\
+      FOREIGN KEY (task_id, step_id, attempt_number)\n\
+        REFERENCES task_step_attempts(task_id, step_id, attempt_number)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_verifications (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      attempt_number INTEGER NOT NULL CHECK (attempt_number BETWEEN 1 AND 4294967295),\n\
+      verification_id BLOB NOT NULL CHECK (length(verification_id) = 32),\n\
+      verification_spec_id BLOB NOT NULL CHECK (length(verification_spec_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed')),\n\
+      failure_summary TEXT\n\
+        CHECK (failure_summary IS NULL OR length(CAST(failure_summary AS BLOB)) BETWEEN 1 AND 8192),\n\
+      verified_at_unix_millis INTEGER NOT NULL CHECK (verified_at_unix_millis >= 0),\n\
+      CHECK ((outcome = 'failed') = (failure_summary IS NOT NULL)),\n\
+      PRIMARY KEY (task_id, step_id, attempt_number),\n\
+      UNIQUE (task_id, verification_id),\n\
+      FOREIGN KEY (task_id, step_id, attempt_number)\n\
+        REFERENCES task_step_attempts(task_id, step_id, attempt_number)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, step_id, verification_spec_id)\n\
+        REFERENCES task_steps(task_id, step_id, verification_spec_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_verification_evidence (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      attempt_number INTEGER NOT NULL CHECK (attempt_number BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      PRIMARY KEY (task_id, step_id, attempt_number, item_sequence),\n\
+      UNIQUE (task_id, step_id, attempt_number, evidence_id),\n\
+      FOREIGN KEY (task_id, step_id, attempt_number)\n\
+        REFERENCES task_step_verifications(task_id, step_id, attempt_number)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_step_stale_evidence (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      PRIMARY KEY (task_id, step_id, item_sequence),\n\
+      UNIQUE (task_id, step_id, evidence_id),\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_ledger_replans (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      plan_revision INTEGER NOT NULL CHECK (plan_revision BETWEEN 2 AND 4294967295),\n\
+      previous_plan_revision INTEGER NOT NULL\n\
+        CHECK (previous_plan_revision BETWEEN 1 AND 4294967294),\n\
+      reason TEXT NOT NULL CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      CHECK (previous_plan_revision = plan_revision - 1),\n\
+      PRIMARY KEY (task_id, plan_revision),\n\
+      FOREIGN KEY (task_id) REFERENCES task_ledgers(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_ledger_replan_retirements (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      plan_revision INTEGER NOT NULL CHECK (plan_revision BETWEEN 2 AND 4294967295),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      PRIMARY KEY (task_id, plan_revision, step_id),\n\
+      FOREIGN KEY (task_id, plan_revision)\n\
+        REFERENCES task_ledger_replans(task_id, plan_revision)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE task_ledger_replan_additions (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      plan_revision INTEGER NOT NULL CHECK (plan_revision BETWEEN 2 AND 4294967295),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      PRIMARY KEY (task_id, plan_revision, step_id),\n\
+      FOREIGN KEY (task_id, plan_revision)\n\
+        REFERENCES task_ledger_replans(task_id, plan_revision)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX task_ledgers_updated_idx ON task_ledgers(updated_at_unix_millis, task_id);\n\
+      CREATE INDEX task_steps_status_idx ON task_steps(task_id, status, step_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1118,6 +1313,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION,
     KNOWLEDGE_CARD_INVALIDATION_MIGRATION,
     KNOWLEDGE_GOAL_CONTRACT_MIGRATION,
+    KNOWLEDGE_TASK_LEDGER_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1150,7 +1346,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(11);
+    pub const CURRENT: Self = Self::new(12);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1552,11 +1748,16 @@ mod tests {
                      'evidence_invalidations', 'module_remap_queue', 'tasks',\n\
                      'goal_contract_revisions', 'acceptance_criteria',\n\
                      'goal_contract_constraints', 'goal_contract_non_goals',\n\
-                     'goal_contract_user_decisions'\n\
+                     'goal_contract_user_decisions', 'task_ledgers', 'task_steps',\n\
+                     'task_step_dependencies', 'task_step_expected_evidence',\n\
+                     'task_step_attempts', 'task_step_attempt_evidence',\n\
+                     'task_step_verifications', 'task_step_verification_evidence',\n\
+                     'task_step_stale_evidence', 'task_ledger_replans',\n\
+                     'task_ledger_replan_retirements', 'task_ledger_replan_additions'\n\
                      )",
                 )
                 .await?,
-                30
+                42
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -2122,6 +2323,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'goal_contract_revisions'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v12_upgrade_preserves_v11_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [48; 32];
+            let worktree_id = [49; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..11],
+                11,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE task_ledgers (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 12, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 11);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('task_ledgers')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'task_steps'",
                 )
                 .await?,
                 0

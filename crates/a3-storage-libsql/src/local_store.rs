@@ -7,7 +7,7 @@ use crate::{
     exact_search_repository, goal_contract_repository, graph_traversal_repository,
     index_publication, index_repository, index_repository::IndexRepositoryError,
     lexical_search_repository, module_card_repository, module_remap_queue_repository,
-    semantic_embedding_repository, task_lens_claim_repository,
+    semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
 };
 use a3_application::{
     EmbeddingOperationControl, GoalContractStore, GoalContractStoreFailure,
@@ -18,7 +18,8 @@ use a3_application::{
     ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit, RemapQueueControl,
     RemapQueueLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLensClaimLimit,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
     TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
     TaskLensIndexStore, TaskLensIndexStoreFuture, VerifiedModuleCardPublisher,
     VerifiedModuleCardPublisherFuture,
@@ -29,8 +30,9 @@ use a3_domain::{
     GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
     IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
     LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId,
-    SemanticEmbedding, Snapshot, SnapshotId, TaskId, TraversalQuery, VectorSearchCapability,
-    VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch, WorktreeId,
+    SemanticEmbedding, Snapshot, SnapshotId, TaskId, TaskLedger, TraversalQuery,
+    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch,
+    WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -315,6 +317,53 @@ impl GoalContractStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl TaskLedgerStore for LibsqlKnowledgeStore {
+    fn create_task_ledger<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        ledger: &'a TaskLedger,
+    ) -> TaskLedgerStoreFuture<'a, TaskLedgerStoreVersion> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_task_ledger(project).await?;
+            task_ledger_repository::create(database.connection(), project.worktree().id(), ledger)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn replace_task_ledger<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_version: TaskLedgerStoreVersion,
+        ledger: &'a TaskLedger,
+    ) -> TaskLedgerStoreFuture<'a, TaskLedgerStoreVersion> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_task_ledger(project).await?;
+            task_ledger_repository::replace(
+                database.connection(),
+                project.worktree().id(),
+                expected_version,
+                ledger,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_task_ledger<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> TaskLedgerStoreFuture<'a, Option<a3_application::StoredTaskLedger>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_task_ledger(project).await?;
+            task_ledger_repository::load(database.connection(), project.worktree().id(), task_id)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 }
@@ -794,6 +843,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_task_ledger(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, TaskLedgerStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_task_ledger_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_task_ledger_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1179,6 +1251,17 @@ fn classify_goal_contract_storage_failure(
         KnowledgeStoreFailure::UnsupportedSchema => GoalContractStoreFailure::UnsupportedSchema,
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             GoalContractStoreFailure::InvalidStoredData
+        }
+    }
+}
+
+fn classify_task_ledger_storage_failure(error: KnowledgeStoreFailure) -> TaskLedgerStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => TaskLedgerStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => TaskLedgerStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => TaskLedgerStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            TaskLedgerStoreFailure::InvalidStoredData
         }
     }
 }

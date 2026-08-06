@@ -31,18 +31,27 @@ Auditstände. Rust- und TypeScript-V1-DTOs besitzen stabile JSON-Formen und stri
 
 Abhängigkeiten: H1
 
-- [ ] TaskStep und StepDependency
-- [ ] VerificationSpec
-- [ ] Zustandsübergänge
-- [ ] genau ein InProgress-Schritt je Run
-- [ ] Replan mit Historie
-- [ ] Stale nach Evidenceinvalidierung
+- [x] TaskStep und StepDependency
+- [x] VerificationSpec
+- [x] Zustandsübergänge
+- [x] genau ein InProgress-Schritt je Run
+- [x] Replan mit Historie
+- [x] Stale nach Evidenceinvalidierung
 
 Akzeptanz:
 
 - Completed ohne erfolgreiche Verification ist unmöglich;
 - zyklische StepDependencies werden abgelehnt;
 - Neustart stellt exakt den letzten Ledgerzustand her.
+
+Verifiziert am 2026-08-06: Die infra-freie Domain modelliert typisierte Schrittdefinitionen,
+Abhängigkeiten, bounded Evidence, unveränderliche Versuche, strikte Statusübergänge und
+evidence-gebundene Verifikationen. Nur eine passende erfolgreiche Verifikation kann `Completed`
+erzeugen; Zyklen und ein zweiter aktiver Versuch werden abgelehnt. Replans behalten ersetzte
+Schritte und ihre Historie, während Evidenceinvalidierung direkte und transitive Abschlüsse auf
+`Stale` setzt. Application-Port und libSQL-Knowledge-Schema V12 speichern das vollständige Ledger
+atomar mit Compare-and-Swap-Version. Der gemeinsame Storage-Contract belegt Konfliktablehnung,
+unveränderliche Historie, Linked-Worktree-Isolation und exakte Rekonstruktion nach Reopen.
 
 ## H3 Run Journal
 

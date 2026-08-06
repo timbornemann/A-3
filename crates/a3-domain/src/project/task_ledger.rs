@@ -156,6 +156,47 @@ pub struct TaskLedgerReplan {
 }
 
 impl TaskLedgerReplan {
+    /// Reconstructs one persisted replan after validating its contiguous revision and ID sets.
+    pub fn reconstruct(
+        revision: TaskLedgerRevision,
+        previous_revision: TaskLedgerRevision,
+        reason: TaskReplanReason,
+        mut retired_step_ids: Vec<TaskStepId>,
+        mut added_step_ids: Vec<TaskStepId>,
+        created_at: TaskLedgerTimestamp,
+    ) -> Result<Self, TaskLedgerError> {
+        if previous_revision
+            .next()
+            .map_err(|_| TaskLedgerError::InvalidReplanHistory)?
+            != revision
+            || (retired_step_ids.is_empty() && added_step_ids.is_empty())
+        {
+            return Err(TaskLedgerError::InvalidReplanHistory);
+        }
+        let retired_count = retired_step_ids.len();
+        retired_step_ids.sort_unstable();
+        retired_step_ids.dedup();
+        let added_count = added_step_ids.len();
+        added_step_ids.sort_unstable();
+        added_step_ids.dedup();
+        if retired_step_ids.len() != retired_count
+            || added_step_ids.len() != added_count
+            || retired_step_ids
+                .iter()
+                .any(|step_id| added_step_ids.binary_search(step_id).is_ok())
+        {
+            return Err(TaskLedgerError::InvalidReplanHistory);
+        }
+        Ok(Self {
+            revision,
+            previous_revision,
+            reason,
+            retired_step_ids,
+            added_step_ids,
+            created_at,
+        })
+    }
+
     /// Returns the plan revision produced by this replan.
     #[must_use]
     pub const fn revision(&self) -> TaskLedgerRevision {
@@ -279,6 +320,140 @@ impl TaskLedger {
             updated_at: created_at,
         };
         ledger.refresh_readiness();
+        Ok(ledger)
+    }
+
+    /// Reconstructs the relational materialized state while revalidating graph and audit history.
+    pub fn reconstruct(
+        goal_contract: GoalContractReference,
+        revision: TaskLedgerRevision,
+        steps: Vec<TaskStep>,
+        replans: Vec<TaskLedgerReplan>,
+        created_at: TaskLedgerTimestamp,
+        updated_at: TaskLedgerTimestamp,
+    ) -> Result<Self, TaskLedgerError> {
+        if updated_at < created_at
+            || steps.is_empty()
+            || steps.len() > MAX_RETAINED_STEPS
+            || replans.len()
+                != usize::try_from(revision.get().saturating_sub(1))
+                    .map_err(|_| TaskLedgerError::InvalidReplanHistory)?
+        {
+            return Err(TaskLedgerError::InvalidMaterializedState);
+        }
+        let mut step_map = BTreeMap::new();
+        let mut specification_ids = BTreeSet::new();
+        for step in steps {
+            let step_id = step.definition().id();
+            if !specification_ids.insert(step.definition().verification_spec().id()) {
+                return Err(TaskLedgerError::DuplicateVerificationSpec);
+            }
+            if step_map.insert(step_id, step).is_some() {
+                return Err(TaskLedgerError::DuplicateStep(step_id));
+            }
+        }
+
+        let mut expected_previous = TaskLedgerRevision::INITIAL;
+        let mut previous_time = created_at;
+        for replan in &replans {
+            if replan.previous_revision() != expected_previous
+                || replan.revision().get() > revision.get()
+                || replan.created_at() < previous_time
+                || replan.created_at() > updated_at
+            {
+                return Err(TaskLedgerError::InvalidReplanHistory);
+            }
+            expected_previous = replan.revision();
+            previous_time = replan.created_at();
+        }
+        if expected_previous != revision && revision != TaskLedgerRevision::INITIAL {
+            return Err(TaskLedgerError::InvalidReplanHistory);
+        }
+
+        let replan_by_revision = replans
+            .iter()
+            .map(|replan| (replan.revision(), replan))
+            .collect::<BTreeMap<_, _>>();
+        for (step_id, step) in &step_map {
+            let introduced = step.introduced_in_revision();
+            if introduced.get() > revision.get()
+                || (introduced != TaskLedgerRevision::INITIAL
+                    && !replan_by_revision
+                        .get(&introduced)
+                        .is_some_and(|replan| replan.added_step_ids().contains(step_id)))
+            {
+                return Err(TaskLedgerError::InvalidReplanHistory);
+            }
+            if let Some(retired) = step.retired_in_revision()
+                && (retired.get() <= introduced.get()
+                    || retired.get() > revision.get()
+                    || !replan_by_revision
+                        .get(&retired)
+                        .is_some_and(|replan| replan.retired_step_ids().contains(step_id)))
+            {
+                return Err(TaskLedgerError::InvalidReplanHistory);
+            }
+            let introduced_at = if introduced == TaskLedgerRevision::INITIAL {
+                created_at
+            } else {
+                replan_by_revision
+                    .get(&introduced)
+                    .map(|replan| replan.created_at())
+                    .ok_or(TaskLedgerError::InvalidReplanHistory)?
+            };
+            if step.attempts().iter().any(|attempt| {
+                attempt.started_at() < introduced_at
+                    || attempt.started_at() > updated_at
+                    || attempt.finished_at().is_some_and(|time| time > updated_at)
+            }) {
+                return Err(TaskLedgerError::InvalidMaterializedState);
+            }
+            if let Some(TaskStepStaleCause::Dependency(prerequisite)) = step.stale_cause()
+                && (!step
+                    .definition()
+                    .dependencies()
+                    .iter()
+                    .any(|dependency| dependency.prerequisite() == *prerequisite)
+                    || step_map
+                        .get(prerequisite)
+                        .is_none_or(|dependency| dependency.status() != TaskStepStatus::Stale))
+            {
+                return Err(TaskLedgerError::InvalidMaterializedState);
+            }
+        }
+        for replan in &replans {
+            if replan.added_step_ids().iter().any(|step_id| {
+                step_map
+                    .get(step_id)
+                    .is_none_or(|step| step.introduced_in_revision() != replan.revision())
+            }) || replan.retired_step_ids().iter().any(|step_id| {
+                step_map
+                    .get(step_id)
+                    .is_none_or(|step| step.retired_in_revision() != Some(replan.revision()))
+            }) {
+                return Err(TaskLedgerError::InvalidReplanHistory);
+            }
+        }
+
+        let ledger = Self {
+            goal_contract,
+            revision,
+            steps: step_map,
+            replans,
+            created_at,
+            updated_at,
+        };
+        validate_active_graph(&ledger.steps)?;
+        ledger.validate_materialized_readiness()?;
+        if ledger
+            .steps
+            .values()
+            .filter(|step| step.status().owns_active_attempt())
+            .count()
+            > 1
+        {
+            return Err(TaskLedgerError::InvalidMaterializedState);
+        }
         Ok(ledger)
     }
 
@@ -723,6 +898,33 @@ impl TaskLedger {
             }
         }
     }
+
+    fn validate_materialized_readiness(&self) -> Result<(), TaskLedgerError> {
+        let active_count = self
+            .steps
+            .values()
+            .filter(|step| step.is_active_plan_step())
+            .count();
+        if active_count == 0 || active_count > MAX_ACTIVE_STEPS {
+            return Err(TaskLedgerError::InvalidActiveStepCount(active_count));
+        }
+        for (step_id, step) in &self.steps {
+            if !step.is_active_plan_step() {
+                continue;
+            }
+            let dependencies_completed = self.dependencies_completed(*step_id)?;
+            match step.status() {
+                TaskStepStatus::Pending if dependencies_completed => {
+                    return Err(TaskLedgerError::InvalidMaterializedState);
+                }
+                TaskStepStatus::Ready if !dependencies_completed => {
+                    return Err(TaskLedgerError::InvalidMaterializedState);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for TaskLedger {
@@ -871,6 +1073,8 @@ pub enum TaskLedgerError {
     DuplicateEvidence,
     /// Persisted or internally derived state contradicted aggregate invariants.
     InvalidMaterializedState,
+    /// Persisted replan revisions or their added/retired identity sets were inconsistent.
+    InvalidReplanHistory,
     /// One task-step transition was rejected.
     StepTransition(TaskStepTransitionError),
 }
@@ -930,6 +1134,9 @@ impl fmt::Display for TaskLedgerError {
             Self::InvalidMaterializedState => {
                 formatter.write_str("Task Ledger materialized state is invalid")
             }
+            Self::InvalidReplanHistory => {
+                formatter.write_str("Task Ledger replan history is invalid")
+            }
             Self::StepTransition(error) => {
                 write!(formatter, "Task Ledger transition failed: {error}")
             }
@@ -946,9 +1153,12 @@ mod tests {
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
         ExpectedTaskEvidence, GoalContract, GoalContractDraft, GoalContractTimestamp,
         GoalObjective, StepDependency, StepVerification, StepVerificationId,
-        StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId, TaskStepDefinition,
-        TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus, VerificationFailureSummary,
-        VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
+        StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId, TaskStepAttempt,
+        TaskStepAttemptDetails, TaskStepAttemptNumber, TaskStepAttemptOutcome,
+        TaskStepAttemptTiming, TaskStepDefinition, TaskStepFailureReason, TaskStepId,
+        TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale, TaskStepStaleCause,
+        TaskStepStatus, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
+        VerificationSpec, VerificationSpecId,
     };
     use std::error::Error;
 
@@ -1063,6 +1273,97 @@ mod tests {
             ledger.step(second_id).map(|step| step.status()),
             Some(TaskStepStatus::Stale)
         );
+
+        let restored = TaskLedger::reconstruct(
+            ledger.goal_contract(),
+            ledger.revision(),
+            ledger.steps().cloned().collect(),
+            ledger.replans().to_vec(),
+            ledger.created_at(),
+            ledger.updated_at(),
+        )?;
+        assert_eq!(restored, ledger);
+        Ok(())
+    }
+
+    #[test]
+    fn restore_rejects_completed_state_without_a_successful_attempt() -> Result<(), Box<dyn Error>>
+    {
+        let result = crate::TaskStep::reconstruct(
+            step(1, Vec::new())?,
+            super::TaskLedgerRevision::INITIAL,
+            TaskStepMaterializedState::new(TaskStepStatus::Completed, None, None, None),
+            Vec::new(),
+        );
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn restore_rejects_stale_state_without_concrete_evidence() -> Result<(), Box<dyn Error>> {
+        let step_id = step_id(1);
+        let mut ledger =
+            TaskLedger::new(goal_reference()?, vec![step(1, Vec::new())?], timestamp(1)?)?;
+        complete(
+            &mut ledger,
+            step_id,
+            1,
+            AgentRunId::from_bytes([9; 32]),
+            2,
+            51,
+        )?;
+        let completed = ledger.step(step_id).ok_or("completed step missing")?;
+
+        let result = crate::TaskStep::reconstruct(
+            completed.definition().clone(),
+            completed.introduced_in_revision(),
+            TaskStepMaterializedState::new(
+                TaskStepStatus::Stale,
+                None,
+                Some(TaskStepStaleCause::VerificationEvidence(Vec::new())),
+                None,
+            ),
+            completed.attempts().to_vec(),
+        );
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn restore_rejects_retry_after_a_terminal_execution_failure() -> Result<(), Box<dyn Error>> {
+        let run = AgentRunId::from_bytes([9; 32]);
+        let failed = TaskStepAttempt::reconstruct(
+            TaskStepAttemptNumber::FIRST,
+            run,
+            TaskStepAttemptTiming::new(timestamp(2)?, Some(timestamp(3)?)),
+            TaskStepAttemptDetails::new(
+                TaskStepAttemptOutcome::Failed {
+                    reason: TaskStepFailureReason::try_from_string(
+                        "execution could not continue".to_owned(),
+                    )?,
+                },
+                None,
+                Vec::new(),
+                None,
+            ),
+        )?;
+        let retried = TaskStepAttempt::reconstruct(
+            TaskStepAttemptNumber::new(2)?,
+            run,
+            TaskStepAttemptTiming::new(timestamp(4)?, None),
+            TaskStepAttemptDetails::new(TaskStepAttemptOutcome::Active, None, Vec::new(), None),
+        )?;
+
+        let result = crate::TaskStep::reconstruct(
+            step(1, Vec::new())?,
+            super::TaskLedgerRevision::INITIAL,
+            TaskStepMaterializedState::new(TaskStepStatus::InProgress, None, None, None),
+            vec![failed, retried],
+        );
+
+        assert!(result.is_err());
         Ok(())
     }
 

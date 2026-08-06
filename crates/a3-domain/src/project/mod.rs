@@ -164,11 +164,12 @@ pub use task_lens::{
     TaskLensTarget, TaskLensTokenBudget, TaskLensTokenBudgetError, TaskLensZoomLevel,
 };
 pub use task_step::{
-    StepDependency, TaskStep, TaskStepAttempt, TaskStepAttemptNumber, TaskStepAttemptNumberError,
-    TaskStepAttemptOutcome, TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition,
-    TaskStepDefinitionError, TaskStepFailureReason, TaskStepOutcome, TaskStepRationale,
-    TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus, TaskStepTextError,
-    TaskStepTextViolation, TaskStepTransitionError,
+    StepDependency, TaskStep, TaskStepAttempt, TaskStepAttemptDetails, TaskStepAttemptNumber,
+    TaskStepAttemptNumberError, TaskStepAttemptOutcome, TaskStepAttemptTiming,
+    TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition,
+    TaskStepDefinitionError, TaskStepFailureReason, TaskStepMaterializedState, TaskStepOutcome,
+    TaskStepRationale, TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus,
+    TaskStepTextError, TaskStepTextViolation, TaskStepTransitionError,
 };
 pub use task_verification::{
     ExpectedTaskEvidence, StepVerification, StepVerificationError, StepVerificationOutcome,
