@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const MAX_SEARCH_DATABASES: usize = 4;
+const MAX_MUTATION_DATABASES: usize = 4;
 const MAX_PUBLISHED_INDEX_CACHE_ENTRIES: usize = 1;
 
 /// Local libSQL implementation of the application knowledge-store boundary.
@@ -43,6 +44,7 @@ pub struct LibsqlKnowledgeStore {
     layout: StorageLayout,
     catalog: CatalogDatabase,
     reconciliation_active: AtomicBool,
+    mutation_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
     search_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
     published_indexes: Mutex<Vec<CachedPublishedIndex>>,
 }
@@ -56,6 +58,7 @@ impl LibsqlKnowledgeStore {
             layout: layout.clone(),
             catalog,
             reconciliation_active: AtomicBool::new(false),
+            mutation_databases: Mutex::new(Vec::new()),
             search_databases: Mutex::new(Vec::new()),
             published_indexes: Mutex::new(Vec::new()),
         })
@@ -148,13 +151,18 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .layout
                 .prepare_project(project.worktree())
                 .map_err(classify_project_layout_error)?;
-            let _knowledge = KnowledgeDatabase::open(&project_layout, project)
-                .await
-                .map_err(classify_knowledge_open_error)?;
-            self.catalog
+            let knowledge = Arc::new(
+                KnowledgeDatabase::open(&project_layout, project)
+                    .await
+                    .map_err(classify_knowledge_open_error)?,
+            );
+            let project_id = self
+                .catalog
                 .record_project(project)
                 .await
-                .map_err(ProjectCatalogError::classify)
+                .map_err(ProjectCatalogError::classify)?;
+            self.cache_mutation_database(knowledge);
+            Ok(project_id)
         })
     }
 
@@ -165,7 +173,7 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
     ) -> KnowledgeStoreFuture<'a, ProjectId> {
         Box::pin(async move {
             let _permit = self.acquire_reconciliation()?;
-            self.clear_search_databases();
+            self.clear_cached_project_state();
             let source = self
                 .layout
                 .existing_project(proposal.previous_worktree_id())
@@ -195,18 +203,23 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .layout
                 .relocate_project(proposal.previous_worktree_id(), project.worktree())
                 .map_err(classify_project_layout_error)?;
-            let _knowledge = KnowledgeDatabase::reconcile_identity(
-                &target_layout,
-                proposal.previous_repository_id(),
-                proposal.previous_worktree_id(),
-                project,
-            )
-            .await
-            .map_err(classify_knowledge_open_error)?;
-            self.catalog
+            let knowledge = Arc::new(
+                KnowledgeDatabase::reconcile_identity(
+                    &target_layout,
+                    proposal.previous_repository_id(),
+                    proposal.previous_worktree_id(),
+                    project,
+                )
+                .await
+                .map_err(classify_knowledge_open_error)?,
+            );
+            let project_id = self
+                .catalog
                 .complete_reconciliation(project, proposal)
                 .await
-                .map_err(ProjectCatalogError::classify)
+                .map_err(ProjectCatalogError::classify)?;
+            self.cache_mutation_database(knowledge);
+            Ok(project_id)
         })
     }
 
@@ -321,7 +334,6 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
             .map_err(|error| error.classify())?;
             let record = published.run();
             self.cache_published_index(project, published);
-            self.cache_search_database(Arc::new(knowledge));
             Ok(record)
         })
     }
@@ -688,16 +700,24 @@ impl LibsqlKnowledgeStore {
     async fn open_project_knowledge(
         &self,
         project: &ProjectIdentity,
-    ) -> Result<KnowledgeDatabase, KnowledgeIndexFailure> {
+    ) -> Result<Arc<KnowledgeDatabase>, KnowledgeIndexFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
         let project_layout = self
             .layout
             .prepare_project(project.worktree())
             .map_err(classify_project_layout_error)
             .map_err(KnowledgeIndexFailure::Storage)?;
-        KnowledgeDatabase::open(&project_layout, project)
-            .await
-            .map_err(classify_knowledge_open_error)
-            .map_err(KnowledgeIndexFailure::Storage)
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?,
+        );
+        Ok(self.cache_mutation_database(database))
     }
 
     async fn open_project_knowledge_for_search(
@@ -839,6 +859,37 @@ impl LibsqlKnowledgeStore {
         Some(database)
     }
 
+    fn cached_mutation_database(
+        &self,
+        repository_id: RepositoryId,
+        worktree_id: WorktreeId,
+    ) -> Option<Arc<KnowledgeDatabase>> {
+        let mut databases = lock_recovering_poison(&self.mutation_databases);
+        let position = databases.iter().position(|database| {
+            database.repository_id() == repository_id && database.worktree_id() == worktree_id
+        })?;
+        let database = databases.remove(position);
+        databases.push(Arc::clone(&database));
+        Some(database)
+    }
+
+    fn cache_mutation_database(&self, database: Arc<KnowledgeDatabase>) -> Arc<KnowledgeDatabase> {
+        let mut databases = lock_recovering_poison(&self.mutation_databases);
+        if let Some(position) = databases.iter().position(|cached| {
+            cached.repository_id() == database.repository_id()
+                && cached.worktree_id() == database.worktree_id()
+        }) {
+            let cached = databases.remove(position);
+            databases.push(Arc::clone(&cached));
+            return cached;
+        }
+        if databases.len() == MAX_MUTATION_DATABASES {
+            databases.remove(0);
+        }
+        databases.push(Arc::clone(&database));
+        database
+    }
+
     fn cache_search_database(&self, database: Arc<KnowledgeDatabase>) -> Arc<KnowledgeDatabase> {
         let mut databases = lock_recovering_poison(&self.search_databases);
         if let Some(position) = databases.iter().position(|cached| {
@@ -904,7 +955,8 @@ impl LibsqlKnowledgeStore {
         });
     }
 
-    fn clear_search_databases(&self) {
+    fn clear_cached_project_state(&self) {
+        lock_recovering_poison(&self.mutation_databases).clear();
         lock_recovering_poison(&self.search_databases).clear();
         lock_recovering_poison(&self.published_indexes).clear();
     }
