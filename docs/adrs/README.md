@@ -35,14 +35,14 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0008](0008-epistemic-memory-and-invalidation.md) | Epistemisches Memory und Invalidierung |
 | [0009](0009-context-compiler.md) | Context Compiler und Tokenbudgets |
 | [0010](0010-single-controller-state-machine.md) | Einzelner Controller mit Zustandsmaschine |
-| [0011](0011-local-model-provider-abstraction.md) | Lokale Modellprovider-Abstraktion |
+| [0011](0011-local-model-provider-abstraction.md) | Lokale Modellprovider-Abstraktion (Superseded by ADR-0018) |
 | [0012](0012-safe-tools-and-approval-policy.md) | Sichere Werkzeuge und Freigaben |
 | [0013](0013-goal-contract-ledger-and-event-journal.md) | Goal Contract, Task Ledger und Event Journal |
 | [0014](0014-cross-platform-release-and-quality.md) | Plattformübergreifende Release- und Qualitätsstrategie |
 | [0015](0015-language-adapter-scope.md) | Initialer Sprachumfang und LanguageAdapter |
 | [0016](0016-evidence-based-worktree-reconciliation.md) | Evidenzbasierte Worktree-Umzugs-Reconciliation |
 | [0017](0017-bounded-repository-discovery.md) | Begrenzte deterministische Repository-Discovery |
-| [0018](0018-model-provider-port-ownership.md) | ModelProvider-Port an der Application-Grenze (Proposed) |
+| [0018](0018-model-provider-port-ownership.md) | ModelProvider-Port an der Application-Grenze |
 
 ## Neue ADRs
 

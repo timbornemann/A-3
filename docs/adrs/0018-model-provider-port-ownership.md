@@ -1,6 +1,6 @@
 # ADR-0018: ModelProvider-Port gehört zur Application-Grenze
 
-Status: Proposed  
+Status: Accepted  
 Datum: 2026-08-06  
 Entscheider: Tim Bornemann  
 Supersedes: ADR-0011

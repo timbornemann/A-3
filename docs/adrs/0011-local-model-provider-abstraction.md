@@ -1,6 +1,6 @@
 # ADR-0011: Lokale Modellprovider-Abstraktion mit Ollama zuerst
 
-Status: Accepted  
+Status: Superseded by ADR-0018  
 Datum: 2026-08-03
 
 ## Kontext
@@ -56,4 +56,3 @@ ModelProfile enthält mindestens:
 ## Compliance
 
 Provider-Contract-Suite mit Stubserver; Application-Code darf keine provider-spezifischen JSON-Strukturen importieren.
-
