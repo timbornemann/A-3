@@ -83,6 +83,23 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 
+### Model Provider
+
+- Der allgemeine Application-Port besitzt keine Ollama-, HTTP- oder Adapter-Payloadtypen; der
+  Cargo-Graph zeigt ausschließlich `a3-provider` → `a3-application` → `a3-domain`.
+- Der neutrale Stubprovider emittiert exakt skriptbare Events und Fehler, wartet wakebar auf
+  Cancellation und speichert ausschließlich content-freie Aufrufmetadaten.
+- Der Ollama-Stubserver prüft die exakte Requestabbildung, fragmentierte chunked NDJSON-Antworten,
+  Eventreihenfolge, terminale Usage und sauberes Body-Ende vollständig offline.
+- Cancellation beendet Connect oder Body-Read und schließt die laufende Response; das
+  Gesamttimeout wird vor Headern und während eines stockenden Response-Bodys als `TimedOut`
+  normalisiert.
+- Endpoint-Contracts prüfen localhost-Normalisierung, abgelehnte Credentials/Pfade, HTTPS-Pflicht
+  für Remote, Local-only als Standard und Ablehnung vor jedem Netzwerkversuch ohne Policyfreigabe.
+- Parser-Negativtests lehnen Modell-/Rollenabweichung, Tool Calls, zu große oder ungültige NDJSON-
+  Daten, fehlenden Abschluss und Daten nach `done` ab. Prompt, Output, Endpoint und Provider-
+  Fehlerbody dürfen nicht in Debug- oder normalisierte Fehlertexte gelangen.
+
 ### Security Boundary
 
 - Negativtests für Traversal, Symlinks und unerlaubte Roots

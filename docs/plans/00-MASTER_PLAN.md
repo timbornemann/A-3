@@ -95,7 +95,7 @@ Ein Nutzer kann:
 - [x] Task Ledger
 - [x] Run Journal
 - [ ] Context Compiler
-- [ ] Ollama-kompatibler Provider
+- [x] Ollama-kompatibler Provider
 - [ ] ModelProfile und Capability Self-Test
 - [ ] read-only Controllerlauf
 - [ ] Resume nach Neustart

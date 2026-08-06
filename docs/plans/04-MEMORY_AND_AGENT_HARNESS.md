@@ -85,13 +85,13 @@ Die V1-Retention erhält alle sicheren Audit-Events unverändert.
 
 Abhängigkeiten: Foundation Job primitives
 
-- [ ] neutraler ModelProvider-Port
-- [ ] Ollama-kompatibler Adapter
-- [ ] Streaming ProviderEvents
-- [ ] Timeouts und Cancellation
-- [ ] sichere Endpoint Policy
-- [ ] normalisierte Fehler
-- [ ] Stubprovider für Tests
+- [x] neutraler ModelProvider-Port
+- [x] Ollama-kompatibler Adapter
+- [x] Streaming ProviderEvents
+- [x] Timeouts und Cancellation
+- [x] sichere Endpoint Policy
+- [x] normalisierte Fehler
+- [x] Stubprovider für Tests
 
 Akzeptanz:
 
@@ -103,6 +103,20 @@ R8 zieht ausschließlich den neutralen, request-/timeout-/cancellation-fähigen
 `ExplorerModelProvider` samt Stubprovider für Explorer-Vertragstests vor. Dieser schmale Port kennt
 keine Providerpayloads oder Endpoints, erfüllt aber bewusst noch nicht H4: allgemeiner
 `ModelProvider`, Streaming-Events, Endpoint Policy und Ollama-Adapter bleiben offen.
+
+Verifiziert am 2026-08-06: ADR-0018 ordnet den allgemeinen Port eindeutig der Application-Grenze
+und den konkreten HTTP-/NDJSON-Adapter `a3-provider` zu. Die neutralen, begrenzten und in Debug
+redigierten Requests und `ProviderEvent`s kennen weder Ollama- noch HTTP-Typen. Der
+Ollama-kompatible Adapter serialisiert das statische Chat-Mapping, akzeptiert ausschließlich
+strikte begrenzte NDJSON-Streams, wartet mit einem terminalen Event bis zum sauberen Body-Ende und
+normalisiert alle Fehler content-frei. Ein redirect- und proxyfreier Client prüft die dynamische
+Endpoint-Policy vor jedem Request; Local-only ist Standard, Remote erfordert HTTPS plus exakte
+Freigabe. Connect und Body-Reads sind wakebar abbrechbar, und ein Gesamttimeout umfasst den
+vollständigen Stream. Acht Offline-Adaptertests belegen Mapping, Fragmentierung, Cancellation samt
+Verbindungsabbau, Timeout vor Headern und im Body, Policyablehnung vor Netzwerk sowie Parser-
+Negativfälle. Drei neutrale Stubtests belegen Event-, Fehler- und Cancellation-Verhalten ohne
+Promptpersistenz. Workspace-Test, Clippy mit `-D warnings`, Rustdoc und der Dependency-/Lizenzbericht
+waren vollständig grün; `a3-application` besitzt weder `reqwest`- noch `a3-provider`-Abhängigkeit.
 
 ## H5 ModelProfile und Capability Probe
 

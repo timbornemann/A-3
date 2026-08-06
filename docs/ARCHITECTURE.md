@@ -1,7 +1,7 @@
 # A^3 Systemarchitektur
 
 Status: verbindliche Baseline  
-Stand: 2026-08-05
+Stand: 2026-08-06
 
 ## Architekturziele
 
@@ -101,14 +101,17 @@ a3/
 │   ├── a3-provider/                # LLM- und Embedding-Adapter
 │   └── a3-workspace/               # Dateien, Patches und Prozesse
 ├── tests/
-│   └── storage-contract/            # adapterneutrale Store-Verträge, dev-only
+│   ├── model-provider-contract/      # neutraler Provider-Stub, dev-only
+│   └── storage-contract/             # adapterneutrale Store-Verträge, dev-only
 ├── fixtures/                       # kleine, lizenzkompatible Test-Repositories
 └── docs/
 ~~~
 
 Die Crates sind logische Grenzen innerhalb eines ausgelieferten Produkts, keine getrennten Dienste.
-Das dev-only Workspace-Crate unter `tests/storage-contract` wird nicht ausgeliefert. Es hängt nur von
-Domain und Application ab und führt dieselben Portverträge gegen jeden konkreten Storageadapter aus.
+Die dev-only Workspace-Crates unter `tests/storage-contract` und `tests/model-provider-contract`
+werden nicht ausgeliefert. Sie hängen nur von Domain und Application ab. Die Storage-Suite führt
+dieselben Portverträge gegen jeden konkreten Storageadapter aus; der Provider-Stub ermöglicht
+deterministische Consumer-Tests ohne Netzwerk oder Providerpayload.
 
 ## Abhängigkeitsrichtung
 
@@ -137,6 +140,13 @@ Regeln:
 - Domain- und Protocol-Typen werden am Tauri-Rand explizit gemappt.
 - src-tauri ist die einzige Stelle, an der alle konkreten Adapter zusammengebaut werden.
 - Zyklische Crate-Abhängigkeiten sind verboten.
+
+Gemäß ADR-0018 besitzt `a3-application` den allgemeinen `ModelProvider`-Port und alle neutralen
+Request-, Event-, Timeout-, Cancellation- und Fehlertypen. `a3-provider` implementiert diesen Port,
+kennt die Ollama-kompatiblen HTTP-/NDJSON-Payloads und hängt ausschließlich nach innen von
+Application und Domain ab. Der erste HTTP-Adapter verwendet das gepinnte `reqwest` nur mit JSON-,
+Streaming- und Rustls-Unterstützung, weil die Standardbibliothek keinen asynchronen, abbrechbaren
+HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diesen Client deaktiviert.
 
 ## Hauptlaufzeiten
 
@@ -201,11 +211,14 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 1. Ein Goal Contract wird erstellt oder bestätigt.
 2. Der Controller lokalisiert relevante Evidenz.
 3. Der Context Compiler erzeugt ein tokenbegrenztes Context Pack.
-4. Das Modell liefert eine streng validierte Aktion.
-5. Policy und Preconditions werden geprüft.
-6. Genau ein Werkzeug wird ausgeführt.
-7. Ergebnis, Evidenz und Ledger werden atomar aktualisiert.
-8. Der Controller wechselt zu Verify, Replan, AwaitApproval oder Done.
+4. Der Application-Kern ruft den neutralen `ModelProvider` mit Gesamttimeout und Cancellation auf;
+   der konkrete Adapter übersetzt den begrenzten Stream in `ProviderEvent`s.
+5. Das Modellresultat wird erst nach einem terminalen Provider-Event als vollständige Ausgabe
+   behandelt und liefert anschließend eine streng validierte Aktion.
+6. Policy und Preconditions werden geprüft.
+7. Genau ein Werkzeug wird ausgeführt.
+8. Ergebnis, Evidenz und Ledger werden atomar aktualisiert.
+9. Der Controller wechselt zu Verify, Replan, AwaitApproval oder Done.
 
 ### Repositoryänderung
 

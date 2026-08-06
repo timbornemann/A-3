@@ -1,7 +1,7 @@
 # Domänenmodell
 
 Status: verbindliche Baseline  
-Stand: 2026-08-05
+Stand: 2026-08-06
 
 ## Ubiquitous Language
 
@@ -22,6 +22,8 @@ Stand: 2026-08-05
 | Task Ledger | Dauerhafter Plan samt Schrittzuständen, Ergebnissen und Verifikation |
 | Run | Ein kontrollierter Agentenlauf für eine Aufgabe |
 | Context Pack | Tokenbegrenzter, reproduzierbarer Modelleingang für genau einen Turn |
+| Model Provider | Austauschbare, providerneutrale lokale Textgenerierungs-Capability |
+| Provider Event | Begrenztes Textfragment oder genau ein terminaler Abschluss eines Modellstreams |
 | Tool Action | Typisierte, durch Policy geprüfte Interaktion mit Workspace oder Prozessen |
 | Source Channel | Explizite Herkunft eines Retrievaltreffers, etwa Exact, Lexical oder Graph |
 
@@ -365,6 +367,27 @@ Snapshot, Profil, Capability und Resultlimit und kanonisiert Gleichstände über
 Projektion alle Kandidaten des begrenzten Korridors erzeugt hat; `LinearFallback` kennzeichnet die
 deterministische direkte Cosine-Berechnung. Beide Pfade erzeugen denselben nicht beweisenden
 Treffertyp und markieren ausgelassene Kandidaten explizit als Trunkierung.
+
+### Model Provider
+
+`ModelProviderId` ist eine begrenzte, credential- und endpointfreie Provideridentität. `ModelId`
+ist eine begrenzte opaque Provideridentität; ihr Name beweist keine Capability. Der allgemeine
+Application-Port nimmt ausschließlich einen `ModelProviderRequest`, ein Gesamttimeout und eine
+wakebare Cancellation-Grenze entgegen. Ein Request enthält 1 bis 256 geordnete System-, User- oder
+Assistant-Nachrichten, höchstens 2 MiB Text sowie optional ein JSON-Objektschema bis 64 KiB. Inhalte
+werden in Debugprojektionen nur als Anzahl und Byteumfang dargestellt.
+
+Ein erfolgreicher Stream besteht aus geordneten `ProviderEvent::OutputText`-Fragmenten von jeweils
+höchstens 64 KiB und genau einem `Completed`-Event mit normalisiertem Stopgrund und optionalen
+Providerzählern. Der Ollama-kompatible Adapter begrenzt zusätzlich eine einzelne NDJSON-Zeile auf
+128 KiB, den Puffer auf 256 KiB und den gesamten Textoutput auf 4 MiB. Ein Abschluss wird erst nach
+sauberem Body-Ende sichtbar; fehlender Abschluss, abweichendes Modell, Tool Calls im H4-Textmodus,
+ungültige Rollen oder Daten nach `done` sind keine ausführbare Ausgabe.
+
+Fehler werden ausschließlich als `Unavailable`, `Rejected`, `InvalidResponse`, `TimedOut`,
+`Cancelled` oder `EndpointDenied` über die Adaptergrenze gegeben. Provider-Fehlertexte,
+HTTP-Payloads und Endpoints sind kein Teil dieser Typen. Das spätere `ModelProfile` bleibt H5
+vorbehalten und wird nicht aus `ModelId` abgeleitet.
 
 ### Task
 

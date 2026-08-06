@@ -26,8 +26,11 @@ Modulprojektion und budgetierte Planung. Eine zusätzliche Offline-Abnahme führ
 M4/M5-Anwendungskern über Indexierung, Deep Map und Task Lens vollständig ohne Semantic-Port aus
 und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Der Durable Harness besitzt nun
 einen revisionierten Goal Contract, ein verifiziertes Task Ledger und ein append-only Run Journal
-mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Als
-Nächstes folgt der allgemeine lokale ModelProvider samt Ollama-kompatiblem Adapter. Die
+mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Der
+allgemeine lokale `ModelProvider` besitzt begrenzte neutrale Streaming-Events, Cancellation und
+Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint-Policy, strikte
+NDJSON-Validierung und content-freie Fehler. Als Nächstes folgen das versionierte `ModelProfile`
+und der Capability Self-Test. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -101,6 +104,8 @@ apps/desktop/       Svelte-WebView und Tauri-Composition-Root
 crates/             Rust-Domain, Use Cases, Features und Adapter
 tests/storage-contract/
                     Adapterneutrale Storage-Verträge (nur Entwicklung und CI)
+tests/model-provider-contract/
+                    Neutraler Provider-Stub (nur Entwicklung und CI)
 fixtures/           kleine lizenzkompatible Test-Repositories
 docs/               verbindliche Architektur, ADRs und Pläne
 ```

@@ -1,0 +1,16 @@
+[package]
+name = "a3-model-provider-contract-tests"
+description = "Dev-only neutral model-provider stubs and contracts for A^3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+a3-application.workspace = true
+a3-domain.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

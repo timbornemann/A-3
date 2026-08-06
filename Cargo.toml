@@ -5,10 +5,12 @@ members = [
     "crates/a3-application",
     "crates/a3-domain",
     "crates/a3-protocol",
+    "crates/a3-provider",
     "crates/a3-repo-index",
     "crates/a3-storage-libsql",
     "crates/a3-workspace",
     "tests/language-adapter-contract",
+    "tests/model-provider-contract",
     "tests/storage-contract",
 ]
 
@@ -24,6 +26,7 @@ a3-domain = { path = "crates/a3-domain" }
 a3-protocol = { path = "crates/a3-protocol" }
 a3-repo-index = { path = "crates/a3-repo-index" }
 a3-language-adapter-contract-tests = { path = "tests/language-adapter-contract" }
+a3-model-provider-contract-tests = { path = "tests/model-provider-contract" }
 a3-storage-libsql = { path = "crates/a3-storage-libsql" }
 a3-storage-contract-tests = { path = "tests/storage-contract" }
 a3-workspace = { path = "crates/a3-workspace" }
@@ -32,10 +35,12 @@ crossbeam-channel = "=0.5.16"
 futures = "=0.3.32"
 gix = { version = "=0.86.0", default-features = false, features = ["sha1", "sha256"] }
 libsql = { version = "=0.9.29", default-features = false, features = ["core"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
 rustix = { version = "=1.1.4", features = ["fs"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 toml = { version = "=0.9.12", default-features = false, features = ["parse", "serde", "std"] }
+tokio = { version = "=1.53.1", default-features = false }
 tree-sitter = { version = "=0.26.11", default-features = false, features = ["std"] }
 tree-sitter-javascript = "=0.25.0"
 tree-sitter-json = "=0.24.8"

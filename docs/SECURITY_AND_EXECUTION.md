@@ -1,7 +1,7 @@
 # Sicherheit und kontrollierte Ausführung
 
 Status: verbindliche Baseline  
-Stand: 2026-08-04
+Stand: 2026-08-06
 
 ## Trust Boundary
 
@@ -205,6 +205,19 @@ V1 ist offline-first:
 - bei nicht lokalen Endpunkten klare Warnung und Freigabe.
 
 Quellcode, Embeddings, Projektkarten, Prompts und Logs werden nie ohne ausdrückliche Aktivierung übertragen.
+
+Der Ollama-kompatible Adapter akzeptiert nur credentialfreie HTTP-/HTTPS-Origins ohne Pfad, Query
+oder Fragment. `localhost` wird vor der Policyprüfung auf die IPv4-Loopbackadresse normalisiert;
+nur literale Loopbackadressen gelten als lokal. Jeder nicht lokale Endpoint benötigt HTTPS und
+zusätzlich vor jedem Request eine Freigabe durch die injizierte Endpoint-Policy. Die Standardpolicy
+erlaubt ausschließlich Loopback. Redirects und Umgebungsproxies sind deaktiviert, damit weder ein
+Server noch lokale Proxykonfiguration den geprüften Zielscope still verändern kann.
+
+Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
+Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,
+Textfragmente und Gesamtausgabe sind fest begrenzt. HTTP-Fehlerbodies und Providerfehler werden
+weder gelesen noch in normalisierte Fehler oder Debugausgaben übernommen. Native Tool Calls sind
+im H4-Textmodus ungültig und werden erst nach der H5-Capability-Prüfung freigeschaltet.
 
 ## Tauri
 
