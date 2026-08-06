@@ -27,6 +27,7 @@ mod repository_watcher;
 mod retrieval_fusion;
 mod semantic_embedding_store;
 mod semantic_embeddings;
+mod task_lens;
 
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
@@ -129,4 +130,12 @@ pub use semantic_embeddings::{
     EmbeddingClock, EmbeddingClockFailure, EmbeddingExecutionMode, EmbeddingProgressError,
     GenerateSemanticEmbeddings, GenerateSemanticEmbeddingsError, GenerateSemanticEmbeddingsOutcome,
     SemanticEmbeddingBatchJob, SemanticEmbeddingJobControl,
+};
+pub use task_lens::{
+    CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimResult,
+    TaskLensClaimResultError, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensSemanticHit,
+    TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticResultError,
+    TaskLensSemanticSearch, TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture,
+    TaskLensTimeout, TaskLensTimeoutError,
 };

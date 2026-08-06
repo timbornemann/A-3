@@ -385,6 +385,10 @@ impl TaskLensClaim {
         if evidence.windows(2).any(|pair| pair[0].id() == pair[1].id()) {
             return Err(TaskLensClaimError::DuplicateEvidence);
         }
+        if evidence.is_empty() && !matches!(predicate, ModuleClaimPredicate::ArchitecturalIntent(_))
+        {
+            return Err(TaskLensClaimError::MissingEvidence);
+        }
         let expected_kind = match &predicate {
             ModuleClaimPredicate::Observed(_) => VerifiedClaimKind::Observation,
             ModuleClaimPredicate::ArchitecturalIntent(_) => VerifiedClaimKind::Hypothesis,
@@ -507,6 +511,8 @@ pub enum TaskLensClaimError {
     },
     /// Claim repeated an evidence identity.
     DuplicateEvidence,
+    /// A non-intent R9 claim lost its required current evidence.
+    MissingEvidence,
     /// Persisted classification did not match predicate and polarity.
     ClassificationMismatch,
     /// A deterministic Fact lacked exact predicate-matching evidence.
@@ -522,6 +528,9 @@ impl fmt::Display for TaskLensClaimError {
             ),
             Self::DuplicateEvidence => {
                 formatter.write_str("Task Lens claim repeats an evidence identity")
+            }
+            Self::MissingEvidence => {
+                formatter.write_str("Task Lens claim requires current resolved evidence")
             }
             Self::ClassificationMismatch => formatter.write_str(
                 "Task Lens claim classification does not match its predicate and polarity",
@@ -683,6 +692,7 @@ impl TaskLensPolicy {
         seeds: TaskLensSeedSet,
         fused: &FusedRetrievalResult,
         claims: Vec<TaskLensClaim>,
+        claims_truncated: bool,
         token_budget: TaskLensTokenBudget,
     ) -> Result<TaskLens, TaskLensCompileError> {
         let run = published.run();
@@ -698,8 +708,16 @@ impl TaskLensPolicy {
             reason: TaskLensEntryReason::RepositoryAnchor,
         })?;
 
+        let mut semantic_hits = Vec::new();
         for (index, hit) in fused.hits().iter().enumerate() {
             let rank = u16::try_from(index + 1).map_err(|_| TaskLensCompileError::ResourceLimit)?;
+            if !retrieval_target_is_current(published, hit.target()) {
+                return Err(TaskLensCompileError::StaleRetrievalTarget);
+            }
+            if hit.explanation().priority() == super::FusionPriority::Semantic {
+                semantic_hits.push((rank, hit));
+                continue;
+            }
             let reason = TaskLensEntryReason::Retrieval {
                 rank,
                 explanation: hit.explanation().clone(),
@@ -719,6 +737,19 @@ impl TaskLensPolicy {
         }
         let mut selected_claims = Vec::new();
         let mut excluded_stale_claims = 0_u16;
+        let explicitly_seeded_claims = seeds
+            .supplemental()
+            .iter()
+            .filter_map(|seed| match seed {
+                TaskLensSeed::OpenHypothesis(claim_id) => Some(*claim_id),
+                TaskLensSeed::ExplicitPath(_)
+                | TaskLensSeed::ExplicitSymbol(_)
+                | TaskLensSeed::ExplicitIdentifier(_)
+                | TaskLensSeed::Diagnostic { .. }
+                | TaskLensSeed::ChangedPath(_)
+                | TaskLensSeed::FailedVerification(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
         for claim in claims {
             if !claim_is_current(published, &claim) {
                 excluded_stale_claims = excluded_stale_claims.saturating_add(1);
@@ -729,8 +760,17 @@ impl TaskLensPolicy {
             let relevant = builder.selected_modules.contains(&claim.module_id())
                 || target_ids
                     .iter()
-                    .any(|target| builder.selected_targets.contains(target));
+                    .any(|target| builder.selected_targets.contains(target))
+                || explicitly_seeded_claims.contains(&claim.id());
             if !relevant {
+                continue;
+            }
+            if !builder.add_claim_module(
+                published,
+                claim.module_id(),
+                TaskLensEntryReason::Claim(claim.id()),
+            )? {
+                builder.truncated = true;
                 continue;
             }
             if !builder.reserve_claim(&claim)? {
@@ -749,13 +789,23 @@ impl TaskLensPolicy {
             selected_claims.push(claim);
         }
 
+        for (rank, hit) in semantic_hits {
+            let reason = TaskLensEntryReason::Retrieval {
+                rank,
+                explanation: hit.explanation().clone(),
+            };
+            if !builder.add_retrieval_target(published, hit.target(), reason)? {
+                builder.truncated = true;
+            }
+        }
+
         if builder.entries.len() > MAX_TASK_LENS_ENTRIES
             || builder.selected_modules.len() > MAX_TASK_LENS_MODULES
             || builder.estimated_tokens > token_budget.get()
         {
             return Err(TaskLensCompileError::ResourceLimit);
         }
-        let truncated = builder.truncated || fused.truncated();
+        let truncated = builder.truncated || fused.truncated() || claims_truncated;
         let digest = task_lens_digest(
             self.version,
             fused.policy_version(),
@@ -984,6 +1034,29 @@ impl TaskLensBuilder {
         }
     }
 
+    fn add_claim_module(
+        &mut self,
+        published: &PublishedIndex,
+        module_id: ModuleId,
+        reason: TaskLensEntryReason,
+    ) -> Result<bool, TaskLensCompileError> {
+        if self.selected_modules.contains(&module_id) {
+            return Ok(true);
+        }
+        let module = published
+            .publication()
+            .modules()
+            .modules()
+            .iter()
+            .find(|module| module.id() == module_id)
+            .ok_or(TaskLensCompileError::InvalidModuleProjection)?;
+        self.add(TaskLensEntry {
+            target: TaskLensTarget::Module(module.clone()),
+            estimated_tokens: estimate_module(module)?,
+            reason,
+        })
+    }
+
     fn reserve_claim(&mut self, claim: &TaskLensClaim) -> Result<bool, TaskLensCompileError> {
         let cost = estimate_claim(claim)?;
         let next_tokens = self
@@ -1148,6 +1221,19 @@ fn claim_is_current(published: &PublishedIndex, claim: &TaskLensClaim) -> bool {
                 && published.publication().graph().edges().contains(edge)
         }
     })
+}
+
+fn retrieval_target_is_current(published: &PublishedIndex, target: &ExactSearchTarget) -> bool {
+    match target {
+        ExactSearchTarget::File(revision) => {
+            published.publication().graph().files().contains(revision)
+        }
+        ExactSearchTarget::Symbol(symbol) => published
+            .publication()
+            .graph()
+            .symbols()
+            .contains(symbol.symbol()),
+    }
 }
 
 fn evidence_supports_predicate(
@@ -1485,6 +1571,8 @@ fn source_channel_tag(channel: SourceChannel) -> u8 {
 pub enum TaskLensCompileError {
     /// Fusion output and published index refer to different runs or snapshots.
     PublicationMismatch,
+    /// A fused candidate did not match the exact current graph projection.
+    StaleRetrievalTarget,
     /// Current module membership could not resolve to its published module.
     InvalidModuleProjection,
     /// The same claim identity was supplied twice.
@@ -1500,6 +1588,9 @@ impl fmt::Display for TaskLensCompileError {
         formatter.write_str(match self {
             Self::PublicationMismatch => {
                 "Task Lens fusion result does not match the published index"
+            }
+            Self::StaleRetrievalTarget => {
+                "Task Lens retrieval candidate is stale for the published index"
             }
             Self::InvalidModuleProjection => {
                 "Task Lens target does not resolve through the published module projection"

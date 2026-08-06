@@ -74,6 +74,7 @@ fn bug_lens_keeps_production_and_test_but_excludes_irrelevant_module_and_stale_f
         seeds.clone(),
         &fused,
         claims.clone(),
+        false,
         TaskLensTokenBudget::DEFAULT,
     )?;
     let repeated = policy.compile(
@@ -81,6 +82,7 @@ fn bug_lens_keeps_production_and_test_but_excludes_irrelevant_module_and_stale_f
         seeds,
         &fused,
         claims,
+        false,
         TaskLensTokenBudget::DEFAULT,
     )?;
 
@@ -166,6 +168,7 @@ fn seed_order_is_canonical_and_index_delta_changes_lens_identity()
         left,
         &first_fused,
         Vec::new(),
+        false,
         TaskLensTokenBudget::DEFAULT,
     )?;
     let second_lens = TaskLensPolicy::v1().compile(
@@ -173,6 +176,7 @@ fn seed_order_is_canonical_and_index_delta_changes_lens_identity()
         right,
         &second_fused,
         Vec::new(),
+        false,
         TaskLensTokenBudget::DEFAULT,
     )?;
 
