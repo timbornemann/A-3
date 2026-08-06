@@ -1,4 +1,8 @@
-use super::{AgentAction, AgentRunTimestamp, ModelTokenCount};
+use super::{
+    AcceptanceCriterionId, AgentAction, AgentRunId, AgentRunTimestamp, GoalContract,
+    GoalContractReference, ModelTokenCount, SnapshotId, TaskEvidenceId, TaskLedgerRevision,
+};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -7,6 +11,155 @@ const MAX_RUN_TOKENS: u64 = i64::MAX as u64;
 const MAX_RUN_ACTIONS: u32 = 100_000;
 const MAX_RUN_DURATION_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const MAX_RUN_REPAIRS: u32 = 10_000;
+const MAX_ACCEPTANCE_EVIDENCE_PER_CRITERION: usize = 64;
+
+/// Current evidence proving one mandatory acceptance criterion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptanceCriterionVerification {
+    criterion_id: AcceptanceCriterionId,
+    evidence_ids: Vec<TaskEvidenceId>,
+}
+
+impl AcceptanceCriterionVerification {
+    /// Binds one criterion to a bounded unique non-empty current-evidence set.
+    pub fn new(
+        criterion_id: AcceptanceCriterionId,
+        mut evidence_ids: Vec<TaskEvidenceId>,
+    ) -> Result<Self, AcceptanceVerificationError> {
+        if evidence_ids.is_empty() || evidence_ids.len() > MAX_ACCEPTANCE_EVIDENCE_PER_CRITERION {
+            return Err(AcceptanceVerificationError::InvalidEvidenceCount(
+                evidence_ids.len(),
+            ));
+        }
+        evidence_ids.sort_unstable();
+        if evidence_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(AcceptanceVerificationError::DuplicateEvidence);
+        }
+        Ok(Self {
+            criterion_id,
+            evidence_ids,
+        })
+    }
+
+    /// Returns the verified Goal Contract criterion.
+    #[must_use]
+    pub const fn criterion_id(&self) -> AcceptanceCriterionId {
+        self.criterion_id
+    }
+
+    /// Returns current evidence retained by the verifier.
+    #[must_use]
+    pub fn evidence_ids(&self) -> &[TaskEvidenceId] {
+        &self.evidence_ids
+    }
+}
+
+/// Complete acceptance-verifier receipt required before a run can enter Done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptanceVerificationReceipt {
+    run_id: AgentRunId,
+    goal_contract: GoalContractReference,
+    ledger_revision: TaskLedgerRevision,
+    snapshot_id: SnapshotId,
+    criteria: Vec<AcceptanceCriterionVerification>,
+}
+
+impl AcceptanceVerificationReceipt {
+    /// Validates exact coverage of every mandatory criterion in one immutable Goal revision.
+    pub fn new(
+        run_id: AgentRunId,
+        goal_contract: &GoalContract,
+        ledger_revision: TaskLedgerRevision,
+        snapshot_id: SnapshotId,
+        mut criteria: Vec<AcceptanceCriterionVerification>,
+    ) -> Result<Self, AcceptanceVerificationError> {
+        criteria.sort_by_key(AcceptanceCriterionVerification::criterion_id);
+        if criteria
+            .windows(2)
+            .any(|pair| pair[0].criterion_id == pair[1].criterion_id)
+        {
+            return Err(AcceptanceVerificationError::DuplicateCriterion);
+        }
+        let expected = goal_contract
+            .draft()
+            .acceptance_criteria()
+            .iter()
+            .map(|criterion| criterion.id())
+            .collect::<BTreeSet<_>>();
+        let actual = criteria
+            .iter()
+            .map(AcceptanceCriterionVerification::criterion_id)
+            .collect::<BTreeSet<_>>();
+        if actual != expected {
+            return Err(AcceptanceVerificationError::CriterionCoverageMismatch);
+        }
+        Ok(Self {
+            run_id,
+            goal_contract: goal_contract.reference(),
+            ledger_revision,
+            snapshot_id,
+            criteria,
+        })
+    }
+
+    /// Returns the run whose acceptance was verified.
+    #[must_use]
+    pub const fn run_id(&self) -> AgentRunId {
+        self.run_id
+    }
+
+    /// Returns the exact verified Goal Contract revision.
+    #[must_use]
+    pub const fn goal_contract(&self) -> GoalContractReference {
+        self.goal_contract
+    }
+
+    /// Returns the exact verified Task Ledger revision.
+    #[must_use]
+    pub const fn ledger_revision(&self) -> TaskLedgerRevision {
+        self.ledger_revision
+    }
+
+    /// Returns the immutable repository snapshot checked by the verifier.
+    #[must_use]
+    pub const fn snapshot_id(&self) -> SnapshotId {
+        self.snapshot_id
+    }
+
+    /// Returns complete criterion coverage in stable identity order.
+    #[must_use]
+    pub fn criteria(&self) -> &[AcceptanceCriterionVerification] {
+        &self.criteria
+    }
+}
+
+/// Acceptance evidence did not prove every mandatory criterion exactly once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcceptanceVerificationError {
+    /// One criterion had no evidence or exceeded the fixed evidence boundary.
+    InvalidEvidenceCount(usize),
+    /// One evidence identity was repeated for a criterion.
+    DuplicateEvidence,
+    /// One criterion appeared more than once.
+    DuplicateCriterion,
+    /// Receipt criteria differed from the immutable Goal Contract criteria.
+    CriterionCoverageMismatch,
+}
+
+impl fmt::Display for AcceptanceVerificationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidEvidenceCount(_) => "acceptance criterion evidence count is invalid",
+            Self::DuplicateEvidence => "acceptance criterion evidence contains a duplicate",
+            Self::DuplicateCriterion => "acceptance verification repeats a criterion",
+            Self::CriterionCoverageMismatch => {
+                "acceptance verification does not cover the exact Goal Contract criteria"
+            }
+        })
+    }
+}
+
+impl Error for AcceptanceVerificationError {}
 
 macro_rules! positive_u32_limit {
     ($(#[$metadata:meta])* $name:ident, $error:ident, $maximum:expr, $label:literal) => {

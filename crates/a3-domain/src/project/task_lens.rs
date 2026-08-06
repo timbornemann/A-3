@@ -557,6 +557,12 @@ impl Error for TaskLensClaimError {}
 pub struct TaskLensDigest([u8; 32]);
 
 impl TaskLensDigest {
+    /// Constructs a digest from a versioned Task Lens compiler or persistence boundary.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// Returns the stable digest bytes.
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 32] {

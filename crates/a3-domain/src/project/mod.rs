@@ -39,6 +39,7 @@ pub use agent_action::{
     AgentSearchLimitError, AgentSearchQuery, AgentTestSelector, AgentUpdateLedgerAction,
 };
 pub use agent_controller::{
+    AcceptanceCriterionVerification, AcceptanceVerificationError, AcceptanceVerificationReceipt,
     AgentActionLimit, AgentActionLimitError, AgentBudgetDimension, AgentBudgetEvaluationError,
     AgentBudgetExhaustion, AgentRepairLimit, AgentRepairLimitError, AgentRunBudget,
     AgentRunDurationLimit, AgentRunDurationLimitError, AgentRunUsage, AgentRunUsageError,

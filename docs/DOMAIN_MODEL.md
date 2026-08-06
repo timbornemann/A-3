@@ -445,7 +445,8 @@ Ausgaben redigiert.
 Replan anfordern. Kein Variant kann Verifikation oder Completion setzen. `Finish` enthält keine
 Modellbehauptung und fordert lediglich die spätere deterministische Acceptance-Verifikation an.
 Patch, Prozess, Shell, Git, Netzwerk, Publishing und destruktive Aktionen sind in V1 nicht
-darstellbar; die eigentlichen read-only Ports sowie Zustandsautorisierung folgen in H10 und H9.
+darstellbar. H9 autorisiert nur den geschlossenen `AgentReadTools`-Port für `Search` und `Inspect`;
+die konkreten read-only Adapter und Ledger-/Finish-Use-Cases folgen in H10.
 
 Das eingebettete `agent-action-v1`-JSON-Schema setzt auf jeder Objektebene
 `additionalProperties: false`; ein separater Runtime-Decoder prüft das vollständige Dokument bis
@@ -499,14 +500,38 @@ Actionklasse enthalten. `AgentRunUsage` wird mit dem Event angewendet und persis
 Sequenz-CAS-Transaktion materialisiert. Erschöpfung wird in der festen Reihenfolge Zeit, Turns,
 Prompttokens, Outputtokens, Actionen und Repairs ausgewertet und bleibt ab dem Grenzwert sichtbar.
 
+Der Application-Controller bildet ausschließlich die dokumentierten Übergänge zwischen `Intake`,
+`Localize`, `Plan`, `Execute`, `Verify`, `Replan`, `AwaitApproval` und den drei terminalen Zuständen
+ab. Cancellation und bereits erschöpfte Budgets haben vor einem neuen Turn Vorrang. Ein erschöpfter
+Run geht aus `Execute` einmal sichtbar nach `AwaitApproval`; ohne einen neuen Run mit neuem Budget
+endet die nächste Fortsetzung deterministisch in `Failed`, statt erneut Modellarbeit zu starten.
+
+`ExecuteReadOnlyAgentTurn` kompiliert pro Turn frischen H7-Kontext, bindet Kontext, Provider und
+read-only Resultat an denselben Snapshot und akzeptiert erst nach einem terminalen Provider-Event
+eine strikt dekodierte Action. Ein ungültiges Ergebnis darf genau einmal über eine content-freie
+Repair-Anweisung korrigiert werden; der ungültige Originaltext wird nicht erneut in den Kontext
+gegeben und nie ausgeführt. Jede akzeptierte oder endgültig verworfene Modellausgabe wird als ein
+budgetierter Turn verbucht. Das Journal erhält ausschließlich Fehlerklasse und redigierte
+Byte-Metadaten, nie den Rohtext.
+
+Ein normaler Zustandsübergang nach `Done` ist im Domain-Aggregat gesperrt. Nur
+`VerifyAgentAcceptance` darf einen vollständigen `AcceptanceVerificationReceipt` anwenden. Dieser
+bindet Run, Goal-Revision, Ledgerrevision und Snapshot und deckt jedes Akzeptanzkriterium exakt
+einmal mit mindestens einer Evidence-ID ab. Der Acceptance-Verifier ist damit der einzige
+Application-Pfad nach `Done`; abgelehnte Verifikation führt abhängig vom Grund nach `Execute` oder
+`Replan` zurück.
+
 Invarianten:
 
 - Pro Turn gibt es höchstens eine ausführbare Tool Action.
 - Jeder Turn erhöht genau einen Turnzähler; Token-, Action- und Repairverbrauch überleben Reopen.
+- Ungültiger oder unvollständiger Modelloutput kann keine Action auslösen und bleibt dennoch
+  budgetiert und content-frei auditierbar.
 - Mutierende Tool Actions werden serialisiert.
 - Ein Turn verweist auf genau einen Snapshot.
 - Vor einer Mutation wird geprüft, ob der erwartete Snapshot noch aktuell ist.
-- Abschluss ist ein expliziter Zustandsübergang und keine bloße Textausgabe.
+- Abschluss ist ein Acceptance-verifizierter expliziter Zustandsübergang und keine bloße
+  Textausgabe oder Modellentscheidung.
 
 ### Run Memory
 

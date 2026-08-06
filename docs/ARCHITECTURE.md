@@ -218,7 +218,8 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 6. Policy und Preconditions werden geprüft.
 7. Genau ein Werkzeug wird ausgeführt.
 8. Ergebnis, Evidenz und Ledger werden atomar aktualisiert.
-9. Der Controller wechselt zu Verify, Replan, AwaitApproval oder Done.
+9. Der Controller wechselt zu Verify, Replan oder AwaitApproval; `Done` ist ausschließlich nach
+   vollständiger snapshotgebundener Prüfung durch den `AcceptanceVerifier` erreichbar.
 
 ### Repositoryänderung
 

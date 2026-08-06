@@ -277,15 +277,15 @@ Lockfile-Werkzeuge direkt ausgeführt. Der Linkcheck prüfte 45 Markdown-Dateien
 
 Abhängigkeiten: H2, H3, H6, H7
 
-- [ ] Intake
-- [ ] Localize
-- [ ] Plan
-- [ ] Execute read-only
-- [ ] Verify
-- [ ] Replan
-- [ ] AwaitApproval-Grundzustand
-- [ ] Done, Failed und Cancelled
-- [ ] Turn-, Token-, Tool- und Zeitbudgets
+- [x] Intake
+- [x] Localize
+- [x] Plan
+- [x] Execute read-only
+- [x] Verify
+- [x] Replan
+- [x] AwaitApproval-Grundzustand
+- [x] Done, Failed und Cancelled
+- [x] Turn-, Token-, Tool- und Zeitbudgets
 
 Akzeptanz:
 
@@ -293,6 +293,25 @@ Akzeptanz:
 - pro Turn höchstens eine Action;
 - Budgetende führt zu erklärtem Failed oder AwaitingUser, nicht Endlosschleife;
 - Done nur über Acceptance-Verifier.
+
+Verifikation: Der Domain-Kern bindet jeden Turn an höchstens eine Actionklasse und persistiert
+Budget sowie kumulativen Turn-, Prompttoken-, Outputtoken-, Action- und Repairverbrauch atomar mit
+dem Run-Journal. Der Application-Controller prüft die vollständige Matrix aus zehn Zuständen und
+zwölf Signalen; kein normaler Signalpfad kann `Done` erreichen. Erschöpfte Runs gehen aus
+`Execute` einmal nach `AwaitApproval` und enden bei weiterer autonomer Fortsetzung nachvollziehbar
+in `Failed`. `ExecuteReadOnlyAgentTurn` kompiliert frischen H7-Kontext, erlaubt ausschließlich den
+geschlossenen Search-/Inspect-Port, führt höchstens eine Action aus und verwirft unvollständige
+oder nach genau einer content-freien Repair-Anweisung weiterhin ungültige Ausgabe ohne
+Toolausführung. Jede vollständige oder verworfene Modellausgabe wird budgetiert und nur mit
+redigierten Byte-Metadaten journalisiert. Ein direkter Domain-Übergang nach `Done` ist gesperrt;
+nur `VerifyAgentAcceptance` kann mit einem vollständig Goal-, Ledger-, Run- und Snapshot-
+gebundenen `AcceptanceVerificationReceipt` abschließen. `cargo fmt --all -- --check`, Workspace-
+Clippy für alle Targets/Features mit `-D warnings`, alle Workspace-Tests und Rustdoc mit
+`-D warnings` sind grün. Zwei isolierte Windows-libSQL-Worker wurden nach der laut Quality Gate
+einzig wiederholbaren `STATUS_ACCESS_VIOLATION` jeweils einmal frisch wiederholt und bestanden.
+Unter Node 24.14.0 bestehen Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier
+Tooltests. Der Linkcheck prüfte 45 Markdown-Dateien und 66 lokale Links; 608 Rust- und 239
+JavaScript-Pakete enthalten keine unbekannte Lizenz.
 
 ## H10 Read-only Toolset
 

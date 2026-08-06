@@ -1,7 +1,8 @@
 use super::{
-    AgentBudgetEvaluationError, AgentBudgetExhaustion, AgentRunBudget, AgentRunId, AgentRunUsage,
-    AgentRunUsageError, AgentTurnCharge, GoalContractReference, ModelProfileReference, RunEventId,
-    SnapshotId, TaskEvidenceId, TaskLedgerRevision, ToolRunId,
+    AcceptanceVerificationReceipt, AgentBudgetEvaluationError, AgentBudgetExhaustion,
+    AgentRunBudget, AgentRunId, AgentRunUsage, AgentRunUsageError, AgentTurnCharge,
+    GoalContractReference, ModelProfileReference, RunEventId, SnapshotId, TaskEvidenceId,
+    TaskLedgerRevision, ToolRunId,
 };
 use std::error::Error;
 use std::fmt;
@@ -792,6 +793,9 @@ impl AgentRun {
                 to: next,
             });
         }
+        if next == AgentControllerState::Done {
+            return Err(AgentRunError::AcceptanceVerificationRequired);
+        }
         self.append(
             event_id,
             RunEventKind::StateTransition {
@@ -800,6 +804,40 @@ impl AgentRun {
             },
             payload,
             snapshot_id,
+            None,
+            occurred_at,
+        )
+    }
+
+    /// Completes a verifying run only with exact current acceptance-verifier coverage.
+    pub fn complete_verified(
+        &mut self,
+        event_id: RunEventId,
+        receipt: &AcceptanceVerificationReceipt,
+        payload: RunEventPayload,
+        occurred_at: AgentRunTimestamp,
+    ) -> Result<RunEvent, AgentRunError> {
+        if self.state != AgentControllerState::Verify {
+            return Err(AgentRunError::InvalidStateTransition {
+                from: self.state,
+                to: AgentControllerState::Done,
+            });
+        }
+        if receipt.run_id() != self.id
+            || receipt.goal_contract() != self.goal_contract
+            || receipt.ledger_revision() != self.task_ledger_revision
+            || receipt.snapshot_id() != self.current_snapshot_id
+        {
+            return Err(AgentRunError::AcceptanceVerificationMismatch);
+        }
+        self.append(
+            event_id,
+            RunEventKind::StateTransition {
+                from: self.state,
+                to: AgentControllerState::Done,
+            },
+            payload,
+            receipt.snapshot_id(),
             None,
             occurred_at,
         )
@@ -1102,6 +1140,10 @@ pub enum AgentRunError {
     InvalidEventKind,
     /// Turn usage appeared on another event kind or bypassed the turn-specific append path.
     InvalidTurnCharge,
+    /// Done was requested without an acceptance-verifier receipt.
+    AcceptanceVerificationRequired,
+    /// Acceptance receipt did not match the current run anchors.
+    AcceptanceVerificationMismatch,
     /// Durable cumulative usage violated cardinality or integer bounds.
     Usage(AgentRunUsageError),
     /// Sequence one was not the mandatory run-start event.
@@ -1132,6 +1174,12 @@ impl fmt::Display for AgentRunError {
             Self::RunMismatch => formatter.write_str("run event belongs to another run"),
             Self::InvalidEventKind => formatter.write_str("run event kind is invalid here"),
             Self::InvalidTurnCharge => formatter.write_str("run event turn charge is invalid"),
+            Self::AcceptanceVerificationRequired => {
+                formatter.write_str("agent run completion requires acceptance verification")
+            }
+            Self::AcceptanceVerificationMismatch => {
+                formatter.write_str("acceptance verification does not match the agent run")
+            }
             Self::Usage(_) => formatter.write_str("agent run usage is invalid"),
             Self::InvalidStartEvent => formatter.write_str("agent run has an invalid start event"),
             Self::PayloadDigestMismatch => {
@@ -1154,7 +1202,8 @@ mod tests {
         RunEventSequence, RunEventSubject,
     };
     use crate::{
-        AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
+        AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement,
+        AcceptanceCriterionVerification, AcceptanceVerificationReceipt, AgentRunId,
         AgentTurnActionClass, AgentTurnCharge, AgentTurnRepairUsage, GoalContract,
         GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
         ModelProfileReference, ModelProfileVersion, ModelTokenCount, RunEventId, SnapshotId,
@@ -1193,7 +1242,6 @@ mod tests {
             AgentControllerState::Plan,
             AgentControllerState::Execute,
             AgentControllerState::Verify,
-            AgentControllerState::Done,
         ]
         .into_iter()
         .enumerate()
@@ -1210,6 +1258,37 @@ mod tests {
                 timestamp(u64::try_from(index + 2)?)?,
             )?;
         }
+        assert_eq!(
+            run.transition(
+                event_id(6),
+                AgentControllerState::Done,
+                RunEventPayload::empty(),
+                snapshot(1),
+                timestamp(6)?,
+            ),
+            Err(AgentRunError::AcceptanceVerificationRequired)
+        );
+        let goal = goal_contract()?;
+        let receipt = AcceptanceVerificationReceipt::new(
+            run.id(),
+            &goal,
+            run.task_ledger_revision(),
+            snapshot(1),
+            vec![AcceptanceCriterionVerification::new(
+                AcceptanceCriterionId::from_bytes([3; 32]),
+                vec![TaskEvidenceId::from_bytes([7; 32])],
+            )?],
+        )?;
+        run.complete_verified(
+            event_id(6),
+            &receipt,
+            RunEventPayload::new(
+                RunEventCode::ControllerDecision,
+                Some(RunEventOutcome::Succeeded),
+                None,
+            ),
+            timestamp(6)?,
+        )?;
         assert_eq!(run.state(), AgentControllerState::Done);
         assert_eq!(
             run.record(

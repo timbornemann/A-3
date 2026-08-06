@@ -12,8 +12,9 @@ pub use job::{JobId, JobOwner, JobStatus};
 pub use platform::Platform;
 pub use progress::{Progress, ProgressTransitionError, ProgressValueError};
 pub use project::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentAction,
-    AgentActionLimit, AgentActionLimitError, AgentActionSchemaVersion,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement,
+    AcceptanceCriterionVerification, AcceptanceVerificationError, AcceptanceVerificationReceipt,
+    AgentAction, AgentActionLimit, AgentActionLimitError, AgentActionSchemaVersion,
     AgentActionSchemaVersionError, AgentActionTextError, AgentActionTextViolation,
     AgentBudgetDimension, AgentBudgetEvaluationError, AgentBudgetExhaustion, AgentControllerState,
     AgentFileInspection, AgentFileLineCount, AgentFileLineCountError, AgentFileStartLine,

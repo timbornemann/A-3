@@ -1,7 +1,9 @@
 //! Application use cases and ports for A^3.
 
 mod agent_action_codec;
+mod agent_controller;
 mod agent_prompt;
+mod agent_turn;
 mod context_compiler;
 mod deep_map_action_codec;
 mod deep_map_explorer;
@@ -41,9 +43,22 @@ mod task_lens;
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
 };
+pub use agent_controller::{
+    AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
+    AcceptanceVerifier, AcceptanceVerifierFailure, AcceptanceVerifierFuture,
+    AcceptanceVerifierOutcome, AcceptanceVerifierTimeout, AcceptanceVerifierTimeoutError,
+    AdvanceAgentController, AgentControllerAdvance, AgentControllerAdvanceKind,
+    AgentControllerControl, AgentControllerError, AgentControllerPreflightFailure,
+    AgentControllerSignal, VerifyAgentAcceptance,
+};
 pub use agent_prompt::{
     AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,
     AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
+};
+pub use agent_turn::{
+    AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,
+    AgentReadToolsFuture, AgentTurnExecution, AgentTurnOutcome, AgentTurnRejectionReason,
+    ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
 };
 pub use context_compiler::{
     AgentContextCompileInput, AgentContextCompileInputError, AgentContextCompiler,
