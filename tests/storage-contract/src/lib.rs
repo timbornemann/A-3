@@ -9,14 +9,15 @@ mod goal_contract;
 mod index;
 mod module_cards;
 mod reconciliation;
+mod run_journal;
 mod search;
 mod semantic;
 mod task_ledger;
 
 use a3_application::{
     GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
-    ModuleRemapQueueStore, SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore,
-    TaskLensIndexStore, VerifiedModuleCardPublisher,
+    ModuleRemapQueueStore, RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore,
+    TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -198,6 +199,7 @@ pub trait KnowledgeStoreContractFactory {
         + KnowledgeIndexStore
         + GoalContractStore
         + TaskLedgerStore
+        + RunJournalStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
         + ModuleRemapQueueStore
@@ -238,6 +240,8 @@ pub enum KnowledgeStoreContractGroup {
     GoalContracts,
     /// Versioned Task Ledger state, attempt history, replans, invalidation, and reopen behavior.
     TaskLedgers,
+    /// Atomic append-only run journal, safe export, reopen, and worktree isolation.
+    RunJournals,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -305,6 +309,7 @@ where
             goal_contract::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::TaskLedgers => task_ledger::verify(factory, &workspace).await,
+        KnowledgeStoreContractGroup::RunJournals => run_journal::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
                 factory,

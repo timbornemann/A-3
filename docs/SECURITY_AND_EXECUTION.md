@@ -167,6 +167,9 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 - bekannte Secret-Dateien und Credential-Muster werden nicht indexiert;
 - Provider-Tokens liegen im OS-Schlüsselspeicher;
 - Logs verwenden Redaction vor Persistenz;
+- persistierte RunEvents besitzen keinen Freitext: Modell-, Tool-, User- und externe Fehlerausgaben
+  werden vor der Adaptergrenze auf Quellkategorie, Bytezahl und Trunkierungsstatus reduziert; auch
+  der JSONL-Export enthält nur diese content-freien Metadaten und den Digest der sicheren Struktur;
 - UI erhält nur SecretExists, niemals den Secretwert;
 - Context Packs enthalten keine vollständigen Environment Dumps;
 - erkannte mögliche Secrets stoppen eine Veröffentlichung oder Synchronisation.

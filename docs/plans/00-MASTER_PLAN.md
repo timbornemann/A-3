@@ -93,7 +93,7 @@ Ein Nutzer kann:
 
 - [x] Goal Contract
 - [x] Task Ledger
-- [ ] Run Journal
+- [x] Run Journal
 - [ ] Context Compiler
 - [ ] Ollama-kompatibler Provider
 - [ ] ModelProfile und Capability Self-Test

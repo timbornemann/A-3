@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 a3-application.workspace = true
 a3-domain.workspace = true
+futures.workspace = true
 
 [lints]
 workspace = true

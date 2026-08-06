@@ -453,7 +453,7 @@ struct LedgerHeader {
     updated_at: TaskLedgerTimestamp,
 }
 
-async fn load_from_transaction(
+pub(crate) async fn load_from_transaction(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     task_id: TaskId,

@@ -38,6 +38,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Linked-Worktree-Isolation, unveränderliche Definitionen sowie Versuchs- und Replan-Historie,
   fehlgeschlagene und erfolgreiche Verifikation, transitive Evidence-Invalidierung und exakte
   Wiederherstellung des vollständigen Aggregats nach Reopen.
+- Run-Journal-Contracts prüfen atomaren Start, Linked-Worktree-Isolation, genau einen Gewinner bei
+  konkurrierenden Appends derselben Sequenz, lückenloses Paging, atomare Run-Materialisierung,
+  Redaction ohne Secret-Fixture, deterministischen begrenzten JSONL-V1-Export und exakte
+  Wiederherstellung nach Reopen.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen

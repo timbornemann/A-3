@@ -393,6 +393,11 @@ Invarianten:
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.
+Der implementierte H3-Kern bindet jeden `AgentRun` an genau eine `GoalContractReference`, die
+aktuelle `TaskLedgerRevision` und einen vorhandenen Snapshot. `RunEventSequence` beginnt bei eins
+und kann ausschließlich lückenlos wachsen. Jeder erlaubte Zustandsübergang und jeder Replan erzeugt
+ein typisiertes Event und aktualisiert zugleich die in-memory Materialisierung; terminale Runs
+akzeptieren keine weiteren Events.
 
 Invarianten:
 
@@ -487,3 +492,15 @@ RunEvent ist ein append-only Audit-Eintrag. Mindestfelder:
 - optional ToolRunId oder EvidenceId
 
 Die Eventfolge ist kein vollständiges Event-Sourcing des Produkts. Fachzustand wird relational materialisiert; das Journal dient Audit, Debugging und reproduzierbarer Laufanalyse.
+
+`RunEventPayload` V1 besitzt keinen Freitextkanal. Sie enthält ausschließlich einen geschlossenen
+`RunEventCode`, ein optionales grobes Outcome, optionale `RunEventRedaction` aus Quellkategorie,
+beobachteter Bytezahl und Trunkierungsflag sowie einen domain-separierten Digest dieser sicheren
+Felder. Ein `RunEventSubject` kann nur eine typisierte `ToolRunId` oder `TaskEvidenceId` sein.
+Roher User-, Repository-, Modell-, Tool- oder Fehlertext kann daher weder persistiert noch über das
+stabile JSONL-Exportformat rekonstruiert werden.
+
+Die V1-Retention `PreserveAuditEvents` ist nicht destruktiv: Das bereits content-freie Journal bleibt
+als Audit erhalten. `agent_runs` ist eine unabhängige relationale Projektion und kann ohne Replay
+des Journalinhalts rekonstruiert werden; vor einem neuen Append prüft der Adapter dagegen den
+aktuellen Eventtail und führt Eventinsert plus Zustands-CAS atomar aus.

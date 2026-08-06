@@ -7,7 +7,8 @@ use crate::{
     exact_search_repository, goal_contract_repository, graph_traversal_repository,
     index_publication, index_repository, index_repository::IndexRepositoryError,
     lexical_search_repository, module_card_repository, module_remap_queue_repository,
-    semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
+    run_journal_repository, semantic_embedding_repository, task_ledger_repository,
+    task_lens_claim_repository,
 };
 use a3_application::{
     EmbeddingOperationControl, GoalContractStore, GoalContractStoreFailure,
@@ -17,7 +18,8 @@ use a3_application::{
     ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleRemapQueueFailure,
     ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit, RemapQueueControl,
-    RemapQueueLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
+    RemapQueueLimit, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
+    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
     SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLedgerStore,
     TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
     TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
@@ -25,14 +27,14 @@ use a3_application::{
     VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
-    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
-    ExactSearchPageSize, ExactSearchQuery, GoalContract, GoalContractRevision,
-    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
-    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
-    LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId,
-    SemanticEmbedding, Snapshot, SnapshotId, TaskId, TaskLedger, TraversalQuery,
-    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch,
-    WorktreeId,
+    AgentRun, AgentRunId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
+    GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex,
+    RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskId,
+    TaskLedger, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -364,6 +366,82 @@ impl TaskLedgerStore for LibsqlKnowledgeStore {
             task_ledger_repository::load(database.connection(), project.worktree().id(), task_id)
                 .await
                 .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl RunJournalStore for LibsqlKnowledgeStore {
+    fn create_agent_run<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run: &'a AgentRun,
+        start_event: &'a RunEvent,
+    ) -> RunJournalStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            run_journal_repository::create(
+                database.connection(),
+                project.worktree().id(),
+                run,
+                start_event,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_run_event<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> RunJournalStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            run_journal_repository::append(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_agent_run<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> RunJournalStoreFuture<'a, Option<AgentRun>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            run_journal_repository::load_run(database.connection(), project.worktree().id(), run_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_run_events<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        after_sequence: Option<RunEventSequence>,
+        limit: RunEventPageLimit,
+    ) -> RunJournalStoreFuture<'a, RunEventPage> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            run_journal_repository::load_events(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+                after_sequence,
+                limit,
+            )
+            .await
+            .map_err(|error| error.classify())
         })
     }
 }
@@ -866,6 +944,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_run_journal(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, RunJournalStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_run_journal_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_run_journal_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1262,6 +1363,17 @@ fn classify_task_ledger_storage_failure(error: KnowledgeStoreFailure) -> TaskLed
         KnowledgeStoreFailure::UnsupportedSchema => TaskLedgerStoreFailure::UnsupportedSchema,
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             TaskLedgerStoreFailure::InvalidStoredData
+        }
+    }
+}
+
+fn classify_run_journal_storage_failure(error: KnowledgeStoreFailure) -> RunJournalStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => RunJournalStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => RunJournalStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => RunJournalStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            RunJournalStoreFailure::InvalidStoredData
         }
     }
 }

@@ -57,17 +57,29 @@ unveränderliche Historie, Linked-Worktree-Isolation und exakte Rekonstruktion n
 
 Abhängigkeiten: H2
 
-- [ ] AgentRun und RunEvent
-- [ ] monotone Sequenznummer
-- [ ] atomare Event- plus Zustandsaktualisierung
-- [ ] sichere Payloadredaction
-- [ ] Retention und Exportformat
+- [x] AgentRun und RunEvent
+- [x] monotone Sequenznummer
+- [x] atomare Event- plus Zustandsaktualisierung
+- [x] sichere Payloadredaction
+- [x] Retention und Exportformat
 
 Akzeptanz:
 
 - paralleles Eventappend erzeugt keine doppelte Sequenz;
 - Eventjournal enthält keine Secret-Fixtures;
 - Journalverlust ist nicht nötig, um materialisierten Zustand zu lesen.
+
+Verifiziert am 2026-08-06: Die infra-freie Domain bindet jeden `AgentRun` an Goal Contract,
+Task-Ledger-Revision und Snapshot, erzwingt die dokumentierte endliche Zustandsmaschine und erzeugt
+nur lückenlose, typisierte `RunEvent`s. Der Application-Port paginiert höchstens 256 Events und
+exportiert mit Cancellation, monotonem Progress sowie festen Event-/Bytegrenzen das deterministische
+`a3.run-journal.jsonl` V1. Seine Payload kann ausschließlich geschlossene Codes, Outcomes und
+content-freie Redaktionsmetadaten enthalten. Knowledge-Schema V13 erstellt Run plus StartEvent und
+CAS-appendet jedes weitere Event samt Materialisierung atomar. Der gemeinsame Storage-Contract
+belegt genau einen Gewinner konkurrierender Appends, Worktree-Isolation, Reopen, Paging,
+deterministischen Export und das Fehlen der Secret-Fixture; ein Adaptertest belegt zusätzlich, dass
+die relationale Run-Materialisierung selbst nach simuliertem Journalverlust ohne Replay lesbar ist.
+Die V1-Retention erhält alle sicheren Audit-Events unverändert.
 
 ## H4 ModelProvider
 

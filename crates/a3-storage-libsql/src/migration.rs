@@ -1301,6 +1301,83 @@ const KNOWLEDGE_TASK_LEDGER_MIGRATION: Migration = Migration {
       CREATE INDEX task_steps_status_idx ON task_steps(task_id, status, step_id);",
 };
 
+const KNOWLEDGE_RUN_JOURNAL_MIGRATION: Migration = Migration {
+    version: 13,
+    name: "append_only_run_journal",
+    sql: "CREATE TABLE agent_runs (\n\
+      run_id BLOB PRIMARY KEY NOT NULL CHECK (length(run_id) = 32),\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      task_ledger_revision INTEGER NOT NULL\n\
+        CHECK (task_ledger_revision BETWEEN 1 AND 4294967295),\n\
+      controller_state TEXT NOT NULL CHECK (controller_state IN ('intake', 'localize', 'plan',\n\
+        'execute', 'verify', 'replan', 'await_approval', 'done', 'failed', 'cancelled')),\n\
+      last_event_sequence INTEGER NOT NULL CHECK (last_event_sequence >= 1),\n\
+      current_snapshot_id BLOB NOT NULL CHECK (length(current_snapshot_id) = 32),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      updated_at_unix_millis INTEGER NOT NULL\n\
+        CHECK (updated_at_unix_millis >= created_at_unix_millis),\n\
+      FOREIGN KEY (task_id) REFERENCES task_ledgers(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (current_snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE run_events (\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      event_sequence INTEGER NOT NULL CHECK (event_sequence >= 1),\n\
+      event_id BLOB NOT NULL CHECK (length(event_id) = 32),\n\
+      occurred_at_unix_millis INTEGER NOT NULL CHECK (occurred_at_unix_millis >= 0),\n\
+      event_kind TEXT NOT NULL CHECK (event_kind IN ('run_started', 'state_transition',\n\
+        'context_compiled', 'model_interaction', 'tool_action', 'ledger_updated',\n\
+        'verification_recorded', 'approval_recorded', 'diagnostic')),\n\
+      state_from TEXT CHECK (state_from IS NULL OR state_from IN ('intake', 'localize', 'plan',\n\
+        'execute', 'verify', 'replan', 'await_approval', 'done', 'failed', 'cancelled')),\n\
+      state_to TEXT CHECK (state_to IS NULL OR state_to IN ('intake', 'localize', 'plan',\n\
+        'execute', 'verify', 'replan', 'await_approval', 'done', 'failed', 'cancelled')),\n\
+      ledger_revision_from INTEGER CHECK (ledger_revision_from IS NULL OR\n\
+        ledger_revision_from BETWEEN 1 AND 4294967294),\n\
+      ledger_revision_to INTEGER CHECK (ledger_revision_to IS NULL OR\n\
+        ledger_revision_to BETWEEN 2 AND 4294967295),\n\
+      payload_schema_version INTEGER NOT NULL CHECK (payload_schema_version = 1),\n\
+      payload_code TEXT NOT NULL CHECK (payload_code IN ('none', 'user_request',\n\
+        'controller_decision', 'policy_decision', 'timeout', 'cancellation',\n\
+        'invalid_model_output', 'tool_failure', 'verification_failure', 'state_recovered')),\n\
+      payload_outcome TEXT CHECK (payload_outcome IS NULL OR\n\
+        payload_outcome IN ('succeeded', 'failed', 'cancelled', 'denied')),\n\
+      redaction_source TEXT CHECK (redaction_source IS NULL OR\n\
+        redaction_source IN ('untrusted_text', 'model_output', 'tool_output', 'external_error')),\n\
+      redaction_observed_bytes INTEGER\n\
+        CHECK (redaction_observed_bytes IS NULL OR redaction_observed_bytes >= 0),\n\
+      redaction_source_truncated INTEGER\n\
+        CHECK (redaction_source_truncated IS NULL OR redaction_source_truncated IN (0, 1)),\n\
+      payload_digest BLOB NOT NULL CHECK (length(payload_digest) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      subject_kind TEXT CHECK (subject_kind IS NULL OR subject_kind IN ('tool', 'evidence')),\n\
+      subject_id BLOB CHECK (subject_id IS NULL OR length(subject_id) = 32),\n\
+      CHECK ((event_sequence = 1) = (event_kind = 'run_started')),\n\
+      CHECK ((event_kind = 'state_transition') = (state_from IS NOT NULL)),\n\
+      CHECK ((state_from IS NULL) = (state_to IS NULL)),\n\
+      CHECK (state_from IS NULL OR state_from <> state_to),\n\
+      CHECK ((event_kind = 'ledger_updated') = (ledger_revision_from IS NOT NULL)),\n\
+      CHECK ((ledger_revision_from IS NULL) = (ledger_revision_to IS NULL)),\n\
+      CHECK (ledger_revision_from IS NULL OR ledger_revision_to = ledger_revision_from + 1),\n\
+      CHECK ((redaction_source IS NULL) = (redaction_observed_bytes IS NULL)),\n\
+      CHECK ((redaction_source IS NULL) = (redaction_source_truncated IS NULL)),\n\
+      CHECK ((subject_kind IS NULL) = (subject_id IS NULL)),\n\
+      PRIMARY KEY (run_id, event_sequence),\n\
+      UNIQUE (event_id),\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE INDEX agent_runs_task_state_idx ON agent_runs(task_id, controller_state, run_id);\n\
+      CREATE INDEX run_events_subject_idx ON run_events(subject_kind, subject_id, run_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1314,6 +1391,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_CARD_INVALIDATION_MIGRATION,
     KNOWLEDGE_GOAL_CONTRACT_MIGRATION,
     KNOWLEDGE_TASK_LEDGER_MIGRATION,
+    KNOWLEDGE_RUN_JOURNAL_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1346,7 +1424,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(12);
+    pub const CURRENT: Self = Self::new(13);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1753,11 +1831,12 @@ mod tests {
                      'task_step_attempts', 'task_step_attempt_evidence',\n\
                      'task_step_verifications', 'task_step_verification_evidence',\n\
                      'task_step_stale_evidence', 'task_ledger_replans',\n\
-                     'task_ledger_replan_retirements', 'task_ledger_replan_additions'\n\
+                     'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
+                     'agent_runs', 'run_events'\n\
                      )",
                 )
                 .await?,
-                42
+                44
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -2372,6 +2451,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'task_steps'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v13_upgrade_preserves_v12_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [50; 32];
+            let worktree_id = [51; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..12],
+                12,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE agent_runs (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 13, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 12);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_runs')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'run_events'",
                 )
                 .await?,
                 0

@@ -90,6 +90,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   bestehende Definitionen, terminale Versuche oder Replans umzuschreiben, wird vor Mutation
   abgelehnt. Leser rekonstruieren und validieren den vollständigen Domain-Aggregatzustand innerhalb
   einer konsistenten Read-Transaktion.
+- Knowledge-Schema V13 ergänzt `agent_runs` als aktuelle relationale Laufprojektion und
+  `run_events` als append-only Auditjournal. Runstart sowie jeder folgende Eventappend aktualisieren
+  Event und Materialisierung atomar in einer `IMMEDIATE`-Transaktion. Der Tail wird per
+  Sequenz-Compare-and-Swap geschützt; Snapshot, Goal-Contract-Revision und Task-Ledger-Revision
+  werden vor Mutation erneut validiert. Materialisierter Zustand wird ohne Journal-Replay gelesen.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -317,7 +322,13 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   aktuelle Zeiger darf nur auf die exakt nächste, zeitlich nicht rückläufige Revision wechseln;
   alte Revisionen und ihre geordneten Inhalte bleiben unverändert lesbar. Ein konkurrierender
   Writer mit veraltetem Vorgänger wird abgelehnt.
-- RunEvent ist über RunId und Sequenz eindeutig und append-only.
+- RunEvent ist über RunId und Sequenz eindeutig und append-only. Sequenz eins ist ausschließlich
+  `RunStarted`; Zustands- und Ledgerübergänge besitzen vollständig typisierte Vorher-/Nachherwerte.
+- `agent_runs` und der neu angehängte `run_events`-Datensatz wechseln in derselben Transaktion.
+  Ein veralteter Writer verliert den Compare-and-Swap und hinterlässt weder Event noch Teilzustand.
+- Run-Event-Payloads enthalten nur geschlossene Codes, grobe Outcomes, content-freie
+  Redaktionsmetadaten und den Digest dieser sicheren Struktur. Freitext, Modelloutput, Tooloutput,
+  externe Fehlertexte und Secretwerte sind in diesem Schema nicht darstellbar.
 - Context Pack speichert keine Secrets und kann nach Retention-Policy komprimiert werden.
 
 ## Transaktionen
@@ -328,6 +339,7 @@ Eine einzelne DB-Transaktion darf:
 - Invalidationen für dieses Delta markieren;
 - einen vollständigen Indexlauf veröffentlichen;
 - einen Task-Schritt samt Verification abschließen;
+- genau einen RunEvent anhängen und die zugehörige Run-Materialisierung aktualisieren;
 - einen Toolrun und sein Ergebnis protokollieren.
 
 Sie darf keine Datei lesen, kein Modell aufrufen und keinen Prozess abwarten.
@@ -384,6 +396,15 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
+Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,
+kontiguierliche Ledgerrevisionen sowie vollständige optionale Feldgruppen. Fremdschlüssel binden
+jeden Run an Task, konkrete Goal-Contract-Revision, Task Ledger und aktuellen Snapshot; jedes Event
+referenziert einen vorhandenen Snapshot. Der gemeinsame Adaptervertrag prüft atomaren Start,
+Linked-Worktree-Isolation, konkurrierende Sequenz-CAS-Appends, Paging, Redaction, deterministischen
+Export und exakte Wiederherstellung nach Reopen. Der getestete V12→V13-Fehlerfall rollt vollständig
+auf V12 zurück.
 
 Das implementierte Knowledge-Schema V12 ergänzt V11 um die relationale Task-Ledger-Projektion.
 Strikte Checks und Fremdschlüssel begrenzen IDs, Texte, Sequenzen, Statuswerte und
@@ -485,4 +506,12 @@ Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Do
 - Index und Embeddings dürfen sicher gelöscht und aufgebaut werden.
 - Task, Decisions und User-Evidence benötigen Backup vor Cleanup.
 - Vollständige Toollogs können nach Policy gekürzt werden; Digest, Status, relevante Evidence und Verifikation bleiben.
+- Strukturierte RunEvents selbst werden in V1 nicht gekürzt: Die Retention-Policy
+  `PreserveAuditEvents` behält das content-freie Auditjournal vollständig. Rohe Modell-, Tool- und
+  Fehlertexte gelangen nie in das Journal und müssen deshalb dort nicht nachträglich gelöscht
+  werden. Ein Rebuild oder Cleanup darf weder `agent_runs` noch `run_events` entfernen.
+- `a3.run-journal.jsonl` V1 exportiert eine Headerzeile und danach exakt einen kanonischen,
+  schema-versionierten JSON-Datensatz pro Event. Der Export ist auf 10.000 Events und 8 MiB
+  begrenzt, paginiert Storagezugriffe mit höchstens 256 Events, unterstützt Cancellation und
+  monotonen Progress und enthält ausschließlich dieselben content-freien Felder wie die DB.
 - Ein Rebuild darf keine Task-Historie oder Decisions verlieren.

@@ -406,8 +406,13 @@ pub enum RunEventKind {
     ModelInteraction,
     /// A bounded tool action was requested or completed.
     ToolAction,
-    /// The durable Task Ledger changed.
-    LedgerUpdated,
+    /// The durable Task Ledger advanced through one validated replan.
+    LedgerUpdated {
+        /// Materialized plan revision before the replan.
+        from: TaskLedgerRevision,
+        /// Immediate next materialized plan revision.
+        to: TaskLedgerRevision,
+    },
     /// A deterministic verification was recorded.
     VerificationRecorded,
     /// A scoped approval was requested or resolved.
@@ -446,7 +451,15 @@ impl RunEvent {
             {
                 return Err(AgentRunError::InvalidStateTransition { from, to });
             }
-            RunEventKind::RunStarted | RunEventKind::StateTransition { .. } => {}
+            RunEventKind::LedgerUpdated { from, to }
+                if identity.sequence == RunEventSequence::FIRST
+                    || from.get().checked_add(1) != Some(to.get()) =>
+            {
+                return Err(AgentRunError::InvalidLedgerRevision { from, to });
+            }
+            RunEventKind::RunStarted
+            | RunEventKind::StateTransition { .. }
+            | RunEventKind::LedgerUpdated { .. } => {}
             _ if identity.sequence == RunEventSequence::FIRST => {
                 return Err(AgentRunError::InvalidStartEvent);
             }
@@ -601,7 +614,7 @@ impl AgentRun {
         ))
     }
 
-    /// Reconstructs materialized state; storage must separately verify the matching event tail.
+    /// Reconstructs independently materialized state without replaying the audit journal.
     pub fn reconstruct(
         identity: AgentRunIdentity,
         materialized: AgentRunMaterializedState,
@@ -634,11 +647,41 @@ impl AgentRun {
     ) -> Result<RunEvent, AgentRunError> {
         if matches!(
             kind,
-            RunEventKind::RunStarted | RunEventKind::StateTransition { .. }
+            RunEventKind::RunStarted
+                | RunEventKind::StateTransition { .. }
+                | RunEventKind::LedgerUpdated { .. }
         ) {
             return Err(AgentRunError::InvalidEventKind);
         }
         self.append(event_id, kind, payload, snapshot_id, subject, occurred_at)
+    }
+
+    /// Records one immediate Task Ledger replan and advances the run's durable plan anchor.
+    pub fn record_ledger_update(
+        &mut self,
+        event_id: RunEventId,
+        next_revision: TaskLedgerRevision,
+        payload: RunEventPayload,
+        snapshot_id: SnapshotId,
+        occurred_at: AgentRunTimestamp,
+    ) -> Result<RunEvent, AgentRunError> {
+        if self.task_ledger_revision.get().checked_add(1) != Some(next_revision.get()) {
+            return Err(AgentRunError::InvalidLedgerRevision {
+                from: self.task_ledger_revision,
+                to: next_revision,
+            });
+        }
+        self.append(
+            event_id,
+            RunEventKind::LedgerUpdated {
+                from: self.task_ledger_revision,
+                to: next_revision,
+            },
+            payload,
+            snapshot_id,
+            None,
+            occurred_at,
+        )
     }
 
     /// Applies one allowed controller transition and returns its next append-only event.
@@ -687,6 +730,9 @@ impl AgentRun {
         if event.occurred_at < self.updated_at {
             return Err(AgentRunError::TimestampRegressed);
         }
+        if self.state.is_terminal() {
+            return Err(AgentRunError::TerminalRun);
+        }
         match event.kind {
             RunEventKind::RunStarted => return Err(AgentRunError::InvalidEventKind),
             RunEventKind::StateTransition { from, to } => {
@@ -698,7 +744,16 @@ impl AgentRun {
                 }
                 self.state = to;
             }
-            _ if self.state.is_terminal() => return Err(AgentRunError::TerminalRun),
+            RunEventKind::LedgerUpdated { from, to } => {
+                if from != self.task_ledger_revision || from.get().checked_add(1) != Some(to.get())
+                {
+                    return Err(AgentRunError::InvalidLedgerRevision {
+                        from: self.task_ledger_revision,
+                        to,
+                    });
+                }
+                self.task_ledger_revision = to;
+            }
             _ => {}
         }
         self.last_event_sequence = event.sequence;
@@ -882,6 +937,13 @@ pub enum AgentRunError {
     InvalidStartEvent,
     /// Persisted payload fields did not match their canonical safe digest.
     PayloadDigestMismatch,
+    /// Ledger update did not advance the exact current plan revision by one.
+    InvalidLedgerRevision {
+        /// Current materialized revision.
+        from: TaskLedgerRevision,
+        /// Requested next revision.
+        to: TaskLedgerRevision,
+    },
 }
 
 impl fmt::Display for AgentRunError {
@@ -901,6 +963,9 @@ impl fmt::Display for AgentRunError {
             Self::InvalidStartEvent => formatter.write_str("agent run has an invalid start event"),
             Self::PayloadDigestMismatch => {
                 formatter.write_str("run-event payload digest does not match its safe fields")
+            }
+            Self::InvalidLedgerRevision { .. } => {
+                formatter.write_str("agent run Task Ledger revision is not contiguous")
             }
         }
     }
@@ -1023,6 +1088,33 @@ mod tests {
         assert_eq!(event.sequence().get(), 2);
         assert_eq!(run.current_snapshot_id(), snapshot(2));
         assert_eq!(run.updated_at(), timestamp(2)?);
+        Ok(())
+    }
+
+    #[test]
+    fn ledger_update_advances_only_the_immediate_revision() -> Result<(), Box<dyn Error>> {
+        let (mut run, _) = started_run()?;
+        assert!(matches!(
+            run.record_ledger_update(
+                event_id(2),
+                TaskLedgerRevision::new(3)?,
+                RunEventPayload::empty(),
+                snapshot(1),
+                timestamp(2)?,
+            ),
+            Err(AgentRunError::InvalidLedgerRevision { .. })
+        ));
+
+        let event = run.record_ledger_update(
+            event_id(2),
+            TaskLedgerRevision::new(2)?,
+            RunEventPayload::empty(),
+            snapshot(1),
+            timestamp(2)?,
+        )?;
+
+        assert_eq!(run.task_ledger_revision().get(), 2);
+        assert!(matches!(event.kind(), RunEventKind::LedgerUpdated { .. }));
         Ok(())
     }
 

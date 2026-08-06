@@ -27,6 +27,7 @@ mod repository_index;
 mod repository_snapshot;
 mod repository_watcher;
 mod retrieval_fusion;
+mod run_journal;
 mod semantic_embedding_store;
 mod semantic_embeddings;
 mod task_ledger;
@@ -134,6 +135,12 @@ pub use repository_watcher::{
     RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,
 };
 pub use retrieval_fusion::FuseRetrievalCandidates;
+pub use run_journal::{
+    AppendRunEvent, CreateAgentRun, ExportRunJournal, RunEventPage, RunEventPageError,
+    RunEventPageLimit, RunEventPageLimitError, RunJournalExport, RunJournalExportControl,
+    RunJournalExportControlError, RunJournalExportError, RunJournalExportSchemaVersion,
+    RunJournalRetentionPolicy, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
+};
 pub use semantic_embedding_store::{
     SemanticCacheRebuildControl, SemanticCacheRebuildProgressError, SemanticEmbeddingStore,
     SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
