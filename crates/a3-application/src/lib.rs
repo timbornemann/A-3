@@ -31,6 +31,8 @@ mod module_card_claim_codec;
 mod module_card_verification;
 mod module_remap_queue;
 mod open_project;
+mod policy;
+mod policy_store;
 mod project_reconciliation;
 mod recent_projects;
 mod repository_discovery;
@@ -173,6 +175,13 @@ pub use open_project::{
     ProjectDirectorySelectionError, ProjectInspectionFailure, ProjectInspector,
     ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
     ProjectReconciliationConfirmer,
+};
+pub use policy::{
+    EvaluateActionPolicy, EvaluateActionPolicyError, EvaluatedPolicyAction, PolicyEvaluationContext,
+};
+pub use policy_store::{
+    GrantPolicyApproval, GrantPolicyApprovalError, PersistPolicyEvaluation, PolicyStore,
+    PolicyStoreFailure, PolicyStoreFuture, RevokePolicyApproval, RevokePolicyApprovalError,
 };
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,

@@ -52,6 +52,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Resume/Replan/Cancel sowie den vollständigen Rollback von Published-Snapshot-, Ledger- und
   Run-Sequenzkonflikten. Nur der atomare Toolresultat-/Journalpfad darf einen Versuch als
   erfolgreich abschließen.
+- V18-Policy-Contracts prüfen begründete Decision und Request nach Reopen, exakten Pfad-Scope,
+  Mismatch ohne Grantverbrauch, einmalige Consumption, Widerruf, restriktive Workspace-Regeln und
+  vollständigen Rollback von Decision, Request, Event und Runprojektion bei veraltetem
+  Runsequenz-CAS.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
@@ -168,7 +172,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - ungültige IPC- und LLM-Payloads abgelehnt; Goal-Contract-V1 fixiert in Rust exakte Schlüssel und
   eine stabile JSON-Form, während der TypeScript-Runtimeparser zusätzlich IDs,
   Revisionsmetadaten, UTF-8-Byte- und Listengrenzen sowie eindeutige Inhalte erneut prüft
-- Approval- und Policy-Tests
+- Approval- und Policy-Tests: abgeleitete Klassen/Risiken, unverrückbare Systembaseline,
+  Pfad-Scope-Mismatch, Ablauf, Widerruf, One-time-Consumption und ungültige persistierte Formen
+- gemeinsamer Storagevertrag für PolicyDecision, Request, Grant, Reopen und atomaren Run-/Approval-
+  CAS-Rollback; jede Auswertung erzeugt genau ein typisiertes Audit-Event
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

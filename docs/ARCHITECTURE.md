@@ -217,8 +217,13 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    der konkrete Adapter übersetzt den begrenzten Stream in `ProviderEvent`s.
 5. Das Modellresultat wird erst nach einem terminalen Provider-Event als vollständige Ausgabe
    behandelt und liefert anschließend eine streng validierte Aktion.
-6. Policy und Preconditions werden geprüft.
-7. Genau ein Werkzeug wird ausgeführt.
+6. Jede typisierte Action durchläuft genau einmal den zentralen `EvaluateActionPolicy`-Use-Case.
+   Aktionsklasse und Risiko werden aus der Action abgeleitet; die feste Systempolicy wird nur durch
+   restriktivere Workspace-Regeln überlagert. Ergebnis ist eine begründete `PolicyDecision` mit
+   genau einem content-freien RunEvent und optional einem exakten `ApprovalRequest`.
+7. Genau ein Werkzeug wird nur bei `Allowed` ausgeführt. `ApprovalRequired` und `Denied` dürfen die
+   Toolgrenze nicht erreichen; eine Freigabe wird für genau Run, Action-Fingerprint und Scope
+   einmalig atomar mit der erlaubenden Entscheidung verbraucht.
 8. Ergebnis, Evidenz und Ledger werden atomar aktualisiert.
 9. Der Controller wechselt zu Verify, Replan oder AwaitApproval; `Done` ist ausschließlich nach
    vollständiger snapshotgebundener Prüfung durch den `AcceptanceVerifier` erreichbar.
@@ -229,6 +234,14 @@ Search, durable Tool-Evidence, Ledger-Verifikation und Acceptance bis `Done`. Vo
 bleibt der Repository-Dateibaum bytegleich. Ein Negativlauf schickt ungültige Primär- und
 Reparaturausgabe durch denselben Compiler und weist null Toolaufrufe, Toolversuche und Tool-Events
 nach.
+
+M7/E1 persistiert Entscheidung, optionalen Request, Runprojektion, genau ein Audit-Event und den
+optionalen Approval-Verbrauch in einer kurzen `IMMEDIATE`-Transaktion. Grant und Widerruf sind
+eigene explizite User-Use-Cases mit jeweils genau einem Journalereignis. Der Application-Port gibt
+weder libSQL-Zeilen noch rohe Pfade, Prozessdaten oder Netzwerkziele weiter; dauerhafte Scopes und
+Actionen werden ausschließlich als domain-separierte Digests gespeichert. Der gemeinsame
+Storagevertrag prüft Reopen, Pfad-Mismatch ohne Verbrauch, einmaligen Verbrauch, Widerruf,
+restriktive Workspace-Regeln und vollständigen Rollback bei veralteter Runsequenz.
 
 ### Agentenlauf nach Appneustart
 

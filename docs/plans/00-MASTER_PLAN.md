@@ -103,7 +103,7 @@ Ein Nutzer kann:
 
 ### M7 Editing Agent
 
-- [ ] Policy Engine und Approval-Modell
+- [x] Policy Engine und Approval-Modell
 - [ ] hashgeschützte PatchAction
 - [ ] argv ProcessRunner
 - [ ] Test- und Buildverifikation

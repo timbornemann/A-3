@@ -7,37 +7,39 @@ use crate::{
     agent_recovery_repository, exact_search_repository, goal_contract_repository,
     graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
-    module_remap_queue_repository, run_journal_repository, semantic_embedding_repository,
-    task_ledger_repository, task_lens_claim_repository,
+    module_remap_queue_repository, policy_repository, run_journal_repository,
+    semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentRecoveryStore,
     AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, EmbeddingOperationControl,
-    GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture, IndexPersistenceControl,
-    KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl,
-    KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore,
-    KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
+    EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
+    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
     ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
-    ModuleRemapQueueStore, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
-    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage,
-    RunEventPageLimit, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
-    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
-    SemanticEmbeddingStoreFuture, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
-    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
-    TaskLensIndexStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture,
+    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
+    RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage, RunEventPageLimit,
+    RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
+    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
+    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber,
-    AgentToolAttemptStatus, AgentToolEvidence, EmbeddingCacheKey, EmbeddingModelProfile,
-    EmbeddingVector, ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
-    GoalContract, GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId,
-    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ProjectId, ProjectIdentity,
-    PublishedIndex, RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot,
-    SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery,
-    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch,
-    WorktreeId,
+    AgentToolAttemptStatus, AgentToolEvidence, ApprovalGrant, ApprovalGrantState, ApprovalId,
+    ApprovalRequest, ApprovalRequestId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
+    GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, PolicyDecision, PolicyDecisionId,
+    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
+    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
+    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -463,6 +465,116 @@ impl RunJournalStore for LibsqlKnowledgeStore {
                 run_id,
                 after_sequence,
                 limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl PolicyStore for LibsqlKnowledgeStore {
+    fn record_policy_evaluation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        evaluation: &'a EvaluatedPolicyAction,
+    ) -> PolicyStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::record_evaluation(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                evaluation,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_approval_request<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        request_id: ApprovalRequestId,
+    ) -> PolicyStoreFuture<'a, Option<ApprovalRequest>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::load_request(database.connection(), request_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_approval<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        approval_id: ApprovalId,
+    ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::load_approval(database.connection(), approval_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_policy_decision<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        decision_id: PolicyDecisionId,
+    ) -> PolicyStoreFuture<'a, Option<PolicyDecision>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::load_decision(database.connection(), decision_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn grant_approval<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        approval: &'a ApprovalGrant,
+        event: &'a RunEvent,
+    ) -> PolicyStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::grant(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                approval,
+                event,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn revoke_approval<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        expected_state: ApprovalGrantState,
+        approval: &'a ApprovalGrant,
+        event: &'a RunEvent,
+    ) -> PolicyStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::revoke(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                expected_state,
+                approval,
+                event,
             )
             .await
             .map_err(|error| error.classify())
@@ -1155,6 +1267,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_policy(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, PolicyStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_policy_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_policy_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     async fn open_project_knowledge_for_recovery(
         &self,
         project: &ProjectIdentity,
@@ -1585,6 +1720,17 @@ fn classify_run_journal_storage_failure(error: KnowledgeStoreFailure) -> RunJour
         KnowledgeStoreFailure::UnsupportedSchema => RunJournalStoreFailure::UnsupportedSchema,
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             RunJournalStoreFailure::InvalidStoredData
+        }
+    }
+}
+
+fn classify_policy_storage_failure(error: KnowledgeStoreFailure) -> PolicyStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => PolicyStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => PolicyStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => PolicyStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            PolicyStoreFailure::InvalidStoredData
         }
     }
 }

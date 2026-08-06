@@ -19,6 +19,7 @@ mod migration;
 mod module_card_repository;
 mod module_projection_codec;
 mod module_remap_queue_repository;
+mod policy_repository;
 mod project_catalog;
 mod project_layout;
 mod run_journal_repository;

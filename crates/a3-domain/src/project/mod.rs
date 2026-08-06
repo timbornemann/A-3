@@ -2,6 +2,7 @@ mod agent_action;
 mod agent_controller;
 mod agent_run;
 mod agent_tool;
+mod approval;
 mod claim_verification;
 mod context_pack;
 mod deep_map;
@@ -21,6 +22,8 @@ mod model;
 mod model_profile;
 mod module_map;
 mod path;
+mod policy;
+mod policy_decision;
 mod retrieval;
 mod retrieval_fusion;
 mod revision;
@@ -58,6 +61,10 @@ pub use agent_tool::{
     AgentToolAttempt, AgentToolAttemptError, AgentToolAttemptNumber, AgentToolAttemptNumberError,
     AgentToolAttemptStatus, AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet,
     AgentToolEvidenceSetError, ToolRunIdDerivationError,
+};
+pub use approval::{
+    ApprovalGrant, ApprovalGrantError, ApprovalGrantState, ApprovalRequest, ApprovalRequestError,
+    ApprovalRevokeError, ApprovalStatus, ApprovalUseError,
 };
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
@@ -126,9 +133,10 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
-    RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
-    VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, IndexRunId, PolicyDecisionId,
+    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
+    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationSpecId,
+    WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
@@ -172,6 +180,17 @@ pub use module_map::{
     ModuleRoot, ModuleSymbolSet, RepositoryCard, RepositoryModule,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
+pub use policy::{
+    ActionClass, GitPolicyOperation, NetworkPurpose, PathPolicyOperation, PathScopeCoverage,
+    PolicyAction, PolicyActionFingerprint, PolicyDisposition, PolicyPathScope, PolicyScopeDigest,
+    ProcessExecutionMode, ProcessNetworkScope, ProcessPlanBinding, ProcessPolicyAction, RiskLevel,
+    RootPolicyOperation, SystemPolicyV1, WorkspacePolicy, WorkspacePolicyError,
+    WorkspacePolicyRestriction, WorkspacePolicyRule,
+};
+pub use policy_decision::{
+    PolicyDecision, PolicyDecisionError, PolicyDecisionOutcome, PolicyDecisionReason,
+    PolicyEvaluationTiming, PolicyEvaluationTimingError,
+};
 pub use retrieval::{
     ExactSearchCursor, ExactSearchCursorError, ExactSearchExplanation, ExactSearchHit,
     ExactSearchHitError, ExactSearchPage, ExactSearchPageError, ExactSearchPageSize,

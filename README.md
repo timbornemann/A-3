@@ -48,8 +48,12 @@ verwaiste Toolversuche als Interrupted, prüft abgeschlossene Evidence gegen den
 Published Snapshot und committed die explizite Wahl Resume, Replan oder Cancel atomar. Gate M6
 führt den vollständigen read-only Controller über reale Rust-, TypeScript- und Python-Fixtures bis
 zum evidenzverifizierten `Done` und belegt am selben Stack, dass ungültige Primär- und
-Reparaturausgaben keine Toolgrenze erreichen. Als Nächstes folgt M7 mit der zentralen Policy- und
-Approval-Grenze. Die
+Reparaturausgaben keine Toolgrenze erreichen. M7/E1 ergänzt die zentrale Policy- und
+Approval-Grenze mit abgeleiteten Aktions- und Risikoklassen, begründeten Entscheidungen,
+exakt scopegebundenen einmaligen Freigaben, Ablauf/Widerruf und atomarem content-freiem Audit.
+Der gemeinsame libSQL-Vertrag belegt insbesondere, dass eine Pfadfreigabe keinen zweiten Pfad
+autorisiert und ein CAS-Konflikt keine Teilzustände hinterlässt. Als Nächstes folgt E2 mit den
+begrenzten sicheren Dateiwerkzeugen. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

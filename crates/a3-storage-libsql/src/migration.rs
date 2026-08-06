@@ -1553,6 +1553,235 @@ const KNOWLEDGE_AGENT_RECOVERY_MIGRATION: Migration = Migration {
         ON tool_run_attempts(run_id, status, tool_run_id, attempt_sequence);",
 };
 
+const KNOWLEDGE_POLICY_APPROVAL_MIGRATION: Migration = Migration {
+    version: 18,
+    name: "central_policy_and_approvals",
+    sql: "CREATE TABLE approval_requests (\n\
+      approval_request_id BLOB PRIMARY KEY NOT NULL CHECK (length(approval_request_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      requested_by TEXT NOT NULL CHECK (requested_by = 'controller'),\n\
+      action_fingerprint BLOB NOT NULL CHECK (length(action_fingerprint) = 32),\n\
+      scope_digest BLOB NOT NULL CHECK (length(scope_digest) = 32),\n\
+      action_class TEXT NOT NULL CHECK (action_class IN ('read', 'derive', 'write',\n\
+        'execute_safe', 'execute_open', 'network', 'destructive', 'publish', 'outside_root')),\n\
+      risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'moderate', 'high', 'critical')),\n\
+      requested_at_unix_millis INTEGER NOT NULL CHECK (requested_at_unix_millis >= 0),\n\
+      expires_at_unix_millis INTEGER NOT NULL CHECK (expires_at_unix_millis > requested_at_unix_millis),\n\
+      CHECK (expires_at_unix_millis - requested_at_unix_millis <= 86400000),\n\
+      CHECK ((action_class IN ('read', 'derive') AND risk_level = 'low') OR\n\
+        (action_class IN ('write', 'execute_safe') AND risk_level = 'moderate') OR\n\
+        (action_class = 'execute_open' AND risk_level IN ('high', 'critical')) OR\n\
+        (action_class = 'network' AND risk_level = 'high') OR\n\
+        (action_class IN ('destructive', 'publish', 'outside_root')\n\
+          AND risk_level = 'critical')),\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE approval_grants (\n\
+      approval_id BLOB PRIMARY KEY NOT NULL CHECK (length(approval_id) = 32),\n\
+      approval_request_id BLOB NOT NULL UNIQUE CHECK (length(approval_request_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      granted_by TEXT NOT NULL CHECK (granted_by = 'user'),\n\
+      granted_event_id BLOB NOT NULL UNIQUE CHECK (length(granted_event_id) = 32),\n\
+      granted_at_unix_millis INTEGER NOT NULL CHECK (granted_at_unix_millis >= 0),\n\
+      expires_at_unix_millis INTEGER NOT NULL CHECK (expires_at_unix_millis > granted_at_unix_millis),\n\
+      status TEXT NOT NULL CHECK (status IN ('active', 'consumed', 'revoked')),\n\
+      consumed_decision_id BLOB\n\
+        CHECK (consumed_decision_id IS NULL OR length(consumed_decision_id) = 32),\n\
+      consumed_at_unix_millis INTEGER CHECK (consumed_at_unix_millis IS NULL OR\n\
+        (consumed_at_unix_millis >= granted_at_unix_millis AND\n\
+          consumed_at_unix_millis < expires_at_unix_millis)),\n\
+      revoked_at_unix_millis INTEGER CHECK (revoked_at_unix_millis IS NULL OR\n\
+        (revoked_at_unix_millis >= granted_at_unix_millis AND\n\
+          revoked_at_unix_millis < expires_at_unix_millis)),\n\
+      revoked_by TEXT CHECK (revoked_by IS NULL OR revoked_by = 'user'),\n\
+      revoked_event_id BLOB UNIQUE\n\
+        CHECK (revoked_event_id IS NULL OR length(revoked_event_id) = 32),\n\
+      CHECK ((status = 'active' AND consumed_decision_id IS NULL\n\
+        AND consumed_at_unix_millis IS NULL AND revoked_at_unix_millis IS NULL\n\
+        AND revoked_by IS NULL AND revoked_event_id IS NULL) OR\n\
+        (status = 'consumed' AND consumed_decision_id IS NOT NULL\n\
+        AND consumed_at_unix_millis IS NOT NULL AND revoked_at_unix_millis IS NULL\n\
+        AND revoked_by IS NULL AND revoked_event_id IS NULL) OR\n\
+        (status = 'revoked' AND consumed_decision_id IS NULL\n\
+        AND consumed_at_unix_millis IS NULL AND revoked_at_unix_millis IS NOT NULL\n\
+        AND revoked_by = 'user' AND revoked_event_id IS NOT NULL)),\n\
+      FOREIGN KEY (approval_request_id) REFERENCES approval_requests(approval_request_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (granted_event_id) REFERENCES run_events(event_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (revoked_event_id) REFERENCES run_events(event_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE policy_decisions (\n\
+      policy_decision_id BLOB PRIMARY KEY NOT NULL CHECK (length(policy_decision_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      event_id BLOB NOT NULL UNIQUE CHECK (length(event_id) = 32),\n\
+      actor TEXT NOT NULL CHECK (actor = 'controller'),\n\
+      action_fingerprint BLOB NOT NULL CHECK (length(action_fingerprint) = 32),\n\
+      scope_digest BLOB NOT NULL CHECK (length(scope_digest) = 32),\n\
+      action_class TEXT NOT NULL CHECK (action_class IN ('read', 'derive', 'write',\n\
+        'execute_safe', 'execute_open', 'network', 'destructive', 'publish', 'outside_root')),\n\
+      risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'moderate', 'high', 'critical')),\n\
+      outcome TEXT NOT NULL CHECK (outcome IN ('allowed', 'approval_required', 'denied')),\n\
+      reason TEXT NOT NULL CHECK (reason IN ('system_automatic', 'system_approval_required',\n\
+        'workspace_approval_required', 'workspace_denied', 'approval_granted',\n\
+        'approval_run_mismatch', 'approval_scope_mismatch', 'approval_action_mismatch',\n\
+        'approval_expired', 'approval_revoked', 'approval_already_consumed',\n\
+        'approval_timestamp_regressed')),\n\
+      approval_request_id BLOB\n\
+        CHECK (approval_request_id IS NULL OR length(approval_request_id) = 32),\n\
+      approval_id BLOB CHECK (approval_id IS NULL OR length(approval_id) = 32),\n\
+      started_at_unix_millis INTEGER NOT NULL CHECK (started_at_unix_millis >= 0),\n\
+      decided_at_unix_millis INTEGER NOT NULL CHECK (decided_at_unix_millis >= started_at_unix_millis),\n\
+      duration_millis INTEGER NOT NULL CHECK (duration_millis >= 0),\n\
+      CHECK (duration_millis = decided_at_unix_millis - started_at_unix_millis),\n\
+      CHECK ((action_class IN ('read', 'derive') AND risk_level = 'low') OR\n\
+        (action_class IN ('write', 'execute_safe') AND risk_level = 'moderate') OR\n\
+        (action_class = 'execute_open' AND risk_level IN ('high', 'critical')) OR\n\
+        (action_class = 'network' AND risk_level = 'high') OR\n\
+        (action_class IN ('destructive', 'publish', 'outside_root')\n\
+          AND risk_level = 'critical')),\n\
+      CHECK ((outcome = 'allowed' AND reason = 'system_automatic'\n\
+        AND approval_request_id IS NULL AND approval_id IS NULL) OR\n\
+        (outcome = 'allowed' AND reason = 'approval_granted'\n\
+        AND approval_request_id IS NULL AND approval_id IS NOT NULL) OR\n\
+        (outcome = 'approval_required' AND reason IN ('system_approval_required',\n\
+          'workspace_approval_required', 'approval_run_mismatch', 'approval_scope_mismatch',\n\
+          'approval_action_mismatch', 'approval_expired', 'approval_revoked',\n\
+          'approval_already_consumed', 'approval_timestamp_regressed')\n\
+        AND approval_request_id IS NOT NULL AND approval_id IS NULL) OR\n\
+        (outcome = 'denied' AND reason = 'workspace_denied'\n\
+        AND approval_request_id IS NULL AND approval_id IS NULL)),\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (event_id) REFERENCES run_events(event_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (approval_request_id) REFERENCES approval_requests(approval_request_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (approval_id) REFERENCES approval_grants(approval_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER approval_requests_immutable_guard\n\
+      BEFORE UPDATE ON approval_requests BEGIN\n\
+        SELECT RAISE(ABORT, 'approval requests are immutable');\n\
+      END;\n\
+      CREATE TRIGGER approval_requests_delete_guard\n\
+      BEFORE DELETE ON approval_requests BEGIN\n\
+        SELECT RAISE(ABORT, 'approval requests are append-only');\n\
+      END;\n\
+      CREATE TRIGGER policy_decisions_immutable_guard\n\
+      BEFORE UPDATE ON policy_decisions BEGIN\n\
+        SELECT RAISE(ABORT, 'policy decisions are immutable');\n\
+      END;\n\
+      CREATE TRIGGER policy_decisions_delete_guard\n\
+      BEFORE DELETE ON policy_decisions BEGIN\n\
+        SELECT RAISE(ABORT, 'policy decisions are append-only');\n\
+      END;\n\
+      CREATE TRIGGER approval_grants_insert_guard\n\
+      BEFORE INSERT ON approval_grants\n\
+      WHEN NEW.status <> 'active' OR NEW.consumed_decision_id IS NOT NULL\n\
+        OR NEW.consumed_at_unix_millis IS NOT NULL OR NEW.revoked_at_unix_millis IS NOT NULL\n\
+        OR NEW.revoked_by IS NOT NULL OR NEW.revoked_event_id IS NOT NULL\n\
+        OR NOT EXISTS (SELECT 1 FROM approval_requests\n\
+          WHERE approval_request_id = NEW.approval_request_id AND run_id = NEW.run_id\n\
+            AND expires_at_unix_millis = NEW.expires_at_unix_millis\n\
+            AND requested_at_unix_millis <= NEW.granted_at_unix_millis\n\
+            AND NEW.granted_at_unix_millis < expires_at_unix_millis)\n\
+        OR NOT EXISTS (SELECT 1 FROM run_events WHERE event_id = NEW.granted_event_id\n\
+          AND run_id = NEW.run_id AND event_kind = 'approval_recorded'\n\
+          AND payload_code = 'user_request' AND payload_outcome = 'succeeded'\n\
+          AND occurred_at_unix_millis = NEW.granted_at_unix_millis)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'approval grant does not match its request');\n\
+      END;\n\
+      CREATE TRIGGER approval_grants_lifecycle_guard\n\
+      BEFORE UPDATE ON approval_grants\n\
+      WHEN OLD.status <> 'active' OR NEW.approval_id <> OLD.approval_id\n\
+        OR NEW.approval_request_id <> OLD.approval_request_id OR NEW.run_id <> OLD.run_id\n\
+        OR NEW.granted_by <> OLD.granted_by OR NEW.granted_event_id <> OLD.granted_event_id\n\
+        OR NEW.granted_at_unix_millis <> OLD.granted_at_unix_millis\n\
+        OR NEW.expires_at_unix_millis <> OLD.expires_at_unix_millis\n\
+        OR NEW.status NOT IN ('consumed', 'revoked')\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'approval lifecycle transition is invalid');\n\
+      END;\n\
+      CREATE TRIGGER approval_grants_revocation_guard\n\
+      BEFORE UPDATE ON approval_grants WHEN NEW.status = 'revoked'\n\
+        AND NOT EXISTS (SELECT 1 FROM run_events WHERE event_id = NEW.revoked_event_id\n\
+          AND run_id = NEW.run_id AND event_kind = 'approval_recorded'\n\
+          AND payload_code = 'user_request' AND payload_outcome = 'cancelled'\n\
+          AND occurred_at_unix_millis = NEW.revoked_at_unix_millis)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'approval revocation event is invalid');\n\
+      END;\n\
+      CREATE TRIGGER approval_grants_delete_guard\n\
+      BEFORE DELETE ON approval_grants BEGIN\n\
+        SELECT RAISE(ABORT, 'approval grants are durable');\n\
+      END;\n\
+      CREATE TRIGGER policy_decisions_event_guard\n\
+      BEFORE INSERT ON policy_decisions\n\
+      WHEN NOT EXISTS (SELECT 1 FROM run_events WHERE event_id = NEW.event_id\n\
+        AND run_id = NEW.run_id AND event_kind = 'approval_recorded'\n\
+        AND payload_code = 'policy_decision'\n\
+        AND occurred_at_unix_millis = NEW.decided_at_unix_millis\n\
+        AND ((NEW.outcome = 'allowed' AND payload_outcome = 'succeeded')\n\
+          OR (NEW.outcome IN ('approval_required', 'denied') AND payload_outcome = 'denied')))\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'policy decision run event is invalid');\n\
+      END;\n\
+      CREATE TRIGGER policy_decisions_request_guard\n\
+      BEFORE INSERT ON policy_decisions WHEN NEW.outcome = 'approval_required'\n\
+        AND NOT EXISTS (SELECT 1 FROM approval_requests\n\
+          WHERE approval_request_id = NEW.approval_request_id AND run_id = NEW.run_id\n\
+            AND action_fingerprint = NEW.action_fingerprint\n\
+            AND scope_digest = NEW.scope_digest AND action_class = NEW.action_class\n\
+            AND risk_level = NEW.risk_level\n\
+            AND requested_at_unix_millis = NEW.decided_at_unix_millis)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'policy decision approval request is invalid');\n\
+      END;\n\
+      CREATE TRIGGER policy_decisions_approval_guard\n\
+      BEFORE INSERT ON policy_decisions WHEN NEW.reason = 'approval_granted'\n\
+        AND NOT EXISTS (SELECT 1 FROM approval_grants JOIN approval_requests USING (approval_request_id)\n\
+          WHERE approval_grants.approval_id = NEW.approval_id\n\
+            AND approval_grants.run_id = NEW.run_id AND approval_grants.status = 'active'\n\
+            AND approval_requests.action_fingerprint = NEW.action_fingerprint\n\
+            AND approval_requests.scope_digest = NEW.scope_digest\n\
+            AND approval_requests.action_class = NEW.action_class\n\
+            AND approval_requests.risk_level = NEW.risk_level\n\
+            AND approval_grants.granted_at_unix_millis <= NEW.decided_at_unix_millis\n\
+            AND NEW.decided_at_unix_millis < approval_grants.expires_at_unix_millis)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'policy decision approval is invalid');\n\
+      END;\n\
+      CREATE TRIGGER approval_grants_consumption_guard\n\
+      BEFORE UPDATE ON approval_grants WHEN NEW.status = 'consumed'\n\
+        AND NOT EXISTS (SELECT 1 FROM policy_decisions JOIN approval_requests\n\
+          ON approval_requests.approval_request_id = NEW.approval_request_id\n\
+          WHERE policy_decisions.policy_decision_id = NEW.consumed_decision_id\n\
+            AND policy_decisions.approval_id = NEW.approval_id\n\
+            AND policy_decisions.run_id = NEW.run_id\n\
+            AND policy_decisions.outcome = 'allowed'\n\
+            AND policy_decisions.reason = 'approval_granted'\n\
+            AND policy_decisions.decided_at_unix_millis = NEW.consumed_at_unix_millis\n\
+            AND policy_decisions.action_fingerprint = approval_requests.action_fingerprint\n\
+            AND policy_decisions.scope_digest = approval_requests.scope_digest\n\
+            AND policy_decisions.action_class = approval_requests.action_class\n\
+            AND policy_decisions.risk_level = approval_requests.risk_level)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'approval consumption decision is invalid');\n\
+      END;\n\
+      CREATE INDEX approval_requests_run_idx\n\
+        ON approval_requests(run_id, requested_at_unix_millis, approval_request_id);\n\
+      CREATE INDEX approval_grants_run_status_idx\n\
+        ON approval_grants(run_id, status, approval_id);\n\
+      CREATE INDEX policy_decisions_run_idx\n\
+        ON policy_decisions(run_id, decided_at_unix_millis, policy_decision_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1571,6 +1800,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION,
     KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION,
     KNOWLEDGE_AGENT_RECOVERY_MIGRATION,
+    KNOWLEDGE_POLICY_APPROVAL_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1603,7 +1833,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(17);
+    pub const CURRENT: Self = Self::new(18);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2012,11 +2242,12 @@ mod tests {
                      'task_step_stale_evidence', 'task_ledger_replans',\n\
                      'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
                      'agent_runs', 'run_events', 'tool_runs', 'tool_evidence',\n\
-                     'tool_run_attempts'\n\
+                     'tool_run_attempts', 'approval_requests', 'approval_grants',\n\
+                     'policy_decisions'\n\
                      )",
                 )
                 .await?,
-                47
+                50
             );
             assert_eq!(
                 query_i64(
@@ -2943,6 +3174,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
                      AND name = 'tool_run_attempts_one_in_flight_idx'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v18_upgrade_preserves_v17_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [60; 32];
+            let worktree_id = [61; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..17],
+                17,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE approval_requests (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 18, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 17);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('approval_requests')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'policy_decisions'",
                 )
                 .await?,
                 0

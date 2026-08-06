@@ -117,11 +117,19 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Grenzfehler enden explizit als `failed`, `cancelled` oder `denied`. Beim Neustart werden
   verbliebene Versuche als `interrupted` abgeschlossen, während ein Retry derselben logischen
   ToolRunId eine monotone neue Versuchsnummer erhält.
+- Knowledge-Schema V18 ergänzt `approval_requests`, `approval_grants` und `policy_decisions`.
+  Requests und Entscheidungen sind append-only; Grants besitzen ausschließlich den Übergang
+  `active` nach `consumed` oder `revoked`. Trigger binden jede Entscheidung sowie Grant und
+  Widerruf an ihr typisiertes `approval_recorded`-RunEvent und prüfen Run, Action-Fingerprint,
+  Scope-Digest, Klasse, Risiko und Zeitfenster erneut. Entscheidung, optionaler Request,
+  Runprojektion, Event und optionaler One-time-Verbrauch werden gemeinsam per Runsequenz-CAS in
+  einer `IMMEDIATE`-Transaktion committed. Grant und Widerruf besitzen je eine eigene atomare
+  User-Audit-Transaktion.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
-  Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
-  libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
-  Crash-, Korruptions- und Schema-Negativtests bleiben getrennt. Jeder weitere Storageadapter muss
-  dieselbe Suite ausführen.
+  Isolation, Publish, Rebuild, IndexRun-Übergänge sowie Policy-/Approval-Lifecycle ausschließlich
+  über die Application-Ports. Der libSQL-Adapter liefert nur eine Factory für temporäre
+  App-Data-Roots; engine-spezifische Migration-, Crash-, Korruptions- und Schema-Negativtests
+  bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
   denselben Store in Open-, Recent- und Index-Use-Case. Nach einem erfolgreichen Project Open besitzt
   ein begrenzter Koordinator den Worktree-Watcher, reicht serialisierte Refresh-Jobs an den
@@ -302,7 +310,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - context_packs
 - tool_runs
 - verification_runs
-- approvals
+- approval_requests
+- approval_grants
+- policy_decisions
 
 ## Schlüsselinvarianten
 
@@ -357,6 +367,15 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - Run-Event-Payloads enthalten nur geschlossene Codes, grobe Outcomes, content-freie
   Redaktionsmetadaten und den Digest dieser sicheren Struktur. Freitext, Modelloutput, Tooloutput,
   externe Fehlertexte und Secretwerte sind in diesem Schema nicht darstellbar.
+- Jeder privilegierte Policyversuch besitzt genau eine unveränderliche `policy_decisions`-Zeile und
+  genau ein passendes content-freies RunEvent. `ApprovalRequired` referenziert einen exakt
+  metadata- und zeitgleichen Request; `ApprovalGranted` referenziert einen noch aktiven Grant mit
+  identischem Run, Action-Fingerprint, Scope, Klasse und Risiko.
+- Approval-Requests gelten höchstens 24 Stunden. Grants dürfen nur innerhalb des Requestfensters
+  entstehen und nur vor ihrem exklusiven Ablauf verbraucht oder widerrufen werden. Consumption
+  referenziert genau die erlaubende Decision; Grant und Widerruf referenzieren genau ihr explizites
+  User-Audit-Event. Terminale Grants und append-only Requests/Decisions können nicht umgeschrieben
+  oder gelöscht werden.
 - Context Pack speichert keine Secrets und kann nach Retention-Policy komprimiert werden.
 
 ## Transaktionen
@@ -368,6 +387,9 @@ Eine einzelne DB-Transaktion darf:
 - einen vollständigen Indexlauf veröffentlichen;
 - einen Task-Schritt samt Verification abschließen;
 - genau einen RunEvent anhängen und die zugehörige Run-Materialisierung aktualisieren;
+- genau eine PolicyDecision, ihren optionalen ApprovalRequest, das Audit-Event und den optionalen
+  Approval-Verbrauch per Runsequenz-CAS committen;
+- genau einen Approval-Grant oder Widerruf zusammen mit seinem User-Audit-Event committen;
 - einen Toolrun und sein Ergebnis protokollieren.
 
 Sie darf keine Datei lesen, kein Modell aufrufen und keinen Prozess abwarten.
@@ -425,6 +447,16 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V18 ergänzt V17 um die zentrale Policy- und
+Approval-Persistenz. `approval_requests` und `policy_decisions` sind unveränderlich und
+append-only; `approval_grants` erlaubt nur einen einmaligen terminalen Übergang. Relationale Checks,
+Fremdschlüssel und Trigger binden Requests, Grants, Entscheidungen sowie Grant-/Widerruf-Events an
+denselben Run und erzwingen exakte Action-/Scope-Metadaten und das ursprüngliche Ablaufzeitfenster.
+Der gemeinsame Adaptervertrag belegt Reopen, Pfad-Mismatch ohne Grantverbrauch, einmalige
+Consumption, Widerruf, restriktive Workspace-Policy und vollständigen Rollback eines veralteten
+Run-CAS. Migrationstests decken leeres Schema, jeden Vorgänger bis V17 und den vollständigen
+Rollback eines fehlgeschlagenen V17→V18-Upgrades ab.
+
 Das implementierte Knowledge-Schema V17 ergänzt V16 um dauerhafte Toolversuche und atomare
 Run-Recovery. Bestehende V16-Toolläufe werden als abgeschlossener erster Versuch übernommen; ein
 partieller Unique Index erlaubt je logischer ToolRunId höchstens einen laufenden Versuch. Die
@@ -455,7 +487,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V17 in einer eigenen atomaren Migration.
+Vorgängerversion bis V18 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

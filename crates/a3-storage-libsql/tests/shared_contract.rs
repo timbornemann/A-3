@@ -103,6 +103,11 @@ fn libsql_satisfies_shared_agent_recovery_contract() -> Result<(), ContractError
 }
 
 #[test]
+fn libsql_satisfies_shared_policy_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::Policy)
+}
+
+#[test]
 fn libsql_satisfies_shared_search_availability_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::SearchAvailability)
 }

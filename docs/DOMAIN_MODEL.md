@@ -487,6 +487,29 @@ Invarianten:
 - Completed benötigt erfolgreiche Verification.
 - Ein Task ist Done, wenn alle Muss-Akzeptanzkriterien aktuell verifiziert sind und keine blockierende offene Hypothese existiert.
 
+### Policy und Approvals
+
+`PolicyAction` ist eine geschlossene typisierte Union für Root-, Pfad-, Prozess-, Netzwerk- und
+Git-Aktionen. `ActionClass` und `RiskLevel` sind daraus abgeleitet und können vom Aufrufer nicht
+unabhängig behauptet werden. Die feste `SystemPolicyV1` erlaubt nur begrenzte Reads und Derivationen,
+read-only Git sowie plan- und worktreegebundene bekannte argv-Prozesse ohne Netzwerk automatisch.
+Alle übrigen privilegierten Aktionen benötigen eine Freigabe. `WorkspacePolicy` kann eine Klasse
+ausschließlich auf `ApprovalRequired` oder `Denied` verschärfen; ein Allow oder eine Lockerung ist
+in ihrem Typ nicht darstellbar.
+
+Jede Auswertung erzeugt genau eine unveränderliche `PolicyDecision` mit Run, Action-Fingerprint,
+Scope-Digest, abgeleiteter Klasse und Risiko, geschlossenem Outcome und Begründung sowie Start-,
+Entscheidungs- und Dauermetadaten. `Allowed`, `ApprovalRequired` und `Denied` besitzen disjunkte
+gültige Feldformen. Ein benötigter `ApprovalRequest` bindet exakt Run, Action-Fingerprint, Scope,
+Klasse und Risiko und läuft spätestens nach 24 Stunden ab.
+
+`ApprovalGrant` übernimmt diese unveränderlichen Anker aus seinem Request. Er ist nur innerhalb des
+ursprünglichen Zeitfensters grantbar und kann ausschließlich von `Active` nach `Consumed` oder
+`Revoked` wechseln; Ablauf ist ein aus der Beobachtungszeit abgeleiteter effektiver Zustand. Eine
+Consumption benötigt denselben Run, dieselbe Action, denselben Scope und eine exakte
+`PolicyDecisionId` und ist nur einmal möglich. Mismatch, Ablauf, Widerruf und Wiederverwendung
+bleiben blockiert und erzeugen eine neue begründete Entscheidung statt stiller Scope-Erweiterung.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.

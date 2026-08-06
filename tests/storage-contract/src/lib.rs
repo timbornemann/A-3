@@ -9,6 +9,7 @@ mod fixture;
 mod goal_contract;
 mod index;
 mod module_cards;
+mod policy;
 mod reconciliation;
 mod run_journal;
 mod search;
@@ -17,7 +18,7 @@ mod task_ledger;
 
 use a3_application::{
     AgentActionStore, AgentRecoveryStore, GoalContractStore, KnowledgeIndexStore,
-    KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, RunJournalStore,
+    KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore, RunJournalStore,
     SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore, TaskLensIndexStore,
     VerifiedModuleCardPublisher,
 };
@@ -203,6 +204,7 @@ pub trait KnowledgeStoreContractFactory {
         + TaskLedgerStore
         + AgentActionStore
         + AgentRecoveryStore
+        + PolicyStore
         + RunJournalStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
@@ -248,6 +250,8 @@ pub enum KnowledgeStoreContractGroup {
     RunJournals,
     /// Restart loading, interrupted attempts, snapshot CAS, and stale-evidence recovery.
     AgentRecovery,
+    /// Central policy decisions and exact one-time approval lifecycle.
+    Policy,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -319,6 +323,7 @@ where
         KnowledgeStoreContractGroup::AgentRecovery => {
             agent_recovery::verify(factory, &workspace).await
         }
+        KnowledgeStoreContractGroup::Policy => policy::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
                 factory,

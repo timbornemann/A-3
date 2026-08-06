@@ -110,7 +110,18 @@ Shellmodus ist eine eigene hochriskante Aktion und immer freigabepflichtig.
 | Publish | Push, PR, Release, externe Nachricht | immer Freigabe |
 | Outside Root | Lesen oder Schreiben außerhalb Workspace | immer Freigabe |
 
-Freigaben sind aktions- und scopegebunden, zeitlich begrenzt und nicht still wiederverwendbar.
+Freigaben sind aktions- und scopegebunden, zeitlich begrenzt und nicht still wiederverwendbar. Die
+implementierte V1-Grenze leitet Klasse und Risiko ausschließlich aus einer typisierten Root-, Pfad-,
+Prozess-, Netzwerk- oder Git-Action ab. Die unveränderliche Systempolicy kann durch
+`WorkspacePolicy` nur auf Freigabepflicht oder Ablehnung verschärft werden; eine Lockerung ist im
+Workspace-Regeltyp nicht darstellbar.
+
+Ein `ApprovalRequest` bindet genau Run, Action-Fingerprint, Scope-Digest, Klasse und Risiko und gilt
+höchstens 24 Stunden. Ein daraus erzeugter Grant kann vor seinem exklusiven Ablauf genau einmal von
+einer passenden `PolicyDecision` verbraucht oder vorher durch den Benutzer widerrufen werden. Ein
+anderer Pfad, Run oder Action-Fingerprint, eine abgelaufene, widerrufene oder bereits verbrauchte
+Freigabe bleibt blockiert. Grant, Widerruf und Verbrauch werden mit der Run-Materialisierung und
+einem typisierten content-freien Audit-Event atomar persistiert.
 
 ## Patch-Policy
 
@@ -280,8 +291,9 @@ Sicherheitsrelevante Aktionen speichern:
 
 - Actor und Run
 - Policy-Entscheidung
+- geschlossene Begründung, ActionClass und RiskLevel
 - Approval ID, falls vorhanden
-- Scope
+- content-freier Action-Fingerprint und Scope-Digest
 - Tooltyp
 - Zeit, Dauer und Status
 - sichere Digests

@@ -8,18 +8,28 @@ Relevante ADRs: 0010, 0012, 0013
 
 Abhängigkeiten: Gate M6
 
-- [ ] ActionClass und RiskLevel
-- [ ] Root-, Path-, Process-, Network- und Git-Policy
-- [ ] PolicyDecision mit Begründung
-- [ ] ApprovalRequest und scopegebundene Approval
-- [ ] Ablauf und Widerruf
-- [ ] Audit Events
+- [x] ActionClass und RiskLevel
+- [x] Root-, Path-, Process-, Network- und Git-Policy
+- [x] PolicyDecision mit Begründung
+- [x] ApprovalRequest und scopegebundene Approval
+- [x] Ablauf und Widerruf
+- [x] Audit Events
 
 Akzeptanz:
 
 - jede privilegierte Action erhält genau eine PolicyDecision;
 - Freigabe für einen Pfad gilt nicht automatisch für andere Pfade;
 - Sicherheitsregeln können nicht durch Workspace-Regeln gelockert werden.
+
+Verifiziert am 2026-08-06: Der Domain-Kern leitet Klasse und Risiko aus der geschlossenen
+Root-/Path-/Process-/Network-/Git-Action ab und besitzt keine Workspace-Repräsentation zum Lockern
+der Systembaseline. Der zentrale Application-Use-Case erzeugt pro Auswertung genau eine begründete
+Decision und genau ein content-freies RunEvent. Knowledge-Schema V18 persistiert Requests, Grants,
+Decisions, Grant/Widerruf und One-time-Consumption atomar mit der Runsequenz. Der gemeinsame
+Storagevertrag belegt Reopen, Pfad-Mismatch ohne Verbrauch, exakte Consumption, Widerruf,
+Workspace-Deny und vollständigen CAS-Rollback. Windows-Workspace-Gates, Rustdoc, Node 24.14.0 mit
+pnpm 11.9.0, 20 Frontend- und vier Tooltests, Build, 45 Markdown-Dateien mit 66 lokalen Links sowie
+der vollständige Linux-`quality`-Job über `act` sind grün.
 
 ## E2 Secure File Tools
 
@@ -170,4 +180,3 @@ Akzeptanz:
 - [ ] alle E2E-Tasks mit vollständigem Audit
 - [ ] kein Netzwerk oder Paketinstall ohne Approval
 - [ ] keine destruktive Gitaktion im automatischen Pfad
-

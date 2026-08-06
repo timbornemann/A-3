@@ -102,6 +102,22 @@ stable_id!(
     /// Stable identity of one bounded tool execution referenced by run audit.
     ToolRunId
 );
+stable_id!(
+    /// Stable identity of one central policy evaluation.
+    PolicyDecisionId
+);
+stable_id!(
+    /// Stable identity of one explicit user-approval request.
+    ApprovalRequestId
+);
+stable_id!(
+    /// Stable identity of one granted, scope-bound approval.
+    ApprovalId
+);
+stable_id!(
+    /// Content-free identity of one external or executable policy resource.
+    PolicyResourceId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -113,8 +129,9 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
-        RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+        AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, IndexRunId,
+        PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
+        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
         VerificationSpecId, WorktreeAnchorId, WorktreeId,
     };
 
@@ -141,5 +158,9 @@ mod tests {
         assert_eq!(AgentRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(RunEventId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(ToolRunId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(PolicyDecisionId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(ApprovalRequestId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(ApprovalId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(PolicyResourceId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }
