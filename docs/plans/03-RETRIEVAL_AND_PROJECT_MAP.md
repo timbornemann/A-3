@@ -157,7 +157,7 @@ Einzelbeiträge, den Redundanzabzug und Endscore. Das Ergebnis speichert Run, Sn
 `FusionPolicyVersion` und Trunkierung. Der versionierte Golden-Eval-Runner belegt in zwei
 identischen Durchläufen Deduplizierung, Graph/Test/Memory/Semantic, alle fünf geforderten Signale,
 Stable Tie-Breaking, Resultlimit und Exact-vor-Semantic. Die breitere Retrieval-Evalbaseline des
-Gates M4/M5 bleibt bewusst ein späteres, weiterhin offenes Arbeitspaket.
+Gates M4/M5 wird separat über die tatsächlich publizierten Retrievalports geprüft.
 
 Akzeptanz:
 
@@ -515,7 +515,16 @@ Akzeptanz:
 
 ## Gate M4/M5
 
-- [ ] Retrieval-Evalbaseline versioniert
+Die Retrieval-Evalbaseline V1 indiziert `fixtures/graph-linker` vollständig über Snapshot,
+Compiler und atomaren libSQL-Publish. Sechs Fälle prüfen exakte Rust- und Python-Symbole, ein
+typo-tolerantes Symbol, Manifestarchitektur sowie Rust- und TypeScript-Importbeziehungen mit sieben
+erwarteten Zielen. Die Golden-Datei fixiert Kanal, native Begründung, Top-5-Rang, Recall@5 von 100
+Prozent und MRR 0,9285;
+alle Ergebnisse müssen denselben aktuellen Run/Snapshot und aktuelle Revisionen tragen. Zwei
+Durchläufe normalisieren bytegleich, ohne Modell, Embeddings oder Netzwerk. Der gezielte Contract
+ist `cargo test -p a3-repo-index --test retrieval_eval_baseline --locked`.
+
+- [x] Retrieval-Evalbaseline versioniert
 - [ ] Deep Map eines Rust-, TS- und Python-Fixtures
 - [x] jede veröffentlichte Card besitzt gültige Evidence
 - [x] Task Lens bleibt innerhalb des konfigurierten Budgets

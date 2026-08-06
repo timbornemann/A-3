@@ -18,13 +18,11 @@ use a3_repo_index::{
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use a3_workspace::RepositoryInspector;
-use futures::executor::block_on;
 use std::error::Error;
 use std::fs;
-use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use support::TempDirectory;
+use support::{TempDirectory, run_libsql_test};
 
 #[derive(Debug, Default)]
 struct RecordingControl {
@@ -67,7 +65,7 @@ impl RepositoryIndexControl for CancelledControl {
 #[test]
 fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<(), Box<dyn Error>>
 {
-    run_incremental_test(async {
+    run_libsql_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write(
@@ -264,7 +262,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
 #[test]
 fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<(), Box<dyn Error>>
 {
-    run_incremental_test(async {
+    run_libsql_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write("src/rename_me.rs", b"pub fn retained() {}\n")?;
@@ -346,7 +344,7 @@ fn burst_add_modify_delete_and_rename_produces_one_consistent_delta() -> Result<
 
 #[test]
 fn cancellation_is_observed_within_the_quality_gate() -> Result<(), Box<dyn Error>> {
-    run_incremental_test(async {
+    run_libsql_test(async {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
         repository.write("src/lib.rs", b"pub fn value() {}\n")?;
@@ -377,112 +375,4 @@ fn cancellation_is_observed_within_the_quality_gate() -> Result<(), Box<dyn Erro
         assert!(started.elapsed() <= Duration::from_millis(500));
         Ok::<(), Box<dyn Error>>(())
     })
-}
-
-fn run_incremental_test<F>(future: F) -> Result<(), Box<dyn Error>>
-where
-    F: Future<Output = Result<(), Box<dyn Error>>>,
-{
-    #[cfg(windows)]
-    let current_thread = std::thread::current();
-    #[cfg(windows)]
-    let test_name = current_thread.name().ok_or_else(|| {
-        std::io::Error::other("libSQL incremental contract test has no harness thread name")
-    })?;
-    #[cfg(windows)]
-    if std::env::var_os("A3_LIBSQL_ISOLATED_TEST").as_deref()
-        != Some(std::ffi::OsStr::new(test_name))
-    {
-        const MAX_NATIVE_ATTEMPTS: u8 = 3;
-        const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
-        let success_marker = incremental_success_marker(test_name);
-        for attempt in 1..=MAX_NATIVE_ATTEMPTS {
-            remove_incremental_success_marker(&success_marker)?;
-            let mut child = std::process::Command::new(std::env::current_exe()?)
-                .arg(test_name)
-                .arg("--exact")
-                .arg("--test-threads=1")
-                .env("A3_LIBSQL_ISOLATED_TEST", test_name)
-                .env("A3_INCREMENTAL_SUCCESS_MARKER", &success_marker)
-                .spawn()?;
-            let child_id = child.id();
-            let status = child.wait()?;
-            cleanup_incremental_workspaces(child_id)?;
-            let contract_completed = success_marker.is_file();
-            remove_incremental_success_marker(&success_marker)?;
-            if contract_completed {
-                return Ok(());
-            }
-            if status.code() == Some(STATUS_ACCESS_VIOLATION) && attempt < MAX_NATIVE_ATTEMPTS {
-                continue;
-            }
-            return Err(std::io::Error::other(format!(
-                "isolated libSQL incremental contract {test_name} failed on attempt {attempt} with {status} before completion evidence"
-            ))
-            .into());
-        }
-        return Err(std::io::Error::other(format!(
-            "isolated libSQL incremental contract {test_name} exhausted its native retry bound"
-        ))
-        .into());
-    }
-    let result = block_on(future);
-    #[cfg(windows)]
-    match result {
-        Ok(()) => {
-            let marker = std::env::var_os("A3_INCREMENTAL_SUCCESS_MARKER")
-                .ok_or_else(|| std::io::Error::other("incremental success marker is missing"))?;
-            std::fs::write(marker, b"complete")?;
-            std::process::exit(0);
-        }
-        Err(error) => {
-            eprintln!("incremental libSQL contract failed: {error}");
-            std::process::exit(1);
-        }
-    }
-    #[cfg(not(windows))]
-    result
-}
-
-#[cfg(windows)]
-fn incremental_success_marker(test_name: &str) -> std::path::PathBuf {
-    let safe_name = test_name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    std::env::temp_dir().join(format!(
-        "a3-incremental-contract-{}-{safe_name}.complete",
-        std::process::id()
-    ))
-}
-
-#[cfg(windows)]
-fn remove_incremental_success_marker(path: &std::path::Path) -> std::io::Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(windows)]
-fn cleanup_incremental_workspaces(child_id: u32) -> std::io::Result<()> {
-    let temporary_root = std::env::temp_dir();
-    let prefix = format!("a3-repo-index-{child_id}-");
-    for entry in std::fs::read_dir(&temporary_root)? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
-            let path = entry.path();
-            if path.parent() == Some(temporary_root.as_path()) {
-                std::fs::remove_dir_all(path)?;
-            }
-        }
-    }
-    Ok(())
 }

@@ -34,7 +34,8 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
-  Worker aus. Erfolg gilt erst nach dem Abschlussmarker hinter der letzten Assertion; nur
+  Worker aus; dieselbe Isolation schützt die Retrieval-Evalbaseline. Erfolg gilt erst nach dem
+  Abschlussmarker hinter der letzten Assertion; nur
   `STATUS_ACCESS_VIOLATION` darf höchstens zweimal mit einem frischen Worker wiederholt werden.
   Assertion- und Vertragsfehler werden nie wiederholt. Verwaiste, exakt mit der Worker-PID
   präfixierte Testverzeichnisse werden nach dessen Prozessende entfernt.
@@ -199,6 +200,13 @@ Modul-Coverage als V1-Golden-Reihenfolge. Separate Grenzfälle belegen Snapshot-
 Unknown-Module-Ablehnung, das Überspringen bereits vollständig abgedeckter Module, alle drei
 Budgetdimensionen sowie Cancellation, Budget-, Coverage-, Stagnations- und Gain-Stopgründe. Kein
 Test ersetzt einen Index durch Modelloutput.
+
+Die Gate-M4/M5-Retrievalbaseline V1 läuft offline über den echten Index-/Publish-/libSQL-Suchpfad
+des gemischten Rust-/TypeScript-/Python-Fixtures. Ihre reviewbare Golden-Datei bindet sechs Exact-,
+Lexical- und Graphfälle mit sieben Erwartungen an Kanal, native Begründung und Top-5-Rang. Sie
+verlangt 100 Prozent Recall@5, fixiert MRR 0,9285, weist aktuelle Run-/Snapshot-/Revision-Bindung
+nach und normalisiert zwei Wiederholungen bytegleich. Der spätere Q1-Umfang ergänzt darauf
+aufbauend Agenten-, User-Edit-, Stale-Evidence- und Compaction-Aufgaben.
 
 Ein versioniertes Eval-Set enthält:
 

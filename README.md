@@ -18,8 +18,10 @@ Modulbildung mit ergänzenden Graphcommunities und deterministischer Repository 
 abgeschlossen. Ebenfalls implementiert sind das versionierte Module-Card-Schema, der
 veröffentlichungsgebundene Deep-Map-Planer, der begrenzte Read-only Explorer, die strikte
 Claim-Verifikation, atomare Card-Publikation, die budgetierte Task Lens und die direkte plus
-ein Hop begrenzte Card-Invalidierung mit priorisierter Remapqueue. Als Nächstes folgen die
-versionierte Retrieval-Evalbaseline und die mehrsprachigen Deep-Map-Abnahmefixtures. Die
+ein Hop begrenzte Card-Invalidierung mit priorisierter Remapqueue. Eine versionierte, vollständig
+offline laufende Retrieval-Evalbaseline misst den real publizierten Exact-, Lexical- und
+Graphpfad des gemischten Rust-/TypeScript-/Python-Fixtures. Als Nächstes folgen die
+mehrsprachigen Deep-Map-Abnahmefixtures. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

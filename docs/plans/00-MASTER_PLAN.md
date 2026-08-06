@@ -77,7 +77,7 @@ Ein Nutzer kann:
 - [ ] Graphtraversierung
 - [ ] Test- und Einstiegspunktsuche
 - [ ] Ranking und Ergebnisbegründung
-- [ ] Retrieval-Golden-Evals
+- [x] Retrieval-Golden-Evals
 
 ### M5 Project Map
 

@@ -653,8 +653,18 @@ Redundanzabzug und Endscore zurück. Der Ergebniscontainer behält Policyversion
 Der versionierte Golden-Eval-Runner führt dieselben Fixtures zweimal aus und fixiert Deduplizierung,
 Graph- und Testkanal, Goal-/Step-/Freshness-/Token-/Redundanzbeiträge, Stable Tie-Breaking,
 Resultlimit sowie den Vorrang eines schwach gewichteten Exact-Treffers vor einem maximal
-gewichteten Semantic-Treffer. Dies ist die R4-Policy-Golden, noch nicht die breitere Retrieval-
-Evalbaseline aus Gate M4/M5.
+gewichteten Semantic-Treffer. Dies ist die isolierte R4-Policy-Golden.
+
+Die separate Gate-M4/M5-Evalbaseline indiziert das repo-eigene, gemischte
+`fixtures/graph-linker` über den vollständigen Snapshot-, Compiler- und atomaren Publishpfad und
+fragt danach die echten libSQL-Ports ab. Schema V1 fixiert in einer reviewbaren Golden-Datei sechs
+Fälle mit sieben erwarteten Zielen: exakte Rust- und Python-Symbole, typo-tolerantes Symbol,
+Manifestarchitektur sowie Rust- und TypeScript-Importbeziehungen. Jeder Treffer muss aus dem erwarteten Kanal stammen,
+eine native Begründung tragen und an den aktuellen Run, Snapshot und eine aktuelle Dateirevision
+gebunden sein. Zwei Abfragen derselben Publikation müssen bytegleich normalisieren. Der feste
+Top-5-Grenzwert liegt derzeit bei Recall 10.000 Basispunkten und MRR 9.285 Basispunkten. Die
+Baseline verwendet weder Modell noch Netzwerk oder Embeddings und läuft mit
+`cargo test -p a3-repo-index --test retrieval_eval_baseline --locked`.
 
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.
 

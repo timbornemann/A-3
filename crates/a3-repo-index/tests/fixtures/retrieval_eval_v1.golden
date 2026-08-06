@@ -1,0 +1,12 @@
+retrieval_eval_schema=1
+fixture=graph-linker-v1
+fixture_digest=f25ce42b846e1b425873842a230d147c1a33616f2968080968b5fa79adcc42ff
+publication files=11 symbols=35
+top_k=5
+case id=symbol_exact query=symbol:launch channel=Exact expected=symbol:src/lib.rs::launch ranks=1 explanations=SymbolNameExact
+case id=symbol_typo query=lexical:luanch channel=Lexical expected=symbol:src/lib.rs::launch ranks=1 explanations=SymbolName
+case id=python_symbol_exact query=symbol:BaseService channel=Exact expected=symbol:python/sample/base.py::BaseService ranks=1 explanations=SymbolNameExact
+case id=architecture_manifests query=role:manifest channel=Exact expected=file:Cargo.toml,file:python/pyproject.toml ranks=1,2 explanations=ManifestRole,ManifestRole
+case id=rust_dependency query=imports:src/lib.rs channel=Graph expected=file:src/service.rs ranks=1 explanations=Imports/1hop
+case id=typescript_dependency query=imports:web/main.ts channel=Graph expected=file:web/helper.ts ranks=1 explanations=Imports/1hop
+metrics cases=6 expectations=7 recall_at_5_bp=10000 mrr_bp=9285
