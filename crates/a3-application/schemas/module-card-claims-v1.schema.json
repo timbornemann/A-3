@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a3.local/schemas/module-card-claims-v1.schema.json",
+  "title": "A^3 Module Card Claims V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "card_id", "module_id", "snapshot_id", "claims"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "card_id": { "$ref": "#/$defs/hexId" },
+    "module_id": { "$ref": "#/$defs/hexId" },
+    "snapshot_id": { "$ref": "#/$defs/hexId" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2048,
+      "items": { "$ref": "#/$defs/claim" }
+    }
+  },
+  "$defs": {
+    "hexId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "field": {
+      "enum": ["title", "paths", "purpose", "responsibilities", "public_surface", "entrypoints", "dependencies", "data_flows", "invariants", "tests", "risks", "open_questions"]
+    },
+    "evidenceIds": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/hexId" }
+    },
+    "fileEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "file" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 131072 }
+      }
+    },
+    "symbolEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "symbol_id"],
+      "properties": {
+        "kind": { "const": "symbol" },
+        "symbol_id": { "$ref": "#/$defs/hexId" }
+      }
+    },
+    "endpoint": {
+      "oneOf": [
+        { "$ref": "#/$defs/fileEndpoint" },
+        { "$ref": "#/$defs/symbolEndpoint" }
+      ]
+    },
+    "pathPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "path" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 131072 }
+      }
+    },
+    "symbolPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "symbol_id"],
+      "properties": {
+        "kind": { "const": "symbol" },
+        "symbol_id": { "$ref": "#/$defs/hexId" }
+      }
+    },
+    "relationPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "target", "relation_kind"],
+      "properties": {
+        "kind": { "const": "relation" },
+        "source": { "$ref": "#/$defs/endpoint" },
+        "target": { "$ref": "#/$defs/endpoint" },
+        "relation_kind": { "enum": ["imports", "exports", "calls", "tests"] }
+      }
+    },
+    "observedPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "statement"],
+      "properties": {
+        "kind": { "const": "observed" },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "architecturalIntentPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "statement"],
+      "properties": {
+        "kind": { "const": "architectural_intent" },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "predicate": {
+      "oneOf": [
+        { "$ref": "#/$defs/pathPredicate" },
+        { "$ref": "#/$defs/symbolPredicate" },
+        { "$ref": "#/$defs/relationPredicate" },
+        { "$ref": "#/$defs/observedPredicate" },
+        { "$ref": "#/$defs/architecturalIntentPredicate" }
+      ]
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "field", "value_index", "confidence_basis_points", "polarity", "predicate", "evidence_ids"],
+      "properties": {
+        "claim_id": { "$ref": "#/$defs/hexId" },
+        "field": { "$ref": "#/$defs/field" },
+        "value_index": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "confidence_basis_points": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "polarity": { "enum": ["affirms", "denies"] },
+        "predicate": { "$ref": "#/$defs/predicate" },
+        "evidence_ids": { "$ref": "#/$defs/evidenceIds" }
+      }
+    }
+  }
+}

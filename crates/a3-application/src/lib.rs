@@ -15,6 +15,7 @@ mod knowledge_search_store;
 mod knowledge_store;
 mod language_adapter;
 mod lexical_search;
+mod module_card_claim_codec;
 mod module_card_verification;
 mod open_project;
 mod project_reconciliation;
@@ -76,6 +77,9 @@ pub use language_adapter::{
     LanguageParseInput, LanguageParsePolicy,
 };
 pub use lexical_search::SearchLexicalIndex;
+pub use module_card_claim_codec::{
+    DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
+};
 pub use module_card_verification::{
     ModuleCardEvidenceResolutionTimeout, ModuleCardEvidenceResolutionTimeoutError,
     ModuleCardEvidenceResolver, ModuleCardEvidenceResolverFailure,

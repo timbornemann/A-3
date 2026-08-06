@@ -22,9 +22,10 @@ pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
     ModuleCardVerificationCandidate, ModuleCardVerificationError, ModuleCardVerifier,
     ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimProposal,
-    ModuleClaimProposalError, ModuleClaimStatement, ModuleClaimStatementError,
-    ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, VerifiedClaimKind,
-    VerifiedClaimStatus, VerifiedModuleCard, VerifiedModuleCardBatch, VerifiedModuleClaim,
+    ModuleClaimProposalError, ModuleClaimSchemaVersion, ModuleClaimStatement,
+    ModuleClaimStatementError, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet,
+    VerifiedClaimKind, VerifiedClaimStatus, VerifiedModuleCard, VerifiedModuleCardBatch,
+    VerifiedModuleClaim,
 };
 pub use deep_map::{
     CoverageRequirement, DeepMapPlanError, DeepMapPlanner, ExpectedInformationGain,

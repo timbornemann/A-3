@@ -434,6 +434,14 @@ Resolver lädt den letzten atomar publizierten Index, verlangt exakt passende Ru
 und gibt ausschließlich die angeforderten Evidence-Objekte zurück. Der model-freie Verifier prüft
 die Objekte danach erneut gegen denselben `PublishedIndex`.
 
+Das strukturierte Dokument `module-card-claims-v1` ist auf 64 KiB begrenzt, bindet sich explizit an
+Card, Modul und Snapshot und verwendet auf jeder Objektebene `additionalProperties: false`. Seine
+geschlossene Prädikat-Union kennt nur Path, Symbol, Relation, Observation und
+ArchitecturalIntent; Endpunkte und Relationstypen sind ebenfalls typisiert. Der unabhängige
+Runtime-Decoder akzeptiert genau ein JSON-Dokument, kanonische Lowercase-Hex-IDs, begrenzte Pfade,
+Statements, Confidence und Evidence-Mengen und erzeugt nur bei vollständiger Feldwertabdeckung
+einen `ModuleCardVerificationCandidate`. Das Schema enthält keine Tool- oder Execute-Capability.
+
 Affirmative Pfad-, Symbol-, Import-, Export-, Call- und Testclaims werden nur bei exaktem Treffer
 zu Fact. Direkt evidenzgebundene, aber nicht strukturell beweisbare Beschreibung wird Observation;
 Architekturabsicht und negative Abwesenheitsclaims bleiben deutlich markierte Hypothesis.

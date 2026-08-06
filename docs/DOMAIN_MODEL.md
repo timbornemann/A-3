@@ -179,6 +179,11 @@ Prüfbare Prädikate sind aktuelle Repository-Pfade, strukturelle Symbol-IDs sow
 Export-, Call- und Testkanten. Freie Beobachtung und Architekturabsicht sind getrennte
 Prädikate, sodass Prosa nie als struktureller Graphbeweis interpretiert wird.
 
+`ModuleClaimSchemaVersion::V1` versioniert die zugehörige strikte JSON-Grenze unabhängig vom
+Card-Schema. Der Decoder übernimmt die bereits validierte Card als Capability und lehnt ein
+abweichendes Card-, Modul- oder Snapshot-Envelope sowie fehlende, doppelte oder zusätzliche
+Feldwertclaims ab, bevor Evidence-Auflösung möglich ist.
+
 `ModuleCardEvidenceId` wird domänensepariert aus der exakten File Revision, Symbol-ID oder
 vollständigen Graphkante abgeleitet. Der Resolver liest nur den letzten atomar publizierten
 Knowledge Index und akzeptiert ausschließlich die angeforderte Kombination aus `IndexRunId` und

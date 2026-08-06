@@ -14,6 +14,21 @@ const MAX_EVIDENCE_PER_CLAIM: usize = 16;
 const MAX_CLAIMS_PER_CARD: usize = 2_048;
 const MAX_CARDS_PER_VERIFICATION: usize = 512;
 
+/// Version of the strict structured Module Card claim document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ModuleClaimSchemaVersion(u16);
+
+impl ModuleClaimSchemaVersion {
+    /// Initial typed Path, Symbol, Relation, Observation, and Architecture contract.
+    pub const V1: Self = Self(1);
+
+    /// Returns the stable wire value.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
 impl ModuleCardEvidenceId {
     /// Derives version-one evidence identity for one exact current file revision.
     #[must_use]
