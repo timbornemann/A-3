@@ -1,8 +1,10 @@
 //! Reusable dev-only model-provider stubs and neutral port contracts.
 
 use a3_application::{
-    ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderFuture,
-    ModelProviderRequest, ModelRequestTimeout, ProviderEvent, ProviderEventStream,
+    ModelCapabilityObservation, ModelCapabilityProbe, ModelCapabilityProbeFuture,
+    ModelCapabilityProbeRequest, ModelOperationControl, ModelProvider, ModelProviderFailure,
+    ModelProviderFuture, ModelProviderRequest, ModelRequestTimeout, ProviderEvent,
+    ProviderEventStream,
 };
 use a3_domain::ModelProviderId;
 use std::sync::Mutex;
@@ -16,6 +18,125 @@ pub enum StubModelProviderBehavior {
     Failure(ModelProviderFailure),
     /// Establishes a stream that remains pending until cooperative cancellation.
     WaitForCancellation,
+}
+
+/// Deterministic behavior selected for a neutral capability-probe stub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StubModelCapabilityProbeBehavior {
+    /// Returns exact provider-neutral metadata and live capability evidence.
+    Observation(ModelCapabilityObservation),
+    /// Rejects the probe with one normalized provider failure.
+    Failure(ModelProviderFailure),
+    /// Remains pending until cooperative cancellation is requested.
+    WaitForCancellation,
+}
+
+/// Content-free metadata retained for one capability-probe invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StubModelCapabilityProbeCall {
+    context_limit: u32,
+    output_limit: u32,
+    timeout: ModelRequestTimeout,
+}
+
+impl StubModelCapabilityProbeCall {
+    /// Returns the requested effective context window.
+    #[must_use]
+    pub const fn context_limit(self) -> u32 {
+        self.context_limit
+    }
+
+    /// Returns the requested generation bound.
+    #[must_use]
+    pub const fn output_limit(self) -> u32 {
+        self.output_limit
+    }
+
+    /// Returns the exact neutral timeout supplied by the consumer.
+    #[must_use]
+    pub const fn timeout(self) -> ModelRequestTimeout {
+        self.timeout
+    }
+}
+
+/// Deterministic provider-neutral capability probe for application contract tests.
+pub struct StubModelCapabilityProbe {
+    provider_id: ModelProviderId,
+    behavior: StubModelCapabilityProbeBehavior,
+    calls: Mutex<Vec<StubModelCapabilityProbeCall>>,
+}
+
+impl StubModelCapabilityProbe {
+    /// Creates one stub that never inspects a model name to choose its capability result.
+    #[must_use]
+    pub fn new(provider_id: ModelProviderId, behavior: StubModelCapabilityProbeBehavior) -> Self {
+        Self {
+            provider_id,
+            behavior,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Returns content-free call metadata in invocation order.
+    pub fn calls(
+        &self,
+    ) -> Result<Vec<StubModelCapabilityProbeCall>, StubModelProviderInspectError> {
+        self.calls
+            .lock()
+            .map(|calls| calls.clone())
+            .map_err(|_| StubModelProviderInspectError)
+    }
+}
+
+impl std::fmt::Debug for StubModelCapabilityProbe {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let call_count = self.calls.lock().map_or(0, |calls| calls.len());
+        formatter
+            .debug_struct("StubModelCapabilityProbe")
+            .field("provider_id", &self.provider_id)
+            .field("behavior", &self.behavior)
+            .field("call_count", &call_count)
+            .finish()
+    }
+}
+
+impl ModelCapabilityProbe for StubModelCapabilityProbe {
+    fn provider_id(&self) -> &ModelProviderId {
+        &self.provider_id
+    }
+
+    fn probe<'a>(
+        &'a self,
+        request: &'a ModelCapabilityProbeRequest,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> ModelCapabilityProbeFuture<'a> {
+        let recorded = self.calls.lock().map(|mut calls| {
+            calls.push(StubModelCapabilityProbeCall {
+                context_limit: request.settings().context_limit().get(),
+                output_limit: request.settings().output_limit().get(),
+                timeout,
+            });
+        });
+        if recorded.is_err() {
+            return Box::pin(async { Err(ModelProviderFailure::Rejected) });
+        }
+        if control.is_cancelled() {
+            return Box::pin(async { Err(ModelProviderFailure::Cancelled) });
+        }
+        match self.behavior {
+            StubModelCapabilityProbeBehavior::Observation(observation) => {
+                Box::pin(async move { Ok(observation) })
+            }
+            StubModelCapabilityProbeBehavior::Failure(failure) => {
+                Box::pin(async move { Err(failure) })
+            }
+            StubModelCapabilityProbeBehavior::WaitForCancellation => Box::pin(async move {
+                control.cancelled().await;
+                Err(ModelProviderFailure::Cancelled)
+            }),
+        }
+    }
 }
 
 /// Request metadata retained by the stub without retaining prompt or schema content.
@@ -146,14 +267,25 @@ impl std::error::Error for StubModelProviderInspectError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{StubModelProvider, StubModelProviderBehavior};
-    use a3_application::{
-        ModelCancellationFuture, ModelFinishReason, ModelMessage, ModelMessageRole,
-        ModelOperationControl, ModelOutputChunk, ModelProvider, ModelProviderCompletion,
-        ModelProviderFailure, ModelProviderRequest, ModelProviderUsage, ModelRequestTimeout,
-        ProviderEvent,
+    use super::{
+        StubModelCapabilityProbe, StubModelCapabilityProbeBehavior, StubModelProvider,
+        StubModelProviderBehavior,
     };
-    use a3_domain::{ModelId, ModelProviderId};
+    use a3_application::ModelCapabilityProbeRequest;
+    use a3_application::{
+        ModelCancellationFuture, ModelCapabilityObservation, ModelFinishReason, ModelMessage,
+        ModelMessageRole, ModelOperationControl, ModelOutputChunk, ModelProvider,
+        ModelProviderCompletion, ModelProviderFailure, ModelProviderRequest, ModelProviderUsage,
+        ModelRequestTimeout, ProbeModelProfile, ProbeModelProfileFailure, ProviderEvent,
+        ReportedModelContextLimit,
+    };
+    use a3_domain::{
+        ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
+        ModelProfileOverride, ModelProfileOverrideRevision, ModelProfileSettings,
+        ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
+        ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
+        ModelToolCallMode, ModelTopP,
+    };
     use futures::FutureExt;
     use futures::StreamExt;
     use futures::task::AtomicWaker;
@@ -204,6 +336,23 @@ mod tests {
                 }
             }))
         }
+    }
+
+    fn profile_settings(
+        context_limit: u32,
+    ) -> Result<ModelProfileSettings, Box<dyn std::error::Error>> {
+        Ok(ModelProfileSettings::new(
+            ModelContextLimit::new(context_limit)?,
+            ModelOutputLimit::new(2_048)?,
+            ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
+            ModelParallelismLimit::new(1)?,
+            ModelSamplingProfile::new(
+                ModelTemperature::from_milli(0)?,
+                ModelTopP::from_milli(1_000)?,
+            ),
+            ModelStopSequences::empty(),
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        )?)
     }
 
     #[test]
@@ -298,6 +447,107 @@ mod tests {
                 &NeverCancelled,
             )),
             Err(ModelProviderFailure::Unavailable)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn capability_stub_builds_a_versioned_profile_from_observed_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let probe = StubModelCapabilityProbe::new(
+            ModelProviderId::try_from_string("contract-stub".to_owned())?,
+            StubModelCapabilityProbeBehavior::Observation(ModelCapabilityObservation::new(
+                Some(ReportedModelContextLimit::new(32_768)?),
+                ModelCapabilities::new(
+                    ModelStructuredOutputCapability::Verified,
+                    ModelToolCallMode::NativeProviderReported,
+                ),
+            )),
+        );
+        let request = ModelCapabilityProbeRequest::new(
+            ModelId::try_from_string("opaque-model-name".to_owned())?,
+            profile_settings(16_384)?,
+        );
+        let profile = futures::executor::block_on(ProbeModelProfile::new(&probe).execute(
+            &request,
+            ModelRequestTimeout::DEFAULT,
+            &NeverCancelled,
+        ))?;
+
+        assert_eq!(profile.provider_id().as_str(), "contract-stub");
+        assert_eq!(profile.model_id().as_str(), "opaque-model-name");
+        assert!(profile.executable_actions_enabled());
+        assert_eq!(probe.calls()?.len(), 1);
+        assert_eq!(probe.calls()?[0].context_limit(), 16_384);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_structured_probe_and_manual_override_cannot_enable_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let probe = StubModelCapabilityProbe::new(
+            ModelProviderId::try_from_string("contract-stub".to_owned())?,
+            StubModelCapabilityProbeBehavior::Observation(ModelCapabilityObservation::new(
+                None,
+                ModelCapabilities::new(
+                    ModelStructuredOutputCapability::Unavailable,
+                    ModelToolCallMode::Disabled,
+                ),
+            )),
+        );
+        let request = ModelCapabilityProbeRequest::new(
+            ModelId::try_from_string("name-does-not-decide-capabilities".to_owned())?,
+            profile_settings(16_384)?,
+        );
+        let profile = futures::executor::block_on(ProbeModelProfile::new(&probe).execute(
+            &request,
+            ModelRequestTimeout::DEFAULT,
+            &NeverCancelled,
+        ))?;
+        let overridden = profile.apply_override(
+            ModelProfileOverride::new(
+                Some(ModelContextLimit::new(32_768)?),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )?,
+            ModelProfileOverrideRevision::new(1)?,
+        )?;
+
+        assert!(!profile.executable_actions_enabled());
+        assert!(!overridden.executable_actions_enabled());
+        assert_eq!(overridden.capabilities(), profile.capabilities());
+        Ok(())
+    }
+
+    #[test]
+    fn profile_creation_rejects_context_above_explicit_provider_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let probe = StubModelCapabilityProbe::new(
+            ModelProviderId::try_from_string("contract-stub".to_owned())?,
+            StubModelCapabilityProbeBehavior::Observation(ModelCapabilityObservation::new(
+                Some(ReportedModelContextLimit::new(16_384)?),
+                ModelCapabilities::new(
+                    ModelStructuredOutputCapability::Verified,
+                    ModelToolCallMode::Disabled,
+                ),
+            )),
+        );
+        let request = ModelCapabilityProbeRequest::new(
+            ModelId::try_from_string("test-model".to_owned())?,
+            profile_settings(32_768)?,
+        );
+
+        assert!(matches!(
+            futures::executor::block_on(ProbeModelProfile::new(&probe).execute(
+                &request,
+                ModelRequestTimeout::DEFAULT,
+                &NeverCancelled,
+            )),
+            Err(ProbeModelProfileFailure::ContextLimitExceedsProvider { .. })
         ));
         Ok(())
     }
