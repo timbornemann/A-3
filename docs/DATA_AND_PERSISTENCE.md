@@ -77,6 +77,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   `card_fts` und aktualisiert dessen erwartete Zeilenzahl. Cancellation, Deadline und höchstens 64
   monotone Progressereignisse werden bis unmittelbar vor Commit geprüft. Nach erfolgreichem Commit
   bleibt der Receipt erfolgreich, auch wenn Cancellation erst danach eintrifft.
+- Knowledge-Schema V11 ergänzt den dauerhaften Task-Zielanker. `tasks` hält pro Worktree nur
+  Erstellzeit und den aktuellen Revisionszeiger; `goal_contract_revisions` sowie die geordneten
+  Acceptance-Criteria-, Constraint-, Non-Goal- und User-Decision-Zeilen sind append-only. Initiale
+  Erstellung und jede Compare-and-Append-Revision laufen in einer `IMMEDIATE`-Transaktion. Der
+  Adapter rekonstruiert beim Lesen ausschließlich Domain-Typen, validiert Sequenzen und Grenzen
+  erneut und gibt weder Rows noch SQL an Application oder UI weiter.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -242,6 +248,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - tasks
 - goal_contract_revisions
 - acceptance_criteria
+- goal_contract_constraints
+- goal_contract_non_goals
+- goal_contract_user_decisions
 - task_steps
 - step_dependencies
 - agent_runs
@@ -287,6 +296,10 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   Snapshots hinweg denselben regenerierbaren Cacheeintrag wiederverwenden.
 - Persistierte Profilmetadaten müssen vollständig zur abgeleiteten ModelProfileId passen; ein
   Provider-, Modell- oder Dimensionswechsel erzeugt daher einen getrennten Cachekorridor.
+- Jeder Task besitzt bei Erstellung atomar eine valide initiale Goal-Contract-Revision. Der
+  aktuelle Zeiger darf nur auf die exakt nächste, zeitlich nicht rückläufige Revision wechseln;
+  alte Revisionen und ihre geordneten Inhalte bleiben unverändert lesbar. Ein konkurrierender
+  Writer mit veraltetem Vorgänger wird abgelehnt.
 - RunEvent ist über RunId und Sequenz eindeutig und append-only.
 - Context Pack speichert keine Secrets und kann nach Retention-Policy komprimiert werden.
 
@@ -354,6 +367,14 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V11 ergänzt V10 um `tasks`, `goal_contract_revisions`,
+`acceptance_criteria`, `goal_contract_constraints`, `goal_contract_non_goals` und
+`goal_contract_user_decisions`. Strikte Checks spiegeln die Domainlängen und die Grenze von 64
+geordneten Einträgen; Fremdschlüssel schützen Task, Vorgänger und aktuellen Revisionszeiger. Die
+initiale zyklische Task-/Revision-Bindung wird ausschließlich innerhalb einer deferred-FK-
+Transaktion hergestellt. Der getestete V10→V11-Fehlerfall rollt vollständig auf V10 zurück;
+Migrationstests decken weiterhin jede unterstützte Vorgängerversion ab.
 
 Das implementierte Knowledge-Schema V10 ergänzt V9 um `module_card_lifecycle`, `claim_lifecycle`,
 `evidence_invalidations` und `module_remap_queue`. Historische Card-, Claim- und Evidence-Zeilen

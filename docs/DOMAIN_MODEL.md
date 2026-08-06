@@ -370,9 +370,22 @@ Treffertyp und markieren ausgelassene Kandidaten explizit als Trunkierung.
 
 Verwaltet Goal Contract, Akzeptanzkriterien, Schritte, Entscheidungen, Runs und Abschluss.
 
+Der implementierte H1-Schnitt verwendet `TaskId` und `AcceptanceCriterionId` als 32-Byte-Newtypes.
+`GoalContractDraft` fasst normalisierte, begrenzte Fachtypen für Objective, Acceptance Criteria,
+Constraints, Non-Goals, User Decisions und Success Verification zusammen. `GoalContract` ist eine
+einzelne unveränderliche Revision; `GoalContractHistory` akzeptiert ausschließlich eine
+lückenlose, zeitlich monotone Folge desselben Tasks. `GoalContractReference` kann nur aus einem
+validen Contract entstehen und bindet jeden späteren Run an eine konkrete Revision.
+
 Invarianten:
 
-- Der Goal Contract wird nach Start nicht still verändert. Änderungen erzeugen eine neue Revision mit Begründung.
+- Ein initialer Goal Contract ist Revision eins ohne Vorgänger und Revisionsbegründung.
+- Der Goal Contract wird nach Start nicht still verändert. Eine materielle Änderung erzeugt exakt
+  die nächste Revision mit Vorgänger, Begründung und nicht rückläufigem Zeitstempel.
+- Mindestens ein und höchstens 64 eindeutige Acceptance Criteria sind Pflicht; Constraints,
+  Non-Goals und User Decisions sind optional, eindeutig und jeweils auf 64 Einträge begrenzt.
+- Leere, überlange, nicht normalisierte oder kontrollzeichenhaltige Goal-Texte sind nicht
+  konstruierbar; Debug-Ausgaben legen ihren Inhalt nicht offen.
 - Jeder Schritt besitzt Outcome, Status und VerificationSpec.
 - Completed benötigt erfolgreiche Verification.
 - Ein Task ist Done, wenn alle Muss-Akzeptanzkriterien aktuell verifiziert sind und keine blockierende offene Hypothese existiert.

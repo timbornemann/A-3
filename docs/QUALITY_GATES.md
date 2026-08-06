@@ -31,6 +31,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Upgrade aus jeder unterstützten Vorgängerversion
 - Rollback des Appstarts bei fehlgeschlagener Migration ohne Datenverlust
 - Contract-Tests gegen temporäre DB
+- Goal-Contract-Contracts prüfen atomare initiale Erstellung, Linked-Worktree-Isolation,
+  lückenlose Compare-and-Append-Revisionen, Konflikte konkurrierender Writer, unveränderte
+  Auditstände und exakte Wiederherstellung nach Reopen.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
@@ -75,7 +78,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 ### Security Boundary
 
 - Negativtests für Traversal, Symlinks und unerlaubte Roots
-- ungültige IPC- und LLM-Payloads abgelehnt
+- ungültige IPC- und LLM-Payloads abgelehnt; Goal-Contract-V1 fixiert in Rust exakte Schlüssel und
+  eine stabile JSON-Form, während der TypeScript-Runtimeparser zusätzlich IDs,
+  Revisionsmetadaten, UTF-8-Byte- und Listengrenzen sowie eindeutige Inhalte erneut prüft
 - Approval- und Policy-Tests
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet

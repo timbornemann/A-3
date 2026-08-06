@@ -24,8 +24,10 @@ Graphpfad des gemischten Rust-/TypeScript-/Python-Fixtures. Die mehrsprachige
 Deep-Map-Abnahme führt außerdem die drei Produkt-Fixtures durch Snapshot, Publish,
 Modulprojektion und budgetierte Planung. Eine zusätzliche Offline-Abnahme führt den aktuellen
 M4/M5-Anwendungskern über Indexierung, Deep Map und Task Lens vollständig ohne Semantic-Port aus
-und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Als Nächstes folgt der Durable
-Harness mit dem Goal Contract. Die
+und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Der Durable Harness besitzt nun
+einen revisionierten, validierten Goal Contract mit append-only libSQL-Persistenz, auditierbaren
+Altständen und einer streng versionierten Rust-/TypeScript-UI-Projektion. Als Nächstes folgt das
+Task Ledger. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

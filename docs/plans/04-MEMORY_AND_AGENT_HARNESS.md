@@ -8,18 +8,24 @@ Relevante ADRs: 0008, 0009, 0010, 0011, 0013
 
 Abhängigkeiten: Gate M5
 
-- [ ] GoalContract-Domänentyp
-- [ ] AcceptanceCriterion und Constraint
-- [ ] Non-Goals und User Decisions
-- [ ] Revision statt stiller Mutation
-- [ ] UI- und Persistenz-DTO
-- [ ] Validierungsregeln
+- [x] GoalContract-Domänentyp
+- [x] AcceptanceCriterion und Constraint
+- [x] Non-Goals und User Decisions
+- [x] Revision statt stiller Mutation
+- [x] UI- und Persistenz-DTO
+- [x] Validierungsregeln
 
 Akzeptanz:
 
 - kein Agentenrun ohne validen Goal Contract;
 - Zieländerung erzeugt neue Revision;
 - alte Revision bleibt auditierbar.
+
+Verifiziert am 2026-08-06: Die infra-freie Domäne erzeugt die run-sichere Referenz ausschließlich
+aus einem validen Contract. Application-Port und libSQL-Schema V11 erstellen Revision eins atomar,
+hängen nur den unmittelbaren Nachfolger an und rekonstruieren aktuelle wie historische Revisionen
+nach Reopen. Der gemeinsame Storage-Contract belegt Isolation, Konfliktablehnung und unveränderte
+Auditstände. Rust- und TypeScript-V1-DTOs besitzen stabile JSON-Formen und strikte Grenztests.
 
 ## H2 Task Ledger
 

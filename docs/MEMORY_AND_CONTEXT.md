@@ -68,6 +68,8 @@ Pflichtfelder:
 GoalContract
   task_id
   revision
+  previous_revision?
+  revision_reason?
   objective
   acceptance_criteria[]
   constraints[]
@@ -78,6 +80,26 @@ GoalContract
 ~~~
 
 Der Goal Contract wird in jedem Modelleingang vor der aktuellen Arbeit eingefügt. Eine Zieländerung wird als neue Revision gespeichert und macht davon abhängige Planungsschritte prüfbedürftig.
+
+Die implementierte H1-Domäne normalisiert Zeilenenden und Randwhitespace und begrenzt Objective auf
+16 KiB, Success Verification auf 8 KiB sowie jedes Kriterium, Constraint, Non-Goal, User Decision
+und jede Revisionsbegründung auf 4 KiB UTF-8. Ein Contract benötigt 1 bis 64 eindeutige
+Acceptance Criteria; die drei optionalen Listen enthalten jeweils höchstens 64 eindeutige Einträge.
+Revision eins besitzt weder Vorgänger noch Begründung. Jede spätere Revision benennt exakt den
+unmittelbaren Vorgänger, enthält eine nicht leere Begründung und ändert den Inhalt materiell.
+Zeitstempel dürfen nicht zurücklaufen.
+
+Die UI-Projektion `GoalContractV1` spiegelt diese Felder ohne Datenbankdetails und trägt immer eine
+explizite Protokollversion. 32-Byte-Identitäten werden als 64-stellige lowercase Hexwerte und Unix-
+Millisekunden als exakter Dezimalstring übertragen, damit die WebView keine 64-Bit-Präzision
+verliert. Die Rust-Wireform lehnt unbekannte Felder ab; der TypeScript-Runtimeparser prüft die
+Domainlängen, Listengrenzen, Identitäten und Revisionsbeziehungen erneut, bevor die WebView den
+Wert verwendet.
+
+Nur ein vollständig validierter `GoalContract` kann eine `GoalContractReference` erzeugen. Diese
+Referenz bindet `TaskId` und konkrete Revision und ist die spätere run-seitige Eintrittskarte; rohe
+IDs können keinen scheinbar gültigen Zielanker konstruieren. Persistenz hängt Revisionen atomar an,
+hält den aktuellen Zeiger getrennt und liest alte Revisionen unverändert für Audit und Resume.
 
 ## Task Ledger
 
