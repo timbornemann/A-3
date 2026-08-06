@@ -5,6 +5,7 @@
 
 mod catalog;
 mod fixture;
+mod goal_contract;
 mod index;
 mod module_cards;
 mod reconciliation;
@@ -12,8 +13,9 @@ mod search;
 mod semantic;
 
 use a3_application::{
-    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore,
-    SemanticEmbeddingStore, TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
+    GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
+    ModuleRemapQueueStore, SemanticEmbeddingStore, TaskLensClaimStore, TaskLensIndexStore,
+    VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -193,6 +195,7 @@ pub trait KnowledgeStoreContractFactory {
     /// Concrete adapter that implements every current storage capability.
     type Store: KnowledgeStore
         + KnowledgeIndexStore
+        + GoalContractStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
         + ModuleRemapQueueStore
@@ -229,6 +232,8 @@ pub enum KnowledgeStoreContractGroup {
     IndexRebuild,
     /// Verified-only Module Card publication, cancellation, duplicate rejection, and rebuild.
     ModuleCardPublication,
+    /// Append-only Goal Contract creation, revision, audit, reopen, and worktree isolation.
+    GoalContracts,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -291,6 +296,9 @@ where
         }
         KnowledgeStoreContractGroup::ModuleCardPublication => {
             module_cards::verify(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::GoalContracts => {
+            goal_contract::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
@@ -365,6 +373,8 @@ where
     index::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();
     module_cards::verify(factory, &workspace).await?;
+    retain_workspace_during_native_teardown();
+    goal_contract::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();
     search::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();

@@ -1011,6 +1011,101 @@ const KNOWLEDGE_CARD_INVALIDATION_MIGRATION: Migration = Migration {
         ON module_remap_queue (priority, module_id);",
 };
 
+const KNOWLEDGE_GOAL_CONTRACT_MIGRATION: Migration = Migration {
+    version: 11,
+    name: "revisioned_goal_contracts",
+    sql: "CREATE TABLE tasks (\n\
+      task_id BLOB PRIMARY KEY NOT NULL CHECK (length(task_id) = 32),\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      current_goal_revision INTEGER NOT NULL\n\
+        CHECK (current_goal_revision BETWEEN 1 AND 4294967295),\n\
+      UNIQUE (task_id, worktree_id),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (task_id, current_goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED\n\
+      ) STRICT;\n\
+      CREATE TABLE goal_contract_revisions (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 4294967295),\n\
+      previous_revision INTEGER\n\
+        CHECK (previous_revision IS NULL OR previous_revision BETWEEN 1 AND 4294967295),\n\
+      objective TEXT NOT NULL\n\
+        CHECK (length(CAST(objective AS BLOB)) BETWEEN 1 AND 16384),\n\
+      success_verification TEXT NOT NULL\n\
+        CHECK (length(CAST(success_verification AS BLOB)) BETWEEN 1 AND 8192),\n\
+      revision_reason TEXT\n\
+        CHECK (revision_reason IS NULL OR\n\
+          length(CAST(revision_reason AS BLOB)) BETWEEN 1 AND 4096),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      CHECK (\n\
+        (revision = 1 AND previous_revision IS NULL AND revision_reason IS NULL) OR\n\
+        (revision > 1 AND previous_revision = revision - 1 AND revision_reason IS NOT NULL)\n\
+      ),\n\
+      PRIMARY KEY (task_id, revision),\n\
+      FOREIGN KEY (task_id) REFERENCES tasks(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (task_id, previous_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED\n\
+      ) STRICT;\n\
+      CREATE TABLE acceptance_criteria (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      criterion_id BLOB NOT NULL CHECK (length(criterion_id) = 32),\n\
+      statement TEXT NOT NULL\n\
+        CHECK (length(CAST(statement AS BLOB)) BETWEEN 1 AND 4096),\n\
+      PRIMARY KEY (task_id, goal_revision, item_sequence),\n\
+      UNIQUE (task_id, goal_revision, criterion_id),\n\
+      UNIQUE (task_id, goal_revision, statement),\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE goal_contract_constraints (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      statement TEXT NOT NULL\n\
+        CHECK (length(CAST(statement AS BLOB)) BETWEEN 1 AND 4096),\n\
+      PRIMARY KEY (task_id, goal_revision, item_sequence),\n\
+      UNIQUE (task_id, goal_revision, statement),\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE goal_contract_non_goals (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      statement TEXT NOT NULL\n\
+        CHECK (length(CAST(statement AS BLOB)) BETWEEN 1 AND 4096),\n\
+      PRIMARY KEY (task_id, goal_revision, item_sequence),\n\
+      UNIQUE (task_id, goal_revision, statement),\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE goal_contract_user_decisions (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      statement TEXT NOT NULL\n\
+        CHECK (length(CAST(statement AS BLOB)) BETWEEN 1 AND 4096),\n\
+      PRIMARY KEY (task_id, goal_revision, item_sequence),\n\
+      UNIQUE (task_id, goal_revision, statement),\n\
+      FOREIGN KEY (task_id, goal_revision)\n\
+        REFERENCES goal_contract_revisions(task_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE INDEX tasks_worktree_idx ON tasks(worktree_id, task_id);\n\
+      CREATE INDEX goal_contract_revisions_created_idx\n\
+        ON goal_contract_revisions(task_id, created_at_unix_millis, revision);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1022,6 +1117,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_MODULE_PROJECTION_MIGRATION,
     KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION,
     KNOWLEDGE_CARD_INVALIDATION_MIGRATION,
+    KNOWLEDGE_GOAL_CONTRACT_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1054,7 +1150,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(10);
+    pub const CURRENT: Self = Self::new(11);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1453,11 +1549,14 @@ mod tests {
                      'ranking_projections', 'exact_search_projections', 'exact_search_symbols',\n\
                      'exact_search_manifests', 'lexical_search_projections', 'symbol_fts',\n\
                      'path_fts', 'card_fts', 'module_card_lifecycle', 'claim_lifecycle',\n\
-                     'evidence_invalidations', 'module_remap_queue'\n\
+                     'evidence_invalidations', 'module_remap_queue', 'tasks',\n\
+                     'goal_contract_revisions', 'acceptance_criteria',\n\
+                     'goal_contract_constraints', 'goal_contract_non_goals',\n\
+                     'goal_contract_user_decisions'\n\
                      )",
                 )
                 .await?,
-                24
+                30
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -1974,6 +2073,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'claim_lifecycle'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v11_upgrade_preserves_v10_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [46; 32];
+            let worktree_id = [47; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..10],
+                10,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE tasks (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 11, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 10);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('tasks')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'goal_contract_revisions'",
                 )
                 .await?,
                 0

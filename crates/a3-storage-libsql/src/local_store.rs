@@ -4,16 +4,18 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    exact_search_repository, graph_traversal_repository, index_publication, index_repository,
-    index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
-    module_remap_queue_repository, semantic_embedding_repository, task_lens_claim_repository,
+    exact_search_repository, goal_contract_repository, graph_traversal_repository,
+    index_publication, index_repository, index_repository::IndexRepositoryError,
+    lexical_search_repository, module_card_repository, module_remap_queue_repository,
+    semantic_embedding_repository, task_lens_claim_repository,
 };
 use a3_application::{
-    EmbeddingOperationControl, IndexPersistenceControl, KnowledgeIndexFailure,
-    KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
-    KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
-    KnowledgeStoreFuture, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
-    ModuleRemapQueueFailure, ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
+    EmbeddingOperationControl, GoalContractStore, GoalContractStoreFailure,
+    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
+    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleRemapQueueFailure,
+    ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
     ProjectReconciliationProposal, RecentProject, RecentProjectLimit, RemapQueueControl,
     RemapQueueLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
     SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLensClaimLimit,
@@ -23,10 +25,11 @@ use a3_application::{
 };
 use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
-    ExactSearchPageSize, ExactSearchQuery, GraphTraversalResult, IndexPublication, IndexRunId,
-    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex,
-    RepositoryId, SemanticEmbedding, Snapshot, SnapshotId, TraversalQuery, VectorSearchCapability,
+    ExactSearchPageSize, ExactSearchQuery, GoalContract, GoalContractRevision,
+    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
+    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
+    LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId,
+    SemanticEmbedding, Snapshot, SnapshotId, TaskId, TraversalQuery, VectorSearchCapability,
     VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -232,6 +235,86 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .read_recent_projects(limit)
                 .await
                 .map_err(ProjectCatalogError::classify)
+        })
+    }
+}
+
+impl GoalContractStore for LibsqlKnowledgeStore {
+    fn create_goal_contract<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        contract: &'a GoalContract,
+    ) -> GoalContractStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            goal_contract_repository::create(
+                database.connection(),
+                project.worktree().id(),
+                contract,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_goal_contract_revision<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        contract: &'a GoalContract,
+    ) -> GoalContractStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            goal_contract_repository::append_revision(
+                database.connection(),
+                project.worktree().id(),
+                contract,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_current_goal_contract<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> GoalContractStoreFuture<'a, Option<GoalContract>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            goal_contract_repository::load_current(
+                database.connection(),
+                project.worktree().id(),
+                task_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_goal_contract_revision<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        revision: GoalContractRevision,
+    ) -> GoalContractStoreFuture<'a, Option<GoalContract>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_goal_contract(project)
+                .await?;
+            goal_contract_repository::load_revision(
+                database.connection(),
+                project.worktree().id(),
+                task_id,
+                revision,
+            )
+            .await
+            .map_err(|error| error.classify())
         })
     }
 }
@@ -688,6 +771,29 @@ impl SemanticEmbeddingStore for LibsqlKnowledgeStore {
 }
 
 impl LibsqlKnowledgeStore {
+    async fn open_project_knowledge_for_goal_contract(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, GoalContractStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_goal_contract_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_goal_contract_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1061,5 +1167,18 @@ fn classify_knowledge_open_error(error: KnowledgeOpenError) -> KnowledgeStoreFai
         | KnowledgeOpenError::ApplyMigration { .. }
         | KnowledgeOpenError::RollbackMigration { .. }
         | KnowledgeOpenError::CommitMigration { .. } => KnowledgeStoreFailure::Unavailable,
+    }
+}
+
+fn classify_goal_contract_storage_failure(
+    error: KnowledgeStoreFailure,
+) -> GoalContractStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => GoalContractStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => GoalContractStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => GoalContractStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            GoalContractStoreFailure::InvalidStoredData
+        }
     }
 }

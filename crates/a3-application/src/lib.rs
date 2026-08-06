@@ -7,6 +7,7 @@ mod deep_map_read_tools;
 mod embedding_provider;
 mod exact_search;
 mod explorer_model_provider;
+mod goal_contract;
 mod graph_traversal;
 mod health_query;
 mod jobs;
@@ -53,6 +54,10 @@ pub use explorer_model_provider::{
     ExplorerModelRequest, ExplorerModelRequestPhase, ExplorerModelTimeout,
     ExplorerModelTimeoutError, ExplorerRepairReason, RawExplorerModelOutput,
     RawExplorerModelOutputError,
+};
+pub use goal_contract::{
+    CreateGoalContract, CreateGoalContractFailure, GoalContractStore, GoalContractStoreFailure,
+    GoalContractStoreFuture, ReviseGoalContract, ReviseGoalContractFailure,
 };
 pub use graph_traversal::TraverseKnowledgeGraph;
 pub use health_query::{GetHealth, HealthQuery};
