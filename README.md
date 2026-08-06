@@ -25,9 +25,9 @@ Deep-Map-Abnahme führt außerdem die drei Produkt-Fixtures durch Snapshot, Publ
 Modulprojektion und budgetierte Planung. Eine zusätzliche Offline-Abnahme führt den aktuellen
 M4/M5-Anwendungskern über Indexierung, Deep Map und Task Lens vollständig ohne Semantic-Port aus
 und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Der Durable Harness besitzt nun
-einen revisionierten, validierten Goal Contract mit append-only libSQL-Persistenz, auditierbaren
-Altständen und einer streng versionierten Rust-/TypeScript-UI-Projektion. Als Nächstes folgt das
-Task Ledger. Die
+einen revisionierten Goal Contract, ein verifiziertes Task Ledger und ein append-only Run Journal
+mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Als
+Nächstes folgt der allgemeine lokale ModelProvider samt Ollama-kompatiblem Adapter. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
