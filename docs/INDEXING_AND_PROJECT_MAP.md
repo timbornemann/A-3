@@ -48,6 +48,14 @@ nicht geöffnet; von kleineren Kandidaten werden höchstens 16 KiB für Binary- 
 gelesen. Manifest-, Build-, Test- und CI-Rollen können überlappen. Die Sprachzuordnung folgt mit dem
 versionierten `LanguageAdapter` in S5 und ist nicht Teil der S3-Pfadklassifikation.
 
+Die nicht übersteuerbaren Pfad- und Präfixklassifikationen gehören zu `DiscoveryPolicy::v1` im
+Domain-Kern. Git-Discovery und die sicheren E2-Dateiwerkzeuge verwenden damit dieselbe versionierte
+Definition für Secret-, Binary-, Vendor- und Generated-Ausschlüsse, ohne dass der Workspace-
+Adapter eine zweite abweichende Patternliste pflegt. Ein E2-Directory-Listing wird aus dem
+aktuellen `PublishedIndex` projiziert und übernimmt dadurch auch repository-lokale Git-Ignores und
+gültige ausschließende `.a3/project.toml`-Muster; die eingebauten Ausschlüsse werden am Toolrand
+zusätzlich erneut geprüft.
+
 ### Hash
 
 - BLAKE3 Content Hash pro relevanter Datei

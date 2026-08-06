@@ -1,5 +1,6 @@
 use a3_domain::{
-    AgentFileInspection, AgentFileStartLine, FileRevision, ProjectIdentity, SourceRange,
+    AgentFileInspection, AgentFileStartLine, AgentToolEvidence, EvidenceRef, FileRevision,
+    ProjectIdentity, SourceRange,
 };
 use std::error::Error;
 use std::fmt;
@@ -111,6 +112,16 @@ impl AgentSourcePage {
     pub const fn truncated(&self) -> bool {
         self.truncated
     }
+
+    /// Returns exact file or span evidence intrinsically bound to this source page.
+    #[must_use]
+    pub fn evidence(&self) -> AgentToolEvidence {
+        if self.range.is_empty() {
+            AgentToolEvidence::for_file(self.revision.clone())
+        } else {
+            AgentToolEvidence::for_span(EvidenceRef::new(self.revision.clone(), self.range))
+        }
+    }
 }
 
 impl fmt::Debug for AgentSourcePage {
@@ -178,6 +189,10 @@ pub enum AgentSourceReadFailure {
     FileTooLarge,
     /// Source was not valid UTF-8 for safe context packing.
     InvalidEncoding,
+    /// Bounded classification identified binary content.
+    BinaryContent,
+    /// Secret candidate classification blocked the page before it crossed the adapter boundary.
+    SecretCandidate,
     /// One complete requested line could not fit the source-page boundary.
     LineTooLong,
     /// The adapter could not construct a valid bounded page.
@@ -194,6 +209,8 @@ impl fmt::Display for AgentSourceReadFailure {
             Self::Stale => "agent source revision is stale",
             Self::FileTooLarge => "agent source file exceeds the observation boundary",
             Self::InvalidEncoding => "agent source file is not valid UTF-8",
+            Self::BinaryContent => "agent source file is binary",
+            Self::SecretCandidate => "agent source file contains a possible secret",
             Self::LineTooLong => "one agent source line exceeds the page boundary",
             Self::InvalidPage => "agent source page is invalid",
             Self::Cancelled => "agent source read was cancelled",

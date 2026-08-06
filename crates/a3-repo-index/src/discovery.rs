@@ -78,6 +78,7 @@ impl RepositoryDiscoverer for GitRepositoryDiscoverer {
             candidates: &mut candidates,
             project_ignore: &project_ignore,
             case,
+            policy,
             control,
             interrupted: &interrupted,
             exclusions: DiscoveryExclusionCounts::default(),
@@ -200,7 +201,13 @@ fn classify_candidate(
         RepositoryPathObservation::Present { path, metadata } => (path, metadata),
     };
     let is_dir = metadata.is_dir();
-    if let Some(reason) = classify_path(repository_path.as_bytes(), is_dir, project_ignore, case) {
+    if let Some(reason) = classify_path(
+        repository_path.as_bytes(),
+        is_dir,
+        project_ignore,
+        case,
+        policy,
+    ) {
         exclusions.record(reason);
         return Ok(());
     }
@@ -216,7 +223,7 @@ fn classify_candidate(
     let prefix = prefix_reader
         .read_prefix(&path, policy.inspection_prefix_bytes(), metadata.len())
         .map_err(|_| RepositoryDiscoveryFailure::Filesystem)?;
-    if let Some(reason) = classify_prefix(&prefix) {
+    if let Some(reason) = classify_prefix(&prefix, policy) {
         exclusions.record(reason);
         return Ok(());
     }
@@ -337,6 +344,7 @@ struct UntrackedCollector<'a> {
     candidates: &'a mut CandidateSet,
     project_ignore: &'a ProjectIgnore,
     case: Case,
+    policy: DiscoveryPolicy,
     control: &'a dyn RepositoryDiscoveryControl,
     interrupted: &'a AtomicBool,
     exclusions: DiscoveryExclusionCounts,
@@ -359,7 +367,9 @@ impl gix::dir::walk::Delegate for UntrackedCollector<'_> {
         }
         let path: &[u8] = entry.rela_path.as_ref().as_ref();
         let is_dir = entry.disk_kind.is_some_and(|kind| kind.is_dir());
-        if let Some(reason) = classify_path(path, is_dir, self.project_ignore, self.case) {
+        if let Some(reason) =
+            classify_path(path, is_dir, self.project_ignore, self.case, self.policy)
+        {
             self.exclusions.record(reason);
             return ControlFlow::Continue(());
         }
@@ -388,7 +398,7 @@ impl gix::dir::walk::Delegate for UntrackedCollector<'_> {
             return false;
         }
         let path: &[u8] = entry.rela_path.as_ref().as_ref();
-        if classify_path(path, true, self.project_ignore, self.case).is_some() {
+        if classify_path(path, true, self.project_ignore, self.case, self.policy).is_some() {
             return false;
         }
         entry.status.can_recurse(

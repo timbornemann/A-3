@@ -28,12 +28,14 @@ mod retrieval;
 mod retrieval_fusion;
 mod revision;
 mod run_memory;
+mod secret;
 mod semantic_card;
 mod snapshot;
 mod task_ledger;
 mod task_lens;
 mod task_step;
 mod task_verification;
+mod workspace_file;
 
 pub use agent_action::{
     AgentAction, AgentActionSchemaVersion, AgentActionSchemaVersionError, AgentActionTextError,
@@ -217,6 +219,7 @@ pub use run_memory::{
     CompactedRunClaim, CompactedStepResult, OpenRunIssue, OpenRunIssueKind, RunMemoryCheckpoint,
     RunMemoryCompileError, RunMemoryDigest, RunMemoryPolicyVersion, StepResultSource,
 };
+pub use secret::{SecretCandidateClassifierV1, SecretCandidateKind};
 pub use semantic_card::{
     BodyHash, NormalizedSemanticCard, SemanticCardBatch, SemanticCardBatchError, SemanticCardId,
     SemanticCardNormalizationError, SemanticCardNormalizationVersion,
@@ -250,6 +253,11 @@ pub use task_verification::{
     TaskLedgerTimestamp, TaskLedgerTimestampError, TaskVerificationTextError,
     TaskVerificationTextViolation, VerificationFailureSummary, VerificationMethod,
     VerificationRequirement, VerificationSpec,
+};
+pub use workspace_file::{
+    DirectoryPageSize, DirectoryPageSizeError, WorkspaceDirectory, WorkspaceDirectoryEntry,
+    WorkspaceDirectoryEntryError, WorkspaceDirectoryEntryKind, WorkspaceDirectoryListRequest,
+    WorkspaceDirectoryListRequestError, WorkspaceDirectoryListing, WorkspaceDirectoryListingError,
 };
 
 use std::error::Error;

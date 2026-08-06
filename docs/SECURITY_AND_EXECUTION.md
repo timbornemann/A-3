@@ -233,6 +233,24 @@ bietet weder Write-, Prozess-, Shell-, Git- noch Netzwerkmethoden. File-Seiten s
 begrenzt und nur vorwärts paginiert. Der Context erhält höchstens 16 KiB normalisierte Vorschau;
 die vollständigen Bytes werden weder journalisiert noch als ungefiltertes Resultat reinjiziert.
 
+E2 verwendet für Repository-Pfade ausschließlich die verlustfreie Plattformkonvertierung im
+Workspace-Adapter; unter Windows sind alternative Separatoren und Alternate Data Streams nicht
+darstellbar. Dateien oberhalb von 4 MiB werden nach Handle-Metadaten abgelehnt, bevor ihr Inhalt
+gelesen wird. Zulässige Dateien werden in höchstens 64-KiB-Blöcken gelesen; Cancellation wird vor
+jedem Block geprüft. Der Adapter öffnet das kanonische Ziel ohne dem letzten Symlink-/Reparse-
+Element zu folgen und bestätigt anschließend Dateityp, Größe, Rootzugehörigkeit, Zielpfad und den
+vollständigen BLAKE3-Hash. Inkonsistenz bricht ohne Teilresultat ab. Binary- und Secret-Erkennung
+erzeugt ausschließlich stabile content-freie Fehler und lässt keine Fundstelle, Credentialklasse
+oder Quelldaten in Preview, Journal oder Debugausgabe gelangen.
+
+Directory Listings enumerieren nicht rekursiv den Live-Dateibaum. Sie projizieren höchstens 256
+direkte Kinder aus genau einem veröffentlichten, bereits ignore-gefilterten Snapshot und prüfen
+den angeforderten Live-Subtree erneut gegen die Root-Grenze. Zusätzlich werden die nicht
+übersteuerbaren V1-Pfadklassen für Secrets, Binary, Vendor und Generated erneut angewandt, selbst
+wenn ein ungültiger Index solche Pfade enthalten sollte. Jede Datei und jedes abgeleitete
+Verzeichnis besitzt eine konkrete aktuelle `FileRevision` als Evidence. Traversalpfade,
+Symlink-Escapes, Sonderdateien und Snapshot-/Worktree-Mismatch werden vor Ausgabe abgelehnt.
+
 `UpdateLedger` akzeptiert für Resultate nur controllerseitig erzeugte, snapshotgleiche Tool-
 Evidence und kann einen Schritt damit lediglich zur objektiven Verifikation vorbereiten. Die
 Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- und Run-CAS-Ankern

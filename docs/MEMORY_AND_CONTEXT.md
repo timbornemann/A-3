@@ -299,6 +299,14 @@ der normalisierte Context-Preview auf 16 KiB und die controllerseitig zugelassen
 100 content-adressierte Quellen. Digest und Bytezahl beziehen sich weiterhin auf das vollständige
 normalisierte Resultat vor Preview-Trunkierung.
 
+E2 härtet den File-Pfad unterhalb dieses unveränderten Context-Vertrags: Vor einer Seite werden
+kanonischer Worktree-Root, regulärer Dateityp, feste 4-MiB-Grenze, vollständiger Content Hash sowie
+Binary- und Secret-Klassifikation erneut bestätigt. Nach dem begrenzten Lesen müssen Handlegröße
+und kanonisches Ziel unverändert sein. Die `AgentSourcePage` erzeugt ihre File-/Span-Evidence aus
+genau dieser bestätigten Revision und dem ausgelieferten Range; der Context-Adapter muss Evidence
+nicht mehr nachträglich aus Previewtext rekonstruieren. Erkannte Kandidaten werden nicht redigiert
+weitergereicht, sondern stoppen den Read content-frei vor der Context-Grenze.
+
 Jeder Read-Lauf erzeugt nach dem Model-Event genau ein journalgeordnetes `tool_action`-Event. V16
 persistiert nur Status, Digest, Trunkierungsmetadaten, Snapshot-Anker und typisierte File-/Span-
 Locators; Query und Preview bleiben flüchtig. `UpdateLedger` darf ein Ergebnis nur mit aktueller,

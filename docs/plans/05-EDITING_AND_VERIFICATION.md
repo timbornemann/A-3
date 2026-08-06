@@ -2,7 +2,8 @@
 
 Ziel: Der Agent kann kontrolliert Code ändern und die Änderung gegen Akzeptanzkriterien verifizieren.
 
-Relevante ADRs: 0010, 0012, 0013
+Alle angenommenen ADRs einschließlich 0018 bleiben bindend. Für diesen Plan unmittelbar relevant
+sind insbesondere 0003, 0006, 0008, 0010, 0012, 0013, 0014 und 0017.
 
 ## E1 Policy Engine
 
@@ -35,18 +36,33 @@ der vollständige Linux-`quality`-Job über `act` sind grün.
 
 Abhängigkeiten: E1
 
-- [ ] begrenztes Datei-Lesen
-- [ ] Directory Listing mit Ignore-Policy
-- [ ] Canonicalization nach Symlinkauflösung
-- [ ] Special-File-Ablehnung
-- [ ] Secretklassifikation und Redaction
-- [ ] Read Evidence
+- [x] begrenztes Datei-Lesen
+- [x] Directory Listing mit Ignore-Policy
+- [x] Canonicalization nach Symlinkauflösung
+- [x] Special-File-Ablehnung
+- [x] Secretklassifikation und Redaction
+- [x] Read Evidence
 
 Akzeptanz:
 
 - Traversal- und Symlink-Escape-Fixtures werden abgelehnt;
 - Binär- und Großdateien werden nicht unkontrolliert gelesen;
 - erlaubte Subtree-Reads funktionieren plattformübergreifend.
+
+Verifiziert am 2026-08-06: Versionierte Domainverträge erzwingen snapshot-/worktreegebundene,
+vorwärts paginierte Directory-Seiten mit höchstens 256 direkten Kindern und konkreter
+`FileRevision`-Evidence. Die Application-Ports bleiben read-only, abbrechbar und content-frei im
+Fehlerfall. `a3-workspace` liest ausschließlich reguläre, kanonisch rootgebundene Dateien in
+64-KiB-Blöcken bis 4 MiB, prüft Handle, Ziel und vollständigen Hash erneut und blockiert Binary-
+und Secret-Kandidaten. Listings verwenden den ignore-gefilterten Published Index und wenden die
+nicht übersteuerbare `DiscoveryPolicy::v1` zusätzlich erneut an. Die öffentliche Contract-Suite
+belegt unter Windows vier Fälle einschließlich Junction-Escape; der Linux-Quality-Job belegt alle
+fünf Fälle einschließlich Unix-Socket-Ablehnung. Workspace-Clippy, Rustdoc, Node 24.14.0 mit pnpm
+11.9.0, 20 Frontend- und vier Tooltests, Build, 45 Markdown-Dateien mit 66 lokalen Links sowie der
+vollständige Linux-`quality`-Job sind grün. Der vollständige Windows-Workspace-Test erreichte nur
+wegen des unveränderten nativen libSQL-Migrationstests keinen grünen Sammelstatus: dessen Worker
+endete nach den drei gemäß Gate zulässigen Versuchen jeweils mit `0xc0000005` vor dem
+Abschlussmarker; Assertions und sämtliche E2-Tests blieben grün.
 
 ## E3 PatchAction
 

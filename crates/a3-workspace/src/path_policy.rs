@@ -1,7 +1,7 @@
 use a3_domain::{CanonicalDirectory, CanonicalDirectoryError};
 use std::error::Error;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -108,6 +108,59 @@ fn metadata(path: &Path) -> Result<fs::Metadata, PathPolicyError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+pub(crate) fn open_regular_no_follow(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Mode, OFlags, open};
+
+        let descriptor = open(
+            path,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )?;
+        let file = File::from(descriptor);
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "workspace path is not a regular file",
+            ));
+        }
+        Ok(file)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "workspace path is not a regular non-reparse file",
+            ));
+        }
+        Ok(file)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let file = File::open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "workspace path is not a regular file",
+            ));
+        }
+        Ok(file)
+    }
 }
 
 /// Failure while establishing or enforcing a workspace root boundary.

@@ -7,6 +7,41 @@ const BUILD_ROLE: u8 = 1 << 1;
 const TEST_ROLE: u8 = 1 << 2;
 const CONTINUOUS_INTEGRATION_ROLE: u8 = 1 << 3;
 const ALL_ROLES: u8 = MANIFEST_ROLE | BUILD_ROLE | TEST_ROLE | CONTINUOUS_INTEGRATION_ROLE;
+const VENDOR_DIRECTORIES: &[&[u8]] = &[
+    b"node_modules",
+    b"vendor",
+    b"vendors",
+    b"third_party",
+    b"third-party",
+    b"bower_components",
+    b"site-packages",
+    b".venv",
+    b"venv",
+];
+const GENERATED_DIRECTORIES: &[&[u8]] = &[
+    b"target",
+    b"dist",
+    b"build",
+    b"out",
+    b".next",
+    b".nuxt",
+    b".svelte-kit",
+    b"coverage",
+    b"__pycache__",
+    b".pytest_cache",
+    b".mypy_cache",
+    b".ruff_cache",
+    b".cache",
+    b"generated",
+];
+const BINARY_EXTENSIONS: &[&[u8]] = &[
+    b"7z", b"a", b"avi", b"bin", b"bmp", b"class", b"db", b"dll", b"dylib", b"eot", b"exe",
+    b"flac", b"gif", b"gz", b"ico", b"jar", b"jpeg", b"jpg", b"lib", b"lockb", b"mov", b"mp3",
+    b"mp4", b"o", b"obj", b"ogg", b"otf", b"parquet", b"pdb", b"pdf", b"png", b"pyc", b"rlib",
+    b"rmeta", b"so", b"sqlite", b"sqlite3", b"tar", b"tiff", b"ttf", b"wasm", b"wav", b"webm",
+    b"webp", b"woff", b"woff2", b"xz", b"zip",
+];
+const SECRET_EXTENSIONS: &[&[u8]] = &[b"jks", b"kdbx", b"key", b"keystore", b"p12", b"pem", b"pfx"];
 
 /// Version of the deterministic rules that produced a discovery result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -116,12 +151,194 @@ impl DiscoveryPolicy {
     pub const fn max_ignore_pattern_bytes(self) -> usize {
         self.max_ignore_pattern_bytes
     }
+
+    /// Applies the non-overridable V1 path exclusions before any repository-owned ignore rule.
+    #[must_use]
+    pub fn classify_built_in_path(
+        self,
+        path: &[u8],
+        is_directory: bool,
+    ) -> Option<DiscoveryExclusionReason> {
+        let components = path.split(|byte| *byte == b'/').collect::<Vec<_>>();
+        if components.iter().any(|component| {
+            VENDOR_DIRECTORIES
+                .iter()
+                .any(|known| component.eq_ignore_ascii_case(known))
+        }) {
+            return Some(DiscoveryExclusionReason::Vendor);
+        }
+        if components.iter().any(|component| {
+            GENERATED_DIRECTORIES
+                .iter()
+                .any(|known| component.eq_ignore_ascii_case(known))
+        }) || (!is_directory && is_generated_file(path))
+        {
+            return Some(DiscoveryExclusionReason::Generated);
+        }
+        if is_secret_path(&components) {
+            return Some(DiscoveryExclusionReason::Secret);
+        }
+        if !is_directory
+            && extension(path).is_some_and(|extension| {
+                BINARY_EXTENSIONS
+                    .iter()
+                    .any(|known| extension.eq_ignore_ascii_case(known))
+            })
+        {
+            return Some(DiscoveryExclusionReason::Binary);
+        }
+        None
+    }
+
+    /// Classifies at most the bounded prefix supplied by a filesystem adapter.
+    #[must_use]
+    pub fn classify_content_prefix(self, prefix: &[u8]) -> Option<DiscoveryExclusionReason> {
+        if contains_private_key_banner(prefix) || contains_credential_token(prefix) {
+            return Some(DiscoveryExclusionReason::Secret);
+        }
+        looks_binary(prefix).then_some(DiscoveryExclusionReason::Binary)
+    }
 }
 
 impl Default for DiscoveryPolicy {
     fn default() -> Self {
         Self::v1()
     }
+}
+
+fn is_secret_basename(basename: &[u8]) -> bool {
+    let basename_is = |value: &[u8]| basename.eq_ignore_ascii_case(value);
+    basename_is(b".env")
+        || starts_with_ignore_ascii_case(basename, b".env.")
+        || [
+            b".npmrc".as_slice(),
+            b".pypirc",
+            b".netrc",
+            b"_netrc",
+            b"auth.json",
+            b"credentials",
+            b"credentials.json",
+            b"secrets.json",
+            b"service-account.json",
+            b"service_account.json",
+            b"id_rsa",
+            b"id_ed25519",
+            b"id_ecdsa",
+        ]
+        .iter()
+        .any(|known| basename_is(known))
+        || extension(basename).is_some_and(|extension| {
+            SECRET_EXTENSIONS
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
+        || ((starts_with_ignore_ascii_case(basename, b"service-account-")
+            || starts_with_ignore_ascii_case(basename, b"service_account_"))
+            && ends_with_ignore_ascii_case(basename, b".json"))
+}
+
+fn is_secret_path(components: &[&[u8]]) -> bool {
+    let Some(basename) = components.last() else {
+        return false;
+    };
+    if is_secret_basename(basename) {
+        return true;
+    }
+    components.windows(2).any(|pair| {
+        (pair[0].eq_ignore_ascii_case(b".aws") && pair[1].eq_ignore_ascii_case(b"credentials"))
+            || (pair[0].eq_ignore_ascii_case(b".docker")
+                && pair[1].eq_ignore_ascii_case(b"config.json"))
+            || (pair[0].eq_ignore_ascii_case(b".kube") && pair[1].eq_ignore_ascii_case(b"config"))
+            || pair[0].eq_ignore_ascii_case(b".ssh")
+    })
+}
+
+fn is_generated_file(path: &[u8]) -> bool {
+    ends_with_ignore_ascii_case(path, b".min.js")
+        || ends_with_ignore_ascii_case(path, b".min.css")
+        || ends_with_ignore_ascii_case(path, b".map")
+        || path
+            .windows(b".generated.".len())
+            .any(|window| window.eq_ignore_ascii_case(b".generated."))
+        || ends_with_ignore_ascii_case(path, b".g.dart")
+        || ends_with_ignore_ascii_case(path, b".designer.cs")
+}
+
+fn contains_private_key_banner(bytes: &[u8]) -> bool {
+    [
+        b"-----BEGIN PRIVATE KEY-----".as_slice(),
+        b"-----BEGIN RSA PRIVATE KEY-----",
+        b"-----BEGIN EC PRIVATE KEY-----",
+        b"-----BEGIN OPENSSH PRIVATE KEY-----",
+    ]
+    .iter()
+    .any(|needle| contains(bytes, needle))
+}
+
+fn contains_credential_token(bytes: &[u8]) -> bool {
+    contains_token_with_tail(bytes, b"ghp_", 36, |byte| byte.is_ascii_alphanumeric())
+        || contains_token_with_tail(bytes, b"github_pat_", 22, |byte| {
+            byte.is_ascii_alphanumeric() || byte == b'_'
+        })
+        || contains_aws_access_key(bytes)
+}
+
+fn looks_binary(bytes: &[u8]) -> bool {
+    if bytes.contains(&0) {
+        return true;
+    }
+    let control_bytes = bytes
+        .iter()
+        .filter(|byte| {
+            byte.is_ascii_control() && !matches!(**byte, b'\n' | b'\r' | b'\t' | 0x08 | 0x0c | 0x1b)
+        })
+        .count();
+    !bytes.is_empty() && control_bytes.saturating_mul(100) > bytes.len().saturating_mul(30)
+}
+
+fn contains_aws_access_key(bytes: &[u8]) -> bool {
+    bytes.windows(20).any(|window| {
+        window.starts_with(b"AKIA")
+            && window[4..]
+                .iter()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    })
+}
+
+fn contains_token_with_tail(
+    bytes: &[u8],
+    prefix: &[u8],
+    tail_length: usize,
+    valid: impl Fn(u8) -> bool,
+) -> bool {
+    let token_length = prefix.len().saturating_add(tail_length);
+    bytes.windows(token_length).any(|window| {
+        window.starts_with(prefix) && window[prefix.len()..].iter().copied().all(&valid)
+    })
+}
+
+fn extension(path: &[u8]) -> Option<&[u8]> {
+    let basename = path.rsplit(|byte| *byte == b'/').next()?;
+    let position = basename.iter().rposition(|byte| *byte == b'.')?;
+    basename.get(position.saturating_add(1)..)
+}
+
+fn starts_with_ignore_ascii_case(value: &[u8], prefix: &[u8]) -> bool {
+    value
+        .get(..prefix.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+}
+
+fn ends_with_ignore_ascii_case(value: &[u8], suffix: &[u8]) -> bool {
+    value
+        .get(value.len().saturating_sub(suffix.len())..)
+        .is_some_and(|end| end.eq_ignore_ascii_case(suffix))
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 /// Whether Git already tracks a discovered file.

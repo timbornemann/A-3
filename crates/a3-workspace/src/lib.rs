@@ -5,7 +5,9 @@ mod identity;
 mod path_policy;
 mod platform_path;
 mod repository;
+mod workspace_directory_lister;
 
 pub use agent_source_reader::WorkspaceAgentSourceReader;
 pub use path_policy::{CanonicalWorkspacePath, PathEntryKind, PathPolicy, PathPolicyError};
 pub use repository::{RepositoryInspectionError, RepositoryInspector};
+pub use workspace_directory_lister::IndexedWorkspaceDirectoryLister;

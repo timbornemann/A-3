@@ -171,11 +171,7 @@ impl<'a> DeterministicAgentReadTools<'a> {
                 }
                 let mut output = String::new();
                 let mut evidence = EvidenceCollector::default();
-                let source = if page.range().is_empty() {
-                    AgentToolEvidence::for_file(revision.clone())
-                } else {
-                    AgentToolEvidence::for_span(EvidenceRef::new(revision.clone(), page.range()))
-                };
+                let source = page.evidence();
                 let marker = evidence.insert(source);
                 writeln!(
                     output,
@@ -764,12 +760,15 @@ fn map_claim_failure(failure: TaskLensClaimStoreFailure) -> AgentReadToolFailure
 fn map_source_failure(failure: AgentSourceReadFailure) -> AgentReadToolFailure {
     match failure {
         AgentSourceReadFailure::Cancelled => AgentReadToolFailure::Cancelled,
-        AgentSourceReadFailure::Denied => AgentReadToolFailure::Denied,
+        AgentSourceReadFailure::Denied | AgentSourceReadFailure::SecretCandidate => {
+            AgentReadToolFailure::Denied
+        }
         AgentSourceReadFailure::Unavailable | AgentSourceReadFailure::Stale => {
             AgentReadToolFailure::Unavailable
         }
         AgentSourceReadFailure::FileTooLarge
         | AgentSourceReadFailure::InvalidEncoding
+        | AgentSourceReadFailure::BinaryContent
         | AgentSourceReadFailure::LineTooLong
         | AgentSourceReadFailure::InvalidPage => AgentReadToolFailure::InvalidResult,
     }

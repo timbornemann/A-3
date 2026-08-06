@@ -176,6 +176,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Pfad-Scope-Mismatch, Ablauf, Widerruf, One-time-Consumption und ungültige persistierte Formen
 - gemeinsamer Storagevertrag für PolicyDecision, Request, Grant, Reopen und atomaren Run-/Approval-
   CAS-Rollback; jede Auswertung erzeugt genau ein typisiertes Audit-Event
+- Secure-File-Tool-Contracts prüfen einen erlaubten verschachtelten Read samt exakter Span-Evidence,
+  vorwärts paginierte direkte Directory-Kinder aus einem snapshot- und worktreegebundenen
+  Published Index sowie konkrete Evidence für abgeleitete Verzeichnisse. Nicht publizierte
+  Ignore-Dateien und selbst künstlich publizierte Built-in-Secret-/Generated-Pfade bleiben aus der
+  Ausgabe ausgeschlossen.
+- Negativverträge lehnen nicht konstruierbare Traversalpfade, einen realen Symlink-/Junction-Escape,
+  Unix-Sockets als Sonderdateien, Binary-Präfixe, Secret-Kandidaten und Dateien oberhalb von 4 MiB
+  ohne Preview oder Quelldaten im Fehler ab. Windows und der Linux-Quality-Job führen dieselbe
+  öffentliche Port-Suite aus; der Unix-Sonderdateifall ist plattformspezifisch zusätzlich aktiv.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

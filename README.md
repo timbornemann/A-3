@@ -52,8 +52,12 @@ Reparaturausgaben keine Toolgrenze erreichen. M7/E1 ergänzt die zentrale Policy
 Approval-Grenze mit abgeleiteten Aktions- und Risikoklassen, begründeten Entscheidungen,
 exakt scopegebundenen einmaligen Freigaben, Ablauf/Widerruf und atomarem content-freiem Audit.
 Der gemeinsame libSQL-Vertrag belegt insbesondere, dass eine Pfadfreigabe keinen zweiten Pfad
-autorisiert und ein CAS-Konflikt keine Teilzustände hinterlässt. Als Nächstes folgt E2 mit den
-begrenzten sicheren Dateiwerkzeugen. Die
+autorisiert und ein CAS-Konflikt keine Teilzustände hinterlässt. M7/E2 ergänzt begrenzte,
+content-adressierte Source-Reads mit intrinsischer File-/Span-Evidence sowie snapshotgebundene,
+vorwärts paginierte Directory Listings aus dem ignore-gefilterten Published Index. Kanonische
+Rootprüfung, No-Follow-Open, Revalidierung, 4-MiB-Grenze, Binary-/Secret-Klassifikation und
+content-freie Fehler verhindern, dass Traversal, Symlink-Escapes, Sonderdateien oder sensible
+Inhalte die Toolgrenze überschreiten. Als Nächstes folgt E3 mit der hashgeschützten PatchAction. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

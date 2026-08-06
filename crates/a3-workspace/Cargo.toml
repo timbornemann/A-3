@@ -11,6 +11,10 @@ a3-application.workspace = true
 a3-domain.workspace = true
 blake3.workspace = true
 gix.workspace = true
+rustix.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
 
 [lints]
 workspace = true

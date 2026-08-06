@@ -45,6 +45,7 @@ mod semantic_embedding_store;
 mod semantic_embeddings;
 mod task_ledger;
 mod task_lens;
+mod workspace_directory;
 
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
@@ -235,4 +236,8 @@ pub use task_lens::{
     TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
     TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,
     TaskLensSemanticSearchFuture, TaskLensTimeout, TaskLensTimeoutError,
+};
+pub use workspace_directory::{
+    WorkspaceDirectoryLister, WorkspaceDirectoryListerFuture, WorkspaceDirectoryProgressError,
+    WorkspaceDirectoryReadControl, WorkspaceDirectoryReadFailure,
 };

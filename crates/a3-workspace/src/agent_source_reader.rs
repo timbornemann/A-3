@@ -1,14 +1,18 @@
+use crate::path_policy::open_regular_no_follow;
+use crate::platform_path;
 use crate::{PathEntryKind, PathPolicy};
 use a3_application::{
     AgentSourcePage, AgentSourceReadControl, AgentSourceReadFailure, AgentSourceReader,
     AgentSourceReaderFuture,
 };
 use a3_domain::{
-    AgentFileInspection, AgentFileStartLine, ContentHash, DiscoveryPolicy, FileRevision,
-    ProjectIdentity, RepositoryPath, SourcePosition, SourceRange,
+    AgentFileInspection, AgentFileStartLine, ContentHash, DiscoveryExclusionReason,
+    DiscoveryPolicy, FileRevision, ProjectIdentity, SecretCandidateClassifierV1, SourcePosition,
+    SourceRange,
 };
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 
 const MAX_AGENT_SOURCE_PAGE_BYTES: usize = 12 * 1_024;
 
@@ -47,33 +51,111 @@ fn read_page_from_root(
     if request.path() != expected_revision.path() {
         return Err(AgentSourceReadFailure::Denied);
     }
-    let relative = repository_path(expected_revision.path())?;
+    let observation_policy = DiscoveryPolicy::v1();
+    if let Some(reason) =
+        observation_policy.classify_built_in_path(expected_revision.path().as_bytes(), false)
+    {
+        return Err(map_exclusion(reason));
+    }
+    let relative = platform_path::repository_path(expected_revision.path())
+        .map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
     let policy =
         PathPolicy::from_selected_root(root).map_err(|_| AgentSourceReadFailure::Denied)?;
     let canonical = policy
-        .resolve_existing(relative)
+        .resolve_existing(&relative)
         .map_err(|_| AgentSourceReadFailure::Denied)?;
     if canonical.kind() != PathEntryKind::File {
         return Err(AgentSourceReadFailure::Unavailable);
     }
-    let metadata =
-        fs::metadata(canonical.as_path()).map_err(|_| AgentSourceReadFailure::Unavailable)?;
+    let mut file = open_regular_no_follow(canonical.as_path())
+        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
     if metadata.len() > DiscoveryPolicy::v1().max_file_bytes() {
         return Err(AgentSourceReadFailure::FileTooLarge);
     }
-    let bytes = fs::read(canonical.as_path()).map_err(|_| AgentSourceReadFailure::Unavailable)?;
-    if bytes.len() as u64 > DiscoveryPolicy::v1().max_file_bytes() {
-        return Err(AgentSourceReadFailure::FileTooLarge);
-    }
+    let bytes = read_bounded(&mut file, observation_policy.max_file_bytes(), control)?;
     if control.is_cancelled() {
         return Err(AgentSourceReadFailure::Cancelled);
+    }
+    let metadata_after = file
+        .metadata()
+        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
+    if metadata_after.len() != metadata.len() {
+        return Err(AgentSourceReadFailure::Stale);
+    }
+    let canonical_after = policy
+        .resolve_existing(&relative)
+        .map_err(|_| AgentSourceReadFailure::Denied)?;
+    if canonical_after.kind() != PathEntryKind::File {
+        return Err(AgentSourceReadFailure::Unavailable);
+    }
+    if canonical_after.as_path() != canonical.as_path() {
+        return Err(AgentSourceReadFailure::Stale);
+    }
+    let prefix_length = bytes
+        .len()
+        .min(observation_policy.inspection_prefix_bytes());
+    if let Some(reason) = observation_policy.classify_content_prefix(&bytes[..prefix_length]) {
+        return Err(map_exclusion(reason));
     }
     let actual_hash = ContentHash::from_bytes(*blake3::hash(&bytes).as_bytes());
     if actual_hash != expected_revision.content_hash() {
         return Err(AgentSourceReadFailure::Stale);
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
+    if SecretCandidateClassifierV1::classify(text).is_some() {
+        return Err(AgentSourceReadFailure::SecretCandidate);
+    }
     build_page(expected_revision.clone(), request, text, control)
+}
+
+fn read_bounded(
+    file: &mut File,
+    maximum_bytes: u64,
+    control: &dyn AgentSourceReadControl,
+) -> Result<Vec<u8>, AgentSourceReadFailure> {
+    let capacity = usize::try_from(maximum_bytes)
+        .map_err(|_| AgentSourceReadFailure::FileTooLarge)?
+        .min(64 * 1_024);
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut buffer = [0u8; 64 * 1_024];
+    loop {
+        if control.is_cancelled() {
+            return Err(AgentSourceReadFailure::Cancelled);
+        }
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| AgentSourceReadFailure::Unavailable)?;
+        if read == 0 {
+            break;
+        }
+        let next_length = bytes
+            .len()
+            .checked_add(read)
+            .ok_or(AgentSourceReadFailure::FileTooLarge)?;
+        if u64::try_from(next_length).map_err(|_| AgentSourceReadFailure::FileTooLarge)?
+            > maximum_bytes
+        {
+            return Err(AgentSourceReadFailure::FileTooLarge);
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+    Ok(bytes)
+}
+
+fn map_exclusion(reason: DiscoveryExclusionReason) -> AgentSourceReadFailure {
+    match reason {
+        DiscoveryExclusionReason::Secret => AgentSourceReadFailure::SecretCandidate,
+        DiscoveryExclusionReason::Binary => AgentSourceReadFailure::BinaryContent,
+        DiscoveryExclusionReason::TooLarge => AgentSourceReadFailure::FileTooLarge,
+        DiscoveryExclusionReason::ProjectIgnore
+        | DiscoveryExclusionReason::Vendor
+        | DiscoveryExclusionReason::Generated
+        | DiscoveryExclusionReason::SymbolicLink
+        | DiscoveryExclusionReason::SpecialFile => AgentSourceReadFailure::Denied,
+    }
 }
 
 fn build_page(
@@ -176,29 +258,6 @@ fn source_position_at(
     let column = u32::try_from(byte_offset - column_start)
         .map_err(|_| AgentSourceReadFailure::InvalidPage)?;
     Ok(SourcePosition::new(row, column))
-}
-
-#[cfg(unix)]
-fn repository_path(path: &RepositoryPath) -> Result<PathBuf, AgentSourceReadFailure> {
-    use std::os::unix::ffi::OsStringExt;
-
-    Ok(PathBuf::from(std::ffi::OsString::from_vec(
-        path.as_bytes().to_vec(),
-    )))
-}
-
-#[cfg(windows)]
-fn repository_path(path: &RepositoryPath) -> Result<PathBuf, AgentSourceReadFailure> {
-    let value = std::str::from_utf8(path.as_bytes())
-        .map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
-    Ok(PathBuf::from(value))
-}
-
-#[cfg(not(any(unix, windows)))]
-fn repository_path(path: &RepositoryPath) -> Result<PathBuf, AgentSourceReadFailure> {
-    let value = std::str::from_utf8(path.as_bytes())
-        .map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
-    Ok(PathBuf::from(value))
 }
 
 #[cfg(test)]

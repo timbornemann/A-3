@@ -243,6 +243,25 @@ Actionen werden ausschließlich als domain-separierte Digests gespeichert. Der g
 Storagevertrag prüft Reopen, Pfad-Mismatch ohne Verbrauch, einmaligen Verbrauch, Widerruf,
 restriktive Workspace-Regeln und vollständigen Rollback bei veralteter Runsequenz.
 
+M7/E2 ergänzt zwei schmale read-only Application-Ports. Der Source-Reader akzeptiert nur eine
+aktuelle `FileRevision` und eine typisierte begrenzte File-Inspection desselben Pfads. Der
+Workspace-Adapter löst den Repository-Pfad plattformspezifisch auf, prüft ihn nach
+Symlinkauflösung gegen den kanonischen Worktree-Root, öffnet ausschließlich eine reguläre Datei
+ohne dem letzten Reparse-/Symlink-Element zu folgen und liest in 64-KiB-Blöcken bis zur festen
+4-MiB-Grenze. Handle-Metadaten, kanonisches Ziel und vollständiger BLAKE3-Hash werden nach dem
+Lesen erneut geprüft. Binary- oder Secret-Kandidaten verlassen den Adapter nur als stabile,
+content-freie Fehlerklasse; eine erfolgreiche 12-KiB-Seite trägt intrinsisch ihre exakte File-
+oder Span-Evidence.
+
+Der Directory-Port bindet jede vorwärts paginierte Anfrage an `WorktreeId`, `SnapshotId` und
+höchstens 256 direkte Kinder. `a3-workspace` projiziert diese Kinder ausschließlich aus dem
+aktuellen `PublishedIndex`, der bereits die Git-/Projekt-Ignore-Policy aus Discovery enthält, und
+wendet die nicht übersteuerbaren V1-Ausschlüsse für Secrets, Binary, Vendor und Generated als
+zweite Sicherheitsgrenze an. Verzeichnisse werden nur aus aktuellen Dateinachfahren abgeleitet und
+behalten eine konkrete unterstützende `FileRevision`; der angeforderte Live-Subtree wird dennoch
+erneut kanonisiert und als Verzeichnis innerhalb des Roots bestätigt. Weder Port wird der WebView
+als generischer Dateisystemzugriff exponiert.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

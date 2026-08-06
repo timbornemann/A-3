@@ -157,7 +157,9 @@ dependencies = [
  "a3-application",
  "a3-domain",
  "blake3",
+ "futures",
  "gix",
+ "rustix 1.1.4",
 ]
 
 [[package]]

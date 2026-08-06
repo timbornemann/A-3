@@ -104,6 +104,7 @@ Ein Nutzer kann:
 ### M7 Editing Agent
 
 - [x] Policy Engine und Approval-Modell
+- [x] begrenzte sichere Dateiwerkzeuge und evidenzgebundenes Directory Listing
 - [ ] hashgeschützte PatchAction
 - [ ] argv ProcessRunner
 - [ ] Test- und Buildverifikation

@@ -510,6 +510,29 @@ Consumption benötigt denselben Run, dieselbe Action, denselben Scope und eine e
 `PolicyDecisionId` und ist nur einmal möglich. Mismatch, Ablauf, Widerruf und Wiederverwendung
 bleiben blockiert und erzeugen eine neue begründete Entscheidung statt stiller Scope-Erweiterung.
 
+### Sichere Dateiwerkzeuge
+
+`WorkspaceDirectoryListRequest` bindet genau einen `WorktreeId`, einen veröffentlichten
+`SnapshotId`, den Root oder einen normalisierten `RepositoryPath`, einen optionalen exklusiven
+Vorwärtscursor und eine `DirectoryPageSize` zwischen eins und 256. Ein Cursor kann konstruktiv nur
+ein direktes Kind des angeforderten Verzeichnisses sein. `WorkspaceDirectoryListing` akzeptiert
+nur streng sortierte, eindeutige direkte Kinder innerhalb dieser Grenze und koppelt Trunkierung an
+den letzten zurückgegebenen Pfad.
+
+`WorkspaceDirectoryEntry` unterscheidet eine direkte Datei von einem aus dem Index abgeleiteten
+Verzeichnis. Eine Datei behält ihre eigene aktuelle `FileRevision`; ein Verzeichnis ist nur mit der
+`FileRevision` eines strikten Nachfahren konstruierbar. Dadurch bleibt auch ein strukturelles
+Listing an konkrete Snapshot-Evidence gebunden und kann keine unbelegte Dateisystembehauptung
+erzeugen.
+
+Eine erfolgreiche `AgentSourcePage` leitet ihre `AgentToolEvidence` selbst aus der erneut
+bestätigten `FileRevision` und dem tatsächlich gelieferten `SourceRange` ab. Leere EOF-Seiten
+verwenden File-Evidence, nicht leere Seiten Span-Evidence. `SecretCandidateClassifierV1`
+klassifiziert Private-Key-, Bearer-, GitHub-, AWS- und bekannte Secret-Assignment-Muster, gibt aber
+nur eine content-freie Kategorie aus. Binary-, Secret-, Größen-, Encoding-, Stale-, Denied- und
+Cancellation-Fälle bleiben getrennte stabile Fehlerzustände; Pfade oder Quelldaten sind in diesen
+Fehlern nicht enthalten.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.
