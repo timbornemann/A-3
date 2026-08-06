@@ -15,7 +15,7 @@ mod semantic;
 mod task_ledger;
 
 use a3_application::{
-    GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
+    AgentActionStore, GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
     ModuleRemapQueueStore, RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore,
     TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
 };
@@ -199,6 +199,7 @@ pub trait KnowledgeStoreContractFactory {
         + KnowledgeIndexStore
         + GoalContractStore
         + TaskLedgerStore
+        + AgentActionStore
         + RunJournalStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore

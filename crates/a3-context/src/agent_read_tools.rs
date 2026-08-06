@@ -4,8 +4,8 @@ use a3_application::{
     AgentReadToolsFuture, AgentSourceReadControl, AgentSourceReadFailure, AgentSourceReader,
     CompileTaskLens, CompileTaskLensFailure, ContextToolResultDigest, ContextToolResultPreview,
     ContextToolResultStatus, KnowledgeIndexFailure, KnowledgeSearchControl, KnowledgeSearchFailure,
-    KnowledgeSearchStore, TaskLensClaimLimit, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensTimeout,
+    KnowledgeSearchStore, TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, TaskLensTimeout,
 };
 use a3_domain::{
     AgentInspectTarget, AgentToolEvidence, AgentToolEvidenceSet, EvidenceRef, ExactSearchTarget,
@@ -240,24 +240,16 @@ impl<'a> DeterministicAgentReadTools<'a> {
                 ))
             }
             AgentInspectTarget::Claim(claim_id) => {
-                let claims = self
+                let claim = self
                     .claims
-                    .load_claims(project, &published, TaskLensClaimLimit::DEFAULT, deadline)
+                    .load_claim(project, &published, *claim_id, deadline)
                     .await
-                    .map_err(map_claim_failure)?;
-                let claim = claims
-                    .claims()
-                    .iter()
-                    .find(|claim| claim.id() == *claim_id)
+                    .map_err(map_claim_failure)?
                     .ok_or(AgentReadToolFailure::Unavailable)?;
                 let mut output = String::new();
                 let mut evidence = EvidenceCollector::default();
-                render_claim(&mut output, claim, &mut evidence)?;
-                Ok(RenderedToolResult::new(
-                    output,
-                    evidence,
-                    claims.truncated(),
-                ))
+                render_claim(&mut output, &claim, &mut evidence)?;
+                Ok(RenderedToolResult::new(output, evidence, false))
             }
             AgentInspectTarget::Test(selector) => {
                 let selector = selector.as_str().to_lowercase();
@@ -788,7 +780,8 @@ mod tests {
     use super::*;
     use a3_application::{
         AgentReadTools, AgentSourcePage, AgentSourceReaderFuture, KnowledgeSearchFuture,
-        TaskLensClaimResult, TaskLensClaimStoreFuture, TaskLensIndexStoreFuture,
+        TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimStoreFuture,
+        TaskLensIndexStoreFuture,
     };
     use a3_domain::{
         AgentFileInspection, AgentFileLineCount, AgentFileStartLine, AgentInspectAction,
@@ -909,6 +902,48 @@ mod tests {
             let result = TaskLensClaimResult::new(Vec::new(), false)
                 .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection);
             Box::pin(async move { result })
+        }
+
+        fn load_claim<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _published: &'a PublishedIndex,
+            _claim_id: a3_domain::ModuleCardClaimId,
+            _control: &'a dyn TaskLensControl,
+        ) -> TaskLensClaimReadFuture<'a> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ExactMissClaims {
+        page_calls: AtomicUsize,
+        exact_calls: AtomicUsize,
+    }
+
+    impl TaskLensClaimStore for ExactMissClaims {
+        fn load_claims<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _published: &'a PublishedIndex,
+            _limit: TaskLensClaimLimit,
+            _control: &'a dyn TaskLensControl,
+        ) -> TaskLensClaimStoreFuture<'a> {
+            self.page_calls.fetch_add(1, Ordering::SeqCst);
+            let result = TaskLensClaimResult::new(Vec::new(), false)
+                .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection);
+            Box::pin(async move { result })
+        }
+
+        fn load_claim<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _published: &'a PublishedIndex,
+            _claim_id: a3_domain::ModuleCardClaimId,
+            _control: &'a dyn TaskLensControl,
+        ) -> TaskLensClaimReadFuture<'a> {
+            self.exact_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(None) })
         }
     }
 
@@ -1070,6 +1105,66 @@ mod tests {
             Err(AgentReadToolFailure::Unavailable)
         );
         assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn claim_inspection_uses_exact_lookup_instead_of_a_leading_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot_id = SnapshotId::from_bytes([13; 32]);
+        let index = MemoryIndex {
+            published: Arc::new(empty_index(snapshot_id)?),
+        };
+        let search = EmptySearch {
+            index_run_id: IndexRunId::from_bytes([2; 32]),
+            snapshot_id,
+            exact_calls: AtomicUsize::new(0),
+            lexical_calls: AtomicUsize::new(0),
+        };
+        let claims = ExactMissClaims {
+            page_calls: AtomicUsize::new(0),
+            exact_calls: AtomicUsize::new(0),
+        };
+        let source = FixedSource {
+            calls: AtomicUsize::new(0),
+        };
+        let tools = DeterministicAgentReadTools::new(&index, &search, &claims, &source);
+        let action = AgentReadAction::Inspect(AgentInspectAction::new(AgentInspectTarget::Claim(
+            a3_domain::ModuleCardClaimId::from_bytes([14; 32]),
+        )));
+
+        assert_eq!(
+            futures::executor::block_on(tools.execute(
+                &project()?,
+                snapshot_id,
+                ToolRunId::from_bytes([15; 32]),
+                &action,
+                AgentReadTimeout::DEFAULT,
+                &Active,
+            )),
+            Err(AgentReadToolFailure::Unavailable)
+        );
+        assert_eq!(claims.exact_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(claims.page_calls.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_normalized_result_keeps_only_a_utf8_safe_preview()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = format!("{}é-tail", "x".repeat(MAX_AGENT_TOOL_PREVIEW_BYTES));
+        let observed = output.len();
+        let rendered = RenderedToolResult::new(output, EvidenceCollector::default(), false);
+
+        let result = rendered.finish(
+            ToolRunId::from_bytes([16; 32]),
+            SnapshotId::from_bytes([17; 32]),
+        )?;
+
+        assert!(result.truncated());
+        assert!(result.preview().as_str().len() <= MAX_AGENT_TOOL_PREVIEW_BYTES);
+        assert_eq!(result.observed_output_bytes(), u64::try_from(observed)?);
+        assert!(!result.preview().as_str().contains("tail"));
         Ok(())
     }
 

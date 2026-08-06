@@ -105,6 +105,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   `model_interaction`-Event trägt seine Prompt-/Outputtokens, die optionale einzige Actionklasse
   und den Verbrauch des einmaligen Repairpfads. Checks und Trigger verhindern ungültige
   Kardinalitäten, halbe Turn-Charges, Charges auf anderen Eventtypen und spätere Budgetänderungen.
+- Knowledge-Schema V16 ergänzt `tool_runs` und `tool_evidence`. Ein normalisierter Read-Tool-Lauf
+  wird gemeinsam mit seinem `tool_action`-Event atomar geschrieben und bleibt über ToolRunId,
+  Runsequenz, Ergebnisstatus und -digest sowie Vorher-/Nachher-Snapshot nachvollziehbar. Evidence
+  besteht ausschließlich aus geordneten, content-adressierten File- oder Source-Span-Locators;
+  Suchanfrage, Source-Text und begrenzte Toolvorschau werden nicht persistiert. Fremdschlüssel und
+  ein Trigger binden jeden Toollauf an genau sein typisiertes Journal-Event.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -413,6 +419,14 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V16 ergänzt V15 um die dauerhafte, bounded Tool-Evidence.
+Der libSQL-Adapter schreibt Tool-Event, Runprojektion, Toolmetadaten und höchstens 100 typisierte
+Evidence-Locators in einer `IMMEDIATE`-Transaktion. Ein separater atomarer Action-Port ersetzt bei
+Ledger-mutierenden `UpdateLedger`-Ergebnissen zusätzlich die Task-Ledger-Projektion und hängt die
+resultierende Controllertransition mit zwei Compare-and-Swap-Ankern in derselben Transaktion an.
+Adaptervertrag und Repositorytest belegen Reopen, Konflikt-Rollback und die Abwesenheit roher
+Toolvorschauen; der getestete V15→V16-Fehlerfall rollt vollständig auf V15 zurück.
+
 Das implementierte Knowledge-Schema V15 ergänzt V14 um unveränderliche Controllerbudgets,
 kumulative Verbrauchszähler und vollständige per-Turn-Charges. Der gemeinsame Adaptervertrag
 belegt die atomare Aktualisierung von Event und Nutzung sowie ihre exakte Wiederherstellung nach
@@ -424,7 +438,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V15 in einer eigenen atomaren Migration.
+Vorgängerversion bis V16 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

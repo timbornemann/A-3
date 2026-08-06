@@ -1,21 +1,25 @@
 use crate::fixture::{ContractWorkspace, project, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{
-    CreateAgentRun, CreateGoalContract, CreateTaskLedger, ExportRunJournal, KnowledgeIndexStore,
-    RunEventPageLimit, RunJournalExportControl, RunJournalExportControlError,
-    RunJournalExportSchemaVersion, RunJournalRetentionPolicy, RunJournalStore,
-    RunJournalStoreFailure,
+    AgentActionStore, AgentActionStoreFailure, AgentReadResult, ContextToolResultDigest,
+    ContextToolResultPreview, ContextToolResultStatus, CreateAgentRun, CreateGoalContract,
+    CreateTaskLedger, ExportRunJournal, KnowledgeIndexStore, RunEventPageLimit,
+    RunJournalExportControl, RunJournalExportControlError, RunJournalExportSchemaVersion,
+    RunJournalRetentionPolicy, RunJournalStore, RunJournalStoreFailure, TaskLedgerStore,
+    TaskLedgerStoreVersion,
 };
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentActionLimit,
     AgentControllerState, AgentRepairLimit, AgentRun, AgentRunBudget, AgentRunDurationLimit,
-    AgentRunId, AgentRunTimestamp, AgentTokenLimit, AgentTurnActionClass, AgentTurnCharge,
-    AgentTurnLimit, AgentTurnRepairUsage, ExpectedTaskEvidence, GoalConstraint, GoalContract,
+    AgentRunId, AgentRunTimestamp, AgentTokenLimit, AgentToolEvidence, AgentToolEvidenceSet,
+    AgentTurnActionClass, AgentTurnCharge, AgentTurnLimit, AgentTurnRepairUsage, ContentHash,
+    EvidenceRef, ExpectedTaskEvidence, FileRevision, GoalConstraint, GoalContract,
     GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId, ModelProfileReference,
-    ModelProfileVersion, ModelTokenCount, NonGoal, Progress, RepositoryId, RunEventCode,
-    RunEventId, RunEventOutcome, RunEventPayload, RunEventRedaction, RunEventRedactionSource,
-    SnapshotId, SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition,
-    TaskStepId, TaskStepOutcome, TaskStepRationale, UserDecision, VerificationMethod,
+    ModelProfileVersion, ModelTokenCount, NonGoal, Progress, RepositoryId, RepositoryPath,
+    RunEventCode, RunEventId, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    RunEventRedactionSource, SnapshotId, SourcePosition, SourceRange, SuccessVerification, TaskId,
+    TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome,
+    TaskStepRationale, TaskStepStatus, ToolRunId, UserDecision, VerificationMethod,
     VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
 };
 use futures::join;
@@ -170,6 +174,33 @@ where
     first_writer
         .append_run_event(&first, expected_sequence, &current, &redacted_event)
         .await?;
+    let expected_sequence = current.last_event_sequence();
+    let tool_run_id = ToolRunId::from_bytes([166; 32]);
+    let evidence = AgentToolEvidence::for_span(EvidenceRef::new(
+        FileRevision::new(
+            RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
+            ContentHash::from_bytes([167; 32]),
+        ),
+        SourceRange::new(0, 8, SourcePosition::new(0, 0), SourcePosition::new(0, 8))?,
+    ));
+    let read = AgentReadResult::new(
+        tool_run_id,
+        ContextToolResultStatus::Succeeded,
+        ContextToolResultPreview::try_from_string(SECRET_FIXTURE.to_owned())?,
+        ContextToolResultDigest::from_bytes([169; 32]),
+        false,
+        snapshot_id,
+        AgentToolEvidenceSet::new(snapshot_id, vec![evidence])?,
+        u64::try_from(SECRET_FIXTURE.len())?,
+    )?
+    .record(
+        &mut current,
+        RunEventId::from_bytes([168; 32]),
+        AgentRunTimestamp::from_unix_millis(2_006)?,
+    )?;
+    first_writer
+        .append_agent_read(&first, expected_sequence, &current, &read)
+        .await?;
 
     let first_page = first_writer
         .load_run_events(&first, run_id, None, RunEventPageLimit::new(2)?)
@@ -185,7 +216,10 @@ where
         )
         .await?;
     assert_eq!(redacted_event.turn_charge(), Some(turn_charge));
-    assert_eq!(second_page.events(), &[redacted_event]);
+    assert_eq!(
+        second_page.events(),
+        &[redacted_event, read.event().clone()]
+    );
     assert_eq!(current.usage().turn_count(), 1);
     assert_eq!(current.usage().action_count(), 1);
     assert_eq!(current.usage().repair_count(), 1);
@@ -199,7 +233,7 @@ where
         .execute(&first, run_id, &control)
         .await?;
     assert_eq!(first_export, second_export);
-    assert_eq!(first_export.event_count(), 3);
+    assert_eq!(first_export.event_count(), 4);
     assert_eq!(
         first_export.schema_version(),
         RunJournalExportSchemaVersion::V2
@@ -222,7 +256,59 @@ where
     assert!(text.contains("\"turn_limit\":17"));
     assert!(text.contains("\"turn_action_kind\":\"inspect\""));
     assert!(text.contains("\"turn_repair_used\":true"));
-    assert_eq!(control.last_completed()?, Some(3));
+    assert_eq!(control.last_completed()?, Some(4));
+
+    let mut committed_ledger = ledger.clone();
+    committed_ledger.start_step(
+        TaskStepId::from_bytes([161; 32]),
+        run_id,
+        TaskLedgerTimestamp::from_unix_millis(2_007)?,
+    )?;
+    let expected_sequence = current.last_event_sequence();
+    let committed_event = current.transition(
+        RunEventId::from_bytes([170; 32]),
+        AgentControllerState::Plan,
+        RunEventPayload::empty(),
+        snapshot_id,
+        AgentRunTimestamp::from_unix_millis(2_008)?,
+    )?;
+    let next_ledger_version = first_writer
+        .commit_ledger_action(
+            &first,
+            TaskLedgerStoreVersion::INITIAL,
+            expected_sequence,
+            &committed_ledger,
+            &current,
+            &committed_event,
+        )
+        .await?;
+    assert_eq!(next_ledger_version.get(), 2);
+
+    let mut losing_run = current.clone();
+    let losing_event = losing_run.transition(
+        RunEventId::from_bytes([171; 32]),
+        AgentControllerState::Execute,
+        RunEventPayload::empty(),
+        snapshot_id,
+        AgentRunTimestamp::from_unix_millis(2_009)?,
+    )?;
+    assert_eq!(
+        first_writer
+            .commit_ledger_action(
+                &first,
+                TaskLedgerStoreVersion::INITIAL,
+                current.last_event_sequence(),
+                &committed_ledger,
+                &losing_run,
+                &losing_event,
+            )
+            .await,
+        Err(AgentActionStoreFailure::LedgerVersionConflict)
+    );
+    assert_eq!(
+        first_writer.load_agent_run(&first, run_id).await?,
+        Some(current.clone())
+    );
 
     crate::release_contract_store(second_writer);
     crate::release_contract_store(first_writer);
@@ -231,10 +317,22 @@ where
         reopened.load_agent_run(&first, run_id).await?,
         Some(current)
     );
+    let reopened_ledger = reopened
+        .load_task_ledger(&first, task_id)
+        .await?
+        .ok_or_else(|| std::io::Error::other("atomically committed Ledger disappeared"))?;
+    assert_eq!(reopened_ledger.version(), next_ledger_version);
+    assert_eq!(
+        reopened_ledger
+            .ledger()
+            .step(TaskStepId::from_bytes([161; 32]))
+            .map(|step| step.status()),
+        Some(TaskStepStatus::InProgress)
+    );
     let all_events = reopened
         .load_run_events(&first, run_id, None, RunEventPageLimit::new(8)?)
         .await?;
-    assert_eq!(all_events.events().len(), 3);
+    assert_eq!(all_events.events().len(), 5);
     crate::release_contract_store(reopened);
     crate::complete_contract_phase()
 }

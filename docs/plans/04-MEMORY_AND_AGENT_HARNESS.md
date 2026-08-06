@@ -317,18 +317,41 @@ JavaScript-Pakete enthalten keine unbekannte Lizenz.
 
 Abhängigkeiten: H9
 
-- [ ] SearchTool über Retrieval
-- [ ] InspectTool für File, Symbol, Graph, Claim und Test
-- [ ] UpdateLedgerTool
-- [ ] FinishTool
-- [ ] Outputlimits und gezieltes Paging
-- [ ] Tool Evidence
+- [x] SearchTool über Retrieval
+- [x] InspectTool für File, Symbol, Graph, Claim und Test
+- [x] UpdateLedgerTool
+- [x] FinishTool
+- [x] Outputlimits und gezieltes Paging
+- [x] Tool Evidence
 
 Akzeptanz:
 
 - Agent beantwortet Architekturfragen mit klickbarer Evidenz;
 - kein Tool kann Datei oder Prozess mutieren;
 - große Ergebnisse werden nicht ungefiltert in Kontext geladen.
+
+Verifikation: `DeterministicAgentReadTools` verwendet Search ausschließlich über die geordnete
+Task-Lens-Pipeline und bietet typisierte File-, Symbol-, Graph-, Claim- und Test-Inspektion. Der
+exakte Claim-Port ist unabhängig von einer abgeschnittenen führenden Claim-Seite. Der
+Workspace-Reader validiert kanonische Pfade nach Symlinkauflösung, vollständigen Contenthash und
+reguläre Dateien, bevor er höchstens 12 KiB vollständige Zeilen mit einem Vorwärtscursor liefert.
+Normalisierte Resultate behalten Digest und beobachtete Bytezahl des vollständigen Ergebnisses,
+geben aber höchstens 16 KiB Preview und 100 content-adressierte Evidence-Locators an den Context.
+
+Knowledge-Schema V16 persistiert Tool-Event, Runprojektion, Status/Digest/Snapshot-Anker und
+File-/Span-Evidence atomar, jedoch weder Query noch Source-/Preview-Text. Ledger-mutierende
+`UpdateLedger`-Ergebnisse ersetzen Ledger und Runtransition mit getrennten CAS-Ankern in derselben
+Transaktion; stale Evidence ändert keinen Aggregatzustand. Blocked, Replan und Cancellation sind
+getestet. `Finish` kann nur `Verify` anfordern, während `Done` weiterhin ausschließlich dem
+Acceptance-Verifier gehört. `cargo fmt --all -- --check`, Workspace-Clippy für alle
+Targets/Features mit `-D warnings`, alle Workspace-Tests und Rustdoc mit `-D warnings` sind grün.
+Beim letzten Wiederholungslauf wurden ausschließlich zufällige native Windows-libSQL-
+`STATUS_ACCESS_VIOLATION`s gemäß Quality Gate mit frischen Workern wiederholt; der zweite und letzte
+zulässige, äußerlich serialisierte Retry bestand alle 15 betroffenen Contracts. Mit pnpm 11.9.0
+aus dem lokalen Cache bestehen Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier
+Tooltests; die lokal verfügbare Node-Version 25.6.1 meldet gegenüber der gepinnten 24.14.0 nur einen
+Engine-Hinweis. Der Linkcheck prüfte 45 Markdown-Dateien und 66 lokale Links; der Lizenzbericht
+enthält keine unbekannte Lizenz.
 
 ## H11 Resume und Recovery
 

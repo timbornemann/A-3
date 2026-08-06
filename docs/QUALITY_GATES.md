@@ -43,7 +43,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Redaction ohne Secret-Fixture, deterministischen begrenzten JSONL-V1-Export und exakte
   Wiederherstellung nach Reopen. Jeder neue Run behält dabei seine ModelProfile-ID und -Version;
   V14-Adaptertests erlauben ausschließlich migrierte Legacy-Nullpaare und lehnen partielle
-  Profilreferenzen ab.
+  Profilreferenzen ab. V16-Contracts prüfen zusätzlich den atomaren Tool-Event-/Metadaten-/
+  Evidence-Append ohne Raw Preview sowie den gemeinsamen Ledger-/Run-Commit mit getrennten
+  Compare-and-Swap-Konflikten.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen

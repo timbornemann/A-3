@@ -3,10 +3,10 @@
 use a3_application::{
     CompileTaskLens, CompileTaskLensFailure, IndexPersistenceControl, KnowledgeIndexFailure,
     KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
-    KnowledgeSearchFuture, KnowledgeSearchStore, TaskLensClaimLimit, TaskLensClaimResult,
-    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
-    TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensSemanticHit,
-    TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticSearch,
+    KnowledgeSearchFuture, KnowledgeSearchStore, TaskLensClaimLimit, TaskLensClaimReadFuture,
+    TaskLensClaimResult, TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture,
+    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticSearch,
     TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture, TaskLensTimeout,
 };
 use a3_domain::{
@@ -489,6 +489,16 @@ impl TaskLensClaimStore for StubStore<'_> {
             TaskLensClaimResult::new(vec![claim], false)
                 .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)
         })
+    }
+
+    fn load_claim<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _published: &'a PublishedIndex,
+        _claim_id: ModuleCardClaimId,
+        _control: &'a dyn TaskLensControl,
+    ) -> TaskLensClaimReadFuture<'a> {
+        Box::pin(async { Ok(None) })
     }
 }
 

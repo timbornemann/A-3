@@ -4,8 +4,9 @@ use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
     ContextCompileFailure, ContextCompilePhase, KnowledgeSearchControl, KnowledgeSearchFailure,
     KnowledgeSearchFuture, KnowledgeSearchStore, ModelMessageRole, TaskLensClaimLimit,
-    TaskLensClaimResult, TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture,
-    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
+    TaskLensIndexStoreFuture,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
@@ -399,6 +400,16 @@ impl TaskLensClaimStore for StubStore<'_> {
                 .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)
         })();
         Box::pin(async move { result })
+    }
+
+    fn load_claim<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _published: &'a PublishedIndex,
+        _claim_id: ModuleCardClaimId,
+        _control: &'a dyn TaskLensControl,
+    ) -> TaskLensClaimReadFuture<'a> {
+        Box::pin(async { Ok(None) })
     }
 }
 

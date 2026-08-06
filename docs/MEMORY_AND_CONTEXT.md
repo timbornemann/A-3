@@ -285,6 +285,21 @@ Toolresultate enthalten:
 
 Das Modell erhält nicht automatisch vollständige Logs. Es kann über ein gezieltes Read-Tool weitere Bereiche anfordern.
 
+Das implementierte H10-Read-Toolset verwendet für Search dieselbe geordnete Task-Lens-Retrieval-
+Pipeline wie der Context Compiler. Inspect besitzt ausschließlich typisierte Ziele für File,
+Symbol, Graph, Claim und Test; Claim-Inspektion liest die exakte aktive ClaimId und hängt nicht von
+einer abgeschnittenen Claim-Seite ab. Source-Seiten sind vorwärtsgerichtet und auf 12 KiB begrenzt,
+der normalisierte Context-Preview auf 16 KiB und die controllerseitig zugelassene Tool-Evidence auf
+100 content-adressierte Quellen. Digest und Bytezahl beziehen sich weiterhin auf das vollständige
+normalisierte Resultat vor Preview-Trunkierung.
+
+Jeder Read-Lauf erzeugt nach dem Model-Event genau ein journalgeordnetes `tool_action`-Event. V16
+persistiert nur Status, Digest, Trunkierungsmetadaten, Snapshot-Anker und typisierte File-/Span-
+Locators; Query und Preview bleiben flüchtig. `UpdateLedger` darf ein Ergebnis nur mit aktueller,
+vom Controller übernommener Tool-Evidence auf `Verifying` setzen. Ledgerprojektion und zugehörige
+Runtransition werden atomar gespeichert. `Finish` fordert ausschließlich `Verify` an; `Done` bleibt
+dem separaten Acceptance-Verifier nach erfolgreicher objektiver Verifikation vorbehalten.
+
 ## Compaction
 
 Nach jedem erfolgreichen Schritt:

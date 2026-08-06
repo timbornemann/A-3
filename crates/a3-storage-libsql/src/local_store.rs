@@ -11,30 +11,30 @@ use crate::{
     task_lens_claim_repository,
 };
 use a3_application::{
-    EmbeddingOperationControl, GoalContractStore, GoalContractStoreFailure,
-    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
-    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleRemapQueueFailure,
-    ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
-    ProjectReconciliationProposal, RecentProject, RecentProjectLimit, RemapQueueControl,
-    RemapQueueLimit, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
-    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
-    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
-    TaskLensIndexStore, TaskLensIndexStoreFuture, VerifiedModuleCardPublisher,
-    VerifiedModuleCardPublisherFuture,
+    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, EmbeddingOperationControl,
+    GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture, IndexPersistenceControl,
+    KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore,
+    KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
+    ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
+    ModuleRemapQueueStore, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
+    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage,
+    RunEventPageLimit, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
+    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
+    SemanticEmbeddingStoreFuture, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
+    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
+    TaskLensIndexStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentRun, AgentRunId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
     ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
     IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex,
-    RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskId,
-    TaskLedger, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
-    VerifiedModuleCardBatch, WorktreeId,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ProjectId, ProjectIdentity,
+    PublishedIndex, RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot,
+    SnapshotId, TaskId, TaskLedger, TraversalQuery, VectorSearchCapability, VectorSearchLimit,
+    VectorSearchResult, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -411,6 +411,27 @@ impl RunJournalStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn append_agent_read<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        read: &'a RecordedAgentRead,
+    ) -> RunJournalStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            run_journal_repository::append_agent_read(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                read,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn load_agent_run<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -442,6 +463,36 @@ impl RunJournalStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl AgentActionStore for LibsqlKnowledgeStore {
+    fn commit_ledger_action<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentActionStoreFuture<'a> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_run_journal(project)
+                .await
+                .map_err(classify_run_journal_for_agent_action)?;
+            run_journal_repository::append_ledger_action(
+                database.connection(),
+                project.worktree().id(),
+                expected_ledger_version,
+                expected_last_sequence,
+                ledger,
+                run,
+                event,
+            )
+            .await
+            .map_err(|error| error.classify_agent_action())
         })
     }
 }
@@ -704,6 +755,27 @@ impl TaskLensClaimStore for LibsqlKnowledgeStore {
                 project.worktree().id(),
                 published,
                 limit.get(),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_claim<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        published: &'a PublishedIndex,
+        claim_id: ModuleCardClaimId,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensClaimReadFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_task_lens(project).await?;
+            task_lens_claim_repository::load_claim(
+                knowledge.connection(),
+                project.worktree().id(),
+                published,
+                claim_id,
                 control,
             )
             .await
@@ -1375,5 +1447,20 @@ fn classify_run_journal_storage_failure(error: KnowledgeStoreFailure) -> RunJour
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             RunJournalStoreFailure::InvalidStoredData
         }
+    }
+}
+
+const fn classify_run_journal_for_agent_action(
+    failure: RunJournalStoreFailure,
+) -> AgentActionStoreFailure {
+    match failure {
+        RunJournalStoreFailure::Unavailable => AgentActionStoreFailure::Unavailable,
+        RunJournalStoreFailure::Corrupt => AgentActionStoreFailure::Corrupt,
+        RunJournalStoreFailure::UnsupportedSchema => AgentActionStoreFailure::UnsupportedSchema,
+        RunJournalStoreFailure::InvalidStoredData | RunJournalStoreFailure::RunAlreadyExists => {
+            AgentActionStoreFailure::InvalidStoredData
+        }
+        RunJournalStoreFailure::RunNotFound => AgentActionStoreFailure::RunNotFound,
+        RunJournalStoreFailure::SequenceConflict => AgentActionStoreFailure::RunSequenceConflict,
     }
 }

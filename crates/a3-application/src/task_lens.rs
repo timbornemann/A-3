@@ -6,8 +6,8 @@ use a3_domain::{
     CandidateFreshness, CandidateTokenCost, ExactSearchPageSize, ExactSearchQuery,
     ExactSearchTarget, ExactSearchTerm, FusionError, FusionPolicy, FusionResultLimit,
     GraphEndpoint, IndexRunId, LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm,
-    NormalizedRetrievalSignal, Progress, ProjectIdentity, PublishedIndex, RetrievalCandidate,
-    RetrievalCandidateSet, RetrievalCandidateSetError, RetrievalCandidateSets,
+    ModuleCardClaimId, NormalizedRetrievalSignal, Progress, ProjectIdentity, PublishedIndex,
+    RetrievalCandidate, RetrievalCandidateSet, RetrievalCandidateSetError, RetrievalCandidateSets,
     RetrievalCandidateSetsError, RetrievalCandidateSignals, RetrievalTargetId, SnapshotId,
     SourceChannel, TaskLens, TaskLensClaim, TaskLensCompileError, TaskLensPolicy, TaskLensSeed,
     TaskLensSeedSet, TaskLensTokenBudget, TraversalQuery, TraversalResultLimit,
@@ -32,6 +32,11 @@ const MAX_TASK_LENS_SEMANTIC_HITS: u16 = 100;
 /// Owned future returned by the object-safe Task Lens claim reader.
 pub type TaskLensClaimStoreFuture<'a> = Pin<
     Box<dyn Future<Output = Result<TaskLensClaimResult, TaskLensClaimStoreFailure>> + Send + 'a>,
+>;
+
+/// Owned future returned by an exact current-claim lookup.
+pub type TaskLensClaimReadFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Option<TaskLensClaim>, TaskLensClaimStoreFailure>> + Send + 'a>,
 >;
 
 /// Owned future returning a shared immutable current index for Task Lens compilation.
@@ -213,6 +218,15 @@ pub trait TaskLensClaimStore: fmt::Debug + Send + Sync {
         limit: TaskLensClaimLimit,
         control: &'a dyn TaskLensControl,
     ) -> TaskLensClaimStoreFuture<'a>;
+
+    /// Reads one exact active claim without depending on a bounded leading page.
+    fn load_claim<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        published: &'a PublishedIndex,
+        claim_id: ModuleCardClaimId,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensClaimReadFuture<'a>;
 }
 
 /// Stable claim-read failure without SQL, rows, or source content.

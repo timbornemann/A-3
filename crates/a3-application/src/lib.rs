@@ -1,6 +1,7 @@
 //! Application use cases and ports for A^3.
 
 mod agent_action_codec;
+mod agent_actions;
 mod agent_controller;
 mod agent_prompt;
 mod agent_read_result;
@@ -44,6 +45,11 @@ mod task_lens;
 
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
+};
+pub use agent_actions::{
+    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
+    AgentLedgerActionOutcomeKind, ApplyAgentLedgerUpdate, ApplyAgentLedgerUpdateError,
+    PersistAgentLedgerMutation, PersistAgentLedgerMutationError, RequestAgentFinish,
 };
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
@@ -188,10 +194,11 @@ pub use repository_watcher::{
 };
 pub use retrieval_fusion::FuseRetrievalCandidates;
 pub use run_journal::{
-    AppendRunEvent, CreateAgentRun, ExportRunJournal, RunEventPage, RunEventPageError,
-    RunEventPageLimit, RunEventPageLimitError, RunJournalExport, RunJournalExportControl,
-    RunJournalExportControlError, RunJournalExportError, RunJournalExportSchemaVersion,
-    RunJournalRetentionPolicy, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
+    AppendAgentRead, AppendRunEvent, CreateAgentRun, ExportRunJournal, RunEventPage,
+    RunEventPageError, RunEventPageLimit, RunEventPageLimitError, RunJournalExport,
+    RunJournalExportControl, RunJournalExportControlError, RunJournalExportError,
+    RunJournalExportSchemaVersion, RunJournalRetentionPolicy, RunJournalStore,
+    RunJournalStoreFailure, RunJournalStoreFuture,
 };
 pub use semantic_embedding_store::{
     SemanticCacheRebuildControl, SemanticCacheRebuildProgressError, SemanticEmbeddingStore,
@@ -207,8 +214,8 @@ pub use task_ledger::{
     TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,
 };
 pub use task_lens::{
-    CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimResult,
-    TaskLensClaimResultError, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimReadFuture,
+    TaskLensClaimResult, TaskLensClaimResultError, TaskLensClaimStore, TaskLensClaimStoreFailure,
     TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
     TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
     TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,

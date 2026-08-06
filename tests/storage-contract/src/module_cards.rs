@@ -227,6 +227,39 @@ where
     );
     assert_eq!(
         store
+            .load_claim(
+                &project,
+                &published,
+                ModuleCardClaimId::from_bytes([138; 32]),
+                &CancelledTaskLensControl,
+            )
+            .await,
+        Err(TaskLensClaimStoreFailure::Cancelled)
+    );
+    assert_eq!(
+        store
+            .load_claim(
+                &project,
+                &published,
+                ModuleCardClaimId::from_bytes([138; 32]),
+                &ContractTaskLensControl,
+            )
+            .await?,
+        Some(claims.claims()[0].clone())
+    );
+    assert_eq!(
+        store
+            .load_claim(
+                &project,
+                &published,
+                ModuleCardClaimId::from_bytes([255; 32]),
+                &ContractTaskLensControl,
+            )
+            .await?,
+        None
+    );
+    assert_eq!(
+        store
             .load_current_index(&project, &ContractTaskLensControl)
             .await?
             .ok_or("shared Task Lens index is missing")?

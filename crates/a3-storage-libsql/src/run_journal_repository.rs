@@ -1,14 +1,18 @@
 use crate::{catalog::is_corruption, goal_contract_repository, task_ledger_repository};
-use a3_application::{RunEventPage, RunEventPageLimit, RunJournalStoreFailure};
+use a3_application::{
+    AgentActionStoreFailure, ContextToolResultStatus, RecordedAgentRead, RunEventPage,
+    RunEventPageLimit, RunJournalStoreFailure, TaskLedgerStoreFailure, TaskLedgerStoreVersion,
+};
 use a3_domain::{
     AgentActionLimit, AgentControllerState, AgentRepairLimit, AgentRun, AgentRunBudget,
     AgentRunDurationLimit, AgentRunId, AgentRunIdentity, AgentRunMaterializedState,
-    AgentRunTimestamp, AgentRunTiming, AgentRunUsage, AgentTokenLimit, AgentTurnActionClass,
-    AgentTurnCharge, AgentTurnLimit, AgentTurnRepairUsage, GoalContractRevision, ModelProfileId,
-    ModelProfileReference, ModelProfileVersion, ModelTokenCount, RunEvent, RunEventCode,
-    RunEventId, RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome,
-    RunEventPayload, RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSubject,
-    RunPayloadDigest, SnapshotId, TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
+    AgentRunTimestamp, AgentRunTiming, AgentRunUsage, AgentTokenLimit, AgentToolEvidenceLocation,
+    AgentTurnActionClass, AgentTurnCharge, AgentTurnLimit, AgentTurnRepairUsage,
+    GoalContractRevision, ModelProfileId, ModelProfileReference, ModelProfileVersion,
+    ModelTokenCount, RunEvent, RunEventCode, RunEventId, RunEventIdentity, RunEventKind,
+    RunEventOccurrence, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    RunEventRedactionSource, RunEventSequence, RunEventSubject, RunPayloadDigest, SnapshotId,
+    TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -93,57 +97,255 @@ pub(crate) async fn append(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(RunJournalRepositoryError::Begin)?;
+    let result = append_in_transaction(
+        &transaction,
+        worktree_id,
+        expected_last_sequence,
+        run,
+        event,
+    )
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn append_agent_read(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    read: &RecordedAgentRead,
+) -> Result<(), RunJournalRepositoryError> {
+    validate_recorded_read(run, read)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(RunJournalRepositoryError::Begin)?;
     let result = async {
-        let existing = load_run_from_transaction(&transaction, worktree_id, run.id())
-            .await?
-            .ok_or(RunJournalRepositoryError::RunNotFound)?;
-        if existing.last_event_sequence() != expected_last_sequence {
-            return Err(RunJournalRepositoryError::SequenceConflict);
-        }
-        let tail = read_event(&transaction, run.id(), expected_last_sequence)
-            .await?
-            .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
-        validate_materialized_tail(&existing, &tail)?;
-        let mut expected_run = existing;
-        expected_run
-            .apply_event(event)
-            .map_err(|_| RunJournalRepositoryError::InvalidInput)?;
-        if &expected_run != run {
-            return Err(RunJournalRepositoryError::InvalidInput);
-        }
-        validate_run_anchors(&transaction, worktree_id, run, true).await?;
-        write_event(&transaction, event).await?;
-        let changed = transaction
+        append_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            read.event(),
+        )
+        .await?;
+        write_agent_read(&transaction, read).await
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn append_ledger_action(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_ledger_version: TaskLedgerStoreVersion,
+    expected_last_sequence: RunEventSequence,
+    ledger: &a3_domain::TaskLedger,
+    run: &AgentRun,
+    event: &RunEvent,
+) -> Result<TaskLedgerStoreVersion, RunJournalRepositoryError> {
+    if ledger.goal_contract() != run.goal_contract() {
+        return Err(RunJournalRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(RunJournalRepositoryError::Begin)?;
+    let result = async {
+        let next_version = task_ledger_repository::replace_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_ledger_version,
+            ledger,
+        )
+        .await
+        .map_err(RunJournalRepositoryError::TaskLedger)?;
+        append_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            event,
+        )
+        .await?;
+        Ok(next_version)
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn append_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+) -> Result<(), RunJournalRepositoryError> {
+    let existing = load_run_from_transaction(transaction, worktree_id, run.id())
+        .await?
+        .ok_or(RunJournalRepositoryError::RunNotFound)?;
+    if existing.last_event_sequence() != expected_last_sequence {
+        return Err(RunJournalRepositoryError::SequenceConflict);
+    }
+    let tail = read_event(transaction, run.id(), expected_last_sequence)
+        .await?
+        .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
+    validate_materialized_tail(&existing, &tail)?;
+    let mut expected_run = existing;
+    expected_run
+        .apply_event(event)
+        .map_err(|_| RunJournalRepositoryError::InvalidInput)?;
+    if &expected_run != run {
+        return Err(RunJournalRepositoryError::InvalidInput);
+    }
+    validate_run_anchors(transaction, worktree_id, run, true).await?;
+    write_event(transaction, event).await?;
+    let changed = transaction
+        .execute(
+            "UPDATE agent_runs SET task_ledger_revision = ?1, controller_state = ?2,
+             last_event_sequence = ?3, current_snapshot_id = ?4,
+             updated_at_unix_millis = ?5, turn_count = ?6, prompt_tokens_used = ?7,
+             output_tokens_used = ?8, action_count = ?9, repair_count = ?10
+             WHERE run_id = ?11 AND last_event_sequence = ?12",
+            params![
+                i64::from(run.task_ledger_revision().get()),
+                controller_state_text(run.state()),
+                sequence_to_i64(run.last_event_sequence())?,
+                id_bytes(run.current_snapshot_id()),
+                timestamp_to_i64(run.updated_at()),
+                i64::from(run.usage().turn_count()),
+                u64_to_i64(run.usage().prompt_tokens())?,
+                u64_to_i64(run.usage().output_tokens())?,
+                i64::from(run.usage().action_count()),
+                i64::from(run.usage().repair_count()),
+                id_bytes(run.id()),
+                sequence_to_i64(expected_last_sequence)?
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+    if changed != 1 {
+        return Err(RunJournalRepositoryError::SequenceConflict);
+    }
+    Ok(())
+}
+
+fn validate_recorded_read(
+    run: &AgentRun,
+    read: &RecordedAgentRead,
+) -> Result<(), RunJournalRepositoryError> {
+    let event = read.event();
+    let result = read.context_result();
+    let redaction = event
+        .payload()
+        .redaction()
+        .ok_or(RunJournalRepositoryError::InvalidInput)?;
+    let expected_outcome = match result.status() {
+        ContextToolResultStatus::Succeeded => RunEventOutcome::Succeeded,
+        ContextToolResultStatus::Failed => RunEventOutcome::Failed,
+        ContextToolResultStatus::Cancelled => RunEventOutcome::Cancelled,
+        ContextToolResultStatus::Denied => RunEventOutcome::Denied,
+    };
+    if event.run_id() != run.id()
+        || event.kind() != RunEventKind::ToolAction
+        || event.sequence() != result.sequence()
+        || event.subject() != Some(RunEventSubject::Tool(result.tool_run_id()))
+        || event.snapshot_id() != result.snapshot_before()
+        || result.snapshot_before() != result.snapshot_after()
+        || read.evidence().snapshot_id() != result.snapshot_before()
+        || event.payload().outcome() != Some(expected_outcome)
+        || redaction.source() != RunEventRedactionSource::ToolOutput
+        || redaction.source_was_truncated() != result.truncated()
+        || event.turn_charge().is_some()
+    {
+        return Err(RunJournalRepositoryError::InvalidInput);
+    }
+    Ok(())
+}
+
+async fn write_agent_read(
+    transaction: &Transaction,
+    read: &RecordedAgentRead,
+) -> Result<(), RunJournalRepositoryError> {
+    let event = read.event();
+    let result = read.context_result();
+    let redaction = event
+        .payload()
+        .redaction()
+        .ok_or(RunJournalRepositoryError::InvalidInput)?;
+    transaction
+        .execute(
+            "INSERT INTO tool_runs (
+             tool_run_id, run_id, event_sequence, status, result_digest, result_truncated,
+             snapshot_before_id, snapshot_after_id, observed_output_bytes
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                id_bytes(result.tool_run_id()),
+                id_bytes(event.run_id()),
+                sequence_to_i64(event.sequence())?,
+                tool_result_status_text(result.status()),
+                result.digest().as_bytes().to_vec(),
+                i64::from(result.truncated()),
+                id_bytes(result.snapshot_before()),
+                id_bytes(result.snapshot_after()),
+                u64_to_i64(redaction.observed_bytes())?
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+
+    for (index, evidence) in read.evidence().evidence().iter().enumerate() {
+        let revision = evidence.location().revision();
+        let (location_kind, range) = match evidence.location() {
+            AgentToolEvidenceLocation::File(_) => ("file", None),
+            AgentToolEvidenceLocation::Span(_) => ("span", evidence.location().range()),
+        };
+        let (start_byte, end_byte, start_row, start_column, end_row, end_column) =
+            range.map_or((None, None, None, None, None, None), |range| {
+                (
+                    Some(i64::from(range.start_byte())),
+                    Some(i64::from(range.end_byte())),
+                    Some(i64::from(range.start_position().row())),
+                    Some(i64::from(range.start_position().column())),
+                    Some(i64::from(range.end_position().row())),
+                    Some(i64::from(range.end_position().column())),
+                )
+            });
+        transaction
             .execute(
-                "UPDATE agent_runs SET task_ledger_revision = ?1, controller_state = ?2,
-                 last_event_sequence = ?3, current_snapshot_id = ?4,
-                 updated_at_unix_millis = ?5, turn_count = ?6, prompt_tokens_used = ?7,
-                 output_tokens_used = ?8, action_count = ?9, repair_count = ?10
-                 WHERE run_id = ?11 AND last_event_sequence = ?12",
+                "INSERT INTO tool_evidence (
+                 tool_run_id, item_sequence, evidence_id, location_kind, repository_path,
+                 content_hash, start_byte, end_byte, start_row, start_column, end_row, end_column
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
-                    i64::from(run.task_ledger_revision().get()),
-                    controller_state_text(run.state()),
-                    sequence_to_i64(run.last_event_sequence())?,
-                    id_bytes(run.current_snapshot_id()),
-                    timestamp_to_i64(run.updated_at()),
-                    i64::from(run.usage().turn_count()),
-                    u64_to_i64(run.usage().prompt_tokens())?,
-                    u64_to_i64(run.usage().output_tokens())?,
-                    i64::from(run.usage().action_count()),
-                    i64::from(run.usage().repair_count()),
-                    id_bytes(run.id()),
-                    sequence_to_i64(expected_last_sequence)?
+                    id_bytes(result.tool_run_id()),
+                    i64::try_from(index + 1)
+                        .map_err(|_| RunJournalRepositoryError::ResourceLimit)?,
+                    id_bytes(evidence.id()),
+                    location_kind,
+                    revision.path().as_bytes().to_vec(),
+                    revision.content_hash().as_bytes().to_vec(),
+                    start_byte,
+                    end_byte,
+                    start_row,
+                    start_column,
+                    end_row,
+                    end_column
                 ],
             )
             .await
             .map_err(classify_unexpected_constraint)?;
-        if changed != 1 {
-            return Err(RunJournalRepositoryError::SequenceConflict);
-        }
-        Ok(())
     }
-    .await;
-    close_write_transaction(transaction, result).await
+    Ok(())
+}
+
+const fn tool_result_status_text(status: ContextToolResultStatus) -> &'static str {
+    match status {
+        ContextToolResultStatus::Succeeded => "succeeded",
+        ContextToolResultStatus::Failed => "failed",
+        ContextToolResultStatus::Cancelled => "cancelled",
+        ContextToolResultStatus::Denied => "denied",
+    }
 }
 
 pub(crate) async fn load_run(
@@ -1143,6 +1345,41 @@ impl RunJournalRepositoryError {
             }
         }
     }
+
+    pub(crate) fn classify_agent_action(&self) -> AgentActionStoreFailure {
+        match self {
+            Self::TaskLedger(error) => match error.classify() {
+                TaskLedgerStoreFailure::Unavailable => AgentActionStoreFailure::Unavailable,
+                TaskLedgerStoreFailure::Corrupt => AgentActionStoreFailure::Corrupt,
+                TaskLedgerStoreFailure::UnsupportedSchema => {
+                    AgentActionStoreFailure::UnsupportedSchema
+                }
+                TaskLedgerStoreFailure::InvalidStoredData
+                | TaskLedgerStoreFailure::LedgerAlreadyExists => {
+                    AgentActionStoreFailure::InvalidStoredData
+                }
+                TaskLedgerStoreFailure::TaskNotFound => AgentActionStoreFailure::TaskNotFound,
+                TaskLedgerStoreFailure::VersionConflict => {
+                    AgentActionStoreFailure::LedgerVersionConflict
+                }
+            },
+            _ => match self.classify() {
+                RunJournalStoreFailure::Unavailable => AgentActionStoreFailure::Unavailable,
+                RunJournalStoreFailure::Corrupt => AgentActionStoreFailure::Corrupt,
+                RunJournalStoreFailure::UnsupportedSchema => {
+                    AgentActionStoreFailure::UnsupportedSchema
+                }
+                RunJournalStoreFailure::InvalidStoredData
+                | RunJournalStoreFailure::RunAlreadyExists => {
+                    AgentActionStoreFailure::InvalidStoredData
+                }
+                RunJournalStoreFailure::RunNotFound => AgentActionStoreFailure::RunNotFound,
+                RunJournalStoreFailure::SequenceConflict => {
+                    AgentActionStoreFailure::RunSequenceConflict
+                }
+            },
+        }
+    }
 }
 
 fn classify_goal_contract_failure(
@@ -1227,15 +1464,19 @@ impl Error for RunJournalRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use super::{create, load_run};
+    use super::{append_agent_read, create, load_run};
+    use a3_application::{
+        AgentReadResult, ContextToolResultDigest, ContextToolResultPreview, ContextToolResultStatus,
+    };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRun,
-        AgentRunId, AgentRunTimestamp, ExpectedTaskEvidence, GitHead, GitReferenceName,
-        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, IndexLanguage,
-        IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion, ModelProfileId,
-        ModelProfileReference, ModelProfileVersion, NonGoal, RunEventId, Snapshot, SnapshotId,
+        AgentRunId, AgentRunTimestamp, AgentToolEvidence, AgentToolEvidenceSet, ContentHash,
+        ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract,
+        GoalContractDraft, GoalContractTimestamp, GoalObjective, IndexLanguage, IndexSchemaVersion,
+        LanguageAdapterRevision, LanguageAdapterVersion, ModelProfileId, ModelProfileReference,
+        ModelProfileVersion, NonGoal, RepositoryPath, RunEventId, Snapshot, SnapshotId,
         SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition,
-        TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationMethod,
+        TaskStepId, TaskStepOutcome, TaskStepRationale, ToolRunId, VerificationMethod,
         VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeGeneration,
         WorktreeId,
     };
@@ -1319,7 +1560,7 @@ mod tests {
                 TaskLedgerTimestamp::from_unix_millis(3_001)?,
             )?;
             crate::task_ledger_repository::create(&connection, worktree_id, &ledger).await?;
-            let (run, start_event) = AgentRun::start(
+            let (mut run, start_event) = AgentRun::start(
                 AgentRunId::from_bytes([178; 32]),
                 goal.reference(),
                 ledger.revision(),
@@ -1332,6 +1573,58 @@ mod tests {
                 AgentRunTimestamp::from_unix_millis(3_002)?,
             )?;
             create(&connection, worktree_id, &run, &start_event).await?;
+            let evidence = AgentToolEvidence::for_file(FileRevision::new(
+                RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
+                ContentHash::from_bytes([181; 32]),
+            ));
+            let read = AgentReadResult::new(
+                ToolRunId::from_bytes([182; 32]),
+                ContextToolResultStatus::Succeeded,
+                ContextToolResultPreview::try_from_string(
+                    "untrusted preview must not be persisted".to_owned(),
+                )?,
+                ContextToolResultDigest::from_bytes([183; 32]),
+                true,
+                snapshot_id,
+                AgentToolEvidenceSet::new(snapshot_id, vec![evidence])?,
+                4_096,
+            )?
+            .record(
+                &mut run,
+                RunEventId::from_bytes([184; 32]),
+                AgentRunTimestamp::from_unix_millis(3_003)?,
+            )?;
+            append_agent_read(
+                &connection,
+                worktree_id,
+                start_event.sequence(),
+                &run,
+                &read,
+            )
+            .await?;
+            let mut tool_rows = connection
+                .query(
+                    "SELECT status, result_digest, result_truncated, observed_output_bytes,
+                     repository_path, content_hash, location_kind
+                     FROM tool_runs JOIN tool_evidence USING (tool_run_id)",
+                    (),
+                )
+                .await?;
+            let tool_row = tool_rows
+                .next()
+                .await?
+                .ok_or_else(|| std::io::Error::other("durable tool metadata disappeared"))?;
+            assert_eq!(tool_row.get::<String>(0)?, "succeeded");
+            assert_eq!(tool_row.get::<Vec<u8>>(1)?, vec![183_u8; 32]);
+            assert_eq!(tool_row.get::<i64>(2)?, 1);
+            assert_eq!(tool_row.get::<i64>(3)?, 4_096);
+            assert_eq!(tool_row.get::<Vec<u8>>(4)?, b"src/lib.rs");
+            assert_eq!(tool_row.get::<Vec<u8>>(5)?, vec![181_u8; 32]);
+            assert_eq!(tool_row.get::<String>(6)?, "file");
+            assert!(tool_rows.next().await?.is_none());
+
+            connection.execute("DELETE FROM tool_evidence", ()).await?;
+            connection.execute("DELETE FROM tool_runs", ()).await?;
             connection.execute("DELETE FROM run_events", ()).await?;
 
             assert_eq!(

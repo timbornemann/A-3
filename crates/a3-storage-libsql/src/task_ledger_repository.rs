@@ -69,75 +69,81 @@ pub(crate) async fn replace(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(TaskLedgerRepositoryError::Begin)?;
-    let result = async {
-        let existing = load_from_transaction(&transaction, worktree_id, ledger.task_id())
-            .await?
-            .ok_or(TaskLedgerRepositoryError::TaskNotFound)?;
-        if existing.version() != expected_version {
-            return Err(TaskLedgerRepositoryError::VersionConflict);
-        }
-        validate_successor(existing.ledger(), ledger)?;
-        ensure_goal_exists(&transaction, worktree_id, ledger.goal_contract()).await?;
-        let next_version = next_store_version(expected_version)?;
-        let changed = transaction
-            .execute(
-                "UPDATE task_ledgers SET goal_revision = ?1, plan_revision = ?2,
-                 store_version = ?3, updated_at_unix_millis = ?4
-                 WHERE task_id = ?5 AND store_version = ?6",
-                params![
-                    i64::from(ledger.goal_contract().revision().get()),
-                    i64::from(ledger.revision().get()),
-                    version_to_i64(next_version)?,
-                    timestamp_to_i64(ledger.updated_at()),
-                    id_bytes(ledger.task_id()),
-                    version_to_i64(expected_version)?
-                ],
-            )
-            .await
-            .map_err(classify_unexpected_constraint)?;
-        if changed != 1 {
-            return Err(TaskLedgerRepositoryError::VersionConflict);
-        }
-        transaction
-            .execute(
-                "DELETE FROM task_ledger_replans WHERE task_id = ?1",
-                params![id_bytes(ledger.task_id())],
-            )
-            .await
-            .map_err(TaskLedgerRepositoryError::Write)?;
-        transaction
-            .execute(
-                "DELETE FROM task_step_dependencies WHERE task_id = ?1",
-                params![id_bytes(ledger.task_id())],
-            )
-            .await
-            .map_err(TaskLedgerRepositoryError::Write)?;
-        transaction
-            .execute(
-                "DELETE FROM task_step_attempts WHERE task_id = ?1",
-                params![id_bytes(ledger.task_id())],
-            )
-            .await
-            .map_err(TaskLedgerRepositoryError::Write)?;
-        transaction
-            .execute(
-                "UPDATE task_steps SET parent_step_id = NULL WHERE task_id = ?1",
-                params![id_bytes(ledger.task_id())],
-            )
-            .await
-            .map_err(TaskLedgerRepositoryError::Write)?;
-        transaction
-            .execute(
-                "DELETE FROM task_steps WHERE task_id = ?1",
-                params![id_bytes(ledger.task_id())],
-            )
-            .await
-            .map_err(TaskLedgerRepositoryError::Write)?;
-        write_projection(&transaction, ledger).await?;
-        Ok(next_version)
-    }
-    .await;
+    let result = replace_in_transaction(&transaction, worktree_id, expected_version, ledger).await;
     close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn replace_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    expected_version: TaskLedgerStoreVersion,
+    ledger: &TaskLedger,
+) -> Result<TaskLedgerStoreVersion, TaskLedgerRepositoryError> {
+    let existing = load_from_transaction(transaction, worktree_id, ledger.task_id())
+        .await?
+        .ok_or(TaskLedgerRepositoryError::TaskNotFound)?;
+    if existing.version() != expected_version {
+        return Err(TaskLedgerRepositoryError::VersionConflict);
+    }
+    validate_successor(existing.ledger(), ledger)?;
+    ensure_goal_exists(transaction, worktree_id, ledger.goal_contract()).await?;
+    let next_version = next_store_version(expected_version)?;
+    let changed = transaction
+        .execute(
+            "UPDATE task_ledgers SET goal_revision = ?1, plan_revision = ?2,
+             store_version = ?3, updated_at_unix_millis = ?4
+             WHERE task_id = ?5 AND store_version = ?6",
+            params![
+                i64::from(ledger.goal_contract().revision().get()),
+                i64::from(ledger.revision().get()),
+                version_to_i64(next_version)?,
+                timestamp_to_i64(ledger.updated_at()),
+                id_bytes(ledger.task_id()),
+                version_to_i64(expected_version)?
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+    if changed != 1 {
+        return Err(TaskLedgerRepositoryError::VersionConflict);
+    }
+    transaction
+        .execute(
+            "DELETE FROM task_ledger_replans WHERE task_id = ?1",
+            params![id_bytes(ledger.task_id())],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Write)?;
+    transaction
+        .execute(
+            "DELETE FROM task_step_dependencies WHERE task_id = ?1",
+            params![id_bytes(ledger.task_id())],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Write)?;
+    transaction
+        .execute(
+            "DELETE FROM task_step_attempts WHERE task_id = ?1",
+            params![id_bytes(ledger.task_id())],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Write)?;
+    transaction
+        .execute(
+            "UPDATE task_steps SET parent_step_id = NULL WHERE task_id = ?1",
+            params![id_bytes(ledger.task_id())],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Write)?;
+    transaction
+        .execute(
+            "DELETE FROM task_steps WHERE task_id = ?1",
+            params![id_bytes(ledger.task_id())],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Write)?;
+    write_projection(transaction, ledger).await?;
+    Ok(next_version)
 }
 
 pub(crate) async fn load(

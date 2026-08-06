@@ -32,24 +32,7 @@ pub(crate) async fn load_claims(
     let result = async {
         guard.checkpoint()?;
         validate_latest_publication(&transaction, worktree_id, published).await?;
-        let (rows, truncated) = read_claim_rows(&transaction, published, limit, &guard).await?;
-        if rows.is_empty() {
-            guard.checkpoint()?;
-            return TaskLensClaimResult::new(Vec::new(), truncated)
-                .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection);
-        }
-        let evidence_by_claim = read_claim_evidence(&transaction, &rows, &guard).await?;
-        let evidence = evidence_projection(published, &rows, &evidence_by_claim)?;
-        let mut claims = Vec::with_capacity(rows.len());
-        for (index, row) in rows.into_iter().enumerate() {
-            if index.is_multiple_of(16) {
-                guard.checkpoint()?;
-            }
-            claims.push(row.resolve(published, &evidence_by_claim, &evidence)?);
-        }
-        guard.checkpoint()?;
-        TaskLensClaimResult::new(claims, truncated)
-            .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection)
+        read_claim_projection(&transaction, published, None, limit, &guard).await
     }
     .await;
     match result {
@@ -62,6 +45,68 @@ pub(crate) async fn load_claims(
         }
         Err(error) => rollback(transaction, error).await,
     }
+}
+
+pub(crate) async fn load_claim(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    published: &PublishedIndex,
+    claim_id: ModuleCardClaimId,
+    control: &dyn TaskLensControl,
+) -> Result<Option<TaskLensClaim>, TaskLensClaimRepositoryError> {
+    let guard = ClaimReadGuard::new(control)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .await
+        .map_err(TaskLensClaimRepositoryError::Begin)?;
+    let result = async {
+        guard.checkpoint()?;
+        validate_latest_publication(&transaction, worktree_id, published).await?;
+        let claims =
+            read_claim_projection(&transaction, published, Some(claim_id), 1, &guard).await?;
+        if claims.truncated() {
+            return Err(TaskLensClaimRepositoryError::InvalidStoredProjection);
+        }
+        Ok(claims.claims().first().cloned())
+    }
+    .await;
+    match result {
+        Ok(claim) => {
+            transaction
+                .commit()
+                .await
+                .map_err(TaskLensClaimRepositoryError::Commit)?;
+            Ok(claim)
+        }
+        Err(error) => rollback(transaction, error).await,
+    }
+}
+
+async fn read_claim_projection(
+    transaction: &Transaction,
+    published: &PublishedIndex,
+    claim_id: Option<ModuleCardClaimId>,
+    limit: u16,
+    guard: &ClaimReadGuard<'_>,
+) -> Result<TaskLensClaimResult, TaskLensClaimRepositoryError> {
+    let (rows, truncated) = read_claim_rows(transaction, published, claim_id, limit, guard).await?;
+    if rows.is_empty() {
+        guard.checkpoint()?;
+        return TaskLensClaimResult::new(Vec::new(), truncated)
+            .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection);
+    }
+    let evidence_by_claim = read_claim_evidence(transaction, &rows, guard).await?;
+    let evidence = evidence_projection(published, &rows, &evidence_by_claim)?;
+    let mut claims = Vec::with_capacity(rows.len());
+    for (index, row) in rows.into_iter().enumerate() {
+        if index.is_multiple_of(16) {
+            guard.checkpoint()?;
+        }
+        claims.push(row.resolve(published, &evidence_by_claim, &evidence)?);
+    }
+    guard.checkpoint()?;
+    TaskLensClaimResult::new(claims, truncated)
+        .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection)
 }
 
 async fn validate_latest_publication(
@@ -96,6 +141,7 @@ async fn validate_latest_publication(
 async fn read_claim_rows(
     transaction: &Transaction,
     published: &PublishedIndex,
+    claim_id: Option<ModuleCardClaimId>,
     limit: u16,
     guard: &ClaimReadGuard<'_>,
 ) -> Result<(Vec<StoredClaimRow>, bool), TaskLensClaimRepositoryError> {
@@ -136,8 +182,13 @@ async fn read_claim_rows(
                AND current_module.module_id = m.module_id\n\
              LEFT JOIN claim_relations r ON r.source_index_run_id = c.source_index_run_id\n\
                AND r.claim_id = c.claim_id\n\
-             ORDER BY c.claim_id, c.source_index_run_id LIMIT ?2",
-            params![published.run().id().as_bytes().to_vec(), query_limit],
+             WHERE (?2 IS NULL OR c.claim_id = ?2)\n\
+             ORDER BY c.claim_id, c.source_index_run_id LIMIT ?3",
+            params![
+                published.run().id().as_bytes().to_vec(),
+                claim_id.map(|id| id.as_bytes().to_vec()),
+                query_limit
+            ],
         )
         .await
         .map_err(TaskLensClaimRepositoryError::Read)?;

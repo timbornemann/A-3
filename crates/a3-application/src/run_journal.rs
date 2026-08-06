@@ -1,4 +1,4 @@
-use crate::JobContext;
+use crate::{JobContext, RecordedAgentRead};
 use a3_domain::{
     AgentControllerState, AgentRun, AgentRunId, AgentTurnActionClass, AgentTurnRepairUsage,
     Progress, ProjectIdentity, RunEvent, RunEventCode, RunEventKind, RunEventOutcome,
@@ -173,6 +173,15 @@ pub trait RunJournalStore: fmt::Debug + Send + Sync {
         expected_last_sequence: RunEventSequence,
         run: &'a AgentRun,
         event: &'a RunEvent,
+    ) -> RunJournalStoreFuture<'a, ()>;
+
+    /// Appends one read-tool event and its bounded durable metadata atomically.
+    fn append_agent_read<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        read: &'a RecordedAgentRead,
     ) -> RunJournalStoreFuture<'a, ()>;
 
     /// Loads materialized state without replaying or requiring the journal body.
@@ -797,6 +806,33 @@ impl<'a> AppendRunEvent<'a> {
     ) -> Result<(), RunJournalStoreFailure> {
         self.store
             .append_run_event(project, expected_last_sequence, run, event)
+            .await
+    }
+}
+
+/// Inbound use case atomically appending a read event with its source evidence.
+#[derive(Debug, Clone, Copy)]
+pub struct AppendAgentRead<'a> {
+    store: &'a dyn RunJournalStore,
+}
+
+impl<'a> AppendAgentRead<'a> {
+    /// Creates the use case from its narrow persistence capability.
+    #[must_use]
+    pub const fn new(store: &'a dyn RunJournalStore) -> Self {
+        Self { store }
+    }
+
+    /// Compare-and-swaps the event tail and retains only bounded typed tool metadata.
+    pub async fn execute(
+        self,
+        project: &ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &AgentRun,
+        read: &RecordedAgentRead,
+    ) -> Result<(), RunJournalStoreFailure> {
+        self.store
+            .append_agent_read(project, expected_last_sequence, run, read)
             .await
     }
 }

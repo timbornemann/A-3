@@ -215,6 +215,19 @@ Capability-Port bietet keine Write-, Shell-, Prozess- oder Git-Methode. Raw Mode
 KiB, normalisierter Toolpreview auf 16 KiB und Tool-Evidenz auf 100 IDs begrenzt; Debugausgaben
 enthalten weder Proposalwerte noch Preview- oder Rohoutput.
 
+Das H10-Agent-Toolset besitzt nur Search und die typisierten Inspect-Ziele File, Symbol, Graph,
+Claim und Test. Sein Workspace-Adapter kann ausschließlich content-adressierte, nach
+Symlinkauflösung innerhalb des kanonischen Worktree-Roots liegende reguläre Dateien lesen; er
+bietet weder Write-, Prozess-, Shell-, Git- noch Netzwerkmethoden. File-Seiten sind auf 12 KiB
+begrenzt und nur vorwärts paginiert. Der Context erhält höchstens 16 KiB normalisierte Vorschau;
+die vollständigen Bytes werden weder journalisiert noch als ungefiltertes Resultat reinjiziert.
+
+`UpdateLedger` akzeptiert für Resultate nur controllerseitig erzeugte, snapshotgleiche Tool-
+Evidence und kann einen Schritt damit lediglich zur objektiven Verifikation vorbereiten. Die
+Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- und Run-CAS-Ankern
+persistiert. `Finish` ist content-frei und wechselt nur in `Verify`; weder Modellausgabe noch
+Toolerfolg können `Done` setzen.
+
 ## Netzwerk und Datenschutz
 
 V1 ist offline-first:

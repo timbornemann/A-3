@@ -1461,6 +1461,66 @@ const KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION: Migration = Migration {
+    version: 16,
+    name: "durable_agent_tool_evidence",
+    sql: "CREATE TABLE tool_runs (\n\
+      tool_run_id BLOB PRIMARY KEY NOT NULL CHECK (length(tool_run_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      event_sequence INTEGER NOT NULL CHECK (event_sequence >= 1),\n\
+      status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'cancelled', 'denied')),\n\
+      result_digest BLOB NOT NULL CHECK (length(result_digest) = 32),\n\
+      result_truncated INTEGER NOT NULL CHECK (result_truncated IN (0, 1)),\n\
+      snapshot_before_id BLOB NOT NULL CHECK (length(snapshot_before_id) = 32),\n\
+      snapshot_after_id BLOB NOT NULL CHECK (length(snapshot_after_id) = 32),\n\
+      observed_output_bytes INTEGER NOT NULL CHECK (observed_output_bytes >= 0),\n\
+      UNIQUE (run_id, event_sequence),\n\
+      FOREIGN KEY (run_id, event_sequence) REFERENCES run_events(run_id, event_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_before_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_after_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE tool_evidence (\n\
+      tool_run_id BLOB NOT NULL CHECK (length(tool_run_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 100),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      location_kind TEXT NOT NULL CHECK (location_kind IN ('file', 'span')),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      start_byte INTEGER CHECK (start_byte IS NULL OR start_byte BETWEEN 0 AND 4294967295),\n\
+      end_byte INTEGER CHECK (end_byte IS NULL OR end_byte BETWEEN 0 AND 4294967295),\n\
+      start_row INTEGER CHECK (start_row IS NULL OR start_row BETWEEN 0 AND 4294967295),\n\
+      start_column INTEGER CHECK (start_column IS NULL OR start_column BETWEEN 0 AND 4294967295),\n\
+      end_row INTEGER CHECK (end_row IS NULL OR end_row BETWEEN 0 AND 4294967295),\n\
+      end_column INTEGER CHECK (end_column IS NULL OR end_column BETWEEN 0 AND 4294967295),\n\
+      CHECK ((location_kind = 'file' AND start_byte IS NULL AND end_byte IS NULL\n\
+        AND start_row IS NULL AND start_column IS NULL AND end_row IS NULL\n\
+        AND end_column IS NULL) OR (location_kind = 'span' AND start_byte IS NOT NULL\n\
+        AND end_byte IS NOT NULL AND start_row IS NOT NULL AND start_column IS NOT NULL\n\
+        AND end_row IS NOT NULL AND end_column IS NOT NULL)),\n\
+      CHECK (start_byte IS NULL OR start_byte <= end_byte),\n\
+      CHECK (start_row IS NULL OR start_row < end_row\n\
+        OR (start_row = end_row AND start_column <= end_column)),\n\
+      PRIMARY KEY (tool_run_id, item_sequence),\n\
+      UNIQUE (tool_run_id, evidence_id),\n\
+      FOREIGN KEY (tool_run_id) REFERENCES tool_runs(tool_run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER tool_runs_event_guard\n\
+      BEFORE INSERT ON tool_runs\n\
+      WHEN NOT EXISTS (SELECT 1 FROM run_events\n\
+        WHERE run_id = NEW.run_id AND event_sequence = NEW.event_sequence\n\
+          AND event_kind = 'tool_action' AND subject_kind = 'tool'\n\
+          AND subject_id = NEW.tool_run_id AND snapshot_id = NEW.snapshot_before_id)\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'tool run journal anchor is invalid');\n\
+      END;\n\
+      CREATE INDEX tool_runs_run_idx ON tool_runs(run_id, event_sequence);\n\
+      CREATE INDEX tool_evidence_id_idx ON tool_evidence(evidence_id, tool_run_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1477,6 +1537,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_RUN_JOURNAL_MIGRATION,
     KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION,
     KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION,
+    KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1509,7 +1570,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(15);
+    pub const CURRENT: Self = Self::new(16);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1917,11 +1978,11 @@ mod tests {
                      'task_step_verifications', 'task_step_verification_evidence',\n\
                      'task_step_stale_evidence', 'task_ledger_replans',\n\
                      'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
-                     'agent_runs', 'run_events'\n\
+                     'agent_runs', 'run_events', 'tool_runs', 'tool_evidence'\n\
                      )",
                 )
                 .await?,
-                44
+                46
             );
             assert_eq!(
                 query_i64(
@@ -2753,6 +2814,55 @@ mod tests {
                 )
                 .await?,
                 1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v16_upgrade_preserves_v15_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [56; 32];
+            let worktree_id = [57; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..15],
+                15,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE tool_runs (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 16, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 15);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('tool_runs')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'tool_evidence'",
+                )
+                .await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
