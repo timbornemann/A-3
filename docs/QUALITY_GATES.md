@@ -61,6 +61,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   vor-Claim-vor-Semantic-Reihenfolge, L0 bis L3, Budget und sichtbare Trunkierung, Digest-
   Determinismus, Indexdelta, Cancellation/Deadline, Produktionscode mit Regressionstest,
   ausgeschlossene Großmodule sowie null stale Fact Leakage
+- Invalidierungs-Contracts prüfen direkte Evidence-Änderung vor dem nächsten Read, `Stale` für
+  eigene und `NeedsReview` nur für direkt abhängige Cards, Parser-/Mappergründe, stabile
+  Direkt-vor-Abhängig-Remapreihenfolge, Queue-Cancellation und -Ersetzung, Erhalt unabhängiger
+  aktueller Claims sowie null stale Fact Leakage nach Task-Lens-Rebuild
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 
@@ -129,6 +133,16 @@ P95 15,286 s, ein erster 900-Parameter-Batch bei 14,493 s. Erst höchstens 30.00
 1.024 Zeilen pro Cancellation-Checkpoint und transaktionale Retention supersedeter Projektionen
 erreichten das Budget. Diese lokale Messung ersetzt nicht die abschließende V1-Referenzmessung auf
 der oben definierten 8-Core-Maschine.
+
+R11 wiederholte dieses Gate nach Erweiterung des atomaren Publishes um Card-Invalidierung. Der
+erste 30-Sample-Lauf öffnete die inzwischen größere Knowledge-Datenbank weiterhin für jeden
+Snapshot- und Run-Schritt neu und verfehlte das Ziel mit P50 2,299 s, P95 3,362 s,
+Watcher-P95 391 ms und Refresh-/Publish-P95 3,047 s. Nach getrenntem, auf vier Worktrees begrenztem
+Wiederverwenden bereits vollständig identitäts- und policygeprüfter Mutationshandles erreichte
+derselbe unveränderte Release-Test am 2026-08-06 P50 816 ms, P95 884 ms, Watcher-P95 394 ms und
+Refresh-/Publish-P95 491 ms. Ein isolierter Diagnoselauf maß den neuen Invalidierungsabschnitt bei
+leerem Cardbestand mit rund 0,7 ms pro Publish; daraus wird kein allgemeiner Geschwindigkeitsclaim
+für große Cardbestände abgeleitet.
 
 R1 besitzt den reproduzierbaren ignorierten Release-Test
 `exact_search_performance::exact_symbol_search_meets_the_100_millisecond_p95_target`. Das Fixture

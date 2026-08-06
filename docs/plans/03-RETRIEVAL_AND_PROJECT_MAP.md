@@ -471,11 +471,41 @@ Akzeptanz:
 
 Abhängigkeiten: R9, R10
 
-- [ ] direkte Claim-Invalidierung
-- [ ] Module Card stale und NeedsReview
-- [ ] priorisierte Remapqueue
-- [ ] Task-Lens-Rebuild
-- [ ] Parser- und Mapperversion als Invalidierungsgrund
+Status: Completed
+
+- [x] direkte Claim-Invalidierung
+- [x] Module Card stale und NeedsReview
+- [x] priorisierte Remapqueue
+- [x] Task-Lens-Rebuild
+- [x] Parser- und Mapperversion als Invalidierungsgrund
+
+Verifizierter Abschluss vom 2026-08-06: `IndexInvalidationPlan` begrenzt die Entscheidung auf die
+eigene Card und genau einen Hop direkter Graphabhängiger. Knowledge-Schema V10 persistiert Card- und
+Claim-Lifecycle, direkte Evidence-Invalidierungen sowie eine stabile Direkt-vor-Abhängig-
+Remapqueue. Der atomische Index-Publish markiert direkte Cards vor Sichtbarkeit des neuen Runs
+`Stale`, direkte Abhängige `NeedsReview` und trägt Evidence-, Parser- oder Mapperursache typisiert
+ein. Entfernte Module erzeugen keine sinnlose Remaparbeit; unveränderte unabhängige Cards und ihre
+aktuelle Evidence bleiben über Run-Grenzen verwendbar.
+
+Der begrenzte `ModuleRemapQueueStore`-Port validiert Ziel-Run/-Snapshot, Priorität und Grund,
+Modul-Eindeutigkeit, kanonische Reihenfolge, Cancellation, Zwei-Sekunden-Deadline und sichtbare
+Trunkierung. Eine erfolgreich neu publizierte Card entfernt ihr Modul atomar aus der Queue.
+Task-Lens-Reads wählen nur die neueste lifecycle-seitig `Published`-Card mit `Active`-Claims und
+lösen jede Evidence erneut gegen den aktuellen Index; stale oder `NeedsReview`-Cards können daher
+keinen Fact ausliefern.
+
+Domain-, Application-, V9→V10-Migrations-, konkrete libSQL- und gemeinsame Storage-Contracts
+belegen direkte Zeilenänderung, Parser-/Mappergrund, unveränderte unabhängige Claims, genau einen
+abhängigen Hop, Queue-Ersetzung, Rollback und null stale Fact Leakage. Der unveränderte
+30-Sample-Release-Fixture mit 100.000 LOC erreichte nach begrenzter Wiederverwendung separater
+identitätsgeprüfter Mutationshandles P50 816 ms und P95 884 ms bei einem Ziel von zwei Sekunden;
+Watcher-P95 lag bei 394 ms, Refresh-/Publish-P95 bei 491 ms.
+
+Abschlussgates am 2026-08-06: `cargo fmt --all -- --check`,
+`cargo test --workspace --all-features --locked`, Workspace-Clippy mit allen Targets/Features und
+Warnings denied, Rustdoc mit Warnings denied, der manuelle 30-Sample-Release-Performancetest,
+Frontend-CI mit Node 24.14.0/pnpm 11.9.0, Markdown-Linkcheck, Dependency-/Lizenzbericht und
+Tauri-Release-Build ohne Bundle sind grün.
 
 Akzeptanz:
 
@@ -487,7 +517,7 @@ Akzeptanz:
 
 - [ ] Retrieval-Evalbaseline versioniert
 - [ ] Deep Map eines Rust-, TS- und Python-Fixtures
-- [ ] jede veröffentlichte Card besitzt gültige Evidence
+- [x] jede veröffentlichte Card besitzt gültige Evidence
 - [x] Task Lens bleibt innerhalb des konfigurierten Budgets
 - [ ] App funktioniert vollständig ohne Embeddings
 - [x] Performanceziele für Search und Context-Vorstufe gemessen

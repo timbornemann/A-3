@@ -54,6 +54,12 @@ Zustände:
 
 Stale Inhalte dürfen nur zur Historie oder als klar markierter Revalidierungshinweis erscheinen.
 
+Für Module Cards materialisiert Knowledge-Schema V10 diesen Zustand getrennt von den unveränderten
+historischen Card- und Claimzeilen. Ein neuer Index-Publish markiert direkte Claims vor Sichtbarkeit
+des Runs als stale und schließt die gesamte `Stale`- oder `NeedsReview`-Card aus der Task Lens aus.
+Weiterhin aktive Claims einer unveränderten `Published`-Card dürfen über Run-Grenzen verwendet
+werden, aber nur nachdem Modul und jede Evidence im aktuellen Index erneut aufgelöst wurden.
+
 ## Goal Contract
 
 Pflichtfelder:

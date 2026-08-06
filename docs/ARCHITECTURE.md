@@ -174,6 +174,11 @@ jüngsten vollständig veröffentlichten Run. Beim erfolgreichen Ersatz werden d
 Zeilen älterer Runs innerhalb derselben Transaktion entfernt; Run-Metadaten und Snapshotkette bleiben
 für monotone Historie erhalten. Rebuild entfernt nur regenerierbare Indexzeilen.
 
+Der Adapter hält getrennt höchstens vier identitäts- und policygeprüfte Mutations- sowie vier
+Read-Datenbankhandles. Dadurch wiederholt ein serialisierter Refresh nicht vor jedem Snapshot- oder
+Run-Schritt Migration, Integritätsprüfung und Open. Die Handles verlassen den Adapter nicht;
+Reconciliation leert beide begrenzten Caches vor Preflight und Verzeichnisumzug.
+
 Der Desktop-Composition-Root aktiviert nach einem erfolgreichen Project Open genau einen
 `RepositoryIndexManager`. Sein besitzender Koordinator hält Watcher, Parse-Cache und einen
 nicht-besitzenden Scheduler-Submitter. Watcher- und Scheduler-Channels sind begrenzt; ein aktiver
@@ -214,8 +219,12 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 5. Der vollständige kanonische Graph wird neu gelinkt und gerankt und über den bestehenden
    `IndexRun` atomar veröffentlicht.
 6. Symbole und Kanten der alten Sicht werden erst mit dem erfolgreichen Commit unsichtbar.
-7. Abhängige Evidenz und Claims werden invalidiert.
-8. Betroffene Modul- und Task-Lenses werden neu berechnet.
+7. Vor Sichtbarkeit des neuen Runs invalidiert dieselbe Storage-Transaktion direkte Evidence und
+   Claims, setzt die eigene Card auf `Stale`, direkte abhängige Cards auf `NeedsReview` und schreibt
+   die begrenzte Direkt-vor-Abhängig-Remapqueue.
+8. Der read-only `ModuleRemapQueueStore`-Port liefert eine kleine, zielrungebundene Queue-Seite;
+   nach erfolgreicher Card-Neupublikation verschwindet das Modul atomar aus der Queue. Task Lenses
+   werden gegen den aktuellen Run neu kompiliert und sehen nur weiterhin aktive Published-Claims.
 9. Ein laufender Agent darf erst nach Zustandsabgleich weiter mutieren.
 
 ## Parallelität

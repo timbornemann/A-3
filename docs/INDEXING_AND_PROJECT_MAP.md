@@ -557,6 +557,20 @@ Invalidierungsradius:
 - Cards direkter abhängiger Module als NeedsReview;
 - abgeschlossene Task-Schritte mit betroffener Verification Evidence.
 
+R11 implementiert diesen Radius beim atomischen Index-Publish. Der libSQL-Adapter wählt pro Modul
+genau die neueste Card desselben Worktrees, prüft ihre gespeicherten File-, Symbol- und
+Graph-Evidence gegen den neuen vollständigen Run und behandelt inkompatible Snapshot-
+Adapterrevisionen oder Mapperprofile als eigene Invalidierungsgründe. Direkte Treffer werden
+`Stale`; nur ein Hop direkter Graphabhängiger wird `NeedsReview`. Unabhängige Cards bleiben
+`Published` und ihre weiterhin aktuelle Evidence darf über Run-Grenzen wiederverwendet werden.
+
+Die dauerhafte Remapqueue ist nach `Direct` vor `Dependent` und danach nach `ModuleId` geordnet.
+Jeder Eintrag ist an den aktuellen Ziel-Run und -Snapshot gebunden; ein begrenzter read-only
+Application-Port liefert höchstens 256 Einträge mit sichtbarer Trunkierung, Cancellation und
+Zwei-Sekunden-Deadline. Eine neu verifizierte Card entfernt ihr Modul im selben Commit aus der
+Queue. Task-Lens-Claim-Reads wählen nur die neueste `Published`-Card mit `Active`-Claim-Lifecycle,
+lösen deren Evidence erneut gegen den aktuellen Run auf und liefern dadurch keine stale Facts.
+
 ## Hybride Suche
 
 ### Implementierter Exact-Kanal

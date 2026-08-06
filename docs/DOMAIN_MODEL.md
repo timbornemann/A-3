@@ -134,6 +134,15 @@ Gesamtdokument ist vor strukturierter Validierung auf 64 KiB, die kanonische Evi
 IDs und jedes Feld zusätzlich auf eine eigene Item- und Bytezahl begrenzt. Confidence bleibt von
 Proposal-, Verified-, Published-, Stale- und NeedsReview-Status getrennt.
 
+`IndexInvalidationPlan` entscheidet den Lebenszyklus rein aus einem aktuellen `PublishedIndex`,
+der Mapperprofilversion und adaptergeprüften Card-Kandidaten. Geänderte direkte Evidence sowie
+inkompatible Parser- oder Mapperversionen setzen die eigene neueste Card auf `Stale`; entfernte
+Module werden stale, aber nicht erneut eingeplant. Ausschließlich direkte Graphabhängige erhalten
+`NeedsReview`. `RemapRequest` macht Priorität und Grund zu einer gültigen Kombination: direkte
+Requests tragen Evidence-, Parser- oder Mapperänderung, abhängige Requests ausschließlich
+`DirectDependencyChanged`. Sortierung, Modul-Eindeutigkeit und feste Kandidaten-/Seitengrenzen sind
+Domänen- beziehungsweise Application-Invarianten.
+
 `ModuleCoverageSnapshot` bindet bereits verifizierte Feld-Coverage an Snapshot und Schemaversion.
 Der `DeepMapPlanner` akzeptiert ausschließlich einen `PublishedIndex` und überspringt Module, deren
 Muss-Felder bereits vollständig belegt sind. Ein `ExplorePlan` behält IndexRun, Snapshot, Schema,

@@ -87,7 +87,7 @@ Ein Nutzer kann:
 - [ ] Claim-Verifier
 - [ ] Deep-Map-Coverage und Stopbedingungen
 - [x] Task Lens
-- [ ] stale Card Invalidation
+- [x] stale Card Invalidation
 
 ### M6 Durable Harness
 

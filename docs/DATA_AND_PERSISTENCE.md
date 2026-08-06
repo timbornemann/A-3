@@ -355,6 +355,25 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V10 ergänzt V9 um `module_card_lifecycle`, `claim_lifecycle`,
+`evidence_invalidations` und `module_remap_queue`. Historische Card-, Claim- und Evidence-Zeilen
+bleiben unverändert auditierbar; separate Lifecyclezeilen verhindern, dass eine alte Published-
+Repräsentation nach einer Invalidierung erneut sichtbar wird. Der neue Index-Run, direkte
+Evidence-Prüfung, Card-/Claim-Übergänge und Queue-Updates werden in derselben `IMMEDIATE`-
+Transaktion publiziert. Bestehende Queueeinträge werden auf den neuen Ziel-Run weitergeschrieben,
+entfernte Module gelöscht und eine erfolgreich ersetzte Card atomar aus der Queue genommen.
+
+Der Queue-Reader validiert aktuellen Run und Snapshot, Priorität/Grund, stabile Reihenfolge,
+Modul-Eindeutigkeit sowie ein Limit von höchstens 256 Einträgen. Ein getesteter V9→V10-Rollback
+lässt die V9-Datenbank unverändert; Migrationstests decken weiterhin jede unterstützte
+Vorgängerversion ab.
+
+Wiederholte Indexmutationen verwenden einen separaten, identitätsgeprüften und auf vier Worktrees
+begrenzten Adaptercache. Read- und Mutationshandles bleiben getrennt; die bestehende
+Ein-Mutation-pro-Worktree-Regel sowie `IMMEDIATE`-Transaktionen bleiben die
+Serialisierungsgrenzen. Reconciliation verwirft beide Cacheklassen, bevor Storage verschoben oder
+umgebunden wird.
+
 Das implementierte Knowledge-Schema V9 ergänzt V8 um `module_cards`, `module_card_fields`,
 `module_card_field_values`, `module_card_field_evidence`, `evidence_refs`, `claims`,
 `claim_evidence` und `claim_relations`. Alle Identitäten bleiben an den verifizierenden
