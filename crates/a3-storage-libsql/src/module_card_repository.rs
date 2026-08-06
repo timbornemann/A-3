@@ -304,6 +304,32 @@ async fn write_card(
         return Err(ModuleCardRepositoryError::Rejected);
     }
     progress.advance(1)?;
+    let affected = transaction
+        .execute(
+            "INSERT INTO module_card_lifecycle\n\
+             (source_index_run_id, card_id, status) VALUES (?1, ?2, 'published')",
+            params![
+                batch.index_run_id().as_bytes().to_vec(),
+                card.id().as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .map_err(ModuleCardRepositoryError::Write)?;
+    if affected != 1 {
+        return Err(ModuleCardRepositoryError::Rejected);
+    }
+    progress.advance(1)?;
+    let affected = transaction
+        .execute(
+            "DELETE FROM module_remap_queue WHERE module_id = ?1",
+            [proposal.module_id().as_bytes().to_vec()],
+        )
+        .await
+        .map_err(ModuleCardRepositoryError::Write)?;
+    if affected > 1 {
+        return Err(ModuleCardRepositoryError::Rejected);
+    }
+    progress.advance(1)?;
 
     for field in proposal.fields() {
         progress.checkpoint()?;
@@ -443,6 +469,20 @@ async fn write_claim(
     if affected != 1 {
         return Err(ModuleCardRepositoryError::Rejected);
     }
+    let affected = transaction
+        .execute(
+            "INSERT INTO claim_lifecycle\n\
+             (source_index_run_id, claim_id, status) VALUES (?1, ?2, 'active')",
+            params![
+                batch.index_run_id().as_bytes().to_vec(),
+                proposal.id().as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .map_err(ModuleCardRepositoryError::Write)?;
+    if affected != 1 {
+        return Err(ModuleCardRepositoryError::Rejected);
+    }
     Ok(())
 }
 
@@ -560,7 +600,7 @@ fn publication_work_units(
     add_len(&mut total, batch.evidence().evidence().len())?;
     for card in batch.cards() {
         total = total
-            .checked_add(2)
+            .checked_add(4)
             .ok_or(ModuleCardRepositoryError::ResourceLimit)?;
         for field in card.proposal().fields() {
             total = total

@@ -1194,9 +1194,7 @@ fn resolve_claim_target(
 
 fn claim_is_current(published: &PublishedIndex, claim: &TaskLensClaim) -> bool {
     let run = published.run();
-    if claim.source_index_run_id() != run.id()
-        || claim.snapshot_id() != run.snapshot_id()
-        || claim.status() != VerifiedClaimStatus::Active
+    if claim.status() != VerifiedClaimStatus::Active
         || !published
             .publication()
             .modules()

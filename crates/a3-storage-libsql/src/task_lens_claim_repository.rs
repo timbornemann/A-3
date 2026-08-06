@@ -8,7 +8,7 @@ use a3_domain::{
     RepositoryPath, ResolvedModuleCardEvidence, SnapshotId, SymbolId, SyntaxRelationKind,
     TaskLensClaim, VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
 };
-use libsql::{Connection, Transaction, TransactionBehavior, params};
+use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -38,7 +38,7 @@ pub(crate) async fn load_claims(
             return TaskLensClaimResult::new(Vec::new(), truncated)
                 .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection);
         }
-        let evidence_by_claim = read_claim_evidence(&transaction, published, limit, &guard).await?;
+        let evidence_by_claim = read_claim_evidence(&transaction, &rows, &guard).await?;
         let evidence = evidence_projection(published, &rows, &evidence_by_claim)?;
         let mut claims = Vec::with_capacity(rows.len());
         for (index, row) in rows.into_iter().enumerate() {
@@ -104,17 +104,39 @@ async fn read_claim_rows(
         .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?;
     let mut rows = transaction
         .query(
-            "SELECT c.source_index_run_id, c.snapshot_id, c.claim_id, m.module_id,\n\
+            "WITH ranked_cards AS (\n\
+               SELECT m.source_index_run_id, m.card_id, m.module_id, lifecycle.status,\n\
+                 ROW_NUMBER() OVER (\n\
+                   PARTITION BY m.module_id ORDER BY\n\
+                     snapshots.generation DESC,\n\
+                     CASE WHEN m.source_index_run_id = ?1 THEN 1 ELSE 0 END DESC,\n\
+                     COALESCE(runs.run_sequence, 0) DESC, m.card_id DESC\n\
+                 ) AS card_rank\n\
+               FROM module_cards m\n\
+               JOIN module_card_lifecycle lifecycle\n\
+                 ON lifecycle.source_index_run_id = m.source_index_run_id\n\
+                AND lifecycle.card_id = m.card_id\n\
+               JOIN snapshots ON snapshots.snapshot_id = m.snapshot_id\n\
+               LEFT JOIN index_runs runs ON runs.index_run_id = m.source_index_run_id\n\
+               WHERE snapshots.worktree_id = (\n\
+                 SELECT worktree_id FROM index_runs WHERE index_run_id = ?1\n\
+               )\n\
+             )\n\
+             SELECT c.source_index_run_id, c.snapshot_id, c.claim_id, m.module_id,\n\
              c.polarity, c.predicate_kind, c.statement, c.claim_kind, c.status, c.confidence,\n\
              r.predicate_kind, r.predicate_path, r.predicate_symbol_id, r.source_kind,\n\
              r.source_value, r.target_kind, r.target_value, r.relation_kind\n\
              FROM claims c\n\
-             JOIN module_cards m ON m.source_index_run_id = c.source_index_run_id\n\
-               AND m.card_id = c.card_id\n\
+             JOIN ranked_cards m ON m.source_index_run_id = c.source_index_run_id\n\
+               AND m.card_id = c.card_id AND m.card_rank = 1 AND m.status = 'published'\n\
+             JOIN claim_lifecycle claim_state\n\
+               ON claim_state.source_index_run_id = c.source_index_run_id\n\
+              AND claim_state.claim_id = c.claim_id AND claim_state.status = 'active'\n\
+             JOIN modules current_module ON current_module.index_run_id = ?1\n\
+               AND current_module.module_id = m.module_id\n\
              LEFT JOIN claim_relations r ON r.source_index_run_id = c.source_index_run_id\n\
                AND r.claim_id = c.claim_id\n\
-             WHERE c.source_index_run_id = ?1\n\
-             ORDER BY c.claim_id LIMIT ?2",
+             ORDER BY c.claim_id, c.source_index_run_id LIMIT ?2",
             params![published.run().id().as_bytes().to_vec(), query_limit],
         )
         .await
@@ -134,16 +156,22 @@ async fn read_claim_rows(
     if truncated {
         stored.pop();
     }
+    if stored
+        .windows(2)
+        .any(|pair| pair[0].claim_id == pair[1].claim_id)
+    {
+        return Err(TaskLensClaimRepositoryError::InvalidStoredProjection);
+    }
     Ok((stored, truncated))
 }
 
 async fn read_claim_evidence(
     transaction: &Transaction,
-    published: &PublishedIndex,
-    limit: u16,
+    selected: &[StoredClaimRow],
     guard: &ClaimReadGuard<'_>,
 ) -> Result<BTreeMap<ModuleCardClaimId, Vec<ModuleCardEvidenceId>>, TaskLensClaimRepositoryError> {
-    let maximum_rows = usize::from(limit)
+    let maximum_rows = selected
+        .len()
         .checked_mul(MAX_EVIDENCE_PER_CLAIM)
         .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?;
     let query_limit = i64::try_from(
@@ -152,19 +180,37 @@ async fn read_claim_evidence(
             .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?,
     )
     .map_err(|_| TaskLensClaimRepositoryError::ResourceLimit)?;
+    if selected.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut filters = Vec::with_capacity(selected.len());
+    let mut parameters = Vec::with_capacity(selected.len().saturating_mul(2).saturating_add(1));
+    for (index, claim) in selected.iter().enumerate() {
+        let first = index
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?;
+        let second = first
+            .checked_add(1)
+            .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?;
+        filters.push(format!(
+            "(e.source_index_run_id = ?{first} AND e.claim_id = ?{second})"
+        ));
+        parameters.push(Value::Blob(claim.run_id.as_bytes().to_vec()));
+        parameters.push(Value::Blob(claim.claim_id.as_bytes().to_vec()));
+    }
+    let limit_parameter = parameters
+        .len()
+        .checked_add(1)
+        .ok_or(TaskLensClaimRepositoryError::ResourceLimit)?;
+    parameters.push(Value::Integer(query_limit));
+    let sql = format!(
+        "SELECT e.claim_id, e.evidence_id FROM claim_evidence e\n\
+         WHERE ({}) ORDER BY e.claim_id, e.evidence_id LIMIT ?{limit_parameter}",
+        filters.join(" OR ")
+    );
     let mut rows = transaction
-        .query(
-            "SELECT e.claim_id, e.evidence_id FROM claim_evidence e\n\
-             JOIN (SELECT claim_id FROM claims WHERE source_index_run_id = ?1\n\
-               ORDER BY claim_id LIMIT ?2) selected ON selected.claim_id = e.claim_id\n\
-             WHERE e.source_index_run_id = ?1\n\
-             ORDER BY e.claim_id, e.evidence_id LIMIT ?3",
-            params![
-                published.run().id().as_bytes().to_vec(),
-                i64::from(limit),
-                query_limit,
-            ],
-        )
+        .query(&sql, params_from_iter(parameters))
         .await
         .map_err(TaskLensClaimRepositoryError::Read)?;
     let mut by_claim = BTreeMap::<ModuleCardClaimId, Vec<ModuleCardEvidenceId>>::new();
@@ -391,14 +437,12 @@ impl StoredClaimRow {
         evidence_by_claim: &BTreeMap<ModuleCardClaimId, Vec<ModuleCardEvidenceId>>,
         evidence: &BTreeMap<ModuleCardEvidenceId, ResolvedModuleCardEvidence>,
     ) -> Result<TaskLensClaim, TaskLensClaimRepositoryError> {
-        if self.run_id != published.run().id()
-            || self.snapshot_id != published.run().snapshot_id()
-            || !published
-                .publication()
-                .modules()
-                .modules()
-                .iter()
-                .any(|module| module.id() == self.module_id)
+        if !published
+            .publication()
+            .modules()
+            .modules()
+            .iter()
+            .any(|module| module.id() == self.module_id)
         {
             return Err(TaskLensClaimRepositoryError::InvalidStoredProjection);
         }

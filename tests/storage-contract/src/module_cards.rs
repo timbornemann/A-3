@@ -2,9 +2,10 @@ use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_h
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchStore, ModuleCardVerificationControl,
-    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, TaskLensClaimLimit, TaskLensClaimStore,
+    KnowledgeSearchControl, KnowledgeSearchStore, LoadPendingModuleRemaps,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError, ModuleRemapQueueFailure,
+    PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure, RemapQueueControl,
+    RemapQueueControlError, RemapQueueLimit, TaskLensClaimLimit, TaskLensClaimStore,
     TaskLensClaimStoreFailure, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
     VerifiedModuleCardPublisherFailure,
 };
@@ -13,7 +14,7 @@ use a3_domain::{
     ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
     ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
     ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
-    ModuleClaimProposal, Progress, ProposedModuleCardField, RepositoryId,
+    ModuleClaimProposal, Progress, ProposedModuleCardField, RemapPriority, RepositoryId,
     ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, SnapshotChangeKind, SymbolId,
     VerifiedModuleCardBatch, WorktreeId,
 };
@@ -92,6 +93,16 @@ impl TaskLensControl for ContractTaskLensControl {
     }
 }
 
+impl RemapQueueControl for ContractTaskLensControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), RemapQueueControlError> {
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledTaskLensControl;
 
@@ -101,6 +112,16 @@ impl TaskLensControl for CancelledTaskLensControl {
     }
 
     fn report_progress(&self, _progress: Progress) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
+impl RemapQueueControl for CancelledTaskLensControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), RemapQueueControlError> {
         Ok(())
     }
 }
@@ -271,6 +292,23 @@ where
         .await?
         .ok_or("replacement publication is missing")?;
     assert_eq!(
+        LoadPendingModuleRemaps::new(&store)
+            .execute(
+                &project,
+                RemapQueueLimit::DEFAULT,
+                &CancelledTaskLensControl,
+            )
+            .await,
+        Err(ModuleRemapQueueFailure::Cancelled)
+    );
+    let remaps = LoadPendingModuleRemaps::new(&store)
+        .execute(&project, RemapQueueLimit::DEFAULT, &ContractTaskLensControl)
+        .await?;
+    assert_eq!(remaps.target_index_run_id(), replacement_run.id());
+    assert_eq!(remaps.target_snapshot_id(), replacement_snapshot.id());
+    assert_eq!(remaps.entries().len(), 1);
+    assert_eq!(remaps.entries()[0].priority(), RemapPriority::Direct);
+    assert_eq!(
         store
             .load_current_index(&project, &ContractTaskLensControl)
             .await?
@@ -289,6 +327,33 @@ where
             .await?
             .claims()
             .is_empty()
+    );
+    publisher
+        .execute(
+            &project,
+            &verified_batch(&replacement)?,
+            &ContractCardControl::default(),
+        )
+        .await?;
+    assert!(
+        LoadPendingModuleRemaps::new(&store)
+            .execute(&project, RemapQueueLimit::DEFAULT, &ContractTaskLensControl,)
+            .await?
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .load_claims(
+                &project,
+                &replacement,
+                TaskLensClaimLimit::DEFAULT,
+                &ContractTaskLensControl,
+            )
+            .await?
+            .claims()
+            .len(),
+        1
     );
 
     store

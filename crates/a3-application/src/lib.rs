@@ -17,6 +17,7 @@ mod language_adapter;
 mod lexical_search;
 mod module_card_claim_codec;
 mod module_card_verification;
+mod module_remap_queue;
 mod open_project;
 mod project_reconciliation;
 mod recent_projects;
@@ -90,6 +91,11 @@ pub use module_card_verification::{
     PublishVerifiedModuleCardsFailure, PublishedIndexEvidenceResolver, PublishedModuleCardReceipt,
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFailure,
     VerifiedModuleCardPublisherFuture, VerifyModuleCards, VerifyModuleCardsFailure,
+};
+pub use module_remap_queue::{
+    LoadPendingModuleRemaps, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
+    ModuleRemapQueueStore, PendingRemapQueue, PendingRemapQueueError, RemapQueueControl,
+    RemapQueueControlError, RemapQueueLimit, RemapQueueLimitError,
 };
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,

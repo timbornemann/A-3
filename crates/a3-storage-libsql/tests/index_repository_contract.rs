@@ -4,10 +4,10 @@ mod support;
 
 use a3_application::{
     CompileTaskLens, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ModuleCardVerificationControl,
-    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, TaskLensControl, TaskLensControlError,
-    VerifiedModuleCardPublisherFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
+    TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, EvidenceRef, GitHead,
@@ -17,9 +17,11 @@ use a3_domain::{
     MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
     ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
     ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimProposal, ParsedSymbol, ProjectIdentity,
-    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
-    RepositoryId, RepositoryIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ModuleClaimPredicate, ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership,
+    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
+    ParsedSymbol, ProjectIdentity, ProposedModuleCardField, PublishedIndex, RankProjection,
+    RankScore, RankingPolicyVersion, RemapPriority, RepositoryCard, RepositoryId,
+    RepositoryIdentity, RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence,
     ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
     SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
     SyntaxProvider, SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText,
@@ -87,6 +89,20 @@ impl TaskLensControl for TestIndexControl {
         self.progress
             .lock()
             .map_err(|_| TaskLensControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
+impl RemapQueueControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: a3_domain::Progress) -> Result<(), RemapQueueControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| RemapQueueControlError::Unavailable)?
             .push(progress);
         Ok(())
     }
@@ -611,22 +627,24 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
     run_index_test(async {
         let fixture = ProjectFixture::new([71; 32], [72; 32])?;
         let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
-        let snapshot = snapshot(
+        let initial_snapshot = snapshot(
             [73; 32],
             fixture.project.worktree().id(),
             None,
             1,
             vec![change(b"src/lib.rs", [74; 32], SnapshotChangeKind::Upsert)?],
         )?;
-        store.append_snapshot(&fixture.project, &snapshot).await?;
-        let run = store
-            .start_index_run(&fixture.project, run([75; 32], snapshot.id(), 1)?)
+        store
+            .append_snapshot(&fixture.project, &initial_snapshot)
             .await?;
-        let publication = symbol_publication(snapshot.id(), b"src/lib.rs", [74; 32])?;
+        let initial_run = store
+            .start_index_run(&fixture.project, run([75; 32], initial_snapshot.id(), 1)?)
+            .await?;
+        let publication = symbol_publication(initial_snapshot.id(), b"src/lib.rs", [74; 32])?;
         store
             .publish_index(
                 &fixture.project,
-                run.id(),
+                initial_run.id(),
                 &publication,
                 &TestIndexControl::default(),
             )
@@ -682,7 +700,7 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         let receipt = publisher
             .execute(&fixture.project, &batch, &control)
             .await?;
-        assert_eq!(receipt.snapshot_id(), snapshot.id());
+        assert_eq!(receipt.snapshot_id(), initial_snapshot.id());
         assert_eq!(receipt.card_count(), 1);
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
         assert_eq!(read_count(&knowledge_path, "module_card_fields").await?, 2);
@@ -699,9 +717,12 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(read_count(&knowledge_path, "claim_evidence").await?, 1);
         assert_eq!(read_count(&knowledge_path, "claim_relations").await?, 1);
         assert_eq!(read_count(&knowledge_path, "card_fts").await?, 1);
-        assert_eq!(read_lexical_card_count(&knowledge_path, run.id()).await?, 1);
         assert_eq!(
-            read_claim_classification(&knowledge_path, run.id()).await?,
+            read_lexical_card_count(&knowledge_path, initial_run.id()).await?,
+            1
+        );
+        assert_eq!(
+            read_claim_classification(&knowledge_path, initial_run.id()).await?,
             vec![
                 (
                     "architectural-intent".to_owned(),
@@ -752,14 +773,92 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                 &TestIndexControl::default(),
             )
             .await?;
-        assert_eq!(lens.index_run_id(), run.id());
-        assert_eq!(lens.snapshot_id(), snapshot.id());
+        assert_eq!(lens.index_run_id(), initial_run.id());
+        assert_eq!(lens.snapshot_id(), initial_snapshot.id());
         assert_eq!(lens.claims().len(), 2);
         assert!(
             lens.claims()
                 .iter()
                 .any(|claim| claim.kind() == VerifiedClaimKind::Fact)
         );
+
+        let changed_snapshot = snapshot(
+            [83; 32],
+            fixture.project.worktree().id(),
+            Some(initial_snapshot.id()),
+            2,
+            vec![change(b"src/lib.rs", [84; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &changed_snapshot)
+            .await?;
+        let changed_run = store
+            .start_index_run(&fixture.project, run([85; 32], changed_snapshot.id(), 1)?)
+            .await?;
+        let changed_publication =
+            symbol_publication(changed_snapshot.id(), b"src/lib.rs", [84; 32])?;
+        store
+            .publish_index(
+                &fixture.project,
+                changed_run.id(),
+                &changed_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        assert_eq!(
+            read_single_text(&knowledge_path, "SELECT status FROM module_card_lifecycle").await?,
+            "stale"
+        );
+        assert_eq!(
+            read_count(&knowledge_path, "evidence_invalidations").await?,
+            1
+        );
+        assert_eq!(read_count(&knowledge_path, "module_remap_queue").await?, 1);
+        let remaps = LoadPendingModuleRemaps::new(&store)
+            .execute(
+                &fixture.project,
+                RemapQueueLimit::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(remaps.target_index_run_id(), changed_run.id());
+        assert_eq!(remaps.target_snapshot_id(), changed_snapshot.id());
+        assert_eq!(remaps.entries().len(), 1);
+        assert_eq!(remaps.entries()[0].priority(), RemapPriority::Direct);
+        assert_eq!(
+            read_single_text(
+                &knowledge_path,
+                "SELECT lifecycle.status FROM claim_lifecycle lifecycle\n\
+                 JOIN claims ON claims.source_index_run_id = lifecycle.source_index_run_id\n\
+                  AND claims.claim_id = lifecycle.claim_id\n\
+                 WHERE claims.claim_kind = 'fact'"
+            )
+            .await?,
+            "stale"
+        );
+        let rebuilt_lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &fixture.project,
+                TaskLensSeedSet::new(
+                    TaskLensSeedText::try_from_string(
+                        "repair the public call relation".to_owned(),
+                    )?,
+                    TaskLensSeedText::try_from_string(
+                        "inspect implementation and tests".to_owned(),
+                    )?,
+                    vec![TaskLensSeed::ExplicitPath(RepositoryPath::try_from_bytes(
+                        b"src/lib.rs".to_vec(),
+                    )?)],
+                )?,
+                TaskLensTokenBudget::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(rebuilt_lens.index_run_id(), changed_run.id());
+        assert_eq!(rebuilt_lens.snapshot_id(), changed_snapshot.id());
+        assert!(rebuilt_lens.claims().is_empty());
+        assert_ne!(rebuilt_lens.digest(), lens.digest());
 
         store
             .rebuild_regenerable_index(&fixture.project, &TestIndexControl::default())
@@ -769,6 +868,291 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
         assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
         assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 1);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn unchanged_file_claim_survives_an_unrelated_delta_without_remap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([86; 32], [87; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let initial_snapshot = snapshot(
+            [88; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [89; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &initial_snapshot)
+            .await?;
+        let initial_run = store
+            .start_index_run(&fixture.project, run([90; 32], initial_snapshot.id(), 1)?)
+            .await?;
+        let initial_publication =
+            symbol_publication(initial_snapshot.id(), b"src/lib.rs", [89; 32])?;
+        store
+            .publish_index(
+                &fixture.project,
+                initial_run.id(),
+                &initial_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let published = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("published fixture index is missing")?;
+        PublishVerifiedModuleCards::new(&store)
+            .execute(
+                &fixture.project,
+                &verified_file_card_batch(&published)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let unrelated_snapshot = snapshot(
+            [91; 32],
+            fixture.project.worktree().id(),
+            Some(initial_snapshot.id()),
+            2,
+            vec![change(
+                b"docs/note.md",
+                [92; 32],
+                SnapshotChangeKind::Upsert,
+            )?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &unrelated_snapshot)
+            .await?;
+        let unrelated_run = store
+            .start_index_run(&fixture.project, run([93; 32], unrelated_snapshot.id(), 1)?)
+            .await?;
+        let unrelated_publication = symbol_publication_with_extra_files(
+            unrelated_snapshot.id(),
+            b"src/lib.rs",
+            [89; 32],
+            &[(b"docs/note.md", [92; 32])],
+        )?;
+        store
+            .publish_index(
+                &fixture.project,
+                unrelated_run.id(),
+                &unrelated_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        assert_eq!(
+            read_single_text(&knowledge_path, "SELECT status FROM module_card_lifecycle").await?,
+            "published"
+        );
+        assert_eq!(
+            read_count(&knowledge_path, "evidence_invalidations").await?,
+            0
+        );
+        assert_eq!(read_count(&knowledge_path, "module_remap_queue").await?, 0);
+
+        let lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &fixture.project,
+                TaskLensSeedSet::new(
+                    TaskLensSeedText::try_from_string("inspect src/lib.rs".to_owned())?,
+                    TaskLensSeedText::try_from_string("retain current path facts".to_owned())?,
+                    vec![TaskLensSeed::ExplicitPath(RepositoryPath::try_from_bytes(
+                        b"src/lib.rs".to_vec(),
+                    )?)],
+                )?,
+                TaskLensTokenBudget::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(lens.index_run_id(), unrelated_run.id());
+        assert_eq!(lens.claims().len(), 1);
+        assert_eq!(lens.claims()[0].source_index_run_id(), initial_run.id());
+        assert_eq!(lens.claims()[0].kind(), VerifiedClaimKind::Fact);
+
+        let parser_snapshot = snapshot_with_rust_version(
+            [96; 32],
+            fixture.project.worktree().id(),
+            Some(unrelated_snapshot.id()),
+            3,
+            "tree-sitter-rust-2",
+            Vec::new(),
+        )?;
+        store
+            .append_snapshot(&fixture.project, &parser_snapshot)
+            .await?;
+        let parser_run = store
+            .start_index_run(&fixture.project, run([97; 32], parser_snapshot.id(), 1)?)
+            .await?;
+        let parser_publication = symbol_publication_with_extra_files(
+            parser_snapshot.id(),
+            b"src/lib.rs",
+            [89; 32],
+            &[(b"docs/note.md", [92; 32])],
+        )?;
+        store
+            .publish_index(
+                &fixture.project,
+                parser_run.id(),
+                &parser_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(
+            read_single_text(&knowledge_path, "SELECT reason FROM module_card_lifecycle").await?,
+            "parser-version-changed"
+        );
+        assert_eq!(read_count(&knowledge_path, "module_remap_queue").await?, 1);
+        let parser_lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &fixture.project,
+                TaskLensSeedSet::new(
+                    TaskLensSeedText::try_from_string("inspect src/lib.rs".to_owned())?,
+                    TaskLensSeedText::try_from_string("revalidate parser facts".to_owned())?,
+                    vec![TaskLensSeed::ExplicitPath(RepositoryPath::try_from_bytes(
+                        b"src/lib.rs".to_vec(),
+                    )?)],
+                )?,
+                TaskLensTokenBudget::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(parser_lens.index_run_id(), parser_run.id());
+        assert!(parser_lens.claims().is_empty());
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn direct_module_change_marks_only_one_hop_dependents_for_review()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([101; 32], [102; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let initial_snapshot = snapshot(
+            [103; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![
+                change(b"packages/a/lib.rs", [111; 32], SnapshotChangeKind::Upsert)?,
+                change(b"packages/b/lib.rs", [112; 32], SnapshotChangeKind::Upsert)?,
+                change(b"packages/c/lib.rs", [113; 32], SnapshotChangeKind::Upsert)?,
+            ],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &initial_snapshot)
+            .await?;
+        let initial_run = store
+            .start_index_run(&fixture.project, run([104; 32], initial_snapshot.id(), 1)?)
+            .await?;
+        let initial_publication =
+            multi_module_publication(initial_snapshot.id(), [[111; 32], [112; 32], [113; 32]])?;
+        store
+            .publish_index(
+                &fixture.project,
+                initial_run.id(),
+                &initial_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let initial = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("multi-module fixture index is missing")?;
+        PublishVerifiedModuleCards::new(&store)
+            .execute(
+                &fixture.project,
+                &multi_module_card_batch(&initial)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let changed_snapshot = snapshot(
+            [105; 32],
+            fixture.project.worktree().id(),
+            Some(initial_snapshot.id()),
+            2,
+            vec![change(
+                b"packages/a/lib.rs",
+                [121; 32],
+                SnapshotChangeKind::Upsert,
+            )?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &changed_snapshot)
+            .await?;
+        let changed_run = store
+            .start_index_run(&fixture.project, run([106; 32], changed_snapshot.id(), 1)?)
+            .await?;
+        let changed_publication =
+            multi_module_publication(changed_snapshot.id(), [[121; 32], [112; 32], [113; 32]])?;
+        store
+            .publish_index(
+                &fixture.project,
+                changed_run.id(),
+                &changed_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let remaps = LoadPendingModuleRemaps::new(&store)
+            .execute(
+                &fixture.project,
+                RemapQueueLimit::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(remaps.entries().len(), 2);
+        assert_eq!(
+            remaps.entries()[0].module_id(),
+            ModuleId::from_bytes([201; 32])
+        );
+        assert_eq!(remaps.entries()[0].priority(), RemapPriority::Direct);
+        assert_eq!(
+            remaps.entries()[1].module_id(),
+            ModuleId::from_bytes([202; 32])
+        );
+        assert_eq!(remaps.entries()[1].priority(), RemapPriority::Dependent);
+        assert!(
+            remaps
+                .entries()
+                .iter()
+                .all(|entry| entry.module_id() != ModuleId::from_bytes([203; 32]))
+        );
+
+        let lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &fixture.project,
+                TaskLensSeedSet::new(
+                    TaskLensSeedText::try_from_string("inspect independent module c".to_owned())?,
+                    TaskLensSeedText::try_from_string("retain unrelated evidence".to_owned())?,
+                    vec![TaskLensSeed::ExplicitPath(RepositoryPath::try_from_bytes(
+                        b"packages/c/lib.rs".to_vec(),
+                    )?)],
+                )?,
+                TaskLensTokenBudget::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(lens.index_run_id(), changed_run.id());
+        assert_eq!(lens.claims().len(), 1);
+        assert_eq!(
+            lens.claims()[0].module_id(),
+            ModuleId::from_bytes([203; 32])
+        );
+        assert_eq!(lens.claims()[0].kind(), VerifiedClaimKind::Fact);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1066,6 +1450,24 @@ fn snapshot(
     generation: u64,
     changes: Vec<SnapshotChange>,
 ) -> Result<Snapshot, Box<dyn std::error::Error>> {
+    snapshot_with_rust_version(
+        id,
+        worktree_id,
+        parent_id,
+        generation,
+        "tree-sitter-rust-1",
+        changes,
+    )
+}
+
+fn snapshot_with_rust_version(
+    id: [u8; 32],
+    worktree_id: WorktreeId,
+    parent_id: Option<SnapshotId>,
+    generation: u64,
+    rust_version: &str,
+    changes: Vec<SnapshotChange>,
+) -> Result<Snapshot, Box<dyn std::error::Error>> {
     Ok(Snapshot::new(
         SnapshotId::from_bytes(id),
         worktree_id,
@@ -1076,7 +1478,7 @@ fn snapshot(
         vec![
             LanguageAdapterRevision::new(
                 IndexLanguage::Rust,
-                LanguageAdapterVersion::try_from_string("tree-sitter-rust-1".to_owned())?,
+                LanguageAdapterVersion::try_from_string(rust_version.to_owned())?,
             ),
             LanguageAdapterRevision::new(
                 IndexLanguage::Generic,
@@ -1137,6 +1539,15 @@ fn symbol_publication(
     path: &[u8],
     hash: [u8; 32],
 ) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    symbol_publication_with_extra_files(snapshot_id, path, hash, &[])
+}
+
+fn symbol_publication_with_extra_files(
+    snapshot_id: SnapshotId,
+    path: &[u8],
+    hash: [u8; 32],
+    extra_files: &[(&[u8], [u8; 32])],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
     let revision = a3_domain::FileRevision::new(
         RepositoryPath::try_from_bytes(path.to_vec())?,
         ContentHash::from_bytes(hash),
@@ -1164,13 +1575,14 @@ fn symbol_publication(
         snapshot_id,
         EvidenceRef::new(revision.clone(), range),
     );
-    let graph = LinkedGraph::new(
-        snapshot_id,
-        vec![revision],
-        vec![symbol],
-        vec![edge],
-        Vec::new(),
-    )?;
+    let mut files = vec![revision];
+    for (extra_path, extra_hash) in extra_files {
+        files.push(a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(extra_path.to_vec())?,
+            ContentHash::from_bytes(*extra_hash),
+        ));
+    }
+    let graph = LinkedGraph::new(snapshot_id, files, vec![symbol], vec![edge], Vec::new())?;
     let ranking = RankProjection::new(
         snapshot_id,
         RankingPolicyVersion::v1(),
@@ -1192,6 +1604,258 @@ fn symbol_publication(
     )?;
     let modules = support::module_projection(&graph, &ranking, &[])?;
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn multi_module_publication(
+    snapshot_id: SnapshotId,
+    hashes: [[u8; 32]; 3],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let paths = [
+        b"packages/a/lib.rs".as_slice(),
+        b"packages/b/lib.rs".as_slice(),
+        b"packages/c/lib.rs".as_slice(),
+    ];
+    let names = ["module_a", "module_b", "module_c"];
+    let mut revisions = Vec::new();
+    let mut symbols = Vec::new();
+    let mut ranks = Vec::new();
+    let mut modules = Vec::new();
+    let mut memberships = Vec::new();
+    for index in 0..3 {
+        let revision = a3_domain::FileRevision::new(
+            RepositoryPath::try_from_bytes(paths[index].to_vec())?,
+            ContentHash::from_bytes(hashes[index]),
+        );
+        let symbol_id = SymbolId::from_bytes([hashes[index][0]; 32]);
+        let range = SourceRange::new(0, 4, SourcePosition::new(0, 0), SourcePosition::new(0, 4))?;
+        symbols.push(GraphSymbol::new(
+            symbol_id,
+            revision.clone(),
+            ParsedSymbol::new(
+                LocalSymbolId::new(1)?,
+                SymbolKind::Function,
+                SymbolName::try_from_string(names[index].to_owned())?,
+                range,
+                range,
+            )?,
+        ));
+        ranks.push(SymbolRank::new(
+            symbol_id,
+            RankScore::try_from_sum(u64::try_from(3 - index)? * 1_000)?,
+            SymbolRankSignals {
+                in_degree: 0,
+                out_degree: 0,
+                centrality: Centrality::from_basis_points(u16::try_from(3 - index)? * 1_000)?,
+                degree_contribution: 0,
+                centrality_contribution: u32::try_from(3 - index)? * 1_000,
+                entrypoint_contribution: 0,
+                public_export_contribution: 0,
+                manifest_contribution: 0,
+                test_contribution: 0,
+            },
+        ));
+        let module_id = ModuleId::from_bytes([u8::try_from(201 + index)?; 32]);
+        modules.push(RepositoryModule::new(
+            module_id,
+            ModuleKind::PathBoundary,
+            Some(ModuleRoot::Directory(RepositoryPath::try_from_bytes(
+                format!("packages/{}", ['a', 'b', 'c'][index]).into_bytes(),
+            )?)),
+            Vec::new(),
+            ModuleSymbolSet::new(vec![symbol_id], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?);
+        memberships.push(ModuleMembership::new(
+            module_id,
+            symbol_id,
+            ModuleMembershipEvidence::path(revision.clone()),
+        ));
+        revisions.push(revision);
+    }
+    let dependency_edge = GraphEdge::new(
+        GraphEndpoint::Symbol(SymbolId::from_bytes([hashes[1][0]; 32])),
+        GraphEndpoint::Symbol(SymbolId::from_bytes([hashes[0][0]; 32])),
+        SyntaxRelationKind::Calls,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterLocalSymbol,
+        snapshot_id,
+        EvidenceRef::new(
+            revisions[1].clone(),
+            SourceRange::new(0, 4, SourcePosition::new(0, 0), SourcePosition::new(0, 4))?,
+        ),
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        revisions,
+        symbols,
+        vec![dependency_edge],
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
+    let repository_card = RepositoryCard::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        vec![
+            ModuleId::from_bytes([201; 32]),
+            ModuleId::from_bytes([202; 32]),
+            ModuleId::from_bytes([203; 32]),
+        ],
+        vec![IndexLanguage::Rust],
+        ModuleSymbolSet::empty(),
+        3,
+        3,
+    )?;
+    let projection = ModuleProjection::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        modules,
+        memberships,
+        repository_card,
+    )?;
+    Ok(IndexPublication::new(
+        graph,
+        ranking,
+        Vec::new(),
+        projection,
+    )?)
+}
+
+fn multi_module_card_batch(
+    published: &PublishedIndex,
+) -> Result<VerifiedModuleCardBatch, Box<dyn std::error::Error>> {
+    let mut candidates = Vec::new();
+    let mut resolved = Vec::new();
+    for (index, module) in published
+        .publication()
+        .modules()
+        .modules()
+        .iter()
+        .enumerate()
+    {
+        let membership = published
+            .publication()
+            .modules()
+            .memberships()
+            .iter()
+            .find(|membership| module.id() == membership.module_id())
+            .ok_or("module membership is missing")?;
+        let symbol = published
+            .publication()
+            .graph()
+            .symbols()
+            .iter()
+            .find(|symbol| symbol.id() == membership.symbol_id())
+            .ok_or("module symbol is missing")?;
+        let revision = symbol.revision().clone();
+        let evidence_id = ModuleCardEvidenceId::for_file_revision_v1(&revision);
+        let card_id = ModuleCardId::from_bytes([u8::try_from(151 + index)?; 32]);
+        let claim_id = ModuleCardClaimId::from_bytes([u8::try_from(161 + index)?; 32]);
+        let proposal = ModuleCardProposal::new(
+            ModuleCardProposalEnvelope::new(
+                card_id,
+                module.id(),
+                published.run().snapshot_id(),
+                ModuleCardSchemaVersion::V1,
+                MapperProfileVersion::V1,
+                Confidence::from_basis_points(8_000)?,
+            ),
+            vec![ProposedModuleCardField::new(
+                ModuleCardField::Paths,
+                vec![String::from_utf8(revision.path().as_bytes().to_vec())?],
+                vec![evidence_id],
+            )?],
+            512,
+        )?;
+        let claim = ModuleClaimProposal::new(
+            ModuleClaimEnvelope::new(
+                claim_id,
+                card_id,
+                module.id(),
+                published.run().snapshot_id(),
+                ModuleCardField::Paths,
+                0,
+                Confidence::from_basis_points(8_000)?,
+            ),
+            ModuleClaimPolarity::Affirms,
+            ModuleClaimPredicate::Path(revision.path().clone()),
+            vec![evidence_id],
+        )?;
+        candidates.push(ModuleCardVerificationCandidate::new(proposal, vec![claim])?);
+        resolved.push(ResolvedModuleCardEvidence::File {
+            id: evidence_id,
+            revision,
+        });
+    }
+    let evidence = ResolvedModuleCardEvidenceSet::new(published.run().snapshot_id(), resolved)?;
+    Ok(ModuleCardVerifier::verify(
+        published, candidates, &evidence,
+    )?)
+}
+
+fn verified_file_card_batch(
+    published: &PublishedIndex,
+) -> Result<VerifiedModuleCardBatch, Box<dyn std::error::Error>> {
+    let revision = published
+        .publication()
+        .graph()
+        .files()
+        .iter()
+        .find(|revision| revision.path().as_bytes() == b"src/lib.rs")
+        .ok_or("published fixture file is missing")?
+        .clone();
+    let evidence_id = ModuleCardEvidenceId::for_file_revision_v1(&revision);
+    let module = published
+        .publication()
+        .modules()
+        .modules()
+        .first()
+        .ok_or("published fixture module is missing")?;
+    let card_id = ModuleCardId::from_bytes([94; 32]);
+    let proposal = ModuleCardProposal::new(
+        ModuleCardProposalEnvelope::new(
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardSchemaVersion::V1,
+            MapperProfileVersion::V1,
+            Confidence::from_basis_points(8_000)?,
+        ),
+        vec![ProposedModuleCardField::new(
+            ModuleCardField::Paths,
+            vec!["src/lib.rs".to_owned()],
+            vec![evidence_id],
+        )?],
+        512,
+    )?;
+    let claim = ModuleClaimProposal::new(
+        ModuleClaimEnvelope::new(
+            ModuleCardClaimId::from_bytes([95; 32]),
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardField::Paths,
+            0,
+            Confidence::from_basis_points(8_000)?,
+        ),
+        ModuleClaimPolarity::Affirms,
+        ModuleClaimPredicate::Path(revision.path().clone()),
+        vec![evidence_id],
+    )?;
+    let candidate = ModuleCardVerificationCandidate::new(proposal, vec![claim])?;
+    let evidence = ResolvedModuleCardEvidenceSet::new(
+        published.run().snapshot_id(),
+        vec![ResolvedModuleCardEvidence::File {
+            id: evidence_id,
+            revision,
+        }],
+    )?;
+    Ok(ModuleCardVerifier::verify(
+        published,
+        vec![candidate],
+        &evidence,
+    )?)
 }
 
 fn verified_card_batch(
@@ -1370,6 +2034,8 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         "claims" => "SELECT COUNT(*) FROM claims",
         "claim_evidence" => "SELECT COUNT(*) FROM claim_evidence",
         "claim_relations" => "SELECT COUNT(*) FROM claim_relations",
+        "evidence_invalidations" => "SELECT COUNT(*) FROM evidence_invalidations",
+        "module_remap_queue" => "SELECT COUNT(*) FROM module_remap_queue",
         "card_fts" => "SELECT COUNT(*) FROM card_fts",
         "task_state_probe" => "SELECT COUNT(*) FROM task_state_probe",
         _ => return Err(Box::from(io::Error::other("unsupported test table"))),
@@ -1382,6 +2048,21 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         .await?
         .ok_or(libsql::Error::QueryReturnedNoRows)?;
     Ok(row.get(0)?)
+}
+
+async fn read_single_text(path: &Path, sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(path).build().await?;
+    let connection = database.connect()?;
+    let mut rows = connection.query(sql, ()).await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or(libsql::Error::QueryReturnedNoRows)?;
+    let value = row.get(0)?;
+    if rows.next().await?.is_some() {
+        return Err(io::Error::other("expected exactly one text row").into());
+    }
+    Ok(value)
 }
 
 async fn read_lexical_card_count(

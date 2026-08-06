@@ -931,6 +931,86 @@ const KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION: Migration = Migration {
       CREATE INDEX evidence_refs_snapshot_idx ON evidence_refs (snapshot_id, evidence_kind);",
 };
 
+const KNOWLEDGE_CARD_INVALIDATION_MIGRATION: Migration = Migration {
+    version: 10,
+    name: "card_invalidation_and_remap",
+    sql: "CREATE TABLE module_card_lifecycle (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      status TEXT NOT NULL CHECK (status IN ('published', 'stale', 'needs-review')),\n\
+      invalidated_by_index_run_id BLOB\n\
+        CHECK (invalidated_by_index_run_id IS NULL OR length(invalidated_by_index_run_id) = 32),\n\
+      reason TEXT CHECK (reason IS NULL OR reason IN (\n\
+        'evidence-changed', 'module-removed', 'parser-version-changed',\n\
+        'mapper-version-changed', 'direct-dependency-changed'\n\
+      )),\n\
+      CHECK (\n\
+        (status = 'published' AND invalidated_by_index_run_id IS NULL AND reason IS NULL) OR\n\
+        (status <> 'published' AND invalidated_by_index_run_id IS NOT NULL AND reason IS NOT NULL)\n\
+      ),\n\
+      PRIMARY KEY (source_index_run_id, card_id),\n\
+      FOREIGN KEY (source_index_run_id, card_id)\n\
+        REFERENCES module_cards(source_index_run_id, card_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO module_card_lifecycle (source_index_run_id, card_id, status)\n\
+        SELECT source_index_run_id, card_id, 'published' FROM module_cards;\n\
+      CREATE TABLE claim_lifecycle (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      claim_id BLOB NOT NULL CHECK (length(claim_id) = 32),\n\
+      status TEXT NOT NULL CHECK (status IN ('active', 'stale')),\n\
+      invalidated_by_index_run_id BLOB\n\
+        CHECK (invalidated_by_index_run_id IS NULL OR length(invalidated_by_index_run_id) = 32),\n\
+      reason TEXT CHECK (reason IS NULL OR reason IN (\n\
+        'evidence-changed', 'module-removed', 'parser-version-changed',\n\
+        'mapper-version-changed', 'direct-dependency-changed'\n\
+      )),\n\
+      CHECK (\n\
+        (status = 'active' AND invalidated_by_index_run_id IS NULL AND reason IS NULL) OR\n\
+        (status = 'stale' AND invalidated_by_index_run_id IS NOT NULL AND reason IS NOT NULL)\n\
+      ),\n\
+      PRIMARY KEY (source_index_run_id, claim_id),\n\
+      FOREIGN KEY (source_index_run_id, claim_id)\n\
+        REFERENCES claims(source_index_run_id, claim_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO claim_lifecycle (source_index_run_id, claim_id, status)\n\
+        SELECT source_index_run_id, claim_id, 'active' FROM claims;\n\
+      CREATE TABLE evidence_invalidations (\n\
+      target_index_run_id BLOB NOT NULL CHECK (length(target_index_run_id) = 32),\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      reason TEXT NOT NULL CHECK (reason = 'evidence-changed'),\n\
+      PRIMARY KEY (target_index_run_id, source_index_run_id, evidence_id),\n\
+      FOREIGN KEY (source_index_run_id, evidence_id)\n\
+        REFERENCES evidence_refs(source_index_run_id, evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_remap_queue (\n\
+      module_id BLOB PRIMARY KEY NOT NULL CHECK (length(module_id) = 32),\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      target_index_run_id BLOB NOT NULL CHECK (length(target_index_run_id) = 32),\n\
+      target_snapshot_id BLOB NOT NULL CHECK (length(target_snapshot_id) = 32),\n\
+      priority INTEGER NOT NULL CHECK (priority IN (0, 1)),\n\
+      reason TEXT NOT NULL CHECK (reason IN (\n\
+        'evidence-changed', 'parser-version-changed', 'mapper-version-changed',\n\
+        'direct-dependency-changed'\n\
+      )),\n\
+      FOREIGN KEY (source_index_run_id, card_id)\n\
+        REFERENCES module_cards(source_index_run_id, card_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (target_snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE INDEX module_card_lifecycle_status_idx\n\
+        ON module_card_lifecycle (status, source_index_run_id, card_id);\n\
+      CREATE INDEX claim_lifecycle_status_idx\n\
+        ON claim_lifecycle (status, source_index_run_id, claim_id);\n\
+      CREATE INDEX module_remap_queue_priority_idx\n\
+        ON module_remap_queue (priority, module_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -941,6 +1021,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION,
     KNOWLEDGE_MODULE_PROJECTION_MIGRATION,
     KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION,
+    KNOWLEDGE_CARD_INVALIDATION_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -973,7 +1054,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(9);
+    pub const CURRENT: Self = Self::new(10);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1371,11 +1452,12 @@ mod tests {
                      'file_revisions', 'symbols', 'symbol_edges', 'unresolved_edges',\n\
                      'ranking_projections', 'exact_search_projections', 'exact_search_symbols',\n\
                      'exact_search_manifests', 'lexical_search_projections', 'symbol_fts',\n\
-                     'path_fts', 'card_fts'\n\
+                     'path_fts', 'card_fts', 'module_card_lifecycle', 'claim_lifecycle',\n\
+                     'evidence_invalidations', 'module_remap_queue'\n\
                      )",
                 )
                 .await?,
-                20
+                24
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -1843,6 +1925,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'evidence_refs'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v10_upgrade_preserves_v9_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [44; 32];
+            let worktree_id = [45; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..9],
+                9,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE module_card_lifecycle (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 10, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 9);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('module_card_lifecycle')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'claim_lifecycle'",
                 )
                 .await?,
                 0

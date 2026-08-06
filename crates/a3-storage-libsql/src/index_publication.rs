@@ -1,5 +1,6 @@
 use crate::{
-    exact_search_projection, index_codec, lexical_search_projection, module_projection_codec,
+    exact_search_projection, index_codec, index_invalidation_repository, lexical_search_projection,
+    module_projection_codec,
 };
 use a3_application::{IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
@@ -53,12 +54,10 @@ pub(crate) async fn publish_index(
         &mut progress,
     )
     .await;
-    let record = match result {
-        Ok(record) => record,
+    let published = match result {
+        Ok(published) => published,
         Err(error) => return rollback(transaction, error).await,
     };
-    let published = PublishedIndex::new(record, publication.clone())
-        .map_err(|_| IndexPublicationRepositoryError::PublicationMismatch)?;
     transaction
         .commit()
         .await
@@ -74,7 +73,7 @@ async fn publish_index_in_transaction(
     search_projection: &exact_search_projection::ExactSearchProjection,
     lexical_projection: &lexical_search_projection::LexicalSearchProjection,
     progress: &mut MutationProgress<'_>,
-) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
+) -> Result<PublishedIndex, IndexPublicationRepositoryError> {
     progress.checkpoint()?;
     let Some(run) = read_index_run(transaction, worktree_id, run_id).await? else {
         return Err(IndexPublicationRepositoryError::IndexRunNotFound);
@@ -108,6 +107,18 @@ async fn publish_index_in_transaction(
         .await?;
     lexical_search_projection::write_projection(transaction, run_id, lexical_projection, progress)
         .await?;
+    let published_record = IndexRunRecord::new(
+        run.id(),
+        run.snapshot_id(),
+        run.ranking_policy_version(),
+        run.sequence(),
+        IndexRunStatus::Published,
+    );
+    let published = PublishedIndex::new(published_record, publication.clone())
+        .map_err(|_| IndexPublicationRepositoryError::PublicationMismatch)?;
+    index_invalidation_repository::invalidate_for_publication(transaction, &published, progress)
+        .await?;
+    progress.advance(1)?;
     delete_superseded_publication_rows(transaction, worktree_id, run_id, progress).await?;
 
     let affected = transaction
@@ -123,13 +134,7 @@ async fn publish_index_in_transaction(
     }
     progress.advance(1)?;
 
-    Ok(IndexRunRecord::new(
-        run.id(),
-        run.snapshot_id(),
-        run.ranking_policy_version(),
-        run.sequence(),
-        IndexRunStatus::Published,
-    ))
+    Ok(published)
 }
 
 async fn delete_superseded_publication_rows(
@@ -392,7 +397,7 @@ fn publication_work_units(
         publication.ranking().symbols().len(),
     ]
     .into_iter()
-    .try_fold(2_u64, |total, length| {
+    .try_fold(3_u64, |total, length| {
         u64::try_from(length)
             .ok()
             .and_then(|length| total.checked_add(length))

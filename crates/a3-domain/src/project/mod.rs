@@ -82,7 +82,7 @@ pub use index_run::{
 };
 pub use invalidation::{
     IndexInvalidationPlan, InvalidationPlanError, InvalidationReason, ModuleCardInvalidation,
-    ModuleCardInvalidationCandidate, RemapPriority, RemapRequest,
+    ModuleCardInvalidationCandidate, RemapPriority, RemapRequest, RemapRequestError,
 };
 pub use language::{
     Confidence, ConfidenceError, DiagnosticMessage, DiagnosticMessageError,

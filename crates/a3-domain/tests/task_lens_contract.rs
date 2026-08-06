@@ -31,7 +31,7 @@ fn bug_lens_keeps_production_and_test_but_excludes_irrelevant_module_and_stale_f
         ModuleClaimPolarity::Affirms,
         ModuleClaimPredicate::Symbol(fixture.production),
         VerifiedClaimKind::Fact,
-        VerifiedClaimStatus::Active,
+        VerifiedClaimStatus::Stale,
         Confidence::certain(),
         vec![resolved_symbol(&fixture.published, fixture.production)?],
     )?;

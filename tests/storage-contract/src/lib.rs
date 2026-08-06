@@ -12,8 +12,8 @@ mod search;
 mod semantic;
 
 use a3_application::{
-    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, SemanticEmbeddingStore,
-    TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
+    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore,
+    SemanticEmbeddingStore, TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -195,6 +195,7 @@ pub trait KnowledgeStoreContractFactory {
         + KnowledgeIndexStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
+        + ModuleRemapQueueStore
         + TaskLensClaimStore
         + TaskLensIndexStore
         + VerifiedModuleCardPublisher;

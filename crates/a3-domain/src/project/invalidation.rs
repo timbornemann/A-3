@@ -148,6 +148,40 @@ pub struct RemapRequest {
 }
 
 impl RemapRequest {
+    /// Reconstructs one persisted pending request and rejects priority/reason mismatches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_persisted(
+        source_index_run_id: IndexRunId,
+        card_id: ModuleCardId,
+        module_id: ModuleId,
+        target_index_run_id: IndexRunId,
+        target_snapshot_id: SnapshotId,
+        priority: RemapPriority,
+        reason: InvalidationReason,
+    ) -> Result<Self, RemapRequestError> {
+        let valid = match priority {
+            RemapPriority::Direct => matches!(
+                reason,
+                InvalidationReason::EvidenceChanged
+                    | InvalidationReason::ParserVersionChanged
+                    | InvalidationReason::MapperVersionChanged
+            ),
+            RemapPriority::Dependent => reason == InvalidationReason::DirectDependencyChanged,
+        };
+        if !valid {
+            return Err(RemapRequestError);
+        }
+        Ok(Self {
+            source_index_run_id,
+            card_id,
+            module_id,
+            target_index_run_id,
+            target_snapshot_id,
+            priority,
+            reason,
+        })
+    }
+
     /// Returns the historical card run being replaced or reviewed.
     #[must_use]
     pub const fn source_index_run_id(self) -> IndexRunId {
@@ -190,6 +224,18 @@ impl RemapRequest {
         self.reason
     }
 }
+
+/// Persisted remap priority and reason did not describe a legal queue state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemapRequestError;
+
+impl fmt::Display for RemapRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("remap request priority and reason are incompatible")
+    }
+}
+
+impl Error for RemapRequestError {}
 
 /// Complete direct-plus-one-hop invalidation decision for one new published index.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,18 +6,20 @@ use crate::{
 use crate::{
     exact_search_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
-    semantic_embedding_repository, task_lens_claim_repository,
+    module_remap_queue_repository, semantic_embedding_repository, task_lens_claim_repository,
 };
 use a3_application::{
     EmbeddingOperationControl, IndexPersistenceControl, KnowledgeIndexFailure,
     KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
     KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
     KnowledgeStoreFuture, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
-    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
-    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
-    SemanticEmbeddingStoreFuture, TaskLensClaimLimit, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
-    TaskLensIndexStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    ModuleRemapQueueFailure, ModuleRemapQueueFuture, ModuleRemapQueueStore, ProjectOpenPreparation,
+    ProjectReconciliationProposal, RecentProject, RecentProjectLimit, RemapQueueControl,
+    RemapQueueLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, TaskLensClaimLimit,
+    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
+    TaskLensIndexStore, TaskLensIndexStoreFuture, VerifiedModuleCardPublisher,
+    VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
@@ -488,6 +490,27 @@ impl TaskLensClaimStore for LibsqlKnowledgeStore {
     }
 }
 
+impl ModuleRemapQueueStore for LibsqlKnowledgeStore {
+    fn load_pending<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        limit: RemapQueueLimit,
+        control: &'a dyn RemapQueueControl,
+    ) -> ModuleRemapQueueFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_remap_queue(project).await?;
+            module_remap_queue_repository::load_pending(
+                knowledge.connection(),
+                project.worktree().id(),
+                limit,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     fn search_exact<'a>(
         &'a self,
@@ -742,6 +765,29 @@ impl LibsqlKnowledgeStore {
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(TaskLensClaimStoreFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_remap_queue(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, ModuleRemapQueueFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(ModuleRemapQueueFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleRemapQueueFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
     }

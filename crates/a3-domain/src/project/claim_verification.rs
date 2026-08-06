@@ -615,6 +615,8 @@ pub enum VerifiedClaimKind {
 pub enum VerifiedClaimStatus {
     /// Claim is current for the verified snapshot.
     Active,
+    /// Direct Evidence or its producing parser/mapper compatibility became invalid.
+    Stale,
 }
 
 /// Verified claim retaining confidence independently from epistemic kind and status.
