@@ -66,6 +66,14 @@ stable_id!(
     /// Stable identity of one deterministic index attempt.
     IndexRunId
 );
+stable_id!(
+    /// Stable identity of one durable coding task across Goal Contract revisions and runs.
+    TaskId
+);
+stable_id!(
+    /// Stable identity of one acceptance criterion across Goal Contract revisions.
+    AcceptanceCriterionId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -77,8 +85,8 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId,
-        WorktreeId,
+        AcceptanceCriterionId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId,
+        TaskId, WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -95,5 +103,7 @@ mod tests {
         assert_eq!(RemoteIdentity::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(SnapshotId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(IndexRunId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AcceptanceCriterionId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }

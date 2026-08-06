@@ -4,6 +4,7 @@ mod deep_map_explorer;
 mod discovery;
 mod embedding;
 mod git;
+mod goal_contract;
 mod graph;
 mod graph_retrieval;
 mod id;
@@ -61,6 +62,15 @@ pub use embedding::{
     VectorSearchResult, VectorSearchResultError,
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
+pub use goal_contract::{
+    AcceptanceCriterion, AcceptanceCriterionStatement, GoalConstraint, GoalContract,
+    GoalContractCollection, GoalContractDraft, GoalContractDraftError, GoalContractHistory,
+    GoalContractHistoryError, GoalContractReference, GoalContractRestoreError,
+    GoalContractRevision, GoalContractRevisionError, GoalContractRevisionFailure,
+    GoalContractTextError, GoalContractTextField, GoalContractTextViolation, GoalContractTimestamp,
+    GoalContractTimestampError, GoalObjective, GoalRevisionReason, NonGoal, SuccessVerification,
+    UserDecision,
+};
 pub use graph::{
     Centrality, CentralityError, EvidenceRef, GraphEdge, GraphEndpoint, GraphSymbol,
     IndexPublication, IndexPublicationError, LinkResolution, LinkedGraph, LinkedGraphError,
@@ -74,7 +84,8 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, TaskId,
+    WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
