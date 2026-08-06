@@ -1,6 +1,7 @@
 mod agent_action;
 mod agent_run;
 mod claim_verification;
+mod context_pack;
 mod deep_map;
 mod deep_map_explorer;
 mod discovery;
@@ -50,6 +51,10 @@ pub use claim_verification::{
     ModuleClaimStatementError, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet,
     VerifiedClaimKind, VerifiedClaimStatus, VerifiedModuleCard, VerifiedModuleCardBatch,
     VerifiedModuleClaim,
+};
+pub use context_pack::{
+    ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
+    ContextDigest, ContextSection,
 };
 pub use deep_map::{
     CoverageRequirement, DeepMapPlanError, DeepMapPlanner, ExpectedInformationGain,
