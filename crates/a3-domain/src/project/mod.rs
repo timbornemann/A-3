@@ -1,3 +1,4 @@
+mod agent_run;
 mod claim_verification;
 mod deep_map;
 mod deep_map_explorer;
@@ -24,6 +25,13 @@ mod task_lens;
 mod task_step;
 mod task_verification;
 
+pub use agent_run::{
+    AgentControllerState, AgentRun, AgentRunError, AgentRunIdentity, AgentRunMaterializedState,
+    AgentRunTimestamp, AgentRunTimestampError, AgentRunTiming, RunEvent, RunEventCode,
+    RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome, RunEventPayload,
+    RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSequenceError,
+    RunEventSubject, RunPayloadDigest,
+};
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
     ModuleCardVerificationCandidate, ModuleCardVerificationError, ModuleCardVerifier,
@@ -88,8 +96,8 @@ pub use graph_retrieval::{
 };
 pub use id::{
     AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
-    SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, VerificationSpecId,
-    WorktreeAnchorId, WorktreeId,
+    RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+    VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,

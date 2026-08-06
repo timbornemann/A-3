@@ -94,6 +94,14 @@ stable_id!(
     /// Stable identity of one controlled agent run.
     AgentRunId
 );
+stable_id!(
+    /// Stable identity of one append-only event in an agent run journal.
+    RunEventId
+);
+stable_id!(
+    /// Stable identity of one bounded tool execution referenced by run audit.
+    ToolRunId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -106,8 +114,8 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 mod tests {
     use super::{
         AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
-        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, VerificationSpecId,
-        WorktreeAnchorId, WorktreeId,
+        RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+        VerificationSpecId, WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -131,5 +139,7 @@ mod tests {
         assert_eq!(VerificationSpecId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(StepVerificationId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentRunId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(RunEventId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(ToolRunId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }
