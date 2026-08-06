@@ -1378,6 +1378,30 @@ const KNOWLEDGE_RUN_JOURNAL_MIGRATION: Migration = Migration {
       CREATE INDEX run_events_subject_idx ON run_events(subject_kind, subject_id, run_id);",
 };
 
+const KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION: Migration = Migration {
+    version: 14,
+    name: "model_profile_run_reference",
+    sql: "ALTER TABLE agent_runs ADD COLUMN model_profile_id BLOB
+        CHECK (model_profile_id IS NULL OR length(model_profile_id) = 32);\n\
+      ALTER TABLE agent_runs ADD COLUMN model_profile_schema_version INTEGER
+        CHECK (model_profile_schema_version IS NULL OR
+          model_profile_schema_version BETWEEN 1 AND 65535);\n\
+      CREATE TRIGGER agent_runs_profile_insert_guard
+      BEFORE INSERT ON agent_runs
+      WHEN (NEW.model_profile_id IS NULL AND NEW.model_profile_schema_version IS NOT NULL)
+        OR (NEW.model_profile_id IS NOT NULL AND NEW.model_profile_schema_version IS NULL)
+      BEGIN
+        SELECT RAISE(ABORT, 'agent run model profile reference is incomplete');
+      END;\n\
+      CREATE TRIGGER agent_runs_profile_update_guard
+      BEFORE UPDATE OF model_profile_id, model_profile_schema_version ON agent_runs
+      WHEN (NEW.model_profile_id IS NULL AND NEW.model_profile_schema_version IS NOT NULL)
+        OR (NEW.model_profile_id IS NOT NULL AND NEW.model_profile_schema_version IS NULL)
+      BEGIN
+        SELECT RAISE(ABORT, 'agent run model profile reference is incomplete');
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1392,6 +1416,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_GOAL_CONTRACT_MIGRATION,
     KNOWLEDGE_TASK_LEDGER_MIGRATION,
     KNOWLEDGE_RUN_JOURNAL_MIGRATION,
+    KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1424,7 +1449,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(13);
+    pub const CURRENT: Self = Self::new(14);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1837,6 +1862,25 @@ mod tests {
                 )
                 .await?,
                 44
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_runs')
+                     WHERE name IN ('model_profile_id', 'model_profile_schema_version')",
+                )
+                .await?,
+                2
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name IN ('agent_runs_profile_insert_guard',
+                       'agent_runs_profile_update_guard')",
+                )
+                .await?,
+                2
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -2503,6 +2547,59 @@ mod tests {
                 )
                 .await?,
                 0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v14_upgrade_preserves_v13_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [52; 32];
+            let worktree_id = [53; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..13],
+                13,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TRIGGER agent_runs_profile_insert_guard
+                     BEFORE INSERT ON agent_runs BEGIN SELECT 1; END",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 14, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 13);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_runs')
+                     WHERE name IN ('model_profile_id', 'model_profile_schema_version')",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name = 'agent_runs_profile_insert_guard'",
+                )
+                .await?,
+                1
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

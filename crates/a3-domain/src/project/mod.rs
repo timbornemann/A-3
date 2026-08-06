@@ -14,6 +14,7 @@ mod invalidation;
 mod language;
 mod lexical_retrieval;
 mod model;
+mod model_profile;
 mod module_map;
 mod path;
 mod retrieval;
@@ -69,9 +70,9 @@ pub use embedding::{
     EmbeddingDimension, EmbeddingDimensionError, EmbeddingModelId, EmbeddingModelProfile,
     EmbeddingProfileTextError, EmbeddingProfileTextKind, EmbeddingProviderId,
     EmbeddingQuantization, EmbeddingTimestamp, EmbeddingTimestampError, EmbeddingVector,
-    EmbeddingVectorError, EmbeddingVectorNormalization, ModelProfileId, SemanticEmbedding,
-    VectorHit, VectorSearchCapability, VectorSearchLimit, VectorSearchLimitError,
-    VectorSearchResult, VectorSearchResultError,
+    EmbeddingVectorError, EmbeddingVectorNormalization, SemanticEmbedding, VectorHit,
+    VectorSearchCapability, VectorSearchLimit, VectorSearchLimitError, VectorSearchResult,
+    VectorSearchResultError,
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
 pub use goal_contract::{
@@ -124,7 +125,18 @@ pub use lexical_retrieval::{
     LexicalSearchPageSizeError, LexicalSearchPosition, LexicalSearchQuery, LexicalSearchSymbol,
     LexicalSearchTarget, LexicalSearchTerm, LexicalSearchTermError,
 };
-pub use model::{ModelId, ModelIdentityError, ModelIdentityKind, ModelProviderId};
+pub use model::{ModelId, ModelIdentityError, ModelIdentityKind, ModelProfileId, ModelProviderId};
+pub use model_profile::{
+    ModelCapabilities, ModelContextLimit, ModelContextLimitError, ModelOutputLimit,
+    ModelOutputLimitError, ModelParallelismLimit, ModelParallelismLimitError, ModelProfile,
+    ModelProfileError, ModelProfileOverride, ModelProfileOverrideError,
+    ModelProfileOverrideRevision, ModelProfileOverrideRevisionError, ModelProfileReference,
+    ModelProfileSettings, ModelProfileSource, ModelProfileVersion, ModelProfileVersionError,
+    ModelPromptSchemaGrounding, ModelSamplingProfile, ModelStopSequence, ModelStopSequenceError,
+    ModelStopSequences, ModelStopSequencesError, ModelStructuredOutputCapability, ModelTemperature,
+    ModelTemperatureError, ModelTokenCount, ModelTokenCountError, ModelTokenCountingStrategy,
+    ModelToolCallMode, ModelTopP, ModelTopPError,
+};
 pub use module_map::{
     ModuleId, ModuleKind, ModuleMapError, ModuleMembership, ModuleMembershipEvidence,
     ModuleMembershipKind, ModulePolicyVersion, ModulePolicyVersionError, ModuleProjection,

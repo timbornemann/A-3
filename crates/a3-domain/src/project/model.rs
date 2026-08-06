@@ -4,6 +4,39 @@ use std::fmt;
 const MAX_MODEL_PROVIDER_ID_BYTES: usize = 128;
 const MAX_MODEL_ID_BYTES: usize = 512;
 
+/// Stable domain-separated identity for one complete model capability profile.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ModelProfileId([u8; 32]);
+
+impl ModelProfileId {
+    /// Reconstructs an ID after the complete persisted profile was validated.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the canonical binary representation.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Display for ModelProfileId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for ModelProfileId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "ModelProfileId({self})")
+    }
+}
+
 /// Stable provider identity containing neither endpoint nor credential material.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModelProviderId(String);
@@ -114,7 +147,7 @@ fn validate_identifier(value: &str, kind: ModelIdentityKind) -> Result<(), Model
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelId, ModelIdentityError, ModelProviderId};
+    use super::{ModelId, ModelIdentityError, ModelProfileId, ModelProviderId};
 
     #[test]
     fn identities_are_bounded_opaque_and_never_endpoint_shaped() {
@@ -126,5 +159,6 @@ mod tests {
         ));
         assert!(ModelId::try_from_string("model\nsecret".to_owned()).is_err());
         assert!(ModelId::try_from_string("x".repeat(513)).is_err());
+        assert_eq!(ModelProfileId::from_bytes([10; 32]).to_string().len(), 64);
     }
 }

@@ -2,10 +2,11 @@ use crate::{catalog::is_corruption, goal_contract_repository, task_ledger_reposi
 use a3_application::{RunEventPage, RunEventPageLimit, RunJournalStoreFailure};
 use a3_domain::{
     AgentControllerState, AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState,
-    AgentRunTimestamp, AgentRunTiming, GoalContractRevision, RunEvent, RunEventCode, RunEventId,
-    RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome, RunEventPayload,
-    RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSubject,
-    RunPayloadDigest, SnapshotId, TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
+    AgentRunTimestamp, AgentRunTiming, GoalContractRevision, ModelProfileId, ModelProfileReference,
+    ModelProfileVersion, RunEvent, RunEventCode, RunEventId, RunEventIdentity, RunEventKind,
+    RunEventOccurrence, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    RunEventRedactionSource, RunEventSequence, RunEventSubject, RunPayloadDigest, SnapshotId,
+    TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -20,6 +21,9 @@ pub(crate) async fn create(
     start_event: &RunEvent,
 ) -> Result<(), RunJournalRepositoryError> {
     validate_start_pair(run, start_event)?;
+    let model_profile = run
+        .model_profile()
+        .ok_or(RunJournalRepositoryError::InvalidInput)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
@@ -35,15 +39,17 @@ pub(crate) async fn create(
         transaction
             .execute(
                 "INSERT INTO agent_runs (
-                 run_id, task_id, goal_revision, task_ledger_revision, controller_state,
-                 last_event_sequence, current_snapshot_id, created_at_unix_millis,
-                 updated_at_unix_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 run_id, task_id, goal_revision, task_ledger_revision, model_profile_id,
+                 model_profile_schema_version, controller_state, last_event_sequence,
+                 current_snapshot_id, created_at_unix_millis, updated_at_unix_millis
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     id_bytes(run.id()),
                     id_bytes(run.goal_contract().task_id()),
                     i64::from(run.goal_contract().revision().get()),
                     i64::from(run.task_ledger_revision().get()),
+                    id_bytes(model_profile.id()),
+                    i64::from(model_profile.version().get()),
                     controller_state_text(run.state()),
                     sequence_to_i64(run.last_event_sequence())?,
                     id_bytes(run.current_snapshot_id()),
@@ -200,7 +206,12 @@ async fn load_run_from_transaction(
     .map_err(RunJournalRepositoryError::GoalContract)?
     .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
     let run = AgentRun::reconstruct(
-        AgentRunIdentity::new(run_id, goal.reference(), header.task_ledger_revision),
+        AgentRunIdentity::new(
+            run_id,
+            goal.reference(),
+            header.task_ledger_revision,
+            header.model_profile,
+        ),
         AgentRunMaterializedState::new(
             header.state,
             header.last_event_sequence,
@@ -218,6 +229,7 @@ struct RunHeader {
     task_id: a3_domain::TaskId,
     goal_revision: GoalContractRevision,
     task_ledger_revision: TaskLedgerRevision,
+    model_profile: Option<ModelProfileReference>,
     state: AgentControllerState,
     last_event_sequence: RunEventSequence,
     current_snapshot_id: SnapshotId,
@@ -232,9 +244,9 @@ async fn read_run_header(
 ) -> Result<Option<RunHeader>, RunJournalRepositoryError> {
     let mut rows = transaction
         .query(
-            "SELECT r.task_id, r.goal_revision, r.task_ledger_revision, r.controller_state,
-             r.last_event_sequence, r.current_snapshot_id, r.created_at_unix_millis,
-             r.updated_at_unix_millis
+            "SELECT r.task_id, r.goal_revision, r.task_ledger_revision, r.model_profile_id,
+             r.model_profile_schema_version, r.controller_state, r.last_event_sequence,
+             r.current_snapshot_id, r.created_at_unix_millis, r.updated_at_unix_millis
              FROM agent_runs r JOIN tasks t ON t.task_id = r.task_id
              WHERE r.run_id = ?1 AND t.worktree_id = ?2",
             params![id_bytes(run_id), id_bytes(worktree_id)],
@@ -250,11 +262,12 @@ async fn read_run_header(
                 task_id: a3_domain::TaskId::from_bytes(read_id(&row, 0)?),
                 goal_revision: read_goal_revision(&row, 1)?,
                 task_ledger_revision: read_ledger_revision(&row, 2)?,
-                state: parse_controller_state(&read_text(&row, 3)?)?,
-                last_event_sequence: read_sequence(&row, 4)?,
-                current_snapshot_id: SnapshotId::from_bytes(read_id(&row, 5)?),
-                created_at: read_timestamp(&row, 6)?,
-                updated_at: read_timestamp(&row, 7)?,
+                model_profile: read_optional_model_profile_reference(&row, 3, 4)?,
+                state: parse_controller_state(&read_text(&row, 5)?)?,
+                last_event_sequence: read_sequence(&row, 6)?,
+                current_snapshot_id: SnapshotId::from_bytes(read_id(&row, 7)?),
+                created_at: read_timestamp(&row, 8)?,
+                updated_at: read_timestamp(&row, 9)?,
             })
         })
         .transpose()?;
@@ -731,7 +744,8 @@ stable_id_bytes!(
     TaskEvidenceId,
     ToolRunId,
     WorktreeId,
-    a3_domain::TaskId
+    a3_domain::TaskId,
+    ModelProfileId
 );
 
 fn read_id(row: &libsql::Row, index: i32) -> Result<[u8; 32], RunJournalRepositoryError> {
@@ -753,6 +767,33 @@ fn read_optional_id(
                 .map_err(|_| RunJournalRepositoryError::InvalidStoredData)
         })
         .transpose()
+}
+
+fn read_optional_model_profile_reference(
+    row: &libsql::Row,
+    id_index: i32,
+    version_index: i32,
+) -> Result<Option<ModelProfileReference>, RunJournalRepositoryError> {
+    let id = read_optional_id(row, id_index)?;
+    let version: Option<i64> = row
+        .get(version_index)
+        .map_err(RunJournalRepositoryError::Read)?;
+    match (id, version) {
+        (None, None) => Ok(None),
+        (Some(id), Some(version)) => {
+            let version = u16::try_from(version)
+                .map_err(|_| RunJournalRepositoryError::InvalidStoredData)
+                .and_then(|value| {
+                    ModelProfileVersion::from_u16(value)
+                        .map_err(|_| RunJournalRepositoryError::InvalidStoredData)
+                })?;
+            Ok(Some(ModelProfileReference::new(
+                ModelProfileId::from_bytes(id),
+                version,
+            )))
+        }
+        (None, Some(_)) | (Some(_), None) => Err(RunJournalRepositoryError::InvalidStoredData),
+    }
 }
 
 fn read_i64(row: &libsql::Row, index: i32) -> Result<i64, RunJournalRepositoryError> {
@@ -1037,9 +1078,10 @@ mod tests {
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRun,
         AgentRunId, AgentRunTimestamp, ExpectedTaskEvidence, GitHead, GitReferenceName,
         GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, IndexLanguage,
-        IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion, NonGoal, RunEventId,
-        Snapshot, SnapshotId, SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp,
-        TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationMethod,
+        IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion, ModelProfileId,
+        ModelProfileReference, ModelProfileVersion, NonGoal, RunEventId, Snapshot, SnapshotId,
+        SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition,
+        TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationMethod,
         VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeGeneration,
         WorktreeId,
     };
@@ -1127,6 +1169,10 @@ mod tests {
                 AgentRunId::from_bytes([178; 32]),
                 goal.reference(),
                 ledger.revision(),
+                ModelProfileReference::new(
+                    ModelProfileId::from_bytes([180; 32]),
+                    ModelProfileVersion::V1,
+                ),
                 snapshot_id,
                 RunEventId::from_bytes([179; 32]),
                 AgentRunTimestamp::from_unix_millis(3_002)?,
@@ -1136,7 +1182,29 @@ mod tests {
 
             assert_eq!(
                 load_run(&connection, worktree_id, run.id()).await?,
-                Some(run)
+                Some(run.clone())
+            );
+            connection
+                .execute(
+                    "UPDATE agent_runs SET model_profile_id = NULL,
+                     model_profile_schema_version = NULL WHERE run_id = ?1",
+                    libsql::params![run.id().as_bytes().to_vec()],
+                )
+                .await?;
+            let legacy = load_run(&connection, worktree_id, run.id())
+                .await?
+                .ok_or_else(|| std::io::Error::other("legacy materialized run disappeared"))?;
+            assert_eq!(legacy.model_profile(), None);
+            assert_eq!(legacy.id(), run.id());
+            assert!(
+                connection
+                    .execute(
+                        "UPDATE agent_runs SET model_profile_id = ?1 WHERE run_id = ?2",
+                        libsql::params![vec![181_u8; 32], run.id().as_bytes().to_vec()],
+                    )
+                    .await
+                    .is_err(),
+                "a partial durable model-profile reference must be rejected"
             );
             Ok::<(), Box<dyn Error>>(())
         })

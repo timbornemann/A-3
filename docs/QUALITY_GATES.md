@@ -41,7 +41,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Run-Journal-Contracts prüfen atomaren Start, Linked-Worktree-Isolation, genau einen Gewinner bei
   konkurrierenden Appends derselben Sequenz, lückenloses Paging, atomare Run-Materialisierung,
   Redaction ohne Secret-Fixture, deterministischen begrenzten JSONL-V1-Export und exakte
-  Wiederherstellung nach Reopen.
+  Wiederherstellung nach Reopen. Jeder neue Run behält dabei seine ModelProfile-ID und -Version;
+  V14-Adaptertests erlauben ausschließlich migrierte Legacy-Nullpaare und lehnen partielle
+  Profilreferenzen ab.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen

@@ -9,12 +9,12 @@ use a3_application::{
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
     AgentRun, AgentRunId, AgentRunTimestamp, ExpectedTaskEvidence, GoalConstraint, GoalContract,
-    GoalContractDraft, GoalContractTimestamp, GoalObjective, NonGoal, Progress, RepositoryId,
-    RunEventCode, RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
-    RunEventRedactionSource, SnapshotId, SuccessVerification, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
-    UserDecision, VerificationMethod, VerificationRequirement, VerificationSpec,
-    VerificationSpecId, WorktreeId,
+    GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId, ModelProfileReference,
+    ModelProfileVersion, NonGoal, Progress, RepositoryId, RunEventCode, RunEventId, RunEventKind,
+    RunEventOutcome, RunEventPayload, RunEventRedaction, RunEventRedactionSource, SnapshotId,
+    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
+    TaskStepOutcome, TaskStepRationale, UserDecision, VerificationMethod, VerificationRequirement,
+    VerificationSpec, VerificationSpecId, WorktreeId,
 };
 use futures::join;
 use std::sync::Mutex;
@@ -68,6 +68,10 @@ where
         run_id,
         goal.reference(),
         ledger.revision(),
+        ModelProfileReference::new(
+            ModelProfileId::from_bytes([165; 32]),
+            ModelProfileVersion::V1,
+        ),
         snapshot_id,
         RunEventId::from_bytes([156; 32]),
         AgentRunTimestamp::from_unix_millis(2_002)?,
@@ -125,6 +129,7 @@ where
         .load_agent_run(&first, run_id)
         .await?
         .ok_or_else(|| std::io::Error::other("materialized run disappeared"))?;
+    assert_eq!(current.model_profile(), initial_run.model_profile());
     assert_eq!(current.state(), AgentControllerState::Localize);
     assert_eq!(current.last_event_sequence().get(), 2);
     let expected_sequence = current.last_event_sequence();

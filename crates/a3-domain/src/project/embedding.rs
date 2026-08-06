@@ -1,6 +1,6 @@
 use super::{
-    BodyHash, NormalizedRetrievalSignal, NormalizedSemanticCard, SemanticCardId, SnapshotId,
-    SourceChannel,
+    BodyHash, ModelProfileId, NormalizedRetrievalSignal, NormalizedSemanticCard, SemanticCardId,
+    SnapshotId, SourceChannel,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -12,36 +12,6 @@ const MAX_EMBEDDING_DIMENSIONS: u16 = 8_192;
 const MAX_EMBEDDING_BATCH_SIZE: u16 = 64;
 const MAX_VECTOR_RESULTS: u16 = 100;
 const MAX_PERSISTED_TIMESTAMP_MILLIS: u64 = i64::MAX as u64;
-
-/// Stable compatibility identity derived from every vector-shaping profile field.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ModelProfileId([u8; 32]);
-
-impl ModelProfileId {
-    /// Reconstructs an ID after persisted profile metadata has been validated.
-    #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// Returns the canonical binary representation.
-    #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-impl fmt::Display for ModelProfileId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.0)
-    }
-}
-
-impl fmt::Debug for ModelProfileId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ModelProfileId({self})")
-    }
-}
 
 /// Validated provider identifier without endpoint or credential data.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -872,7 +842,7 @@ fn derive_profile_id(
     hasher.update(&[match normalization {
         EmbeddingVectorNormalization::L2Unit => 1,
     }]);
-    ModelProfileId(*hasher.finalize().as_bytes())
+    ModelProfileId::from_bytes(*hasher.finalize().as_bytes())
 }
 
 fn update_length_prefixed(hasher: &mut blake3::Hasher, value: &[u8]) {
@@ -881,22 +851,17 @@ fn update_length_prefixed(hasher: &mut blake3::Hasher, value: &[u8]) {
     hasher.update(value);
 }
 
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
-        EmbeddingProviderId, EmbeddingTimestamp, EmbeddingVector, EmbeddingVectorError,
-        ModelProfileId, VectorHit, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
-        VectorSearchResultError,
+        EmbeddingProviderId, EmbeddingTimestamp, EmbeddingVector, EmbeddingVectorError, VectorHit,
+        VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VectorSearchResultError,
     };
-    use crate::{BodyHash, NormalizedRetrievalSignal, SemanticCardId, SnapshotId, SourceChannel};
+    use crate::{
+        BodyHash, ModelProfileId, NormalizedRetrievalSignal, SemanticCardId, SnapshotId,
+        SourceChannel,
+    };
 
     fn profile(
         provider: &str,

@@ -1,6 +1,6 @@
 use super::{
-    AgentRunId, GoalContractReference, RunEventId, SnapshotId, TaskEvidenceId, TaskLedgerRevision,
-    ToolRunId,
+    AgentRunId, GoalContractReference, ModelProfileReference, RunEventId, SnapshotId,
+    TaskEvidenceId, TaskLedgerRevision, ToolRunId,
 };
 use std::error::Error;
 use std::fmt;
@@ -576,6 +576,7 @@ pub struct AgentRun {
     id: AgentRunId,
     goal_contract: GoalContractReference,
     task_ledger_revision: TaskLedgerRevision,
+    model_profile: Option<ModelProfileReference>,
     state: AgentControllerState,
     last_event_sequence: RunEventSequence,
     current_snapshot_id: SnapshotId,
@@ -589,6 +590,7 @@ impl AgentRun {
         id: AgentRunId,
         goal_contract: GoalContractReference,
         task_ledger_revision: TaskLedgerRevision,
+        model_profile: ModelProfileReference,
         snapshot_id: SnapshotId,
         event_id: RunEventId,
         created_at: AgentRunTimestamp,
@@ -604,6 +606,7 @@ impl AgentRun {
                 id,
                 goal_contract,
                 task_ledger_revision,
+                model_profile: Some(model_profile),
                 state: AgentControllerState::Intake,
                 last_event_sequence: RunEventSequence::FIRST,
                 current_snapshot_id: snapshot_id,
@@ -627,6 +630,7 @@ impl AgentRun {
             id: identity.id,
             goal_contract: identity.goal_contract,
             task_ledger_revision: identity.task_ledger_revision,
+            model_profile: identity.model_profile,
             state: materialized.state,
             last_event_sequence: materialized.last_event_sequence,
             current_snapshot_id: materialized.current_snapshot_id,
@@ -809,6 +813,12 @@ impl AgentRun {
         self.task_ledger_revision
     }
 
+    /// Returns the exact model profile, or `None` only for a pre-H5 legacy run.
+    #[must_use]
+    pub const fn model_profile(&self) -> Option<ModelProfileReference> {
+        self.model_profile
+    }
+
     /// Returns the current finite controller state.
     #[must_use]
     pub const fn state(&self) -> AgentControllerState {
@@ -846,6 +856,7 @@ pub struct AgentRunIdentity {
     id: AgentRunId,
     goal_contract: GoalContractReference,
     task_ledger_revision: TaskLedgerRevision,
+    model_profile: Option<ModelProfileReference>,
 }
 
 impl AgentRunIdentity {
@@ -855,11 +866,13 @@ impl AgentRunIdentity {
         id: AgentRunId,
         goal_contract: GoalContractReference,
         task_ledger_revision: TaskLedgerRevision,
+        model_profile: Option<ModelProfileReference>,
     ) -> Self {
         Self {
             id,
             goal_contract,
             task_ledger_revision,
+            model_profile,
         }
     }
 }
@@ -982,8 +995,9 @@ mod tests {
     };
     use crate::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, RunEventId,
-        SnapshotId, SuccessVerification, TaskEvidenceId, TaskId, TaskLedgerRevision,
+        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
+        ModelProfileReference, ModelProfileVersion, RunEventId, SnapshotId, SuccessVerification,
+        TaskEvidenceId, TaskId, TaskLedgerRevision,
     };
     use std::error::Error;
 
@@ -1123,6 +1137,10 @@ mod tests {
             AgentRunId::from_bytes([1; 32]),
             goal_contract()?.reference(),
             TaskLedgerRevision::INITIAL,
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([8; 32]),
+                ModelProfileVersion::V1,
+            ),
             snapshot(1),
             event_id(1),
             timestamp(1)?,

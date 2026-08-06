@@ -386,8 +386,17 @@ ungültige Rollen oder Daten nach `done` sind keine ausführbare Ausgabe.
 
 Fehler werden ausschließlich als `Unavailable`, `Rejected`, `InvalidResponse`, `TimedOut`,
 `Cancelled` oder `EndpointDenied` über die Adaptergrenze gegeben. Provider-Fehlertexte,
-HTTP-Payloads und Endpoints sind kein Teil dieser Typen. Das spätere `ModelProfile` bleibt H5
-vorbehalten und wird nicht aus `ModelId` abgeleitet.
+HTTP-Payloads und Endpoints sind kein Teil dieser Typen.
+
+`ModelProfile` V1 bindet Provider- und opaque Modell-ID an effektives Kontext- und Outputlimit,
+konservative Tokenzählung, Parallelitätslimit, fixed-point Temperatur und Top-p, kanonische
+Stopbedingungen, Schema-Grounding, expliziten Toolmodus und das Ergebnis einer echten
+Structured-Output-Probe. Alle runformenden Felder, Capabilitystatus und die Quellrevision fließen
+domänensepariert in `ModelProfileId` ein. Nur `Verified` aktiviert ausführbare strukturierte
+Aktionen. Ein manueller Override kann Limits und Laufparameter ändern, übernimmt aber den
+Capabilitystatus unverändert und kann eine fehlgeschlagene Probe nicht hochstufen. Die V1-
+Fallbackzählung bewertet jedes UTF-8-Byte als ein Token und ist damit deterministisch und
+tokenizerunabhängig konservativ; Stoptexte bleiben in Debugausgaben redigiert.
 
 ### Task
 
@@ -417,9 +426,11 @@ Invarianten:
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.
 Der implementierte H3-Kern bindet jeden `AgentRun` an genau eine `GoalContractReference`, die
-aktuelle `TaskLedgerRevision` und einen vorhandenen Snapshot. `RunEventSequence` beginnt bei eins
-und kann ausschließlich lückenlos wachsen. Jeder erlaubte Zustandsübergang und jeder Replan erzeugt
-ein typisiertes Event und aktualisiert zugleich die in-memory Materialisierung; terminale Runs
+aktuelle `TaskLedgerRevision` und einen vorhandenen Snapshot. Seit H5 trägt jeder neue Run außerdem
+die exakte `ModelProfileReference` aus Profil-ID und Schemaversion. Nur aus V13 migrierte Alt-Runs
+dürfen diesen Bezug explizit gemeinsam leer lassen. `RunEventSequence` beginnt bei eins und kann
+ausschließlich lückenlos wachsen. Jeder erlaubte Zustandsübergang und jeder Replan erzeugt ein
+typisiertes Event und aktualisiert zugleich die in-memory Materialisierung; terminale Runs
 akzeptieren keine weiteren Events.
 
 Invarianten:

@@ -95,6 +95,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Event und Materialisierung atomar in einer `IMMEDIATE`-Transaktion. Der Tail wird per
   Sequenz-Compare-and-Swap geschützt; Snapshot, Goal-Contract-Revision und Task-Ledger-Revision
   werden vor Mutation erneut validiert. Materialisierter Zustand wird ohne Journal-Replay gelesen.
+- Knowledge-Schema V14 ergänzt jeden neuen `agent_runs`-Datensatz um `ModelProfileId` und
+  `ModelProfileVersion`. Beide Felder sind gemeinsam gesetzt oder gemeinsam leer; Insert- und
+  Update-Trigger verhindern halbe Referenzen. Ausschließlich aus V13 migrierte Bestandsruns dürfen
+  als expliziter Legacyfall ohne Profilbezug lesbar bleiben. Der Storage-Adapter erstellt keinen
+  neuen Legacyrun und validiert ID-Länge sowie unterstützte Schemaversion erneut beim Lesen.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -326,6 +331,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   `RunStarted`; Zustands- und Ledgerübergänge besitzen vollständig typisierte Vorher-/Nachherwerte.
 - `agent_runs` und der neu angehängte `run_events`-Datensatz wechseln in derselben Transaktion.
   Ein veralteter Writer verliert den Compare-and-Swap und hinterlässt weder Event noch Teilzustand.
+- Jeder neue `agent_runs`-Datensatz referenziert eine vollständige `ModelProfileId` zusammen mit
+  genau der unterstützten Profilschemaversion. Ein migrierter Legacyrun hat beide Werte `NULL`;
+  gemischte Nullzustände sind durch Trigger und Adaptervalidierung ausgeschlossen.
 - Run-Event-Payloads enthalten nur geschlossene Codes, grobe Outcomes, content-freie
   Redaktionsmetadaten und den Digest dieser sicheren Struktur. Freitext, Modelloutput, Tooloutput,
   externe Fehlertexte und Secretwerte sind in diesem Schema nicht darstellbar.
@@ -396,6 +404,13 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V14 ergänzt V13 um den dauerhaften ModelProfile-Bezug jedes
+neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem expliziten
+Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
+Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
+eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
+Vorgängerversion bis V14 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

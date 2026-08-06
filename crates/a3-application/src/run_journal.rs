@@ -723,9 +723,9 @@ mod tests {
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRun,
         AgentRunId, AgentRunTimestamp, GoalContract, GoalContractDraft, GoalContractTimestamp,
-        GoalObjective, RunEventId, RunEventIdentity, RunEventKind, RunEventOccurrence,
-        RunEventPayload, RunEventSequence, SnapshotId, SuccessVerification, TaskId,
-        TaskLedgerRevision,
+        GoalObjective, ModelProfileId, ModelProfileReference, ModelProfileVersion, RunEventId,
+        RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventPayload, RunEventSequence,
+        SnapshotId, SuccessVerification, TaskId, TaskLedgerRevision,
     };
     use std::error::Error;
 
@@ -752,6 +752,10 @@ mod tests {
             AgentRunId::from_bytes([3; 32]),
             goal.reference(),
             TaskLedgerRevision::INITIAL,
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([8; 32]),
+                ModelProfileVersion::V1,
+            ),
             SnapshotId::from_bytes([4; 32]),
             RunEventId::from_bytes([5; 32]),
             AgentRunTimestamp::from_unix_millis(1)?,
