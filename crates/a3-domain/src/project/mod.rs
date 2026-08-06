@@ -22,6 +22,7 @@ mod path;
 mod retrieval;
 mod retrieval_fusion;
 mod revision;
+mod run_memory;
 mod semantic_card;
 mod snapshot;
 mod task_ledger;
@@ -177,6 +178,10 @@ pub use retrieval_fusion::{
 pub use revision::{
     FileDelta, FileRevision, RenameCandidate, RepositoryFileState, RepositoryFileStateError,
     SnapshotDelta,
+};
+pub use run_memory::{
+    CompactedRunClaim, CompactedStepResult, OpenRunIssue, OpenRunIssueKind, RunMemoryCheckpoint,
+    RunMemoryCompileError, RunMemoryDigest, RunMemoryPolicyVersion, StepResultSource,
 };
 pub use semantic_card::{
     BodyHash, NormalizedSemanticCard, SemanticCardBatch, SemanticCardBatchError, SemanticCardId,

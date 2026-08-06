@@ -482,6 +482,12 @@ impl TaskLensClaim {
     pub fn evidence(&self) -> &[ResolvedModuleCardEvidence] {
         &self.evidence
     }
+
+    /// Returns whether run, snapshot, module, status, and every Evidence ID resolve currently.
+    #[must_use]
+    pub fn is_current_for(&self, published: &PublishedIndex) -> bool {
+        claim_is_current(published, self)
+    }
 }
 
 impl fmt::Debug for TaskLensClaim {
@@ -1194,7 +1200,9 @@ fn resolve_claim_target(
 
 fn claim_is_current(published: &PublishedIndex, claim: &TaskLensClaim) -> bool {
     let run = published.run();
-    if claim.status() != VerifiedClaimStatus::Active
+    if claim.source_index_run_id() != run.id()
+        || claim.snapshot_id() != run.snapshot_id()
+        || claim.status() != VerifiedClaimStatus::Active
         || !published
             .publication()
             .modules()
