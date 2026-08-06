@@ -100,6 +100,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Update-Trigger verhindern halbe Referenzen. Ausschließlich aus V13 migrierte Bestandsruns dürfen
   als expliziter Legacyfall ohne Profilbezug lesbar bleiben. Der Storage-Adapter erstellt keinen
   neuen Legacyrun und validiert ID-Länge sowie unterstützte Schemaversion erneut beim Lesen.
+- Knowledge-Schema V15 ergänzt unveränderliche Turn-, Token-, Action-, Zeit- und Repair-Limits
+  sowie materialisierte kumulative Verbrauchszähler in `agent_runs`. Jeder neue
+  `model_interaction`-Event trägt seine Prompt-/Outputtokens, die optionale einzige Actionklasse
+  und den Verbrauch des einmaligen Repairpfads. Checks und Trigger verhindern ungültige
+  Kardinalitäten, halbe Turn-Charges, Charges auf anderen Eventtypen und spätere Budgetänderungen.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -334,6 +339,9 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - Jeder neue `agent_runs`-Datensatz referenziert eine vollständige `ModelProfileId` zusammen mit
   genau der unterstützten Profilschemaversion. Ein migrierter Legacyrun hat beide Werte `NULL`;
   gemischte Nullzustände sind durch Trigger und Adaptervalidierung ausgeschlossen.
+- Das am Runstart gewählte Budget ist unveränderlich. Turn-, Action- und Repairzähler werden mit
+  genau dem zugehörigen `model_interaction`-Event in derselben Sequenz-CAS-Transaktion erhöht;
+  `action_count` und `repair_count` können nie größer als `turn_count` sein.
 - Run-Event-Payloads enthalten nur geschlossene Codes, grobe Outcomes, content-freie
   Redaktionsmetadaten und den Digest dieser sicheren Struktur. Freitext, Modelloutput, Tooloutput,
   externe Fehlertexte und Secretwerte sind in diesem Schema nicht darstellbar.
@@ -405,12 +413,18 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V15 ergänzt V14 um unveränderliche Controllerbudgets,
+kumulative Verbrauchszähler und vollständige per-Turn-Charges. Der gemeinsame Adaptervertrag
+belegt die atomare Aktualisierung von Event und Nutzung sowie ihre exakte Wiederherstellung nach
+Reopen. Migrationstests decken leeres Schema, jeden Vorgänger bis V14 und den vollständigen
+Rollback eines fehlgeschlagenen V14→V15-Upgrades ab.
+
 Das implementierte Knowledge-Schema V14 ergänzt V13 um den dauerhaften ModelProfile-Bezug jedes
 neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem expliziten
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V14 in einer eigenen atomaren Migration.
+Vorgängerversion bis V15 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,
@@ -521,12 +535,14 @@ Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Do
 - Index und Embeddings dürfen sicher gelöscht und aufgebaut werden.
 - Task, Decisions und User-Evidence benötigen Backup vor Cleanup.
 - Vollständige Toollogs können nach Policy gekürzt werden; Digest, Status, relevante Evidence und Verifikation bleiben.
-- Strukturierte RunEvents selbst werden in V1 nicht gekürzt: Die Retention-Policy
+- Strukturierte RunEvents selbst werden nicht gekürzt: Die Retention-Policy
   `PreserveAuditEvents` behält das content-freie Auditjournal vollständig. Rohe Modell-, Tool- und
   Fehlertexte gelangen nie in das Journal und müssen deshalb dort nicht nachträglich gelöscht
   werden. Ein Rebuild oder Cleanup darf weder `agent_runs` noch `run_events` entfernen.
-- `a3.run-journal.jsonl` V1 exportiert eine Headerzeile und danach exakt einen kanonischen,
-  schema-versionierten JSON-Datensatz pro Event. Der Export ist auf 10.000 Events und 8 MiB
-  begrenzt, paginiert Storagezugriffe mit höchstens 256 Events, unterstützt Cancellation und
-  monotonen Progress und enthält ausschließlich dieselben content-freien Felder wie die DB.
+- `a3.run-journal.jsonl` V2 exportiert zusätzlich die unveränderlichen Budgets, den kumulativen
+  Verbrauch und die content-freien per-Turn-Charges. Es schreibt eine Headerzeile und danach exakt
+  einen kanonischen, schema-versionierten JSON-Datensatz pro Event. Der Export ist auf 10.000
+  Events und 8 MiB begrenzt, paginiert Storagezugriffe mit höchstens 256 Events, unterstützt
+  Cancellation und monotonen Progress und enthält ausschließlich dieselben content-freien Felder
+  wie die DB.
 - Ein Rebuild darf keine Task-Historie oder Decisions verlieren.

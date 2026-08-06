@@ -1,4 +1,5 @@
 mod agent_action;
+mod agent_controller;
 mod agent_run;
 mod claim_verification;
 mod context_pack;
@@ -36,6 +37,13 @@ pub use agent_action::{
     AgentFileStartLine, AgentFileStartLineError, AgentFinishAction, AgentGraphInspection,
     AgentInspectAction, AgentInspectTarget, AgentLedgerUpdate, AgentSearchAction, AgentSearchLimit,
     AgentSearchLimitError, AgentSearchQuery, AgentTestSelector, AgentUpdateLedgerAction,
+};
+pub use agent_controller::{
+    AgentActionLimit, AgentActionLimitError, AgentBudgetDimension, AgentBudgetEvaluationError,
+    AgentBudgetExhaustion, AgentRepairLimit, AgentRepairLimitError, AgentRunBudget,
+    AgentRunDurationLimit, AgentRunDurationLimitError, AgentRunUsage, AgentRunUsageError,
+    AgentTokenLimit, AgentTokenLimitError, AgentTurnActionClass, AgentTurnCharge, AgentTurnLimit,
+    AgentTurnLimitError, AgentTurnRepairUsage,
 };
 pub use agent_run::{
     AgentControllerState, AgentRun, AgentRunError, AgentRunIdentity, AgentRunMaterializedState,

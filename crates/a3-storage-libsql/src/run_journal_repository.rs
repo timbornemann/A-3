@@ -1,12 +1,14 @@
 use crate::{catalog::is_corruption, goal_contract_repository, task_ledger_repository};
 use a3_application::{RunEventPage, RunEventPageLimit, RunJournalStoreFailure};
 use a3_domain::{
-    AgentControllerState, AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState,
-    AgentRunTimestamp, AgentRunTiming, GoalContractRevision, ModelProfileId, ModelProfileReference,
-    ModelProfileVersion, RunEvent, RunEventCode, RunEventId, RunEventIdentity, RunEventKind,
-    RunEventOccurrence, RunEventOutcome, RunEventPayload, RunEventRedaction,
-    RunEventRedactionSource, RunEventSequence, RunEventSubject, RunPayloadDigest, SnapshotId,
-    TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
+    AgentActionLimit, AgentControllerState, AgentRepairLimit, AgentRun, AgentRunBudget,
+    AgentRunDurationLimit, AgentRunId, AgentRunIdentity, AgentRunMaterializedState,
+    AgentRunTimestamp, AgentRunTiming, AgentRunUsage, AgentTokenLimit, AgentTurnActionClass,
+    AgentTurnCharge, AgentTurnLimit, AgentTurnRepairUsage, GoalContractRevision, ModelProfileId,
+    ModelProfileReference, ModelProfileVersion, ModelTokenCount, RunEvent, RunEventCode,
+    RunEventId, RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome,
+    RunEventPayload, RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSubject,
+    RunPayloadDigest, SnapshotId, TaskEvidenceId, TaskLedgerRevision, ToolRunId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -41,8 +43,12 @@ pub(crate) async fn create(
                 "INSERT INTO agent_runs (
                  run_id, task_id, goal_revision, task_ledger_revision, model_profile_id,
                  model_profile_schema_version, controller_state, last_event_sequence,
-                 current_snapshot_id, created_at_unix_millis, updated_at_unix_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 current_snapshot_id, created_at_unix_millis, updated_at_unix_millis,
+                 turn_limit, prompt_token_limit, output_token_limit, action_limit,
+                 duration_limit_millis, repair_limit, turn_count, prompt_tokens_used,
+                 output_tokens_used, action_count, repair_count
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     id_bytes(run.id()),
                     id_bytes(run.goal_contract().task_id()),
@@ -54,7 +60,18 @@ pub(crate) async fn create(
                     sequence_to_i64(run.last_event_sequence())?,
                     id_bytes(run.current_snapshot_id()),
                     timestamp_to_i64(run.created_at()),
-                    timestamp_to_i64(run.updated_at())
+                    timestamp_to_i64(run.updated_at()),
+                    i64::from(run.budget().turn_limit().get()),
+                    u64_to_i64(run.budget().prompt_token_limit().get())?,
+                    u64_to_i64(run.budget().output_token_limit().get())?,
+                    i64::from(run.budget().action_limit().get()),
+                    u64_to_i64(run.budget().duration_limit().millis())?,
+                    i64::from(run.budget().repair_limit().get()),
+                    i64::from(run.usage().turn_count()),
+                    u64_to_i64(run.usage().prompt_tokens())?,
+                    u64_to_i64(run.usage().output_tokens())?,
+                    i64::from(run.usage().action_count()),
+                    i64::from(run.usage().repair_count())
                 ],
             )
             .await
@@ -100,14 +117,20 @@ pub(crate) async fn append(
             .execute(
                 "UPDATE agent_runs SET task_ledger_revision = ?1, controller_state = ?2,
                  last_event_sequence = ?3, current_snapshot_id = ?4,
-                 updated_at_unix_millis = ?5
-                 WHERE run_id = ?6 AND last_event_sequence = ?7",
+                 updated_at_unix_millis = ?5, turn_count = ?6, prompt_tokens_used = ?7,
+                 output_tokens_used = ?8, action_count = ?9, repair_count = ?10
+                 WHERE run_id = ?11 AND last_event_sequence = ?12",
                 params![
                     i64::from(run.task_ledger_revision().get()),
                     controller_state_text(run.state()),
                     sequence_to_i64(run.last_event_sequence())?,
                     id_bytes(run.current_snapshot_id()),
                     timestamp_to_i64(run.updated_at()),
+                    i64::from(run.usage().turn_count()),
+                    u64_to_i64(run.usage().prompt_tokens())?,
+                    u64_to_i64(run.usage().output_tokens())?,
+                    i64::from(run.usage().action_count()),
+                    i64::from(run.usage().repair_count()),
                     id_bytes(run.id()),
                     sequence_to_i64(expected_last_sequence)?
                 ],
@@ -162,7 +185,8 @@ pub(crate) async fn load_events(
                  state_from, state_to, ledger_revision_from, ledger_revision_to,
                  payload_schema_version, payload_code, payload_outcome, redaction_source,
                  redaction_observed_bytes, redaction_source_truncated, payload_digest,
-                 snapshot_id, subject_kind, subject_id
+                 snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
+                 turn_output_tokens, turn_action_kind, turn_repair_used
                  FROM run_events WHERE run_id = ?1 AND event_sequence > ?2
                  ORDER BY event_sequence LIMIT ?3",
                 params![
@@ -206,16 +230,18 @@ async fn load_run_from_transaction(
     .map_err(RunJournalRepositoryError::GoalContract)?
     .ok_or(RunJournalRepositoryError::InvalidStoredData)?;
     let run = AgentRun::reconstruct(
-        AgentRunIdentity::new(
+        AgentRunIdentity::with_budget(
             run_id,
             goal.reference(),
             header.task_ledger_revision,
             header.model_profile,
+            header.budget,
         ),
-        AgentRunMaterializedState::new(
+        AgentRunMaterializedState::with_usage(
             header.state,
             header.last_event_sequence,
             header.current_snapshot_id,
+            header.usage,
         ),
         AgentRunTiming::new(header.created_at, header.updated_at),
     )
@@ -230,6 +256,8 @@ struct RunHeader {
     goal_revision: GoalContractRevision,
     task_ledger_revision: TaskLedgerRevision,
     model_profile: Option<ModelProfileReference>,
+    budget: AgentRunBudget,
+    usage: AgentRunUsage,
     state: AgentControllerState,
     last_event_sequence: RunEventSequence,
     current_snapshot_id: SnapshotId,
@@ -246,7 +274,10 @@ async fn read_run_header(
         .query(
             "SELECT r.task_id, r.goal_revision, r.task_ledger_revision, r.model_profile_id,
              r.model_profile_schema_version, r.controller_state, r.last_event_sequence,
-             r.current_snapshot_id, r.created_at_unix_millis, r.updated_at_unix_millis
+             r.current_snapshot_id, r.created_at_unix_millis, r.updated_at_unix_millis,
+             r.turn_limit, r.prompt_token_limit, r.output_token_limit, r.action_limit,
+             r.duration_limit_millis, r.repair_limit, r.turn_count, r.prompt_tokens_used,
+             r.output_tokens_used, r.action_count, r.repair_count
              FROM agent_runs r JOIN tasks t ON t.task_id = r.task_id
              WHERE r.run_id = ?1 AND t.worktree_id = ?2",
             params![id_bytes(run_id), id_bytes(worktree_id)],
@@ -263,6 +294,8 @@ async fn read_run_header(
                 goal_revision: read_goal_revision(&row, 1)?,
                 task_ledger_revision: read_ledger_revision(&row, 2)?,
                 model_profile: read_optional_model_profile_reference(&row, 3, 4)?,
+                budget: read_run_budget(&row, 10)?,
+                usage: read_run_usage(&row, 16)?,
                 state: parse_controller_state(&read_text(&row, 5)?)?,
                 last_event_sequence: read_sequence(&row, 6)?,
                 current_snapshot_id: SnapshotId::from_bytes(read_id(&row, 7)?),
@@ -352,7 +385,9 @@ fn validate_start_pair(run: &AgentRun, event: &RunEvent) -> Result<(), RunJourna
         || event.occurred_at() != run.created_at()
         || event.snapshot_id() != run.current_snapshot_id()
         || event.subject().is_some()
+        || event.turn_charge().is_some()
         || event.payload() != &RunEventPayload::empty()
+        || run.usage() != AgentRunUsage::ZERO
     {
         return Err(RunJournalRepositoryError::InvalidInput);
     }
@@ -407,6 +442,19 @@ async fn write_event(
         Some(RunEventSubject::Evidence(id)) => (Some("evidence"), Some(id_bytes(id))),
         None => (None, None),
     };
+    let (turn_prompt_tokens, turn_output_tokens, turn_action_kind, turn_repair_used) =
+        match event.turn_charge() {
+            Some(charge) => (
+                Some(i64::from(charge.prompt_tokens().get())),
+                Some(i64::from(charge.output_tokens().get())),
+                charge.action().map(turn_action_class_text),
+                Some(i64::from(matches!(
+                    charge.repair(),
+                    AgentTurnRepairUsage::One
+                ))),
+            ),
+            None => (None, None, None, None),
+        };
     transaction
         .execute(
             "INSERT INTO run_events (
@@ -414,9 +462,10 @@ async fn write_event(
              state_from, state_to, ledger_revision_from, ledger_revision_to,
              payload_schema_version, payload_code, payload_outcome, redaction_source,
              redaction_observed_bytes, redaction_source_truncated, payload_digest,
-             snapshot_id, subject_kind, subject_id
+             snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
+             turn_output_tokens, turn_action_kind, turn_repair_used
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12,
-             ?13, ?14, ?15, ?16, ?17, ?18)",
+             ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 id_bytes(event.run_id()),
                 sequence_to_i64(event.sequence())?,
@@ -435,7 +484,11 @@ async fn write_event(
                 event.payload().digest().as_bytes().to_vec(),
                 id_bytes(event.snapshot_id()),
                 subject_kind,
-                subject_id
+                subject_id,
+                turn_prompt_tokens,
+                turn_output_tokens,
+                turn_action_kind,
+                turn_repair_used
             ],
         )
         .await
@@ -454,7 +507,8 @@ async fn read_event(
              state_from, state_to, ledger_revision_from, ledger_revision_to,
              payload_schema_version, payload_code, payload_outcome, redaction_source,
              redaction_observed_bytes, redaction_source_truncated, payload_digest,
-             snapshot_id, subject_kind, subject_id
+             snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
+             turn_output_tokens, turn_action_kind, turn_repair_used
              FROM run_events WHERE run_id = ?1 AND event_sequence = ?2",
             params![id_bytes(run_id), sequence_to_i64(sequence)?],
         )
@@ -527,9 +581,48 @@ fn read_event_row(
         _ => return Err(RunJournalRepositoryError::InvalidStoredData),
     };
     let kind = parse_event_kind(&kind_text, state_from, state_to, ledger_from, ledger_to)?;
+    let turn_prompt_tokens = read_optional_u64(row, 18)?;
+    let turn_output_tokens = read_optional_u64(row, 19)?;
+    let turn_action = read_optional_text(row, 20)?
+        .map(|value| parse_turn_action_class(&value))
+        .transpose()?;
+    let turn_repair = read_optional_bool(row, 21)?;
+    let occurrence = match (
+        turn_prompt_tokens,
+        turn_output_tokens,
+        turn_action,
+        turn_repair,
+    ) {
+        (None, None, None, None) => RunEventOccurrence::new(occurred_at, snapshot_id, subject),
+        (Some(prompt), Some(output), action, Some(repair))
+            if kind == RunEventKind::ModelInteraction && subject.is_none() =>
+        {
+            RunEventOccurrence::for_turn(
+                occurred_at,
+                snapshot_id,
+                AgentTurnCharge::new(
+                    ModelTokenCount::new(
+                        u32::try_from(prompt)
+                            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+                    ),
+                    ModelTokenCount::new(
+                        u32::try_from(output)
+                            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+                    ),
+                    action,
+                    if repair {
+                        AgentTurnRepairUsage::One
+                    } else {
+                        AgentTurnRepairUsage::None
+                    },
+                ),
+            )
+        }
+        _ => return Err(RunJournalRepositoryError::InvalidStoredData),
+    };
     RunEvent::reconstruct(
         RunEventIdentity::new(event_id, run_id, sequence),
-        RunEventOccurrence::new(occurred_at, snapshot_id, subject),
+        occurrence,
         kind,
         payload,
     )
@@ -634,6 +727,25 @@ fn parse_controller_state(value: &str) -> Result<AgentControllerState, RunJourna
         "done" => Ok(AgentControllerState::Done),
         "failed" => Ok(AgentControllerState::Failed),
         "cancelled" => Ok(AgentControllerState::Cancelled),
+        _ => Err(RunJournalRepositoryError::InvalidStoredData),
+    }
+}
+
+fn turn_action_class_text(action: AgentTurnActionClass) -> &'static str {
+    match action {
+        AgentTurnActionClass::Search => "search",
+        AgentTurnActionClass::Inspect => "inspect",
+        AgentTurnActionClass::UpdateLedger => "update_ledger",
+        AgentTurnActionClass::Finish => "finish",
+    }
+}
+
+fn parse_turn_action_class(value: &str) -> Result<AgentTurnActionClass, RunJournalRepositoryError> {
+    match value {
+        "search" => Ok(AgentTurnActionClass::Search),
+        "inspect" => Ok(AgentTurnActionClass::Inspect),
+        "update_ledger" => Ok(AgentTurnActionClass::UpdateLedger),
+        "finish" => Ok(AgentTurnActionClass::Finish),
         _ => Err(RunJournalRepositoryError::InvalidStoredData),
     }
 }
@@ -798,6 +910,48 @@ fn read_optional_model_profile_reference(
 
 fn read_i64(row: &libsql::Row, index: i32) -> Result<i64, RunJournalRepositoryError> {
     row.get(index).map_err(RunJournalRepositoryError::Read)
+}
+
+fn read_u32(row: &libsql::Row, index: i32) -> Result<u32, RunJournalRepositoryError> {
+    u32::try_from(read_i64(row, index)?).map_err(|_| RunJournalRepositoryError::InvalidStoredData)
+}
+
+fn read_u64(row: &libsql::Row, index: i32) -> Result<u64, RunJournalRepositoryError> {
+    u64::try_from(read_i64(row, index)?).map_err(|_| RunJournalRepositoryError::InvalidStoredData)
+}
+
+fn read_run_budget(
+    row: &libsql::Row,
+    first_index: i32,
+) -> Result<AgentRunBudget, RunJournalRepositoryError> {
+    Ok(AgentRunBudget::new(
+        AgentTurnLimit::new(read_u32(row, first_index)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+        AgentTokenLimit::new(read_u64(row, first_index + 1)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+        AgentTokenLimit::new(read_u64(row, first_index + 2)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+        AgentActionLimit::new(read_u32(row, first_index + 3)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+        AgentRunDurationLimit::from_millis(read_u64(row, first_index + 4)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+        AgentRepairLimit::new(read_u32(row, first_index + 5)?)
+            .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?,
+    ))
+}
+
+fn read_run_usage(
+    row: &libsql::Row,
+    first_index: i32,
+) -> Result<AgentRunUsage, RunJournalRepositoryError> {
+    AgentRunUsage::reconstruct(
+        read_u32(row, first_index)?,
+        read_u64(row, first_index + 1)?,
+        read_u64(row, first_index + 2)?,
+        read_u32(row, first_index + 3)?,
+        read_u32(row, first_index + 4)?,
+    )
+    .map_err(|_| RunJournalRepositoryError::InvalidStoredData)
 }
 
 fn read_text(row: &libsql::Row, index: i32) -> Result<String, RunJournalRepositoryError> {

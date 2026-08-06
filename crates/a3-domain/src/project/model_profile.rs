@@ -509,6 +509,12 @@ impl ModelTokenCountingStrategy {
 pub struct ModelTokenCount(u32);
 
 impl ModelTokenCount {
+    /// Creates an exact token count already bounded by the shared 32-bit arithmetic range.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
     fn from_usize(value: usize) -> Result<Self, ModelTokenCountError> {
         u32::try_from(value)
             .map(Self)

@@ -1402,6 +1402,65 @@ const KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION: Migration = Migration {
+    version: 15,
+    name: "durable_agent_run_budgets",
+    sql: "ALTER TABLE agent_runs ADD COLUMN turn_limit INTEGER NOT NULL DEFAULT 128
+        CHECK (turn_limit BETWEEN 1 AND 10000);\n\
+      ALTER TABLE agent_runs ADD COLUMN prompt_token_limit INTEGER NOT NULL DEFAULT 2097152
+        CHECK (prompt_token_limit >= 1);\n\
+      ALTER TABLE agent_runs ADD COLUMN output_token_limit INTEGER NOT NULL DEFAULT 524288
+        CHECK (output_token_limit >= 1);\n\
+      ALTER TABLE agent_runs ADD COLUMN action_limit INTEGER NOT NULL DEFAULT 128
+        CHECK (action_limit BETWEEN 1 AND 100000);\n\
+      ALTER TABLE agent_runs ADD COLUMN duration_limit_millis INTEGER NOT NULL DEFAULT 7200000
+        CHECK (duration_limit_millis BETWEEN 1 AND 604800000);\n\
+      ALTER TABLE agent_runs ADD COLUMN repair_limit INTEGER NOT NULL DEFAULT 32
+        CHECK (repair_limit BETWEEN 1 AND 10000);\n\
+      ALTER TABLE agent_runs ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0
+        CHECK (turn_count BETWEEN 0 AND 4294967295);\n\
+      ALTER TABLE agent_runs ADD COLUMN prompt_tokens_used INTEGER NOT NULL DEFAULT 0
+        CHECK (prompt_tokens_used >= 0);\n\
+      ALTER TABLE agent_runs ADD COLUMN output_tokens_used INTEGER NOT NULL DEFAULT 0
+        CHECK (output_tokens_used >= 0);\n\
+      ALTER TABLE agent_runs ADD COLUMN action_count INTEGER NOT NULL DEFAULT 0
+        CHECK (action_count BETWEEN 0 AND 4294967295 AND action_count <= turn_count);\n\
+      ALTER TABLE agent_runs ADD COLUMN repair_count INTEGER NOT NULL DEFAULT 0
+        CHECK (repair_count BETWEEN 0 AND 4294967295 AND repair_count <= turn_count);\n\
+      ALTER TABLE run_events ADD COLUMN turn_prompt_tokens INTEGER
+        CHECK (turn_prompt_tokens IS NULL OR turn_prompt_tokens BETWEEN 0 AND 4294967295);\n\
+      ALTER TABLE run_events ADD COLUMN turn_output_tokens INTEGER
+        CHECK (turn_output_tokens IS NULL OR turn_output_tokens BETWEEN 0 AND 4294967295);\n\
+      ALTER TABLE run_events ADD COLUMN turn_action_kind TEXT
+        CHECK (turn_action_kind IS NULL OR
+          turn_action_kind IN ('search', 'inspect', 'update_ledger', 'finish'));\n\
+      ALTER TABLE run_events ADD COLUMN turn_repair_used INTEGER
+        CHECK (turn_repair_used IS NULL OR turn_repair_used IN (0, 1));\n\
+      CREATE TRIGGER agent_runs_budget_immutable_guard
+      BEFORE UPDATE OF turn_limit, prompt_token_limit, output_token_limit, action_limit,
+        duration_limit_millis, repair_limit ON agent_runs
+      WHEN NEW.turn_limit <> OLD.turn_limit
+        OR NEW.prompt_token_limit <> OLD.prompt_token_limit
+        OR NEW.output_token_limit <> OLD.output_token_limit
+        OR NEW.action_limit <> OLD.action_limit
+        OR NEW.duration_limit_millis <> OLD.duration_limit_millis
+        OR NEW.repair_limit <> OLD.repair_limit
+      BEGIN
+        SELECT RAISE(ABORT, 'agent run budgets are immutable');
+      END;\n\
+      CREATE TRIGGER run_events_turn_charge_insert_guard
+      BEFORE INSERT ON run_events
+      WHEN (NEW.event_kind = 'model_interaction' AND
+          (NEW.turn_prompt_tokens IS NULL OR NEW.turn_output_tokens IS NULL OR
+           NEW.turn_repair_used IS NULL))
+        OR (NEW.event_kind <> 'model_interaction' AND
+          (NEW.turn_prompt_tokens IS NOT NULL OR NEW.turn_output_tokens IS NOT NULL OR
+           NEW.turn_action_kind IS NOT NULL OR NEW.turn_repair_used IS NOT NULL))
+      BEGIN
+        SELECT RAISE(ABORT, 'run event turn charge is invalid');
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1417,6 +1476,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_TASK_LEDGER_MIGRATION,
     KNOWLEDGE_RUN_JOURNAL_MIGRATION,
     KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION,
+    KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1449,7 +1509,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(14);
+    pub const CURRENT: Self = Self::new(15);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1875,9 +1935,40 @@ mod tests {
             assert_eq!(
                 query_i64(
                     &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name IN (
+                     'turn_limit', 'prompt_token_limit', 'output_token_limit', 'action_limit',
+                     'duration_limit_millis', 'repair_limit', 'turn_count',
+                     'prompt_tokens_used', 'output_tokens_used', 'action_count', 'repair_count')",
+                )
+                .await?,
+                11
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('run_events') WHERE name IN (
+                     'turn_prompt_tokens', 'turn_output_tokens', 'turn_action_kind',
+                     'turn_repair_used')",
+                )
+                .await?,
+                4
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
                      AND name IN ('agent_runs_profile_insert_guard',
                        'agent_runs_profile_update_guard')",
+                )
+                .await?,
+                2
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+                     'agent_runs_budget_immutable_guard',
+                     'run_events_turn_charge_insert_guard')",
                 )
                 .await?,
                 2
@@ -2597,6 +2688,68 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
                      AND name = 'agent_runs_profile_insert_guard'",
+                )
+                .await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v15_upgrade_preserves_v14_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [54; 32];
+            let worktree_id = [55; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..14],
+                14,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TRIGGER agent_runs_budget_immutable_guard
+                     BEFORE INSERT ON agent_runs BEGIN SELECT 1; END",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 15, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 14);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_runs')
+                     WHERE name = 'turn_limit'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('run_events')
+                     WHERE name = 'turn_prompt_tokens'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name = 'agent_runs_budget_immutable_guard'",
                 )
                 .await?,
                 1

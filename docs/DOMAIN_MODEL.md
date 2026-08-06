@@ -492,9 +492,17 @@ ausschließlich lückenlos wachsen. Jeder erlaubte Zustandsübergang und jeder R
 typisiertes Event und aktualisiert zugleich die in-memory Materialisierung; terminale Runs
 akzeptieren keine weiteren Events.
 
+H9 ergänzt ein am Start unveränderliches `AgentRunBudget` für Turns, Prompt-/Outputtokens,
+Actionen, Laufzeit und Structured-Output-Repairs. Jeder `ModelInteraction`-Event besitzt eine
+`AgentTurnCharge`; ihr optionales `AgentTurnActionClass` kann strukturell nur null oder genau eine
+Actionklasse enthalten. `AgentRunUsage` wird mit dem Event angewendet und persistent mit derselben
+Sequenz-CAS-Transaktion materialisiert. Erschöpfung wird in der festen Reihenfolge Zeit, Turns,
+Prompttokens, Outputtokens, Actionen und Repairs ausgewertet und bleibt ab dem Grenzwert sichtbar.
+
 Invarianten:
 
 - Pro Turn gibt es höchstens eine ausführbare Tool Action.
+- Jeder Turn erhöht genau einen Turnzähler; Token-, Action- und Repairverbrauch überleben Reopen.
 - Mutierende Tool Actions werden serialisiert.
 - Ein Turn verweist auf genau einen Snapshot.
 - Vor einer Mutation wird geprüft, ob der erwartete Snapshot noch aktuell ist.
@@ -607,6 +615,10 @@ beobachteter Bytezahl und Trunkierungsflag sowie einen domain-separierten Digest
 Felder. Ein `RunEventSubject` kann nur eine typisierte `ToolRunId` oder `TaskEvidenceId` sein.
 Roher User-, Repository-, Modell-, Tool- oder Fehlertext kann daher weder persistiert noch über das
 stabile JSONL-Exportformat rekonstruiert werden.
+
+`a3.run-journal.jsonl` V2 ergänzt im Header das unveränderliche Runbudget und die kumulative
+Nutzung sowie je Event optionale content-freie Turn-Charges. Alte V1-Felder bleiben unverändert;
+Rohtext oder Providerpayloads werden auch durch die neuen Felder nicht darstellbar.
 
 Die V1-Retention `PreserveAuditEvents` ist nicht destruktiv: Das bereits content-freie Journal bleibt
 als Audit erhalten. `agent_runs` ist eine unabhängige relationale Projektion und kann ohne Replay

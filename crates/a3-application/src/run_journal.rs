@@ -1,7 +1,8 @@
 use crate::JobContext;
 use a3_domain::{
-    AgentControllerState, AgentRun, AgentRunId, Progress, ProjectIdentity, RunEvent, RunEventCode,
-    RunEventKind, RunEventOutcome, RunEventRedactionSource, RunEventSequence, RunEventSubject,
+    AgentControllerState, AgentRun, AgentRunId, AgentTurnActionClass, AgentTurnRepairUsage,
+    Progress, ProjectIdentity, RunEvent, RunEventCode, RunEventKind, RunEventOutcome,
+    RunEventRedactionSource, RunEventSequence, RunEventSubject,
 };
 use serde_json::{Map, Value};
 use std::error::Error;
@@ -289,7 +290,7 @@ impl RunJournalExport {
         self.schema_version
     }
 
-    /// Returns the non-destructive V1 audit retention policy declared by the export.
+    /// Returns the non-destructive audit retention policy declared by the export.
     #[must_use]
     pub const fn retention_policy(&self) -> RunJournalRetentionPolicy {
         self.retention_policy
@@ -301,6 +302,8 @@ impl RunJournalExport {
 pub enum RunJournalExportSchemaVersion {
     /// Header plus one content-free event record per immutable journal row.
     V1,
+    /// V1 plus immutable run budgets, cumulative usage, and per-turn resource charges.
+    V2,
 }
 
 impl RunJournalExportSchemaVersion {
@@ -309,11 +312,12 @@ impl RunJournalExportSchemaVersion {
     pub const fn get(self) -> u16 {
         match self {
             Self::V1 => 1,
+            Self::V2 => 2,
         }
     }
 }
 
-/// Retention rule for V1 journals under ADR-0013 and the H8 audit invariant.
+/// Retention rule for journals under ADR-0013 and the H8 audit invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RunJournalRetentionPolicy {
     /// Preserve every structured audit event; raw untrusted content is never journaled.
@@ -327,9 +331,9 @@ pub enum RunJournalExportError {
     Store(RunJournalStoreFailure),
     /// No materialized run exists for the requested identity.
     RunNotFound,
-    /// The fixed V1 event-count bound was exceeded.
+    /// The fixed export event-count bound was exceeded.
     EventLimitExceeded,
-    /// The fixed V1 byte bound was exceeded.
+    /// The fixed export byte bound was exceeded.
     ByteLimitExceeded,
     /// The owning operation cancelled export between bounded pages.
     Cancelled,
@@ -386,7 +390,7 @@ impl<'a> ExportRunJournal<'a> {
         Self { store }
     }
 
-    /// Exports a complete, bounded journal using the stable `a3.run-journal.jsonl` V1 schema.
+    /// Exports a complete, bounded journal using the stable `a3.run-journal.jsonl` V2 schema.
     pub async fn execute(
         self,
         project: &ProjectIdentity,
@@ -440,7 +444,7 @@ impl<'a> ExportRunJournal<'a> {
         Ok(RunJournalExport {
             bytes,
             event_count,
-            schema_version: RunJournalExportSchemaVersion::V1,
+            schema_version: RunJournalExportSchemaVersion::V2,
             retention_policy: RunJournalRetentionPolicy::PreserveAuditEvents,
         })
     }
@@ -485,7 +489,7 @@ fn export_header(run: &AgentRun) -> Value {
     );
     header.insert(
         "version".to_owned(),
-        Value::from(RunJournalExportSchemaVersion::V1.get()),
+        Value::from(RunJournalExportSchemaVersion::V2.get()),
     );
     header.insert(
         "run_id".to_owned(),
@@ -498,6 +502,50 @@ fn export_header(run: &AgentRun) -> Value {
     header.insert(
         "retention".to_owned(),
         Value::String("audit_events_preserved".to_owned()),
+    );
+    header.insert(
+        "turn_limit".to_owned(),
+        Value::from(run.budget().turn_limit().get()),
+    );
+    header.insert(
+        "prompt_token_limit".to_owned(),
+        Value::from(run.budget().prompt_token_limit().get()),
+    );
+    header.insert(
+        "output_token_limit".to_owned(),
+        Value::from(run.budget().output_token_limit().get()),
+    );
+    header.insert(
+        "action_limit".to_owned(),
+        Value::from(run.budget().action_limit().get()),
+    );
+    header.insert(
+        "duration_limit_millis".to_owned(),
+        Value::from(run.budget().duration_limit().millis()),
+    );
+    header.insert(
+        "repair_limit".to_owned(),
+        Value::from(run.budget().repair_limit().get()),
+    );
+    header.insert(
+        "turn_count".to_owned(),
+        Value::from(run.usage().turn_count()),
+    );
+    header.insert(
+        "prompt_tokens_used".to_owned(),
+        Value::from(run.usage().prompt_tokens()),
+    );
+    header.insert(
+        "output_tokens_used".to_owned(),
+        Value::from(run.usage().output_tokens()),
+    );
+    header.insert(
+        "action_count".to_owned(),
+        Value::from(run.usage().action_count()),
+    );
+    header.insert(
+        "repair_count".to_owned(),
+        Value::from(run.usage().repair_count()),
     );
     Value::Object(header)
 }
@@ -563,7 +611,43 @@ fn export_event(event: &RunEvent) -> Value {
         "subject_id".to_owned(),
         subject_id.map_or(Value::Null, Value::String),
     );
+    let turn_charge = event.turn_charge();
+    value.insert(
+        "turn_prompt_tokens".to_owned(),
+        turn_charge.map_or(Value::Null, |charge| {
+            Value::from(charge.prompt_tokens().get())
+        }),
+    );
+    value.insert(
+        "turn_output_tokens".to_owned(),
+        turn_charge.map_or(Value::Null, |charge| {
+            Value::from(charge.output_tokens().get())
+        }),
+    );
+    value.insert(
+        "turn_action_kind".to_owned(),
+        optional_string(
+            turn_charge
+                .and_then(|charge| charge.action())
+                .map(export_turn_action_class),
+        ),
+    );
+    value.insert(
+        "turn_repair_used".to_owned(),
+        turn_charge.map_or(Value::Null, |charge| {
+            Value::from(matches!(charge.repair(), AgentTurnRepairUsage::One))
+        }),
+    );
     Value::Object(value)
+}
+
+fn export_turn_action_class(action: AgentTurnActionClass) -> &'static str {
+    match action {
+        AgentTurnActionClass::Search => "search",
+        AgentTurnActionClass::Inspect => "inspect",
+        AgentTurnActionClass::UpdateLedger => "update_ledger",
+        AgentTurnActionClass::Finish => "finish",
+    }
 }
 
 type ExportEventKind = (

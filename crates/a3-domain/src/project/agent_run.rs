@@ -1,6 +1,7 @@
 use super::{
-    AgentRunId, GoalContractReference, ModelProfileReference, RunEventId, SnapshotId,
-    TaskEvidenceId, TaskLedgerRevision, ToolRunId,
+    AgentBudgetEvaluationError, AgentBudgetExhaustion, AgentRunBudget, AgentRunId, AgentRunUsage,
+    AgentRunUsageError, AgentTurnCharge, GoalContractReference, ModelProfileReference, RunEventId,
+    SnapshotId, TaskEvidenceId, TaskLedgerRevision, ToolRunId,
 };
 use std::error::Error;
 use std::fmt;
@@ -432,6 +433,7 @@ pub struct RunEvent {
     payload: RunEventPayload,
     snapshot_id: SnapshotId,
     subject: Option<RunEventSubject>,
+    turn_charge: Option<AgentTurnCharge>,
 }
 
 impl RunEvent {
@@ -442,6 +444,9 @@ impl RunEvent {
         kind: RunEventKind,
         payload: RunEventPayload,
     ) -> Result<Self, AgentRunError> {
+        if occurrence.turn_charge.is_some() && kind != RunEventKind::ModelInteraction {
+            return Err(AgentRunError::InvalidTurnCharge);
+        }
         match kind {
             RunEventKind::RunStarted if identity.sequence != RunEventSequence::FIRST => {
                 return Err(AgentRunError::InvalidStartEvent);
@@ -474,6 +479,7 @@ impl RunEvent {
             payload,
             snapshot_id: occurrence.snapshot_id,
             subject: occurrence.subject,
+            turn_charge: occurrence.turn_charge,
         })
     }
 
@@ -524,6 +530,12 @@ impl RunEvent {
     pub const fn subject(&self) -> Option<RunEventSubject> {
         self.subject
     }
+
+    /// Returns resource usage for one controller turn, absent only on non-turn or legacy events.
+    #[must_use]
+    pub const fn turn_charge(&self) -> Option<AgentTurnCharge> {
+        self.turn_charge
+    }
 }
 
 /// Stable identity and position used to reconstruct one journal event.
@@ -552,6 +564,7 @@ pub struct RunEventOccurrence {
     occurred_at: AgentRunTimestamp,
     snapshot_id: SnapshotId,
     subject: Option<RunEventSubject>,
+    turn_charge: Option<AgentTurnCharge>,
 }
 
 impl RunEventOccurrence {
@@ -566,6 +579,22 @@ impl RunEventOccurrence {
             occurred_at,
             snapshot_id,
             subject,
+            turn_charge: None,
+        }
+    }
+
+    /// Creates occurrence metadata for one bounded controller turn.
+    #[must_use]
+    pub const fn for_turn(
+        occurred_at: AgentRunTimestamp,
+        snapshot_id: SnapshotId,
+        turn_charge: AgentTurnCharge,
+    ) -> Self {
+        Self {
+            occurred_at,
+            snapshot_id,
+            subject: None,
+            turn_charge: Some(turn_charge),
         }
     }
 }
@@ -577,6 +606,8 @@ pub struct AgentRun {
     goal_contract: GoalContractReference,
     task_ledger_revision: TaskLedgerRevision,
     model_profile: Option<ModelProfileReference>,
+    budget: AgentRunBudget,
+    usage: AgentRunUsage,
     state: AgentControllerState,
     last_event_sequence: RunEventSequence,
     current_snapshot_id: SnapshotId,
@@ -595,6 +626,30 @@ impl AgentRun {
         event_id: RunEventId,
         created_at: AgentRunTimestamp,
     ) -> Result<(Self, RunEvent), AgentRunError> {
+        Self::start_with_budget(
+            id,
+            goal_contract,
+            task_ledger_revision,
+            model_profile,
+            AgentRunBudget::DEFAULT,
+            snapshot_id,
+            event_id,
+            created_at,
+        )
+    }
+
+    /// Starts one run with explicit immutable hard budgets.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_budget(
+        id: AgentRunId,
+        goal_contract: GoalContractReference,
+        task_ledger_revision: TaskLedgerRevision,
+        model_profile: ModelProfileReference,
+        budget: AgentRunBudget,
+        snapshot_id: SnapshotId,
+        event_id: RunEventId,
+        created_at: AgentRunTimestamp,
+    ) -> Result<(Self, RunEvent), AgentRunError> {
         let event = RunEvent::reconstruct(
             RunEventIdentity::new(event_id, id, RunEventSequence::FIRST),
             RunEventOccurrence::new(created_at, snapshot_id, None),
@@ -607,6 +662,8 @@ impl AgentRun {
                 goal_contract,
                 task_ledger_revision,
                 model_profile: Some(model_profile),
+                budget,
+                usage: AgentRunUsage::ZERO,
                 state: AgentControllerState::Intake,
                 last_event_sequence: RunEventSequence::FIRST,
                 current_snapshot_id: snapshot_id,
@@ -631,6 +688,8 @@ impl AgentRun {
             goal_contract: identity.goal_contract,
             task_ledger_revision: identity.task_ledger_revision,
             model_profile: identity.model_profile,
+            budget: identity.budget,
+            usage: materialized.usage,
             state: materialized.state,
             last_event_sequence: materialized.last_event_sequence,
             current_snapshot_id: materialized.current_snapshot_id,
@@ -654,10 +713,40 @@ impl AgentRun {
             RunEventKind::RunStarted
                 | RunEventKind::StateTransition { .. }
                 | RunEventKind::LedgerUpdated { .. }
+                | RunEventKind::ModelInteraction
         ) {
             return Err(AgentRunError::InvalidEventKind);
         }
         self.append(event_id, kind, payload, snapshot_id, subject, occurred_at)
+    }
+
+    /// Records one bounded model turn containing zero or one selected action.
+    pub fn record_turn(
+        &mut self,
+        event_id: RunEventId,
+        payload: RunEventPayload,
+        snapshot_id: SnapshotId,
+        occurred_at: AgentRunTimestamp,
+        charge: AgentTurnCharge,
+    ) -> Result<RunEvent, AgentRunError> {
+        if self.state.is_terminal() {
+            return Err(AgentRunError::TerminalRun);
+        }
+        if occurred_at < self.updated_at {
+            return Err(AgentRunError::TimestampRegressed);
+        }
+        let sequence = self
+            .last_event_sequence
+            .next()
+            .map_err(|_| AgentRunError::SequenceOverflow)?;
+        let event = RunEvent::reconstruct(
+            RunEventIdentity::new(event_id, self.id, sequence),
+            RunEventOccurrence::for_turn(occurred_at, snapshot_id, charge),
+            RunEventKind::ModelInteraction,
+            payload,
+        )?;
+        self.apply_event(&event)?;
+        Ok(event)
     }
 
     /// Records one immediate Task Ledger replan and advances the run's durable plan anchor.
@@ -760,6 +849,12 @@ impl AgentRun {
             }
             _ => {}
         }
+        if let Some(charge) = event.turn_charge {
+            self.usage = self
+                .usage
+                .record_turn(charge)
+                .map_err(AgentRunError::Usage)?;
+        }
         self.last_event_sequence = event.sequence;
         self.current_snapshot_id = event.snapshot_id;
         self.updated_at = event.occurred_at;
@@ -819,6 +914,27 @@ impl AgentRun {
         self.model_profile
     }
 
+    /// Returns immutable hard resource ceilings selected at run start.
+    #[must_use]
+    pub const fn budget(&self) -> AgentRunBudget {
+        self.budget
+    }
+
+    /// Returns durable cumulative turn usage.
+    #[must_use]
+    pub const fn usage(&self) -> AgentRunUsage {
+        self.usage
+    }
+
+    /// Evaluates the first exhausted hard limit at one observed wall-clock timestamp.
+    pub fn budget_exhaustion(
+        &self,
+        observed_at: AgentRunTimestamp,
+    ) -> Result<Option<AgentBudgetExhaustion>, AgentBudgetEvaluationError> {
+        self.budget
+            .exhaustion(self.usage, self.created_at, observed_at)
+    }
+
     /// Returns the current finite controller state.
     #[must_use]
     pub const fn state(&self) -> AgentControllerState {
@@ -857,6 +973,7 @@ pub struct AgentRunIdentity {
     goal_contract: GoalContractReference,
     task_ledger_revision: TaskLedgerRevision,
     model_profile: Option<ModelProfileReference>,
+    budget: AgentRunBudget,
 }
 
 impl AgentRunIdentity {
@@ -873,6 +990,25 @@ impl AgentRunIdentity {
             goal_contract,
             task_ledger_revision,
             model_profile,
+            budget: AgentRunBudget::DEFAULT,
+        }
+    }
+
+    /// Creates an identity projection with explicit immutable controller budgets.
+    #[must_use]
+    pub const fn with_budget(
+        id: AgentRunId,
+        goal_contract: GoalContractReference,
+        task_ledger_revision: TaskLedgerRevision,
+        model_profile: Option<ModelProfileReference>,
+        budget: AgentRunBudget,
+    ) -> Self {
+        Self {
+            id,
+            goal_contract,
+            task_ledger_revision,
+            model_profile,
+            budget,
         }
     }
 }
@@ -883,6 +1019,7 @@ pub struct AgentRunMaterializedState {
     state: AgentControllerState,
     last_event_sequence: RunEventSequence,
     current_snapshot_id: SnapshotId,
+    usage: AgentRunUsage,
 }
 
 impl AgentRunMaterializedState {
@@ -897,6 +1034,23 @@ impl AgentRunMaterializedState {
             state,
             last_event_sequence,
             current_snapshot_id,
+            usage: AgentRunUsage::ZERO,
+        }
+    }
+
+    /// Creates a materialized projection with persisted controller usage.
+    #[must_use]
+    pub const fn with_usage(
+        state: AgentControllerState,
+        last_event_sequence: RunEventSequence,
+        current_snapshot_id: SnapshotId,
+        usage: AgentRunUsage,
+    ) -> Self {
+        Self {
+            state,
+            last_event_sequence,
+            current_snapshot_id,
+            usage,
         }
     }
 }
@@ -946,6 +1100,10 @@ pub enum AgentRunError {
     RunMismatch,
     /// Start or transition-only kind was used through the generic append path.
     InvalidEventKind,
+    /// Turn usage appeared on another event kind or bypassed the turn-specific append path.
+    InvalidTurnCharge,
+    /// Durable cumulative usage violated cardinality or integer bounds.
+    Usage(AgentRunUsageError),
     /// Sequence one was not the mandatory run-start event.
     InvalidStartEvent,
     /// Persisted payload fields did not match their canonical safe digest.
@@ -973,6 +1131,8 @@ impl fmt::Display for AgentRunError {
             }
             Self::RunMismatch => formatter.write_str("run event belongs to another run"),
             Self::InvalidEventKind => formatter.write_str("run event kind is invalid here"),
+            Self::InvalidTurnCharge => formatter.write_str("run event turn charge is invalid"),
+            Self::Usage(_) => formatter.write_str("agent run usage is invalid"),
             Self::InvalidStartEvent => formatter.write_str("agent run has an invalid start event"),
             Self::PayloadDigestMismatch => {
                 formatter.write_str("run-event payload digest does not match its safe fields")
@@ -995,9 +1155,10 @@ mod tests {
     };
     use crate::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
-        ModelProfileReference, ModelProfileVersion, RunEventId, SnapshotId, SuccessVerification,
-        TaskEvidenceId, TaskId, TaskLedgerRevision,
+        AgentTurnActionClass, AgentTurnCharge, AgentTurnRepairUsage, GoalContract,
+        GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
+        ModelProfileReference, ModelProfileVersion, ModelTokenCount, RunEventId, SnapshotId,
+        SuccessVerification, TaskEvidenceId, TaskId, TaskLedgerRevision,
     };
     use std::error::Error;
 
@@ -1102,6 +1263,44 @@ mod tests {
         assert_eq!(event.sequence().get(), 2);
         assert_eq!(run.current_snapshot_id(), snapshot(2));
         assert_eq!(run.updated_at(), timestamp(2)?);
+        Ok(())
+    }
+
+    #[test]
+    fn model_turn_charges_are_journal_bound_and_cumulative() -> Result<(), Box<dyn Error>> {
+        let (mut run, _) = started_run()?;
+        let charge = AgentTurnCharge::new(
+            ModelTokenCount::new(400),
+            ModelTokenCount::new(25),
+            Some(AgentTurnActionClass::Inspect),
+            AgentTurnRepairUsage::One,
+        );
+
+        assert_eq!(
+            run.record(
+                event_id(2),
+                RunEventKind::ModelInteraction,
+                RunEventPayload::empty(),
+                snapshot(1),
+                None,
+                timestamp(2)?,
+            ),
+            Err(AgentRunError::InvalidEventKind)
+        );
+        let event = run.record_turn(
+            event_id(2),
+            RunEventPayload::empty(),
+            snapshot(1),
+            timestamp(2)?,
+            charge,
+        )?;
+
+        assert_eq!(event.turn_charge(), Some(charge));
+        assert_eq!(run.usage().turn_count(), 1);
+        assert_eq!(run.usage().prompt_tokens(), 400);
+        assert_eq!(run.usage().output_tokens(), 25);
+        assert_eq!(run.usage().action_count(), 1);
+        assert_eq!(run.usage().repair_count(), 1);
         Ok(())
     }
 

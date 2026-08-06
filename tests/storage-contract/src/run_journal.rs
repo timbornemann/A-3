@@ -7,14 +7,16 @@ use a3_application::{
     RunJournalStoreFailure,
 };
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
-    AgentRun, AgentRunId, AgentRunTimestamp, ExpectedTaskEvidence, GoalConstraint, GoalContract,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentActionLimit,
+    AgentControllerState, AgentRepairLimit, AgentRun, AgentRunBudget, AgentRunDurationLimit,
+    AgentRunId, AgentRunTimestamp, AgentTokenLimit, AgentTurnActionClass, AgentTurnCharge,
+    AgentTurnLimit, AgentTurnRepairUsage, ExpectedTaskEvidence, GoalConstraint, GoalContract,
     GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId, ModelProfileReference,
-    ModelProfileVersion, NonGoal, Progress, RepositoryId, RunEventCode, RunEventId, RunEventKind,
-    RunEventOutcome, RunEventPayload, RunEventRedaction, RunEventRedactionSource, SnapshotId,
-    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
-    TaskStepOutcome, TaskStepRationale, UserDecision, VerificationMethod, VerificationRequirement,
-    VerificationSpec, VerificationSpecId, WorktreeId,
+    ModelProfileVersion, ModelTokenCount, NonGoal, Progress, RepositoryId, RunEventCode,
+    RunEventId, RunEventOutcome, RunEventPayload, RunEventRedaction, RunEventRedactionSource,
+    SnapshotId, SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition,
+    TaskStepId, TaskStepOutcome, TaskStepRationale, UserDecision, VerificationMethod,
+    VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
 };
 use futures::join;
 use std::sync::Mutex;
@@ -64,7 +66,15 @@ where
         TaskLedgerTimestamp::from_unix_millis(2_001)?,
     )?;
     let run_id = AgentRunId::from_bytes([155; 32]);
-    let (initial_run, start_event) = AgentRun::start(
+    let budget = AgentRunBudget::new(
+        AgentTurnLimit::new(17)?,
+        AgentTokenLimit::new(500_000)?,
+        AgentTokenLimit::new(50_000)?,
+        AgentActionLimit::new(13)?,
+        AgentRunDurationLimit::from_millis(123_456)?,
+        AgentRepairLimit::new(2)?,
+    );
+    let (initial_run, start_event) = AgentRun::start_with_budget(
         run_id,
         goal.reference(),
         ledger.revision(),
@@ -72,6 +82,7 @@ where
             ModelProfileId::from_bytes([165; 32]),
             ModelProfileVersion::V1,
         ),
+        budget,
         snapshot_id,
         RunEventId::from_bytes([156; 32]),
         AgentRunTimestamp::from_unix_millis(2_002)?,
@@ -130,6 +141,7 @@ where
         .await?
         .ok_or_else(|| std::io::Error::other("materialized run disappeared"))?;
     assert_eq!(current.model_profile(), initial_run.model_profile());
+    assert_eq!(current.budget(), budget);
     assert_eq!(current.state(), AgentControllerState::Localize);
     assert_eq!(current.last_event_sequence().get(), 2);
     let expected_sequence = current.last_event_sequence();
@@ -142,13 +154,18 @@ where
             false,
         )),
     );
-    let redacted_event = current.record(
+    let turn_charge = AgentTurnCharge::new(
+        ModelTokenCount::new(1_024),
+        ModelTokenCount::new(64),
+        Some(AgentTurnActionClass::Inspect),
+        AgentTurnRepairUsage::One,
+    );
+    let redacted_event = current.record_turn(
         RunEventId::from_bytes([159; 32]),
-        RunEventKind::ModelInteraction,
         safe_payload,
         snapshot_id,
-        None,
         AgentRunTimestamp::from_unix_millis(2_005)?,
+        turn_charge,
     )?;
     first_writer
         .append_run_event(&first, expected_sequence, &current, &redacted_event)
@@ -167,7 +184,11 @@ where
             RunEventPageLimit::new(2)?,
         )
         .await?;
+    assert_eq!(redacted_event.turn_charge(), Some(turn_charge));
     assert_eq!(second_page.events(), &[redacted_event]);
+    assert_eq!(current.usage().turn_count(), 1);
+    assert_eq!(current.usage().action_count(), 1);
+    assert_eq!(current.usage().repair_count(), 1);
     assert!(!second_page.has_more());
 
     let control = RecordingExportControl::default();
@@ -181,7 +202,7 @@ where
     assert_eq!(first_export.event_count(), 3);
     assert_eq!(
         first_export.schema_version(),
-        RunJournalExportSchemaVersion::V1
+        RunJournalExportSchemaVersion::V2
     );
     assert_eq!(
         first_export.retention_policy(),
@@ -197,6 +218,10 @@ where
     assert!(text.contains("\"schema\":\"a3.run-journal.jsonl\""));
     assert!(text.contains("\"retention\":\"audit_events_preserved\""));
     assert!(text.contains("\"redaction_source\":\"model_output\""));
+    assert!(text.contains("\"turn_count\":1"));
+    assert!(text.contains("\"turn_limit\":17"));
+    assert!(text.contains("\"turn_action_kind\":\"inspect\""));
+    assert!(text.contains("\"turn_repair_used\":true"));
     assert_eq!(control.last_completed()?, Some(3));
 
     crate::release_contract_store(second_writer);
