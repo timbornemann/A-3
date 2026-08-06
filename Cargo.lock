@@ -13,6 +13,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "a3-context"
+version = "0.1.0"
+dependencies = [
+ "a3-application",
+ "a3-domain",
+ "blake3",
+ "futures",
+]
+
+[[package]]
 name = "a3-desktop"
 version = "0.1.0"
 dependencies = [
@@ -115,6 +125,7 @@ name = "a3-storage-libsql"
 version = "0.1.0"
 dependencies = [
  "a3-application",
+ "a3-context",
  "a3-domain",
  "a3-storage-contract-tests",
  "blake3",

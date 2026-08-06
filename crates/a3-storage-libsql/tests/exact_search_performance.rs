@@ -3,26 +3,36 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchStore, ModuleCardVerificationControl,
-    ModuleCardVerificationControlError, PublishVerifiedModuleCards, TaskLensControl,
-    TaskLensControlError,
+    AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
+    ContextCompilePhase, IndexPersistenceControl, IndexPersistenceControlError,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    TaskLensControl, TaskLensControlError,
 };
+use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
-    CanonicalDirectory, Centrality, Confidence, ContentHash, ExactSearchPageSize, ExactSearchQuery,
-    ExactSearchTerm, FileRevision, GitHead, GitReferenceName, GraphSymbol, IndexPublication,
-    IndexRunId, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion,
-    LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTarget, LexicalSearchTerm, LinkedGraph,
-    LocalSymbolId, MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField,
-    ModuleCardId, ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
-    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimProposal, ParsedSymbol, ProjectIdentity,
-    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
-    RepositoryId, RepositoryIdentity, RepositoryPath, ResolvedModuleCardEvidence,
-    ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
-    SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
-    TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget,
-    VerifiedModuleCardBatch, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, CanonicalDirectory,
+    Centrality, Confidence, ContentHash, ExactSearchPageSize, ExactSearchQuery, ExactSearchTerm,
+    ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, GraphSymbol, IndexPublication, IndexRunId, IndexRunStart,
+    IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion, LexicalSearchPageSize,
+    LexicalSearchQuery, LexicalSearchTarget, LexicalSearchTerm, LinkedGraph, LocalSymbolId,
+    MapperProfileVersion, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
+    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
+    ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
+    ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
+    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
+    ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
+    ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleClaimProposal, ParsedSymbol, ProjectIdentity, ProposedModuleCardField, PublishedIndex,
+    RankProjection, RankScore, RankingPolicyVersion, RepositoryId, RepositoryIdentity,
+    RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, Snapshot,
+    SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
+    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, TaskId, TaskLedger, TaskLedgerTimestamp,
+    TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget, TaskStepDefinition,
+    TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationMethod, VerificationRequirement,
+    VerificationSpec, VerificationSpecId, VerifiedModuleCardBatch, WorktreeAnchorId,
+    WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -37,9 +47,11 @@ const BASELINE_SAMPLES: usize = 5;
 const EXACT_SAMPLES: usize = 30;
 const LEXICAL_SAMPLES: usize = 30;
 const TASK_LENS_SAMPLES: usize = 30;
+const CONTEXT_COMPILE_SAMPLES: usize = 30;
 const EXACT_P95_TARGET: Duration = Duration::from_millis(100);
 const LEXICAL_P95_TARGET: Duration = Duration::from_millis(100);
 const TASK_LENS_P95_TARGET: Duration = Duration::from_millis(300);
+const CONTEXT_COMPILE_P95_TARGET: Duration = Duration::from_millis(300);
 
 #[derive(Debug)]
 struct SilentControl;
@@ -73,6 +85,16 @@ impl TaskLensControl for SilentControl {
     }
 }
 
+impl ContextCompileControl for SilentControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_phase(&self, _phase: ContextCompilePhase) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
 impl ModuleCardVerificationControl for SilentControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -87,7 +109,7 @@ impl ModuleCardVerificationControl for SilentControl {
 }
 
 #[test]
-#[ignore = "manual 100,000-structural-line exact/FTS/Task-Lens P95 baseline"]
+#[ignore = "manual 100,000-structural-line exact/FTS/Task-Lens/Context-Compile P95 baseline"]
 fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let temporary = TempDirectory::new()?;
@@ -134,6 +156,7 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
             TaskLensSeedText::try_from_string(target.clone())?,
             Vec::new(),
         )?;
+        let context_input = context_input(&project, &target)?;
         let _warm_exact = store
             .search_exact(
                 &project,
@@ -164,6 +187,10 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
                 &SilentControl,
             )
             .await?;
+        let _warm_context =
+            DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store))
+                .compile(&context_input, &SilentControl)
+                .await?;
 
         let mut baseline_samples = Vec::with_capacity(BASELINE_SAMPLES);
         for _ in 0..BASELINE_SAMPLES {
@@ -233,10 +260,23 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
                 TaskLensTarget::Symbol(symbol) if symbol.parsed().name().as_str() == target
             )));
         }
+        let mut context_compile_samples = Vec::with_capacity(CONTEXT_COMPILE_SAMPLES);
+        for _ in 0..CONTEXT_COMPILE_SAMPLES {
+            let started = Instant::now();
+            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+                &store, &store, &store,
+            ))
+            .compile(&context_input, &SilentControl)
+            .await?;
+            context_compile_samples.push(started.elapsed());
+            assert_eq!(context.snapshot_id(), snapshot.id());
+            assert!(context.budget_usage().prompt_total() <= 11_879);
+        }
         baseline_samples.sort_unstable();
         exact_samples.sort_unstable();
         lexical_samples.sort_unstable();
         task_lens_samples.sort_unstable();
+        context_compile_samples.sort_unstable();
         let baseline_p50 = baseline_samples[BASELINE_SAMPLES / 2];
         let baseline_p95 = baseline_samples[percentile_index(BASELINE_SAMPLES)];
         let exact_p50 = exact_samples[EXACT_SAMPLES / 2];
@@ -245,8 +285,11 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         let lexical_p95 = lexical_samples[percentile_index(LEXICAL_SAMPLES)];
         let task_lens_p50 = task_lens_samples[TASK_LENS_SAMPLES / 2];
         let task_lens_p95 = task_lens_samples[percentile_index(TASK_LENS_SAMPLES)];
+        let context_compile_p50 = context_compile_samples[CONTEXT_COMPILE_SAMPLES / 2];
+        let context_compile_p95 =
+            context_compile_samples[percentile_index(CONTEXT_COMPILE_SAMPLES)];
         println!(
-            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols and primary module memberships; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}; deterministic Task Lens compile {TASK_LENS_SAMPLES} samples P50={task_lens_p50:?}, P95={task_lens_p95:?}"
+            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols and primary module memberships; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}; deterministic Task Lens compile {TASK_LENS_SAMPLES} samples P50={task_lens_p50:?}, P95={task_lens_p95:?}; complete Context Compile {CONTEXT_COMPILE_SAMPLES} samples P50={context_compile_p50:?}, P95={context_compile_p95:?}"
         );
         assert!(
             lexical_p95 <= LEXICAL_P95_TARGET,
@@ -259,6 +302,10 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         assert!(
             task_lens_p95 <= TASK_LENS_P95_TARGET,
             "Task Lens P95 {task_lens_p95:?} exceeded {TASK_LENS_P95_TARGET:?}"
+        );
+        assert!(
+            context_compile_p95 <= CONTEXT_COMPILE_P95_TARGET,
+            "Context Compile P95 {context_compile_p95:?} exceeded {CONTEXT_COMPILE_P95_TARGET:?}"
         );
         Ok::<(), Box<dyn Error>>(())
     })
@@ -290,6 +337,87 @@ fn project(
             reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
         },
     )?)
+}
+
+fn context_input(
+    project: &ProjectIdentity,
+    target: &str,
+) -> Result<AgentContextCompileInput, Box<dyn Error>> {
+    let goal = GoalContract::initial(
+        TaskId::from_bytes([40; 32]),
+        GoalContractDraft::new(
+            GoalObjective::try_from_string(format!("inspect {target}"))?,
+            vec![AcceptanceCriterion::new(
+                AcceptanceCriterionId::from_bytes([41; 32]),
+                AcceptanceCriterionStatement::try_from_string(
+                    "current evidence is packed deterministically".to_owned(),
+                )?,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            a3_domain::SuccessVerification::try_from_string(
+                "verify the bounded Context Pack".to_owned(),
+            )?,
+        )?,
+        GoalContractTimestamp::from_unix_millis(1)?,
+    );
+    let step_id = TaskStepId::from_bytes([42; 32]);
+    let ledger = TaskLedger::new(
+        goal.reference(),
+        vec![TaskStepDefinition::new(
+            step_id,
+            None,
+            TaskStepOutcome::try_from_string(format!("inspect {target}"))?,
+            TaskStepRationale::try_from_string("ground the next action".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "current symbol evidence".to_owned(),
+            )?],
+            VerificationSpec::new(
+                VerificationSpecId::from_bytes([43; 32]),
+                VerificationMethod::Test,
+                VerificationRequirement::try_from_string(
+                    "run the context performance fixture".to_owned(),
+                )?,
+            ),
+        )?],
+        TaskLedgerTimestamp::from_unix_millis(1)?,
+    )?;
+    AgentContextCompileInput::new(
+        project.clone(),
+        goal,
+        ledger,
+        step_id,
+        performance_profile()?,
+        Vec::new(),
+        Vec::new(),
+    )
+    .map_err(Into::into)
+}
+
+fn performance_profile() -> Result<ModelProfile, Box<dyn Error>> {
+    let settings = ModelProfileSettings::new(
+        ModelContextLimit::new(16_384)?,
+        ModelOutputLimit::new(4_096)?,
+        ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
+        ModelParallelismLimit::new(1)?,
+        ModelSamplingProfile::new(
+            ModelTemperature::from_milli(0)?,
+            ModelTopP::from_milli(1_000)?,
+        ),
+        ModelStopSequences::empty(),
+        ModelPromptSchemaGrounding::FormatFieldOnly,
+    )?;
+    Ok(ModelProfile::from_probe(
+        ModelProviderId::try_from_string("performance".to_owned())?,
+        ModelId::try_from_string("performance-model".to_owned())?,
+        settings,
+        ModelCapabilities::new(
+            ModelStructuredOutputCapability::Verified,
+            ModelToolCallMode::Disabled,
+        ),
+    ))
 }
 
 fn fixture(worktree_id: WorktreeId) -> Result<(Snapshot, IndexPublication), Box<dyn Error>> {

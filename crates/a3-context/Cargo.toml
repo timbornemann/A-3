@@ -1,6 +1,6 @@
 [package]
-name = "a3-storage-libsql"
-description = "Embedded local libSQL storage adapters for A^3"
+name = "a3-context"
+description = "Deterministic Context Compiler for A^3"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,14 +10,8 @@ license.workspace = true
 a3-application.workspace = true
 a3-domain.workspace = true
 blake3.workspace = true
-libsql.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-rustix.workspace = true
 
 [dev-dependencies]
-a3-context.workspace = true
-a3-storage-contract-tests.workspace = true
 futures.workspace = true
 
 [lints]

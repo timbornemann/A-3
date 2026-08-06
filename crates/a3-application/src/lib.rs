@@ -2,6 +2,7 @@
 
 mod agent_action_codec;
 mod agent_prompt;
+mod context_compiler;
 mod deep_map_action_codec;
 mod deep_map_explorer;
 mod deep_map_planner;
@@ -43,6 +44,12 @@ pub use agent_action_codec::{
 pub use agent_prompt::{
     AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,
     AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
+};
+pub use context_compiler::{
+    AgentContextCompileInput, AgentContextCompileInputError, AgentContextCompiler,
+    AgentContextCompilerFuture, CompiledAgentContext, ContextCompileControl, ContextCompileFailure,
+    ContextCompilePhase, ContextToolResult, ContextToolResultDigest, ContextToolResultPreview,
+    ContextToolResultPreviewError, ContextToolResultStatus,
 };
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
