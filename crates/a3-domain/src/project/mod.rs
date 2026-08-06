@@ -13,6 +13,7 @@ mod index_run;
 mod invalidation;
 mod language;
 mod lexical_retrieval;
+mod model;
 mod module_map;
 mod path;
 mod retrieval;
@@ -123,6 +124,7 @@ pub use lexical_retrieval::{
     LexicalSearchPageSizeError, LexicalSearchPosition, LexicalSearchQuery, LexicalSearchSymbol,
     LexicalSearchTarget, LexicalSearchTerm, LexicalSearchTermError,
 };
+pub use model::{ModelId, ModelIdentityError, ModelIdentityKind, ModelProviderId};
 pub use module_map::{
     ModuleId, ModuleKind, ModuleMapError, ModuleMembership, ModuleMembershipEvidence,
     ModuleMembershipKind, ModulePolicyVersion, ModulePolicyVersionError, ModuleProjection,

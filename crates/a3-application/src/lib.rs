@@ -16,6 +16,7 @@ mod knowledge_search_store;
 mod knowledge_store;
 mod language_adapter;
 mod lexical_search;
+mod model_provider;
 mod module_card_claim_codec;
 mod module_card_verification;
 mod module_remap_queue;
@@ -86,6 +87,13 @@ pub use language_adapter::{
     LanguageParseInput, LanguageParsePolicy,
 };
 pub use lexical_search::SearchLexicalIndex;
+pub use model_provider::{
+    ModelCancellationFuture, ModelFinishReason, ModelMessage, ModelMessageError, ModelMessageRole,
+    ModelOperationControl, ModelOutputChunk, ModelOutputChunkError, ModelProvider,
+    ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
+    ModelProviderRequestError, ModelProviderUsage, ModelRequestTimeout, ModelRequestTimeoutError,
+    ProviderEvent, ProviderEventStream, StructuredOutputSchema, StructuredOutputSchemaError,
+};
 pub use module_card_claim_codec::{
     DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
 };

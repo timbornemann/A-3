@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::task::Poll;
 use std::time::Duration;
 
 /// Read-only cooperative cancellation signal passed to one job execution.
@@ -13,6 +14,7 @@ struct CancellationState {
     requested: AtomicBool,
     gate: Mutex<()>,
     changed: Condvar,
+    async_waiter: futures::task::AtomicWaker,
 }
 
 impl CancellationToken {
@@ -22,6 +24,7 @@ impl CancellationToken {
                 requested: AtomicBool::new(false),
                 gate: Mutex::new(()),
                 changed: Condvar::new(),
+                async_waiter: futures::task::AtomicWaker::new(),
             }),
         }
     }
@@ -64,11 +67,28 @@ impl CancellationToken {
         }
     }
 
+    /// Asynchronously waits without occupying a worker thread until cancellation is requested.
+    pub async fn cancelled(&self) {
+        futures::future::poll_fn(|context| {
+            if self.is_cancelled() {
+                return Poll::Ready(());
+            }
+            self.inner.async_waiter.register(context.waker());
+            if self.is_cancelled() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
     pub(super) fn request(&self) -> bool {
         let _guard = lock_recovering_poison(&self.inner.gate);
         let already_requested = self.inner.requested.swap(true, Ordering::AcqRel);
         if !already_requested {
             self.inner.changed.notify_all();
+            self.inner.async_waiter.wake();
         }
         !already_requested
     }
@@ -92,8 +112,11 @@ mod tests {
     fn cancellation_wakes_all_waiters() -> Result<(), Box<dyn std::error::Error>> {
         let token = CancellationToken::new();
         let waiter_token = token.clone();
+        let async_waiter_token = token.clone();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(0);
         let (done_sender, done_receiver) = mpsc::sync_channel(0);
+        let (async_ready_sender, async_ready_receiver) = mpsc::sync_channel(0);
+        let (async_done_sender, async_done_receiver) = mpsc::sync_channel(0);
         let waiter = thread::Builder::new()
             .name("a3-cancellation-test".to_owned())
             .spawn(move || {
@@ -101,12 +124,22 @@ mod tests {
                 waiter_token.wait_cancelled();
                 let _ = done_sender.send(());
             })?;
+        let async_waiter = thread::Builder::new()
+            .name("a3-async-cancellation-test".to_owned())
+            .spawn(move || {
+                let _ = async_ready_sender.send(());
+                futures::executor::block_on(async_waiter_token.cancelled());
+                let _ = async_done_sender.send(());
+            })?;
 
         ready_receiver.recv_timeout(Duration::from_secs(1))?;
+        async_ready_receiver.recv_timeout(Duration::from_secs(1))?;
         assert!(token.request());
         assert!(!token.request());
         done_receiver.recv_timeout(Duration::from_secs(1))?;
+        async_done_receiver.recv_timeout(Duration::from_secs(1))?;
         assert!(waiter.join().is_ok());
+        assert!(async_waiter.join().is_ok());
         Ok(())
     }
 }
