@@ -676,6 +676,16 @@ Top-5-Grenzwert liegt derzeit bei Recall 10.000 Basispunkten und MRR 9.285 Basis
 Baseline verwendet weder Modell noch Netzwerk oder Embeddings und läuft mit
 `cargo test -p a3-repo-index --test retrieval_eval_baseline --locked`.
 
+Die darauf aufbauende No-Embeddings-Abnahme des aktuellen M4/M5-Anwendungskerns verwendet
+denselben echten Snapshot-, Compiler-, Publish- und libSQL-Pfad. Sie erzeugt ohne Semantic-Port
+zweimal eine identische, vollständig budgetgedeckte Deep-Map-Planung und Task Lens, bindet beide an
+die aktuelle Publikation und weist Exact- und Graphquellen bei null semantischen Quellen nach. Ein
+nicht leerer
+snapshotgebundener Semantic-Card-Batch wird parallel durch den konstruktiv provider- und
+cachelosen deaktivierten Use Case vollständig übersprungen. Dieser Vertrag zieht weder den
+allgemeinen Agent Harness noch die Desktop-Produktoberfläche aus M6 beziehungsweise M8 vor und
+läuft mit `cargo test -p a3-repo-index --test no_embeddings_app_acceptance --locked`.
+
 Vektoren werden ausschließlich für Semantic Cards und ausgewählte Symbolbeschreibungen erzeugt. Standardmäßig werden nicht beliebige überlappende Zeilenchunks eingebettet.
 
 ### R5 Semantic-, Provider- und Cachevertrag

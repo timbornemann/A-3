@@ -211,6 +211,13 @@ verlangt 100 Prozent Recall@5, fixiert MRR 0,9285, weist aktuelle Run-/Snapshot-
 nach und normalisiert zwei Wiederholungen bytegleich. Der spätere Q1-Umfang ergänzt darauf
 aufbauend Agenten-, User-Edit-, Stale-Evidence- und Compaction-Aufgaben.
 
+Der Gate-M4/M5-No-Embeddings-Contract führt den aktuellen Anwendungskern über einen real
+publizierten gemischten Index, vollständige Deep-Map-Planung und budgetierte Task-Lens-Kompilierung
+aus. Zwei Wiederholungen müssen identisch und aktuell sein; mindestens Exact und Graph müssen
+vertreten sein, während `SourceChannel::Semantic` ohne injizierten Semantic-Port ausgeschlossen
+bleibt. Ein nicht leerer Card-Batch muss außerdem im konstruktiv provider- und cachelosen
+`GenerateSemanticEmbeddings::disabled()`-Pfad vollständig als deaktiviert enden.
+
 Ein versioniertes Eval-Set enthält:
 
 - Symbol finden

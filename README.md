@@ -22,8 +22,10 @@ ein Hop begrenzte Card-Invalidierung mit priorisierter Remapqueue. Eine versioni
 offline laufende Retrieval-Evalbaseline misst den real publizierten Exact-, Lexical- und
 Graphpfad des gemischten Rust-/TypeScript-/Python-Fixtures. Die mehrsprachige
 Deep-Map-Abnahme führt außerdem die drei Produkt-Fixtures durch Snapshot, Publish,
-Modulprojektion und budgetierte Planung. Als Nächstes folgt der vollständige App-Betrieb ohne
-Embeddings. Die
+Modulprojektion und budgetierte Planung. Eine zusätzliche Offline-Abnahme führt den aktuellen
+M4/M5-Anwendungskern über Indexierung, Deep Map und Task Lens vollständig ohne Semantic-Port aus
+und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Als Nächstes folgt der Durable
+Harness mit dem Goal Contract. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

@@ -528,7 +528,7 @@ ist `cargo test -p a3-repo-index --test retrieval_eval_baseline --locked`.
 - [x] Deep Map eines Rust-, TS- und Python-Fixtures
 - [x] jede veröffentlichte Card besitzt gültige Evidence
 - [x] Task Lens bleibt innerhalb des konfigurierten Budgets
-- [ ] App funktioniert vollständig ohne Embeddings
+- [x] App funktioniert vollständig ohne Embeddings
 - [x] Performanceziele für Search und Context-Vorstufe gemessen
 
 Die mehrsprachige Deep-Map-Abnahme V1 indiziert die drei repo-eigenen Produkt-Fixtures über
@@ -539,3 +539,15 @@ Modul-, Manifest- oder Symbolevidenz gegen denselben veröffentlichten Run und S
 Coverage endet für Rust, TypeScript und Python mit `CoveragePlanned`, und zwei Planläufe sind
 identisch. Gezielter Contract:
 `cargo test -p a3-repo-index --test deep_map_fixture_acceptance --locked`.
+
+Verifizierter Gate-Abschluss vom 2026-08-06: Die No-Embeddings-Abnahme indiziert das gemischte
+`graph-linker`-Fixture über den echten Snapshot-, Compiler- und atomaren libSQL-Publishpfad. Der
+aktuelle M4/M5-Anwendungskern erzeugt daraus zweimal dieselbe vollständig budgetgedeckte
+Deep-Map-Planung und kompiliert zweimal dieselbe aktuelle, budgetgedeckte Task Lens ausschließlich
+über die ohne Semantic-Port
+konstruierte `CompileTaskLens`-Variante. Die Lens muss das exakte `launch`-Symbol sowie Exact- und
+Graphquellen enthalten und jede semantische Quelle ablehnen. Zusätzlich verarbeitet
+`GenerateSemanticEmbeddings::disabled()` einen nicht leeren snapshotgebundenen Card-Batch als
+`Disabled`, obwohl weder Provider noch Cache komponiert sind. Der Contract läuft ohne Modell,
+Embeddingprovider oder Netzwerk mit
+`cargo test -p a3-repo-index --test no_embeddings_app_acceptance --locked`.
