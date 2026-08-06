@@ -177,7 +177,6 @@ async fn validate_projection(
         || values[1] != values[6]
         || values[2] != values[7]
         || values[3] != values[8]
-        || values[3] != 0
         || rows
             .next()
             .await

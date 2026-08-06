@@ -449,6 +449,15 @@ Confidence und Claimstatus sind getrennte Werte. Opponierende strukturierte Clai
 Batch mit einem sichtbaren Widerspruchsbericht. Der Publish-Port akzeptiert konstruktiv nur den
 durch diese Prüfung erzeugten `VerifiedModuleCardBatch`, niemals Proposal- oder Rohmodelltypen.
 
+Der libSQL-Adapter publiziert diesen Batch in einer `IMMEDIATE`-Transaktion des Knowledge-Schemas
+V9. Cards, Feldwerte, Field Evidence, Claims, strukturierte Prädikate, Claim-Evidence und die
+vollständige aufgelöste Provenienz werden gemeinsam committed; ein SQL-Fehler lässt keine
+Teil-Card sichtbar. Gleichzeitig erhält `card_fts` genau eine Zeile pro Card und der
+Lexical-Projektionsmarker wird auf dieselbe Anzahl gesetzt. Der Publisher lehnt stale Run- oder
+Snapshotgrenzen und einen zweiten Publish desselben Runs ab, prüft Cancellation sowie eine
+30-Sekunden-Deadline und sendet höchstens 64 monotone Progressereignisse. Dauerhafte Claims und
+Evidence überleben einen Rebuild des regenerierbaren Fast Index; ihre Invalidierung folgt in R11.
+
 ## Task Lens
 
 Seeds:

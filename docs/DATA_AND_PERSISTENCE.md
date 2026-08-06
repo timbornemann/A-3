@@ -1,7 +1,7 @@
 # Daten und Persistenz
 
 Status: verbindliche Baseline  
-Stand: 2026-08-05
+Stand: 2026-08-06
 
 ## Entscheidung
 
@@ -68,6 +68,15 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   vorherige Projektion wieder her; Snapshot- und IndexRun-Metadaten bleiben erhalten.
   Breite Symbol-, Kanten-, Kandidaten- und Rankzeilen werden über parametrisierte Mehrzeilen-Inserts
   mit höchstens 30.000 SQL-Parametern und 1.024 Zeilen pro Cancellation-Checkpoint geschrieben.
+- Knowledge-Schema V9 veröffentlicht ausschließlich einen vom deterministischen R9-Verifier
+  erzeugten `VerifiedModuleCardBatch`. Eine `IMMEDIATE`-Transaktion speichert Cards, Feldgruppen,
+  Feldwerte, feldgenaue Evidence IDs, Claims, Claim-Evidence und strukturierte Prädikate gemeinsam
+  mit der vollständigen File-, Symbol- oder Graphkanten-Provenienz. Run und Snapshot müssen dem
+  jüngsten atomar publizierten Index entsprechen; ein zweiter Publish, eine fremde Evidence ID oder
+  ein unvollständiger Lexical-Marker wird vor Mutation abgelehnt. Dieselbe Transaktion füllt
+  `card_fts` und aktualisiert dessen erwartete Zeilenzahl. Cancellation, Deadline und höchstens 64
+  monotone Progressereignisse werden bis unmittelbar vor Commit geprüft. Nach erfolgreichem Commit
+  bleibt der Receipt erfolgreich, auch wenn Cancellation erst danach eintrifft.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -97,6 +106,8 @@ persistierten Baseline und hasht nur neue oder vom Watcher gemeldete Pfade; ein 
 Eventverlustsignal erzwingt den Vollscan. Parser und Graph erzeugen den vollständigen
 deterministischen Publish-Input; Knowledge-Schema V8 veröffentlicht die daraus abgeleiteten Datei-,
 Symbol-, Kanten-, Kandidaten-, Rank-, Exact-, FTS-, Modul- und Repository-Card-Projektionen atomar.
+Knowledge-Schema V9 ergänzt danach ausschließlich deterministisch verifizierte Module Cards,
+Claims und ihre vollständige Evidence-Provenienz.
 Die Reconciliation entscheidet trotz persistierter Evidenz nie
 selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.
 
@@ -216,6 +227,10 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 
 ### Knowledge und Evidenz
 
+- module_cards
+- module_card_fields
+- module_card_field_values
+- module_card_field_evidence
 - claims
 - evidence_refs
 - claim_evidence
@@ -255,13 +270,18 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   Symbole ab; Manifestzeilen referenzieren die aktuelle File Revision desselben Runs.
 - Die Lexical-Search-Projektion besitzt pro veröffentlichtem Run genau einen Versionsmarker mit
   erwarteter Symbol-, Pfad- und Card-Anzahl. `symbol_fts` und `path_fts` decken exakt die aktuelle
-  Run-Projektion ab; `card_fts` bleibt bis zur evidenzgebundenen Card-Erzeugung leer.
+  Run-Projektion ab; nach R9-Publish deckt `card_fts` exakt die publizierten Cards dieses Runs ab.
 - Graphabfragen lesen ausschließlich `file_revisions`, `symbols`, `symbol_edges` und qualifizierte
   Namen desselben jüngsten veröffentlichten Runs. Seeds und jedes erreichte Ziel müssen in dieser
   vollständigen Run-Projektion vorhanden sein; historische oder gelöschte IDs werden nicht
   aufgelöst.
-- EvidenceRef besitzt eine typabhängige, validierte Nutzlast.
+- EvidenceRef besitzt eine typabhängige, validierte Nutzlast. Persistierte Card-Evidence behält
+  zusätzlich die vollständige File Revision, Symbolrevision oder Graphkante des Verify-Zeitpunkts.
 - Claim-Evidence ist many-to-many.
+- Fact, Observation und Hypothesis sowie `Active` und Confidence werden in getrennten Spalten
+  gespeichert; Schema-Checks verhindern, dass Architekturabsicht als Fact persistiert wird.
+- Verifizierte Cards, Claims und Evidence sind dauerhaft. Ein Rebuild entfernt ihre regenerierbare
+  `card_fts`-Projektion, aber nicht ihre Herkunft; R11 übernimmt deren spätere Invalidierung.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
 - Eine Semantic Card besitzt pro Snapshot genau eine Body-Revision; derselbe Body darf über
   Snapshots hinweg denselben regenerierbaren Cacheeintrag wiederverwenden.
@@ -334,6 +354,17 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V9 ergänzt V8 um `module_cards`, `module_card_fields`,
+`module_card_field_values`, `module_card_field_evidence`, `evidence_refs`, `claims`,
+`claim_evidence` und `claim_relations`. Alle Identitäten bleiben an den verifizierenden
+`source_index_run_id` und `SnapshotId` gebunden. Der Herkunfts-Run ist bewusst kein
+Delete-Fremdschlüssel: Fast-Index-Rebuilds dürfen die dauerhaften Claims nicht vernichten.
+Snapshots bleiben referenziell geschützt; alle abhängigen Cardtabellen besitzen dagegen strikte
+komposite Schlüssel. Ein getesteter V8→V9-Rollback lässt die V8-Datenbank unverändert. Die
+Publisher-Contractprobe belegt atomaren SQL-Fehlerrollback, Cancellation vor Mutation,
+Progressfehler, maximal 64 monotone Fortschrittsereignisse, getrennte Fact-/Hypothesis-
+Persistenz, exakte FTS-Zeilenzahl, Duplicate-Rejection und Erhalt der Claims nach Index-Rebuild.
 
 Das implementierte Knowledge-Schema V8 ergänzt V7 um die vollständige run-gebundene
 `ModuleProjection`. Ein Marker hält `ModulePolicyVersion`, Datei-/Symbol-/Modul-/Membershipzahlen,

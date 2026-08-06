@@ -197,6 +197,12 @@ Gegensätzliche strukturierte Claims erzeugen einen sichtbaren Widerspruchsberic
 zusammengeführte Card. Erst der nicht öffentlich konstruierbare `VerifiedModuleCardBatch` darf die
 verified-only Publish-Grenze passieren.
 
+Der Batch behält neben den Cards die exakt verifizierten Evidence-Objekte. Damit kann ein
+Storageadapter vollständige Provenienz atomar persistieren, ohne Evidence IDs nachträglich aus
+Prosa oder einem möglicherweise neueren Index zu rekonstruieren. Publication ist begrenzt,
+abbrechbar und fortschrittsmeldend; ein erfolgreicher Commit ist der einzige Übergang zur
+dauerhaften Published-Repräsentation.
+
 ### Exact Retrieval
 
 Eine `ExactSearchQuery` wählt entweder einen normalisierten Repository-Pfad, einen begrenzten

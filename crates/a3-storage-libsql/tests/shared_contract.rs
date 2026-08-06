@@ -78,6 +78,11 @@ fn libsql_satisfies_shared_index_rebuild_contract() -> Result<(), ContractError>
 }
 
 #[test]
+fn libsql_satisfies_shared_module_card_publication_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::ModuleCardPublication)
+}
+
+#[test]
 fn libsql_satisfies_shared_search_availability_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::SearchAvailability)
 }

@@ -6,12 +6,14 @@
 mod catalog;
 mod fixture;
 mod index;
+mod module_cards;
 mod reconciliation;
 mod search;
 mod semantic;
 
 use a3_application::{
     KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, SemanticEmbeddingStore,
+    VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -189,7 +191,11 @@ pub(crate) fn fixture_modules(
 /// layout type, but must not change the contract scenarios.
 pub trait KnowledgeStoreContractFactory {
     /// Concrete adapter that implements every current storage capability.
-    type Store: KnowledgeStore + KnowledgeIndexStore + KnowledgeSearchStore + SemanticEmbeddingStore;
+    type Store: KnowledgeStore
+        + KnowledgeIndexStore
+        + KnowledgeSearchStore
+        + SemanticEmbeddingStore
+        + VerifiedModuleCardPublisher;
 
     /// Opens the store at `app_data_root`, preserving data across repeated calls.
     fn open<'a>(&'a self, app_data_root: &'a Path) -> ContractFactoryFuture<'a, Self::Store>;
@@ -218,6 +224,8 @@ pub enum KnowledgeStoreContractGroup {
     IndexReplacementPublication,
     /// Regenerable-index rebuild and authoritative snapshot retention.
     IndexRebuild,
+    /// Verified-only Module Card publication, cancellation, duplicate rejection, and rebuild.
+    ModuleCardPublication,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -277,6 +285,9 @@ where
         }
         KnowledgeStoreContractGroup::IndexRebuild => {
             index::verify_rebuild(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::ModuleCardPublication => {
+            module_cards::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
@@ -349,6 +360,8 @@ where
     catalog::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();
     index::verify(factory, &workspace).await?;
+    retain_workspace_during_native_teardown();
+    module_cards::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();
     search::verify(factory, &workspace).await?;
     retain_workspace_during_native_teardown();

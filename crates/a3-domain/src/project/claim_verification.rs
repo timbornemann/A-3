@@ -659,6 +659,12 @@ pub struct VerifiedModuleCard {
 }
 
 impl VerifiedModuleCard {
+    /// Returns the structurally validated source proposal retained for publication.
+    #[must_use]
+    pub const fn proposal(&self) -> &ModuleCardProposal {
+        &self.proposal
+    }
+
     /// Returns the stable card identity.
     #[must_use]
     pub const fn id(&self) -> ModuleCardId {
@@ -690,6 +696,7 @@ pub struct VerifiedModuleCardBatch {
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     cards: Vec<VerifiedModuleCard>,
+    evidence: ResolvedModuleCardEvidenceSet,
 }
 
 impl VerifiedModuleCardBatch {
@@ -709,6 +716,12 @@ impl VerifiedModuleCardBatch {
     #[must_use]
     pub fn cards(&self) -> &[VerifiedModuleCard] {
         &self.cards
+    }
+
+    /// Returns the exact current Evidence objects validated for this batch.
+    #[must_use]
+    pub const fn evidence(&self) -> &ResolvedModuleCardEvidenceSet {
+        &self.evidence
     }
 }
 
@@ -792,6 +805,7 @@ impl ModuleCardVerifier {
             index_run_id: published.run().id(),
             snapshot_id,
             cards,
+            evidence: evidence.clone(),
         })
     }
 }

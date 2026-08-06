@@ -375,12 +375,47 @@ Akzeptanz:
 
 Abhängigkeiten: R8
 
-- [ ] Evidence-Auflösung
-- [ ] Import-, Export-, Test- und Graphclaimprüfung
-- [ ] Widerspruchserkennung
-- [ ] Fact-, Observation- und Hypothesis-Zuweisung
-- [ ] Confidence ist getrennt vom Status
-- [ ] Publish nur nach Verify
+Status: Completed
+
+- [x] Evidence-Auflösung
+- [x] Import-, Export-, Test- und Graphclaimprüfung
+- [x] Widerspruchserkennung
+- [x] Fact-, Observation- und Hypothesis-Zuweisung
+- [x] Confidence ist getrennt vom Status
+- [x] Publish nur nach Verify
+
+Das geschlossene `module-card-claims-v1`-Schema und sein unabhängiger Runtime-Decoder akzeptieren
+genau ein streng versioniertes JSON-Dokument. Card, Modul, Snapshot und jedes Claim-Feld sind an
+den Proposal-Envelope gebunden; unbekannte Felder, Text außerhalb des Dokuments, nicht kanonische
+IDs und Prädikate außerhalb der typisierten Path-, Symbol-, Import-, Export-, Call-, Test-,
+Observation- und Architecture-Intent-Union werden abgelehnt.
+
+Evidence IDs sind domänenseparierte BLAKE3-Identitäten der vollständigen File Revision, des
+Symbols oder der Graphkante. Der read-only Resolver lädt ausschließlich den jüngsten atomar
+veröffentlichten Index und löst exakt die angefragten IDs innerhalb desselben Runs und Snapshots
+auf. Der deterministische Verifier konstruiert Facts nur aus bejahenden, exakt belegten
+Strukturclaims, Observations aus beobachteter Prosa und Hypotheses aus negativen Aussagen oder
+nicht deterministisch beweisbarer Architekturabsicht. Classification, Active-Status und
+Confidence bleiben getrennte Typen. Opponierende Claims erzeugen einen sichtbaren
+Widerspruchsbericht; Cards werden weder still zusammengeführt noch per Mehrheitsentscheid
+umklassifiziert.
+
+Nur der privat konstruierbare `VerifiedModuleCardBatch` überschreitet den Publish-Port. Das
+Knowledge-Schema V9 persistiert Cards, Felder, Claims und die vollständige aufgelöste Provenienz in
+einer `IMMEDIATE`-Transaktion und aktualisiert `card_fts` samt Lexical-Marker atomar. Stale Runs,
+fremde oder erfundene Evidence, Duplicate-Publish, Cancellation, Deadline und nicht zustellbarer
+Progress werden vor Commit abgelehnt; SQL-Fehler rollen alle Teilzeilen zurück. Ein Fast-Index-
+Rebuild entfernt die regenerierbare Suchprojektion, erhält aber die dauerhaften Claim- und
+Evidence-Zeilen für die Invalidierung in R11.
+
+Domain-, Application-, Migration-, konkrete libSQL- und gemeinsame adapterneutrale Storage-
+Contracts belegen Fake-ID- und Stale-Run-Ablehnung, Fact/Observation/Hypothesis,
+Widerspruchssichtbarkeit, verified-only Publish, höchstens 64 monotone Progressereignisse,
+atomaren Fehlerrollback, persistente Classification/Confidence, Lexical Search,
+Duplicate-Rejection und Rebuild-Erhalt. Abschlussgates am 2026-08-06: `cargo fmt --all -- --check`,
+`cargo test --workspace --all-features`, Workspace-Clippy mit allen Targets/Features und Warnings
+denied, Rustdoc mit Warnings denied, Frontend-CI mit Node 24.14.0/pnpm 11.9.0,
+Markdown-Linkcheck, Dependency-/Lizenzbericht und Tauri-Release-Build ohne Bundle sind grün.
 
 Akzeptanz:
 

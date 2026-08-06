@@ -1,7 +1,7 @@
 # Qualitätsgates und Definition of Done
 
 Status: verbindliche Baseline  
-Stand: 2026-08-05
+Stand: 2026-08-06
 
 ## Grundsatz
 
@@ -53,6 +53,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Semantic-Card-/Embedding-Contracts prüfen BodyHash-Kanonik, Profil-/Dimensionsisolation,
   Redaction, Cancellation, Disabled ohne Adapterzugriff, persistentes Reopen, native
   dimensionsgebundene Vector-Capability, begrenzten linearen Fallback und semantikexklusiven Rebuild
+- Claim-Verifier-Contracts prüfen das strikt versionierte Claim-Schema, exakte Evidence-Auflösung
+  gegen den aktuell veröffentlichten Index, Ablehnung erfundener oder veralteter IDs, sichtbare
+  Widersprüche, getrennte Classification und Confidence sowie ausschließlich verifizierte,
+  atomare Card-Publikation mitsamt Evidence und Lexical-Search-Projektion
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 

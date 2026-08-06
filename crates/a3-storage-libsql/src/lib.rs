@@ -13,6 +13,7 @@ mod lexical_search_projection;
 mod lexical_search_repository;
 mod local_store;
 mod migration;
+mod module_card_repository;
 mod module_projection_codec;
 mod project_catalog;
 mod project_layout;

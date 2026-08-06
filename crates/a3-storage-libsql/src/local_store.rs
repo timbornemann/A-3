@@ -5,16 +5,17 @@ use crate::{
 };
 use crate::{
     exact_search_repository, graph_traversal_repository, index_publication, index_repository,
-    index_repository::IndexRepositoryError, lexical_search_repository,
+    index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
     semantic_embedding_repository,
 };
 use a3_application::{
     EmbeddingOperationControl, IndexPersistenceControl, KnowledgeIndexFailure,
     KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
     KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
-    KnowledgeStoreFuture, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
-    RecentProjectLimit, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    KnowledgeStoreFuture, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
+    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
+    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
+    SemanticEmbeddingStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
@@ -22,7 +23,7 @@ use a3_domain::{
     IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
     LexicalSearchPageSize, LexicalSearchQuery, ProjectId, ProjectIdentity, PublishedIndex,
     RepositoryId, SemanticEmbedding, Snapshot, SnapshotId, TraversalQuery, VectorSearchCapability,
-    VectorSearchLimit, VectorSearchResult, WorktreeId,
+    VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -373,6 +374,32 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
             index_publication::rebuild_regenerable_index(
                 knowledge.connection(),
                 project.worktree().id(),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
+    fn publish<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        batch: &'a VerifiedModuleCardBatch,
+        timeout: ModuleCardPublicationTimeout,
+        control: &'a dyn ModuleCardVerificationControl,
+    ) -> VerifiedModuleCardPublisherFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::VerifiedModuleCardPublisherFailure::Storage)?;
+            module_card_repository::publish_verified_module_cards(
+                knowledge.connection(),
+                project.worktree().id(),
+                batch,
+                timeout,
                 control,
             )
             .await

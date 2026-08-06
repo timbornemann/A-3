@@ -4,15 +4,25 @@ mod support;
 
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ModuleCardVerificationControl,
+    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    PublishVerifiedModuleCardsFailure, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
-    CanonicalDirectory, ContentHash, GitHead, GitReferenceName, IndexLanguage, IndexPublication,
+    CanonicalDirectory, Centrality, Confidence, ContentHash, EvidenceRef, GitHead,
+    GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage, IndexPublication,
     IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
-    LanguageAdapterRevision, LanguageAdapterVersion, LinkedGraph, ProjectIdentity, RankProjection,
-    RankingPolicyVersion, RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot,
-    SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeAnchorId, WorktreeGeneration,
-    WorktreeId, WorktreeIdentity,
+    LanguageAdapterRevision, LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId,
+    MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
+    ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
+    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
+    ModuleClaimPredicate, ModuleClaimProposal, ParsedSymbol, ProjectIdentity,
+    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
+    RepositoryId, RepositoryIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
+    SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
+    SyntaxProvider, SyntaxRelationKind, VerifiedModuleCardBatch, WorktreeAnchorId,
+    WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -49,6 +59,23 @@ impl IndexPersistenceControl for TestIndexControl {
     }
 }
 
+impl ModuleCardVerificationControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardVerificationControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleCardVerificationControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -61,6 +88,19 @@ impl IndexPersistenceControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleCardVerificationControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardVerificationControlError> {
         Ok(())
     }
 }
@@ -78,6 +118,19 @@ impl IndexPersistenceControl for UnavailableProgressControl {
         _progress: a3_domain::Progress,
     ) -> Result<(), IndexPersistenceControlError> {
         Err(IndexPersistenceControlError::Unavailable)
+    }
+}
+
+impl ModuleCardVerificationControl for UnavailableProgressControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardVerificationControlError> {
+        Err(ModuleCardVerificationControlError::Unavailable)
     }
 }
 
@@ -536,6 +589,148 @@ fn persistence_control_cancels_before_mutation_and_bounds_progress()
 }
 
 #[test]
+fn verified_module_cards_publish_atomically_with_evidence_and_search_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([71; 32], [72; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [73; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [74; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([75; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = symbol_publication(snapshot.id(), b"src/lib.rs", [74; 32])?;
+        store
+            .publish_index(
+                &fixture.project,
+                run.id(),
+                &publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let published = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("published fixture index is missing")?;
+        let batch = verified_card_batch(&published)?;
+        let publisher = PublishVerifiedModuleCards::new(&store);
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+
+        assert_eq!(
+            publisher
+                .execute(&fixture.project, &batch, &CancelledIndexControl)
+                .await,
+            Err(PublishVerifiedModuleCardsFailure::Cancelled)
+        );
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 0);
+        assert_eq!(
+            publisher
+                .execute(&fixture.project, &batch, &UnavailableProgressControl)
+                .await,
+            Err(PublishVerifiedModuleCardsFailure::Publisher(
+                VerifiedModuleCardPublisherFailure::ProgressUnavailable
+            ))
+        );
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 0);
+
+        mutate_knowledge(
+            &knowledge_path,
+            "CREATE TRIGGER reject_verified_claim BEFORE INSERT ON claims\n\
+             BEGIN SELECT RAISE(ABORT, 'simulated card publication crash'); END",
+        )
+        .await?;
+        assert_eq!(
+            publisher
+                .execute(&fixture.project, &batch, &TestIndexControl::default())
+                .await,
+            Err(PublishVerifiedModuleCardsFailure::Publisher(
+                VerifiedModuleCardPublisherFailure::Storage
+            ))
+        );
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 0);
+        mutate_knowledge(&knowledge_path, "DROP TRIGGER reject_verified_claim").await?;
+
+        let control = TestIndexControl::default();
+        let receipt = publisher
+            .execute(&fixture.project, &batch, &control)
+            .await?;
+        assert_eq!(receipt.snapshot_id(), snapshot.id());
+        assert_eq!(receipt.card_count(), 1);
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "module_card_fields").await?, 2);
+        assert_eq!(
+            read_count(&knowledge_path, "module_card_field_values").await?,
+            2
+        );
+        assert_eq!(
+            read_count(&knowledge_path, "module_card_field_evidence").await?,
+            2
+        );
+        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
+        assert_eq!(read_count(&knowledge_path, "claim_evidence").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "claim_relations").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "card_fts").await?, 1);
+        assert_eq!(read_lexical_card_count(&knowledge_path, run.id()).await?, 1);
+        assert_eq!(
+            read_claim_classification(&knowledge_path, run.id()).await?,
+            vec![
+                (
+                    "architectural-intent".to_owned(),
+                    "hypothesis".to_owned(),
+                    5_000
+                ),
+                ("relation".to_owned(), "fact".to_owned(), 7_000),
+            ]
+        );
+        {
+            let progress = control
+                .progress
+                .lock()
+                .map_err(|_| io::Error::other("progress lock was poisoned"))?;
+            assert!(progress.len() <= 64);
+            assert_eq!(
+                progress.first().and_then(|value| value.completed()),
+                Some(0)
+            );
+            assert_eq!(progress.last().map(|value| value.is_complete()), Some(true));
+        }
+
+        assert_eq!(
+            publisher
+                .execute(&fixture.project, &batch, &TestIndexControl::default())
+                .await,
+            Err(PublishVerifiedModuleCardsFailure::Publisher(
+                VerifiedModuleCardPublisherFailure::Rejected
+            ))
+        );
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+
+        store
+            .rebuild_regenerable_index(&fixture.project, &TestIndexControl::default())
+            .await?;
+        assert_eq!(read_count(&knowledge_path, "index_runs").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "card_fts").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
+        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 1);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
 fn superseded_projection_rows_are_retired_without_deleting_run_history()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
@@ -894,6 +1089,161 @@ fn file_only_publication(
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
 }
 
+fn symbol_publication(
+    snapshot_id: SnapshotId,
+    path: &[u8],
+    hash: [u8; 32],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let revision = a3_domain::FileRevision::new(
+        RepositoryPath::try_from_bytes(path.to_vec())?,
+        ContentHash::from_bytes(hash),
+    );
+    let range = SourceRange::new(0, 4, SourcePosition::new(0, 0), SourcePosition::new(0, 4))?;
+    let symbol_id = SymbolId::from_bytes([76; 32]);
+    let symbol = GraphSymbol::new(
+        symbol_id,
+        revision.clone(),
+        ParsedSymbol::new(
+            LocalSymbolId::new(1)?,
+            SymbolKind::Function,
+            SymbolName::try_from_string("main".to_owned())?,
+            range,
+            range,
+        )?,
+    );
+    let edge = GraphEdge::new(
+        GraphEndpoint::File(revision.path().clone()),
+        GraphEndpoint::Symbol(symbol_id),
+        SyntaxRelationKind::Exports,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterLocalSymbol,
+        snapshot_id,
+        EvidenceRef::new(revision.clone(), range),
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        vec![revision],
+        vec![symbol],
+        vec![edge],
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(
+        snapshot_id,
+        RankingPolicyVersion::v1(),
+        vec![SymbolRank::new(
+            symbol_id,
+            RankScore::try_from_sum(1_000)?,
+            SymbolRankSignals {
+                in_degree: 0,
+                out_degree: 0,
+                centrality: Centrality::from_basis_points(1_000)?,
+                degree_contribution: 0,
+                centrality_contribution: 1_000,
+                entrypoint_contribution: 0,
+                public_export_contribution: 0,
+                manifest_contribution: 0,
+                test_contribution: 0,
+            },
+        )],
+    )?;
+    let modules = support::module_projection(&graph, &ranking, &[])?;
+    Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn verified_card_batch(
+    published: &PublishedIndex,
+) -> Result<VerifiedModuleCardBatch, Box<dyn std::error::Error>> {
+    let edge = published
+        .publication()
+        .graph()
+        .edges()
+        .first()
+        .ok_or("published fixture edge is missing")?
+        .clone();
+    let evidence_id = ModuleCardEvidenceId::for_graph_edge_v1(&edge);
+    let module = published
+        .publication()
+        .modules()
+        .modules()
+        .first()
+        .ok_or("published fixture module is missing")?;
+    let card_id = ModuleCardId::from_bytes([77; 32]);
+    let proposal = ModuleCardProposal::new(
+        ModuleCardProposalEnvelope::new(
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardSchemaVersion::V1,
+            MapperProfileVersion::V1,
+            Confidence::from_basis_points(8_000)?,
+        ),
+        vec![
+            ProposedModuleCardField::new(
+                ModuleCardField::Purpose,
+                vec!["keeps policy centralized".to_owned()],
+                vec![evidence_id],
+            )?,
+            ProposedModuleCardField::new(
+                ModuleCardField::PublicSurface,
+                vec!["exports main".to_owned()],
+                vec![evidence_id],
+            )?,
+        ],
+        512,
+    )?;
+    let relation_claim = ModuleClaimProposal::new(
+        ModuleClaimEnvelope::new(
+            ModuleCardClaimId::from_bytes([78; 32]),
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardField::PublicSurface,
+            0,
+            Confidence::from_basis_points(7_000)?,
+        ),
+        ModuleClaimPolarity::Affirms,
+        ModuleClaimPredicate::Relation {
+            source: edge.source().clone(),
+            target: edge.target().clone(),
+            kind: edge.kind(),
+        },
+        vec![evidence_id],
+    )?;
+    let intent_claim = ModuleClaimProposal::new(
+        ModuleClaimEnvelope::new(
+            ModuleCardClaimId::from_bytes([79; 32]),
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardField::Purpose,
+            0,
+            Confidence::from_basis_points(5_000)?,
+        ),
+        ModuleClaimPolarity::Affirms,
+        ModuleClaimPredicate::ArchitecturalIntent(
+            a3_domain::ModuleClaimStatement::try_from_string(
+                "keeps policy centralized".to_owned(),
+            )?,
+        ),
+        Vec::new(),
+    )?;
+    let candidate =
+        ModuleCardVerificationCandidate::new(proposal, vec![relation_claim, intent_claim])?;
+    let evidence = ResolvedModuleCardEvidenceSet::new(
+        published.run().snapshot_id(),
+        vec![ResolvedModuleCardEvidence::GraphEdge {
+            id: evidence_id,
+            edge,
+        }],
+    )?;
+    Ok(ModuleCardVerifier::verify(
+        published,
+        vec![candidate],
+        &evidence,
+    )?)
+}
+
 fn unborn_head() -> Result<GitHead, Box<dyn std::error::Error>> {
     Ok(GitHead::Unborn {
         reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
@@ -969,6 +1319,15 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         "snapshots" => "SELECT COUNT(*) FROM snapshots",
         "index_runs" => "SELECT COUNT(*) FROM index_runs",
         "file_revisions" => "SELECT COUNT(*) FROM file_revisions",
+        "module_cards" => "SELECT COUNT(*) FROM module_cards",
+        "module_card_fields" => "SELECT COUNT(*) FROM module_card_fields",
+        "module_card_field_values" => "SELECT COUNT(*) FROM module_card_field_values",
+        "module_card_field_evidence" => "SELECT COUNT(*) FROM module_card_field_evidence",
+        "evidence_refs" => "SELECT COUNT(*) FROM evidence_refs",
+        "claims" => "SELECT COUNT(*) FROM claims",
+        "claim_evidence" => "SELECT COUNT(*) FROM claim_evidence",
+        "claim_relations" => "SELECT COUNT(*) FROM claim_relations",
+        "card_fts" => "SELECT COUNT(*) FROM card_fts",
         "task_state_probe" => "SELECT COUNT(*) FROM task_state_probe",
         _ => return Err(Box::from(io::Error::other("unsupported test table"))),
     };
@@ -980,6 +1339,50 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         .await?
         .ok_or(libsql::Error::QueryReturnedNoRows)?;
     Ok(row.get(0)?)
+}
+
+async fn read_lexical_card_count(
+    path: &Path,
+    run_id: IndexRunId,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(path).build().await?;
+    let connection = database.connect()?;
+    let mut rows = connection
+        .query(
+            "SELECT card_count FROM lexical_search_projections WHERE index_run_id = ?1",
+            [run_id.as_bytes().to_vec()],
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or(libsql::Error::QueryReturnedNoRows)?;
+    let count = row.get(0)?;
+    if rows.next().await?.is_some() {
+        return Err(io::Error::other("duplicate lexical projection row").into());
+    }
+    Ok(count)
+}
+
+async fn read_claim_classification(
+    path: &Path,
+    run_id: IndexRunId,
+) -> Result<Vec<(String, String, i64)>, Box<dyn std::error::Error>> {
+    let database = libsql::Builder::new_local(path).build().await?;
+    let connection = database.connect()?;
+    let mut rows = connection
+        .query(
+            "SELECT predicate_kind, claim_kind, confidence FROM claims\n\
+             WHERE source_index_run_id = ?1 AND status = 'active'\n\
+             ORDER BY predicate_kind",
+            [run_id.as_bytes().to_vec()],
+        )
+        .await?;
+    let mut claims = Vec::new();
+    while let Some(row) = rows.next().await? {
+        claims.push((row.get(0)?, row.get(1)?, row.get(2)?));
+    }
+    Ok(claims)
 }
 
 async fn read_run_count(

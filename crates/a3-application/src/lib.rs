@@ -83,7 +83,9 @@ pub use module_card_claim_codec::{
 pub use module_card_verification::{
     ModuleCardEvidenceResolutionTimeout, ModuleCardEvidenceResolutionTimeoutError,
     ModuleCardEvidenceResolver, ModuleCardEvidenceResolverFailure,
-    ModuleCardEvidenceResolverFuture, ModuleCardVerificationControl, PublishVerifiedModuleCards,
+    ModuleCardEvidenceResolverFuture, ModuleCardPublicationTimeout,
+    ModuleCardPublicationTimeoutError, ModuleCardVerificationControl,
+    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
     PublishVerifiedModuleCardsFailure, PublishedIndexEvidenceResolver, PublishedModuleCardReceipt,
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFailure,
     VerifiedModuleCardPublisherFuture, VerifyModuleCards, VerifyModuleCardsFailure,

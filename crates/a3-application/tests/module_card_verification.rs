@@ -15,7 +15,7 @@ use a3_domain::{
     ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
     ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimProposal, ModuleId,
     ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection,
-    ModuleRoot, ModuleSymbolSet, ParsedSymbol, ProjectIdentity, ProposedModuleCardField,
+    ModuleRoot, ModuleSymbolSet, ParsedSymbol, Progress, ProjectIdentity, ProposedModuleCardField,
     PublishedIndex, RankProjection, RankScore, RankingPolicyVersion, RepositoryCard,
     RepositoryFileState, RepositoryId, RepositoryIdentity, RepositoryModule, RepositoryPath,
     Snapshot, SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName,
@@ -148,6 +148,13 @@ impl ModuleCardVerificationControl for TestControl {
     fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
+
+    fn report_progress(
+        &self,
+        _progress: Progress,
+    ) -> Result<(), a3_application::ModuleCardVerificationControlError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -159,11 +166,46 @@ impl RecordingPublisher {
     }
 }
 
+#[derive(Debug)]
+struct BorrowedControl<'a>(&'a AtomicBool);
+
+impl ModuleCardVerificationControl for BorrowedControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn report_progress(
+        &self,
+        _progress: Progress,
+    ) -> Result<(), a3_application::ModuleCardVerificationControlError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct CancelAfterCommitPublisher<'a>(&'a AtomicBool);
+
+impl VerifiedModuleCardPublisher for CancelAfterCommitPublisher<'_> {
+    fn publish<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _batch: &'a VerifiedModuleCardBatch,
+        _timeout: a3_application::ModuleCardPublicationTimeout,
+        _control: &'a dyn ModuleCardVerificationControl,
+    ) -> VerifiedModuleCardPublisherFuture<'a> {
+        Box::pin(async move {
+            self.0.store(true, Ordering::Release);
+            Ok(())
+        })
+    }
+}
+
 impl VerifiedModuleCardPublisher for RecordingPublisher {
     fn publish<'a>(
         &'a self,
         _project: &'a ProjectIdentity,
         _batch: &'a VerifiedModuleCardBatch,
+        _timeout: a3_application::ModuleCardPublicationTimeout,
         control: &'a dyn ModuleCardVerificationControl,
     ) -> VerifiedModuleCardPublisherFuture<'a> {
         Box::pin(async move {
@@ -290,6 +332,19 @@ fn only_a_verified_batch_crosses_the_publish_boundary() -> Result<(), Box<dyn Er
     assert_eq!(receipt.snapshot_id(), published.run().snapshot_id());
     assert_eq!(receipt.card_count(), 1);
     assert_eq!(publisher.calls(), 1);
+
+    let cancellation = AtomicBool::new(false);
+    let late_cancel_publisher = CancelAfterCommitPublisher(&cancellation);
+    let late_cancel_control = BorrowedControl(&cancellation);
+    let committed = block_on(
+        PublishVerifiedModuleCards::new(&late_cancel_publisher).execute(
+            &project,
+            &batch,
+            &late_cancel_control,
+        ),
+    )?;
+    assert_eq!(committed.card_count(), 1);
+    assert!(cancellation.load(Ordering::Acquire));
     Ok(())
 }
 

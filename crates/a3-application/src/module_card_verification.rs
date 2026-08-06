@@ -15,6 +15,7 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 const MAX_EVIDENCE_RESOLUTION_TIMEOUT_MILLIS: u64 = 30_000;
+const MAX_MODULE_CARD_PUBLICATION_TIMEOUT_MILLIS: u64 = 120_000;
 
 /// Owned future returned by the object-safe Module Card evidence resolver.
 pub type ModuleCardEvidenceResolverFuture<'a> = Pin<
@@ -34,13 +35,40 @@ pub type VerifiedModuleCardPublisherFuture<'a> =
 pub trait ModuleCardVerificationControl: fmt::Debug + Send + Sync {
     /// Returns whether the owning operation requested cancellation.
     fn is_cancelled(&self) -> bool;
+
+    /// Reports bounded monotone progress for evidence reads and publication.
+    fn report_progress(&self, progress: Progress)
+    -> Result<(), ModuleCardVerificationControlError>;
 }
 
 impl ModuleCardVerificationControl for JobContext {
     fn is_cancelled(&self) -> bool {
         self.cancellation_token().is_cancelled()
     }
+
+    fn report_progress(
+        &self,
+        progress: Progress,
+    ) -> Result<(), ModuleCardVerificationControlError> {
+        JobContext::report_progress(self, progress)
+            .map_err(|_| ModuleCardVerificationControlError::Unavailable)
+    }
 }
+
+/// Progress delivery failed at the R9 job boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleCardVerificationControlError {
+    /// The owning scheduler no longer accepts progress.
+    Unavailable,
+}
+
+impl fmt::Display for ModuleCardVerificationControlError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Module Card verification progress is unavailable")
+    }
+}
+
+impl Error for ModuleCardVerificationControlError {}
 
 /// Positive bounded deadline for one local evidence-resolution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +110,47 @@ impl fmt::Display for ModuleCardEvidenceResolutionTimeoutError {
 }
 
 impl Error for ModuleCardEvidenceResolutionTimeoutError {}
+
+/// Positive bounded deadline for one atomic verified Card publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModuleCardPublicationTimeout(Duration);
+
+impl ModuleCardPublicationTimeout {
+    /// Version-one local publication deadline.
+    pub const DEFAULT: Self = Self(Duration::from_secs(30));
+
+    /// Creates a deadline capped at two minutes.
+    pub fn from_millis(value: u64) -> Result<Self, ModuleCardPublicationTimeoutError> {
+        if value == 0 || value > MAX_MODULE_CARD_PUBLICATION_TIMEOUT_MILLIS {
+            return Err(ModuleCardPublicationTimeoutError { value });
+        }
+        Ok(Self(Duration::from_millis(value)))
+    }
+
+    /// Returns the neutral duration.
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.0
+    }
+}
+
+/// Publication deadline was zero or exceeded two minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModuleCardPublicationTimeoutError {
+    value: u64,
+}
+
+impl fmt::Display for ModuleCardPublicationTimeoutError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "Module Card publication timeout {} ms must be between 1 and {MAX_MODULE_CARD_PUBLICATION_TIMEOUT_MILLIS}",
+            self.value
+        )
+    }
+}
+
+impl Error for ModuleCardPublicationTimeoutError {}
 
 /// Read-only adapter boundary resolving opaque Card Evidence IDs against one snapshot.
 pub trait ModuleCardEvidenceResolver: fmt::Debug + Send + Sync {
@@ -229,11 +298,13 @@ impl IndexPersistenceControl for ResolverIndexReadControl<'_> {
         self.control.is_cancelled() || self.started.elapsed() >= self.timeout
     }
 
-    fn report_progress(&self, _progress: Progress) -> Result<(), IndexPersistenceControlError> {
+    fn report_progress(&self, progress: Progress) -> Result<(), IndexPersistenceControlError> {
         if self.is_cancelled() {
             Err(IndexPersistenceControlError::Unavailable)
         } else {
-            Ok(())
+            self.control
+                .report_progress(progress)
+                .map_err(|_| IndexPersistenceControlError::Unavailable)
         }
     }
 }
@@ -245,6 +316,7 @@ pub trait VerifiedModuleCardPublisher: fmt::Debug + Send + Sync {
         &'a self,
         project: &'a ProjectIdentity,
         batch: &'a VerifiedModuleCardBatch,
+        timeout: ModuleCardPublicationTimeout,
         control: &'a dyn ModuleCardVerificationControl,
     ) -> VerifiedModuleCardPublisherFuture<'a>;
 }
@@ -305,13 +377,17 @@ impl<'a> VerifyModuleCards<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct PublishVerifiedModuleCards<'a> {
     publisher: &'a dyn VerifiedModuleCardPublisher,
+    timeout: ModuleCardPublicationTimeout,
 }
 
 impl<'a> PublishVerifiedModuleCards<'a> {
     /// Composes the verified-only publisher boundary.
     #[must_use]
     pub const fn new(publisher: &'a dyn VerifiedModuleCardPublisher) -> Self {
-        Self { publisher }
+        Self {
+            publisher,
+            timeout: ModuleCardPublicationTimeout::DEFAULT,
+        }
     }
 
     /// Publishes an already verified batch and returns snapshot-bound safe metadata.
@@ -324,10 +400,9 @@ impl<'a> PublishVerifiedModuleCards<'a> {
         if control.is_cancelled() {
             return Err(PublishVerifiedModuleCardsFailure::Cancelled);
         }
-        self.publisher.publish(project, batch, control).await?;
-        if control.is_cancelled() {
-            return Err(PublishVerifiedModuleCardsFailure::Cancelled);
-        }
+        self.publisher
+            .publish(project, batch, self.timeout, control)
+            .await?;
         Ok(PublishedModuleCardReceipt {
             snapshot_id: batch.snapshot_id(),
             card_count: batch.cards().len(),
@@ -395,6 +470,10 @@ pub enum VerifiedModuleCardPublisherFailure {
     Rejected,
     /// Atomic publication failed.
     Storage,
+    /// Atomic publication exceeded its bounded deadline.
+    TimedOut,
+    /// Publication progress could not reach the owning job.
+    ProgressUnavailable,
     /// Owning operation cancelled publication before commit.
     Cancelled,
 }
@@ -404,6 +483,8 @@ impl fmt::Display for VerifiedModuleCardPublisherFailure {
         formatter.write_str(match self {
             Self::Rejected => "verified Module Card batch was rejected",
             Self::Storage => "verified Module Card publication failed",
+            Self::TimedOut => "verified Module Card publication timed out",
+            Self::ProgressUnavailable => "verified Module Card publication progress is unavailable",
             Self::Cancelled => "verified Module Card publication was cancelled",
         })
     }
@@ -497,12 +578,19 @@ impl From<VerifiedModuleCardPublisherFailure> for PublishVerifiedModuleCardsFail
 
 #[cfg(test)]
 mod tests {
-    use super::ModuleCardEvidenceResolutionTimeout;
+    use super::{ModuleCardEvidenceResolutionTimeout, ModuleCardPublicationTimeout};
 
     #[test]
     fn evidence_resolution_timeout_is_positive_and_bounded() {
         assert!(ModuleCardEvidenceResolutionTimeout::from_millis(0).is_err());
         assert!(ModuleCardEvidenceResolutionTimeout::from_millis(30_001).is_err());
         assert!(ModuleCardEvidenceResolutionTimeout::from_millis(500).is_ok());
+    }
+
+    #[test]
+    fn publication_timeout_is_positive_and_bounded() {
+        assert!(ModuleCardPublicationTimeout::from_millis(0).is_err());
+        assert!(ModuleCardPublicationTimeout::from_millis(120_001).is_err());
+        assert!(ModuleCardPublicationTimeout::from_millis(500).is_ok());
     }
 }

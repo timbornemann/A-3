@@ -740,6 +740,197 @@ const KNOWLEDGE_MODULE_PROJECTION_MIGRATION: Migration = Migration {
       ) STRICT;",
 };
 
+const KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION: Migration = Migration {
+    version: 9,
+    name: "verified_module_cards",
+    sql: "CREATE TABLE module_cards (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      card_schema_version INTEGER NOT NULL CHECK (card_schema_version = 1),\n\
+      mapper_profile_version INTEGER NOT NULL CHECK (mapper_profile_version = 1),\n\
+      confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 10000),\n\
+      status TEXT NOT NULL CHECK (status = 'published'),\n\
+      PRIMARY KEY (source_index_run_id, card_id),\n\
+      UNIQUE (source_index_run_id, module_id),\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_card_fields (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      field_kind TEXT NOT NULL CHECK (field_kind IN (\n\
+        'title', 'paths', 'purpose', 'responsibilities', 'public-surface', 'entrypoints',\n\
+        'dependencies', 'data-flows', 'invariants', 'tests', 'risks', 'open-questions'\n\
+      )),\n\
+      PRIMARY KEY (source_index_run_id, card_id, field_kind),\n\
+      FOREIGN KEY (source_index_run_id, card_id)\n\
+        REFERENCES module_cards(source_index_run_id, card_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_card_field_values (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      field_kind TEXT NOT NULL,\n\
+      value_index INTEGER NOT NULL CHECK (value_index BETWEEN 0 AND 65535),\n\
+      field_value TEXT NOT NULL\n\
+        CHECK (length(CAST(field_value AS BLOB)) BETWEEN 1 AND 16384),\n\
+      PRIMARY KEY (source_index_run_id, card_id, field_kind, value_index),\n\
+      UNIQUE (source_index_run_id, card_id, field_kind, field_value),\n\
+      FOREIGN KEY (source_index_run_id, card_id, field_kind)\n\
+        REFERENCES module_card_fields(source_index_run_id, card_id, field_kind)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE evidence_refs (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('file', 'symbol', 'graph-edge')),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      symbol_id BLOB CHECK (symbol_id IS NULL OR length(symbol_id) = 32),\n\
+      source_kind TEXT CHECK (source_kind IS NULL OR source_kind IN ('file', 'symbol')),\n\
+      source_value BLOB,\n\
+      target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN ('file', 'symbol')),\n\
+      target_value BLOB,\n\
+      relation_kind TEXT CHECK (relation_kind IS NULL OR relation_kind IN (\n\
+        'contains', 'defines', 'imports', 'exports', 'calls', 'implements', 'extends', 'reads',\n\
+        'writes', 'configures', 'tests', 'builds', 'documents'\n\
+      )),\n\
+      provider TEXT CHECK (provider IS NULL OR provider IN ('tree-sitter', 'manifest', 'language-heuristic')),\n\
+      edge_confidence INTEGER CHECK (edge_confidence IS NULL OR edge_confidence BETWEEN 0 AND 10000),\n\
+      resolution TEXT CHECK (resolution IS NULL OR resolution IN (\n\
+        'adapter-local-symbol', 'adapter-file', 'exact-module-reference',\n\
+        'unique-file-local-name', 'unique-qualified-name'\n\
+      )),\n\
+      start_byte INTEGER CHECK (start_byte IS NULL OR start_byte BETWEEN 0 AND 4294967295),\n\
+      end_byte INTEGER CHECK (end_byte IS NULL OR end_byte BETWEEN start_byte AND 4294967295),\n\
+      start_row INTEGER CHECK (start_row IS NULL OR start_row BETWEEN 0 AND 4294967295),\n\
+      start_column INTEGER CHECK (start_column IS NULL OR start_column BETWEEN 0 AND 4294967295),\n\
+      end_row INTEGER CHECK (end_row IS NULL OR end_row BETWEEN 0 AND 4294967295),\n\
+      end_column INTEGER CHECK (end_column IS NULL OR end_column BETWEEN 0 AND 4294967295),\n\
+      CHECK ((source_kind IS NULL) = (source_value IS NULL)),\n\
+      CHECK ((target_kind IS NULL) = (target_value IS NULL)),\n\
+      CHECK (source_kind IS NULL OR\n\
+        (source_kind = 'symbol' AND length(source_value) = 32) OR\n\
+        (source_kind = 'file' AND length(source_value) BETWEEN 1 AND 131072)),\n\
+      CHECK (target_kind IS NULL OR\n\
+        (target_kind = 'symbol' AND length(target_value) = 32) OR\n\
+        (target_kind = 'file' AND length(target_value) BETWEEN 1 AND 131072)),\n\
+      CHECK (\n\
+        (evidence_kind = 'file' AND symbol_id IS NULL AND source_kind IS NULL AND\n\
+          relation_kind IS NULL AND provider IS NULL AND edge_confidence IS NULL AND\n\
+          resolution IS NULL AND start_byte IS NULL AND end_byte IS NULL AND\n\
+          start_row IS NULL AND start_column IS NULL AND end_row IS NULL AND end_column IS NULL) OR\n\
+        (evidence_kind = 'symbol' AND symbol_id IS NOT NULL AND source_kind IS NULL AND\n\
+          relation_kind IS NULL AND provider IS NULL AND edge_confidence IS NULL AND\n\
+          resolution IS NULL AND start_byte IS NULL AND end_byte IS NULL AND\n\
+          start_row IS NULL AND start_column IS NULL AND end_row IS NULL AND end_column IS NULL) OR\n\
+        (evidence_kind = 'graph-edge' AND symbol_id IS NULL AND source_kind IS NOT NULL AND\n\
+          target_kind IS NOT NULL AND relation_kind IS NOT NULL AND provider IS NOT NULL AND\n\
+          edge_confidence IS NOT NULL AND resolution IS NOT NULL AND start_byte IS NOT NULL AND\n\
+          end_byte IS NOT NULL AND start_row IS NOT NULL AND start_column IS NOT NULL AND\n\
+          end_row IS NOT NULL AND end_column IS NOT NULL)\n\
+      ),\n\
+      PRIMARY KEY (source_index_run_id, evidence_id),\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE module_card_field_evidence (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      field_kind TEXT NOT NULL,\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      PRIMARY KEY (source_index_run_id, card_id, field_kind, evidence_id),\n\
+      FOREIGN KEY (source_index_run_id, card_id, field_kind)\n\
+        REFERENCES module_card_fields(source_index_run_id, card_id, field_kind)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (source_index_run_id, evidence_id)\n\
+        REFERENCES evidence_refs(source_index_run_id, evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE claims (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      claim_id BLOB NOT NULL CHECK (length(claim_id) = 32),\n\
+      card_id BLOB NOT NULL CHECK (length(card_id) = 32),\n\
+      field_kind TEXT NOT NULL,\n\
+      value_index INTEGER NOT NULL CHECK (value_index BETWEEN 0 AND 65535),\n\
+      polarity TEXT NOT NULL CHECK (polarity IN ('affirms', 'denies')),\n\
+      predicate_kind TEXT NOT NULL CHECK (predicate_kind IN (\n\
+        'path', 'symbol', 'relation', 'observed', 'architectural-intent'\n\
+      )),\n\
+      statement TEXT CHECK (statement IS NULL OR\n\
+        length(CAST(statement AS BLOB)) BETWEEN 1 AND 2048),\n\
+      claim_kind TEXT NOT NULL CHECK (claim_kind IN ('fact', 'observation', 'hypothesis')),\n\
+      status TEXT NOT NULL CHECK (status = 'active'),\n\
+      confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 10000),\n\
+      CHECK ((predicate_kind IN ('observed', 'architectural-intent')) = (statement IS NOT NULL)),\n\
+      CHECK ((predicate_kind = 'architectural-intent') = (claim_kind = 'hypothesis') OR\n\
+        predicate_kind <> 'architectural-intent'),\n\
+      CHECK ((predicate_kind = 'observed') = (claim_kind = 'observation') OR\n\
+        predicate_kind <> 'observed'),\n\
+      CHECK (predicate_kind IN ('observed', 'architectural-intent') OR\n\
+        (polarity = 'affirms' AND claim_kind = 'fact') OR\n\
+        (polarity = 'denies' AND claim_kind = 'hypothesis')),\n\
+      PRIMARY KEY (source_index_run_id, claim_id),\n\
+      UNIQUE (source_index_run_id, card_id, field_kind, value_index),\n\
+      FOREIGN KEY (source_index_run_id, card_id, field_kind, value_index)\n\
+        REFERENCES module_card_field_values(source_index_run_id, card_id, field_kind, value_index)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE claim_evidence (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      claim_id BLOB NOT NULL CHECK (length(claim_id) = 32),\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      PRIMARY KEY (source_index_run_id, claim_id, evidence_id),\n\
+      FOREIGN KEY (source_index_run_id, claim_id)\n\
+        REFERENCES claims(source_index_run_id, claim_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (source_index_run_id, evidence_id)\n\
+        REFERENCES evidence_refs(source_index_run_id, evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE claim_relations (\n\
+      source_index_run_id BLOB NOT NULL CHECK (length(source_index_run_id) = 32),\n\
+      claim_id BLOB NOT NULL CHECK (length(claim_id) = 32),\n\
+      predicate_kind TEXT NOT NULL CHECK (predicate_kind IN ('path', 'symbol', 'relation')),\n\
+      predicate_path BLOB CHECK (predicate_path IS NULL OR length(predicate_path) BETWEEN 1 AND 131072),\n\
+      predicate_symbol_id BLOB CHECK (predicate_symbol_id IS NULL OR length(predicate_symbol_id) = 32),\n\
+      source_kind TEXT CHECK (source_kind IS NULL OR source_kind IN ('file', 'symbol')),\n\
+      source_value BLOB,\n\
+      target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN ('file', 'symbol')),\n\
+      target_value BLOB,\n\
+      relation_kind TEXT CHECK (relation_kind IS NULL OR relation_kind IN ('imports', 'exports', 'calls', 'tests')),\n\
+      CHECK ((source_kind IS NULL) = (source_value IS NULL)),\n\
+      CHECK ((target_kind IS NULL) = (target_value IS NULL)),\n\
+      CHECK (source_kind IS NULL OR\n\
+        (source_kind = 'symbol' AND length(source_value) = 32) OR\n\
+        (source_kind = 'file' AND length(source_value) BETWEEN 1 AND 131072)),\n\
+      CHECK (target_kind IS NULL OR\n\
+        (target_kind = 'symbol' AND length(target_value) = 32) OR\n\
+        (target_kind = 'file' AND length(target_value) BETWEEN 1 AND 131072)),\n\
+      CHECK (\n\
+        (predicate_kind = 'path' AND predicate_path IS NOT NULL AND predicate_symbol_id IS NULL AND\n\
+          source_kind IS NULL AND target_kind IS NULL AND relation_kind IS NULL) OR\n\
+        (predicate_kind = 'symbol' AND predicate_path IS NULL AND predicate_symbol_id IS NOT NULL AND\n\
+          source_kind IS NULL AND target_kind IS NULL AND relation_kind IS NULL) OR\n\
+        (predicate_kind = 'relation' AND predicate_path IS NULL AND predicate_symbol_id IS NULL AND\n\
+          source_kind IS NOT NULL AND target_kind IS NOT NULL AND relation_kind IS NOT NULL)\n\
+      ),\n\
+      PRIMARY KEY (source_index_run_id, claim_id),\n\
+      FOREIGN KEY (source_index_run_id, claim_id)\n\
+        REFERENCES claims(source_index_run_id, claim_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE INDEX module_cards_snapshot_idx ON module_cards (snapshot_id, source_index_run_id);\n\
+      CREATE INDEX claims_card_idx ON claims (source_index_run_id, card_id);\n\
+      CREATE INDEX evidence_refs_snapshot_idx ON evidence_refs (snapshot_id, evidence_kind);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -749,6 +940,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_LEXICAL_SEARCH_MIGRATION,
     KNOWLEDGE_SEMANTIC_EMBEDDING_MIGRATION,
     KNOWLEDGE_MODULE_PROJECTION_MIGRATION,
+    KNOWLEDGE_VERIFIED_MODULE_CARDS_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -781,7 +973,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(8);
+    pub const CURRENT: Self = Self::new(9);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1603,6 +1795,54 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master\n\
                      WHERE type = 'table' AND name = 'modules'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v9_upgrade_preserves_v8_schema() -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [42; 32];
+            let worktree_id = [43; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..8],
+                8,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE module_cards (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 9, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 8);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('module_cards')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'evidence_refs'",
                 )
                 .await?,
                 0

@@ -667,7 +667,7 @@ where
     crate::complete_contract_phase()
 }
 
-fn publication(
+pub(crate) fn publication(
     snapshot_id: SnapshotId,
     path: &[u8],
     hash: [u8; 32],
