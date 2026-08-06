@@ -152,6 +152,18 @@ P50 38,9 ms und P95 60,6 ms sowie FTS bei P50 36,2 ms und P95 39,5 ms; beide ble
 100-ms-Gate. Die Messung dokumentiert damit den zusätzlichen vollständigen Loadaufwand der
 evidenzgebundenen Membershipzeilen, ohne daraus eine Geschwindigkeitsverbesserung abzuleiten.
 
+R10 erweitert denselben ignorierten Release-Test um 30 vollständige Task-Lens-Compiles ohne LLM.
+Das 50.000-Symbole-Fixture publiziert zusätzlich einen aktuellen, symbolgebundenen Fact; jede
+Stichprobe umfasst aktuelle Run-Prüfung, Exact, FTS, Graph/Test, Claim-Rekonstruktion, Fusion,
+Budgetierung und Digest. Der unveränderte erste Stand rekonstruierte und kopierte den vollständigen
+Index pro Lens und erreichte am 2026-08-06 P50 1,745 s und P95 2,168 s. Eine auf einen Eintrag
+begrenzte Shared-Index-Capability, die vor jeder Ausgabe den dauerhaften neuesten Run prüft und bei
+Publish/Rebuild aktualisiert wird, erreichte auf derselben lokalen Maschine mit dem verifizierten
+Fact P50 251,101 ms und P95 267,307 ms. Im selben finalen Lauf lagen Exact Search bei P95 50,811 ms,
+FTS bei P95 37,762 ms und die absichtlich weiterhin tiefe vollständige Indexkopie bei P95 1,254 s.
+Damit besteht die Task-Lens-Context-Vorstufe das 300-ms-Gate; die lokale Messung ersetzt nicht die
+abschließende V1-Referenzmessung.
+
 Modellmetriken werden separat erfasst:
 
 - Time to First Token

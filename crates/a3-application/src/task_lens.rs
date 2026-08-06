@@ -1,7 +1,6 @@
 use crate::{
-    IndexPersistenceControl, IndexPersistenceControlError, JobContext, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchStore,
-    KnowledgeStoreFailure,
+    JobContext, KnowledgeIndexFailure, KnowledgeSearchControl, KnowledgeSearchFailure,
+    KnowledgeSearchStore, KnowledgeStoreFailure,
 };
 use a3_domain::{
     CandidateFreshness, CandidateTokenCost, ExactSearchPageSize, ExactSearchQuery,
@@ -18,6 +17,7 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TASK_LENS_PROGRESS_TOTAL: u64 = 7;
@@ -32,6 +32,13 @@ const MAX_TASK_LENS_SEMANTIC_HITS: u16 = 100;
 /// Owned future returned by the object-safe Task Lens claim reader.
 pub type TaskLensClaimStoreFuture<'a> = Pin<
     Box<dyn Future<Output = Result<TaskLensClaimResult, TaskLensClaimStoreFailure>> + Send + 'a>,
+>;
+
+/// Owned future returning a shared immutable current index for Task Lens compilation.
+pub type TaskLensIndexStoreFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<Option<Arc<PublishedIndex>>, KnowledgeIndexFailure>> + Send + 'a,
+    >,
 >;
 
 /// Owned future returned by the optional Task Lens semantic candidate provider.
@@ -76,6 +83,16 @@ impl fmt::Display for TaskLensControlError {
 }
 
 impl Error for TaskLensControlError {}
+
+/// Read-only boundary avoiding a deep clone of a complete immutable index per Lens.
+pub trait TaskLensIndexStore: fmt::Debug + Send + Sync {
+    /// Returns the latest atomically published index through a shared immutable capability.
+    fn load_current_index<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensIndexStoreFuture<'a>;
+}
 
 /// Positive bounded deadline for exact through semantic Task Lens compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +419,7 @@ impl Error for TaskLensSemanticSearchFailure {}
 /// Inbound use case compiling one deterministic Task Lens through ordered read-only channels.
 #[derive(Debug, Clone, Copy)]
 pub struct CompileTaskLens<'a> {
-    index: &'a dyn KnowledgeIndexStore,
+    index: &'a dyn TaskLensIndexStore,
     search: &'a dyn KnowledgeSearchStore,
     claims: &'a dyn TaskLensClaimStore,
     semantic: Option<&'a dyn TaskLensSemanticSearch>,
@@ -413,7 +430,7 @@ impl<'a> CompileTaskLens<'a> {
     /// Composes deterministic index/search and current verified-claim boundaries.
     #[must_use]
     pub const fn new(
-        index: &'a dyn KnowledgeIndexStore,
+        index: &'a dyn TaskLensIndexStore,
         search: &'a dyn KnowledgeSearchStore,
         claims: &'a dyn TaskLensClaimStore,
     ) -> Self {
@@ -458,7 +475,7 @@ impl<'a> CompileTaskLens<'a> {
         deadline.report(0)?;
         let published = self
             .index
-            .latest_published_index(project, &deadline)
+            .load_current_index(project, &deadline)
             .await
             .map_err(|source| deadline.map_index_failure(source))?
             .ok_or(CompileTaskLensFailure::IndexUnavailable)?;
@@ -1143,20 +1160,6 @@ impl TaskLensControl for TaskLensDeadline<'_> {
 impl KnowledgeSearchControl for TaskLensDeadline<'_> {
     fn is_cancelled(&self) -> bool {
         self.control.is_cancelled() || self.started.elapsed() >= self.timeout
-    }
-}
-
-impl IndexPersistenceControl for TaskLensDeadline<'_> {
-    fn is_cancelled(&self) -> bool {
-        self.control.is_cancelled() || self.started.elapsed() >= self.timeout
-    }
-
-    fn report_progress(&self, _progress: Progress) -> Result<(), IndexPersistenceControlError> {
-        if self.control.is_cancelled() || self.started.elapsed() >= self.timeout {
-            Err(IndexPersistenceControlError::Unavailable)
-        } else {
-            Ok(())
-        }
     }
 }
 

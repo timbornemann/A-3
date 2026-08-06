@@ -291,15 +291,22 @@ Overhead plus höchstens ein Token je UTF-8-Byte. Ein zu großes Detail wird sic
 bereits ausgewählte gröbere Zoomstufen zu verwerfen.
 
 Eine `TaskLensClaim`-Projektion rekonstruiert Classification, Status und Confidence getrennt und
-prüft die R9-Zuweisung erneut. Fact verlangt ein positives strukturelles Prädikat und mindestens
-eine exakt passende Evidence. Vor Aufnahme vergleicht der Compiler Claim-Run, Snapshot, Modul und
-jede File-, Symbol- oder Graphkanten-Evidence nochmals mit dem veröffentlichten Index. Stale oder
-inkompatible Claims werden gezählt und ausgeschlossen, niemals als Fakten materialisiert.
+prüft die R9-Zuweisung erneut. Jeder nicht ausschließlich auf Architekturabsicht beruhende Claim
+verlangt weiterhin aktuelle aufgelöste Evidence; Fact verlangt zusätzlich ein positives
+strukturelles Prädikat und mindestens eine exakt passende Evidence. Vor Aufnahme vergleicht der
+Compiler Claim-Run, Snapshot, Modul und jede File-, Symbol- oder Graphkanten-Evidence nochmals mit
+dem veröffentlichten Index. Stale oder inkompatible Claims werden gezählt und ausgeschlossen,
+niemals als Fakten materialisiert. Ein begrenztes Claim-Read bleibt durch einen eigenen
+Trunkierungszustand in Lens und Digest sichtbar.
 
 `LensDigest` ist domänensepariert und umfasst Task-Lens- und Fusionpolicy, Budget, kanonische
 Seedmenge, Run, Snapshot, geordnete Einträge, aktuelle Claims, Trunkierung und den Stale-Zähler.
 Identische Eingaben ergeben denselben Digest; ein neuer veröffentlichter Indexlauf macht die alte
 Lens konstruktiv unaktuell und erzeugt beim Recompile eine andere Identität.
+
+Die Application erhält den vollständigen Index als geteilte, unveränderliche Capability statt als
+tiefe Kopie. Diese Laufzeitrepräsentation ändert keine Domainidentität: Run und Snapshot werden vor
+jeder Ausgabe erneut gegen die dauerhafte aktuelle Publikation geprüft.
 
 ## Aggregate
 

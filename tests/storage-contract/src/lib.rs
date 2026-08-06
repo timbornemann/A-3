@@ -13,7 +13,7 @@ mod semantic;
 
 use a3_application::{
     KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, SemanticEmbeddingStore,
-    TaskLensClaimStore, VerifiedModuleCardPublisher,
+    TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -196,6 +196,7 @@ pub trait KnowledgeStoreContractFactory {
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
         + TaskLensClaimStore
+        + TaskLensIndexStore
         + VerifiedModuleCardPublisher;
 
     /// Opens the store at `app_data_root`, preserving data across repeated calls.

@@ -1,12 +1,13 @@
 //! R10 ordered read-only Task Lens orchestration contracts.
 
 use a3_application::{
-    CompileTaskLens, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
-    KnowledgeSearchStore, TaskLensClaimLimit, TaskLensClaimResult, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError,
-    TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticSearch,
-    TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture,
+    CompileTaskLens, CompileTaskLensFailure, IndexPersistenceControl, KnowledgeIndexFailure,
+    KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure,
+    KnowledgeSearchFuture, KnowledgeSearchStore, TaskLensClaimLimit, TaskLensClaimResult,
+    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensSemanticHit,
+    TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticSearch,
+    TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture, TaskLensTimeout,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, EvidenceRef, ExactSearchCursor,
@@ -30,7 +31,7 @@ use a3_domain::{
 use futures::executor::block_on;
 use std::error::Error;
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn channels_run_in_order_and_claims_are_packed_before_optional_semantic_candidates()
@@ -134,6 +135,38 @@ fn cancellation_stops_before_any_read() -> Result<(), Box<dyn Error>> {
         result,
         Err(a3_application::CompileTaskLensFailure::Cancelled)
     ));
+    assert!(
+        calls
+            .lock()
+            .map_err(|_| TestError("call log lock was poisoned"))?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn whole_operation_deadline_is_propagated_into_the_index_port() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published,
+        production: fixture.production,
+        test: fixture.test,
+        irrelevant: fixture.irrelevant,
+        calls: &calls,
+    };
+    let result = block_on(
+        CompileTaskLens::new(&DeadlineIndex, &store, &store)
+            .with_timeout(TaskLensTimeout::from_millis(1)?)
+            .execute(
+                &project()?,
+                TaskLensSeedSet::new(seed("goal")?, seed("step")?, Vec::new())?,
+                TaskLensTokenBudget::DEFAULT,
+                &RecordingControl::default(),
+            ),
+    );
+
+    assert!(matches!(result, Err(CompileTaskLensFailure::TimedOut)));
     assert!(
         calls
             .lock()
@@ -280,6 +313,36 @@ impl KnowledgeIndexStore for StubStore<'_> {
         _control: &'a dyn IndexPersistenceControl,
     ) -> KnowledgeIndexFuture<'a, ()> {
         Box::pin(async { Err(KnowledgeIndexFailure::InvalidIndexRunTransition) })
+    }
+}
+
+impl TaskLensIndexStore for StubStore<'_> {
+    fn load_current_index<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _control: &'a dyn TaskLensControl,
+    ) -> TaskLensIndexStoreFuture<'a> {
+        self.record("index");
+        let published = Arc::new(self.published.clone());
+        Box::pin(async move { Ok(Some(published)) })
+    }
+}
+
+#[derive(Debug)]
+struct DeadlineIndex;
+
+impl TaskLensIndexStore for DeadlineIndex {
+    fn load_current_index<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensIndexStoreFuture<'a> {
+        Box::pin(async move {
+            while !control.is_cancelled() {
+                std::hint::spin_loop();
+            }
+            Err(KnowledgeIndexFailure::Cancelled)
+        })
     }
 }
 

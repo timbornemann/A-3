@@ -3,18 +3,26 @@
 mod support;
 
 use a3_application::{
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchStore,
+    CompileTaskLens, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchStore, ModuleCardVerificationControl,
+    ModuleCardVerificationControlError, PublishVerifiedModuleCards, TaskLensControl,
+    TaskLensControlError,
 };
 use a3_domain::{
-    CanonicalDirectory, Centrality, ContentHash, ExactSearchPageSize, ExactSearchQuery,
+    CanonicalDirectory, Centrality, Confidence, ContentHash, ExactSearchPageSize, ExactSearchQuery,
     ExactSearchTerm, FileRevision, GitHead, GitReferenceName, GraphSymbol, IndexPublication,
     IndexRunId, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion,
     LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTarget, LexicalSearchTerm, LinkedGraph,
-    LocalSymbolId, ParsedSymbol, ProjectIdentity, RankProjection, RankScore, RankingPolicyVersion,
-    RepositoryId, RepositoryIdentity, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind,
-    SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
-    SymbolRankSignals, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    LocalSymbolId, MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField,
+    ModuleCardId, ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
+    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
+    ModuleClaimPredicate, ModuleClaimProposal, ParsedSymbol, ProjectIdentity,
+    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
+    RepositoryId, RepositoryIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
+    SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
+    TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget,
+    VerifiedModuleCardBatch, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -28,8 +36,10 @@ const SYMBOL_COUNT: usize = STRUCTURAL_LINES / 2;
 const BASELINE_SAMPLES: usize = 5;
 const EXACT_SAMPLES: usize = 30;
 const LEXICAL_SAMPLES: usize = 30;
+const TASK_LENS_SAMPLES: usize = 30;
 const EXACT_P95_TARGET: Duration = Duration::from_millis(100);
 const LEXICAL_P95_TARGET: Duration = Duration::from_millis(100);
+const TASK_LENS_P95_TARGET: Duration = Duration::from_millis(300);
 
 #[derive(Debug)]
 struct SilentControl;
@@ -53,8 +63,31 @@ impl IndexPersistenceControl for SilentControl {
     }
 }
 
+impl TaskLensControl for SilentControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, _progress: a3_domain::Progress) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleCardVerificationControl for SilentControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardVerificationControlError> {
+        Ok(())
+    }
+}
+
 #[test]
-#[ignore = "manual 100,000-structural-line exact/FTS-search P95 baseline"]
+#[ignore = "manual 100,000-structural-line exact/FTS/Task-Lens P95 baseline"]
 fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let temporary = TempDirectory::new()?;
@@ -81,6 +114,14 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         store
             .publish_index(&project, run.id(), &publication, &SilentControl)
             .await?;
+        let published_for_card = store
+            .latest_published_index(&project, &SilentControl)
+            .await?
+            .ok_or("published benchmark index is missing before card verification")?;
+        let card_batch = verified_card_batch(&published_for_card)?;
+        PublishVerifiedModuleCards::new(&store)
+            .execute(&project, &card_batch, &SilentControl)
+            .await?;
 
         let target = format!("function_{:05}", SYMBOL_COUNT - 1);
         let query = ExactSearchQuery::Symbol(ExactSearchTerm::try_from_string(target.clone())?);
@@ -88,6 +129,11 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
             "function_{:04}x",
             (SYMBOL_COUNT - 1) / 10
         ))?);
+        let lens_seeds = TaskLensSeedSet::new(
+            TaskLensSeedText::try_from_string(target.clone())?,
+            TaskLensSeedText::try_from_string(target.clone())?,
+            Vec::new(),
+        )?;
         let _warm_exact = store
             .search_exact(
                 &project,
@@ -110,6 +156,14 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
             .latest_published_index(&project, &SilentControl)
             .await?
             .ok_or("published benchmark index is missing")?;
+        let _warm_task_lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &project,
+                lens_seeds.clone(),
+                TaskLensTokenBudget::DEFAULT,
+                &SilentControl,
+            )
+            .await?;
 
         let mut baseline_samples = Vec::with_capacity(BASELINE_SAMPLES);
         for _ in 0..BASELINE_SAMPLES {
@@ -162,17 +216,37 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
                     if symbol.symbol().parsed().name().as_str() == target
             )));
         }
+        let mut task_lens_samples = Vec::with_capacity(TASK_LENS_SAMPLES);
+        for _ in 0..TASK_LENS_SAMPLES {
+            let started = Instant::now();
+            let lens = CompileTaskLens::new(&store, &store, &store)
+                .execute(
+                    &project,
+                    lens_seeds.clone(),
+                    TaskLensTokenBudget::DEFAULT,
+                    &SilentControl,
+                )
+                .await?;
+            task_lens_samples.push(started.elapsed());
+            assert!(lens.entries().iter().any(|entry| matches!(
+                entry.target(),
+                TaskLensTarget::Symbol(symbol) if symbol.parsed().name().as_str() == target
+            )));
+        }
         baseline_samples.sort_unstable();
         exact_samples.sort_unstable();
         lexical_samples.sort_unstable();
+        task_lens_samples.sort_unstable();
         let baseline_p50 = baseline_samples[BASELINE_SAMPLES / 2];
         let baseline_p95 = baseline_samples[percentile_index(BASELINE_SAMPLES)];
         let exact_p50 = exact_samples[EXACT_SAMPLES / 2];
         let exact_p95 = exact_samples[percentile_index(EXACT_SAMPLES)];
         let lexical_p50 = lexical_samples[LEXICAL_SAMPLES / 2];
         let lexical_p95 = lexical_samples[percentile_index(LEXICAL_SAMPLES)];
+        let task_lens_p50 = task_lens_samples[TASK_LENS_SAMPLES / 2];
+        let task_lens_p95 = task_lens_samples[percentile_index(TASK_LENS_SAMPLES)];
         println!(
-            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols and primary module memberships; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}"
+            "A^3 fast-search baseline: {STRUCTURAL_LINES} structural lines, {SYMBOL_COUNT} symbols and primary module memberships; pre-retrieval full-index-load scan {BASELINE_SAMPLES} samples P50={baseline_p50:?}, P95={baseline_p95:?}; indexed exact retrieval {EXACT_SAMPLES} samples P50={exact_p50:?}, P95={exact_p95:?}; typo-tolerant FTS retrieval {LEXICAL_SAMPLES} samples P50={lexical_p50:?}, P95={lexical_p95:?}; deterministic Task Lens compile {TASK_LENS_SAMPLES} samples P50={task_lens_p50:?}, P95={task_lens_p95:?}"
         );
         assert!(
             lexical_p95 <= LEXICAL_P95_TARGET,
@@ -181,6 +255,10 @@ fn exact_symbol_search_meets_the_100_millisecond_p95_target() -> Result<(), Box<
         assert!(
             exact_p95 <= EXACT_P95_TARGET,
             "exact-search P95 {exact_p95:?} exceeded {EXACT_P95_TARGET:?}"
+        );
+        assert!(
+            task_lens_p95 <= TASK_LENS_P95_TARGET,
+            "Task Lens P95 {task_lens_p95:?} exceeded {TASK_LENS_P95_TARGET:?}"
         );
         Ok::<(), Box<dyn Error>>(())
     })
@@ -278,6 +356,68 @@ fn fixture(worktree_id: WorktreeId) -> Result<(Snapshot, IndexPublication), Box<
         snapshot,
         IndexPublication::new(graph, ranking, Vec::new(), modules)?,
     ))
+}
+
+fn verified_card_batch(
+    published: &PublishedIndex,
+) -> Result<VerifiedModuleCardBatch, Box<dyn Error>> {
+    let module = published
+        .publication()
+        .modules()
+        .modules()
+        .first()
+        .ok_or("benchmark module is missing")?;
+    let symbol = published
+        .publication()
+        .graph()
+        .symbols()
+        .last()
+        .ok_or("benchmark symbol is missing")?;
+    let evidence_id = ModuleCardEvidenceId::for_symbol_v1(symbol);
+    let card_id = ModuleCardId::from_bytes([250; 32]);
+    let proposal = ModuleCardProposal::new(
+        ModuleCardProposalEnvelope::new(
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardSchemaVersion::V1,
+            MapperProfileVersion::V1,
+            Confidence::from_basis_points(8_000)?,
+        ),
+        vec![ProposedModuleCardField::new(
+            ModuleCardField::PublicSurface,
+            vec!["benchmark public surface".to_owned()],
+            vec![evidence_id],
+        )?],
+        512,
+    )?;
+    let claim = ModuleClaimProposal::new(
+        ModuleClaimEnvelope::new(
+            ModuleCardClaimId::from_bytes([251; 32]),
+            card_id,
+            module.id(),
+            published.run().snapshot_id(),
+            ModuleCardField::PublicSurface,
+            0,
+            Confidence::from_basis_points(7_000)?,
+        ),
+        ModuleClaimPolarity::Affirms,
+        ModuleClaimPredicate::Symbol(symbol.id()),
+        vec![evidence_id],
+    )?;
+    let candidate = ModuleCardVerificationCandidate::new(proposal, vec![claim])?;
+    let evidence = ResolvedModuleCardEvidenceSet::new(
+        published.run().snapshot_id(),
+        vec![ResolvedModuleCardEvidence::Symbol {
+            id: evidence_id,
+            symbol: symbol.clone(),
+        }],
+    )?;
+    Ok(ModuleCardVerifier::verify(
+        published,
+        vec![candidate],
+        &evidence,
+    )?)
 }
 
 fn symbol_id(index: usize) -> Result<SymbolId, Box<dyn Error>> {

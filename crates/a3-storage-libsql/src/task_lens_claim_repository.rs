@@ -9,7 +9,7 @@ use a3_domain::{
     TaskLensClaim, VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -33,11 +33,16 @@ pub(crate) async fn load_claims(
         guard.checkpoint()?;
         validate_latest_publication(&transaction, worktree_id, published).await?;
         let (rows, truncated) = read_claim_rows(&transaction, published, limit, &guard).await?;
+        if rows.is_empty() {
+            guard.checkpoint()?;
+            return TaskLensClaimResult::new(Vec::new(), truncated)
+                .map_err(|_| TaskLensClaimRepositoryError::InvalidStoredProjection);
+        }
         let evidence_by_claim = read_claim_evidence(&transaction, published, limit, &guard).await?;
-        let evidence = evidence_projection(published)?;
+        let evidence = evidence_projection(published, &rows, &evidence_by_claim)?;
         let mut claims = Vec::with_capacity(rows.len());
         for (index, row) in rows.into_iter().enumerate() {
-            if index % 16 == 0 {
+            if index.is_multiple_of(16) {
                 guard.checkpoint()?;
             }
             claims.push(row.resolve(published, &evidence_by_claim, &evidence)?);
@@ -191,13 +196,87 @@ async fn read_claim_evidence(
 
 fn evidence_projection(
     published: &PublishedIndex,
+    rows: &[StoredClaimRow],
+    evidence_by_claim: &BTreeMap<ModuleCardClaimId, Vec<ModuleCardEvidenceId>>,
 ) -> Result<BTreeMap<ModuleCardEvidenceId, ResolvedModuleCardEvidence>, TaskLensClaimRepositoryError>
 {
     let graph = published.publication().graph();
     let mut result = BTreeMap::new();
+    let mut requested = evidence_by_claim
+        .values()
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    for row in rows {
+        match &row.predicate {
+            ModuleClaimPredicate::Path(path) => {
+                if let Ok(position) = graph
+                    .files()
+                    .binary_search_by(|revision| revision.path().cmp(path))
+                {
+                    let revision = &graph.files()[position];
+                    let id = ModuleCardEvidenceId::for_file_revision_v1(revision);
+                    insert_requested_evidence(
+                        &mut requested,
+                        &mut result,
+                        id,
+                        ResolvedModuleCardEvidence::File {
+                            id,
+                            revision: revision.clone(),
+                        },
+                    )?;
+                }
+            }
+            ModuleClaimPredicate::Symbol(symbol_id) => {
+                if let Ok(position) = graph
+                    .symbols()
+                    .binary_search_by_key(symbol_id, |symbol| symbol.id())
+                {
+                    let symbol = &graph.symbols()[position];
+                    let id = ModuleCardEvidenceId::for_symbol_v1(symbol);
+                    insert_requested_evidence(
+                        &mut requested,
+                        &mut result,
+                        id,
+                        ResolvedModuleCardEvidence::Symbol {
+                            id,
+                            symbol: symbol.clone(),
+                        },
+                    )?;
+                }
+            }
+            ModuleClaimPredicate::Relation {
+                source,
+                target,
+                kind,
+            } => {
+                for edge in graph.edges().iter().filter(|edge| {
+                    edge.source() == source && edge.target() == target && edge.kind() == *kind
+                }) {
+                    let id = ModuleCardEvidenceId::for_graph_edge_v1(edge);
+                    insert_requested_evidence(
+                        &mut requested,
+                        &mut result,
+                        id,
+                        ResolvedModuleCardEvidence::GraphEdge {
+                            id,
+                            edge: edge.clone(),
+                        },
+                    )?;
+                }
+            }
+            ModuleClaimPredicate::Observed(_) | ModuleClaimPredicate::ArchitecturalIntent(_) => {}
+        }
+    }
+    if requested.is_empty() {
+        return Ok(result);
+    }
+
     for revision in graph.files() {
         let id = ModuleCardEvidenceId::for_file_revision_v1(revision);
-        insert_evidence(
+        insert_requested_evidence(
+            &mut requested,
             &mut result,
             id,
             ResolvedModuleCardEvidence::File {
@@ -207,8 +286,12 @@ fn evidence_projection(
         )?;
     }
     for symbol in graph.symbols() {
+        if requested.is_empty() {
+            break;
+        }
         let id = ModuleCardEvidenceId::for_symbol_v1(symbol);
-        insert_evidence(
+        insert_requested_evidence(
+            &mut requested,
             &mut result,
             id,
             ResolvedModuleCardEvidence::Symbol {
@@ -218,8 +301,12 @@ fn evidence_projection(
         )?;
     }
     for edge in graph.edges() {
+        if requested.is_empty() {
+            break;
+        }
         let id = ModuleCardEvidenceId::for_graph_edge_v1(edge);
-        insert_evidence(
+        insert_requested_evidence(
+            &mut requested,
             &mut result,
             id,
             ResolvedModuleCardEvidence::GraphEdge {
@@ -228,14 +315,22 @@ fn evidence_projection(
             },
         )?;
     }
-    Ok(result)
+    if requested.is_empty() {
+        Ok(result)
+    } else {
+        Err(TaskLensClaimRepositoryError::InvalidStoredProjection)
+    }
 }
 
-fn insert_evidence(
+fn insert_requested_evidence(
+    requested: &mut BTreeSet<ModuleCardEvidenceId>,
     evidence: &mut BTreeMap<ModuleCardEvidenceId, ResolvedModuleCardEvidence>,
     id: ModuleCardEvidenceId,
     value: ResolvedModuleCardEvidence,
 ) -> Result<(), TaskLensClaimRepositoryError> {
+    if !requested.remove(&id) {
+        return Ok(());
+    }
     if evidence.insert(id, value).is_some() {
         Err(TaskLensClaimRepositoryError::InvalidStoredProjection)
     } else {

@@ -4,7 +4,8 @@ use crate::{
 use a3_application::{IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeStoreFailure};
 use a3_domain::{
     FileRevision, IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus,
-    IndexSchemaVersion, Progress, RankingPolicyVersion, RepositoryPath, SnapshotId, WorktreeId,
+    IndexSchemaVersion, Progress, PublishedIndex, RankingPolicyVersion, RepositoryPath, SnapshotId,
+    WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -31,7 +32,7 @@ pub(crate) async fn publish_index(
     run_id: IndexRunId,
     publication: &IndexPublication,
     control: &dyn IndexPersistenceControl,
-) -> Result<IndexRunRecord, IndexPublicationRepositoryError> {
+) -> Result<PublishedIndex, IndexPublicationRepositoryError> {
     validate_resource_limits(publication)?;
     let search_projection = exact_search_projection::build_projection(publication)?;
     let lexical_projection =
@@ -56,11 +57,13 @@ pub(crate) async fn publish_index(
         Ok(record) => record,
         Err(error) => return rollback(transaction, error).await,
     };
+    let published = PublishedIndex::new(record, publication.clone())
+        .map_err(|_| IndexPublicationRepositoryError::PublicationMismatch)?;
     transaction
         .commit()
         .await
         .map_err(IndexPublicationRepositoryError::Commit)?;
-    Ok(record)
+    Ok(published)
 }
 
 async fn publish_index_in_transaction(

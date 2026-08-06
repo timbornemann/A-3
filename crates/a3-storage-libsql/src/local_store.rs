@@ -16,8 +16,8 @@ use a3_application::{
     ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
     SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
     SemanticEmbeddingStoreFuture, TaskLensClaimLimit, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
-    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
+    TaskLensIndexStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const MAX_SEARCH_DATABASES: usize = 4;
+const MAX_PUBLISHED_INDEX_CACHE_ENTRIES: usize = 1;
 
 /// Local libSQL implementation of the application knowledge-store boundary.
 ///
@@ -41,6 +42,7 @@ pub struct LibsqlKnowledgeStore {
     catalog: CatalogDatabase,
     reconciliation_active: AtomicBool,
     search_databases: Mutex<Vec<Arc<KnowledgeDatabase>>>,
+    published_indexes: Mutex<Vec<CachedPublishedIndex>>,
 }
 
 impl LibsqlKnowledgeStore {
@@ -53,6 +55,7 @@ impl LibsqlKnowledgeStore {
             catalog,
             reconciliation_active: AtomicBool::new(false),
             search_databases: Mutex::new(Vec::new()),
+            published_indexes: Mutex::new(Vec::new()),
         })
     }
 }
@@ -305,7 +308,7 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
-            index_publication::publish_index(
+            let published = index_publication::publish_index(
                 knowledge.connection(),
                 project.worktree().id(),
                 run_id,
@@ -313,7 +316,11 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
                 control,
             )
             .await
-            .map_err(|error| error.classify())
+            .map_err(|error| error.classify())?;
+            let record = published.run();
+            self.cache_published_index(project, published);
+            self.cache_search_database(Arc::new(knowledge));
+            Ok(record)
         })
     }
 
@@ -379,7 +386,9 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
                 control,
             )
             .await
-            .map_err(|error| error.classify())
+            .map_err(|error| error.classify())?;
+            self.remove_cached_published_index(project);
+            Ok(())
         })
     }
 }
@@ -406,6 +415,52 @@ impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl TaskLensIndexStore for LibsqlKnowledgeStore {
+    fn load_current_index<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensIndexStoreFuture<'a> {
+        Box::pin(async move {
+            if control.is_cancelled() {
+                return Err(KnowledgeIndexFailure::Cancelled);
+            }
+            let knowledge = self
+                .open_project_knowledge_for_task_lens_index(project)
+                .await?;
+            let latest = index_repository::latest_index_run(
+                knowledge.connection(),
+                project.worktree().id(),
+                true,
+            )
+            .await
+            .map_err(IndexRepositoryError::classify)?;
+            if control.is_cancelled() {
+                return Err(KnowledgeIndexFailure::Cancelled);
+            }
+            let Some(record) = latest else {
+                self.remove_cached_published_index(project);
+                return Ok(None);
+            };
+            if let Some(index) = self.shared_cached_published_index(project, record) {
+                return Ok(Some(index));
+            }
+            let index_control = SharedIndexControl(control);
+            let published = index_publication::latest_published_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                &index_control,
+            )
+            .await
+            .map_err(|error| error.classify())?
+            .ok_or(KnowledgeIndexFailure::InvalidIndexRunTransition)?;
+            let shared = Arc::new(published);
+            self.cache_shared_published_index(project, Arc::clone(&shared));
+            Ok(Some(shared))
         })
     }
 }
@@ -691,6 +746,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_search_database(database))
     }
 
+    async fn open_project_knowledge_for_task_lens_index(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, KnowledgeIndexFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(KnowledgeIndexFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
     async fn semantic_vector_capability(
         &self,
         profile: &EmbeddingModelProfile,
@@ -732,8 +810,88 @@ impl LibsqlKnowledgeStore {
         database
     }
 
+    fn shared_cached_published_index(
+        &self,
+        project: &ProjectIdentity,
+        record: IndexRunRecord,
+    ) -> Option<Arc<PublishedIndex>> {
+        let cached = {
+            let mut indexes = lock_recovering_poison(&self.published_indexes);
+            let position = indexes.iter().position(|entry| {
+                entry.repository_id == project.repository().id()
+                    && entry.worktree_id == project.worktree().id()
+                    && entry.index.run() == record
+            })?;
+            let entry = indexes.remove(position);
+            let index = Arc::clone(&entry.index);
+            indexes.push(entry);
+            index
+        };
+        Some(cached)
+    }
+
+    fn cache_published_index(&self, project: &ProjectIdentity, index: PublishedIndex) {
+        self.cache_shared_published_index(project, Arc::new(index));
+    }
+
+    fn cache_shared_published_index(&self, project: &ProjectIdentity, index: Arc<PublishedIndex>) {
+        let mut indexes = lock_recovering_poison(&self.published_indexes);
+        indexes.retain(|entry| {
+            entry.repository_id != project.repository().id()
+                || entry.worktree_id != project.worktree().id()
+        });
+        indexes.push(CachedPublishedIndex {
+            repository_id: project.repository().id(),
+            worktree_id: project.worktree().id(),
+            index,
+        });
+        if indexes.len() > MAX_PUBLISHED_INDEX_CACHE_ENTRIES {
+            indexes.remove(0);
+        }
+    }
+
+    fn remove_cached_published_index(&self, project: &ProjectIdentity) {
+        let mut indexes = lock_recovering_poison(&self.published_indexes);
+        indexes.retain(|entry| {
+            entry.repository_id != project.repository().id()
+                || entry.worktree_id != project.worktree().id()
+        });
+    }
+
     fn clear_search_databases(&self) {
         lock_recovering_poison(&self.search_databases).clear();
+        lock_recovering_poison(&self.published_indexes).clear();
+    }
+}
+
+struct CachedPublishedIndex {
+    repository_id: RepositoryId,
+    worktree_id: WorktreeId,
+    index: Arc<PublishedIndex>,
+}
+
+struct SharedIndexControl<'a>(&'a dyn TaskLensControl);
+
+impl std::fmt::Debug for SharedIndexControl<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedIndexControl")
+    }
+}
+
+impl IndexPersistenceControl for SharedIndexControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        if self.0.is_cancelled() {
+            Err(a3_application::IndexPersistenceControlError::Unavailable)
+        } else {
+            Ok(())
+        }
     }
 }
 

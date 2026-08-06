@@ -492,8 +492,24 @@ Classification und die vollständige aktuelle File-, Symbol- oder Graphkanten-Ev
 Nicht aktuelle Claims werden gezählt und vollständig aus dem Faktenanteil ausgeschlossen. Der
 domänenseparierte `LensDigest` umfasst Policy, Fusionpolicy, Budget, Seeds, Publikation, geordnete
 Auswahl, aktuelle Claims und Trunkierungszustand; ein Indexdelta erzwingt deshalb eine neue Lens.
-Die geordnete Application-Retrieval-Orchestrierung und der libSQL-Claim-Read-Port folgen im
-nächsten R10-Slice.
+
+`CompileTaskLens` führt die read-only Kanäle fest als Exact, Lexical, Graph/Test, Claims und optional
+Semantic aus. V1 begrenzt unter anderem 16 Exact Queries, 32 Lexical Tokens, vier Graphseeds,
+100 Kandidaten je Kanal, 32 Fusionstreffer, 128 Claims und 20 semantische Kandidaten. Acht feste
+Fortschrittszustände, kooperative Cancellation und eine standardmäßige 30-Sekunden-Gesamtdeadline
+gelten einschließlich aller Adapteraufrufe. Semantic ist eine optionale Capability; ohne sie bleibt
+die vollständige deterministische Lens verfügbar. Similarity erzeugt ausschließlich Kandidaten und
+wird weder Evidence noch Fact.
+
+Der libSQL-Claim-Adapter liest nur Claims des exakt übergebenen aktuellen Runs in Claim-ID-Reihenfolge
+und macht eine Begrenzung als `truncated` sichtbar. Persistierte Evidence-Zeilen sind dabei keine
+Autorität: Evidence IDs werden gegen die vollständigen typisierten Objekte des unveränderlichen
+`PublishedIndex` aufgelöst und danach erneut durch die Domain geprüft. Vor und nach einem
+Indexaustausch validiert der Adapter den neuesten publizierten Run in einer konsistenten
+Read-Transaktion; eine alte Indexcapability wird abgelehnt. Ein auf einen Eintrag begrenzter,
+identitätsgebundener Shared-Index-Cache vermeidet pro Lens eine tiefe Kopie von zehntausenden
+Symbolen. Jeder Zugriff vergleicht zuvor den aktuellen dauerhaften Run; Publish ersetzt und Rebuild
+entfernt den Eintrag.
 
 ## Inkrementelle Aktualisierung
 

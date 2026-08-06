@@ -186,6 +186,24 @@ fn seed_order_is_canonical_and_index_delta_changes_lens_identity()
     Ok(())
 }
 
+#[test]
+fn upstream_claim_truncation_remains_visible_in_the_lens() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = fixture(3)?;
+    let fused = fused(&fixture.published, &[fixture.production])?;
+    let lens = TaskLensPolicy::v1().compile(
+        &fixture.published,
+        seeds()?,
+        &fused,
+        Vec::new(),
+        true,
+        TaskLensTokenBudget::DEFAULT,
+    )?;
+
+    assert!(lens.truncated());
+    Ok(())
+}
+
 struct Fixture {
     published: PublishedIndex,
     production: SymbolId,

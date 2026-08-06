@@ -134,8 +134,8 @@ pub use semantic_embeddings::{
 pub use task_lens::{
     CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimResult,
     TaskLensClaimResultError, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensSemanticHit,
-    TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticResultError,
-    TaskLensSemanticSearch, TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture,
-    TaskLensTimeout, TaskLensTimeoutError,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
+    TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
+    TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,
+    TaskLensSemanticSearchFuture, TaskLensTimeout, TaskLensTimeoutError,
 };

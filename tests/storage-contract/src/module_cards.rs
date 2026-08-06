@@ -5,7 +5,7 @@ use a3_application::{
     KnowledgeSearchControl, KnowledgeSearchStore, ModuleCardVerificationControl,
     ModuleCardVerificationControlError, PublishVerifiedModuleCards,
     PublishVerifiedModuleCardsFailure, TaskLensClaimLimit, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensControl, TaskLensControlError,
+    TaskLensClaimStoreFailure, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
     VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
@@ -204,6 +204,14 @@ where
         claims.claims()[0].evidence()[0].id(),
         batch.evidence().evidence()[0].id()
     );
+    assert_eq!(
+        store
+            .load_current_index(&project, &ContractTaskLensControl)
+            .await?
+            .ok_or("shared Task Lens index is missing")?
+            .run(),
+        published.run()
+    );
 
     let query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launch".to_owned())?);
     let page = store
@@ -262,6 +270,14 @@ where
         .latest_published_index(&project, &ContractIndexControl)
         .await?
         .ok_or("replacement publication is missing")?;
+    assert_eq!(
+        store
+            .load_current_index(&project, &ContractTaskLensControl)
+            .await?
+            .ok_or("replacement Task Lens index is missing")?
+            .run(),
+        replacement.run()
+    );
     assert!(
         store
             .load_claims(
@@ -278,6 +294,12 @@ where
     store
         .rebuild_regenerable_index(&project, &ContractIndexControl)
         .await?;
+    assert_eq!(
+        store
+            .load_current_index(&project, &ContractTaskLensControl)
+            .await?,
+        None
+    );
     assert_eq!(store.latest_index_run(&project).await?, None);
     crate::release_contract_store(store);
     let reopened = factory.open(&app_data).await?;
