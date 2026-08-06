@@ -57,6 +57,12 @@ impl OllamaEndpoint {
         url.set_path("/api/chat");
         url
     }
+
+    pub(crate) fn show_url(&self) -> reqwest::Url {
+        let mut url = self.url.clone();
+        url.set_path("/api/show");
+        url
+    }
 }
 
 impl fmt::Debug for OllamaEndpoint {

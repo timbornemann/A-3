@@ -281,7 +281,7 @@ mod tests {
     };
     use a3_domain::{
         ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
-        ModelProfileOverride, ModelProfileOverrideRevision, ModelProfileSettings,
+        ModelProfile, ModelProfileOverride, ModelProfileOverrideRevision, ModelProfileSettings,
         ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
         ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
         ModelToolCallMode, ModelTopP,
@@ -355,6 +355,18 @@ mod tests {
         )?)
     }
 
+    fn model_profile(
+        provider_id: &str,
+        structured_output: ModelStructuredOutputCapability,
+    ) -> Result<ModelProfile, Box<dyn std::error::Error>> {
+        Ok(ModelProfile::from_probe(
+            ModelProviderId::try_from_string(provider_id.to_owned())?,
+            ModelId::try_from_string("test-model".to_owned())?,
+            profile_settings(16_384)?,
+            ModelCapabilities::new(structured_output, ModelToolCallMode::Disabled),
+        ))
+    }
+
     #[test]
     fn scripted_stub_emits_exact_events_and_retains_no_prompt()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -370,7 +382,10 @@ mod tests {
             StubModelProviderBehavior::Events(events.clone()),
         );
         let request = ModelProviderRequest::new(
-            ModelId::try_from_string("test-model".to_owned())?,
+            model_profile(
+                "contract-stub",
+                ModelStructuredOutputCapability::Unavailable,
+            )?,
             vec![ModelMessage::try_from_string(
                 ModelMessageRole::User,
                 "secret prompt fixture".to_owned(),
@@ -401,7 +416,7 @@ mod tests {
             StubModelProviderBehavior::WaitForCancellation,
         );
         let request = ModelProviderRequest::new(
-            ModelId::try_from_string("test-model".to_owned())?,
+            model_profile("pending-stub", ModelStructuredOutputCapability::Unavailable)?,
             vec![ModelMessage::try_from_string(
                 ModelMessageRole::User,
                 "bounded prompt".to_owned(),
@@ -432,7 +447,7 @@ mod tests {
             StubModelProviderBehavior::Failure(ModelProviderFailure::Unavailable),
         );
         let request = ModelProviderRequest::new(
-            ModelId::try_from_string("test-model".to_owned())?,
+            model_profile("failure-stub", ModelStructuredOutputCapability::Unavailable)?,
             vec![ModelMessage::try_from_string(
                 ModelMessageRole::User,
                 "bounded prompt".to_owned(),

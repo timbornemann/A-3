@@ -1,10 +1,14 @@
 use crate::{OllamaEndpoint, OllamaEndpointPolicy};
 use a3_application::{
-    ModelFinishReason, ModelMessageRole, ModelOperationControl, ModelOutputChunk, ModelProvider,
-    ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
-    ModelProviderUsage, ModelRequestTimeout, ProviderEvent, ProviderEventStream,
+    ModelCapabilityObservation, ModelCapabilityProbe, ModelCapabilityProbeFuture,
+    ModelCapabilityProbeRequest, ModelFinishReason, ModelMessageRole, ModelOperationControl,
+    ModelOutputChunk, ModelProvider, ModelProviderCompletion, ModelProviderFailure,
+    ModelProviderFuture, ModelProviderRequest, ModelProviderUsage, ModelRequestTimeout,
+    ProviderEvent, ProviderEventStream, ReportedModelContextLimit,
 };
-use a3_domain::{ModelId, ModelProviderId};
+use a3_domain::{
+    ModelCapabilities, ModelId, ModelProviderId, ModelStructuredOutputCapability, ModelToolCallMode,
+};
 use futures::future::{Either, select};
 use futures::stream::{BoxStream, StreamExt};
 use futures::{FutureExt, pin_mut};
@@ -14,12 +18,24 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 const OLLAMA_PROVIDER_ID: &str = "ollama";
 const OLLAMA_CONTENT_TYPE: &str = "application/x-ndjson";
+const OLLAMA_JSON_CONTENT_TYPE: &str = "application/json";
 const MAX_OLLAMA_BUFFER_BYTES: usize = 256 * 1024;
 const MAX_OLLAMA_LINE_BYTES: usize = 128 * 1024;
 const MAX_OLLAMA_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OLLAMA_SHOW_BYTES: usize = 512 * 1024;
+const MAX_OLLAMA_PROBE_BYTES: usize = 128 * 1024;
+const MAX_OLLAMA_CAPABILITIES: usize = 64;
+const MAX_OLLAMA_CAPABILITY_BYTES: usize = 64;
+const MAX_OLLAMA_MODEL_INFO_FIELDS: usize = 2_048;
+const MAX_OLLAMA_MODEL_INFO_KEY_BYTES: usize = 256;
+const OLLAMA_PROBE_CONTEXT_TOKENS: u32 = 4_096;
+const OLLAMA_PROBE_OUTPUT_TOKENS: u32 = 32;
+const OLLAMA_PROBE_PROMPT: &str =
+    "Return exactly this JSON object and nothing else: {\"a3_probe\":\"ok\"}.";
 
 /// Ollama-compatible implementation of the general streaming model-provider port.
 pub struct OllamaModelProvider {
@@ -80,6 +96,9 @@ impl ModelProvider for OllamaModelProvider {
             if control.is_cancelled() {
                 return Err(ModelProviderFailure::Cancelled);
             }
+            if request.profile().provider_id() != &self.provider_id {
+                return Err(ModelProviderFailure::Rejected);
+            }
             let wire_request = OllamaChatRequest::from_request(request);
             let send = self
                 .client
@@ -106,6 +125,292 @@ impl ModelProvider for OllamaModelProvider {
     }
 }
 
+impl ModelCapabilityProbe for OllamaModelProvider {
+    fn provider_id(&self) -> &ModelProviderId {
+        &self.provider_id
+    }
+
+    fn probe<'a>(
+        &'a self,
+        request: &'a ModelCapabilityProbeRequest,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> ModelCapabilityProbeFuture<'a> {
+        Box::pin(async move {
+            let deadline = Instant::now()
+                .checked_add(timeout.duration())
+                .ok_or(ModelProviderFailure::TimedOut)?;
+            let show = self.show_model(request, deadline, control).await?;
+            let structured_output = self
+                .probe_structured_output(request, show.context_limit, deadline, control)
+                .await?;
+            let tool_call_mode = if show.tools_reported {
+                ModelToolCallMode::NativeProviderReported
+            } else {
+                ModelToolCallMode::Disabled
+            };
+            Ok(ModelCapabilityObservation::new(
+                show.context_limit,
+                ModelCapabilities::new(structured_output, tool_call_mode),
+            ))
+        })
+    }
+}
+
+impl OllamaModelProvider {
+    async fn show_model(
+        &self,
+        request: &ModelCapabilityProbeRequest,
+        deadline: Instant,
+        control: &dyn ModelOperationControl,
+    ) -> Result<OllamaShowObservation, ModelProviderFailure> {
+        self.authorize_probe_request(control)?;
+        let wire_request = OllamaShowRequest {
+            model: request.model_id().as_str(),
+            verbose: false,
+        };
+        let response = send_before_deadline(
+            self.client
+                .post(self.endpoint.show_url())
+                .json(&wire_request),
+            deadline,
+            control,
+        )
+        .await?;
+        validate_json_response_head(&response)?;
+        let body = read_bounded_response(response, MAX_OLLAMA_SHOW_BYTES, control).await?;
+        parse_show_observation(&body)
+    }
+
+    async fn probe_structured_output(
+        &self,
+        request: &ModelCapabilityProbeRequest,
+        reported_context_limit: Option<ReportedModelContextLimit>,
+        deadline: Instant,
+        control: &dyn ModelOperationControl,
+    ) -> Result<ModelStructuredOutputCapability, ModelProviderFailure> {
+        self.authorize_probe_request(control)?;
+        let schema = ollama_probe_schema();
+        let wire_request = OllamaProbeChatRequest {
+            model: request.model_id().as_str(),
+            messages: [OllamaRequestMessage {
+                role: "user",
+                content: OLLAMA_PROBE_PROMPT,
+            }],
+            stream: false,
+            think: false,
+            format: &schema,
+            options: OllamaChatOptions::for_probe(request, reported_context_limit),
+        };
+        let response = send_before_deadline(
+            self.client
+                .post(self.endpoint.chat_url())
+                .json(&wire_request),
+            deadline,
+            control,
+        )
+        .await?;
+        if let Err(error) = validate_json_response_head(&response) {
+            return match error {
+                ModelProviderFailure::Rejected | ModelProviderFailure::InvalidResponse => {
+                    Ok(ModelStructuredOutputCapability::Unavailable)
+                }
+                other => Err(other),
+            };
+        }
+        let body = match read_bounded_response(response, MAX_OLLAMA_PROBE_BYTES, control).await {
+            Ok(body) => body,
+            Err(ModelProviderFailure::InvalidResponse) => {
+                return Ok(ModelStructuredOutputCapability::Unavailable);
+            }
+            Err(other) => return Err(other),
+        };
+        Ok(
+            if valid_structured_probe_response(&body, request.model_id()) {
+                ModelStructuredOutputCapability::Verified
+            } else {
+                ModelStructuredOutputCapability::Unavailable
+            },
+        )
+    }
+
+    fn authorize_probe_request(
+        &self,
+        control: &dyn ModelOperationControl,
+    ) -> Result<(), ModelProviderFailure> {
+        self.endpoint_policy
+            .authorize(&self.endpoint)
+            .map_err(|_| ModelProviderFailure::EndpointDenied)?;
+        if control.is_cancelled() {
+            return Err(ModelProviderFailure::Cancelled);
+        }
+        Ok(())
+    }
+}
+
+async fn send_before_deadline(
+    request: reqwest::RequestBuilder,
+    deadline: Instant,
+    control: &dyn ModelOperationControl,
+) -> Result<reqwest::Response, ModelProviderFailure> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .ok_or(ModelProviderFailure::TimedOut)?;
+    let send = request.timeout(remaining).send().fuse();
+    let cancelled = control.cancelled().fuse();
+    pin_mut!(send, cancelled);
+    match select(cancelled, send).await {
+        Either::Left(((), _)) => Err(ModelProviderFailure::Cancelled),
+        Either::Right((result, _)) => result.map_err(classify_reqwest_error),
+    }
+}
+
+async fn read_bounded_response(
+    response: reqwest::Response,
+    maximum_bytes: usize,
+    control: &dyn ModelOperationControl,
+) -> Result<Vec<u8>, ModelProviderFailure> {
+    if response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .is_some_and(|length| length > maximum_bytes)
+    {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    let mut body = response.bytes_stream();
+    let mut bytes = Vec::new();
+    loop {
+        if control.is_cancelled() {
+            return Err(ModelProviderFailure::Cancelled);
+        }
+        let read = body.next().fuse();
+        let cancelled = control.cancelled().fuse();
+        pin_mut!(read, cancelled);
+        let item = match select(cancelled, read).await {
+            Either::Left(((), _)) => return Err(ModelProviderFailure::Cancelled),
+            Either::Right((item, _)) => item,
+        };
+        let Some(chunk) = item else {
+            return Ok(bytes);
+        };
+        let chunk = chunk.map_err(classify_reqwest_error)?;
+        if bytes.len().saturating_add(chunk.len()) > maximum_bytes {
+            return Err(ModelProviderFailure::InvalidResponse);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+}
+
+#[derive(Serialize)]
+struct OllamaShowRequest<'a> {
+    model: &'a str,
+    verbose: bool,
+}
+
+#[derive(Deserialize)]
+struct OllamaShowResponse {
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default)]
+    model_info: serde_json::Map<String, Value>,
+}
+
+struct OllamaShowObservation {
+    context_limit: Option<ReportedModelContextLimit>,
+    tools_reported: bool,
+}
+
+fn parse_show_observation(body: &[u8]) -> Result<OllamaShowObservation, ModelProviderFailure> {
+    let response = serde_json::from_slice::<OllamaShowResponse>(body)
+        .map_err(|_| ModelProviderFailure::InvalidResponse)?;
+    if response.capabilities.len() > MAX_OLLAMA_CAPABILITIES
+        || response.capabilities.iter().any(|capability| {
+            capability.len() > MAX_OLLAMA_CAPABILITY_BYTES
+                || capability.chars().any(char::is_control)
+        })
+        || response.model_info.len() > MAX_OLLAMA_MODEL_INFO_FIELDS
+        || response.model_info.keys().any(|key| {
+            key.len() > MAX_OLLAMA_MODEL_INFO_KEY_BYTES || key.chars().any(char::is_control)
+        })
+    {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    let mut context_limit = None;
+    for (key, value) in &response.model_info {
+        if !key.ends_with(".context_length") {
+            continue;
+        }
+        let raw = value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(ModelProviderFailure::InvalidResponse)?;
+        let reported = ReportedModelContextLimit::new(raw)
+            .map_err(|_| ModelProviderFailure::InvalidResponse)?;
+        if context_limit.is_some_and(|existing| existing != reported) {
+            return Err(ModelProviderFailure::InvalidResponse);
+        }
+        context_limit = Some(reported);
+    }
+    Ok(OllamaShowObservation {
+        context_limit,
+        tools_reported: response
+            .capabilities
+            .iter()
+            .any(|capability| capability == "tools"),
+    })
+}
+
+#[derive(Serialize)]
+struct OllamaProbeChatRequest<'a> {
+    model: &'a str,
+    messages: [OllamaRequestMessage<'a>; 1],
+    stream: bool,
+    think: bool,
+    format: &'a Value,
+    options: OllamaChatOptions<'a>,
+}
+
+fn ollama_probe_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "a3_probe": {
+                "type": "string",
+                "const": "ok"
+            }
+        },
+        "required": ["a3_probe"],
+        "additionalProperties": false
+    })
+}
+
+fn valid_structured_probe_response(body: &[u8], expected_model: &ModelId) -> bool {
+    let Ok(response) = serde_json::from_slice::<OllamaProbeChatResponse>(body) else {
+        return false;
+    };
+    if response.model != expected_model.as_str()
+        || response.message.role != "assistant"
+        || !response.done
+        || response
+            .message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| !calls.is_empty())
+    {
+        return false;
+    }
+    serde_json::from_str::<Value>(&response.message.content)
+        .is_ok_and(|value| value == serde_json::json!({"a3_probe": "ok"}))
+}
+
+#[derive(Deserialize)]
+struct OllamaProbeChatResponse {
+    model: String,
+    message: OllamaResponseMessage,
+    done: bool,
+}
+
 fn validate_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
     let status = response.status();
     if status.is_client_error() || status.is_redirection() {
@@ -121,6 +426,27 @@ fn validate_response_head(response: &reqwest::Response) -> Result<(), ModelProvi
         .and_then(|value| value.split(';').next())
         .map(str::trim);
     if !matches!(content_type, Some(value) if value.eq_ignore_ascii_case(OLLAMA_CONTENT_TYPE)) {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn validate_json_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
+    let status = response.status();
+    if status.is_client_error() || status.is_redirection() {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    if !status.is_success() {
+        return Err(ModelProviderFailure::Unavailable);
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim);
+    if !matches!(content_type, Some(value) if value.eq_ignore_ascii_case(OLLAMA_JSON_CONTENT_TYPE))
+    {
         return Err(ModelProviderFailure::InvalidResponse);
     }
     Ok(())
@@ -144,6 +470,7 @@ struct OllamaChatRequest<'a> {
     think: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<&'a Value>,
+    options: OllamaChatOptions<'a>,
 }
 
 impl<'a> OllamaChatRequest<'a> {
@@ -163,6 +490,61 @@ impl<'a> OllamaChatRequest<'a> {
             format: request
                 .structured_output()
                 .map(a3_application::StructuredOutputSchema::value),
+            options: OllamaChatOptions::from_request(request),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct OllamaChatOptions<'a> {
+    num_ctx: u32,
+    num_predict: u32,
+    temperature: f64,
+    top_p: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<&'a str>>,
+}
+
+impl<'a> OllamaChatOptions<'a> {
+    fn from_request(request: &'a ModelProviderRequest) -> Self {
+        let settings = request.profile().settings();
+        let stops = settings.stop_sequences().as_slice();
+        Self {
+            num_ctx: settings.context_limit().get(),
+            num_predict: settings.output_limit().get(),
+            temperature: f64::from(settings.sampling().temperature().milli()) / 1_000.0,
+            top_p: f64::from(settings.sampling().top_p().milli()) / 1_000.0,
+            stop: (!stops.is_empty()).then(|| stops.iter().map(|stop| stop.as_str()).collect()),
+        }
+    }
+
+    fn for_probe(
+        request: &'a ModelCapabilityProbeRequest,
+        reported_context_limit: Option<ReportedModelContextLimit>,
+    ) -> Self {
+        let num_ctx = reported_context_limit.map_or_else(
+            || {
+                request
+                    .settings()
+                    .context_limit()
+                    .get()
+                    .min(OLLAMA_PROBE_CONTEXT_TOKENS)
+            },
+            |reported| {
+                request
+                    .settings()
+                    .context_limit()
+                    .get()
+                    .min(reported.get())
+                    .min(OLLAMA_PROBE_CONTEXT_TOKENS)
+            },
+        );
+        Self {
+            num_ctx,
+            num_predict: OLLAMA_PROBE_OUTPUT_TOKENS,
+            temperature: 0.0,
+            top_p: 1.0,
+            stop: None,
         }
     }
 }
@@ -393,7 +775,7 @@ impl Error for OllamaProviderCreateError {}
 mod tests {
     use super::{
         MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason, parse_ollama_line,
-        take_complete_line,
+        parse_show_observation, take_complete_line, valid_structured_probe_response,
     };
     use a3_application::{
         ModelCancellationFuture, ModelFinishReason, ModelOperationControl, ProviderEvent,
@@ -488,6 +870,66 @@ mod tests {
             take_complete_line(&mut oversized),
             Err(a3_application::ModelProviderFailure::InvalidResponse)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn show_metadata_requires_one_unambiguous_context_limit_and_exact_tool_capability()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let observed = parse_show_observation(
+            br#"{
+                "capabilities":["completion","tools"],
+                "model_info":{"gemma3.context_length":32768}
+            }"#,
+        )?;
+        assert_eq!(
+            observed.context_limit.map(|limit| limit.get()),
+            Some(32_768)
+        );
+        assert!(observed.tools_reported);
+        assert!(
+            parse_show_observation(
+                br#"{
+                    "capabilities":["tool-use"],
+                    "model_info":{
+                        "first.context_length":16384,
+                        "second.context_length":32768
+                    }
+                }"#,
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn structured_probe_requires_exact_model_role_completion_and_object()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let model = ModelId::try_from_string("gemma3".to_owned())?;
+        assert!(valid_structured_probe_response(
+            br#"{
+                "model":"gemma3",
+                "message":{"role":"assistant","content":"{\"a3_probe\":\"ok\"}"},
+                "done":true
+            }"#,
+            &model,
+        ));
+        assert!(!valid_structured_probe_response(
+            br#"{
+                "model":"gemma3",
+                "message":{"role":"assistant","content":"{\"a3_probe\":\"ok\",\"extra\":true}"},
+                "done":true
+            }"#,
+            &model,
+        ));
+        assert!(!valid_structured_probe_response(
+            br#"{
+                "model":"other",
+                "message":{"role":"assistant","content":"{\"a3_probe\":\"ok\"}"},
+                "done":true
+            }"#,
+            &model,
+        ));
         Ok(())
     }
 }

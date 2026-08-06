@@ -1,5 +1,5 @@
 use crate::JobContext;
-use a3_domain::{ModelId, ModelProviderId};
+use a3_domain::{ModelId, ModelProfile, ModelProviderId};
 use futures::Stream;
 use serde_json::Value;
 use std::error::Error;
@@ -258,7 +258,7 @@ impl Error for StructuredOutputSchemaError {
 /// Bounded provider-neutral text generation request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ModelProviderRequest {
-    model_id: ModelId,
+    profile: ModelProfile,
     messages: Vec<ModelMessage>,
     structured_output: Option<StructuredOutputSchema>,
     message_bytes: usize,
@@ -267,7 +267,7 @@ pub struct ModelProviderRequest {
 impl ModelProviderRequest {
     /// Validates message cardinality and aggregate allocation before HTTP encoding.
     pub fn new(
-        model_id: ModelId,
+        profile: ModelProfile,
         messages: Vec<ModelMessage>,
         structured_output: Option<StructuredOutputSchema>,
     ) -> Result<Self, ModelProviderRequestError> {
@@ -284,8 +284,11 @@ impl ModelProviderRequest {
         if message_bytes > MAX_MODEL_REQUEST_TEXT_BYTES {
             return Err(ModelProviderRequestError::TextTooLarge);
         }
+        if structured_output.is_some() && !profile.executable_actions_enabled() {
+            return Err(ModelProviderRequestError::StructuredOutputNotVerified);
+        }
         Ok(Self {
-            model_id,
+            profile,
             messages,
             structured_output,
             message_bytes,
@@ -295,7 +298,13 @@ impl ModelProviderRequest {
     /// Returns the opaque provider-native model identity.
     #[must_use]
     pub const fn model_id(&self) -> &ModelId {
-        &self.model_id
+        self.profile.model_id()
+    }
+
+    /// Returns the complete versioned profile that shapes this request.
+    #[must_use]
+    pub const fn profile(&self) -> &ModelProfile {
+        &self.profile
     }
 
     /// Returns messages in exact context order.
@@ -315,7 +324,7 @@ impl fmt::Debug for ModelProviderRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ModelProviderRequest")
-            .field("model_id", &self.model_id)
+            .field("profile", &self.profile)
             .field("message_count", &self.messages.len())
             .field("message_bytes", &self.message_bytes)
             .field("structured_output", &self.structured_output.is_some())
@@ -333,6 +342,8 @@ pub enum ModelProviderRequestError {
     },
     /// Aggregate message bytes exceeded 2 MiB or overflowed.
     TextTooLarge,
+    /// A structured schema was requested without successful live capability evidence.
+    StructuredOutputNotVerified,
 }
 
 impl fmt::Display for ModelProviderRequestError {
@@ -342,6 +353,9 @@ impl fmt::Display for ModelProviderRequestError {
                 write!(formatter, "model request contains {actual} messages")
             }
             Self::TextTooLarge => formatter.write_str("model request text exceeds its boundary"),
+            Self::StructuredOutputNotVerified => {
+                formatter.write_str("structured model output requires a verified capability probe")
+            }
         }
     }
 }
@@ -526,8 +540,35 @@ mod tests {
         ModelMessage, ModelMessageRole, ModelOutputChunk, ModelProviderRequest,
         ModelRequestTimeout, StructuredOutputSchema,
     };
-    use a3_domain::ModelId;
+    use a3_domain::{
+        ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
+        ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId,
+        ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
+        ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
+    };
     use serde_json::json;
+
+    fn profile(
+        structured_output: ModelStructuredOutputCapability,
+    ) -> Result<ModelProfile, Box<dyn std::error::Error>> {
+        Ok(ModelProfile::from_probe(
+            ModelProviderId::try_from_string("ollama".to_owned())?,
+            ModelId::try_from_string("gemma3:4b".to_owned())?,
+            ModelProfileSettings::new(
+                ModelContextLimit::new(16_384)?,
+                ModelOutputLimit::new(2_048)?,
+                ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
+                ModelParallelismLimit::new(1)?,
+                ModelSamplingProfile::new(
+                    ModelTemperature::from_milli(0)?,
+                    ModelTopP::from_milli(1_000)?,
+                ),
+                ModelStopSequences::empty(),
+                ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+            )?,
+            ModelCapabilities::new(structured_output, ModelToolCallMode::Disabled),
+        ))
+    }
 
     #[test]
     fn neutral_request_and_output_boundaries_redact_content()
@@ -543,7 +584,7 @@ mod tests {
             "additionalProperties": false
         }))?;
         let request = ModelProviderRequest::new(
-            ModelId::try_from_string("gemma3:4b".to_owned())?,
+            profile(ModelStructuredOutputCapability::Verified)?,
             vec![message],
             Some(schema),
         )?;
@@ -557,6 +598,17 @@ mod tests {
             ModelMessage::try_from_string(ModelMessageRole::User, "x".repeat(524_289)).is_err()
         );
         assert!(ModelOutputChunk::try_from_string("x".repeat(65_537)).is_err());
+        assert!(
+            ModelProviderRequest::new(
+                profile(ModelStructuredOutputCapability::Unavailable)?,
+                vec![ModelMessage::try_from_string(
+                    ModelMessageRole::User,
+                    "safe bounded prompt".to_owned(),
+                )?],
+                Some(StructuredOutputSchema::new(json!({"type": "object"}))?),
+            )
+            .is_err()
+        );
         Ok(())
     }
 }
