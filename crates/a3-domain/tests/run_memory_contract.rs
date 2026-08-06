@@ -1,22 +1,24 @@
 //! H8 deterministic run-memory projection contracts.
 
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-    Centrality, Confidence, ContentHash, ExpectedTaskEvidence, FileRevision, GoalContract,
-    GoalContractDraft, GoalContractTimestamp, GoalObjective, GraphSymbol, IndexLanguage,
-    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus, LinkedGraph,
-    LocalSymbolId, ModuleCardClaimId, ModuleCardEvidenceId, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimStatement, ModuleId, ModuleKind, ModuleMembership,
-    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
-    OpenRunIssueKind, ParsedSymbol, PublishedIndex, RankProjection, RankScore,
-    RankingPolicyVersion, RepositoryCard, RepositoryModule, RepositoryPath,
-    ResolvedModuleCardEvidence, RunEventSequence, RunMemoryCheckpoint, SnapshotId, SourcePosition,
-    SourceRange, StepDependency, StepVerification, StepVerificationId, StepVerificationOutcome,
-    SuccessVerification, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
-    TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition,
-    TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
-    VerificationFailureSummary, VerificationMethod, VerificationRequirement, VerificationSpec,
-    VerificationSpecId, VerifiedClaimKind, VerifiedClaimStatus,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
+    AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState, AgentRunTimestamp,
+    AgentRunTiming, Centrality, Confidence, ContentHash, ExpectedTaskEvidence, FileRevision,
+    GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, GraphSymbol,
+    IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus,
+    LinkedGraph, LocalSymbolId, ModelProfileId, ModelProfileReference, ModelProfileVersion,
+    ModuleCardClaimId, ModuleCardEvidenceId, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleClaimStatement, ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence,
+    ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet, OpenRunIssueKind,
+    ParsedSymbol, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion, RepositoryCard,
+    RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence, RunEventSequence,
+    RunMemoryCheckpoint, SnapshotId, SourcePosition, SourceRange, StepDependency, StepVerification,
+    StepVerificationId, StepVerificationOutcome, SuccessVerification, SymbolId, SymbolKind,
+    SymbolName, SymbolRank, SymbolRankSignals, TaskEvidenceId, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition, TaskStepId, TaskStepOutcome,
+    TaskStepRationale, TaskStepResultSummary, VerificationFailureSummary, VerificationMethod,
+    VerificationRequirement, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
+    VerifiedClaimStatus,
 };
 use std::error::Error;
 
@@ -41,13 +43,9 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
     let index_run_id = published.run().id();
     let snapshot_id = published.run().snapshot_id();
     let claims = claims(index_run_id, snapshot_id)?;
-    let first = RunMemoryCheckpoint::compile(
-        &goal,
-        &ledger,
-        &published,
-        RunEventSequence::new(3)?,
-        claims.clone(),
-    )?;
+    let first_run = run(&goal, &ledger, snapshot_id, 3)?;
+    let first =
+        RunMemoryCheckpoint::compile(&goal, &ledger, &first_run, &published, claims.clone())?;
     assert_eq!(first.goal_contract(), goal.reference());
     assert_eq!(first.step_results().len(), 1);
     assert_eq!(first.claims().len(), 2);
@@ -63,20 +61,19 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
     );
 
     fail_verification(&mut ledger, second_id, 2, run_id, 5, 12, 13)?;
-    let second = RunMemoryCheckpoint::compile(
-        &goal,
-        &ledger,
-        &published,
-        RunEventSequence::new(8)?,
-        claims.clone(),
-    )?;
-    let repeated = RunMemoryCheckpoint::compile(
-        &goal,
-        &ledger,
-        &published,
-        RunEventSequence::new(8)?,
-        claims,
-    )?;
+    let second_run = run(&goal, &ledger, snapshot_id, 8)?;
+    let second =
+        RunMemoryCheckpoint::compile(&goal, &ledger, &second_run, &published, claims.clone())?;
+    let mut repeated = None;
+    for _ in 0..64 {
+        let checkpoint =
+            RunMemoryCheckpoint::compile(&goal, &ledger, &second_run, &published, claims.clone())?;
+        assert_eq!(checkpoint.goal_contract(), goal.reference());
+        assert_eq!(checkpoint.open_hypotheses().count(), 1);
+        assert_eq!(checkpoint.open_issues().len(), 1);
+        repeated = Some(checkpoint);
+    }
+    let repeated = repeated.ok_or_else(|| std::io::Error::other("long-run fixture was empty"))?;
 
     assert_eq!(second.digest(), repeated.digest());
     assert_ne!(first.digest(), second.digest());
@@ -90,11 +87,14 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
     );
     assert_eq!(second.open_issues()[0].step_id(), second_id);
     assert_eq!(second.through_event_sequence(), RunEventSequence::new(8)?);
+    assert_eq!(second_run.last_event_sequence(), RunEventSequence::new(8)?);
     assert!(second.step_results().iter().all(|result| {
         result.source().attempt_number().get() > 0
             && result.source().run_id() == run_id
             && result.summary().is_some()
     }));
+    assert_eq!(second.step_results()[0].source().step_id(), first_id);
+    assert_eq!(second.step_results()[1].source().step_id(), second_id);
     Ok(())
 }
 
@@ -116,6 +116,34 @@ fn goal() -> Result<GoalContract, Box<dyn Error>> {
         )?,
         GoalContractTimestamp::from_unix_millis(1)?,
     ))
+}
+
+fn run(
+    goal: &GoalContract,
+    ledger: &TaskLedger,
+    snapshot_id: SnapshotId,
+    sequence: u64,
+) -> Result<AgentRun, Box<dyn Error>> {
+    Ok(AgentRun::reconstruct(
+        AgentRunIdentity::new(
+            AgentRunId::from_bytes([3; 32]),
+            goal.reference(),
+            ledger.revision(),
+            Some(ModelProfileReference::new(
+                ModelProfileId::from_bytes([4; 32]),
+                ModelProfileVersion::V1,
+            )),
+        ),
+        AgentRunMaterializedState::new(
+            AgentControllerState::Verify,
+            RunEventSequence::new(sequence)?,
+            snapshot_id,
+        ),
+        AgentRunTiming::new(
+            AgentRunTimestamp::from_unix_millis(1)?,
+            AgentRunTimestamp::from_unix_millis(sequence)?,
+        ),
+    )?)
 }
 
 fn step(

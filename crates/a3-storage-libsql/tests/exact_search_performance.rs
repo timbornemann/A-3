@@ -390,6 +390,7 @@ fn context_input(
         ledger,
         step_id,
         performance_profile()?,
+        None,
         Vec::new(),
         Vec::new(),
     )

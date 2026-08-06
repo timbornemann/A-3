@@ -1,5 +1,5 @@
 use super::{
-    AgentRunId, GoalContract, GoalContractReference, GraphEndpoint, IndexRunId,
+    AgentRun, AgentRunId, GoalContract, GoalContractReference, GraphEndpoint, IndexRunId,
     ModuleClaimPolarity, ModuleClaimPredicate, PublishedIndex, RunEventSequence, SnapshotId,
     SyntaxRelationKind, TaskEvidenceId, TaskLedger, TaskLedgerRevision, TaskLensClaim,
     TaskStepAttemptNumber, TaskStepAttemptOutcome, TaskStepId, TaskStepResultSummary,
@@ -212,6 +212,7 @@ impl fmt::Debug for CompactedRunClaim {
 #[derive(Clone, PartialEq, Eq)]
 pub struct RunMemoryCheckpoint {
     policy_version: RunMemoryPolicyVersion,
+    run_id: AgentRunId,
     goal_contract: GoalContractReference,
     ledger_revision: TaskLedgerRevision,
     index_run_id: IndexRunId,
@@ -229,12 +230,20 @@ impl RunMemoryCheckpoint {
     pub fn compile(
         goal: &GoalContract,
         ledger: &TaskLedger,
+        run: &AgentRun,
         published: &PublishedIndex,
-        through_event_sequence: RunEventSequence,
         claims: Vec<TaskLensClaim>,
     ) -> Result<Self, RunMemoryCompileError> {
         if ledger.goal_contract() != goal.reference() {
             return Err(RunMemoryCompileError::GoalLedgerMismatch);
+        }
+        if run.goal_contract() != goal.reference()
+            || run.task_ledger_revision() != ledger.revision()
+        {
+            return Err(RunMemoryCompileError::RunAnchorMismatch);
+        }
+        if run.current_snapshot_id() != published.run().snapshot_id() {
+            return Err(RunMemoryCompileError::SnapshotMismatch);
         }
         let step_results = compact_step_results(ledger)?;
         let open_issues = collect_open_issues(ledger)?;
@@ -244,9 +253,10 @@ impl RunMemoryCheckpoint {
         let digest = run_memory_digest(
             goal,
             ledger,
+            run.id(),
             index_run_id,
             snapshot_id,
-            through_event_sequence,
+            run.last_event_sequence(),
             &step_results,
             &claims,
             &open_issues,
@@ -254,11 +264,12 @@ impl RunMemoryCheckpoint {
         );
         Ok(Self {
             policy_version: RunMemoryPolicyVersion::V1,
+            run_id: run.id(),
             goal_contract: goal.reference(),
             ledger_revision: ledger.revision(),
             index_run_id,
             snapshot_id,
-            through_event_sequence,
+            through_event_sequence: run.last_event_sequence(),
             step_results,
             claims,
             open_issues,
@@ -271,6 +282,12 @@ impl RunMemoryCheckpoint {
     #[must_use]
     pub const fn policy_version(&self) -> RunMemoryPolicyVersion {
         self.policy_version
+    }
+
+    /// Returns the run whose active Context Pack may consume this checkpoint.
+    #[must_use]
+    pub const fn run_id(&self) -> AgentRunId {
+        self.run_id
     }
 
     /// Returns the exact Goal Contract anchor that must be re-injected separately in full.
@@ -346,6 +363,7 @@ impl fmt::Debug for RunMemoryCheckpoint {
         formatter
             .debug_struct("RunMemoryCheckpoint")
             .field("policy_version", &self.policy_version)
+            .field("run_id", &self.run_id)
             .field("goal_contract", &self.goal_contract)
             .field("ledger_revision", &self.ledger_revision)
             .field("index_run_id", &self.index_run_id)
@@ -365,6 +383,10 @@ impl fmt::Debug for RunMemoryCheckpoint {
 pub enum RunMemoryCompileError {
     /// Task Ledger serves another Goal Contract revision.
     GoalLedgerMismatch,
+    /// Materialized run points at another Goal Contract or Ledger revision.
+    RunAnchorMismatch,
+    /// Materialized run and published index point at different snapshots.
+    SnapshotMismatch,
     /// More terminal attempts exist than one checkpoint may retain.
     TooManyStepResults,
     /// More claim projections were supplied than one checkpoint may inspect.
@@ -379,6 +401,8 @@ impl fmt::Display for RunMemoryCompileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::GoalLedgerMismatch => "run memory goal and Task Ledger do not match",
+            Self::RunAnchorMismatch => "run memory does not match the materialized agent run",
+            Self::SnapshotMismatch => "run memory run and published index snapshots do not match",
             Self::TooManyStepResults => "run memory exceeds the terminal step-result limit",
             Self::TooManyClaims => "run memory exceeds the claim limit",
             Self::DuplicateClaim => "run memory repeats an original claim identity",
@@ -500,6 +524,7 @@ fn collect_open_issues(ledger: &TaskLedger) -> Result<Vec<OpenRunIssue>, RunMemo
 fn run_memory_digest(
     goal: &GoalContract,
     ledger: &TaskLedger,
+    run_id: AgentRunId,
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     through_event_sequence: RunEventSequence,
@@ -514,6 +539,7 @@ fn run_memory_digest(
     hash_bytes(&mut hasher, goal.task_id().as_bytes());
     hash_u32(&mut hasher, goal.revision().get());
     hash_u32(&mut hasher, ledger.revision().get());
+    hash_bytes(&mut hasher, run_id.as_bytes());
     hash_bytes(&mut hasher, index_run_id.as_bytes());
     hash_bytes(&mut hasher, snapshot_id.as_bytes());
     hash_u64(&mut hasher, through_event_sequence.get());

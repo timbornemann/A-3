@@ -2,8 +2,8 @@ use crate::{ModelProviderRequest, TaskLensControlError};
 use a3_domain::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
     ContextDigest, GoalContract, GoalContractReference, IndexRunId, ModelProfile, ProjectIdentity,
-    RunEventSequence, SnapshotId, TaskLedger, TaskLedgerRevision, TaskLensDigest, TaskLensSeed,
-    TaskStepId, ToolRunId,
+    RunEventSequence, RunMemoryCheckpoint, RunMemoryDigest, SnapshotId, TaskLedger,
+    TaskLedgerRevision, TaskLensDigest, TaskLensSeed, TaskStepId, ToolRunId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -264,6 +264,7 @@ pub struct AgentContextCompileInput {
     task_ledger: TaskLedger,
     current_step_id: TaskStepId,
     model_profile: ModelProfile,
+    run_memory: Option<RunMemoryCheckpoint>,
     supplemental_seeds: Vec<TaskLensSeed>,
     tool_results: Vec<ContextToolResult>,
 }
@@ -277,6 +278,7 @@ impl AgentContextCompileInput {
         task_ledger: TaskLedger,
         current_step_id: TaskStepId,
         model_profile: ModelProfile,
+        run_memory: Option<RunMemoryCheckpoint>,
         mut supplemental_seeds: Vec<TaskLensSeed>,
         mut tool_results: Vec<ContextToolResult>,
     ) -> Result<Self, AgentContextCompileInputError> {
@@ -288,6 +290,12 @@ impl AgentContextCompileInput {
             .ok_or(AgentContextCompileInputError::CurrentStepUnavailable)?;
         if !current_step.is_active_plan_step() {
             return Err(AgentContextCompileInputError::CurrentStepRetired);
+        }
+        if run_memory.as_ref().is_some_and(|memory| {
+            memory.goal_contract() != goal_contract.reference()
+                || memory.ledger_revision() != task_ledger.revision()
+        }) {
+            return Err(AgentContextCompileInputError::RunMemoryMismatch);
         }
         if supplemental_seeds.len() > MAX_CONTEXT_SUPPLEMENTAL_SEEDS {
             return Err(AgentContextCompileInputError::TooManySupplementalSeeds(
@@ -323,6 +331,7 @@ impl AgentContextCompileInput {
             task_ledger,
             current_step_id,
             model_profile,
+            run_memory,
             supplemental_seeds,
             tool_results,
         })
@@ -358,6 +367,12 @@ impl AgentContextCompileInput {
         &self.model_profile
     }
 
+    /// Returns optional H8 memory rebuilt from the same Goal and Ledger revision.
+    #[must_use]
+    pub const fn run_memory(&self) -> Option<&RunMemoryCheckpoint> {
+        self.run_memory.as_ref()
+    }
+
     /// Returns canonical supplemental Task Lens seeds.
     #[must_use]
     pub fn supplemental_seeds(&self) -> &[TaskLensSeed] {
@@ -380,6 +395,8 @@ pub enum AgentContextCompileInputError {
     CurrentStepUnavailable,
     /// Requested step belongs only to replan history.
     CurrentStepRetired,
+    /// Optional run memory belongs to another Goal or Ledger revision.
+    RunMemoryMismatch,
     /// More than 64 supplemental retrieval seeds were supplied.
     TooManySupplementalSeeds(usize),
     /// Supplemental seed set contained a duplicate.
@@ -398,6 +415,7 @@ impl fmt::Display for AgentContextCompileInputError {
             Self::GoalLedgerMismatch => "context goal and Task Ledger revision do not match",
             Self::CurrentStepUnavailable => "context current step is absent from the Task Ledger",
             Self::CurrentStepRetired => "context current step was retired by a replan",
+            Self::RunMemoryMismatch => "context run memory does not match Goal and Task Ledger",
             Self::TooManySupplementalSeeds(_) => "context has too many supplemental seeds",
             Self::DuplicateSupplementalSeed => "context has a duplicate supplemental seed",
             Self::TooManyToolResults(_) => "context has too many recent tool results",
@@ -420,6 +438,7 @@ pub struct CompiledAgentContext {
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     task_lens_digest: TaskLensDigest,
+    run_memory_digest: Option<RunMemoryDigest>,
     budget_plan: ContextBudgetPlan,
     budget_usage: ContextBudgetUsage,
     excluded_stale_claims: u16,
@@ -440,6 +459,7 @@ impl CompiledAgentContext {
         index_run_id: IndexRunId,
         snapshot_id: SnapshotId,
         task_lens_digest: TaskLensDigest,
+        run_memory_digest: Option<RunMemoryDigest>,
         budget_plan: ContextBudgetPlan,
         budget_usage: ContextBudgetUsage,
         excluded_stale_claims: u16,
@@ -455,6 +475,7 @@ impl CompiledAgentContext {
             index_run_id,
             snapshot_id,
             task_lens_digest,
+            run_memory_digest,
             budget_plan,
             budget_usage,
             excluded_stale_claims,
@@ -522,6 +543,12 @@ impl CompiledAgentContext {
         self.task_lens_digest
     }
 
+    /// Returns the exact H8 checkpoint included in the request, when one was supplied.
+    #[must_use]
+    pub const fn run_memory_digest(&self) -> Option<RunMemoryDigest> {
+        self.run_memory_digest
+    }
+
     /// Returns scaled hard area ceilings and reserves.
     #[must_use]
     pub const fn budget_plan(&self) -> ContextBudgetPlan {
@@ -560,6 +587,7 @@ impl fmt::Debug for CompiledAgentContext {
             .field("index_run_id", &self.index_run_id)
             .field("snapshot_id", &self.snapshot_id)
             .field("task_lens_digest", &self.task_lens_digest)
+            .field("run_memory_digest", &self.run_memory_digest)
             .field("budget_plan", &self.budget_plan)
             .field("budget_usage", &self.budget_usage)
             .field("excluded_stale_claims", &self.excluded_stale_claims)

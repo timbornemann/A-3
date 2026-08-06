@@ -9,28 +9,31 @@ use a3_application::{
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, CanonicalDirectory,
-    Centrality, Confidence, ContentHash, ExactSearchCursor, ExactSearchExplanation, ExactSearchHit,
-    ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchSymbol, ExactSearchTarget,
-    ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract, GoalContractDraft,
-    GoalContractTimestamp, GoalObjective, GraphSymbol, GraphTraversalResult, IndexLanguage,
-    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus, LexicalScore,
-    LexicalSearchCursor, LexicalSearchExplanation, LexicalSearchHit, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph, LocalSymbolId, ModelCapabilities,
-    ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit, ModelProfile,
-    ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile,
-    ModelStopSequences, ModelStructuredOutputCapability, ModelTemperature,
-    ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
+    AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState, AgentRunTimestamp,
+    AgentRunTiming, CanonicalDirectory, Centrality, Confidence, ContentHash, ExactSearchCursor,
+    ExactSearchExplanation, ExactSearchHit, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
+    ExactSearchSymbol, ExactSearchTarget, ExpectedTaskEvidence, FileRevision, GitHead,
+    GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
+    GraphSymbol, GraphTraversalResult, IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunSequence, IndexRunStatus, LexicalScore, LexicalSearchCursor, LexicalSearchExplanation,
+    LexicalSearchHit, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph,
+    LocalSymbolId, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
+    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
+    ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
+    ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
     ModuleCardEvidenceId, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimStatement,
     ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion,
     ModuleProjection, ModuleRoot, ModuleSymbolSet, ParsedSymbol, ProjectIdentity, PublishedIndex,
     QualifiedSymbolName, RankProjection, RankScore, RankingPolicyVersion, RepositoryCard,
     RepositoryId, RepositoryIdentity, RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence,
-    SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
-    SymbolRankSignals, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition,
-    TaskStepId, TaskStepOutcome, TaskStepRationale, TraversalQuery, VerificationMethod,
-    VerificationRequirement, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
-    VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    RunEventSequence, RunMemoryCheckpoint, SnapshotId, SourcePosition, SourceRange, StepDependency,
+    StepVerification, StepVerificationId, StepVerificationOutcome, SymbolId, SymbolKind,
+    SymbolName, SymbolRank, SymbolRankSignals, TaskEvidenceId, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition, TaskStepId, TaskStepOutcome,
+    TaskStepRationale, TaskStepResultSummary, TraversalQuery, VerificationFailureSummary,
+    VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
+    VerifiedClaimKind, VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use futures::executor::block_on;
 use std::error::Error;
@@ -113,6 +116,58 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
             .map_err(|_| TestError("call lock was poisoned"))?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn run_memory_reinjects_original_sources_without_duplicate_claims() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let (input, memory_digest, run_sequence) = input_with_run_memory(&fixture)?;
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+
+    let first = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    let repeated = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+
+    assert_eq!(first.digest(), repeated.digest());
+    assert_eq!(first.run_memory_digest(), Some(memory_digest));
+    assert_eq!(run_sequence, RunEventSequence::new(7)?);
+    let pack = first.request().messages()[1].content();
+    assert!(pack.contains("[RUN_MEMORY]"));
+    assert!(pack.contains("through_event=7"));
+    assert!(pack.contains("kind=verification_failed"));
+    assert!(pack.contains("outcome=verification_failed"));
+    assert!(pack.contains("summary=completed H7 groundwork"));
+    assert!(pack.contains("current_status=completed outcome=completed"));
+    assert!(pack.contains("evidence=1010101010101010101010101010101010101010101010101010101010101010,1111111111111111111111111111111111111111111111111111111111111111"));
+    assert!(pack.contains(
+        "memory_claim id=4747474747474747474747474747474747474747474747474747474747474747"
+    ));
+    assert_eq!(pack.matches("id=4747474747474747").count(), 1);
+    let counted_prompt = first
+        .request()
+        .messages()
+        .iter()
+        .try_fold(0_u32, |total, message| {
+            let count = input
+                .model_profile()
+                .settings()
+                .token_counting()
+                .count_text(message.content())
+                .map_err(|_| TestError("token count failed"))?
+                .get();
+            total
+                .checked_add(count)
+                .ok_or(TestError("token sum overflow"))
+        })?;
+    assert_eq!(first.budget_usage().prompt_total(), counted_prompt);
     Ok(())
 }
 
@@ -315,28 +370,35 @@ impl TaskLensClaimStore for StubStore<'_> {
                 }],
             )
             .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?;
-            let current_hypothesis = TaskLensClaim::new(
-                published.run().id(),
-                published.run().snapshot_id(),
-                ModuleCardClaimId::from_bytes([71; 32]),
-                self.module_id,
-                ModuleClaimPolarity::Affirms,
-                ModuleClaimPredicate::ArchitecturalIntent(
-                    ModuleClaimStatement::try_from_string("context stays deterministic".to_owned())
-                        .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?,
-                ),
-                VerifiedClaimKind::Hypothesis,
-                VerifiedClaimStatus::Active,
-                Confidence::from_basis_points(7_500)
-                    .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?,
-                Vec::new(),
-            )
-            .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?;
+            let current_hypothesis = current_hypothesis(published, self.module_id)?;
             TaskLensClaimResult::new(vec![stale_fact, current_hypothesis], false)
                 .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)
         })();
         Box::pin(async move { result })
     }
+}
+
+fn current_hypothesis(
+    published: &PublishedIndex,
+    module_id: ModuleId,
+) -> Result<TaskLensClaim, TaskLensClaimStoreFailure> {
+    TaskLensClaim::new(
+        published.run().id(),
+        published.run().snapshot_id(),
+        ModuleCardClaimId::from_bytes([71; 32]),
+        module_id,
+        ModuleClaimPolarity::Affirms,
+        ModuleClaimPredicate::ArchitecturalIntent(
+            ModuleClaimStatement::try_from_string("context stays deterministic".to_owned())
+                .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?,
+        ),
+        VerifiedClaimKind::Hypothesis,
+        VerifiedClaimStatus::Active,
+        Confidence::from_basis_points(7_500)
+            .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)?,
+        Vec::new(),
+    )
+    .map_err(|_| TaskLensClaimStoreFailure::InvalidStoredProjection)
 }
 
 struct Fixture {
@@ -477,10 +539,176 @@ fn input(_snapshot_id: SnapshotId) -> Result<AgentContextCompileInput, Box<dyn E
         ledger,
         step_id,
         profile()?,
+        None,
         Vec::new(),
         Vec::new(),
     )
     .map_err(Into::into)
+}
+
+fn input_with_run_memory(
+    fixture: &Fixture,
+) -> Result<
+    (
+        AgentContextCompileInput,
+        a3_domain::RunMemoryDigest,
+        RunEventSequence,
+    ),
+    Box<dyn Error>,
+> {
+    let goal = GoalContract::initial(
+        TaskId::from_bytes([110; 32]),
+        GoalContractDraft::new(
+            GoalObjective::try_from_string("implement H8 compaction".to_owned())?,
+            vec![AcceptanceCriterion::new(
+                AcceptanceCriterionId::from_bytes([111; 32]),
+                AcceptanceCriterionStatement::try_from_string(
+                    "retain original result sources".to_owned(),
+                )?,
+            )],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            a3_domain::SuccessVerification::try_from_string(
+                "run memory contract tests".to_owned(),
+            )?,
+        )?,
+        GoalContractTimestamp::from_unix_millis(1)?,
+    );
+    let completed_step_id = TaskStepId::from_bytes([112; 32]);
+    let current_step_id = TaskStepId::from_bytes([113; 32]);
+    let completed_spec_id = VerificationSpecId::from_bytes([114; 32]);
+    let current_spec_id = VerificationSpecId::from_bytes([115; 32]);
+    let mut ledger = TaskLedger::new(
+        goal.reference(),
+        vec![
+            TaskStepDefinition::new(
+                completed_step_id,
+                None,
+                TaskStepOutcome::try_from_string("materialize prior step".to_owned())?,
+                TaskStepRationale::try_from_string("retain factual progress".to_owned())?,
+                Vec::new(),
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "verified H7 result".to_owned(),
+                )?],
+                VerificationSpec::new(
+                    completed_spec_id,
+                    VerificationMethod::Test,
+                    VerificationRequirement::try_from_string("run H7 tests".to_owned())?,
+                ),
+            )?,
+            TaskStepDefinition::new(
+                current_step_id,
+                None,
+                TaskStepOutcome::try_from_string("compile next context".to_owned())?,
+                TaskStepRationale::try_from_string("continue without full run text".to_owned())?,
+                vec![StepDependency::new(completed_step_id)],
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "source-bound memory".to_owned(),
+                )?],
+                VerificationSpec::new(
+                    current_spec_id,
+                    VerificationMethod::Test,
+                    VerificationRequirement::try_from_string("run H8 tests".to_owned())?,
+                ),
+            )?,
+        ],
+        TaskLedgerTimestamp::from_unix_millis(1)?,
+    )?;
+    let run_id = AgentRunId::from_bytes([120; 32]);
+    ledger.start_step(
+        completed_step_id,
+        run_id,
+        TaskLedgerTimestamp::from_unix_millis(2)?,
+    )?;
+    ledger.begin_step_verification(
+        completed_step_id,
+        run_id,
+        Some(TaskStepResultSummary::try_from_string(
+            "completed H7 groundwork".to_owned(),
+        )?),
+        vec![TaskEvidenceId::from_bytes([16; 32])],
+        TaskLedgerTimestamp::from_unix_millis(3)?,
+    )?;
+    ledger.finish_step_verification(
+        completed_step_id,
+        StepVerification::new(
+            StepVerificationId::from_bytes([116; 32]),
+            completed_spec_id,
+            run_id,
+            StepVerificationOutcome::Passed,
+            vec![TaskEvidenceId::from_bytes([17; 32])],
+            TaskLedgerTimestamp::from_unix_millis(4)?,
+        )?,
+    )?;
+    ledger.start_step(
+        current_step_id,
+        run_id,
+        TaskLedgerTimestamp::from_unix_millis(5)?,
+    )?;
+    ledger.begin_step_verification(
+        current_step_id,
+        run_id,
+        Some(TaskStepResultSummary::try_from_string(
+            "H8 verification remains open".to_owned(),
+        )?),
+        vec![TaskEvidenceId::from_bytes([18; 32])],
+        TaskLedgerTimestamp::from_unix_millis(6)?,
+    )?;
+    ledger.finish_step_verification(
+        current_step_id,
+        StepVerification::new(
+            StepVerificationId::from_bytes([117; 32]),
+            current_spec_id,
+            run_id,
+            StepVerificationOutcome::Failed {
+                summary: VerificationFailureSummary::try_from_string(
+                    "retry the H8 verification".to_owned(),
+                )?,
+            },
+            vec![TaskEvidenceId::from_bytes([19; 32])],
+            TaskLedgerTimestamp::from_unix_millis(7)?,
+        )?,
+    )?;
+
+    let model_profile = profile()?;
+    let run = AgentRun::reconstruct(
+        AgentRunIdentity::new(
+            run_id,
+            goal.reference(),
+            ledger.revision(),
+            Some(model_profile.reference()),
+        ),
+        AgentRunMaterializedState::new(
+            AgentControllerState::Verify,
+            RunEventSequence::new(7)?,
+            fixture.snapshot_id,
+        ),
+        AgentRunTiming::new(
+            AgentRunTimestamp::from_unix_millis(1)?,
+            AgentRunTimestamp::from_unix_millis(7)?,
+        ),
+    )?;
+    let memory = RunMemoryCheckpoint::compile(
+        &goal,
+        &ledger,
+        &run,
+        &fixture.published,
+        vec![current_hypothesis(&fixture.published, fixture.module_id)?],
+    )?;
+    let memory_digest = memory.digest();
+    let run_sequence = run.last_event_sequence();
+    let input = AgentContextCompileInput::new(
+        project()?,
+        goal,
+        ledger,
+        current_step_id,
+        model_profile,
+        Some(memory),
+        Vec::new(),
+        Vec::new(),
+    )?;
+    Ok((input, memory_digest, run_sequence))
 }
 
 fn profile() -> Result<ModelProfile, Box<dyn Error>> {

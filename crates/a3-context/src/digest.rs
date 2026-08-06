@@ -29,6 +29,15 @@ pub(super) fn context_digest(
     hash_bytes(&mut hasher, lens.index_run_id().as_bytes());
     hash_bytes(&mut hasher, lens.snapshot_id().as_bytes());
     hash_bytes(&mut hasher, &lens.digest().as_bytes());
+    match input.run_memory() {
+        Some(checkpoint) => {
+            hasher.update(&[1]);
+            hash_bytes(&mut hasher, &checkpoint.digest().as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
     hash_u32(&mut hasher, budget_plan.context_limit());
     for section in [
         ContextSection::SystemAndTools,

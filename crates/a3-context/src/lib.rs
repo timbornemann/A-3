@@ -12,11 +12,12 @@ use a3_application::{
 };
 use a3_domain::{
     ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion, ContextSection,
-    EvidenceRef, GoalContract, GraphEndpoint, GraphSymbol, ModelProfile, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleKind, ModuleRoot, Progress, RepositoryCard, RepositoryModule,
-    RepositoryPath, SnapshotId, SymbolRole, TaskLedger, TaskLens, TaskLensClaim, TaskLensEntry,
-    TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget,
-    TaskStep, TaskStepStatus, VerifiedClaimKind, VerifiedClaimStatus,
+    EvidenceRef, GoalContract, GraphEndpoint, GraphSymbol, ModelProfile, ModuleCardClaimId,
+    ModuleClaimPolarity, ModuleClaimPredicate, ModuleKind, ModuleRoot, OpenRunIssueKind, Progress,
+    RepositoryCard, RepositoryModule, RepositoryPath, RunMemoryCheckpoint, SnapshotId, SymbolRole,
+    TaskLedger, TaskLens, TaskLensClaim, TaskLensEntry, TaskLensEntryReason, TaskLensSeedSet,
+    TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget, TaskStep, TaskStepAttemptOutcome,
+    TaskStepStatus, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use std::collections::BTreeSet;
 use std::fmt;
@@ -28,6 +29,7 @@ const MAX_TASK_LENS_SEED_BYTES: usize = 4 * 1_024;
 const MIN_TASK_LENS_BUDGET: u32 = 256;
 const MAX_TASK_LENS_BUDGET: u32 = 32_768;
 const CONTEXT_PACK_HEADER: &str = "A3_CONTEXT_PACK_V1\n";
+const CODE_AND_EVIDENCE_HEADER: &str = "[CODE_AND_EVIDENCE]\n";
 
 /// Concrete feature implementation composing the existing ordered Task Lens retrieval use case.
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +93,8 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             .await
             .map_err(map_task_lens_failure)?;
 
+        let run_memory = pack_run_memory(input.run_memory(), &lens, profile, budget_plan)?;
+
         check_cancelled(control)?;
         report(control, ContextCompilePhase::Pack)?;
         let (system_message, schema_grounding, structured_output) = prompt.into_parts();
@@ -110,10 +114,21 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             ));
         }
 
-        let packed = pack_ranked_context(&lens, input.tool_results(), profile, budget_plan)?;
+        let packed = pack_ranked_context(
+            &lens,
+            &run_memory.claim_ids,
+            run_memory.tokens,
+            input.tool_results(),
+            profile,
+            budget_plan,
+        )?;
         let context_message_text = format!(
-            "{CONTEXT_PACK_HEADER}{anchor}{}{}{}{}",
-            packed.project_map, packed.code_and_evidence, packed.tool_results, packed.pack_state
+            "{CONTEXT_PACK_HEADER}{anchor}{}{}{}{}{}",
+            run_memory.text,
+            packed.project_map,
+            packed.code_and_evidence,
+            packed.tool_results,
+            packed.pack_state
         );
         reject_secret_candidate(&context_message_text)?;
         let context_message =
@@ -159,10 +174,11 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             lens.index_run_id(),
             lens.snapshot_id(),
             lens.digest(),
+            input.run_memory().map(RunMemoryCheckpoint::digest),
             budget_plan,
             budget_usage,
             lens.excluded_stale_claims(),
-            packed.truncated || lens.truncated(),
+            run_memory.truncated || packed.truncated || lens.truncated(),
         ))
     }
 }
@@ -371,14 +387,269 @@ struct PackedSections {
     truncated: bool,
 }
 
+struct PackedRunMemory {
+    text: String,
+    tokens: u32,
+    claim_ids: BTreeSet<ModuleCardClaimId>,
+    truncated: bool,
+}
+
+fn pack_run_memory(
+    checkpoint: Option<&RunMemoryCheckpoint>,
+    lens: &TaskLens,
+    profile: &ModelProfile,
+    budget: ContextBudgetPlan,
+) -> Result<PackedRunMemory, ContextCompileFailure> {
+    let Some(checkpoint) = checkpoint else {
+        return Ok(PackedRunMemory {
+            text: String::new(),
+            tokens: 0,
+            claim_ids: BTreeSet::new(),
+            truncated: false,
+        });
+    };
+    if checkpoint.index_run_id() != lens.index_run_id()
+        || checkpoint.snapshot_id() != lens.snapshot_id()
+    {
+        return Err(ContextCompileFailure::StaleOrMismatchedInput);
+    }
+
+    let mut text = String::from("[RUN_MEMORY]\n");
+    push_line(
+        &mut text,
+        format_args!(
+            "policy={} digest={} run={} through_event={} excluded_stale_claims={}",
+            checkpoint.policy_version().get(),
+            checkpoint.digest(),
+            checkpoint.run_id(),
+            checkpoint.through_event_sequence().get(),
+            checkpoint.excluded_stale_claims()
+        ),
+    );
+    reject_secret_candidate(&text)?;
+    let allowance = budget.allowance(ContextSection::CodeAndEvidence);
+    let reserved_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?;
+    let mut tokens = count(profile, &text)?;
+    ensure_memory_fits(reserved_tokens, tokens, allowance)?;
+    let mut claim_ids = BTreeSet::new();
+
+    for issue in checkpoint.open_issues() {
+        let outcome = issue.source().and_then(|source| {
+            checkpoint
+                .step_results()
+                .iter()
+                .find(|result| result.source() == source)
+                .map(|result| attempt_outcome(result.outcome()))
+        });
+        let source = issue.source().map_or_else(
+            || String::from("-"),
+            |source| {
+                format!(
+                    "{}:{}:{}",
+                    source.step_id(),
+                    source.attempt_number().get(),
+                    source.run_id()
+                )
+            },
+        );
+        let rendered = format!(
+            "issue step={} kind={} source={} outcome={}\n",
+            issue.step_id(),
+            open_issue_kind(issue.kind()),
+            source,
+            outcome.as_deref().unwrap_or("-")
+        );
+        append_mandatory_memory_item(
+            &mut text,
+            &mut tokens,
+            reserved_tokens,
+            allowance,
+            profile,
+            &rendered,
+        )?;
+    }
+
+    for compacted in checkpoint.open_hypotheses() {
+        let claim = compacted.claim();
+        let rendered = render_memory_claim(claim);
+        append_mandatory_memory_item(
+            &mut text,
+            &mut tokens,
+            reserved_tokens,
+            allowance,
+            profile,
+            &rendered,
+        )?;
+        claim_ids.insert(claim.id());
+    }
+
+    let mut truncated = false;
+    for result in checkpoint.step_results() {
+        let source = result.source();
+        let summary = result.summary().map_or("-", |summary| summary.as_str());
+        let rendered = format!(
+            "result step={} attempt={} run={} current_status={} outcome={} summary={} evidence={}\n",
+            source.step_id(),
+            source.attempt_number().get(),
+            source.run_id(),
+            step_status(result.current_step_status()),
+            attempt_outcome(result.outcome()),
+            summary,
+            join_ids(result.evidence_ids())
+        );
+        if !append_optional_memory_item(
+            &mut text,
+            &mut tokens,
+            reserved_tokens,
+            allowance,
+            profile,
+            &rendered,
+        )? {
+            truncated = true;
+        }
+    }
+
+    for compacted in checkpoint.claims() {
+        let claim = compacted.claim();
+        if claim.kind() == VerifiedClaimKind::Hypothesis {
+            continue;
+        }
+        let rendered = render_memory_claim(claim);
+        if append_optional_memory_item(
+            &mut text,
+            &mut tokens,
+            reserved_tokens,
+            allowance,
+            profile,
+            &rendered,
+        )? {
+            claim_ids.insert(claim.id());
+        } else {
+            truncated = true;
+        }
+    }
+
+    Ok(PackedRunMemory {
+        text,
+        tokens,
+        claim_ids,
+        truncated,
+    })
+}
+
+fn append_mandatory_memory_item(
+    text: &mut String,
+    tokens: &mut u32,
+    reserved_tokens: u32,
+    allowance: u32,
+    profile: &ModelProfile,
+    rendered: &str,
+) -> Result<(), ContextCompileFailure> {
+    reject_secret_candidate(rendered)?;
+    let cost = count(profile, rendered)?;
+    let next = tokens
+        .checked_add(cost)
+        .ok_or(ContextCompileFailure::InvalidPack)?;
+    ensure_memory_fits(reserved_tokens, next, allowance)?;
+    text.push_str(rendered);
+    *tokens = next;
+    Ok(())
+}
+
+fn append_optional_memory_item(
+    text: &mut String,
+    tokens: &mut u32,
+    reserved_tokens: u32,
+    allowance: u32,
+    profile: &ModelProfile,
+    rendered: &str,
+) -> Result<bool, ContextCompileFailure> {
+    let cost = count(profile, rendered)?;
+    let next = tokens
+        .checked_add(cost)
+        .ok_or(ContextCompileFailure::InvalidPack)?;
+    if reserved_tokens
+        .checked_add(next)
+        .ok_or(ContextCompileFailure::InvalidPack)?
+        > allowance
+    {
+        return Ok(false);
+    }
+    reject_secret_candidate(rendered)?;
+    text.push_str(rendered);
+    *tokens = next;
+    Ok(true)
+}
+
+fn ensure_memory_fits(
+    reserved_tokens: u32,
+    memory_tokens: u32,
+    allowance: u32,
+) -> Result<(), ContextCompileFailure> {
+    if reserved_tokens
+        .checked_add(memory_tokens)
+        .ok_or(ContextCompileFailure::InvalidPack)?
+        > allowance
+    {
+        Err(ContextCompileFailure::AnchorTooLarge)
+    } else {
+        Ok(())
+    }
+}
+
+fn render_memory_claim(claim: &TaskLensClaim) -> String {
+    let evidence = claim
+        .evidence()
+        .iter()
+        .map(|item| hex(item.id().as_bytes()))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "memory_claim id={} module={} kind={} polarity={} confidence={} predicate={} evidence={}\n",
+        hex(claim.id().as_bytes()),
+        claim.module_id(),
+        claim_kind(claim.kind()),
+        claim_polarity(claim.polarity()),
+        claim.confidence().basis_points(),
+        claim_predicate(claim.predicate()),
+        evidence
+    )
+}
+
+fn attempt_outcome(outcome: &TaskStepAttemptOutcome) -> String {
+    match outcome {
+        TaskStepAttemptOutcome::Active => String::from("active"),
+        TaskStepAttemptOutcome::Blocked { reason } => format!("blocked:{}", reason.as_str()),
+        TaskStepAttemptOutcome::VerificationFailed => String::from("verification_failed"),
+        TaskStepAttemptOutcome::Completed => String::from("completed"),
+        TaskStepAttemptOutcome::Failed { reason } => format!("failed:{}", reason.as_str()),
+        TaskStepAttemptOutcome::Cancelled { reason } => {
+            format!("cancelled:{}", reason.as_str())
+        }
+    }
+}
+
+const fn open_issue_kind(kind: OpenRunIssueKind) -> &'static str {
+    match kind {
+        OpenRunIssueKind::VerificationFailed => "verification_failed",
+        OpenRunIssueKind::Blocked => "blocked",
+        OpenRunIssueKind::AwaitingApproval => "awaiting_approval",
+        OpenRunIssueKind::Failed => "failed",
+        OpenRunIssueKind::Cancelled => "cancelled",
+        OpenRunIssueKind::Stale => "stale",
+    }
+}
+
 fn pack_ranked_context(
     lens: &TaskLens,
+    run_memory_claim_ids: &BTreeSet<ModuleCardClaimId>,
+    run_memory_tokens: u32,
     tool_results: &[ContextToolResult],
     profile: &ModelProfile,
     budget: ContextBudgetPlan,
 ) -> Result<PackedSections, ContextCompileFailure> {
     let mut project_map = String::from("[PROJECT_MAP]\n");
-    let mut code_and_evidence = String::from("[CODE_AND_EVIDENCE]\n");
+    let mut code_and_evidence = String::from(CODE_AND_EVIDENCE_HEADER);
     let framing_reserve = count(profile, CONTEXT_PACK_HEADER)?
         .checked_add(
             count(profile, &render_pack_state(lens, false))?
@@ -388,7 +659,9 @@ fn pack_ranked_context(
     let mut project_tokens = count(profile, &project_map)?
         .checked_add(framing_reserve)
         .ok_or(ContextCompileFailure::InvalidPack)?;
-    let mut code_tokens = count(profile, &code_and_evidence)?;
+    let mut code_tokens = count(profile, &code_and_evidence)?
+        .checked_add(run_memory_tokens)
+        .ok_or(ContextCompileFailure::InvalidPack)?;
     let mut target_keys = BTreeSet::new();
     let mut spans = Vec::new();
     let mut truncated = false;
@@ -440,6 +713,9 @@ fn pack_ranked_context(
     }
 
     for claim in lens.claims() {
+        if run_memory_claim_ids.contains(&claim.id()) {
+            continue;
+        }
         if claim.status() != VerifiedClaimStatus::Active
             || claim.source_index_run_id() != lens.index_run_id()
             || claim.snapshot_id() != lens.snapshot_id()
