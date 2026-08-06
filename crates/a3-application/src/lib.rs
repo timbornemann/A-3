@@ -1,5 +1,6 @@
 //! Application use cases and ports for A^3.
 
+mod agent_action_codec;
 mod deep_map_action_codec;
 mod deep_map_explorer;
 mod deep_map_planner;
@@ -35,6 +36,9 @@ mod semantic_embeddings;
 mod task_ledger;
 mod task_lens;
 
+pub use agent_action_codec::{
+    AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
+};
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
 };

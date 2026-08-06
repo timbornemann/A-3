@@ -1,3 +1,4 @@
+mod agent_action;
 mod agent_run;
 mod claim_verification;
 mod deep_map;
@@ -27,6 +28,13 @@ mod task_lens;
 mod task_step;
 mod task_verification;
 
+pub use agent_action::{
+    AgentAction, AgentActionSchemaVersion, AgentActionSchemaVersionError, AgentActionTextError,
+    AgentActionTextViolation, AgentFileInspection, AgentFileLineCount, AgentFileLineCountError,
+    AgentFileStartLine, AgentFileStartLineError, AgentFinishAction, AgentGraphInspection,
+    AgentInspectAction, AgentInspectTarget, AgentLedgerUpdate, AgentSearchAction, AgentSearchLimit,
+    AgentSearchLimitError, AgentSearchQuery, AgentTestSelector, AgentUpdateLedgerAction,
+};
 pub use agent_run::{
     AgentControllerState, AgentRun, AgentRunError, AgentRunIdentity, AgentRunMaterializedState,
     AgentRunTimestamp, AgentRunTimestampError, AgentRunTiming, RunEvent, RunEventCode,
