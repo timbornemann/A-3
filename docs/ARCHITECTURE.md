@@ -101,6 +101,7 @@ a3/
 │   ├── a3-provider/                # LLM- und Embedding-Adapter
 │   └── a3-workspace/               # Dateien, Patches und Prozesse
 ├── tests/
+│   ├── agent-harness/                # read-only End-to-End-Abnahme, dev-only
 │   ├── model-provider-contract/      # neutraler Provider-Stub, dev-only
 │   └── storage-contract/             # adapterneutrale Store-Verträge, dev-only
 ├── fixtures/                       # kleine, lizenzkompatible Test-Repositories
@@ -108,10 +109,11 @@ a3/
 ~~~
 
 Die Crates sind logische Grenzen innerhalb eines ausgelieferten Produkts, keine getrennten Dienste.
-Die dev-only Workspace-Crates unter `tests/storage-contract` und `tests/model-provider-contract`
-werden nicht ausgeliefert. Sie hängen nur von Domain und Application ab. Die Storage-Suite führt
-dieselben Portverträge gegen jeden konkreten Storageadapter aus; der Provider-Stub ermöglicht
-deterministische Consumer-Tests ohne Netzwerk oder Providerpayload.
+Die dev-only Workspace-Crates unter `tests/` werden nicht ausgeliefert. Storage- und
+Model-Provider-Contract hängen nur von Domain und Application ab. Die Storage-Suite führt dieselben
+Portverträge gegen jeden konkreten Storageadapter aus; die Provider-Suite prüft Stub und
+Ollama-Adapter über dieselbe neutrale Streamprojektion. `agent-harness` komponiert ausschließlich
+für die Offline-Abnahme reale Feature- und Adaptergrenzen über die drei Produkt-Fixtures.
 
 ## Abhängigkeitsrichtung
 
@@ -220,6 +222,13 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 8. Ergebnis, Evidenz und Ledger werden atomar aktualisiert.
 9. Der Controller wechselt zu Verify, Replan oder AwaitApproval; `Done` ist ausschließlich nach
    vollständiger snapshotgebundener Prüfung durch den `AcceptanceVerifier` erreichbar.
+
+Gate M6 belegt diesen Pfad ohne zweite Testarchitektur: temporäre Rust-, TypeScript- und Python-
+Worktrees werden real indiziert und publiziert; zwei providerneutrale Modellturns führen über
+Search, durable Tool-Evidence, Ledger-Verifikation und Acceptance bis `Done`. Vorher und nachher
+bleibt der Repository-Dateibaum bytegleich. Ein Negativlauf schickt ungültige Primär- und
+Reparaturausgabe durch denselben Compiler und weist null Toolaufrufe, Toolversuche und Tool-Events
+nach.
 
 ### Agentenlauf nach Appneustart
 

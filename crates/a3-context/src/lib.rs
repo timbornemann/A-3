@@ -169,7 +169,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         report(control, ContextCompilePhase::Complete)?;
         Ok(CompiledAgentContext::new(
             request,
-            ContextCompilerPolicyVersion::V1,
+            ContextCompilerPolicyVersion::CURRENT,
             digest,
             input.goal_contract().reference(),
             input.task_ledger().revision(),
@@ -286,7 +286,7 @@ fn render_anchor(
         &mut text,
         format_args!(
             "policy={} task={} goal_rev={} ledger_rev={} profile={}:{} context={} output={}",
-            ContextCompilerPolicyVersion::V1.get(),
+            ContextCompilerPolicyVersion::CURRENT.get(),
             goal.task_id(),
             goal.revision().get(),
             ledger.revision().get(),
@@ -669,7 +669,18 @@ fn pack_ranked_context(
     let mut spans = Vec::new();
     let mut truncated = false;
 
-    for entry in lens.entries() {
+    // The repository card is the untruncatable L0 project anchor. Retrieval rank can place an
+    // optional L1 module before it, so reserve L0 first while preserving rank within both groups.
+    let ordered_entries = lens
+        .entries()
+        .iter()
+        .filter(|entry| matches!(entry.target(), TaskLensTarget::Repository(_)))
+        .chain(
+            lens.entries()
+                .iter()
+                .filter(|entry| !matches!(entry.target(), TaskLensTarget::Repository(_))),
+        );
+    for entry in ordered_entries {
         let key = target_key(entry.target());
         if !target_keys.insert(key) {
             continue;
@@ -833,14 +844,14 @@ fn render_repository(card: &RepositoryCard, reason: String) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "L0 repository snapshot={} module_policy={} files={} symbols={} packages={} languages={} entrypoints={} reason={reason}\n",
+        "L0 repository snapshot={} module_policy={} files={} symbols={} package_count={} languages={} entrypoint_count={} reason={reason}\n",
         card.snapshot_id(),
         card.policy_version().get(),
         card.file_count(),
         card.symbol_count(),
-        join_ids(card.packages()),
+        card.packages().len(),
         languages,
-        join_ids(card.entrypoints().symbols())
+        card.entrypoints().symbols().len()
     )
 }
 

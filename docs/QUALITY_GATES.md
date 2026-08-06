@@ -95,6 +95,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 
 ### Model Provider
 
+- Die gemeinsame dev-only Streaming-Contract-Suite prüft den neutralen Stub und den konkreten
+  Ollama-Adapter auf exakte Provideridentität, begrenzte Ereignisfolge, genau eine terminale
+  Completion am Streamende und dieselbe erwartete `ProviderEvent`-Projektion.
 - Der allgemeine Application-Port besitzt keine Ollama-, HTTP- oder Adapter-Payloadtypen; der
   Cargo-Graph zeigt ausschließlich `a3-provider` → `a3-application` → `a3-domain`.
 - Der neutrale Stubprovider emittiert exakt skriptbare Events und Fehler, wartet wakebar auf
@@ -135,6 +138,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Repair-Tests belegen eine nicht clonebare, bei Anweisungserzeugung verbrauchte Befugnis, keine
   Wiederholung geheim markierter ungültiger Rohbytes und terminale Ablehnung eines ebenfalls
   ungültigen zweiten Dokuments.
+- Die Gate-M6-End-to-End-Abnahme indiziert und publiziert die Rust-, TypeScript- und Python-
+  Produkt-Fixtures real und führt je Fixture zwei neutrale Modellturns über Context Compiler,
+  SearchTool, durable Tool-Evidence, Ledger-Verifikation, Run Journal und Acceptance-Verifier bis
+  `Done`. Der Repository-Dateibaum bleibt bytegleich. Ein Negativlauf über denselben Stack verlangt
+  nach ungültiger Primär- und Reparaturausgabe null Toolaufrufe, null durable Toolversuche und null
+  Tool-Journalereignisse.
 
 ### Compaction
 

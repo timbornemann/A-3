@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "a3-agent-harness-tests"
+version = "0.1.0"
+dependencies = [
+ "a3-application",
+ "a3-context",
+ "a3-domain",
+ "a3-model-provider-contract-tests",
+ "a3-repo-index",
+ "a3-storage-libsql",
+ "a3-workspace",
+ "blake3",
+ "futures",
+]
+
+[[package]]
 name = "a3-application"
 version = "0.1.0"
 dependencies = [
@@ -79,6 +94,7 @@ version = "0.1.0"
 dependencies = [
  "a3-application",
  "a3-domain",
+ "a3-model-provider-contract-tests",
  "futures",
  "reqwest",
  "serde",

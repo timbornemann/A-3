@@ -12,6 +12,7 @@ use a3_domain::{
     ModelSamplingProfile, ModelStopSequence, ModelStopSequences, ModelStructuredOutputCapability,
     ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
 };
+use a3_model_provider_contract_tests::verify_model_provider_stream;
 use a3_provider::{LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider};
 use futures::StreamExt;
 use futures::task::AtomicWaker;
@@ -98,13 +99,26 @@ async fn ollama_adapter_streams_neutral_events_and_encodes_strict_request() -> R
     let provider = provider(endpoint)?;
     let control = TestControl::default();
     let request = request()?;
-    let events = provider
-        .stream(&request, ModelRequestTimeout::from_millis(2_000)?, &control)
-        .await?
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    let expected = vec![
+        ProviderEvent::OutputText(a3_application::ModelOutputChunk::try_from_string(
+            "hel".to_owned(),
+        )?),
+        ProviderEvent::OutputText(a3_application::ModelOutputChunk::try_from_string(
+            "lo".to_owned(),
+        )?),
+        ProviderEvent::Completed(a3_application::ModelProviderCompletion::new(
+            ModelFinishReason::Stop,
+            a3_application::ModelProviderUsage::new(Some(7), Some(2)),
+        )),
+    ];
+    let events = verify_model_provider_stream(
+        &provider,
+        &request,
+        ModelRequestTimeout::from_millis(2_000)?,
+        &control,
+        &expected,
+    )
+    .await?;
     let body = server.await??;
 
     assert_eq!(events.len(), 3);

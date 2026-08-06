@@ -21,6 +21,12 @@ impl ContextCompilerPolicyVersion {
     /// Initial H7 Context Compiler policy.
     pub const V1: Self = Self(1);
 
+    /// M6 policy with a compact untruncatable L0 anchor before ranked L1/L2 detail.
+    pub const V2: Self = Self(2);
+
+    /// Policy emitted by the current deterministic compiler implementation.
+    pub const CURRENT: Self = Self::V2;
+
     /// Returns the stable persisted integer.
     #[must_use]
     pub const fn get(self) -> u32 {
@@ -339,7 +345,8 @@ fn percentage_ceiling(
 #[cfg(test)]
 mod tests {
     use super::{
-        ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextDigest, ContextSection,
+        ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
+        ContextDigest, ContextSection,
     };
     use crate::{
         ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
@@ -375,6 +382,10 @@ mod tests {
 
     #[test]
     fn sixteen_k_budget_matches_the_documented_v1_profile() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            ContextCompilerPolicyVersion::CURRENT,
+            ContextCompilerPolicyVersion::V2
+        );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);
         assert_eq!(plan.allowance(ContextSection::GoalAndLedger), 900);

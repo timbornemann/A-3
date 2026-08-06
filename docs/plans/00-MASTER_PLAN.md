@@ -98,7 +98,7 @@ Ein Nutzer kann:
 - [x] evidenzgebundene Run-Memory-Compaction
 - [x] Ollama-kompatibler Provider
 - [x] ModelProfile und Capability Self-Test
-- [ ] read-only Controllerlauf
+- [x] read-only Controllerlauf
 - [x] Resume nach Neustart
 
 ### M7 Editing Agent

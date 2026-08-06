@@ -230,6 +230,12 @@ Code/Evidence und Toolresultate werden lückenlos genau einer Sektion zugerechne
 bleiben 900 Tokens Sicherheitsreserve frei. Eine ungekürzte Pflichtsektion, die ihre Grenze
 überschreitet, bricht den Compile ab, statt still Inhalte zu verlieren.
 
+`ContextCompilerPolicyVersion::V2` reserviert den vollständigen kompakten L0-Repository-Anchor vor
+allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
+Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
+evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
+Anchor- beziehungsweise Detailgruppe bleibt stabil. V2 besitzt eine getrennte Digest-Domäne.
+
 Packregeln:
 
 - kurze Signatur vor Implementierung;

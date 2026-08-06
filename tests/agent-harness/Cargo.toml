@@ -1,0 +1,22 @@
+[package]
+name = "a3-agent-harness-tests"
+description = "Offline end-to-end acceptance contracts for the A^3 durable read-only harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+a3-application.workspace = true
+a3-context.workspace = true
+a3-domain.workspace = true
+a3-model-provider-contract-tests.workspace = true
+a3-repo-index.workspace = true
+a3-storage-libsql.workspace = true
+a3-workspace.workspace = true
+blake3.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

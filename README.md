@@ -45,8 +45,11 @@ Run-Memory-Projektion ohne Audit-Events oder Quellketten zu ersetzen. H9 und H10
 budgetierte endliche Controller-Zustandsmaschine, den Acceptance-verifizierten Done-Pfad und das
 snapshotgebundene Read-only Toolset. H11 lädt nicht terminale Runs nach Appneustart, schließt
 verwaiste Toolversuche als Interrupted, prüft abgeschlossene Evidence gegen den aktuellen
-Published Snapshot und committed die explizite Wahl Resume, Replan oder Cancel atomar. Als
-Nächstes folgt die vollständige Abnahme des M6-Gates. Die
+Published Snapshot und committed die explizite Wahl Resume, Replan oder Cancel atomar. Gate M6
+führt den vollständigen read-only Controller über reale Rust-, TypeScript- und Python-Fixtures bis
+zum evidenzverifizierten `Done` und belegt am selben Stack, dass ungültige Primär- und
+Reparaturausgaben keine Toolgrenze erreichen. Als Nächstes folgt M7 mit der zentralen Policy- und
+Approval-Grenze. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -121,7 +124,9 @@ crates/             Rust-Domain, Use Cases, Features und Adapter
 tests/storage-contract/
                     Adapterneutrale Storage-Verträge (nur Entwicklung und CI)
 tests/model-provider-contract/
-                    Neutraler Provider-Stub (nur Entwicklung und CI)
+                    Neutraler Provider-Stub und gemeinsamer Adaptervertrag (nur Entwicklung und CI)
+tests/agent-harness/
+                    Offline-End-to-End-Abnahme des read-only Harness (nur Entwicklung und CI)
 fixtures/           kleine lizenzkompatible Test-Repositories
 docs/               verbindliche Architektur, ADRs und Pläne
 ```

@@ -389,9 +389,28 @@ Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier Tooltests; 
 
 ## Gate M6
 
-- [ ] read-only End-to-End-Agent auf drei Fixture-Sprachen
+- [x] read-only End-to-End-Agent auf drei Fixture-Sprachen
 - [x] Goal-Retention- und Compaction-Eval grün
-- [ ] ungültige Modellausgaben werden nie ausgeführt
+- [x] ungültige Modellausgaben werden nie ausgeführt
 - [x] Resume nach simuliertem Crash
 - [x] Context Compile P95 innerhalb Budget
-- [ ] Provider bleibt austauschbar durch Contract-Suite
+- [x] Provider bleibt austauschbar durch Contract-Suite
+
+Verifiziert am 2026-08-06: Das dev-only `agent-harness`-Crate baut die drei Produkt-Fixtures in
+temporären Git-Worktrees auf, führt den realen Snapshot-, Parser-, Linker-, Ranking-, Modul- und
+atomaren libSQL-Publishpfad aus und komponiert darauf den V2-Context-Compiler, den neutralen
+Stubprovider, das echte Read-only Toolset, Tool-Attempts, Journal, Ledger und Acceptance-Gate. Je
+Sprache liefern zwei strikt decodierte Modellturns eine Search mit content-adressierter Evidence
+und einen nicht-verifizierenden Ledger-Result-Intent; erst die fixtureseitige deterministische
+Evidenceprüfung vervollständigt Schritt und Acceptance Receipt. Der erneut geladene durable
+Zustand ist `Done`, das Journal lückenlos und jeder Repository-Dateibaum vor und nach dem Lauf
+bytegleich.
+
+Ein Negativlauf verwendet denselben realen Rust-Stack. Ungültige Primär- und Reparaturausgabe
+erzeugen genau ein redigiertes `invalid_model_output`-Ereignis, aber null Toolaufrufe, null durable
+Toolversuche und null Toolereignisse. Die gemeinsame providerneutrale Streaming-Suite wird sowohl
+vom In-Memory-Stub als auch vom Ollama-HTTP-Adapter ausgeführt und erzwingt Identität, feste
+Ereignisgrenze, genau eine terminale Completion am Streamende und die erwartete neutrale
+`ProviderEvent`-Projektion. M6 deckte zusätzlich einen realen TypeScript-Monorepo-Budgetfehler auf:
+Context-Policy V2 reserviert nun den kompakten L0-Anchor vor optionalen Details und besitzt eine
+eigene Digest-Domäne.

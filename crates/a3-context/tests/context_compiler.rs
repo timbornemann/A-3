@@ -12,17 +12,18 @@ use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
     AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState, AgentRunTimestamp,
-    AgentRunTiming, CanonicalDirectory, Centrality, Confidence, ContentHash, ExactSearchCursor,
-    ExactSearchExplanation, ExactSearchHit, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
-    ExactSearchSymbol, ExactSearchTarget, ExpectedTaskEvidence, FileRevision, GitHead,
-    GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
-    GraphSymbol, GraphTraversalResult, IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunSequence, IndexRunStatus, LexicalScore, LexicalSearchCursor, LexicalSearchExplanation,
-    LexicalSearchHit, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph,
-    LocalSymbolId, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
-    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
-    ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
-    ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
+    AgentRunTiming, CanonicalDirectory, Centrality, Confidence, ContentHash,
+    ContextCompilerPolicyVersion, ExactSearchCursor, ExactSearchExplanation, ExactSearchHit,
+    ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchSymbol, ExactSearchTarget,
+    ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, GraphSymbol, GraphTraversalResult, IndexLanguage,
+    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus, LexicalScore,
+    LexicalSearchCursor, LexicalSearchExplanation, LexicalSearchHit, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph, LocalSymbolId, ModelCapabilities,
+    ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit, ModelProfile,
+    ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile,
+    ModelStopSequences, ModelStructuredOutputCapability, ModelTemperature,
+    ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
     ModuleCardEvidenceId, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimStatement,
     ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion,
     ModuleProjection, ModuleRoot, ModuleSymbolSet, ParsedSymbol, ProjectIdentity, PublishedIndex,
@@ -61,6 +62,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V2);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);

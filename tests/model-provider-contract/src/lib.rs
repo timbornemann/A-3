@@ -7,7 +7,99 @@ use a3_application::{
     ProviderEventStream,
 };
 use a3_domain::ModelProviderId;
+use futures::StreamExt;
+use std::error::Error;
+use std::fmt;
 use std::sync::Mutex;
+
+const MAX_CONTRACT_EVENTS: usize = 1_024;
+
+/// Executes the shared provider-neutral streaming contract against one adapter instance.
+///
+/// The contract deliberately observes only the Application port. It requires exact provider
+/// identity, a bounded stream, exactly one terminal completion at the end, and the caller's
+/// expected neutral event projection.
+pub async fn verify_model_provider_stream(
+    provider: &dyn ModelProvider,
+    request: &ModelProviderRequest,
+    timeout: ModelRequestTimeout,
+    control: &dyn ModelOperationControl,
+    expected: &[ProviderEvent],
+) -> Result<Vec<ProviderEvent>, ModelProviderContractError> {
+    if provider.provider_id() != request.profile().provider_id() {
+        return Err(ModelProviderContractError::ProviderMismatch);
+    }
+    let mut stream = provider
+        .stream(request, timeout, control)
+        .await
+        .map_err(ModelProviderContractError::Establishment)?;
+    let mut events = Vec::new();
+    let mut completed = false;
+    while let Some(item) = stream.next().await {
+        let event = item.map_err(ModelProviderContractError::Stream)?;
+        if completed {
+            return Err(ModelProviderContractError::EventAfterCompletion);
+        }
+        if events.len() == MAX_CONTRACT_EVENTS {
+            return Err(ModelProviderContractError::EventLimitExceeded);
+        }
+        completed = matches!(event, ProviderEvent::Completed(_));
+        events.push(event);
+    }
+    if !completed {
+        return Err(ModelProviderContractError::MissingCompletion);
+    }
+    if events != expected {
+        return Err(ModelProviderContractError::UnexpectedEvents);
+    }
+    Ok(events)
+}
+
+/// Stable failure of the reusable provider-neutral streaming contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelProviderContractError {
+    /// Adapter identity differed from the profile-bound request identity.
+    ProviderMismatch,
+    /// The adapter rejected stream establishment.
+    Establishment(ModelProviderFailure),
+    /// The established stream failed before its clean terminal event.
+    Stream(ModelProviderFailure),
+    /// More than the fixed contract event bound was emitted.
+    EventLimitExceeded,
+    /// The stream ended without one terminal completion event.
+    MissingCompletion,
+    /// An event appeared after the terminal completion event.
+    EventAfterCompletion,
+    /// The neutral event projection differed from the adapter-independent expectation.
+    UnexpectedEvents,
+}
+
+impl fmt::Display for ModelProviderContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ProviderMismatch => "model-provider contract identity mismatch",
+            Self::Establishment(_) => "model-provider contract stream establishment failed",
+            Self::Stream(_) => "model-provider contract stream failed",
+            Self::EventLimitExceeded => "model-provider contract event limit exceeded",
+            Self::MissingCompletion => "model-provider contract completion is missing",
+            Self::EventAfterCompletion => "model-provider contract emitted after completion",
+            Self::UnexpectedEvents => "model-provider contract events differ",
+        })
+    }
+}
+
+impl Error for ModelProviderContractError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Establishment(error) | Self::Stream(error) => Some(error),
+            Self::ProviderMismatch
+            | Self::EventLimitExceeded
+            | Self::MissingCompletion
+            | Self::EventAfterCompletion
+            | Self::UnexpectedEvents => None,
+        }
+    }
+}
 
 /// Deterministic behavior selected for a neutral stub provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,8 +360,8 @@ impl std::error::Error for StubModelProviderInspectError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        StubModelCapabilityProbe, StubModelCapabilityProbeBehavior, StubModelProvider,
-        StubModelProviderBehavior,
+        ModelProviderContractError, StubModelCapabilityProbe, StubModelCapabilityProbeBehavior,
+        StubModelProvider, StubModelProviderBehavior, verify_model_provider_stream,
     };
     use a3_application::ModelCapabilityProbeRequest;
     use a3_application::{
@@ -393,19 +485,52 @@ mod tests {
             None,
         )?;
         let control = NeverCancelled;
-        let returned = futures::executor::block_on(async {
-            provider
-                .stream(&request, ModelRequestTimeout::DEFAULT, &control)
-                .await?
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>, ModelProviderFailure>>()
-        })?;
+        let returned = futures::executor::block_on(verify_model_provider_stream(
+            &provider,
+            &request,
+            ModelRequestTimeout::DEFAULT,
+            &control,
+            &events,
+        ))?;
 
         assert_eq!(returned, events);
         assert_eq!(provider.calls()?.len(), 1);
         assert!(!format!("{provider:?}").contains("secret prompt fixture"));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_stream_contract_rejects_a_non_terminal_adapter_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let events = vec![ProviderEvent::OutputText(
+            ModelOutputChunk::try_from_string("partial".to_owned())?,
+        )];
+        let provider = StubModelProvider::new(
+            ModelProviderId::try_from_string("contract-stub".to_owned())?,
+            StubModelProviderBehavior::Events(events.clone()),
+        );
+        let request = ModelProviderRequest::new(
+            model_profile(
+                "contract-stub",
+                ModelStructuredOutputCapability::Unavailable,
+            )?,
+            vec![ModelMessage::try_from_string(
+                ModelMessageRole::User,
+                "bounded prompt".to_owned(),
+            )?],
+            None,
+        )?;
+
+        assert!(matches!(
+            futures::executor::block_on(verify_model_provider_stream(
+                &provider,
+                &request,
+                ModelRequestTimeout::DEFAULT,
+                &NeverCancelled,
+                &events,
+            )),
+            Err(ModelProviderContractError::MissingCompletion)
+        ));
         Ok(())
     }
 

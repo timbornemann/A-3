@@ -6,7 +6,7 @@ use a3_domain::{
     ContextSection, ModelProfile, TaskLens,
 };
 
-const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v1";
+const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v2";
 
 pub(super) fn context_digest(
     profile: &ModelProfile,
@@ -19,7 +19,7 @@ pub(super) fn context_digest(
 ) -> ContextDigest {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CONTEXT_DIGEST_DOMAIN);
-    hash_u32(&mut hasher, ContextCompilerPolicyVersion::V1.get());
+    hash_u32(&mut hasher, ContextCompilerPolicyVersion::CURRENT.get());
     hash_bytes(&mut hasher, profile.id().as_bytes());
     hash_u32(&mut hasher, u32::from(profile.version().get()));
     hash_bytes(&mut hasher, input.goal_contract().task_id().as_bytes());

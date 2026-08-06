@@ -321,7 +321,7 @@ jeder Ausgabe erneut gegen die dauerhafte aktuelle Publikation geprüft.
 
 ### Context Pack
 
-`ContextCompilerPolicyVersion::V1`, `ContextBudgetPlan`, `ContextBudgetUsage` und `ContextDigest`
+`ContextCompilerPolicyVersion`, `ContextBudgetPlan`, `ContextBudgetUsage` und `ContextDigest`
 sind infrastrukturfreie Domainwerte. Der Plan legt für jedes Modellprofil harte Grenzen für
 System/Tools, Goal/Ledger, Project Map, Code/Evidence und aktuelle Toolresultate sowie getrennte
 Sicherheits- und Outputreserven fest. Eine beobachtete Nutzung ist nur konstruierbar, wenn jede
@@ -333,6 +333,11 @@ und höchstens 64 journalgeordnete normalisierte Toolresultate. `CompiledAgentCo
 einen providerneutralen `ModelProviderRequest` samt Policy-, Goal-, Ledger-, Step-, Index-,
 Snapshot-, Task-Lens-, Budget- und Digestidentität aus. Dadurch kann der spätere Controller keinen
 Context Pack ohne nachvollziehbare Ausgangsevidenz als aktuellen Turn verwenden.
+
+Policy V2 behält die V1-Budgets bei, reserviert aber den unverkürzbaren L0-Repository-Anchor vor
+optionalen gerankten L1-/L2-Details. L0 trägt kompakte Datei-, Symbol-, Package- und Entrypoint-
+Anzahlen; konkrete Modul- und Symbolidentitäten bleiben in L1/L2. Die Policyversion und die neue
+Digest-Domäne verhindern, dass V1- und V2-Packs dieselbe Identität beanspruchen.
 
 ## Aggregate
 

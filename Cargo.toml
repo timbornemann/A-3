@@ -10,6 +10,7 @@ members = [
     "crates/a3-repo-index",
     "crates/a3-storage-libsql",
     "crates/a3-workspace",
+    "tests/agent-harness",
     "tests/language-adapter-contract",
     "tests/model-provider-contract",
     "tests/storage-contract",
@@ -27,6 +28,7 @@ a3-context = { path = "crates/a3-context" }
 a3-domain = { path = "crates/a3-domain" }
 a3-protocol = { path = "crates/a3-protocol" }
 a3-repo-index = { path = "crates/a3-repo-index" }
+a3-agent-harness-tests = { path = "tests/agent-harness" }
 a3-language-adapter-contract-tests = { path = "tests/language-adapter-contract" }
 a3-model-provider-contract-tests = { path = "tests/model-provider-contract" }
 a3-storage-libsql = { path = "crates/a3-storage-libsql" }
