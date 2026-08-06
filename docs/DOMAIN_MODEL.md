@@ -514,6 +514,20 @@ gegeben und nie ausgeführt. Jede akzeptierte oder endgültig verworfene Modella
 budgetierter Turn verbucht. Das Journal erhält ausschließlich Fehlerklasse und redigierte
 Byte-Metadaten, nie den Rohtext.
 
+H11 modelliert jeden Toolaufruf als `AgentToolAttempt` mit logischer ToolRunId, monotoner
+Versuchsnummer, Run- und Snapshotanker sowie einem geschlossenen Lifecycle aus `InFlight`,
+`Succeeded`, `Failed`, `Cancelled`, `Denied` und `Interrupted`. Der Versuch muss vor dem Aufruf
+durabel sein. `Succeeded` entsteht ausschließlich gemeinsam mit dem normalisierten Toolresultat
+und dessen RunEvent; ein nach Neustart noch laufender Versuch wird terminal `Interrupted`.
+
+`InspectAgentRunRecovery` rekonstruiert den nicht terminalen Run, sein revisionsgebundenes Ledger
+und den aktuellen Published Snapshot und klassifiziert nicht mehr auflösbare
+Verification-Evidence als stale. `RecoverAgentRun` akzeptiert ausschließlich die expliziten
+Entscheidungen Resume, Replan und Cancel. Resume ist bei stale Evidence ausgeschlossen; Replan und
+Cancel verwenden die bestehende Ledger-Invalidierung zum transitiven Reopen. Der Recovery-Commit
+aktualisiert Ledger, Run und Event atomar und verweigert einen zwischenzeitlich gewechselten
+Published Snapshot oder konkurrierende Ledger-/Run-Schreiber.
+
 Ein normaler Zustandsübergang nach `Done` ist im Domain-Aggregat gesperrt. Nur
 `VerifyAgentAcceptance` darf einen vollständigen `AcceptanceVerificationReceipt` anwenden. Dieser
 bindet Run, Goal-Revision, Ledgerrevision und Snapshot und deckt jedes Akzeptanzkriterium exakt

@@ -1,5 +1,6 @@
 use super::{
-    AgentRunId, EvidenceRef, FileRevision, SnapshotId, SourceRange, TaskEvidenceId, ToolRunId,
+    AgentRunId, AgentRunTimestamp, EvidenceRef, FileRevision, SnapshotId, SourceRange,
+    TaskEvidenceId, ToolRunId,
 };
 use std::error::Error;
 use std::fmt;
@@ -33,6 +34,161 @@ impl fmt::Display for ToolRunIdDerivationError {
 }
 
 impl Error for ToolRunIdDerivationError {}
+
+/// One-based durable attempt number for retries of the same logical tool action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AgentToolAttemptNumber(u32);
+
+impl AgentToolAttemptNumber {
+    /// First attempt of one logical tool action.
+    pub const FIRST: Self = Self(1);
+
+    /// Reconstructs a non-zero persisted attempt number.
+    pub const fn new(value: u32) -> Result<Self, AgentToolAttemptNumberError> {
+        if value == 0 {
+            return Err(AgentToolAttemptNumberError);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the persisted integer representation.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// A tool-attempt number was zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentToolAttemptNumberError;
+
+impl fmt::Display for AgentToolAttemptNumberError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("agent tool-attempt number must be non-zero")
+    }
+}
+
+impl Error for AgentToolAttemptNumberError {}
+
+/// Durable lifecycle state of one bounded attempt of a logical agent tool action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AgentToolAttemptStatus {
+    /// The application persisted the attempt before invoking the tool boundary.
+    InFlight,
+    /// A normalized successful result was atomically journaled.
+    Succeeded,
+    /// The tool boundary failed before producing an admissible result.
+    Failed,
+    /// Cooperative cancellation stopped the tool boundary.
+    Cancelled,
+    /// Central policy denied the tool boundary.
+    Denied,
+    /// The application restarted while this attempt was still in flight.
+    Interrupted,
+}
+
+impl AgentToolAttemptStatus {
+    /// Returns whether this attempt can no longer change lifecycle state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        !matches!(self, Self::InFlight)
+    }
+}
+
+/// Content-free durable projection of one tool attempt across application restarts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentToolAttempt {
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+    run_id: AgentRunId,
+    snapshot_id: SnapshotId,
+    status: AgentToolAttemptStatus,
+    started_at: AgentRunTimestamp,
+    updated_at: AgentRunTimestamp,
+}
+
+impl AgentToolAttempt {
+    /// Creates or reconstructs a lifecycle projection after validating its chronology.
+    pub fn new(
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        status: AgentToolAttemptStatus,
+        started_at: AgentRunTimestamp,
+        updated_at: AgentRunTimestamp,
+    ) -> Result<Self, AgentToolAttemptError> {
+        if updated_at < started_at {
+            return Err(AgentToolAttemptError::TimestampRegressed);
+        }
+        Ok(Self {
+            tool_run_id,
+            attempt,
+            run_id,
+            snapshot_id,
+            status,
+            started_at,
+            updated_at,
+        })
+    }
+
+    /// Returns the logical tool-run identity shared by its retries and final result.
+    #[must_use]
+    pub const fn tool_run_id(self) -> ToolRunId {
+        self.tool_run_id
+    }
+
+    /// Returns the one-based retry position of this attempt.
+    #[must_use]
+    pub const fn attempt(self) -> AgentToolAttemptNumber {
+        self.attempt
+    }
+
+    /// Returns the owning agent run.
+    #[must_use]
+    pub const fn run_id(self) -> AgentRunId {
+        self.run_id
+    }
+
+    /// Returns the immutable repository snapshot observed by this attempt.
+    #[must_use]
+    pub const fn snapshot_id(self) -> SnapshotId {
+        self.snapshot_id
+    }
+
+    /// Returns the current durable lifecycle state.
+    #[must_use]
+    pub const fn status(self) -> AgentToolAttemptStatus {
+        self.status
+    }
+
+    /// Returns when the attempt became durable, before tool invocation.
+    #[must_use]
+    pub const fn started_at(self) -> AgentRunTimestamp {
+        self.started_at
+    }
+
+    /// Returns the latest lifecycle-transition timestamp.
+    #[must_use]
+    pub const fn updated_at(self) -> AgentRunTimestamp {
+        self.updated_at
+    }
+}
+
+/// A persisted tool-attempt lifecycle projection violated a domain invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentToolAttemptError {
+    /// The lifecycle update preceded the durable start.
+    TimestampRegressed,
+}
+
+impl fmt::Display for AgentToolAttemptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("agent tool-attempt timestamp regressed")
+    }
+}
+
+impl Error for AgentToolAttemptError {}
 
 /// Exact current source location retained by one read-only agent tool result.
 #[derive(Clone, PartialEq, Eq)]
@@ -219,6 +375,41 @@ impl Error for AgentToolEvidenceSetError {}
 mod tests {
     use super::*;
     use crate::{ContentHash, RepositoryPath, SourcePosition, SourceRange};
+
+    #[test]
+    fn tool_attempt_requires_monotone_time_and_a_non_zero_number() -> Result<(), Box<dyn Error>> {
+        let started_at = AgentRunTimestamp::from_unix_millis(20)?;
+        let attempt = AgentToolAttempt::new(
+            ToolRunId::from_bytes([3; 32]),
+            AgentToolAttemptNumber::FIRST,
+            AgentRunId::from_bytes([4; 32]),
+            SnapshotId::from_bytes([5; 32]),
+            AgentToolAttemptStatus::InFlight,
+            started_at,
+            AgentRunTimestamp::from_unix_millis(21)?,
+        )?;
+
+        assert_eq!(attempt.attempt(), AgentToolAttemptNumber::FIRST);
+        assert!(!attempt.status().is_terminal());
+        assert_eq!(
+            AgentToolAttemptNumber::new(0),
+            Err(AgentToolAttemptNumberError)
+        );
+        assert!(matches!(
+            AgentToolAttempt::new(
+                attempt.tool_run_id(),
+                attempt.attempt(),
+                attempt.run_id(),
+                attempt.snapshot_id(),
+                AgentToolAttemptStatus::Interrupted,
+                started_at,
+                AgentRunTimestamp::from_unix_millis(19)?,
+            ),
+            Err(AgentToolAttemptError::TimestampRegressed)
+        ));
+        assert!(AgentToolAttemptStatus::Interrupted.is_terminal());
+        Ok(())
+    }
 
     #[test]
     fn evidence_is_content_bound_canonical_and_bounded() -> Result<(), Box<dyn Error>> {

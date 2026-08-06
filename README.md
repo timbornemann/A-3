@@ -39,10 +39,14 @@ deterministische Context Compiler verankert Goal Contract, aktuellen Schritt, Le
 Snapshot und Modellprofil für jeden Turn neu, verwendet die bestehende geordnete Task Lens als
 einzigen Retrieve-/Rank-Pfad und erzeugt daraus einen frischen, bereichsbudgetierten Context Pack
 mit Zoomstufen, Freshness-/Secret-Prüfung und reproduzierbarem Digest. H8 materialisiert
-verifizierte Step-Ergebnisse mit
-ihren ursprünglichen Step-, Attempt-, Run- und Evidence-IDs, behält offene Fehler und Hypothesen
-explizit und reinjiziert die deterministisch regenerierbare Run-Memory-Projektion ohne Audit-
-Events oder Quellketten zu ersetzen. Als Nächstes folgt H9 mit der Controller-Zustandsmaschine. Die
+verifizierte Step-Ergebnisse mit ihren ursprünglichen Step-, Attempt-, Run- und Evidence-IDs,
+behält offene Fehler und Hypothesen explizit und reinjiziert die deterministisch regenerierbare
+Run-Memory-Projektion ohne Audit-Events oder Quellketten zu ersetzen. H9 und H10 ergänzen die
+budgetierte endliche Controller-Zustandsmaschine, den Acceptance-verifizierten Done-Pfad und das
+snapshotgebundene Read-only Toolset. H11 lädt nicht terminale Runs nach Appneustart, schließt
+verwaiste Toolversuche als Interrupted, prüft abgeschlossene Evidence gegen den aktuellen
+Published Snapshot und committed die explizite Wahl Resume, Replan oder Cancel atomar. Als
+Nächstes folgt die vollständige Abnahme des M6-Gates. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

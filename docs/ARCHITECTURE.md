@@ -221,6 +221,18 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 9. Der Controller wechselt zu Verify, Replan oder AwaitApproval; `Done` ist ausschließlich nach
    vollständiger snapshotgebundener Prüfung durch den `AcceptanceVerifier` erreichbar.
 
+### Agentenlauf nach Appneustart
+
+1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;
+   ein Journal-Replay ist nicht erforderlich.
+2. Vor dem Abbruch dauerhaft laufende Toolversuche werden als `Interrupted` markiert.
+3. Der jüngste Published Snapshot wird geladen und abgeschlossene Verification-Evidence gegen
+   dessen content-adressierte FileRevisionen geprüft.
+4. Resume ist nur mit vollständig frischer Evidence zulässig; Replan und Cancel invalidieren stale
+   Evidence und öffnen abhängige Schritte über die bestehende Ledgerlogik neu.
+5. Die explizite Benutzerwahl wird mit Published-Snapshot-, Ledger- und Run-CAS atomar als neues
+   Ledger, neue Runprojektion und append-only Recovery-Event committed.
+
 ### Repositoryänderung
 
 1. Der Git-gestützte Polling-Watcher erzeugt nach Debounce ein kanonisch gebündeltes Change Set.

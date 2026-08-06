@@ -5,6 +5,7 @@ mod agent_actions;
 mod agent_controller;
 mod agent_prompt;
 mod agent_read_result;
+mod agent_recovery;
 mod agent_source_reader;
 mod agent_turn;
 mod context_compiler;
@@ -64,6 +65,11 @@ pub use agent_prompt::{
     AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
 };
 pub use agent_read_result::{AgentReadResult, AgentReadResultError, RecordedAgentRead};
+pub use agent_recovery::{
+    AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection, AgentRecoveryOutcome,
+    AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
+    AgentRecoveryStoreFuture, InspectAgentRunRecovery, RecoverAgentRun,
+};
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
     AgentSourceReader, AgentSourceReaderFuture,

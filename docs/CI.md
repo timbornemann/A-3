@@ -54,3 +54,7 @@ pnpm --filter @a3/desktop tauri build --no-bundle
 ~~~
 
 Die Foundation-Baseline ist durch den vollständig grünen öffentlichen [GitHub-Actions-Lauf 30895965464](https://github.com/timbornemann/A-3/actions/runs/30895965464) einschließlich aller vier Plattformjobs und des Dependency-/Lizenzartefakts verifiziert. Ein lokal erfolgreicher Windows-Build bleibt kein Ersatz für den Linux- oder macOS-Nachweis.
+
+Für den lokalen `act`-Quality-Job wird das GitHub-exklusive Artefakt-Upload übersprungen, weil dort
+kein `ACTIONS_RUNTIME_TOKEN` existiert. Erzeugung und Prüfung des Berichts bleiben Bestandteil des
+lokalen Jobs; auf GitHub ist der Upload weiterhin verpflichtend.

@@ -357,11 +357,11 @@ enthält keine unbekannte Lizenz.
 
 Abhängigkeiten: H3, H9
 
-- [ ] Run nach Appneustart laden
-- [ ] in-flight Toolrun als Interrupted markieren
-- [ ] Snapshotabgleich
-- [ ] stale Steps neu öffnen
-- [ ] Benutzerwahl Resume, Replan oder Cancel
+- [x] Run nach Appneustart laden
+- [x] in-flight Toolrun als Interrupted markieren
+- [x] Snapshotabgleich
+- [x] stale Steps neu öffnen
+- [x] Benutzerwahl Resume, Replan oder Cancel
 
 Akzeptanz:
 
@@ -369,11 +369,29 @@ Akzeptanz:
 - Resume mutiert nicht auf altem Snapshot;
 - abgeschlossene Verification bleibt nur bei frischer Evidenz gültig.
 
+Verifikation: `AgentToolAttempt` hält logische ToolRunId, monotone Versuchsnummer, Run-/Snapshot-
+Anker und den geschlossenen InFlight-/Terminal-Lifecycle. `ExecuteReadOnlyAgentTurn` persistiert den
+Versuch vor der Werkzeuggrenze; nur der atomare Toolresultat-/Journal-Commit darf `Succeeded`
+setzen. Knowledge-Schema V17 übernimmt bestehende V16-Toolläufe als ersten Versuch und besitzt
+einen getesteten V16→V17-Rollback. Der gemeinsame Recovery-Adaptervertrag schließt den Store mit
+einem laufenden Versuch, öffnet ihn neu, prüft Interrupted und Retry 2, Fresh-/Stale-Evidence,
+Resume-Ablehnung, transitives Step-Reopen, Replan, Cancel sowie vollständigen Snapshot- und
+Run-CAS-Rollback ohne Ledger- oder Indexmutation.
+
+`cargo fmt --all -- --check`, Workspace-Clippy für alle Targets/Features mit `-D warnings`, alle
+Workspace- und Doc-Tests sowie Rustdoc mit `-D warnings` sind grün. Drei voneinander unabhängige
+Windows-libSQL-Kindprozesse endeten einmalig mit dem dokumentierten `STATUS_ACCESS_VIOLATION` und
+bestanden jeweils beim ersten zulässigen frischen Retry. Ein abschließender vollständiger
+Windows-Workspace-Lauf bestand danach ohne Retry; der vollständige Linux-Quality-Job bestand mit
+`act` im mittleren `catthehacker/ubuntu:act-latest`-Image. pnpm 11.9.0 bestand
+Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier Tooltests; der Linkcheck prüfte
+45 Markdown-Dateien und 66 lokale Links, der Lizenzbericht enthält keine unbekannte Lizenz.
+
 ## Gate M6
 
 - [ ] read-only End-to-End-Agent auf drei Fixture-Sprachen
 - [x] Goal-Retention- und Compaction-Eval grün
 - [ ] ungültige Modellausgaben werden nie ausgeführt
-- [ ] Resume nach simuliertem Crash
+- [x] Resume nach simuliertem Crash
 - [x] Context Compile P95 innerhalb Budget
 - [ ] Provider bleibt austauschbar durch Contract-Suite

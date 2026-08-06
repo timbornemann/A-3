@@ -111,6 +111,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   besteht ausschließlich aus geordneten, content-adressierten File- oder Source-Span-Locators;
   Suchanfrage, Source-Text und begrenzte Toolvorschau werden nicht persistiert. Fremdschlüssel und
   ein Trigger binden jeden Toollauf an genau sein typisiertes Journal-Event.
+- Knowledge-Schema V17 ergänzt `tool_run_attempts` als content-freie Lifecycle-Projektion. Vor
+  jedem Read-Toolaufruf wird ein `in_flight`-Versuch mit Run-, Snapshot- und logischer ToolRunId
+  committed. Nur der atomare Toolresultat-/Journal-Commit darf ihn auf den Ergebnisstatus setzen;
+  Grenzfehler enden explizit als `failed`, `cancelled` oder `denied`. Beim Neustart werden
+  verbliebene Versuche als `interrupted` abgeschlossen, während ein Retry derselben logischen
+  ToolRunId eine monotone neue Versuchsnummer erhält.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild und IndexRun-Übergänge ausschließlich über die Application-Ports. Der
   libSQL-Adapter liefert nur eine Factory für temporäre App-Data-Roots; engine-spezifische Migration-,
@@ -419,6 +425,17 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V17 ergänzt V16 um dauerhafte Toolversuche und atomare
+Run-Recovery. Bestehende V16-Toolläufe werden als abgeschlossener erster Versuch übernommen; ein
+partieller Unique Index erlaubt je logischer ToolRunId höchstens einen laufenden Versuch. Die
+Recovery liest Run und Ledger nach Reopen, vergleicht abgeschlossene Verification-Evidence mit dem
+jüngsten atomar veröffentlichten Index und committed Resume, Replan oder Cancel in einer kurzen
+`IMMEDIATE`-Transaktion. Diese Transaktion vergleicht Published Snapshot, Ledger-Store-Version und
+RunEvent-Sequenz, bevor Ledgerprojektion, Runmaterialisierung und Recovery-Event gemeinsam sichtbar
+werden. Der gemeinsame Adaptervertrag simuliert Appabbruch, Interrupted-Markierung, Retry,
+Snapshotwechsel, stale Step-Reopen sowie Snapshot- und Run-CAS-Rollback; der getestete V16→V17-
+Fehlerfall lässt Schema und `user_version` vollständig auf V16.
+
 Das implementierte Knowledge-Schema V16 ergänzt V15 um die dauerhafte, bounded Tool-Evidence.
 Der libSQL-Adapter schreibt Tool-Event, Runprojektion, Toolmetadaten und höchstens 100 typisierte
 Evidence-Locators in einer `IMMEDIATE`-Transaktion. Ein separater atomarer Action-Port ersetzt bei
@@ -438,7 +455,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V16 in einer eigenen atomaren Migration.
+Vorgängerversion bis V17 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

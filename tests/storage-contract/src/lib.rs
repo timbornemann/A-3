@@ -3,6 +3,7 @@
 //! This crate is dev-only. It depends on application and domain contracts, never
 //! on a storage engine, so every adapter can execute the exact same behavior.
 
+mod agent_recovery;
 mod catalog;
 mod fixture;
 mod goal_contract;
@@ -15,9 +16,10 @@ mod semantic;
 mod task_ledger;
 
 use a3_application::{
-    AgentActionStore, GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
-    ModuleRemapQueueStore, RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore,
-    TaskLensClaimStore, TaskLensIndexStore, VerifiedModuleCardPublisher,
+    AgentActionStore, AgentRecoveryStore, GoalContractStore, KnowledgeIndexStore,
+    KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, RunJournalStore,
+    SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore, TaskLensIndexStore,
+    VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -200,6 +202,7 @@ pub trait KnowledgeStoreContractFactory {
         + GoalContractStore
         + TaskLedgerStore
         + AgentActionStore
+        + AgentRecoveryStore
         + RunJournalStore
         + KnowledgeSearchStore
         + SemanticEmbeddingStore
@@ -243,6 +246,8 @@ pub enum KnowledgeStoreContractGroup {
     TaskLedgers,
     /// Atomic append-only run journal, safe export, reopen, and worktree isolation.
     RunJournals,
+    /// Restart loading, interrupted attempts, snapshot CAS, and stale-evidence recovery.
+    AgentRecovery,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -311,6 +316,9 @@ where
         }
         KnowledgeStoreContractGroup::TaskLedgers => task_ledger::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::RunJournals => run_journal::verify(factory, &workspace).await,
+        KnowledgeStoreContractGroup::AgentRecovery => {
+            agent_recovery::verify(factory, &workspace).await
+        }
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
                 factory,

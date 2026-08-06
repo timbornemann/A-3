@@ -1,5 +1,6 @@
 //! Local-only libSQL storage adapters for A^3 catalog and project data.
 
+mod agent_recovery_repository;
 mod catalog;
 mod exact_search_projection;
 mod exact_search_repository;

@@ -1,16 +1,17 @@
 use crate::{
     AgentActionPrimaryOutcome, AgentContextCompileInput, AgentContextCompiler,
-    AgentControllerControl, AgentControllerPreflightFailure, AgentReadResult,
-    ContextCompileControl, ContextCompileFailure, DecodeAgentActionTurn, ModelFinishReason,
-    ModelMessageError, ModelOperationControl, ModelProvider, ModelProviderFailure,
-    ModelProviderRequest, ModelProviderRequestError, ModelRequestTimeout, ProviderEvent,
+    AgentControllerControl, AgentControllerPreflightFailure, AgentReadResult, AgentRecoveryStore,
+    AgentRecoveryStoreFailure, ContextCompileControl, ContextCompileFailure, DecodeAgentActionTurn,
+    ModelFinishReason, ModelMessageError, ModelOperationControl, ModelProvider,
+    ModelProviderFailure, ModelProviderRequest, ModelProviderRequestError, ModelRequestTimeout,
+    ProviderEvent,
 };
 use a3_domain::{
     AgentAction, AgentInspectAction, AgentRun, AgentRunError, AgentRunTimestamp, AgentSearchAction,
-    AgentTurnActionClass, AgentTurnCharge, AgentTurnRepairUsage, ContextDigest, ModelTokenCount,
-    ModelTokenCountError, ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventOutcome,
-    RunEventPayload, RunEventRedaction, RunEventRedactionSource, SnapshotId, TaskStepId,
-    TaskStepStatus, ToolRunId,
+    AgentToolAttemptStatus, AgentTurnActionClass, AgentTurnCharge, AgentTurnRepairUsage,
+    ContextDigest, ModelTokenCount, ModelTokenCountError, ProjectIdentity, RunEvent, RunEventCode,
+    RunEventId, RunEventOutcome, RunEventPayload, RunEventRedaction, RunEventRedactionSource,
+    SnapshotId, TaskStepId, TaskStepStatus, ToolRunId,
 };
 use futures::StreamExt;
 use std::error::Error;
@@ -287,6 +288,7 @@ pub struct ExecuteReadOnlyAgentTurn<'a> {
     compiler: &'a dyn AgentContextCompiler,
     provider: &'a dyn ModelProvider,
     tools: &'a dyn AgentReadTools,
+    recovery: &'a dyn AgentRecoveryStore,
     model_timeout: ModelRequestTimeout,
     read_timeout: AgentReadTimeout,
 }
@@ -298,11 +300,13 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
         compiler: &'a dyn AgentContextCompiler,
         provider: &'a dyn ModelProvider,
         tools: &'a dyn AgentReadTools,
+        recovery: &'a dyn AgentRecoveryStore,
     ) -> Self {
         Self {
             compiler,
             provider,
             tools,
+            recovery,
             model_timeout: ModelRequestTimeout::DEFAULT,
             read_timeout: AgentReadTimeout::DEFAULT,
         }
@@ -467,7 +471,17 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
                 .ok_or(ExecuteAgentTurnFailure::InvalidToolIdentity)?;
             let tool_run_id = ToolRunId::for_agent_action_v1(run.id(), action_ordinal)
                 .map_err(|_| ExecuteAgentTurnFailure::InvalidToolIdentity)?;
-            let result = self
+            let attempt = self
+                .recovery
+                .begin_agent_tool_attempt(
+                    input.project(),
+                    run.id(),
+                    snapshot_id,
+                    tool_run_id,
+                    observed_at,
+                )
+                .await?;
+            let result = match self
                 .tools
                 .execute(
                     input.project(),
@@ -477,8 +491,39 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
                     self.read_timeout,
                     control,
                 )
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(failure) => {
+                    let status = match failure {
+                        AgentReadToolFailure::Denied => AgentToolAttemptStatus::Denied,
+                        AgentReadToolFailure::Cancelled => AgentToolAttemptStatus::Cancelled,
+                        AgentReadToolFailure::Unavailable
+                        | AgentReadToolFailure::InvalidResult
+                        | AgentReadToolFailure::TimedOut => AgentToolAttemptStatus::Failed,
+                    };
+                    self.recovery
+                        .finish_agent_tool_attempt(
+                            input.project(),
+                            tool_run_id,
+                            attempt.attempt(),
+                            status,
+                            observed_at,
+                        )
+                        .await?;
+                    return Err(ExecuteAgentTurnFailure::Read(failure));
+                }
+            };
             if result.snapshot_id() != snapshot_id || result.tool_run_id() != tool_run_id {
+                self.recovery
+                    .finish_agent_tool_attempt(
+                        input.project(),
+                        tool_run_id,
+                        attempt.attempt(),
+                        AgentToolAttemptStatus::Failed,
+                        observed_at,
+                    )
+                    .await?;
                 return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                     charge,
                     reason: AgentTurnRejectionReason::InvalidReadResult,
@@ -665,6 +710,8 @@ pub enum ExecuteAgentTurnFailure {
     Read(AgentReadToolFailure),
     /// A unique run-local tool identity could not be derived.
     InvalidToolIdentity,
+    /// Durable tool-attempt lifecycle persistence failed.
+    ToolLifecycle(AgentRecoveryStoreFailure),
     /// Cancellation was observed before a complete model exchange.
     Cancelled,
 }
@@ -686,6 +733,7 @@ impl fmt::Display for ExecuteAgentTurnFailure {
             Self::TokenCount(_) => "agent turn token count failed",
             Self::Read(_) => "agent turn read action failed",
             Self::InvalidToolIdentity => "agent turn tool identity is invalid",
+            Self::ToolLifecycle(_) => "agent turn tool lifecycle persistence failed",
             Self::Cancelled => "agent turn was cancelled",
         })
     }
@@ -701,6 +749,7 @@ impl Error for ExecuteAgentTurnFailure {
             Self::RepairRequest(error) => Some(error),
             Self::TokenCount(error) => Some(error),
             Self::Read(error) => Some(error),
+            Self::ToolLifecycle(error) => Some(error),
             Self::InputMismatch
             | Self::ContextMismatch
             | Self::ProviderMismatch
@@ -752,6 +801,12 @@ impl From<ModelTokenCountError> for ExecuteAgentTurnFailure {
 impl From<AgentReadToolFailure> for ExecuteAgentTurnFailure {
     fn from(value: AgentReadToolFailure) -> Self {
         Self::Read(value)
+    }
+}
+
+impl From<AgentRecoveryStoreFailure> for ExecuteAgentTurnFailure {
+    fn from(value: AgentRecoveryStoreFailure) -> Self {
+        Self::ToolLifecycle(value)
     }
 }
 
@@ -901,6 +956,120 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct TestRecoveryStore {
+        begins: AtomicUsize,
+        finishes: Mutex<Vec<AgentToolAttemptStatus>>,
+    }
+
+    impl AgentRecoveryStore for TestRecoveryStore {
+        fn begin_agent_tool_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            run_id: AgentRunId,
+            snapshot_id: SnapshotId,
+            tool_run_id: ToolRunId,
+            started_at: AgentRunTimestamp,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentToolAttempt> {
+            self.begins.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                a3_domain::AgentToolAttempt::new(
+                    tool_run_id,
+                    a3_domain::AgentToolAttemptNumber::FIRST,
+                    run_id,
+                    snapshot_id,
+                    AgentToolAttemptStatus::InFlight,
+                    started_at,
+                    started_at,
+                )
+                .map_err(|_| AgentRecoveryStoreFailure::InvalidStoredData)
+            })
+        }
+
+        fn finish_agent_tool_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            tool_run_id: ToolRunId,
+            attempt: a3_domain::AgentToolAttemptNumber,
+            status: AgentToolAttemptStatus,
+            finished_at: AgentRunTimestamp,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentToolAttempt> {
+            let recorded = self
+                .finishes
+                .lock()
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)
+                .map(|mut finishes| finishes.push(status));
+            Box::pin(async move {
+                recorded?;
+                a3_domain::AgentToolAttempt::new(
+                    tool_run_id,
+                    attempt,
+                    AgentRunId::from_bytes([0; 32]),
+                    SnapshotId::from_bytes([0; 32]),
+                    status,
+                    finished_at,
+                    finished_at,
+                )
+                .map_err(|_| AgentRecoveryStoreFailure::InvalidStoredData)
+            })
+        }
+
+        fn interrupt_agent_tool_attempts<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _run_id: AgentRunId,
+            _interrupted_at: AgentRunTimestamp,
+        ) -> crate::AgentRecoveryStoreFuture<'a, u32> {
+            Box::pin(async { Ok(0) })
+        }
+
+        fn load_agent_tool_evidence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _run_id: AgentRunId,
+            _evidence_ids: &'a [a3_domain::TaskEvidenceId],
+        ) -> crate::AgentRecoveryStoreFuture<'a, Vec<a3_domain::AgentToolEvidence>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn commit_agent_recovery<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_published_snapshot: SnapshotId,
+            _expected_ledger_version: crate::TaskLedgerStoreVersion,
+            _expected_last_sequence: RunEventSequence,
+            _ledger: &'a TaskLedger,
+            _run: &'a AgentRun,
+            _event: &'a RunEvent,
+        ) -> crate::AgentRecoveryStoreFuture<'a, crate::TaskLedgerStoreVersion> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct DeniedReadTools<'a> {
+        durable_begins: &'a AtomicUsize,
+    }
+
+    impl AgentReadTools for DeniedReadTools<'_> {
+        fn execute<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _snapshot_id: SnapshotId,
+            _tool_run_id: ToolRunId,
+            _action: &'a AgentReadAction,
+            _timeout: AgentReadTimeout,
+            _control: &'a dyn AgentControllerControl,
+        ) -> AgentReadToolsFuture<'a> {
+            let failure = if self.durable_begins.load(Ordering::SeqCst) == 1 {
+                AgentReadToolFailure::Denied
+            } else {
+                AgentReadToolFailure::InvalidResult
+            };
+            Box::pin(async move { Err(failure) })
+        }
+    }
+
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
@@ -914,9 +1083,10 @@ mod tests {
         let tools = CountingReadTools {
             calls: AtomicUsize::new(0),
         };
+        let recovery = TestRecoveryStore::default();
 
         let outcome = futures::executor::block_on(
-            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools).execute(
+            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
                 &fixture.run,
                 &fixture.input,
                 timestamp(5)?,
@@ -940,6 +1110,14 @@ mod tests {
             .ok_or("search did not retain its read result")?
             .record(&mut fixture.run, event_id(21), timestamp(21)?)?;
         assert_eq!(tools.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(recovery.begins.load(Ordering::SeqCst), 1);
+        assert!(
+            recovery
+                .finishes
+                .lock()
+                .map_err(|_| "finish log poisoned")?
+                .is_empty()
+        );
         assert_eq!(fixture.run.usage().turn_count(), 1);
         assert_eq!(fixture.run.usage().action_count(), 1);
         assert_eq!(fixture.run.usage().repair_count(), 0);
@@ -967,9 +1145,10 @@ mod tests {
         let tools = CountingReadTools {
             calls: AtomicUsize::new(0),
         };
+        let recovery = TestRecoveryStore::default();
 
         let outcome = futures::executor::block_on(
-            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools).execute(
+            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
                 &fixture.run,
                 &fixture.input,
                 timestamp(5)?,
@@ -988,10 +1167,51 @@ mod tests {
         assert_eq!(rejected.charge().repair(), AgentTurnRepairUsage::One);
         assert_eq!(rejected.charge().action(), None);
         assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
         assert_eq!(fixture.run.usage().turn_count(), 1);
         assert_eq!(fixture.run.usage().action_count(), 0);
         assert_eq!(fixture.run.usage().repair_count(), 1);
         assert_eq!(event.payload().code(), RunEventCode::InvalidModelOutput);
+        Ok(())
+    }
+
+    #[test]
+    fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
+    -> Result<(), Box<dyn Error>> {
+        let fixture = turn_fixture(vec![provider_response(
+            r#"{"schema_version":1,"action":{"kind":"search","query":"controller","limit":5}}"#,
+        )?])?;
+        let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+        let provider = ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        };
+        let recovery = TestRecoveryStore::default();
+        let tools = DeniedReadTools {
+            durable_begins: &recovery.begins,
+        };
+
+        let result = futures::executor::block_on(
+            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                &fixture.run,
+                &fixture.input,
+                timestamp(5)?,
+                &TestControl,
+            ),
+        );
+
+        assert!(matches!(
+            result,
+            Err(ExecuteAgentTurnFailure::Read(AgentReadToolFailure::Denied))
+        ));
+        assert_eq!(recovery.begins.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *recovery
+                .finishes
+                .lock()
+                .map_err(|_| "finish log poisoned")?,
+            vec![AgentToolAttemptStatus::Denied]
+        );
         Ok(())
     }
 

@@ -55,8 +55,9 @@ pub use agent_run::{
     RunEventSubject, RunPayloadDigest,
 };
 pub use agent_tool::{
-    AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet, AgentToolEvidenceSetError,
-    ToolRunIdDerivationError,
+    AgentToolAttempt, AgentToolAttemptError, AgentToolAttemptNumber, AgentToolAttemptNumberError,
+    AgentToolAttemptStatus, AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet,
+    AgentToolEvidenceSetError, ToolRunIdDerivationError,
 };
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,

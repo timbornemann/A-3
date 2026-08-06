@@ -1521,6 +1521,38 @@ const KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION: Migration = Migration {
       CREATE INDEX tool_evidence_id_idx ON tool_evidence(evidence_id, tool_run_id);",
 };
 
+const KNOWLEDGE_AGENT_RECOVERY_MIGRATION: Migration = Migration {
+    version: 17,
+    name: "durable_agent_recovery",
+    sql: "CREATE TABLE tool_run_attempts (\n\
+      tool_run_id BLOB NOT NULL CHECK (length(tool_run_id) = 32),\n\
+      attempt_sequence INTEGER NOT NULL CHECK (attempt_sequence BETWEEN 1 AND 4294967295),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      status TEXT NOT NULL CHECK (status IN ('in_flight', 'succeeded', 'failed', 'cancelled',\n\
+        'denied', 'interrupted')),\n\
+      started_at_unix_millis INTEGER NOT NULL CHECK (started_at_unix_millis >= 0),\n\
+      updated_at_unix_millis INTEGER NOT NULL\n\
+        CHECK (updated_at_unix_millis >= started_at_unix_millis),\n\
+      PRIMARY KEY (tool_run_id, attempt_sequence),\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO tool_run_attempts (\n\
+        tool_run_id, attempt_sequence, run_id, snapshot_id, status,\n\
+        started_at_unix_millis, updated_at_unix_millis\n\
+      ) SELECT tool_runs.tool_run_id, 1, tool_runs.run_id, tool_runs.snapshot_before_id,\n\
+        tool_runs.status, run_events.occurred_at_unix_millis, run_events.occurred_at_unix_millis\n\
+        FROM tool_runs JOIN run_events ON run_events.run_id = tool_runs.run_id\n\
+          AND run_events.event_sequence = tool_runs.event_sequence;\n\
+      CREATE UNIQUE INDEX tool_run_attempts_one_in_flight_idx\n\
+        ON tool_run_attempts(tool_run_id) WHERE status = 'in_flight';\n\
+      CREATE INDEX tool_run_attempts_run_status_idx\n\
+        ON tool_run_attempts(run_id, status, tool_run_id, attempt_sequence);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1538,6 +1570,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_MODEL_PROFILE_RUN_REFERENCE_MIGRATION,
     KNOWLEDGE_AGENT_RUN_BUDGET_MIGRATION,
     KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION,
+    KNOWLEDGE_AGENT_RECOVERY_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1570,7 +1603,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(16);
+    pub const CURRENT: Self = Self::new(17);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -1978,11 +2011,12 @@ mod tests {
                      'task_step_verifications', 'task_step_verification_evidence',\n\
                      'task_step_stale_evidence', 'task_ledger_replans',\n\
                      'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
-                     'agent_runs', 'run_events', 'tool_runs', 'tool_evidence'\n\
+                     'agent_runs', 'run_events', 'tool_runs', 'tool_evidence',\n\
+                     'tool_run_attempts'\n\
                      )",
                 )
                 .await?,
-                46
+                47
             );
             assert_eq!(
                 query_i64(
@@ -2860,6 +2894,55 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
                      AND name = 'tool_evidence'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v17_upgrade_preserves_v16_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [58; 32];
+            let worktree_id = [59; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..16],
+                16,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE tool_run_attempts (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 17, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 16);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('tool_run_attempts')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
+                     AND name = 'tool_run_attempts_one_in_flight_idx'",
                 )
                 .await?,
                 0

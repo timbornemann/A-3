@@ -1,9 +1,9 @@
 use crate::fixture::{ContractWorkspace, project, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{
-    AgentActionStore, AgentActionStoreFailure, AgentReadResult, ContextToolResultDigest,
-    ContextToolResultPreview, ContextToolResultStatus, CreateAgentRun, CreateGoalContract,
-    CreateTaskLedger, ExportRunJournal, KnowledgeIndexStore, RunEventPageLimit,
+    AgentActionStore, AgentActionStoreFailure, AgentReadResult, AgentRecoveryStore,
+    ContextToolResultDigest, ContextToolResultPreview, ContextToolResultStatus, CreateAgentRun,
+    CreateGoalContract, CreateTaskLedger, ExportRunJournal, KnowledgeIndexStore, RunEventPageLimit,
     RunJournalExportControl, RunJournalExportControlError, RunJournalExportSchemaVersion,
     RunJournalRetentionPolicy, RunJournalStore, RunJournalStoreFailure, TaskLedgerStore,
     TaskLedgerStoreVersion,
@@ -176,6 +176,15 @@ where
         .await?;
     let expected_sequence = current.last_event_sequence();
     let tool_run_id = ToolRunId::from_bytes([166; 32]);
+    first_writer
+        .begin_agent_tool_attempt(
+            &first,
+            run_id,
+            snapshot_id,
+            tool_run_id,
+            AgentRunTimestamp::from_unix_millis(2_005)?,
+        )
+        .await?;
     let evidence = AgentToolEvidence::for_span(EvidenceRef::new(
         FileRevision::new(
             RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,

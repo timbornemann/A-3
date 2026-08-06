@@ -4,14 +4,15 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    exact_search_repository, goal_contract_repository, graph_traversal_repository,
-    index_publication, index_repository, index_repository::IndexRepositoryError,
-    lexical_search_repository, module_card_repository, module_remap_queue_repository,
-    run_journal_repository, semantic_embedding_repository, task_ledger_repository,
-    task_lens_claim_repository,
+    agent_recovery_repository, exact_search_repository, goal_contract_repository,
+    graph_traversal_repository, index_publication, index_repository,
+    index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
+    module_remap_queue_repository, run_journal_repository, semantic_embedding_repository,
+    task_ledger_repository, task_lens_claim_repository,
 };
 use a3_application::{
-    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, EmbeddingOperationControl,
+    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentRecoveryStore,
+    AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, EmbeddingOperationControl,
     GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture, IndexPersistenceControl,
     KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore,
@@ -27,14 +28,16 @@ use a3_application::{
     TaskLensIndexStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
-    AgentRun, AgentRunId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
-    GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber,
+    AgentToolAttemptStatus, AgentToolEvidence, EmbeddingCacheKey, EmbeddingModelProfile,
+    EmbeddingVector, ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
+    GoalContract, GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId,
+    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
     LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ProjectId, ProjectIdentity,
     PublishedIndex, RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot,
-    SnapshotId, TaskId, TaskLedger, TraversalQuery, VectorSearchCapability, VectorSearchLimit,
-    VectorSearchResult, VerifiedModuleCardBatch, WorktreeId,
+    SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery,
+    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerifiedModuleCardBatch,
+    WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -460,6 +463,119 @@ impl RunJournalStore for LibsqlKnowledgeStore {
                 run_id,
                 after_sequence,
                 limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl AgentRecoveryStore for LibsqlKnowledgeStore {
+    fn begin_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::begin_tool_attempt(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+                snapshot_id,
+                tool_run_id,
+                started_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn finish_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        status: AgentToolAttemptStatus,
+        finished_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::finish_tool_attempt(
+                database.connection(),
+                project.worktree().id(),
+                tool_run_id,
+                attempt,
+                status,
+                finished_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn interrupt_agent_tool_attempts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        interrupted_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, u32> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::interrupt_tool_attempts(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+                interrupted_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_agent_tool_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        evidence_ids: &'a [TaskEvidenceId],
+    ) -> AgentRecoveryStoreFuture<'a, Vec<AgentToolEvidence>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::load_tool_evidence(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+                evidence_ids,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn commit_agent_recovery<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_published_snapshot: SnapshotId,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentRecoveryStoreFuture<'a, TaskLedgerStoreVersion> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::commit_recovery(
+                database.connection(),
+                project.worktree().id(),
+                expected_published_snapshot,
+                expected_ledger_version,
+                expected_last_sequence,
+                ledger,
+                run,
+                event,
             )
             .await
             .map_err(|error| error.classify())
@@ -1039,6 +1155,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_recovery(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, AgentRecoveryStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_agent_recovery_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_agent_recovery_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     fn acquire_reconciliation(&self) -> Result<ReconciliationPermit<'_>, KnowledgeStoreFailure> {
         self.reconciliation_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1446,6 +1585,19 @@ fn classify_run_journal_storage_failure(error: KnowledgeStoreFailure) -> RunJour
         KnowledgeStoreFailure::UnsupportedSchema => RunJournalStoreFailure::UnsupportedSchema,
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             RunJournalStoreFailure::InvalidStoredData
+        }
+    }
+}
+
+fn classify_agent_recovery_storage_failure(
+    error: KnowledgeStoreFailure,
+) -> AgentRecoveryStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => AgentRecoveryStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => AgentRecoveryStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => AgentRecoveryStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            AgentRecoveryStoreFailure::InvalidStoredData
         }
     }
 }

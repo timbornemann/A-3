@@ -46,6 +46,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Profilreferenzen ab. V16-Contracts prüfen zusätzlich den atomaren Tool-Event-/Metadaten-/
   Evidence-Append ohne Raw Preview sowie den gemeinsamen Ledger-/Run-Commit mit getrennten
   Compare-and-Swap-Konflikten.
+- V17-Recovery-Contracts schließen einen Store mit laufendem Toolversuch, öffnen ihn neu und
+  verlangen Interrupted plus monotone Retry-Nummer. Sie prüfen frische und stale
+  Verification-Evidence, Resume-Ablehnung auf altem Snapshot, transitives Step-Reopen,
+  Resume/Replan/Cancel sowie den vollständigen Rollback von Published-Snapshot-, Ledger- und
+  Run-Sequenzkonflikten. Nur der atomare Toolresultat-/Journalpfad darf einen Versuch als
+  erfolgreich abschließen.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen

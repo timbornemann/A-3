@@ -129,7 +129,8 @@ pub(crate) async fn append_agent_read(
             read.event(),
         )
         .await?;
-        write_agent_read(&transaction, read).await
+        write_agent_read(&transaction, read).await?;
+        complete_agent_tool_attempt(&transaction, read).await
     }
     .await;
     close_write_transaction(transaction, result).await
@@ -335,6 +336,65 @@ async fn write_agent_read(
             )
             .await
             .map_err(classify_unexpected_constraint)?;
+    }
+    Ok(())
+}
+
+async fn complete_agent_tool_attempt(
+    transaction: &Transaction,
+    read: &RecordedAgentRead,
+) -> Result<(), RunJournalRepositoryError> {
+    let event = read.event();
+    let result = read.context_result();
+    let mut rows = transaction
+        .query(
+            "SELECT attempt_sequence, started_at_unix_millis
+             FROM tool_run_attempts
+             WHERE tool_run_id = ?1 AND run_id = ?2 AND snapshot_id = ?3
+               AND status = 'in_flight'",
+            params![
+                id_bytes(result.tool_run_id()),
+                id_bytes(event.run_id()),
+                id_bytes(result.snapshot_before())
+            ],
+        )
+        .await
+        .map_err(RunJournalRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(RunJournalRepositoryError::Read)?
+        .ok_or(RunJournalRepositoryError::InvalidInput)?;
+    let attempt_sequence: i64 = row
+        .get(0)
+        .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?;
+    let started_at: i64 = row
+        .get(1)
+        .map_err(|_| RunJournalRepositoryError::InvalidStoredData)?;
+    if rows
+        .next()
+        .await
+        .map_err(RunJournalRepositoryError::Read)?
+        .is_some()
+        || timestamp_to_i64(event.occurred_at()) < started_at
+    {
+        return Err(RunJournalRepositoryError::InvalidStoredData);
+    }
+    let changed = transaction
+        .execute(
+            "UPDATE tool_run_attempts SET status = ?1, updated_at_unix_millis = ?2
+             WHERE tool_run_id = ?3 AND attempt_sequence = ?4 AND status = 'in_flight'",
+            params![
+                tool_result_status_text(result.status()),
+                timestamp_to_i64(event.occurred_at()),
+                id_bytes(result.tool_run_id()),
+                attempt_sequence
+            ],
+        )
+        .await
+        .map_err(classify_unexpected_constraint)?;
+    if changed != 1 {
+        return Err(RunJournalRepositoryError::InvalidInput);
     }
     Ok(())
 }
@@ -1577,8 +1637,18 @@ mod tests {
                 RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
                 ContentHash::from_bytes([181; 32]),
             ));
+            let tool_run_id = ToolRunId::from_bytes([182; 32]);
+            crate::agent_recovery_repository::begin_tool_attempt(
+                &connection,
+                worktree_id,
+                run.id(),
+                snapshot_id,
+                tool_run_id,
+                AgentRunTimestamp::from_unix_millis(3_002)?,
+            )
+            .await?;
             let read = AgentReadResult::new(
-                ToolRunId::from_bytes([182; 32]),
+                tool_run_id,
                 ContextToolResultStatus::Succeeded,
                 ContextToolResultPreview::try_from_string(
                     "untrusted preview must not be persisted".to_owned(),

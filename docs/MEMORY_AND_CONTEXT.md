@@ -300,6 +300,21 @@ vom Controller übernommener Tool-Evidence auf `Verifying` setzen. Ledgerprojekt
 Runtransition werden atomar gespeichert. `Finish` fordert ausschließlich `Verify` an; `Done` bleibt
 dem separaten Acceptance-Verifier nach erfolgreicher objektiver Verifikation vorbehalten.
 
+H11 persistiert vor dem eigentlichen Read-Toolaufruf einen content-freien `in_flight`-Versuch.
+Nur der gemeinsame Resultat-/Journal-Commit darf diesen Versuch erfolgreich abschließen; ein
+Boundaryfehler wird als Failed, Cancelled oder Denied gespeichert. Bleibt ein Versuch durch einen
+Appabbruch offen, markiert der nächste Recovery-Load ihn als Interrupted. Ein erneuter Aufruf
+behält die logische ToolRunId, erhält aber eine monotone Versuchsnummer und kann deshalb weder den
+alten Versuch überschreiben noch ein Ergebnis doppelt journalisieren.
+
+Recovery rekonstruiert den materialisierten Run und das vollständige Task Ledger, lädt den jüngsten
+atomar veröffentlichten Index und löst jede Evidence-ID abgeschlossener Verifikationen zurück auf
+ihre content-adressierte FileRevision. Resume ist nur ohne stale Evidence zulässig und übernimmt
+vor weiterer Agentenarbeit den aktuellen Published Snapshot. Replan und Cancel invalidieren stale
+Evidence transitiv, öffnen betroffene Completed-Steps neu und beenden einen aktiven Step; Cancel
+terminiert zusätzlich den Run. Die gewählte Wirkung wird zusammen mit Ledger und Recovery-Event
+unter Published-Snapshot-, Ledger-Version- und Run-Sequenz-CAS atomar gespeichert.
+
 ## Compaction
 
 Nach jedem erfolgreichen Schritt:

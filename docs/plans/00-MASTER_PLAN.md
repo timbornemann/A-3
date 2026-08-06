@@ -99,7 +99,7 @@ Ein Nutzer kann:
 - [x] Ollama-kompatibler Provider
 - [x] ModelProfile und Capability Self-Test
 - [ ] read-only Controllerlauf
-- [ ] Resume nach Neustart
+- [x] Resume nach Neustart
 
 ### M7 Editing Agent
 
