@@ -397,12 +397,12 @@ keinen Text außerhalb des Dokuments. `serde_json` wird dafür als bereits works
 gepinntes Parserfundament nun direkt in `a3-application` verwendet; die Standardbibliothek besitzt
 keinen JSON-Parser, und es wurde keine neue externe Version in den Lockfile-Graph aufgenommen.
 
-`ExplorerModelProvider` ist der für R8 vorgezogene neutrale Stub-Port der späteren
-Providergrundlage. Er erhält die Schemafassung, das statische JSON Schema, Run, Snapshot, aktuellen
-Schritt, erwartete Felder und höchstens ein normalisiertes Werkzeugresultat. Er kennt keine
-Ollama-Payload, keinen Endpoint und keine Credentials. Der vollständige allgemeine ModelProvider
-mit `ModelProfile`, Streaming, Capability Probe, Endpoint Policy und Ollama-Adapter bleibt in H4
-und H5 offen.
+`ExplorerModelProvider` ist der für R8 vorgezogene neutrale Stub-Port der Providergrundlage. Er
+erhält die Schemafassung, das statische JSON Schema, Run, Snapshot, aktuellen Schritt, erwartete
+Felder und höchstens ein normalisiertes Werkzeugresultat. Er kennt keine Ollama-Payload, keinen
+Endpoint und keine Credentials. Der vollständige allgemeine `ModelProvider`, das versionierte
+`ModelProfile`, Streaming, Capability Probe, Endpoint Policy und Ollama-Adapter wurden später in
+H4 und H5 ergänzt; der R8-Port bleibt bewusst die engere read-only Capability.
 
 Die Capability `DeepMapReadTools` besitzt konstruktiv nur `inspect` und `search`. Ein Planschritt
 darf genau den bereits reservierten einen Werkzeugaufruf ausführen. Inspect verwendet ausschließlich

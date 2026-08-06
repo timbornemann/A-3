@@ -101,6 +101,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Parser-Negativtests lehnen Modell-/Rollenabweichung, Tool Calls, zu große oder ungültige NDJSON-
   Daten, fehlenden Abschluss und Daten nach `done` ab. Prompt, Output, Endpoint und Provider-
   Fehlerbody dürfen nicht in Debug- oder normalisierte Fehlertexte gelangen.
+- ModelProfile-Tests prüfen alle V1-Limits, deterministische ID-Ableitung, konservative UTF-8-
+  Bytezählung, kanonische redigierte Stopbedingungen und Overrides, die Capability-Evidenz nicht
+  verändern können. Jeder neue Run behält Profil-ID und Schemaversion nach Reopen.
+- Die neutrale Capability-Stub-Suite belegt, dass weder Modellname noch manueller Override eine
+  fehlgeschlagene Structured-Output-Probe hochstufen und dass explizite Providerkontextgrenzen vor
+  Profilerzeugung gelten.
+- Der Ollama-Stubserver prüft `/api/show`, das exakte kleine `/api/chat`-Schema, Profiloptionen,
+  erfolgreiche und schemawidrige Probeantworten, Cancellation vor Netzwerk und ein gemeinsames
+  Gesamttimeout über beide Requests. Metadaten mit mehreren abweichenden Kontextgrenzen werden
+  abgelehnt; nur die exakte Capability `tools` setzt den nicht ausführbaren nativen Toolmodus.
 
 ### Security Boundary
 

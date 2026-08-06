@@ -216,8 +216,16 @@ Server noch lokale Proxykonfiguration den geprüften Zielscope still verändern 
 Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
 Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,
 Textfragmente und Gesamtausgabe sind fest begrenzt. HTTP-Fehlerbodies und Providerfehler werden
-weder gelesen noch in normalisierte Fehler oder Debugausgaben übernommen. Native Tool Calls sind
-im H4-Textmodus ungültig und werden erst nach der H5-Capability-Prüfung freigeschaltet.
+weder gelesen noch in normalisierte Fehler oder Debugausgaben übernommen.
+
+Die H5-Capability-Probe autorisiert `/api/show` und `/api/chat` jeweils erneut, teilt für beide
+Requests ein Gesamttimeout und begrenzt ihre JSON-Bodies auf 512 beziehungsweise 128 KiB. Die
+Schema-Probe verwendet höchstens 4.096 Kontext- und 32 Outputtokens. Modellnamen aktivieren keine
+Fähigkeit; Provider-Metadaten dürfen nur den nativen Toolmodus melden. Ausschließlich ein exakt
+validiertes Structured-Output-Probeergebnis aktiviert später ausführbare Schemaaktionen. Eine
+fehlgeschlagene Probe und ein manueller Profile Override können diesen Sicherheitsstatus nicht
+hochsetzen. Native Tool Calls bleiben bis zur expliziten H6-Controllerintegration nicht
+ausführbar.
 
 ## Tauri
 

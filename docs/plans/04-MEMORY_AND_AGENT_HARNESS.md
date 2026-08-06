@@ -122,19 +122,41 @@ waren vollständig grün; `a3-application` besitzt weder `reqwest`- noch `a3-pro
 
 Abhängigkeiten: H4
 
-- [ ] Context- und Outputlimit
-- [ ] Structured Output
-- [ ] Tool Call Mode
-- [ ] Tokenizer oder konservativer Counter
-- [ ] Parallelitätslimit
-- [ ] Startprobe mit kleinem Schema
-- [ ] manueller Profile Override
+- [x] Context- und Outputlimit
+- [x] Structured Output
+- [x] Tool Call Mode
+- [x] Tokenizer oder konservativer Counter
+- [x] Parallelitätslimit
+- [x] Startprobe mit kleinem Schema
+- [x] manueller Profile Override
 
 Akzeptanz:
 
 - Fähigkeiten werden nicht nur aus Modellnamen erraten;
 - fehlschlagende Structured-Output-Probe deaktiviert ausführbare Aktionen;
 - Profile sind versioniert und in Runs referenziert.
+
+Verifiziert am 2026-08-06: `ModelProfile` V1 bindet Provider und opaque Modell-ID an validierte
+Context-/Outputgrenzen, konservative UTF-8-Bytezählung, Parallelität, fixed-point Sampling,
+kanonische Stopbedingungen, Schema-Grounding und explizite Capability-Evidenz. Manuelle Overrides
+ändern ausschließlich Laufparameter und übernehmen einen fehlgeschlagenen Capabilitystatus. Jeder
+neue Run referenziert Profil-ID plus Schemaversion; Knowledge-Schema V14 erhält diesen Bezug nach
+Reopen und erlaubt nur migrierten Legacy-Runs das vollständige Nullpaar.
+
+Der Application-Port `ModelCapabilityProbe` und der Use Case `ProbeModelProfile` erzeugen Profile
+ohne Modellnamensheuristik und lehnen konfigurierte Contextlimits oberhalb eindeutiger
+Providermetadaten ab. Der Ollama-Adapter kombiniert begrenztes `/api/show` mit einer realen kleinen
+Strict-Schema-Anfrage an `/api/chat`, autorisiert beide Netzwerkzugriffe separat und teilt ein
+Gesamttimeout. Nur das exakte Probeobjekt aktiviert Structured Output; Toolmetadaten allein bleiben
+nicht ausführbar. Normale Requests tragen das vollständige Profil, blockieren ungeprüfte Schemas
+vor HTTP und bilden Context, Output, Sampling sowie Stops auf Ollama-Optionen ab.
+
+Vier Domain-Profiltests, sechs neutrale Port-/Stubtests, fünf Ollama-Unittests und neun vollständige
+Offline-HTTP-Adaptertests decken Grenzen, deterministische Identität, Override-Sicherheit,
+Metadatenambiguität, exakte Requests und Antworten, Policy, Cancellation und die gemeinsame
+Deadline ab. `cargo fmt --check`, Workspace-Test mit allen Features, Workspace-Clippy mit
+`-D warnings`, Rustdoc mit `-D warnings`, Markdown-Linkcheck, Tooltests und der deterministische
+Dependency-/Lizenzbericht sind vollständig grün; der Bericht enthält keine unbekannten Lizenzen.
 
 ## H6 Prompt und Action Schemas
 

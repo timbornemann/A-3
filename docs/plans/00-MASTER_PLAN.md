@@ -96,7 +96,7 @@ Ein Nutzer kann:
 - [x] Run Journal
 - [ ] Context Compiler
 - [x] Ollama-kompatibler Provider
-- [ ] ModelProfile und Capability Self-Test
+- [x] ModelProfile und Capability Self-Test
 - [ ] read-only Controllerlauf
 - [ ] Resume nach Neustart
 

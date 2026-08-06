@@ -348,9 +348,9 @@ Claimstatus, Persistenz und Publish bleiben R9 vorbehalten.
 Der neutrale `ExplorerModelProvider`-Stub erhält das statische JSON Schema, plan- und
 snapshotgebundene Metadaten, feste Timeouts und Cancellation, aber keine Ollama-Payload oder
 Netzwerkfähigkeit. Er ist bewusst nur die für R8 benötigte Teilgrundlage; der allgemeine
-ModelProvider, Streaming, `ModelProfile`, Capability Probe, Endpoint Policy und ein echter Adapter
-bleiben H4/H5. Providerrohoutput, Toolpreview und Tool-Evidenz sind auf 64 KiB, 16 KiB und 100 IDs
-begrenzt und in Debugausgaben redigiert.
+`ModelProvider`, Streaming, `ModelProfile`, Capability Probe, Endpoint Policy und ein echter
+Adapter wurden anschließend in H4/H5 umgesetzt. Providerrohoutput, Toolpreview und Tool-Evidenz
+sind auf 64 KiB, 16 KiB und 100 IDs begrenzt und in Debugausgaben redigiert.
 
 Über einen kompletten Explorer-Aufruf ist höchstens eine inhaltsfreie Repair-Anfrage erlaubt. Erst
 vollständig dekodierte und zustandsautorisierte Aktionen erreichen den Read-Port; ein ungültiges

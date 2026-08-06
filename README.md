@@ -29,8 +29,11 @@ einen revisionierten Goal Contract, ein verifiziertes Task Ledger und ein append
 mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Der
 allgemeine lokale `ModelProvider` besitzt begrenzte neutrale Streaming-Events, Cancellation und
 Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint-Policy, strikte
-NDJSON-Validierung und content-freie Fehler. Als Nächstes folgen das versionierte `ModelProfile`
-und der Capability Self-Test. Die
+NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, konservative
+Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
+sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
+Aktionen freischalten. Als Nächstes folgen der statische Promptvertrag und die allgemeine
+versionierte AgentAction-Union. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

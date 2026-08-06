@@ -375,7 +375,10 @@ ist eine begrenzte opaque Provideridentität; ihr Name beweist keine Capability.
 Application-Port nimmt ausschließlich einen `ModelProviderRequest`, ein Gesamttimeout und eine
 wakebare Cancellation-Grenze entgegen. Ein Request enthält 1 bis 256 geordnete System-, User- oder
 Assistant-Nachrichten, höchstens 2 MiB Text sowie optional ein JSON-Objektschema bis 64 KiB. Inhalte
-werden in Debugprojektionen nur als Anzahl und Byteumfang dargestellt.
+werden in Debugprojektionen nur als Anzahl und Byteumfang dargestellt. Jeder Request trägt das
+vollständige versionierte `ModelProfile`; ein Adapter lehnt eine fremde Provider-ID ab. Ein
+Structured-Output-Schema ist bereits an dieser neutralen Grenze nur mit live verifiziertem
+Capabilitystatus konstruierbar.
 
 Ein erfolgreicher Stream besteht aus geordneten `ProviderEvent::OutputText`-Fragmenten von jeweils
 höchstens 64 KiB und genau einem `Completed`-Event mit normalisiertem Stopgrund und optionalen
@@ -397,6 +400,21 @@ Aktionen. Ein manueller Override kann Limits und Laufparameter ändern, übernim
 Capabilitystatus unverändert und kann eine fehlgeschlagene Probe nicht hochstufen. Die V1-
 Fallbackzählung bewertet jedes UTF-8-Byte als ein Token und ist damit deterministisch und
 tokenizerunabhängig konservativ; Stoptexte bleiben in Debugausgaben redigiert.
+
+Der Application-Port `ModelCapabilityProbe` erhält ausschließlich opaque Modell-ID, validierte
+Profileinstellungen, Gesamttimeout und Cancellation. `ProbeModelProfile` erzeugt aus seiner
+providerneutralen Beobachtung das vollständige Profil und lehnt ein konfiguriertes Kontextlimit
+oberhalb expliziter Providermetadaten ab. Toolfähigkeit wird nur aus einem exakten Providermerkmal
+übernommen; `NativeProviderReported` allein aktiviert keine ausführbare Aktion.
+
+Der Ollama-Adapter liest zuerst die begrenzte `/api/show`-Antwort und sucht genau ein eindeutiges
+numerisches `*.context_length` sowie die exakte Capability `tools`. Anschließend sendet er unter
+derselben Gesamtdauer eine reale nicht streamende `/api/chat`-Anfrage mit einem kleinen strikten
+Schema und einer auf 4.096 Kontext- sowie 32 Outputtokens begrenzten Probe. Nur Modell, Assistant-
+Rolle, terminaler Zustand und das exakte Objekt `{"a3_probe":"ok"}` ergeben `Verified`; abgelehnte,
+formal ungültige oder schemawidrige Antworten ergeben `Unavailable`. Normale Chatrequests bilden
+Kontext- und Outputlimit, fixed-point Temperatur, Top-p und kanonische Stopbedingungen aus dem
+Profil auf Ollama-Optionen ab.
 
 ### Task
 
