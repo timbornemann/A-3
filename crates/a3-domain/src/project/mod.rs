@@ -19,7 +19,10 @@ mod retrieval_fusion;
 mod revision;
 mod semantic_card;
 mod snapshot;
+mod task_ledger;
 mod task_lens;
+mod task_step;
+mod task_verification;
 
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
@@ -84,7 +87,8 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId, TaskId,
+    AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
+    SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, VerificationSpecId,
     WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
@@ -149,11 +153,28 @@ pub use snapshot::{
     RepositoryPathError, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotError,
     WorktreeGeneration, WorktreeGenerationError,
 };
+pub use task_ledger::{
+    TaskLedger, TaskLedgerError, TaskLedgerInvalidation, TaskLedgerReplan, TaskLedgerRevision,
+    TaskLedgerRevisionError, TaskReplanReason, TaskReplanReasonError, TaskReplanReasonViolation,
+};
 pub use task_lens::{
     TaskLens, TaskLensClaim, TaskLensClaimError, TaskLensCompileError, TaskLensDiagnosticKind,
     TaskLensDigest, TaskLensEntry, TaskLensEntryReason, TaskLensPolicy, TaskLensPolicyVersion,
     TaskLensSeed, TaskLensSeedSet, TaskLensSeedSetError, TaskLensSeedText, TaskLensSeedTextError,
     TaskLensTarget, TaskLensTokenBudget, TaskLensTokenBudgetError, TaskLensZoomLevel,
+};
+pub use task_step::{
+    StepDependency, TaskStep, TaskStepAttempt, TaskStepAttemptNumber, TaskStepAttemptNumberError,
+    TaskStepAttemptOutcome, TaskStepBlockingReason, TaskStepCancellationReason, TaskStepDefinition,
+    TaskStepDefinitionError, TaskStepFailureReason, TaskStepOutcome, TaskStepRationale,
+    TaskStepResultSummary, TaskStepStaleCause, TaskStepStatus, TaskStepTextError,
+    TaskStepTextViolation, TaskStepTransitionError,
+};
+pub use task_verification::{
+    ExpectedTaskEvidence, StepVerification, StepVerificationError, StepVerificationOutcome,
+    TaskLedgerTimestamp, TaskLedgerTimestampError, TaskVerificationTextError,
+    TaskVerificationTextViolation, VerificationFailureSummary, VerificationMethod,
+    VerificationRequirement, VerificationSpec,
 };
 
 use std::error::Error;

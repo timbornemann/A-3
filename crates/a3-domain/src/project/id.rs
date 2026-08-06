@@ -74,6 +74,26 @@ stable_id!(
     /// Stable identity of one acceptance criterion across Goal Contract revisions.
     AcceptanceCriterionId
 );
+stable_id!(
+    /// Stable identity of one task-plan step across replans and attempts.
+    TaskStepId
+);
+stable_id!(
+    /// Stable identity of one evidence artifact attached to a task-step attempt.
+    TaskEvidenceId
+);
+stable_id!(
+    /// Stable identity of one immutable task-step verification specification.
+    VerificationSpecId
+);
+stable_id!(
+    /// Stable identity of one completed verification execution.
+    StepVerificationId
+);
+stable_id!(
+    /// Stable identity of one controlled agent run.
+    AgentRunId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -85,8 +105,9 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceCriterionId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId, SnapshotId,
-        TaskId, WorktreeAnchorId, WorktreeId,
+        AcceptanceCriterionId, AgentRunId, IndexRunId, ProjectId, RemoteIdentity, RepositoryId,
+        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, VerificationSpecId,
+        WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -105,5 +126,10 @@ mod tests {
         assert_eq!(IndexRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AcceptanceCriterionId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(TaskStepId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(TaskEvidenceId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(VerificationSpecId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(StepVerificationId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AgentRunId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }
