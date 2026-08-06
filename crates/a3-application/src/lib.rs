@@ -1,6 +1,7 @@
 //! Application use cases and ports for A^3.
 
 mod agent_action_codec;
+mod agent_prompt;
 mod deep_map_action_codec;
 mod deep_map_explorer;
 mod deep_map_planner;
@@ -38,6 +39,10 @@ mod task_lens;
 
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
+};
+pub use agent_prompt::{
+    AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,
+    AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
 };
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
