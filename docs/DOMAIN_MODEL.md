@@ -533,6 +533,34 @@ nur eine content-freie Kategorie aus. Binary-, Secret-, Größen-, Encoding-, St
 Cancellation-Fälle bleiben getrennte stabile Fehlerzustände; Pfade oder Quelldaten sind in diesen
 Fehlern nicht enthalten.
 
+### PatchAction und Change Set
+
+`PatchActionSchemaVersion::V1` ist eine geschlossene Volltextmutation aus höchstens 64
+kanonisch geordneten, pfad-disjunkten Add-, Update-, Move- oder Delete-Operationen. Update, Move
+und Delete tragen eine vollständige erwartete `FileRevision`; Add verlangt nachweisbare
+Abwesenheit. Jeder bereitgestellte Dateiinhalt ist höchstens 4 MiB groß, alle neuen Inhalte
+zusammen höchstens 16 MiB. `PatchFileContent` akzeptiert nur secret-geprüftes UTF-8, unterscheidet
+UTF-8 mit und ohne BOM und klassifiziert LF, CRLF, CR oder Mixed, ohne ein Byte zu normalisieren.
+
+Eine `PatchAction` bindet `AgentRunId`, `WorktreeId`, `SnapshotId`, `TaskStepId`,
+`VerificationSpecId`, eine begrenzte Rationale und den vollständigen Operationssatz. Ihr
+`PatchActionDigest` ändert sich bei jedem semantischen Unterschied einschließlich eines erwarteten
+oder neuen Content Hashes. Der getrennte `PatchScopeDigest` enthält nur Worktree und betroffene
+Pfade. Dadurch kann eine Freigabe denselben Pfadsatz nicht mit anderem Inhalt autorisieren.
+
+`PatchPreviewEntry` besitzt je nach Operation einen Quell- und/oder Zielpfad sowie begrenzte
+Vorher-/Nachherinhalte. Ein `PatchContentPreview` behält einen exakten UTF-8-Präfix, aber immer den
+Hash, die Bytezahl, Encoding und Line Endings des vollständigen Inhalts. `PatchPreview` validiert
+die Eins-zu-eins-Zuordnung zur Action und begrenzt alle Präfixe zusammen auf 64 KiB.
+
+`PatchChange` unterscheidet Added, Updated, Moved und Deleted und enthält die jeweils tatsächlich
+sichtbare alte und/oder neue `FileRevision`. Ein `PatchChangeSet` akzeptiert nur die vollständige
+Operationsfolge oder bei einem späteren Fehler ein nicht leeres kanonisches Präfix. Es bindet
+Action-Digest, Policy-Entscheidung, Run, Worktree, Basissnapshot, TaskStep und Verification und
+liefert die eindeutigen geordneten Änderungspfade für nachfolgende Invalidierung. Damit kann weder
+ein bloß vorgeschlagenes Ergebnis noch ein gewöhnlicher Fehler bereits ausgeführte Änderungen als
+erfolgreiche Gesamtanwendung ausgeben oder verbergen.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.

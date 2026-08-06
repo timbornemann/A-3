@@ -21,6 +21,7 @@ mod lexical_retrieval;
 mod model;
 mod model_profile;
 mod module_map;
+mod patch;
 mod path;
 mod policy;
 mod policy_decision;
@@ -180,6 +181,13 @@ pub use module_map::{
     ModuleId, ModuleKind, ModuleMapError, ModuleMembership, ModuleMembershipEvidence,
     ModuleMembershipKind, ModulePolicyVersion, ModulePolicyVersionError, ModuleProjection,
     ModuleRoot, ModuleSymbolSet, RepositoryCard, RepositoryModule,
+};
+pub use patch::{
+    PatchAction, PatchActionDigest, PatchActionError, PatchActionSchemaVersion, PatchAdd,
+    PatchChange, PatchChangeSet, PatchChangeSetError, PatchContentPreview, PatchFileContent,
+    PatchFileContentError, PatchLineEndings, PatchMove, PatchOperation, PatchOperationError,
+    PatchPolicyAction, PatchPreview, PatchPreviewEntry, PatchPreviewError, PatchRationale,
+    PatchRationaleError, PatchScopeDigest, PatchTextEncoding, PatchUpdate,
 };
 pub use path::{CanonicalDirectory, CanonicalDirectoryError};
 pub use policy::{

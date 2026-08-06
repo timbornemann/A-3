@@ -262,6 +262,33 @@ behalten eine konkrete unterstützende `FileRevision`; der angeforderte Live-Sub
 erneut kanonisiert und als Verzeichnis innerhalb des Roots bestätigt. Weder Port wird der WebView
 als generischer Dateisystemzugriff exponiert.
 
+M7/E3 ergänzt im Domain-Kern die geschlossene `PatchActionSchemaVersion::V1` mit vollständigen
+UTF-8-Dateiinhalten und getrennten Add-, Update-, Move- und Delete-Operationen. Die Action bindet
+Run, Worktree, Published Snapshot, TaskStep und erwartete Verification; ihr domain-separierter
+Digest umfasst Rationale, Pfade sowie alle erwarteten und neuen BLAKE3-Hashes. Eine zweite
+content-freie Scope-Projektion bindet die zentrale Policy-Freigabe an genau diesen Worktree und
+Pfadsatz. `AuthorizedPatchAction` ist eine nicht klonbare Application-Capability und entsteht nur
+aus einer verbrauchten `ApprovalGranted`-Entscheidung mit identischem Run, Fingerprint, Scope,
+Klasse und Risiko.
+
+Der `WorkspacePatchTool` bleibt ein schmaler Port aus Preview und einmaligem Apply. Der Adapter
+prüft Published Snapshot, Indexrevisionen, kanonischen Root, jeden Pfad und jeden Live-Hash sowohl
+für die Vorschau als auch erneut unmittelbar vor der ersten Mutation. Add und Move verlangen in
+V1 ein bereits vorhandenes kanonisches Elternverzeichnis; Verzeichnisanlage ist keine implizite
+Patchwirkung. Add- und Update-Inhalte werden vollständig in demselben Zielverzeichnis gestaged und
+vor Sichtbarkeit synchronisiert. Add und Move verwenden No-Replace-Semantik, Update nutzt die
+atomare Ersetzungs-Umbenennung der Plattform, Delete die atomare Dateientfernung soweit vom
+Dateisystem bereitgestellt. Ein adapterlokaler Worktree-Lease verhindert parallele Anwendung;
+die controllerweite Serialisierung aller Mutationstypen folgt weiterhin in E7.
+
+`PatchPreview` speichert exakte unnormalisierte UTF-8-Präfixe mit vollständigem Hash, Bytezahl,
+Encoding-, Line-Ending- und Trunkierungsmetadaten. Sie ist auf 16 KiB pro Inhaltsseite und 64 KiB
+gesamt begrenzt. Nach jeder sichtbaren Operation wird der tatsächliche Zustand erneut gelesen.
+`PatchChangeSet` bindet vollständige oder kanonisch partielle Änderungen an Action, Approval,
+TaskStep, Verification und Basissnapshot und liefert die sortierten Pfade für die von E7 vor dem
+nächsten Modellturn auszulösende Evidence- und Indexinvalidierung. Fehler nach einer bereits
+sichtbaren Operation tragen dieses Change-Set ausdrücklich, statt die Mutation zu verbergen.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

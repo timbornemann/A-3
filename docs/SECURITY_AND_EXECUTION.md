@@ -251,6 +251,32 @@ wenn ein ungültiger Index solche Pfade enthalten sollte. Jede Datei und jedes a
 Verzeichnis besitzt eine konkrete aktuelle `FileRevision` als Evidence. Traversalpfade,
 Symlink-Escapes, Sonderdateien und Snapshot-/Worktree-Mismatch werden vor Ausgabe abgelehnt.
 
+E3 macht die Patch-Policy als `PatchActionSchemaVersion::V1` ausführbar. Eine Action enthält
+höchstens 64 disjunkte Operationen, höchstens 4 MiB vollständiges UTF-8 je neuem Dateiinhalt und
+höchstens 16 MiB neuen Inhalt insgesamt. BOM, Line Endings und Codepoints werden nicht
+normalisiert. Built-in-Ausschlüsse und die vollständige Secret-Klassifikation laufen bereits bei
+der Konstruktion; Rationale und Inhalte erscheinen in Debug-Ausgaben nur als Metadaten. Der
+Action-Fingerprint umfasst den erwarteten Snapshot, alle alten und neuen Hashes, Pfade, Run,
+TaskStep und Verification. Die Anwendung akzeptiert ausschließlich eine einmalig verbrauchte,
+explizit freigegebene Policy-Entscheidung mit exakt demselben Fingerprint und Scope.
+
+Vor einer Vorschau und erneut nach dem Staging unmittelbar vor der ersten Mutation bestätigt der
+Workspace-Adapter Worktree, Published Snapshot, alle Indexrevisionen, alle Live-Hashes und die
+Abwesenheit neuer Ziele. Jeder Pfad wird verlustfrei in einen Plattformpfad überführt; Symlink-
+oder Reparse-Komponenten werden abgelehnt, und kanonische Eltern müssen im ausgewählten Root
+liegen. V1 erzeugt keine Verzeichnisse implizit. Die Vorschau ist auf exakte UTF-8-Präfixe von
+höchstens 16 KiB pro Inhaltsseite und 64 KiB insgesamt begrenzt und trägt für den vollständigen
+Inhalt Hash, Bytezahl, Encoding, Line Endings und Trunkierung.
+
+Neue Inhalte werden mit exklusiver temporärer Datei im kanonischen Zielverzeichnis vollständig
+geschrieben und synchronisiert. Add und Move reservieren das weiterhin abwesende Ziel ohne
+Überschreiben; Update ersetzt erst nach der zweiten Hashprüfung durch die atomare Rename-Primitive
+der Plattform, soweit das Dateisystem sie bereitstellt. Nach jeder sichtbaren Operation wird der
+resultierende Hash erneut geprüft. Ein späterer Konflikt, Cancellation- oder Progressfehler gibt
+ein vollständiges oder partielles `PatchChangeSet` zurück, sodass die bereits geänderten Pfade vor
+weiterem Reasoning invalidiert werden können. Fremde Änderungen werden nie automatisch
+zurückgesetzt.
+
 `UpdateLedger` akzeptiert für Resultate nur controllerseitig erzeugte, snapshotgleiche Tool-
 Evidence und kann einen Schritt damit lediglich zur objektiven Verifikation vorbereiten. Die
 Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- und Run-CAS-Ankern

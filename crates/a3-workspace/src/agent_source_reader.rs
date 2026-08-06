@@ -1,17 +1,12 @@
-use crate::path_policy::open_regular_no_follow;
-use crate::platform_path;
-use crate::{PathEntryKind, PathPolicy};
+use crate::secure_file::{SecureFileReadError, read_verified_text};
 use a3_application::{
     AgentSourcePage, AgentSourceReadControl, AgentSourceReadFailure, AgentSourceReader,
     AgentSourceReaderFuture,
 };
 use a3_domain::{
-    AgentFileInspection, AgentFileStartLine, ContentHash, DiscoveryExclusionReason,
-    DiscoveryPolicy, FileRevision, ProjectIdentity, SecretCandidateClassifierV1, SourcePosition,
+    AgentFileInspection, AgentFileStartLine, FileRevision, ProjectIdentity, SourcePosition,
     SourceRange,
 };
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 
 const MAX_AGENT_SOURCE_PAGE_BYTES: usize = 12 * 1_024;
@@ -51,110 +46,22 @@ fn read_page_from_root(
     if request.path() != expected_revision.path() {
         return Err(AgentSourceReadFailure::Denied);
     }
-    let observation_policy = DiscoveryPolicy::v1();
-    if let Some(reason) =
-        observation_policy.classify_built_in_path(expected_revision.path().as_bytes(), false)
-    {
-        return Err(map_exclusion(reason));
-    }
-    let relative = platform_path::repository_path(expected_revision.path())
-        .map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
-    let policy =
-        PathPolicy::from_selected_root(root).map_err(|_| AgentSourceReadFailure::Denied)?;
-    let canonical = policy
-        .resolve_existing(&relative)
-        .map_err(|_| AgentSourceReadFailure::Denied)?;
-    if canonical.kind() != PathEntryKind::File {
-        return Err(AgentSourceReadFailure::Unavailable);
-    }
-    let mut file = open_regular_no_follow(canonical.as_path())
-        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
-    if metadata.len() > DiscoveryPolicy::v1().max_file_bytes() {
-        return Err(AgentSourceReadFailure::FileTooLarge);
-    }
-    let bytes = read_bounded(&mut file, observation_policy.max_file_bytes(), control)?;
-    if control.is_cancelled() {
-        return Err(AgentSourceReadFailure::Cancelled);
-    }
-    let metadata_after = file
-        .metadata()
-        .map_err(|_| AgentSourceReadFailure::Unavailable)?;
-    if metadata_after.len() != metadata.len() {
-        return Err(AgentSourceReadFailure::Stale);
-    }
-    let canonical_after = policy
-        .resolve_existing(&relative)
-        .map_err(|_| AgentSourceReadFailure::Denied)?;
-    if canonical_after.kind() != PathEntryKind::File {
-        return Err(AgentSourceReadFailure::Unavailable);
-    }
-    if canonical_after.as_path() != canonical.as_path() {
-        return Err(AgentSourceReadFailure::Stale);
-    }
-    let prefix_length = bytes
-        .len()
-        .min(observation_policy.inspection_prefix_bytes());
-    if let Some(reason) = observation_policy.classify_content_prefix(&bytes[..prefix_length]) {
-        return Err(map_exclusion(reason));
-    }
-    let actual_hash = ContentHash::from_bytes(*blake3::hash(&bytes).as_bytes());
-    if actual_hash != expected_revision.content_hash() {
-        return Err(AgentSourceReadFailure::Stale);
-    }
+    let bytes = read_verified_text(root, expected_revision, || control.is_cancelled())
+        .map_err(map_secure_read_error)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| AgentSourceReadFailure::InvalidEncoding)?;
-    if SecretCandidateClassifierV1::classify(text).is_some() {
-        return Err(AgentSourceReadFailure::SecretCandidate);
-    }
     build_page(expected_revision.clone(), request, text, control)
 }
 
-fn read_bounded(
-    file: &mut File,
-    maximum_bytes: u64,
-    control: &dyn AgentSourceReadControl,
-) -> Result<Vec<u8>, AgentSourceReadFailure> {
-    let capacity = usize::try_from(maximum_bytes)
-        .map_err(|_| AgentSourceReadFailure::FileTooLarge)?
-        .min(64 * 1_024);
-    let mut bytes = Vec::with_capacity(capacity);
-    let mut buffer = [0u8; 64 * 1_024];
-    loop {
-        if control.is_cancelled() {
-            return Err(AgentSourceReadFailure::Cancelled);
-        }
-        let read = file
-            .read(&mut buffer)
-            .map_err(|_| AgentSourceReadFailure::Unavailable)?;
-        if read == 0 {
-            break;
-        }
-        let next_length = bytes
-            .len()
-            .checked_add(read)
-            .ok_or(AgentSourceReadFailure::FileTooLarge)?;
-        if u64::try_from(next_length).map_err(|_| AgentSourceReadFailure::FileTooLarge)?
-            > maximum_bytes
-        {
-            return Err(AgentSourceReadFailure::FileTooLarge);
-        }
-        bytes.extend_from_slice(&buffer[..read]);
-    }
-    Ok(bytes)
-}
-
-fn map_exclusion(reason: DiscoveryExclusionReason) -> AgentSourceReadFailure {
-    match reason {
-        DiscoveryExclusionReason::Secret => AgentSourceReadFailure::SecretCandidate,
-        DiscoveryExclusionReason::Binary => AgentSourceReadFailure::BinaryContent,
-        DiscoveryExclusionReason::TooLarge => AgentSourceReadFailure::FileTooLarge,
-        DiscoveryExclusionReason::ProjectIgnore
-        | DiscoveryExclusionReason::Vendor
-        | DiscoveryExclusionReason::Generated
-        | DiscoveryExclusionReason::SymbolicLink
-        | DiscoveryExclusionReason::SpecialFile => AgentSourceReadFailure::Denied,
+const fn map_secure_read_error(error: SecureFileReadError) -> AgentSourceReadFailure {
+    match error {
+        SecureFileReadError::Denied => AgentSourceReadFailure::Denied,
+        SecureFileReadError::Unavailable => AgentSourceReadFailure::Unavailable,
+        SecureFileReadError::Stale => AgentSourceReadFailure::Stale,
+        SecureFileReadError::TooLarge => AgentSourceReadFailure::FileTooLarge,
+        SecureFileReadError::InvalidEncoding => AgentSourceReadFailure::InvalidEncoding,
+        SecureFileReadError::Binary => AgentSourceReadFailure::BinaryContent,
+        SecureFileReadError::SecretCandidate => AgentSourceReadFailure::SecretCandidate,
+        SecureFileReadError::Cancelled => AgentSourceReadFailure::Cancelled,
     }
 }
 
@@ -263,7 +170,7 @@ fn source_position_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a3_domain::{AgentFileLineCount, RepositoryPath};
+    use a3_domain::{AgentFileLineCount, ContentHash, RepositoryPath};
 
     #[derive(Debug)]
     struct Active;

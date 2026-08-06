@@ -185,6 +185,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Unix-Sockets als Sonderdateien, Binary-Präfixe, Secret-Kandidaten und Dateien oberhalb von 4 MiB
   ohne Preview oder Quelldaten im Fehler ab. Windows und der Linux-Quality-Job führen dieselbe
   öffentliche Port-Suite aus; der Unix-Sonderdateifall ist plattformspezifisch zusätzlich aktiv.
+- PatchAction-Contracts prüfen kanonische getrennte Add-, Update-, Move- und Delete-Operationen,
+  Snapshot- und Hashbindung, exakten Approval-Fingerprint, Binary-/Secret-Ablehnung sowie
+  unveränderte UTF-8-BOM-, CRLF- und Nicht-ASCII-Bytes. Die öffentliche Workspace-Port-Suite prüft
+  die begrenzte Vorschau, tatsächliche Post-Patch-Hashes, No-Replace, Useränderung zwischen Preview
+  und Apply, Symlink-/Junction-Escape und ein explizites partielles Change-Set nach spätem Konflikt.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

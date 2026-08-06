@@ -105,7 +105,7 @@ Ein Nutzer kann:
 
 - [x] Policy Engine und Approval-Modell
 - [x] begrenzte sichere Dateiwerkzeuge und evidenzgebundenes Directory Listing
-- [ ] hashgeschützte PatchAction
+- [x] hashgeschützte PatchAction
 - [ ] argv ProcessRunner
 - [ ] Test- und Buildverifikation
 - [ ] Replan und Failure Recovery

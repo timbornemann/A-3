@@ -1,4 +1,4 @@
-use super::{PolicyResourceId, RepositoryPath, TaskStepId, WorktreeId};
+use super::{PatchPolicyAction, PolicyResourceId, RepositoryPath, TaskStepId, WorktreeId};
 use std::error::Error;
 use std::fmt;
 
@@ -290,6 +290,8 @@ pub enum PolicyAction {
         /// Read, write, or destructive delete.
         operation: PathPolicyOperation,
     },
+    /// One complete snapshot- and content-bound structured patch.
+    Patch(PatchPolicyAction),
     /// One bounded direct process or explicit shell request.
     Process(ProcessPolicyAction),
     /// One explicit standalone network action.
@@ -325,6 +327,13 @@ impl PolicyAction {
                     PathPolicyOperation::Delete => ActionClass::Destructive,
                 },
             },
+            Self::Patch(patch) => {
+                if patch.destructive() {
+                    ActionClass::Destructive
+                } else {
+                    ActionClass::Write
+                }
+            }
             Self::Process(process) => match process.network() {
                 ProcessNetworkScope::Requested(_) => ActionClass::Network,
                 ProcessNetworkScope::Denied => match process.mode() {
@@ -457,6 +466,7 @@ impl SystemPolicyV1 {
                 }
                 _ => PolicyDisposition::ApprovalRequired,
             },
+            PolicyAction::Patch(_) => PolicyDisposition::ApprovalRequired,
             PolicyAction::Process(process)
                 if matches!(process.mode(), ProcessExecutionMode::KnownSafe)
                     && matches!(process.plan_binding(), ProcessPlanBinding::Validated(_))
@@ -644,6 +654,16 @@ fn derive_action_digest(domain: &str, action: &PolicyAction) -> [u8; 32] {
                     PathPolicyOperation::Delete => 2,
                 },
             );
+        }
+        PolicyAction::Patch(patch) => {
+            hash_tag(&mut hasher, 5);
+            hasher.update(patch.worktree_id().as_bytes());
+            if domain == POLICY_ACTION_DIGEST_DOMAIN {
+                hasher.update(&patch.action_digest().as_bytes());
+            } else {
+                hasher.update(&patch.scope_digest().as_bytes());
+            }
+            hash_tag(&mut hasher, u8::from(patch.destructive()));
         }
         PolicyAction::Process(process) => {
             hash_tag(&mut hasher, 2);

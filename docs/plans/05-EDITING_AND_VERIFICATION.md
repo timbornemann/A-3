@@ -68,13 +68,13 @@ Abschlussmarker; Assertions und sämtliche E2-Tests blieben grün.
 
 Abhängigkeiten: E1, E2
 
-- [ ] erwarteter Snapshot und Content Hash
-- [ ] Add, Update, Move und Delete als getrennte Operationen
-- [ ] Patchvorschau
-- [ ] atomare Dateioperation soweit möglich
-- [ ] Konflikt bei Useränderung
-- [ ] keine automatische Überschreibung
-- [ ] Post-Patch Change Set
+- [x] erwarteter Snapshot und Content Hash
+- [x] Add, Update, Move und Delete als getrennte Operationen
+- [x] Patchvorschau
+- [x] atomare Dateioperation soweit möglich
+- [x] Konflikt bei Useränderung
+- [x] keine automatische Überschreibung
+- [x] Post-Patch Change Set
 
 Akzeptanz:
 
@@ -82,6 +82,29 @@ Akzeptanz:
 - Patch außerhalb Root wird abgelehnt;
 - Line-Ending und Encoding-Fixtures bleiben korrekt;
 - Diff und Evidence zeigen den tatsächlichen neuen Inhalt.
+
+Verifiziert am 2026-08-06: `PatchActionSchemaVersion::V1` bindet Run, Worktree, Published
+Snapshot, TaskStep, Verification sowie erwartete und neue BLAKE3-Hashes an getrennte Add-,
+Update-, Move- und Delete-Operationen und einen content-freien Policy-Fingerprint. Der schmale
+Application-Port erzwingt eine verbrauchte exakte Approval-Entscheidung. `a3-workspace` prüft
+Root, Symlink-/Reparse-Komponenten, Published Revisionen, Live-Hashes und Zielabwesenheit vor der
+Vorschau und erneut nach vollständigem Same-Directory-Staging unmittelbar vor der ersten
+Mutation. Add und Move überschreiben kein bestehendes Ziel; Update und Delete verwenden atomare
+Dateisystemoperationen soweit von der Plattform bereitgestellt. Vollständige und kanonisch
+partielle `PatchChangeSet`s tragen die tatsächlichen Revisionen und Invalidierungspfade.
+
+Vier Domain-/Policy-Tests, ein Authorization-Test und sechs öffentliche Workspace-Contracts
+prüfen Binary-/Secret-Ablehnung, exakte und global auf 64 KiB begrenzte Vorschau, UTF-8-BOM,
+CRLF und Nicht-ASCII-Bytes, alle vier Operationen, tatsächliche Post-Write-Hashes, Useränderung
+zwischen Preview und Apply, No-Replace, Symlink-/Junction-Escape und einen späten Konflikt nach
+bereits sichtbarer Teilmutation. Formatcheck, Workspace-Clippy mit allen Targets und Features bei
+`-D warnings`, Rustdoc bei `-D warnings`, Frontendformat/Lint/Typecheck, 20 Frontend- und vier
+Tooltests, Build, 45 Markdown-Dateien mit 66 Links, Dependency-Report und der vollständige
+Linux-`quality`-Job über `act` sind grün. Der Windows-Workspace-Sammellauf erreichte wegen des
+unveränderten nativen libSQL-`knowledge_contract`-Workers keinen grünen Gesamtstatus: zwei gemäß
+Gate zulässige frische Sammelversuche endeten mit `0xc0000005`; der isolierte Wiederholungs-Worker
+bestand alle acht Tests mit Abschlussmarker, anschließend bestanden die sonst nicht erreichten
+sechs E3-, sieben Project-Catalog- und 26 Shared-Storage-Contracts separat.
 
 ## E4 ProcessRunner
 

@@ -46,6 +46,7 @@ mod semantic_embeddings;
 mod task_ledger;
 mod task_lens;
 mod workspace_directory;
+mod workspace_patch;
 
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
@@ -240,4 +241,9 @@ pub use task_lens::{
 pub use workspace_directory::{
     WorkspaceDirectoryLister, WorkspaceDirectoryListerFuture, WorkspaceDirectoryProgressError,
     WorkspaceDirectoryReadControl, WorkspaceDirectoryReadFailure,
+};
+pub use workspace_patch::{
+    AuthorizedPatchAction, PatchApplyFailure, PatchApplyFuture, PatchAuthorizationError,
+    PatchPreviewFailure, PatchPreviewFuture, WorkspacePatchControl, WorkspacePatchProgressError,
+    WorkspacePatchTool,
 };

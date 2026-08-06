@@ -57,7 +57,13 @@ content-adressierte Source-Reads mit intrinsischer File-/Span-Evidence sowie sna
 vorwärts paginierte Directory Listings aus dem ignore-gefilterten Published Index. Kanonische
 Rootprüfung, No-Follow-Open, Revalidierung, 4-MiB-Grenze, Binary-/Secret-Klassifikation und
 content-freie Fehler verhindern, dass Traversal, Symlink-Escapes, Sonderdateien oder sensible
-Inhalte die Toolgrenze überschreiten. Als Nächstes folgt E3 mit der hashgeschützten PatchAction. Die
+Inhalte die Toolgrenze überschreiten. M7/E3 ergänzt eine versionierte, snapshot- und
+hashgeschützte `PatchAction` mit getrennten Add-, Update-, Move- und Delete-Operationen,
+begrenzter exakter Vorschau, einmaliger exakter Policy-Autorisierung, konfliktgeschützter
+Anwendung und vollständigem oder explizit partiellem Post-Patch-Change-Set. Staging im
+Zielverzeichnis, erneute Hashprüfung unmittelbar vor der ersten Mutation und No-Replace für neue
+Ziele verhindern stilles Überschreiben; UTF-8-BOM, Line Endings und nicht-ASCII-Bytes bleiben
+unverändert. Als Nächstes folgt E4 mit dem argv-basierten ProcessRunner. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
