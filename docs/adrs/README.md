@@ -42,6 +42,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0015](0015-language-adapter-scope.md) | Initialer Sprachumfang und LanguageAdapter |
 | [0016](0016-evidence-based-worktree-reconciliation.md) | Evidenzbasierte Worktree-Umzugs-Reconciliation |
 | [0017](0017-bounded-repository-discovery.md) | Begrenzte deterministische Repository-Discovery |
+| [0018](0018-model-provider-port-ownership.md) | ModelProvider-Port an der Application-Grenze (Proposed) |
 
 ## Neue ADRs
 
