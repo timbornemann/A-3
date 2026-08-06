@@ -1,3 +1,4 @@
+mod claim_verification;
 mod deep_map;
 mod deep_map_explorer;
 mod discovery;
@@ -17,6 +18,14 @@ mod revision;
 mod semantic_card;
 mod snapshot;
 
+pub use claim_verification::{
+    ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
+    ModuleCardVerificationCandidate, ModuleCardVerificationError, ModuleCardVerifier,
+    ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimProposal,
+    ModuleClaimProposalError, ModuleClaimStatement, ModuleClaimStatementError,
+    ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, VerifiedClaimKind,
+    VerifiedClaimStatus, VerifiedModuleCard, VerifiedModuleCardBatch, VerifiedModuleClaim,
+};
 pub use deep_map::{
     CoverageRequirement, DeepMapPlanError, DeepMapPlanner, ExpectedInformationGain,
     ExpectedInformationGainError, ExplorationStopPolicy, ExplorationStopReason,

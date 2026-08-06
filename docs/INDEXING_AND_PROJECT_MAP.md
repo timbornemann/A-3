@@ -427,6 +427,20 @@ Der Verifier prüft:
 
 Prüfbare Aussagen werden Fact oder Observation. Unprüfbare Aussagen bleiben Hypothesis. Widersprüche werden nicht durch Mehrheitsentscheid des LLM aufgelöst.
 
+R9 stellt jeden Feldwert als separaten, typisierten Claim dar. Path-, Symbol- und Relationclaims
+werden nicht aus dem Beschreibungstext erraten, sondern referenzieren kanonische Evidence IDs für
+eine File Revision, ein strukturelles Symbol oder eine vollständige Graphkante. Der read-only
+Resolver lädt den letzten atomar publizierten Index, verlangt exakt passende Run- und Snapshot-IDs
+und gibt ausschließlich die angeforderten Evidence-Objekte zurück. Der model-freie Verifier prüft
+die Objekte danach erneut gegen denselben `PublishedIndex`.
+
+Affirmative Pfad-, Symbol-, Import-, Export-, Call- und Testclaims werden nur bei exaktem Treffer
+zu Fact. Direkt evidenzgebundene, aber nicht strukturell beweisbare Beschreibung wird Observation;
+Architekturabsicht und negative Abwesenheitsclaims bleiben deutlich markierte Hypothesis.
+Confidence und Claimstatus sind getrennte Werte. Opponierende strukturierte Claims stoppen den
+Batch mit einem sichtbaren Widerspruchsbericht. Der Publish-Port akzeptiert konstruktiv nur den
+durch diese Prüfung erzeugten `VerifiedModuleCardBatch`, niemals Proposal- oder Rohmodelltypen.
+
 ## Task Lens
 
 Seeds:

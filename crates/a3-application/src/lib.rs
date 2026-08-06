@@ -15,6 +15,7 @@ mod knowledge_search_store;
 mod knowledge_store;
 mod language_adapter;
 mod lexical_search;
+mod module_card_verification;
 mod open_project;
 mod project_reconciliation;
 mod recent_projects;
@@ -75,6 +76,14 @@ pub use language_adapter::{
     LanguageParseInput, LanguageParsePolicy,
 };
 pub use lexical_search::SearchLexicalIndex;
+pub use module_card_verification::{
+    ModuleCardEvidenceResolutionTimeout, ModuleCardEvidenceResolutionTimeoutError,
+    ModuleCardEvidenceResolver, ModuleCardEvidenceResolverFailure,
+    ModuleCardEvidenceResolverFuture, ModuleCardVerificationControl, PublishVerifiedModuleCards,
+    PublishVerifiedModuleCardsFailure, PublishedIndexEvidenceResolver, PublishedModuleCardReceipt,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFailure,
+    VerifiedModuleCardPublisherFuture, VerifyModuleCards, VerifyModuleCardsFailure,
+};
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,
     ProjectDirectorySelectionError, ProjectInspectionFailure, ProjectInspector,

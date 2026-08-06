@@ -162,12 +162,35 @@ Ein `ModuleCardProposal` besteht aus einer typisierten Envelope und kanonisch ge
 mindestens eine eigene `ModuleCardEvidenceId`, und Werte, Duplikate, UTF-8-Bytes sowie die
 vereinigte Evidenzmenge werden gegen `ModuleCardSchema::V1` geprüft. Der Typ liefert ausschließlich
 `ModuleCardStatus::Proposed`; er kann weder Verification noch Fact-, Observation- oder
-Hypothesis-Status vergeben. Erst R9 darf Evidenz auflösen und einen verifizierten Zustand erzeugen.
+Hypothesis-Status vergeben. Der R9-Verifier löst diese Evidenz gegen genau einen atomar
+veröffentlichten Indexlauf auf und erzeugt erst danach einen verifizierten Zustand.
 
 `ExplorerCheckpoint` bindet Run, Snapshot, Card-Schema und Plannerpolicy an ein lückenloses Präfix
 bestätigter Vorschläge. Eine Bestätigung ist nur für den nächsten Planschritt möglich und muss
 Modul, Snapshot, Schema und alle erwarteten Felder treffen. Deshalb beginnt Resume exakt beim
 ersten unbestätigten Schritt, während ein Checkpoint eines anderen Plans abgelehnt wird.
+
+### ModuleCardVerificationCandidate und VerifiedModuleCardBatch
+
+Ein `ModuleCardVerificationCandidate` bindet genau einen typisierten Claim an jeden einzelnen
+Feldwert eines `ModuleCardProposal`. Claim-, Card-, Modul- und Snapshotidentität müssen
+übereinstimmen; Claim-Evidence muss eine Teilmenge der Evidence IDs des betroffenen Felds sein.
+Prüfbare Prädikate sind aktuelle Repository-Pfade, strukturelle Symbol-IDs sowie exakte Import-,
+Export-, Call- und Testkanten. Freie Beobachtung und Architekturabsicht sind getrennte
+Prädikate, sodass Prosa nie als struktureller Graphbeweis interpretiert wird.
+
+`ModuleCardEvidenceId` wird domänensepariert aus der exakten File Revision, Symbol-ID oder
+vollständigen Graphkante abgeleitet. Der Resolver liest nur den letzten atomar publizierten
+Knowledge Index und akzeptiert ausschließlich die angeforderte Kombination aus `IndexRunId` und
+`SnapshotId`. Der Verifier vergleicht jedes aufgelöste Objekt nochmals mit demselben
+`PublishedIndex`; fehlende, zusätzliche, stale oder erfundene Evidence wird abgelehnt.
+
+Nur positive, exakt passende Strukturclaims werden `Fact`. Direkte aktuelle Beobachtungen werden
+`Observation`; Architekturabsicht und durch bloße Abwesenheit nicht beweisbare negative Claims
+bleiben `Hypothesis`. `Confidence` bleibt davon sowie vom Lebenszyklusstatus `Active` unabhängig.
+Gegensätzliche strukturierte Claims erzeugen einen sichtbaren Widerspruchsbericht und keine
+zusammengeführte Card. Erst der nicht öffentlich konstruierbare `VerifiedModuleCardBatch` darf die
+verified-only Publish-Grenze passieren.
 
 ### Exact Retrieval
 
