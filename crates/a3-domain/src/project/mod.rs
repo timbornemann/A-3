@@ -1,6 +1,7 @@
 mod agent_action;
 mod agent_controller;
 mod agent_run;
+mod agent_tool;
 mod claim_verification;
 mod context_pack;
 mod deep_map;
@@ -52,6 +53,10 @@ pub use agent_run::{
     RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome, RunEventPayload,
     RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSequenceError,
     RunEventSubject, RunPayloadDigest,
+};
+pub use agent_tool::{
+    AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet, AgentToolEvidenceSetError,
+    ToolRunIdDerivationError,
 };
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,

@@ -1,7 +1,7 @@
 use crate::{
     AgentActionPrimaryOutcome, AgentContextCompileInput, AgentContextCompiler,
-    AgentControllerControl, AgentControllerPreflightFailure, ContextCompileControl,
-    ContextCompileFailure, ContextToolResult, DecodeAgentActionTurn, ModelFinishReason,
+    AgentControllerControl, AgentControllerPreflightFailure, AgentReadResult,
+    ContextCompileControl, ContextCompileFailure, DecodeAgentActionTurn, ModelFinishReason,
     ModelMessageError, ModelOperationControl, ModelProvider, ModelProviderFailure,
     ModelProviderRequest, ModelProviderRequestError, ModelRequestTimeout, ProviderEvent,
 };
@@ -10,7 +10,7 @@ use a3_domain::{
     AgentTurnActionClass, AgentTurnCharge, AgentTurnRepairUsage, ContextDigest, ModelTokenCount,
     ModelTokenCountError, ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventOutcome,
     RunEventPayload, RunEventRedaction, RunEventRedactionSource, SnapshotId, TaskStepId,
-    TaskStepStatus,
+    TaskStepStatus, ToolRunId,
 };
 use futures::StreamExt;
 use std::error::Error;
@@ -74,7 +74,7 @@ impl Error for AgentReadTimeoutError {}
 
 /// Future returned by the object-safe read-only H9 tool capability.
 pub type AgentReadToolsFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<ContextToolResult, AgentReadToolFailure>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<AgentReadResult, AgentReadToolFailure>> + Send + 'a>>;
 
 /// Narrow tool capability; no patch, process, shell, Git, network, or publish method exists.
 pub trait AgentReadTools: fmt::Debug + Send + Sync {
@@ -83,6 +83,7 @@ pub trait AgentReadTools: fmt::Debug + Send + Sync {
         &'a self,
         project: &'a ProjectIdentity,
         snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
         action: &'a AgentReadAction,
         timeout: AgentReadTimeout,
         control: &'a dyn AgentControllerControl,
@@ -126,7 +127,7 @@ pub struct AgentTurnExecution {
     context_digest: ContextDigest,
     snapshot_id: SnapshotId,
     current_step_id: TaskStepId,
-    tool_result: Option<ContextToolResult>,
+    tool_result: Option<AgentReadResult>,
     observed_model_output_bytes: u64,
 }
 
@@ -163,8 +164,14 @@ impl AgentTurnExecution {
 
     /// Returns the sole normalized read result for Search or Inspect.
     #[must_use]
-    pub const fn tool_result(&self) -> Option<&ContextToolResult> {
+    pub const fn tool_result(&self) -> Option<&AgentReadResult> {
         self.tool_result.as_ref()
+    }
+
+    /// Takes the sole read result so it can be journaled after this turn's model event.
+    #[must_use]
+    pub fn take_tool_result(&mut self) -> Option<AgentReadResult> {
+        self.tool_result.take()
     }
 }
 
@@ -453,17 +460,25 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
             AgentAction::UpdateLedger(_) | AgentAction::Finish(_) => None,
         };
         let tool_result = if let Some(read_action) = read_action {
+            let action_ordinal = run
+                .usage()
+                .action_count()
+                .checked_add(1)
+                .ok_or(ExecuteAgentTurnFailure::InvalidToolIdentity)?;
+            let tool_run_id = ToolRunId::for_agent_action_v1(run.id(), action_ordinal)
+                .map_err(|_| ExecuteAgentTurnFailure::InvalidToolIdentity)?;
             let result = self
                 .tools
                 .execute(
                     input.project(),
                     snapshot_id,
+                    tool_run_id,
                     &read_action,
                     self.read_timeout,
                     control,
                 )
                 .await?;
-            if result.snapshot_before() != snapshot_id || result.snapshot_after() != snapshot_id {
+            if result.snapshot_id() != snapshot_id || result.tool_run_id() != tool_run_id {
                 return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                     charge,
                     reason: AgentTurnRejectionReason::InvalidReadResult,
@@ -648,6 +663,8 @@ pub enum ExecuteAgentTurnFailure {
     TokenCount(ModelTokenCountError),
     /// The sole read-only action failed at its capability boundary.
     Read(AgentReadToolFailure),
+    /// A unique run-local tool identity could not be derived.
+    InvalidToolIdentity,
     /// Cancellation was observed before a complete model exchange.
     Cancelled,
 }
@@ -668,6 +685,7 @@ impl fmt::Display for ExecuteAgentTurnFailure {
             Self::RepairRequest(_) => "agent turn repair request is invalid",
             Self::TokenCount(_) => "agent turn token count failed",
             Self::Read(_) => "agent turn read action failed",
+            Self::InvalidToolIdentity => "agent turn tool identity is invalid",
             Self::Cancelled => "agent turn was cancelled",
         })
     }
@@ -689,6 +707,7 @@ impl Error for ExecuteAgentTurnFailure {
             | Self::InvalidProviderStream
             | Self::OutputTooLarge
             | Self::TokenOverflow
+            | Self::InvalidToolIdentity
             | Self::Cancelled => None,
         }
     }
@@ -748,10 +767,10 @@ mod tests {
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement,
-        AgentControllerState, AgentRunId, CanonicalDirectory, ContextBudgetPlan,
-        ContextBudgetUsage, ContextCompilerPolicyVersion, ExpectedTaskEvidence, GitHead,
-        GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
-        IndexRunId, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
+        AgentControllerState, AgentRunId, AgentToolEvidenceSet, CanonicalDirectory,
+        ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion, ExpectedTaskEvidence,
+        GitHead, GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp,
+        GoalObjective, IndexRunId, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
         ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
         ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
         ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, RepositoryId,
@@ -851,21 +870,34 @@ mod tests {
     #[derive(Debug)]
     struct CountingReadTools {
         calls: AtomicUsize,
-        result: ContextToolResult,
     }
 
     impl AgentReadTools for CountingReadTools {
         fn execute<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
-            _snapshot_id: SnapshotId,
+            snapshot_id: SnapshotId,
+            tool_run_id: ToolRunId,
             _action: &'a AgentReadAction,
             _timeout: AgentReadTimeout,
             _control: &'a dyn AgentControllerControl,
         ) -> AgentReadToolsFuture<'a> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let result = self.result.clone();
-            Box::pin(async move { Ok(result) })
+            Box::pin(async move {
+                AgentReadResult::new(
+                    tool_run_id,
+                    ContextToolResultStatus::Succeeded,
+                    ContextToolResultPreview::try_from_string("bounded result".to_owned())
+                        .map_err(|_| AgentReadToolFailure::InvalidResult)?,
+                    ContextToolResultDigest::from_bytes([31; 32]),
+                    false,
+                    snapshot_id,
+                    AgentToolEvidenceSet::new(snapshot_id, Vec::new())
+                        .map_err(|_| AgentReadToolFailure::InvalidResult)?,
+                    14,
+                )
+                .map_err(|_| AgentReadToolFailure::InvalidResult)
+            })
         }
     }
 
@@ -881,7 +913,6 @@ mod tests {
         };
         let tools = CountingReadTools {
             calls: AtomicUsize::new(0),
-            result: tool_result(snapshot())?,
         };
 
         let outcome = futures::executor::block_on(
@@ -892,9 +923,9 @@ mod tests {
                 &TestControl,
             ),
         )?;
-        let event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+        let model_event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
 
-        let AgentTurnOutcome::Executed(execution) = outcome else {
+        let AgentTurnOutcome::Executed(mut execution) = outcome else {
             return Err("valid search was rejected".into());
         };
         assert!(matches!(execution.action(), AgentAction::Search(_)));
@@ -904,11 +935,21 @@ mod tests {
         );
         assert_eq!(execution.charge().repair(), AgentTurnRepairUsage::None);
         assert!(execution.tool_result().is_some());
+        let recorded = execution
+            .take_tool_result()
+            .ok_or("search did not retain its read result")?
+            .record(&mut fixture.run, event_id(21), timestamp(21)?)?;
         assert_eq!(tools.calls.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.run.usage().turn_count(), 1);
         assert_eq!(fixture.run.usage().action_count(), 1);
         assert_eq!(fixture.run.usage().repair_count(), 0);
-        assert!(event.payload().redaction().is_some());
+        assert!(model_event.payload().redaction().is_some());
+        assert_eq!(model_event.sequence(), RunEventSequence::new(5)?);
+        assert_eq!(recorded.event().sequence(), RunEventSequence::new(6)?);
+        assert_eq!(
+            recorded.context_result().sequence(),
+            recorded.event().sequence()
+        );
         Ok(())
     }
 
@@ -925,7 +966,6 @@ mod tests {
         };
         let tools = CountingReadTools {
             calls: AtomicUsize::new(0),
-            result: tool_result(snapshot())?,
         };
 
         let outcome = futures::executor::block_on(
@@ -1047,19 +1087,6 @@ mod tests {
                 ModelProviderUsage::new(Some(100), Some(10)),
             )),
         ])
-    }
-
-    fn tool_result(snapshot_id: SnapshotId) -> Result<ContextToolResult, Box<dyn Error>> {
-        Ok(ContextToolResult::new(
-            RunEventSequence::new(5)?,
-            ToolRunId::from_bytes([30; 32]),
-            ContextToolResultStatus::Succeeded,
-            ContextToolResultPreview::try_from_string("bounded result".to_owned())?,
-            ContextToolResultDigest::from_bytes([31; 32]),
-            false,
-            snapshot_id,
-            snapshot_id,
-        ))
     }
 
     fn step_definition(step_id: TaskStepId) -> Result<TaskStepDefinition, Box<dyn Error>> {

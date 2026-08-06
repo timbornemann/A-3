@@ -3,6 +3,8 @@
 mod agent_action_codec;
 mod agent_controller;
 mod agent_prompt;
+mod agent_read_result;
+mod agent_source_reader;
 mod agent_turn;
 mod context_compiler;
 mod deep_map_action_codec;
@@ -54,6 +56,11 @@ pub use agent_controller::{
 pub use agent_prompt::{
     AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,
     AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
+};
+pub use agent_read_result::{AgentReadResult, AgentReadResultError, RecordedAgentRead};
+pub use agent_source_reader::{
+    AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
+    AgentSourceReader, AgentSourceReaderFuture,
 };
 pub use agent_turn::{
     AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,

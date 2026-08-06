@@ -1,7 +1,10 @@
 //! Deterministic Anchor, Retrieve, Rank, Pack, Validate Context Compiler for A^3.
 
+mod agent_read_tools;
 mod digest;
 mod security;
+
+pub use agent_read_tools::DeterministicAgentReadTools;
 
 use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, AgentContextCompilerFuture,
