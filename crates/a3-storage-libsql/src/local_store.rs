@@ -6,7 +6,7 @@ use crate::{
 use crate::{
     exact_search_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
-    semantic_embedding_repository,
+    semantic_embedding_repository, task_lens_claim_repository,
 };
 use a3_application::{
     EmbeddingOperationControl, IndexPersistenceControl, KnowledgeIndexFailure,
@@ -15,7 +15,9 @@ use a3_application::{
     KnowledgeStoreFuture, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
     ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
     SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
-    SemanticEmbeddingStoreFuture, VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    SemanticEmbeddingStoreFuture, TaskLensClaimLimit, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
@@ -408,6 +410,29 @@ impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
     }
 }
 
+impl TaskLensClaimStore for LibsqlKnowledgeStore {
+    fn load_claims<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        published: &'a PublishedIndex,
+        limit: TaskLensClaimLimit,
+        control: &'a dyn TaskLensControl,
+    ) -> TaskLensClaimStoreFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_task_lens(project).await?;
+            task_lens_claim_repository::load_claims(
+                knowledge.connection(),
+                project.worktree().id(),
+                published,
+                limit.get(),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     fn search_exact<'a>(
         &'a self,
@@ -639,6 +664,29 @@ impl LibsqlKnowledgeStore {
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(SemanticEmbeddingStoreFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_task_lens(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, TaskLensClaimStoreFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(TaskLensClaimStoreFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(TaskLensClaimStoreFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
     }

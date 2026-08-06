@@ -18,6 +18,7 @@ mod module_projection_codec;
 mod project_catalog;
 mod project_layout;
 mod semantic_embedding_repository;
+mod task_lens_claim_repository;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};
 pub use knowledge::{KnowledgeDatabase, KnowledgeOpenError, KnowledgeVerification};

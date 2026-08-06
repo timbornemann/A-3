@@ -4,7 +4,9 @@ use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchStore, ModuleCardVerificationControl,
     ModuleCardVerificationControlError, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, VerifiedModuleCardPublisherFailure,
+    PublishVerifiedModuleCardsFailure, TaskLensClaimLimit, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensControl, TaskLensControlError,
+    VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     Confidence, LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm, MapperProfileVersion,
@@ -77,6 +79,32 @@ impl KnowledgeSearchControl for ContractSearchControl {
     }
 }
 
+#[derive(Debug)]
+struct ContractTaskLensControl;
+
+impl TaskLensControl for ContractTaskLensControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct CancelledTaskLensControl;
+
+impl TaskLensControl for CancelledTaskLensControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
 where
     F: KnowledgeStoreContractFactory,
@@ -146,6 +174,37 @@ where
         ))
     );
 
+    assert_eq!(
+        store
+            .load_claims(
+                &project,
+                &published,
+                TaskLensClaimLimit::DEFAULT,
+                &CancelledTaskLensControl,
+            )
+            .await,
+        Err(TaskLensClaimStoreFailure::Cancelled)
+    );
+    let claims = store
+        .load_claims(
+            &project,
+            &published,
+            TaskLensClaimLimit::DEFAULT,
+            &ContractTaskLensControl,
+        )
+        .await?;
+    assert!(!claims.truncated());
+    assert_eq!(claims.claims().len(), 1);
+    assert_eq!(
+        claims.claims()[0].id(),
+        ModuleCardClaimId::from_bytes([138; 32])
+    );
+    assert_eq!(claims.claims()[0].evidence().len(), 1);
+    assert_eq!(
+        claims.claims()[0].evidence()[0].id(),
+        batch.evidence().evidence()[0].id()
+    );
+
     let query = LexicalSearchQuery::new(LexicalSearchTerm::try_from_string("launch".to_owned())?);
     let page = store
         .search_lexical(
@@ -158,13 +217,74 @@ where
         .await?;
     assert!(!page.hits().is_empty());
 
+    let replacement_snapshot = crate::fixture::snapshot(
+        [139; 32],
+        worktree_id,
+        Some(snapshot.id()),
+        2,
+        vec![change(
+            b"src/lib.rs",
+            [140; 32],
+            SnapshotChangeKind::Upsert,
+        )?],
+    )?;
+    store
+        .append_snapshot(&project, &replacement_snapshot)
+        .await?;
+    let replacement_run = store
+        .start_index_run(
+            &project,
+            crate::fixture::run([141; 32], replacement_snapshot.id(), 1)?,
+        )
+        .await?;
+    let replacement_publication =
+        crate::index::publication(replacement_snapshot.id(), b"src/lib.rs", [140; 32], 142)?;
+    store
+        .publish_index(
+            &project,
+            replacement_run.id(),
+            &replacement_publication,
+            &ContractIndexControl,
+        )
+        .await?;
+    assert_eq!(
+        store
+            .load_claims(
+                &project,
+                &published,
+                TaskLensClaimLimit::DEFAULT,
+                &ContractTaskLensControl,
+            )
+            .await,
+        Err(TaskLensClaimStoreFailure::InvalidStoredProjection)
+    );
+    let replacement = store
+        .latest_published_index(&project, &ContractIndexControl)
+        .await?
+        .ok_or("replacement publication is missing")?;
+    assert!(
+        store
+            .load_claims(
+                &project,
+                &replacement,
+                TaskLensClaimLimit::DEFAULT,
+                &ContractTaskLensControl,
+            )
+            .await?
+            .claims()
+            .is_empty()
+    );
+
     store
         .rebuild_regenerable_index(&project, &ContractIndexControl)
         .await?;
     assert_eq!(store.latest_index_run(&project).await?, None);
     crate::release_contract_store(store);
     let reopened = factory.open(&app_data).await?;
-    assert_eq!(reopened.latest_snapshot(&project).await?, Some(snapshot));
+    assert_eq!(
+        reopened.latest_snapshot(&project).await?,
+        Some(replacement_snapshot)
+    );
     assert_eq!(reopened.latest_index_run(&project).await?, None);
     crate::complete_contract_phase()
 }

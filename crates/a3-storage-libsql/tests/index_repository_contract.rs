@@ -3,10 +3,11 @@
 mod support;
 
 use a3_application::{
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    CompileTaskLens, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
     KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ModuleCardVerificationControl,
     ModuleCardVerificationControlError, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, VerifiedModuleCardPublisherFailure,
+    PublishVerifiedModuleCardsFailure, TaskLensControl, TaskLensControlError,
+    VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, EvidenceRef, GitHead,
@@ -21,7 +22,8 @@ use a3_domain::{
     RepositoryId, RepositoryIdentity, RepositoryPath, ResolvedModuleCardEvidence,
     ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
     SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
-    SyntaxProvider, SyntaxRelationKind, VerifiedModuleCardBatch, WorktreeAnchorId,
+    SyntaxProvider, SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText,
+    TaskLensTokenBudget, VerifiedClaimKind, VerifiedModuleCardBatch, WorktreeAnchorId,
     WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
@@ -71,6 +73,20 @@ impl ModuleCardVerificationControl for TestIndexControl {
         self.progress
             .lock()
             .map_err(|_| ModuleCardVerificationControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
+impl TaskLensControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: a3_domain::Progress) -> Result<(), TaskLensControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| TaskLensControlError::Unavailable)?
             .push(progress);
         Ok(())
     }
@@ -717,6 +733,33 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
             ))
         );
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+
+        let lens = CompileTaskLens::new(&store, &store, &store)
+            .execute(
+                &fixture.project,
+                TaskLensSeedSet::new(
+                    TaskLensSeedText::try_from_string(
+                        "repair the public call relation".to_owned(),
+                    )?,
+                    TaskLensSeedText::try_from_string(
+                        "inspect implementation and tests".to_owned(),
+                    )?,
+                    vec![TaskLensSeed::ExplicitPath(RepositoryPath::try_from_bytes(
+                        b"src/lib.rs".to_vec(),
+                    )?)],
+                )?,
+                TaskLensTokenBudget::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(lens.index_run_id(), run.id());
+        assert_eq!(lens.snapshot_id(), snapshot.id());
+        assert_eq!(lens.claims().len(), 2);
+        assert!(
+            lens.claims()
+                .iter()
+                .any(|claim| claim.kind() == VerifiedClaimKind::Fact)
+        );
 
         store
             .rebuild_regenerable_index(&fixture.project, &TestIndexControl::default())
