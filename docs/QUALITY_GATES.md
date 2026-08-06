@@ -112,6 +112,22 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Gesamttimeout über beide Requests. Metadaten mit mehreren abweichenden Kontextgrenzen werden
   abgelehnt; nur die exakte Capability `tools` setzt den nicht ausführbaren nativen Toolmodus.
 
+### AgentAction und Prompt
+
+- Domain-Tests prüfen Grenzen und Redaction für Search, paged File Inspect, Testselektor und
+  nicht-verifizierende Ledger-Intents; jede V1-Action bestätigt konstruktiv null Workspace-
+  Mutation.
+- Schema- und Decoder-Tests akzeptieren alle vier Top-Level-Actions und sämtliche fünf Inspect-
+  Ziele, lehnen aber unbekannte Toolnamen und Felder, Trailing Text, Traversalpfade, nicht
+  kanonische IDs sowie übergroße oder kontrollzeichenhaltige Werte ab. Schema und Decoder werden
+  unabhängig geprüft; jede Objektebene ist geschlossen.
+- Prompttests zählen den statischen Vertrag mit dem ModelProfile-Counter gegen das feste
+  900-Token-Budget, blockieren Profile ohne verifizierten Structured Output und vergleichen die
+  optionale kanonische Schemawiederholung mit demselben Provider-Schema.
+- Repair-Tests belegen eine nicht clonebare, bei Anweisungserzeugung verbrauchte Befugnis, keine
+  Wiederholung geheim markierter ungültiger Rohbytes und terminale Ablehnung eines ebenfalls
+  ungültigen zweiten Dokuments.
+
 ### Security Boundary
 
 - Negativtests für Traversal, Symlinks und unerlaubte Roots

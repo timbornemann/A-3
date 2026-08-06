@@ -416,6 +416,32 @@ formal ungültige oder schemawidrige Antworten ergeben `Unavailable`. Normale Ch
 Kontext- und Outputlimit, fixed-point Temperatur, Top-p und kanonische Stopbedingungen aus dem
 Profil auf Ollama-Optionen ab.
 
+### AgentAction und Promptvertrag
+
+`AgentActionSchemaVersion::V1` ist die geschlossene strukturierte Modellausgabe für die read-only
+Harnessphase. Die Union enthält ausschließlich `Search`, `Inspect`, `UpdateLedger` und `Finish`.
+`Search` übergibt eine begrenzte Query und ein Limit an die spätere deterministische Retrieval-
+Pipeline, ohne einen Vertrauenskanal wählen zu können. `Inspect` adressiert genau eine begrenzte
+Dateiseite, eine Symbol-ID, eine typisierte Graphtraversierung, eine Claim-ID oder einen
+Testselektor. Datei-, Test-, Query- und Ledgertexte sind normalisiert, bytebegrenzt und in Debug-
+Ausgaben redigiert.
+
+`UpdateLedger` kann nur ein nicht autoritatives Resultat vormerken, einen Blocker melden oder einen
+Replan anfordern. Kein Variant kann Verifikation oder Completion setzen. `Finish` enthält keine
+Modellbehauptung und fordert lediglich die spätere deterministische Acceptance-Verifikation an.
+Patch, Prozess, Shell, Git, Netzwerk, Publishing und destruktive Aktionen sind in V1 nicht
+darstellbar; die eigentlichen read-only Ports sowie Zustandsautorisierung folgen in H10 und H9.
+
+Das eingebettete `agent-action-v1`-JSON-Schema setzt auf jeder Objektebene
+`additionalProperties: false`; ein separater Runtime-Decoder prüft das vollständige Dokument bis
+64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen- und
+Textgrenzen sowie Domaininvarianten. Der statische Systemvertrag kostet mit der konservativen
+V1-Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
+Structured Output vorbereitet werden. Profilabhängiges Schema-Grounding wiederholt bei Bedarf
+dieselbe kanonische Schemafassung. Ein ungültiges Primärergebnis erzeugt genau eine nicht clonebare,
+verbrauchbare Repair-Befugnis mit ausschließlich content-freiem Fehlercode. Auch deren ungültiges
+Ergebnis ist terminal und erzeugt keine weitere Befugnis.
+
 ### Task
 
 Verwaltet Goal Contract, Akzeptanzkriterien, Schritte, Entscheidungen, Runs und Abschluss.

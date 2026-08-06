@@ -162,12 +162,12 @@ Dependency-/Lizenzbericht sind vollständig grün; der Bericht enthält keine un
 
 Abhängigkeiten: H1, H2, H5
 
-- [ ] kompakter statischer Systemvertrag
-- [ ] versionierte AgentAction-Union
-- [ ] Search, Inspect, UpdateLedger und Finish in read-only Phase
-- [ ] JSON-Schema-Erzeugung
-- [ ] Strict Validator
-- [ ] maximal ein Repair Attempt
+- [x] kompakter statischer Systemvertrag
+- [x] versionierte AgentAction-Union
+- [x] Search, Inspect, UpdateLedger und Finish in read-only Phase
+- [x] JSON-Schema-Erzeugung
+- [x] Strict Validator
+- [x] maximal ein Repair Attempt
 
 Akzeptanz:
 
@@ -178,6 +178,25 @@ Akzeptanz:
 Das in R8 vorgezogene `deep-map-explorer-action-v1`-Schema und sein Strict Validator decken nur die
 read-only Deep-Map-Union Inspect, Search und Propose ab. Die allgemeine AgentAction-Union mit
 Ledger- und Finish-Aktionen sowie ihre Promptintegration bleibt Teil von H6.
+
+Verifiziert am 2026-08-06: `AgentActionSchemaVersion::V1` schließt Search, fünf begrenzte Inspect-
+Ziele, nicht verifizierende Ledger-Intents und eine inhaltslose Finish-Anforderung zu einer Domain-
+Union ohne Workspace-Mutation. Patch-, Prozess-, Shell-, Git-, Netzwerk-, Publish- und destruktive
+Aktionen sind nicht darstellbar. Das eingebettete `agent-action-v1`-JSON-Schema wird an der
+providerneutralen Formatgrenze bereitgestellt; der unabhängige Decoder begrenzt Dokumente auf
+64 KiB und lehnt unbekannte Actions, Felder, Versionen, Trailing Text, unsichere Pfade, nicht
+kanonische IDs und verletzte Domaininvarianten ab.
+
+Der statische Systemvertrag bleibt mit dem konservativen ModelProfile-Counter unter 900 Tokens,
+behandelt Repositoryinhalt als untrusted data und kann nur mit live verifiziertem Structured
+Output vorbereitet werden. Profilabhängiges Schema-Grounding verwendet exakt dieselbe kanonische
+Schemafassung. Eine ungültige Primärausgabe erzeugt genau eine nicht clonebare Repair-Befugnis;
+ihre content-freie Anweisung verbraucht sie, und eine zweite ungültige Ausgabe ist terminal.
+Zwei Domain-, vier Codec- und vier Prompt-/Repair-Tests belegen diese Grenzen. `cargo fmt --all --
+--check`, fokussierte Domain-/Application-Tests, Workspace-Test mit allen Features, Workspace-
+Clippy mit `-D warnings`, Rustdoc mit `-D warnings`, Markdown-Linkcheck, Tooltests und der
+deterministische Dependency-/Lizenzbericht sind vollständig grün; der Bericht enthält keine
+unbekannten Lizenzen.
 
 ## H7 Context Compiler Core
 

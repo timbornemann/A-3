@@ -139,6 +139,14 @@ validiert das Domain-Aggregat erneut.
 
 ## Context Compiler
 
+Der vorgezogene H6-Systemvertrag bleibt mit der konservativen ModelProfile-Zählung unter 900
+Tokens. Er definiert ausschließlich das geschlossene `AgentAction`-V1-Schema für Search, Inspect,
+sichere Ledger-Intents und eine Finish-Anforderung. Repository- und Context-Inhalte werden darin
+explizit als untrusted data bezeichnet. Das Structured-Output-Schema liegt gleichzeitig im
+Provider-Formatfeld; nur Profile mit `RepeatSchemaInPrompt` erhalten zusätzlich dieselbe
+kanonische Schemafassung als getrennte User-Nachricht. Diese optionale Nachricht zählt H7 später
+vollständig gegen das Contextbudget und ist nicht Teil der unveränderlichen Systemvertragsgrenze.
+
 Der Compiler arbeitet deterministisch in fünf Phasen:
 
 ~~~text

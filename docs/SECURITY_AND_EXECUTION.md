@@ -183,6 +183,21 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 - unbekannte Felder werden standardmäßig abgelehnt.
 - Reparaturversuch maximal einmal und ohne Ausführung des ungültigen Originals.
 
+Die allgemeine H6-Ausgabe ist das versionierte `agent-action-v1`-Dokument. Sein statisches Schema
+und der davon unabhängige Runtime-Decoder erlauben ausschließlich Search, Inspect, sichere
+nicht-verifizierende Ledger-Intents und Finish als Anforderung an den späteren Acceptance-Verifier.
+Patch-, Prozess-, Shell-, Git-, Netzwerk-, Publish- oder Destruktionsfelder sind nicht
+darstellbar. Unbekannte Actions, Felder, Versionen, Text außerhalb des einen JSON-Dokuments,
+unsichere Pfade, nicht kanonische IDs und ungebundene Werte werden vor jeder Toolgrenze abgelehnt.
+Der kompakte statische Systemvertrag behandelt Repository- und Kontextinhalt ausdrücklich als
+untrusted data und ist konservativ auf höchstens 900 Tokens begrenzt.
+
+Nur ein live verifiziertes ModelProfile darf den Prompt samt Structured-Output-Schema vorbereiten.
+Eine ungültige Primärausgabe erzeugt eine einzelne nicht clonebare Repair-Befugnis. Schon die
+Erstellung ihrer content-freien Korrekturanweisung verbraucht sie; die zweite Decode-Operation
+liefert entweder eine valide Action oder einen terminalen Fehler ohne weitere Reparatur. Der rohe
+ungültige Modelltext wird weder in die Korrekturanweisung kopiert noch als Action zurückgegeben.
+
 Der Deep-Map-Explorer konkretisiert diese Regeln mit dem versionierten
 `deep-map-explorer-action-v1`-JSON-Schema und einem davon unabhängig strikt prüfenden
 Runtime-Decoder. Nur Inspect, Search und ein nicht autoritatives Proposal sind darstellbar. Vor

@@ -32,8 +32,10 @@ Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint
 NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, konservative
 Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
-Aktionen freischalten. Als Nächstes folgen der statische Promptvertrag und die allgemeine
-versionierte AgentAction-Union. Die
+Aktionen freischalten. Der statische Promptvertrag und die allgemeine versionierte AgentAction-
+Union sind nun als kompakter budgetierter Systemvertrag, eingebettetes striktes JSON-Schema,
+unabhängiger Runtime-Decoder und verbrauchbarer einzelner Repair-Versuch umgesetzt. Als Nächstes
+folgt der deterministische Context Compiler. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
