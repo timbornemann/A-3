@@ -202,14 +202,14 @@ unbekannten Lizenzen.
 
 Abhängigkeiten: H1, H2, Task Lens
 
-- [ ] Anchor
-- [ ] Retrieve
-- [ ] Rank
-- [ ] Pack
-- [ ] Validate
-- [ ] ContextDigest
-- [ ] Bereichsbudgets und Outputreserve
-- [ ] Deduplizierung und Zoom
+- [x] Anchor
+- [x] Retrieve
+- [x] Rank
+- [x] Pack
+- [x] Validate
+- [x] ContextDigest
+- [x] Bereichsbudgets und Outputreserve
+- [x] Deduplizierung und Zoom
 
 Akzeptanz:
 
@@ -217,6 +217,23 @@ Akzeptanz:
 - stale Fact Fixture wird blockiert;
 - 16k-Profil hält die definierten Budgets;
 - gleiche Eingaben ergeben gleichen Digest.
+
+Verifiziert am 2026-08-06: Der infra-freie Domainkern modelliert versionierte Bereichsbudgets,
+tatsächliche Nutzung und `ContextDigest`; der Application-Port bindet Goal Contract, Ledgerrevision,
+aktuellen Schritt, Modellprofil, optionale Seeds und begrenzte Toolresultate. Das neue
+`a3-context`-Feature komponiert die vorhandene geordnete Task Lens für Retrieve/Rank und packt L0
+bis L3, aktuelle Claims sowie snapshotgleiche Toolresultate deterministisch. Der End-to-End-
+Contract belegt den vollständigen Goal-/Step-Anchor, Ausschluss eines stale Fact, lückenlose
+Budgetrechnung des 16.384er-Profils mit 3.605 Outputtokens, bytegleichen Request und Digest bei
+gleichen Eingaben sowie Cancellation vor dem ersten Read. Das reproduzierbare 100.000-
+Strukturzeilen-/50.000-Symbole-Release-Fixture maß über 30 Samples Task Lens P95 141,473 ms und
+vollständigen Context Compile P95 215,220 ms. `cargo fmt --all -- --check`, Workspace-Clippy mit
+allen Targets/Features und `-D warnings`, Workspace-Tests mit allen Features und Rustdoc mit
+`-D warnings` sind vollständig grün. Die unter dem gepinnten Node 24.14.0 direkt ausgeführten
+Frontend-/Tool-Schritte bestätigen Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und
+vier Tooltests; der lokale pnpm-Wrapper war 11.16.0 statt des geforderten 11.9.0 und lehnte deshalb
+nur den aggregierenden Skriptstart ab. Markdown-Linkcheck und der deterministische Bericht sind
+grün; 608 Rust- und 239 JavaScript-Pakete enthalten keine unbekannte Lizenz.
 
 ## H8 Compaction
 
@@ -294,5 +311,5 @@ Akzeptanz:
 - [ ] Goal-Retention- und Compaction-Eval grün
 - [ ] ungültige Modellausgaben werden nie ausgeführt
 - [ ] Resume nach simuliertem Crash
-- [ ] Context Compile P95 innerhalb Budget
+- [x] Context Compile P95 innerhalb Budget
 - [ ] Provider bleibt austauschbar durch Contract-Suite

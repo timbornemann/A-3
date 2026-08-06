@@ -144,14 +144,22 @@ Tokens. Er definiert ausschließlich das geschlossene `AgentAction`-V1-Schema f�
 sichere Ledger-Intents und eine Finish-Anforderung. Repository- und Context-Inhalte werden darin
 explizit als untrusted data bezeichnet. Das Structured-Output-Schema liegt gleichzeitig im
 Provider-Formatfeld; nur Profile mit `RepeatSchemaInPrompt` erhalten zusätzlich dieselbe
-kanonische Schemafassung als getrennte User-Nachricht. Diese optionale Nachricht zählt H7 später
-vollständig gegen das Contextbudget und ist nicht Teil der unveränderlichen Systemvertragsgrenze.
+kanonische Schemafassung als getrennte User-Nachricht. Diese optionale Nachricht zählt der
+Compiler vollständig gegen das Contextbudget und ist nicht Teil der unveränderlichen
+Systemvertragsgrenze.
 
 Der Compiler arbeitet deterministisch in fünf Phasen:
 
 ~~~text
 ANCHOR → RETRIEVE → RANK → PACK → VALIDATE
 ~~~
+
+Der implementierte `DeterministicAgentContextCompiler` ist das `a3-context`-Feature hinter dem
+inbound `AgentContextCompiler`-Port der Application. Er ruft weder Modell noch Werkzeug auf und
+persistiert nichts. Statt einen zweiten Such- oder Rankingpfad einzuführen, komponiert er
+`CompileTaskLens`: Exact → Lexical → Graph/Test → Claims → optional Semantic → Fusion bleibt damit
+die einzige versionierte Retrieve-/Rank-Reihenfolge. Kooperative Cancellation, ein
+Gesamtdeadline-Fehler und die festen Phasen werden bis zur besitzenden Runtime weitergereicht.
 
 ### Anchor
 
@@ -215,6 +223,13 @@ Standard bei einem Modellkontext von 16.384 Tokens:
 
 Budgets skalieren proportional, aber Goal Contract und Outputreserve dürfen nicht auf null verdrängt werden. Mindestens 22 Prozent des Modellkontexts werden standardmäßig für Output reserviert.
 
+`ContextBudgetPlan::V1` skaliert alle Grenzen ganzzahlig und reproduzierbar. Beim 16.384er-Profil
+beträgt die durch Aufrunden tatsächlich reservierte 22-Prozent-Outputmenge 3.605 Tokens. Statischer
+Prompt, optional wiederholtes Schema, vollständiger Anchor, Pack-Framing, Project Map,
+Code/Evidence und Toolresultate werden lückenlos genau einer Sektion zugerechnet; zusätzlich
+bleiben 900 Tokens Sicherheitsreserve frei. Eine ungekürzte Pflichtsektion, die ihre Grenze
+überschreitet, bricht den Compile ab, statt still Inhalte zu verlieren.
+
 Packregeln:
 
 - kurze Signatur vor Implementierung;
@@ -237,6 +252,14 @@ Vor dem Modellaufruf:
 - Toolschemas zum Modellprofil passend;
 - keine Secret-Kandidaten;
 - deterministischer ContextDigest erzeugt.
+
+Der V1-Digest ist BLAKE3-domänensepariert und bindet Compilerpolicy, Modellprofil, Goal- und
+Ledgerrevision, aktuellen Step, IndexRun, Snapshot, Task-Lens-Digest, Budgetplan, tatsächliche
+Sektionkosten, Nachrichteninhalt und Structured-Output-Schema. Aktive Claims werden vor dem Packen
+erneut an Run und Snapshot gebunden; stale oder evidence-inkompatible Claims gelangen nicht in den
+Faktenabschnitt. Toolresultate sind journalgeordnet, auf den aktuellen Vorher-/Nachher-Snapshot
+gebunden und werden unter dem harten Bereichsbudget von neu nach alt ausgewählt. Überlappende
+Source-Spans und identische Ziele werden deterministisch dedupliziert.
 
 ## Zoomstufen
 

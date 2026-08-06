@@ -319,6 +319,21 @@ Die Application erhält den vollständigen Index als geteilte, unveränderliche 
 tiefe Kopie. Diese Laufzeitrepräsentation ändert keine Domainidentität: Run und Snapshot werden vor
 jeder Ausgabe erneut gegen die dauerhafte aktuelle Publikation geprüft.
 
+### Context Pack
+
+`ContextCompilerPolicyVersion::V1`, `ContextBudgetPlan`, `ContextBudgetUsage` und `ContextDigest`
+sind infrastrukturfreie Domainwerte. Der Plan legt für jedes Modellprofil harte Grenzen für
+System/Tools, Goal/Ledger, Project Map, Code/Evidence und aktuelle Toolresultate sowie getrennte
+Sicherheits- und Outputreserven fest. Eine beobachtete Nutzung ist nur konstruierbar, wenn jede
+Sektion und die Gesamtrechnung innerhalb dieser Grenzen liegen.
+
+`AgentContextCompileInput` bindet im Application-Layer genau einen Goal Contract an seine passende
+Task-Ledger-Revision, einen aktiven aktuellen Schritt, ein Modellprofil, kanonische optionale Seeds
+und höchstens 64 journalgeordnete normalisierte Toolresultate. `CompiledAgentContext` gibt nur
+einen providerneutralen `ModelProviderRequest` samt Policy-, Goal-, Ledger-, Step-, Index-,
+Snapshot-, Task-Lens-, Budget- und Digestidentität aus. Dadurch kann der spätere Controller keinen
+Context Pack ohne nachvollziehbare Ausgangsevidenz als aktuellen Turn verwenden.
+
 ## Aggregate
 
 ### Project

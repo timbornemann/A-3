@@ -244,6 +244,15 @@ FTS bei P95 37,762 ms und die absichtlich weiterhin tiefe vollständige Indexkop
 Damit besteht die Task-Lens-Context-Vorstufe das 300-ms-Gate; die lokale Messung ersetzt nicht die
 abschließende V1-Referenzmessung.
 
+H7 erweitert dasselbe Release-Fixture um 30 vollständige Context-Compiles. Jede Stichprobe umfasst
+den unveränderten Task-Lens-Pfad sowie Anchor, Bereichsbudgetierung, Zoom-/Claim-/Tool-Packing,
+Freshness-, Secret- und Gesamtbudgetprüfung, Promptkonstruktion und `ContextDigest`; ein LLM-Aufruf
+ist ausdrücklich nicht enthalten. Im Lauf vom 2026-08-06 lagen die direkte Task Lens bei
+P50 134,457 ms und P95 141,473 ms sowie der vollständige Context Compile bei P50 158,352 ms und
+P95 215,220 ms. Im selben Prozess lagen Exact bei P95 31,899 ms und FTS bei P95 39,808 ms. Damit
+besteht der vollständige H7-Pfad das 300-ms-Gate; die lokale Messung ersetzt weiterhin nicht die
+abschließende V1-Referenzmessung.
+
 Modellmetriken werden separat erfasst:
 
 - Time to First Token

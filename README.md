@@ -34,8 +34,12 @@ Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-C
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
 Aktionen freischalten. Der statische Promptvertrag und die allgemeine versionierte AgentAction-
 Union sind nun als kompakter budgetierter Systemvertrag, eingebettetes striktes JSON-Schema,
-unabhängiger Runtime-Decoder und verbrauchbarer einzelner Repair-Versuch umgesetzt. Als Nächstes
-folgt der deterministische Context Compiler. Die
+unabhängiger Runtime-Decoder und verbrauchbarer einzelner Repair-Versuch umgesetzt. Der
+deterministische Context Compiler verankert Goal Contract, aktuellen Schritt, Ledgerstatus,
+Snapshot und Modellprofil für jeden Turn neu, verwendet die bestehende geordnete Task Lens als
+einzigen Retrieve-/Rank-Pfad und erzeugt daraus einen frischen, bereichsbudgetierten Context Pack
+mit Zoomstufen, Freshness-/Secret-Prüfung und reproduzierbarem Digest. Als Nächstes folgt H8 mit
+der evidenzgebundenen Compaction. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

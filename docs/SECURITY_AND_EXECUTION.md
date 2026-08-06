@@ -172,7 +172,10 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
   der JSONL-Export enthält nur diese content-freien Metadaten und den Digest der sicheren Struktur;
 - UI erhält nur SecretExists, niemals den Secretwert;
 - Context Packs enthalten keine vollständigen Environment Dumps;
-- erkannte mögliche Secrets stoppen eine Veröffentlichung oder Synchronisation.
+- der Context Compiler prüft Anchor, jede gepackte Retrieval-/Claim-Einheit und jede begrenzte
+  Toolvorschau auf bekannte Private-Key-, Bearer-, GitHub-, AWS- und Secret-Assignment-Muster;
+- erkannte mögliche Secrets stoppen den Context Compile, eine Veröffentlichung oder
+  Synchronisation.
 
 ## LLM-Ausgaben
 
