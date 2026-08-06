@@ -57,6 +57,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   gegen den aktuell veröffentlichten Index, Ablehnung erfundener oder veralteter IDs, sichtbare
   Widersprüche, getrennte Classification und Confidence sowie ausschließlich verifizierte,
   atomare Card-Publikation mitsamt Evidence und Lexical-Search-Projektion
+- Task-Lens-Contracts prüfen kanonische Goal-/Step-/Fehler-/Pfadseeds, Exact-vor-FTS-vor-Graph/Test-
+  vor-Claim-vor-Semantic-Reihenfolge, L0 bis L3, Budget und sichtbare Trunkierung, Digest-
+  Determinismus, Indexdelta, Cancellation/Deadline, Produktionscode mit Regressionstest,
+  ausgeschlossene Großmodule sowie null stale Fact Leakage
 - Retrieval-Eval zeigt keinen unbegründeten Recall-Rückgang
 - keine stale Evidence in Facts
 

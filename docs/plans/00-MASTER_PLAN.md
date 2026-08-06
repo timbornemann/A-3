@@ -86,7 +86,7 @@ Ein Nutzer kann:
 - [ ] budgetierter Read-only Explorer
 - [ ] Claim-Verifier
 - [ ] Deep-Map-Coverage und Stopbedingungen
-- [ ] Task Lens
+- [x] Task Lens
 - [ ] stale Card Invalidation
 
 ### M6 Durable Harness

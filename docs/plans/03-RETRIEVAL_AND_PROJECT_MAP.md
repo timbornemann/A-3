@@ -427,12 +427,39 @@ Akzeptanz:
 
 Abhängigkeiten: R4, R6, R9
 
-- [ ] Seeds aus Goal, Step, Fehlern und expliziten Pfaden
-- [ ] begrenzte Expansion exact → FTS → graph/test → claims → semantic
-- [ ] Zoomstufen L0 bis L3
-- [ ] Tokenkostenschätzung
-- [ ] LensDigest und Policyversion
-- [ ] Aktualisierung nach Indexdelta
+Status: Completed
+
+- [x] Seeds aus Goal, Step, Fehlern und expliziten Pfaden
+- [x] begrenzte Expansion exact → FTS → graph/test → claims → semantic
+- [x] Zoomstufen L0 bis L3
+- [x] Tokenkostenschätzung
+- [x] LensDigest und Policyversion
+- [x] Aktualisierung nach Indexdelta
+
+Der Domain-Compiler V1 kanonisiert Goal, aktuellen Schritt, Diagnosen, explizite Pfade, Symbole und
+IDs, geänderte Dateien, Hypothesen sowie fehlgeschlagene Verifikationen. Er fusioniert höchstens
+32 Retrieval-Einträge in der festen Reihenfolge Exact, FTS, Graph/Test, Claims und optional
+Semantic. L0 bis L3, konservative Byte- und Strukturkosten, ein Budget von 256 bis 32.768 Tokens,
+sichtbare Trunkierung und ein policy-, seed-, index-, snapshot-, claim- und reihenfolgegebundener
+`LensDigest` machen identische Eingaben deterministisch und Änderungen am veröffentlichten Index
+sichtbar.
+
+Der Application-Use-Case reicht eine gemeinsame Cancellation und Deadline durch alle Kanäle,
+begrenzt jeden Adapteraufruf und kompiliert Semantic-Treffer ausschließlich als Kandidaten, nie als
+Evidence. Die libSQL-Adapter validieren bei jeder Auslieferung den aktuell veröffentlichten Run,
+rekonstruieren Claim-Evidence gegen dessen unveränderlichen `PublishedIndex` und verwerfen alte
+Publikationen. Ein eintragsgroßer, bei Publish und Rebuild aktualisierter Indexcache vermeidet eine
+vollständige Kopie pro Lens, ohne die dauerhafte Aktualitätsprüfung zu überspringen.
+
+Contracts belegen kanonische Seeds, feste Kanalreihenfolge, Produktionscode plus Test in der
+Bugfixture, Ausschluss eines irrelevanten Großmoduls, sichtbare Claim-Trunkierung, Cancellation,
+Deadline-Weitergabe, Indexdelta und null stale Fact Leakage. Der reproduzierbare Release-Fixture
+mit 50.000 Symbolen, 100.000 Strukturzeilen und einem verifizierten Fact misst Exact P95 mit
+50,81 ms, FTS P95 mit 37,76 ms und Task Lens P95 mit 267,31 ms bei einem Ziel von 300 ms.
+Abschlussgates am 2026-08-06: `cargo fmt --all -- --check`,
+`cargo test --workspace --all-features --locked`, Workspace-Clippy mit allen Targets/Features und
+Warnings denied, Rustdoc mit Warnings denied, Frontend-CI mit Node 24.14.0/pnpm 11.9.0,
+Markdown-Linkcheck, Dependency-/Lizenzbericht und Tauri-Release-Build ohne Bundle sind grün.
 
 Akzeptanz:
 
@@ -461,6 +488,6 @@ Akzeptanz:
 - [ ] Retrieval-Evalbaseline versioniert
 - [ ] Deep Map eines Rust-, TS- und Python-Fixtures
 - [ ] jede veröffentlichte Card besitzt gültige Evidence
-- [ ] Task Lens bleibt innerhalb des konfigurierten Budgets
+- [x] Task Lens bleibt innerhalb des konfigurierten Budgets
 - [ ] App funktioniert vollständig ohne Embeddings
-- [ ] Performanceziele für Search und Context-Vorstufe gemessen
+- [x] Performanceziele für Search und Context-Vorstufe gemessen
