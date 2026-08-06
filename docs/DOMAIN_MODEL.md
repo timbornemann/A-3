@@ -275,6 +275,32 @@ Ziel-ID auf. `ResultExplanation` bewahrt jeden Normalwert, Beitrag, Abzug und Qu
 `FusedRetrievalResult` speichert außerdem Run, Snapshot, `FusionPolicyVersion`, Trunkierung und die
 finale Reihenfolge.
 
+### Task Lens
+
+`TaskLensSeedSet` hält den nicht leeren Goal- und Step-Anker sowie höchstens 64 kanonisch geordnete
+explizite Pfad-, Symbol-, Identifier-, Diagnose-, Change-, Hypothesen- und fehlgeschlagene
+Verification-Seeds. Seedtext ist auf vier KiB begrenzt, normalisiert Zeilenenden und bleibt in
+Debugausgaben redigiert. `TaskLensPolicy::v1` akzeptiert ausschließlich einen `PublishedIndex` und
+eine R4-Fusionsausgabe desselben Runs und Snapshots.
+
+Die Auswahl beginnt mit der verpflichtenden L0-Repository Card und ergänzt nur Module, Symbole und
+Source Spans tatsächlich fusionierter oder durch aktuelle Claims verbundener Ziele. L0 bis L3 sind
+unterschiedliche Typvarianten; höchstens acht Module und 64 Einträge passen in ein konfigurierbares
+Budget von 256 bis 32.768 geschätzten Tokens. Der konservative Fallback berechnet strukturellen
+Overhead plus höchstens ein Token je UTF-8-Byte. Ein zu großes Detail wird sichtbar trunkiert, ohne
+bereits ausgewählte gröbere Zoomstufen zu verwerfen.
+
+Eine `TaskLensClaim`-Projektion rekonstruiert Classification, Status und Confidence getrennt und
+prüft die R9-Zuweisung erneut. Fact verlangt ein positives strukturelles Prädikat und mindestens
+eine exakt passende Evidence. Vor Aufnahme vergleicht der Compiler Claim-Run, Snapshot, Modul und
+jede File-, Symbol- oder Graphkanten-Evidence nochmals mit dem veröffentlichten Index. Stale oder
+inkompatible Claims werden gezählt und ausgeschlossen, niemals als Fakten materialisiert.
+
+`LensDigest` ist domänensepariert und umfasst Task-Lens- und Fusionpolicy, Budget, kanonische
+Seedmenge, Run, Snapshot, geordnete Einträge, aktuelle Claims, Trunkierung und den Stale-Zähler.
+Identische Eingaben ergeben denselben Digest; ein neuer veröffentlichter Indexlauf macht die alte
+Lens konstruktiv unaktuell und erzeugt beim Recompile eine andere Identität.
+
 ## Aggregate
 
 ### Project

@@ -17,6 +17,7 @@ mod retrieval_fusion;
 mod revision;
 mod semantic_card;
 mod snapshot;
+mod task_lens;
 
 pub use claim_verification::{
     ModuleCardClaimId, ModuleCardContradiction, ModuleCardContradictionReport,
@@ -131,6 +132,12 @@ pub use snapshot::{
     LanguageAdapterRevision, LanguageAdapterVersion, LanguageAdapterVersionError, RepositoryPath,
     RepositoryPathError, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotError,
     WorktreeGeneration, WorktreeGenerationError,
+};
+pub use task_lens::{
+    TaskLens, TaskLensClaim, TaskLensClaimError, TaskLensCompileError, TaskLensDiagnosticKind,
+    TaskLensDigest, TaskLensEntry, TaskLensEntryReason, TaskLensPolicy, TaskLensPolicyVersion,
+    TaskLensSeed, TaskLensSeedSet, TaskLensSeedSetError, TaskLensSeedText, TaskLensSeedTextError,
+    TaskLensTarget, TaskLensTokenBudget, TaskLensTokenBudgetError, TaskLensZoomLevel,
 };
 
 use std::error::Error;

@@ -480,6 +480,21 @@ Expansion:
 
 Ergebnis ist ein kleiner, priorisierter Subgraph mit Module Cards und Quellenausschnitten. Die Task Lens ist temporär, aber ihre Policy-Version und Seed-Menge werden für Reproduzierbarkeit gespeichert.
 
+Die implementierte infra-freie R10-Domainvorstufe `TaskLensPolicy::v1` bindet die kanonische
+Seedmenge und eine R4-Fusionsausgabe an genau einen `PublishedIndex`. Sie selektiert grob nach
+konkret über L0 Repository Card, L1 Modul, L2 Symbol und L3 File beziehungsweise Declaration Span.
+Ein konfigurierbares Budget von 256 bis 32.768 Tokens, höchstens acht Module und 64 Einträge
+begrenzen die Lens; die V1-Schätzung verwendet strukturellen Overhead plus einen konservativen
+Byte-Counter. Zu große Details und vorgelagert trunkierte Kandidaten bleiben sichtbar.
+
+Persistierte Claim-Projektionen werden vor Aufnahme nochmals gegen Run, Snapshot, Modul,
+Classification und die vollständige aktuelle File-, Symbol- oder Graphkanten-Evidence geprüft.
+Nicht aktuelle Claims werden gezählt und vollständig aus dem Faktenanteil ausgeschlossen. Der
+domänenseparierte `LensDigest` umfasst Policy, Fusionpolicy, Budget, Seeds, Publikation, geordnete
+Auswahl, aktuelle Claims und Trunkierungszustand; ein Indexdelta erzwingt deshalb eine neue Lens.
+Die geordnete Application-Retrieval-Orchestrierung und der libSQL-Claim-Read-Port folgen im
+nächsten R10-Slice.
+
 ## Inkrementelle Aktualisierung
 
 Der implementierte V1-Watcher verwendet keine neue Plattform- oder Netzwerkabhängigkeit. Ein
