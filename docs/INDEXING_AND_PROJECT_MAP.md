@@ -325,6 +325,16 @@ wenn alle drei Dimensionen innerhalb des `ExploreBudget` bleiben. V1 verwendet a
 Standard 32.000 Tokens, 120 Sekunden und 64 Read-only-Toolaufrufe; globale Grenzen verhindern
 unbegrenzte Rekonstruktionen.
 
+Die versionierte Gate-M4/M5-Abnahme indiziert die repo-eigenen Produkt-Fixtures
+`rust-adapter`, `typescript-monorepo` und `python-package` jeweils als eigenständiges Repository
+über den vollständigen Snapshot-, Compiler- und atomaren libSQL-Publishpfad. Die aktuelle V1-
+Golden umfasst 25 veröffentlichte Dateien, 98 Symbole, sechs primäre Manifestmodule und 20
+budgetgedeckte Planschritte. Für jedes Symbol wird genau eine primäre, aktuelle Membership
+nachgewiesen; jeder Schritt löst sein Modul sowie seine Manifest- oder Symbolevidenz gegen dieselbe
+Publikation auf. Leere Coverage endet für alle drei Sprachen mit `CoveragePlanned`, und zwei Pläne
+derselben Publikation sind identisch. Der Contract läuft ohne Modell, Embeddings und Netzwerk mit
+`cargo test -p a3-repo-index --test deep_map_fixture_acceptance --locked`.
+
 ### Exploration
 
 Das LLM darf nur über typisierte Read-only-Werkzeuge explorieren. Jeder nächste Leseschritt benötigt einen erwarteten Informationsgewinn. Vollständiges rekursives Lesen ist verboten.

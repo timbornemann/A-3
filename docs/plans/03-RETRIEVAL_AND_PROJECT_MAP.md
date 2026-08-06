@@ -525,8 +525,17 @@ Durchläufe normalisieren bytegleich, ohne Modell, Embeddings oder Netzwerk. Der
 ist `cargo test -p a3-repo-index --test retrieval_eval_baseline --locked`.
 
 - [x] Retrieval-Evalbaseline versioniert
-- [ ] Deep Map eines Rust-, TS- und Python-Fixtures
+- [x] Deep Map eines Rust-, TS- und Python-Fixtures
 - [x] jede veröffentlichte Card besitzt gültige Evidence
 - [x] Task Lens bleibt innerhalb des konfigurierten Budgets
 - [ ] App funktioniert vollständig ohne Embeddings
 - [x] Performanceziele für Search und Context-Vorstufe gemessen
+
+Die mehrsprachige Deep-Map-Abnahme V1 indiziert die drei repo-eigenen Produkt-Fixtures über
+Snapshot, Compiler und atomaren libSQL-Publish. Ihre reviewbare Golden-Datei umfasst 25 Dateien,
+98 Symbole, sechs primäre Manifestmodule und 20 vollständig budgetgedeckte Planschritte. Jede der
+98 Symbolprojektionen besitzt genau eine aktuelle primäre Membership; jeder Schritt löst seine
+Modul-, Manifest- oder Symbolevidenz gegen denselben veröffentlichten Run und Snapshot auf. Leere
+Coverage endet für Rust, TypeScript und Python mit `CoveragePlanned`, und zwei Planläufe sind
+identisch. Gezielter Contract:
+`cargo test -p a3-repo-index --test deep_map_fixture_acceptance --locked`.

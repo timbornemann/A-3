@@ -51,6 +51,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   deterministische Wiederholung, SCC-Communities, genau eine primäre Membership, aktuelle
   Membership-Evidence, zentrale Symbole, Entrypoints, Tests, Repository Card, Cancellation und
   abgelehnte Progressausgabe
+- Die mehrsprachige Deep-Map-Golden indiziert die Rust-, TypeScript- und Python-Produkt-Fixtures
+  bis zum atomar veröffentlichten Index und fixiert aktuelle Modul-Evidence, vollständige
+  leere-Coverage-Planung, Budget, Schrittverifikation und deterministische Wiederholung.
 - Semantic-Card-/Embedding-Contracts prüfen BodyHash-Kanonik, Profil-/Dimensionsisolation,
   Redaction, Cancellation, Disabled ohne Adapterzugriff, persistentes Reopen, native
   dimensionsgebundene Vector-Capability, begrenzten linearen Fallback und semantikexklusiven Rebuild

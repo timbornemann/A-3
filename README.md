@@ -20,8 +20,10 @@ veröffentlichungsgebundene Deep-Map-Planer, der begrenzte Read-only Explorer, d
 Claim-Verifikation, atomare Card-Publikation, die budgetierte Task Lens und die direkte plus
 ein Hop begrenzte Card-Invalidierung mit priorisierter Remapqueue. Eine versionierte, vollständig
 offline laufende Retrieval-Evalbaseline misst den real publizierten Exact-, Lexical- und
-Graphpfad des gemischten Rust-/TypeScript-/Python-Fixtures. Als Nächstes folgen die
-mehrsprachigen Deep-Map-Abnahmefixtures. Die
+Graphpfad des gemischten Rust-/TypeScript-/Python-Fixtures. Die mehrsprachige
+Deep-Map-Abnahme führt außerdem die drei Produkt-Fixtures durch Snapshot, Publish,
+Modulprojektion und budgetierte Planung. Als Nächstes folgt der vollständige App-Betrieb ohne
+Embeddings. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
