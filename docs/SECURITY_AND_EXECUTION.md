@@ -173,7 +173,11 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 - UI erhält nur SecretExists, niemals den Secretwert;
 - Context Packs enthalten keine vollständigen Environment Dumps;
 - der Context Compiler prüft Anchor, jede gepackte Retrieval-/Claim-Einheit und jede begrenzte
-  Toolvorschau auf bekannte Private-Key-, Bearer-, GitHub-, AWS- und Secret-Assignment-Muster;
+  Toolvorschau sowie jede tatsächlich reinjizierte Run-Memory-Einheit auf bekannte Private-Key-,
+  Bearer-, GitHub-, AWS- und Secret-Assignment-Muster;
+- ein Run-Memory-Checkpoint wird nur aus typisierten autoritativen Objekten erzeugt und besitzt
+  weder einen Persistence- noch einen Journal-Mutationsport; Compaction kann Audit-Events deshalb
+  nicht löschen oder umschreiben;
 - erkannte mögliche Secrets stoppen den Context Compile, eine Veröffentlichung oder
   Synchronisation.
 

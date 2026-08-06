@@ -345,7 +345,7 @@ impl RunMemoryCheckpoint {
             .filter(|claim| claim.claim().kind() == VerifiedClaimKind::Hypothesis)
     }
 
-    /// Returns claims rejected for stale status or another run/snapshot.
+    /// Returns claims rejected for stale status or incompatible current evidence.
     #[must_use]
     pub const fn excluded_stale_claims(&self) -> u16 {
         self.excluded_stale_claims

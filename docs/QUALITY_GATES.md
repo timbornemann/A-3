@@ -128,6 +128,23 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Wiederholung geheim markierter ungültiger Rohbytes und terminale Ablehnung eines ebenfalls
   ungültigen zweiten Dokuments.
 
+### Compaction
+
+- Der Domain-Contract kompiliert dasselbe Langlauffixture 64-mal neu aus Goal, Ledger, Run,
+  Published Index und Original-Claims. Goal-Referenz, Step-/Attempt-/Run-/Evidence-Quellen, offene
+  fehlgeschlagene Verifikation und aktive Hypothesen müssen in jeder Projektion erhalten bleiben;
+  stale beziehungsweise evidence-inkompatible Claims bleiben ausgeschlossen. Ein Claim aus einem
+  älteren Source-Run bleibt nach einem unabhängigen Publish als Provenienz erhalten, wenn seine
+  konkrete Evidence im aktuellen Index weiterhin auflösbar ist.
+- Der `RunMemoryCheckpoint` akzeptiert keinen früheren Checkpoint als Eingang. Gleiche
+  autoritative Eingaben erzeugen denselben Digest; eine neue Ledger-/Event-Materialisierung ändert
+  ihn. Die nur gelesene `RunEventSequence` bleibt unverändert, während der bestehende
+  Run-Journal-Contract weiterhin alle Audit-Events nach Reopen nachweist.
+- Der Context-Contract prüft die tatsächliche Reinjection von Step Result, offenem Fehler und
+  Hypothese mit originalen IDs, deterministische Claim-Deduplizierung sowie die lückenlose
+  konservative Budgetrechnung. Run Memory wird vor der Task Lens gegen `CodeAndEvidence`
+  reserviert; unpassende Run-/Snapshot-Bindungen und Secret-Kandidaten werden abgelehnt.
+
 ### Security Boundary
 
 - Negativtests für Traversal, Symlinks und unerlaubte Roots

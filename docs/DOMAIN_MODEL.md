@@ -500,6 +500,21 @@ Invarianten:
 - Vor einer Mutation wird geprüft, ob der erwartete Snapshot noch aktuell ist.
 - Abschluss ist ein expliziter Zustandsübergang und keine bloße Textausgabe.
 
+### Run Memory
+
+`RunMemoryCheckpoint` ist die deterministische, regenerierbare H8-Projektion für den nächsten
+Context Pack und kein zweites Run-Aggregat. Er bindet exakt eine Goal-Referenz, Ledgerrevision,
+Run-ID, Event-Watermark, IndexRun-ID und Snapshot-ID. `CompactedStepResult` verweist immer auf die
+ursprüngliche `StepResultSource` aus Step-ID, Attemptnummer und Run-ID und behält direkte sowie
+Verifikations-Evidence-IDs. `CompactedRunClaim` kapselt den originalen frischen `TaskLensClaim`;
+eine zuvor erzeugte Summary kann nicht als Claim- oder Step-Quelle eingesetzt werden.
+
+`OpenRunIssue` hält fehlgeschlagene Verifikation, Blocked, AwaitingApproval, Failed, Cancelled und
+Stale getrennt. Aktive Hypothesen bleiben ebenfalls typisiert und werden nicht durch Confidence
+zu Facts hochgestuft. Der `RunMemoryDigest` bindet den vollständigen normalisierten Inhalt und die
+Policyversion. Weil die Projektion nur aus unveränderlichen autoritativen Referenzen kompiliert
+wird, verändert sie weder Ledger noch append-only Audit-Events.
+
 ## Claim-Typen
 
 | Typ | Bedeutung | Darf als Wahrheit in Kontext? |

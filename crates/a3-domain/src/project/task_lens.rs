@@ -483,7 +483,9 @@ impl TaskLensClaim {
         &self.evidence
     }
 
-    /// Returns whether run, snapshot, module, status, and every Evidence ID resolve currently.
+    /// Returns whether status, module, and every source Evidence object resolve in the current index.
+    ///
+    /// Source run and snapshot remain provenance and may precede an unrelated publish.
     #[must_use]
     pub fn is_current_for(&self, published: &PublishedIndex) -> bool {
         claim_is_current(published, self)
@@ -590,7 +592,7 @@ pub struct TaskLens {
 }
 
 impl TaskLens {
-    /// Returns the exact published run used by all entries and facts.
+    /// Returns the exact published run used for entries and current claim revalidation.
     #[must_use]
     pub const fn index_run_id(&self) -> IndexRunId {
         self.index_run_id
@@ -1200,9 +1202,7 @@ fn resolve_claim_target(
 
 fn claim_is_current(published: &PublishedIndex, claim: &TaskLensClaim) -> bool {
     let run = published.run();
-    if claim.source_index_run_id() != run.id()
-        || claim.snapshot_id() != run.snapshot_id()
-        || claim.status() != VerifiedClaimStatus::Active
+    if claim.status() != VerifiedClaimStatus::Active
         || !published
             .publication()
             .modules()

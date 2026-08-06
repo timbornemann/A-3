@@ -12,13 +12,13 @@ use a3_domain::{
     ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet, OpenRunIssueKind,
     ParsedSymbol, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion, RepositoryCard,
     RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence, RunEventSequence,
-    RunMemoryCheckpoint, SnapshotId, SourcePosition, SourceRange, StepDependency, StepVerification,
-    StepVerificationId, StepVerificationOutcome, SuccessVerification, SymbolId, SymbolKind,
-    SymbolName, SymbolRank, SymbolRankSignals, TaskEvidenceId, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition, TaskStepId, TaskStepOutcome,
-    TaskStepRationale, TaskStepResultSummary, VerificationFailureSummary, VerificationMethod,
-    VerificationRequirement, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
-    VerifiedClaimStatus,
+    RunMemoryCheckpoint, RunMemoryCompileError, SnapshotId, SourcePosition, SourceRange,
+    StepDependency, StepVerification, StepVerificationId, StepVerificationOutcome,
+    SuccessVerification, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
+    TaskEvidenceId, TaskId, TaskLedger, TaskLedgerRevision, TaskLedgerTimestamp, TaskLensClaim,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
+    VerificationFailureSummary, VerificationMethod, VerificationRequirement, VerificationSpec,
+    VerificationSpecId, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use std::error::Error;
 
@@ -48,9 +48,14 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
         RunMemoryCheckpoint::compile(&goal, &ledger, &first_run, &published, claims.clone())?;
     assert_eq!(first.goal_contract(), goal.reference());
     assert_eq!(first.step_results().len(), 1);
-    assert_eq!(first.claims().len(), 2);
-    assert_eq!(first.open_hypotheses().count(), 1);
-    assert_eq!(first.excluded_stale_claims(), 2);
+    assert_eq!(first.claims().len(), 3);
+    assert_eq!(first.open_hypotheses().count(), 2);
+    assert_eq!(first.excluded_stale_claims(), 1);
+    assert!(
+        first.claims().iter().any(|claim| {
+            claim.claim().source_index_run_id() == IndexRunId::from_bytes([99; 32])
+        })
+    );
     assert!(first.open_issues().is_empty());
     assert_eq!(
         first.step_results()[0].evidence_ids(),
@@ -69,7 +74,7 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
         let checkpoint =
             RunMemoryCheckpoint::compile(&goal, &ledger, &second_run, &published, claims.clone())?;
         assert_eq!(checkpoint.goal_contract(), goal.reference());
-        assert_eq!(checkpoint.open_hypotheses().count(), 1);
+        assert_eq!(checkpoint.open_hypotheses().count(), 2);
         assert_eq!(checkpoint.open_issues().len(), 1);
         repeated = Some(checkpoint);
     }
@@ -79,7 +84,7 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
     assert_ne!(first.digest(), second.digest());
     assert_eq!(second.goal_contract(), goal.reference());
     assert_eq!(second.step_results().len(), 2);
-    assert_eq!(second.open_hypotheses().count(), 1);
+    assert_eq!(second.open_hypotheses().count(), 2);
     assert_eq!(second.open_issues().len(), 1);
     assert_eq!(
         second.open_issues()[0].kind(),
@@ -95,6 +100,57 @@ fn repeated_compaction_retains_goal_sources_hypotheses_and_open_failures()
     }));
     assert_eq!(second.step_results()[0].source().step_id(), first_id);
     assert_eq!(second.step_results()[1].source().step_id(), second_id);
+    Ok(())
+}
+
+#[test]
+fn compaction_rejects_mismatched_run_and_snapshot_anchors() -> Result<(), Box<dyn Error>> {
+    let goal = goal()?;
+    let ledger = TaskLedger::new(
+        goal.reference(),
+        vec![step(TaskStepId::from_bytes([1; 32]), 1, Vec::new())?],
+        timestamp(1)?,
+    )?;
+    let published = published_index()?;
+    let mismatched_ledger_run = AgentRun::reconstruct(
+        AgentRunIdentity::new(
+            AgentRunId::from_bytes([3; 32]),
+            goal.reference(),
+            TaskLedgerRevision::new(2)?,
+            None,
+        ),
+        AgentRunMaterializedState::new(
+            AgentControllerState::Verify,
+            RunEventSequence::new(1)?,
+            published.run().snapshot_id(),
+        ),
+        AgentRunTiming::new(
+            AgentRunTimestamp::from_unix_millis(1)?,
+            AgentRunTimestamp::from_unix_millis(1)?,
+        ),
+    )?;
+    assert!(matches!(
+        RunMemoryCheckpoint::compile(
+            &goal,
+            &ledger,
+            &mismatched_ledger_run,
+            &published,
+            Vec::new()
+        ),
+        Err(RunMemoryCompileError::RunAnchorMismatch)
+    ));
+
+    let mismatched_snapshot_run = run(&goal, &ledger, SnapshotId::from_bytes([99; 32]), 1)?;
+    assert!(matches!(
+        RunMemoryCheckpoint::compile(
+            &goal,
+            &ledger,
+            &mismatched_snapshot_run,
+            &published,
+            Vec::new()
+        ),
+        Err(RunMemoryCompileError::SnapshotMismatch)
+    ));
     Ok(())
 }
 
@@ -273,14 +329,14 @@ fn claims(
         35,
         VerifiedClaimStatus::Stale,
     )?;
-    let mismatched_run = hypothesis(
+    let prior_source_run = hypothesis(
         IndexRunId::from_bytes([99; 32]),
         snapshot_id,
         module_id,
         36,
         VerifiedClaimStatus::Active,
     )?;
-    Ok(vec![mismatched_run, stale, fact, active_hypothesis])
+    Ok(vec![prior_source_run, stale, fact, active_hypothesis])
 }
 
 fn published_index() -> Result<PublishedIndex, Box<dyn Error>> {

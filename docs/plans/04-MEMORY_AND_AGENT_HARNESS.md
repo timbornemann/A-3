@@ -239,17 +239,39 @@ grün; 608 Rust- und 239 JavaScript-Pakete enthalten keine unbekannte Lizenz.
 
 Abhängigkeiten: H3, H7
 
-- [ ] Step Result Materialization
-- [ ] Claims mit Evidence extrahieren
-- [ ] offene Fehler und Hypothesen behalten
-- [ ] redundante Runtexte aus aktivem Pack entfernen
-- [ ] Source IDs erhalten
+- [x] Step Result Materialization
+- [x] Claims mit Evidence extrahieren
+- [x] offene Fehler und Hypothesen behalten
+- [x] redundante Runtexte aus aktivem Pack entfernen
+- [x] Source IDs erhalten
 
 Akzeptanz:
 
 - Langlauffixture kann nach mehreren Compactions Ziel und offene Punkte korrekt nennen;
 - keine Summary-of-Summary ohne Quellkette;
 - Audit Events bleiben erhalten.
+
+Verifiziert am 2026-08-06: `RunMemoryCheckpoint` wird deterministisch nur aus Goal Contract,
+Task Ledger, materialisiertem Agent Run, aktuellem Published Index und originalen Claims
+kompiliert. Terminale Versuche behalten Step-, Attempt-, Run- und direkte plus Verifikations-
+Evidence-IDs; offene Fehler und aktive Hypothesen werden im nächsten Context Pack als Pflichtinhalt
+reinjiziert. Ein vorheriger Checkpoint ist kein Eingang, und der Compiler besitzt keinen
+Journal-Mutationsport. Der Langlauf-Contract baut dieselbe Projektion 64-mal aus den autoritativen
+Quellen neu auf und behält Ziel, offene Punkte und Source-Kette; der bestehende Storage-Contract
+weist weiterhin alle append-only Audit-Events nach Reopen nach. Evidence-basierte Freshness lässt
+Claims aus einem älteren Source-Run nach einem unabhängigen Publish als Provenienz bestehen, wenn
+ihre konkrete Evidence weiterhin aktuell auflösbar ist, und schließt stale oder inkompatible
+Claims aus.
+
+Der Context-Contract belegt die einmalige Reinjection von Step Result, offenem Fehler und
+Hypothese, Secret-Ablehnung, Snapshot-/Run-Bindung, deterministischen Digest sowie die lückenlose
+Budgetrechnung; Run Memory wird vor der Task Lens gegen `CodeAndEvidence` reserviert. `cargo fmt
+--all -- --check`, Workspace-Clippy für alle Targets/Features mit `-D warnings`, alle Workspace-
+Tests und Rustdoc mit `-D warnings` sind grün. Unter dem gepinnten Node 24.14.0 bestehen Prettier,
+ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier Tooltests. Der lokale pnpm-Wrapper bleibt
+mit 11.16.0 von der geforderten Version 11.9.0 verschieden, daher wurden die installierten
+Lockfile-Werkzeuge direkt ausgeführt. Der Linkcheck prüfte 45 Markdown-Dateien und 66 lokale Links;
+608 Rust- und 239 JavaScript-Pakete enthalten keine unbekannte Lizenz.
 
 ## H9 Controller State Machine
 
@@ -308,7 +330,7 @@ Akzeptanz:
 ## Gate M6
 
 - [ ] read-only End-to-End-Agent auf drei Fixture-Sprachen
-- [ ] Goal-Retention- und Compaction-Eval grün
+- [x] Goal-Retention- und Compaction-Eval grün
 - [ ] ungültige Modellausgaben werden nie ausgeführt
 - [ ] Resume nach simuliertem Crash
 - [x] Context Compile P95 innerhalb Budget

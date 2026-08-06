@@ -38,8 +38,11 @@ unabhängiger Runtime-Decoder und verbrauchbarer einzelner Repair-Versuch umgese
 deterministische Context Compiler verankert Goal Contract, aktuellen Schritt, Ledgerstatus,
 Snapshot und Modellprofil für jeden Turn neu, verwendet die bestehende geordnete Task Lens als
 einzigen Retrieve-/Rank-Pfad und erzeugt daraus einen frischen, bereichsbudgetierten Context Pack
-mit Zoomstufen, Freshness-/Secret-Prüfung und reproduzierbarem Digest. Als Nächstes folgt H8 mit
-der evidenzgebundenen Compaction. Die
+mit Zoomstufen, Freshness-/Secret-Prüfung und reproduzierbarem Digest. H8 materialisiert
+verifizierte Step-Ergebnisse mit
+ihren ursprünglichen Step-, Attempt-, Run- und Evidence-IDs, behält offene Fehler und Hypothesen
+explizit und reinjiziert die deterministisch regenerierbare Run-Memory-Projektion ohne Audit-
+Events oder Quellketten zu ersetzen. Als Nächstes folgt H9 mit der Controller-Zustandsmaschine. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

@@ -716,10 +716,7 @@ fn pack_ranked_context(
         if run_memory_claim_ids.contains(&claim.id()) {
             continue;
         }
-        if claim.status() != VerifiedClaimStatus::Active
-            || claim.source_index_run_id() != lens.index_run_id()
-            || claim.snapshot_id() != lens.snapshot_id()
-        {
+        if claim.status() != VerifiedClaimStatus::Active {
             return Err(ContextCompileFailure::StaleOrMismatchedInput);
         }
         let rendered = render_claim(claim);

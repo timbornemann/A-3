@@ -95,6 +95,7 @@ Ein Nutzer kann:
 - [x] Task Ledger
 - [x] Run Journal
 - [x] Context Compiler
+- [x] evidenzgebundene Run-Memory-Compaction
 - [x] Ollama-kompatibler Provider
 - [x] ModelProfile und Capability Self-Test
 - [ ] read-only Controllerlauf

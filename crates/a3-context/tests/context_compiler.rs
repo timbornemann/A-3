@@ -129,7 +129,8 @@ fn run_memory_reinjects_original_sources_without_duplicate_claims() -> Result<()
         module_id: fixture.module_id,
         calls: &calls,
     };
-    let (input, memory_digest, run_sequence) = input_with_run_memory(&fixture)?;
+    let (input, memory_digest, run_sequence) =
+        input_with_run_memory(&fixture, "completed H7 groundwork")?;
     let compiler =
         DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
 
@@ -168,6 +169,29 @@ fn run_memory_reinjects_original_sources_without_duplicate_claims() -> Result<()
                 .ok_or(TestError("token sum overflow"))
         })?;
     assert_eq!(first.budget_usage().prompt_total(), counted_prompt);
+    Ok(())
+}
+
+#[test]
+fn run_memory_secret_candidate_never_reaches_provider_request() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let (input, _, _) = input_with_run_memory(&fixture, "AKIAIOSFODNN7EXAMPLE")?;
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+
+    let result = block_on(compiler.compile(&input, &RecordingControl::default()));
+
+    assert!(matches!(
+        result,
+        Err(ContextCompileFailure::SecretCandidate)
+    ));
     Ok(())
 }
 
@@ -548,6 +572,7 @@ fn input(_snapshot_id: SnapshotId) -> Result<AgentContextCompileInput, Box<dyn E
 
 fn input_with_run_memory(
     fixture: &Fixture,
+    completed_summary: &str,
 ) -> Result<
     (
         AgentContextCompileInput,
@@ -625,7 +650,7 @@ fn input_with_run_memory(
         completed_step_id,
         run_id,
         Some(TaskStepResultSummary::try_from_string(
-            "completed H7 groundwork".to_owned(),
+            completed_summary.to_owned(),
         )?),
         vec![TaskEvidenceId::from_bytes([16; 32])],
         TaskLedgerTimestamp::from_unix_millis(3)?,

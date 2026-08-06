@@ -254,9 +254,10 @@ Vor dem Modellaufruf:
 - deterministischer ContextDigest erzeugt.
 
 Der V1-Digest ist BLAKE3-domänensepariert und bindet Compilerpolicy, Modellprofil, Goal- und
-Ledgerrevision, aktuellen Step, IndexRun, Snapshot, Task-Lens-Digest, Budgetplan, tatsächliche
-Sektionkosten, Nachrichteninhalt und Structured-Output-Schema. Aktive Claims werden vor dem Packen
-erneut an Run und Snapshot gebunden; stale oder evidence-inkompatible Claims gelangen nicht in den
+Ledgerrevision, aktuellen Step, IndexRun, Snapshot, Task-Lens-Digest, den optionalen
+Run-Memory-Digest, Budgetplan, tatsächliche Sektionkosten, Nachrichteninhalt und Structured-
+Output-Schema. Aktive Claims werden vor dem Packen erneut gegen Modul und konkrete Evidence des
+aktuellen Published Index geprüft; stale oder evidence-inkompatible Claims gelangen nicht in den
 Faktenabschnitt. Toolresultate sind journalgeordnet, auf den aktuellen Vorher-/Nachher-Snapshot
 gebunden und werden unter dem harten Bereichsbudget von neu nach alt ausgewählt. Überlappende
 Source-Spans und identische Ziele werden deterministisch dedupliziert.
@@ -295,6 +296,40 @@ Nach jedem erfolgreichen Schritt:
 5. Goal Contract unverändert verankern.
 
 Compaction löscht keine Audit-Events. Sie verändert nur den nächsten Context Pack.
+
+Der implementierte H8-Kern erzeugt dafür einen `RunMemoryCheckpoint` ausschließlich aus dem
+vollständigen `GoalContract`, der aktuellen `TaskLedgerRevision`, dem materialisierten `AgentRun`,
+dem aktuellen atomar publizierten Index und originalen `TaskLensClaim`-Projektionen. Ein vorheriger
+Checkpoint ist absichtlich kein zulässiger Eingang. Dadurch kann eine wiederholte Compaction keine
+Summary-of-Summary erzeugen und die ursprüngliche Quellkette nicht schleichend verlieren.
+
+Der Checkpoint enthält:
+
+- jeden terminalen Step-Versuch mit Step-, Attempt- und Run-ID, aktuellem Step-Status, Outcome,
+  begrenzter Ergebnissummary sowie der kanonisch deduplizierten Menge direkter und
+  Verifikations-Evidence-IDs;
+- ausschließlich aktive Claims, deren Modul und konkrete Evidence im aktuellen Published Index
+  erneut auflösbar sind, weiterhin getrennt nach Fact, Observation und Hypothesis und mit ihren
+  originalen Source-Run-, Snapshot-, Claim- und Evidence-IDs; ein älterer Source-Run bleibt dabei
+  Provenienz und wird nicht allein durch einen unabhängigen Publish stale;
+- offene fehlgeschlagene Verifikationen, Blocker, Approvals, Fehler, Abbrüche und stale Steps mit
+  der letzten vorhandenen Attempt-Quelle;
+- die beobachtete `RunEventSequence` nur als Audit-Watermark sowie einen domänenseparierten
+  `RunMemoryDigest` über alle autoritativen Eingaben.
+
+Der Checkpoint ist regenerierbar und erhält deshalb keine zweite Persistenzwahrheit neben Goal,
+Ledger, Run Journal und Knowledge Index. Seine Kompilierung besitzt nur unveränderliche
+Referenzen und kann das append-only Journal weder kürzen noch umschreiben. Nach Neustart wird
+dieselbe Projektion aus den dauerhaften Quellen neu aufgebaut.
+
+Im nächsten Context Pack steht `[RUN_MEMORY]` direkt nach dem vollständigen Anchor. Metadaten,
+offene Fehler und offene Hypothesen sind Pflichtinhalt; passen sie nicht in das harte Budget, wird
+der Compile abgebrochen. Step-Ergebnisse und weitere aktuelle Claims folgen deterministisch und
+dürfen am Ende des Budgets als Ganzes ausgelassen werden, wobei `truncated=true` gesetzt wird.
+Ausgewählte Claims werden nicht ein zweites Mal aus der Task Lens gepackt. Run Memory wird
+vollständig gegen `CodeAndEvidence` gerechnet, vor dem normalen Lens-Packing reserviert und wie
+jede andere Context-Einheit auf Secret-Kandidaten geprüft. Goal- und Ledger-Anchor bleiben davon
+unberührt und ungekürzt.
 
 ## Erfolgsmetriken
 
