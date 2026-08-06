@@ -99,12 +99,32 @@ impl MapperProfileVersion {
     /// Initial mapper profile used by the version-one schema.
     pub const V1: Self = Self(1);
 
+    /// Creates a positive mapper profile version for compatibility checks.
+    pub fn new(value: u16) -> Result<Self, MapperProfileVersionError> {
+        if value == 0 {
+            return Err(MapperProfileVersionError);
+        }
+        Ok(Self(value))
+    }
+
     /// Returns the persisted positive version.
     #[must_use]
     pub const fn get(self) -> u16 {
         self.0
     }
 }
+
+/// A mapper profile version must be positive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapperProfileVersionError;
+
+impl fmt::Display for MapperProfileVersionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("mapper profile version must be positive")
+    }
+}
+
+impl Error for MapperProfileVersionError {}
 
 /// Explicit lifecycle state carried by every complete Module Card document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

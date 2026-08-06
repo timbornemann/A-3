@@ -8,6 +8,7 @@ mod graph;
 mod graph_retrieval;
 mod id;
 mod index_run;
+mod invalidation;
 mod language;
 mod lexical_retrieval;
 mod module_map;
@@ -34,9 +35,9 @@ pub use deep_map::{
     ExplorationStopState, ExploreBudget, ExploreBudgetError, ExploreCost, ExploreCostError,
     ExploreEvidenceRequirement, ExplorePlan, ExplorePlanStopReason, ExplorePolicyVersion,
     ExploreSeedReason, ExploreStep, ExploreStepStatus, ExploreTarget, ExploreVerificationMethod,
-    MapperProfileVersion, ModuleCardEvidenceId, ModuleCardField, ModuleCardFieldSpec, ModuleCardId,
-    ModuleCardMetadataField, ModuleCardSchema, ModuleCardSchemaVersion, ModuleCardStatus,
-    ModuleCoverage, ModuleCoverageSnapshot,
+    MapperProfileVersion, MapperProfileVersionError, ModuleCardEvidenceId, ModuleCardField,
+    ModuleCardFieldSpec, ModuleCardId, ModuleCardMetadataField, ModuleCardSchema,
+    ModuleCardSchemaVersion, ModuleCardStatus, ModuleCoverage, ModuleCoverageSnapshot,
 };
 pub use deep_map_explorer::{
     ExplorerAction, ExplorerActionSchemaVersion, ExplorerCheckpoint, ExplorerCheckpointError,
@@ -78,6 +79,10 @@ pub use id::{
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
+};
+pub use invalidation::{
+    IndexInvalidationPlan, InvalidationPlanError, InvalidationReason, ModuleCardInvalidation,
+    ModuleCardInvalidationCandidate, RemapPriority, RemapRequest,
 };
 pub use language::{
     Confidence, ConfidenceError, DiagnosticMessage, DiagnosticMessageError,
