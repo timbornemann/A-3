@@ -4,27 +4,29 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    agent_recovery_repository, exact_search_repository, goal_contract_repository,
-    graph_traversal_repository, index_publication, index_repository,
+    agent_recovery_repository, command_allowlist_repository, exact_search_repository,
+    goal_contract_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
     module_remap_queue_repository, policy_repository, run_journal_repository,
     semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentRecoveryStore,
-    AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, EmbeddingOperationControl,
-    EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
-    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
-    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
-    ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
-    ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture,
-    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
-    RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage, RunEventPageLimit,
-    RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
-    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
-    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
-    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, CommandAllowlistStore,
+    CommandAllowlistStoreFailure, CommandAllowlistStoreFuture, CommandAllowlistStoreVersion,
+    EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
+    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
+    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleRemapQueueFailure,
+    ModuleRemapQueueFuture, ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure,
+    PolicyStoreFuture, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
+    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage,
+    RunEventPageLimit, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
+    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
+    SemanticEmbeddingStoreFuture, StoredProjectCommandAllowlist, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
+    TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
     TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
@@ -36,9 +38,9 @@ use a3_domain::{
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
     IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
     LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, PolicyDecision, PolicyDecisionId,
-    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
-    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
-    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent,
+    RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger,
+    ToolRunId, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
     VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -575,6 +577,46 @@ impl PolicyStore for LibsqlKnowledgeStore {
                 expected_state,
                 approval,
                 event,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl CommandAllowlistStore for LibsqlKnowledgeStore {
+    fn load_current<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> CommandAllowlistStoreFuture<'a, Option<StoredProjectCommandAllowlist>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_command_allowlist(project)
+                .await?;
+            command_allowlist_repository::load_current(
+                database.connection(),
+                project.worktree().id(),
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected: Option<CommandAllowlistStoreVersion>,
+        confirmation: &'a ProjectCommandAllowlist,
+    ) -> CommandAllowlistStoreFuture<'a, StoredProjectCommandAllowlist> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_command_allowlist(project)
+                .await?;
+            command_allowlist_repository::append(
+                database.connection(),
+                project.worktree().id(),
+                expected,
+                confirmation,
             )
             .await
             .map_err(|error| error.classify())
@@ -1290,6 +1332,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_command_allowlist(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, CommandAllowlistStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_command_allowlist_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_command_allowlist_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
     async fn open_project_knowledge_for_recovery(
         &self,
         project: &ProjectIdentity,
@@ -1732,6 +1797,18 @@ fn classify_policy_storage_failure(error: KnowledgeStoreFailure) -> PolicyStoreF
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             PolicyStoreFailure::InvalidStoredData
         }
+    }
+}
+
+fn classify_command_allowlist_storage_failure(
+    error: KnowledgeStoreFailure,
+) -> CommandAllowlistStoreFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => CommandAllowlistStoreFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => CommandAllowlistStoreFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => CommandAllowlistStoreFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData => CommandAllowlistStoreFailure::InvalidStoredData,
+        KnowledgeStoreFailure::IdentityConflict => CommandAllowlistStoreFailure::ProjectMismatch,
     }
 }
 

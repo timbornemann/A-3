@@ -56,6 +56,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Mismatch ohne Grantverbrauch, einmalige Consumption, Widerruf, restriktive Workspace-Regeln und
   vollständigen Rollback von Decision, Request, Event und Runprojektion bei veraltetem
   Runsequenz-CAS.
+- V19-Command-Allowlist-Contracts prüfen leeren Anfangszustand, exakte Confirmation, Reopen,
+  monotone Revisionen, vollständigen Rollback eines veralteten CAS und Worktree-Isolation. Die
+  Migrationstests prüfen zusätzlich V18→V19-Rollback, unveränderliche Revisionen und die allein
+  erlaubte Worktree-Reconciliation-Cascade.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
@@ -196,6 +200,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   erzeugten Kindprozesses bei Cancellation und lückenlos terminierende Stream-Events. Ein
   Mehr-MiB-Ausgabestrom muss trotz kleinem Retained Limit vollständig gedraint werden; Secret-
   Kandidaten dürfen weder im Resultat noch in Stream-Events erscheinen.
+- Command-Discovery-Akzeptanz veröffentlicht reale Rust-, TypeScript-Monorepo- und
+  Python-Fixtures über den Fast Index. Sie prüft Cargo `--offline --locked`, eindeutige
+  Package-Manager-Evidence, Root- und Package-CWD, Python-Modulbefehle, die Abwesenheit jeder
+  Installationskategorie sowie plan-ungebundene, nicht automatisch erlaubte `ProcessSpec`-
+  Vorschauen. Das Node-Fixture besitzt bewusst keine Lockdatei; dennoch wird kein Installversuch
+  erzeugt oder gestartet.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

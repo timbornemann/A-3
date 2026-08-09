@@ -8,6 +8,7 @@ mod agent_read_result;
 mod agent_recovery;
 mod agent_source_reader;
 mod agent_turn;
+mod command_discovery;
 mod context_compiler;
 mod deep_map_action_codec;
 mod deep_map_explorer;
@@ -83,6 +84,12 @@ pub use agent_turn::{
     AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,
     AgentReadToolsFuture, AgentTurnExecution, AgentTurnOutcome, AgentTurnRejectionReason,
     ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
+};
+pub use command_discovery::{
+    CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
+    CommandAllowlistStoreVersion, CommandAllowlistStoreVersionError, CommandDiscoveryFailure,
+    ConfirmProjectCommandAllowlist, ConfirmProjectCommandAllowlistError, DiscoverProjectCommands,
+    LoadProjectCommandAllowlist, PrepareDiscoveredCommand, StoredProjectCommandAllowlist,
 };
 pub use context_compiler::{
     AgentContextCompileInput, AgentContextCompileInputError, AgentContextCompiler,

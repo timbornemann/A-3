@@ -96,6 +96,28 @@ ProcessSpec
 
 Shellmodus ist eine eigene hochriskante Aktion und immer freigabepflichtig.
 
+### Manifest-Command-Discovery
+
+- Der Command-Katalog stammt ausschließlich aus aktuellen `FileRevision`- und
+  `EvidenceRef`-Belegen des atomar publizierten Fast Index; der Adapter liest für E5 keinen
+  Manifesttext außerhalb dieses Pfads nach.
+- Die geschlossene Kategorie enthält nur Test, Build, Lint und Format. Paketinstallation,
+  Lifecycle-Skripte, Shell Mode, Netzwerkziele und beliebige offene Commands sind keine
+  Discovery-Ausgabe.
+- Rust Test, Build und Clippy verwenden `--offline --locked`; eine fehlende Lockdatei oder ein
+  fehlender lokaler Cache führt zu einem Fehler statt zu Auflösung oder Download. Format prüft nur.
+- Node-Skripte werden ausschließlich als direkte `pnpm|npm|yarn run <script-name>`-argv gezeigt,
+  wenn ein eindeutiger aktueller Manager-Marker am Package oder einem Vorfahren belegt ist. Der
+  Package Manager kann das ausdrücklich bestätigte Repositoryskript intern interpretieren; A^3
+  startet weder einen verborgenen Shell-Fallback noch zeigt einen rohen Skriptwert als sichere
+  Instruktion an.
+- `ProcessSpec`-Vorschauen sind plan-ungebunden und daher nicht automatisch ausführbar. Erst eine
+  explizit persistierte Auswahl des exakten Katalog-Digests und eine validierte `TaskStepId`
+  erlauben der unveränderten zentralen Policy, den bekannten netzwerkfreien Spec erneut zu prüfen.
+- Eine Manifest- oder Manageränderung ändert Command- beziehungsweise Katalog-ID. Eine alte
+  Projekt-Allowlist wird dann abgelehnt; sie ist kein wiederverwendeter `ApprovalGrant` und kann
+  keine Sicherheitsregel lockern.
+
 ## Aktionsklassen
 
 | Klasse | Beispiel | Standard |

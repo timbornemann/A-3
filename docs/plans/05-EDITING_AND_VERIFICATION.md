@@ -127,7 +127,8 @@ Akzeptanz:
 
 Verifiziert am 2026-08-09: `ProcessSpecSchemaVersion::V1` bindet exakte argv-Grenzen, Run,
 Worktree, kanonisches CWD, Executable, eine sortierte Env-Allowlist, positive Timeout- und getrennte
-Outputlimits, Plan/Verification sowie Network Scope in einen domain-separierten Policy-Fingerprint.
+Outputlimits, eine optionale Bindung an einen validierten TaskStep sowie Network Scope in einen
+domain-separierten Policy-Fingerprint.
 Shell Mode ist nicht konstruierbar. Nur plan-gebundene bekannte sichere Commands ohne Netzwerk
 können eine echte `SystemAutomatic`-Entscheidung konsumieren; Open- und Netzwerkaktionen bleiben
 freigabepflichtig. `AuthorizedProcessSpec` lehnt jede Abweichung von Run, Fingerprint, Scope,
@@ -168,17 +169,45 @@ grün.
 
 Abhängigkeiten: Fast Index, E4
 
-- [ ] sichere Test-, Build-, Lint- und Formatbefehle aus Manifesten ableiten
-- [ ] Commands als ProcessSpec anzeigen
-- [ ] Allowlist je Projekt bestätigen
-- [ ] kein automatisches Paketinstall
-- [ ] Working Directory je Package
+- [x] sichere Test-, Build-, Lint- und Formatbefehle aus Manifesten ableiten
+- [x] Commands als ProcessSpec anzeigen
+- [x] Allowlist je Projekt bestätigen
+- [x] kein automatisches Paketinstall
+- [x] Working Directory je Package
 
 Akzeptanz:
 
 - Rust-, Node- und Python-Fixtures erhalten korrekte Standardbefehle;
 - Lockfile-fehlender Installversuch startet nicht automatisch;
 - Monorepo-Kommandos laufen im richtigen Package.
+
+Verifiziert am 2026-08-09: Der versionierte Domain-Katalog akzeptiert ausschließlich die
+geschlossenen Arten Test, Build, Lint und Format. Der Katalog-Digest bindet den Worktree; jeder
+Command-Digest bindet CWD, Executable, argv, Env, Limits und konkrete Manifest- oder
+Source-Evidence. Jede evidenzwirksame Katalogänderung macht eine Bestätigung stale. Vorschauen
+bleiben bis zur exakten,
+projektbezogenen Allowlist-Bestätigung ungebunden und niemals automatisch ausführbar. Erst die
+zusätzliche Bindung an einen validierten TaskStep erzeugt einen `KnownSafe`-`ProcessSpec`; dessen
+Ausführung bleibt dem zentralen E4-Policy- und Runner-Pfad vorbehalten.
+
+Die Application Discovery arbeitet ausschließlich auf dem veröffentlichten Fast-Index. Rust erhält
+offline und lockfilegebundene Cargo-Kommandos, Node nur benannte Test-/Build-/Lint-/Format-Skripte
+mit genau einem nächstgelegenen indexierten pnpm-, npm- oder Yarn-Marker und Python nur statisch aus
+seinen Manifestrelationen ableitbare Module. Install- und Lifecycle-Skripte sind nicht
+repräsentierbar; ein fehlender oder mehrdeutiger Package-Manager-Marker erzeugt keinen Node-Command.
+Jeder Monorepo-Command trägt das Package-Verzeichnis als eigenes CWD. Die append-only
+Knowledge-Schema-V19-Persistenz speichert monotone Allowlist-Revisionen mit Compare-and-Swap und
+Worktree-Isolation; nur die dokumentierte Identity-Reconciliation darf IDs kaskadieren.
+
+Zwei Domain-Tests, drei Application-Tests, der gemeinsame LibSQL-Allowlist-Contract sowie die echte
+Rust-/pnpm-Monorepo-/Python-Fixture belegen Ableitung, Bestätigung, Freshness, Reopen, stale CAS,
+fehlendes Lockfile, ausgeschlossene Installbefehle und Package-CWD. Formatcheck, Workspace-Clippy
+über alle Targets/Features mit `-D warnings`, Rustdoc mit `-D warnings`, Node 24.14.0/pnpm 11.9.0,
+Frontendformat/Lint/Typecheck, 20 Frontend- und vier Tooltests, Build, 45 Markdown-Dateien mit 66
+Links, Lizenzbericht sowie der vollständige Linux-`quality`-Job über `act` sind grün. Der
+Windows-Workspace-Sammellauf erreichte nach grünen Rust-Tests erneut den bereits dokumentierten
+nativen libSQL-Worker-Absturz `0xc0000005`; der vollständige Linux-Lauf bestand dieselben 27
+Knowledge-Contracts einschließlich E5.
 
 ## E6 Verification Engine
 

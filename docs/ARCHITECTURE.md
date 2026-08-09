@@ -303,8 +303,26 @@ Adapter drainiert stdout und stderr auch nach Erreichen der Retained Limits, lie
 sequenzierte begrenzte Events und joint alle Reader vor dem terminalen Resultat. Timeout,
 Cancellation und Event-Sink-Fehler beenden die gesamte Gruppe und warten sie ein. Das Resultat
 enthält vollständige Bytezähler und Digests, aber nur secret-geprüfte begrenzte Inhalte. E4 führt
-weder Manifest-Command-Discovery aus E5 noch Verification-Klassifikation aus E6 oder die
-controllerweite Mutationsserialisierung und Evidence-Invalidierung aus E7 vorweg.
+weder Verification-Klassifikation aus E6 noch die controllerweite Mutationsserialisierung und
+Evidence-Invalidierung aus E7 vorweg.
+
+M7/E5 liest keine Manifestdatei erneut und vertraut keinem Repositorytext als Instruktion. Der
+Application-Use-Case `DiscoverProjectCommands` konsumiert ausschließlich `manifest_files` und
+`Manifest`-Relationen eines atomar publizierten `PublishedIndex`. Rust-Befehle verwenden direkte
+Cargo-argv mit `--offline` und für Test, Build und Clippy zusätzlich `--locked`. Node-Befehle werden
+nur für explizite test-, build-, lint- oder format-Skriptnamen und genau einen durch aktuellen
+pnpm-, npm- oder Yarn-Marker belegten Package Manager erzeugt. Python-Befehle entstehen nur aus
+belegten Build-, pytest-, Ruff-, Black- oder Mypy-Relationen. Package-Eltern bestimmen das
+`WorkspaceDirectory`; mehrdeutige Node-Package-Manager und alle Install-/Lifecycle-Skripte liefern
+kein Kommando.
+
+`ProjectCommandCatalog` erzeugt plan-ungebundene `ProcessSpec`-Vorschauen. Die separate
+`CommandAllowlistStore`-Grenze persistiert eine explizite Auswahl append-only in der privaten
+Worktree-Datenbank. Der libSQL-Adapter verwendet monotone Revisionen und `IMMEDIATE`-CAS; eine
+veraltete Bestätigung schreibt keine Teilzeile. Erst aktueller Katalog, passende gespeicherte
+Allowlist und validierte `TaskStepId` ergeben einen automatisch policy-fähigen Spec. Ein
+Package-Manager kann ein bestätigtes Repositoryskript intern über seinen eigenen Interpreter
+ausführen; A^3 selbst fügt dabei keine Shell ein und bestätigt niemals einen rohen Skriptwert.
 
 ### Agentenlauf nach Appneustart
 

@@ -4,6 +4,7 @@ mod agent_run;
 mod agent_tool;
 mod approval;
 mod claim_verification;
+mod command_discovery;
 mod context_pack;
 mod deep_map;
 mod deep_map_explorer;
@@ -79,6 +80,11 @@ pub use claim_verification::{
     VerifiedClaimKind, VerifiedClaimStatus, VerifiedModuleCard, VerifiedModuleCardBatch,
     VerifiedModuleClaim,
 };
+pub use command_discovery::{
+    CommandCatalogError, CommandDiscoverySchemaVersion, CommandEvidence, DiscoveredCommand,
+    DiscoveredCommandError, DiscoveredCommandKind, DiscoveredCommandProcessError,
+    ProjectCommandAllowlist, ProjectCommandAllowlistError, ProjectCommandCatalog,
+};
 pub use context_pack::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
     ContextDigest, ContextSection,
@@ -137,10 +143,10 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, IndexRunId, PolicyDecisionId,
-    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
-    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationSpecId,
-    WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
+    DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity,
+    RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
+    ToolRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,

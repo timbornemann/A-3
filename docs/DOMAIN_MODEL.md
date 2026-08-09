@@ -566,7 +566,8 @@ erfolgreiche Gesamtanwendung ausgeben oder verbergen.
 `ProcessSpecSchemaVersion::V1` beschreibt genau einen direkten argv-Prozessstart. Die
 Spezifikation bindet Run, Worktree, Arbeitsverzeichnis, ausführbare Datei, höchstens 256 einzelne
 Argumente, eine kanonische Umgebungs-Variablen-Allowlist, Timeout, getrennte stdout-/stderr-Limits,
-Execution Mode, TaskStep, Verification und Network Scope. Argumentgrenzen bleiben erhalten; es
+Execution Mode, eine optionale Bindung an genau einen validierten TaskStep und Network Scope.
+Argumentgrenzen bleiben erhalten; es
 gibt weder String-Splitting noch Shell-Interpretation. Ein domain-separiert abgeleiteter
 `PolicyResourceId` umfasst alle ausführungsrelevanten Felder und ist zugleich der exakte
 Policy-Fingerprint der Spezifikation.
@@ -586,6 +587,25 @@ Secret-Kandidaten oder unsichere Steuerzeichen erzeugen nur eine content-freie
 `ProcessOutputRedaction`; Überlauf wird sichtbar markiert und dennoch vollständig bis EOF
 verworfen. Lückenlos sequenzierte Started-, Output-, Truncated-, Redacted- und Terminated-Events
 machen Fortschritt, Backpressure-Fehler und das terminale Ergebnis prüfbar.
+
+### ProjectCommandCatalog und ProjectCommandAllowlist
+
+`CommandDiscoverySchemaVersion::V1` erzeugt aus dem atomar publizierten Fast Index einen
+deterministischen, worktreegebundenen `ProjectCommandCatalog`. Seine geschlossene
+`DiscoveredCommandKind`-Union enthält ausschließlich `Test`, `Build`, `Lint` und `Format`; ein
+Installationskommando ist nicht darstellbar. Jedes `DiscoveredCommand` bindet Kategorie,
+package-lokales `WorkspaceDirectory`, direktes Executable, einzelne argv-Werte und höchstens 16
+aktuelle `FileRevision`- oder `EvidenceRef`-Belege. `DiscoveredCommandId` und `CommandCatalogId`
+werden domain-separiert aus diesen Feldern abgeleitet; eine relevante Manifest- oder
+Package-Manager-Änderung erzeugt deshalb eine andere Identität.
+
+Eine Anzeige wird bereits als `ProcessSpec` erzeugt, bleibt aber
+`ProcessPlanBinding::Unbound` und ist damit nicht automatisch ausführbar. Der Benutzer kann eine
+begrenzte Teilmenge genau dieses Katalogs als `ProjectCommandAllowlist` bestätigen. Nur wenn
+Worktree, vollständiger Katalog-Digest und Command-ID weiterhin identisch sind, darf der
+Application-Use-Case zusammen mit einer `TaskStepId` einen `KnownSafe`, netzwerkfreien,
+plan-gebundenen `ProcessSpec` bilden. Diese Bestätigung ersetzt weder die zentrale PolicyDecision
+noch eine einmalige privilegierte Freigabe und kann Workspace- oder Systempolicy nicht lockern.
 
 ### Agent Run
 

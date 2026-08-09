@@ -67,8 +67,13 @@ unverändert. M7/E4 ergänzt einen streng argv-basierten `ProcessRunner` mit kan
 Executable-Prüfung, leerer Umgebung plus expliziter Variablen-Allowlist, wakebarer Cancellation,
 Timeout und vollständiger Prozessgruppenbeendigung. Begrenzte stdout-/stderr-Reader drainieren
 Überlauf ohne Deadlock; lückenlos sequenzierte Events und secret-geprüfte Resultate behalten nur
-freigegebene Inhalte, aber Digest und Bytezahl der vollständigen Ausgabe. Als Nächstes folgt E5
-mit der Manifest-Command-Discovery. Die
+freigegebene Inhalte, aber Digest und Bytezahl der vollständigen Ausgabe. M7/E5 leitet
+evidenzgebundene Rust-, Node- und
+Python-Test-/Build-/Lint-/Formatbefehle aus dem atomar publizierten Fast Index ab, zeigt sie als
+plan-ungebundene `ProcessSpec`-Vorschauen und bindet eine Ausführung an eine append-only
+projektbezogene Benutzer-Allowlist plus validierten Task-Schritt. Package-CWDs bleiben erhalten;
+Installationsbefehle werden nicht dargestellt, und ein Manifestwechsel macht die Bestätigung
+stale. Als Nächstes folgt E6 mit der Verification Engine. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

@@ -5,6 +5,7 @@
 
 mod agent_recovery;
 mod catalog;
+mod command_allowlist;
 mod fixture;
 mod goal_contract;
 mod index;
@@ -17,10 +18,10 @@ mod semantic;
 mod task_ledger;
 
 use a3_application::{
-    AgentActionStore, AgentRecoveryStore, GoalContractStore, KnowledgeIndexStore,
-    KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore, RunJournalStore,
-    SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore, TaskLensIndexStore,
-    VerifiedModuleCardPublisher,
+    AgentActionStore, AgentRecoveryStore, CommandAllowlistStore, GoalContractStore,
+    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore,
+    RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore,
+    TaskLensIndexStore, VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -204,6 +205,7 @@ pub trait KnowledgeStoreContractFactory {
         + TaskLedgerStore
         + AgentActionStore
         + AgentRecoveryStore
+        + CommandAllowlistStore
         + PolicyStore
         + RunJournalStore
         + KnowledgeSearchStore
@@ -252,6 +254,8 @@ pub enum KnowledgeStoreContractGroup {
     AgentRecovery,
     /// Central policy decisions and exact one-time approval lifecycle.
     Policy,
+    /// Append-only project command confirmations, CAS, reopen, and worktree isolation.
+    CommandAllowlists,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -324,6 +328,9 @@ where
             agent_recovery::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::Policy => policy::verify(factory, &workspace).await,
+        KnowledgeStoreContractGroup::CommandAllowlists => {
+            command_allowlist::verify(factory, &workspace).await
+        }
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(
                 factory,

@@ -2,6 +2,7 @@
 
 mod agent_recovery_repository;
 mod catalog;
+mod command_allowlist_repository;
 mod exact_search_projection;
 mod exact_search_repository;
 mod goal_contract_repository;

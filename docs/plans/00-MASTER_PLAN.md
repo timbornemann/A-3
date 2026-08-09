@@ -107,6 +107,7 @@ Ein Nutzer kann:
 - [x] begrenzte sichere Dateiwerkzeuge und evidenzgebundenes Directory Listing
 - [x] hashgeschützte PatchAction
 - [x] argv ProcessRunner
+- [x] evidenzgebundene Command Discovery und projektbezogene Allowlist
 - [ ] Test- und Buildverifikation
 - [ ] Replan und Failure Recovery
 - [ ] ein Mutations-Lock pro Worktree

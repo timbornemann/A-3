@@ -125,8 +125,14 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Runprojektion, Event und optionaler One-time-Verbrauch werden gemeinsam per Runsequenz-CAS in
   einer `IMMEDIATE`-Transaktion committed. Grant und Widerruf besitzen je eine eigene atomare
   User-Audit-Transaktion.
+- Knowledge-Schema V19 ergänzt `command_allowlist_revisions` und
+  `command_allowlist_entries`. Jede Benutzerbestätigung bindet Worktree, monotonen CAS-Stand,
+  exakten Katalog-Digest, Zeitpunkt und eine kanonische nicht leere Teilmenge von höchstens 256
+  Command-IDs. Revisionen und Einträge sind append-only; ausschließlich die kontrollierte
+  Worktree-Reconciliation darf ihre Worktree-ID über Fremdschlüssel-Cascade umschreiben.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
-  Isolation, Publish, Rebuild, IndexRun-Übergänge sowie Policy-/Approval-Lifecycle ausschließlich
+  Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle und die
+  projektbezogene Command-Allowlist ausschließlich
   über die Application-Ports. Der libSQL-Adapter liefert nur eine Factory für temporäre
   App-Data-Roots; engine-spezifische Migration-, Crash-, Korruptions- und Schema-Negativtests
   bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
@@ -313,6 +319,8 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - approval_requests
 - approval_grants
 - policy_decisions
+- command_allowlist_revisions
+- command_allowlist_entries
 
 ## Schlüsselinvarianten
 
@@ -376,6 +384,10 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   referenziert genau die erlaubende Decision; Grant und Widerruf referenzieren genau ihr explizites
   User-Audit-Event. Terminale Grants und append-only Requests/Decisions können nicht umgeschrieben
   oder gelöscht werden.
+- Jede Command-Allowlist-Revision ist append-only und pro Worktree monoton. Ihre Einträge sind
+  ordinal lückenlos, eindeutig und auf 256 begrenzt. Ein veralteter erwarteter Revisionsstand
+  rollt die gesamte Bestätigung zurück; ein aktueller Command-Katalog akzeptiert sie nur bei
+  identischem Worktree, Katalog-Digest und bestätigter Command-ID.
 - Context Pack speichert keine Secrets und kann nach Retention-Policy komprimiert werden.
 
 ## Transaktionen
@@ -447,6 +459,14 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V19 ergänzt V18 um die dauerhafte projektbezogene
+Command-Allowlist. `command_allowlist_revisions` und `command_allowlist_entries` sind append-only,
+streng worktreegebunden und erlauben nur der kontrollierten Identitäts-Reconciliation ein
+Worktree-ID-Cascade. Der gemeinsame Adaptervertrag belegt leeren Anfangszustand, Confirmation,
+Reopen, monotone Revision, vollständigen CAS-Rollback und Worktree-Isolation. Migrationstests
+decken leeres Schema, jeden Vorgänger bis V18, den vollständigen Rollback eines fehlgeschlagenen
+V18→V19-Upgrades sowie die allein zulässige Reconciliation-Cascade ab.
+
 Das implementierte Knowledge-Schema V18 ergänzt V17 um die zentrale Policy- und
 Approval-Persistenz. `approval_requests` und `policy_decisions` sind unveränderlich und
 append-only; `approval_grants` erlaubt nur einen einmaligen terminalen Übergang. Relationale Checks,
@@ -487,7 +507,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V18 in einer eigenen atomaren Migration.
+Vorgängerversion bis V19 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

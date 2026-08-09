@@ -108,6 +108,11 @@ fn libsql_satisfies_shared_policy_contract() -> Result<(), ContractError> {
 }
 
 #[test]
+fn libsql_satisfies_shared_command_allowlist_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::CommandAllowlists)
+}
+
+#[test]
 fn libsql_satisfies_shared_search_availability_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::SearchAvailability)
 }

@@ -1782,6 +1782,56 @@ const KNOWLEDGE_POLICY_APPROVAL_MIGRATION: Migration = Migration {
         ON policy_decisions(run_id, decided_at_unix_millis, policy_decision_id);",
 };
 
+const KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION: Migration = Migration {
+    version: 19,
+    name: "project_command_allowlists",
+    sql: "CREATE TABLE command_allowlist_revisions (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      revision INTEGER NOT NULL CHECK (revision > 0),\n\
+      catalog_id BLOB NOT NULL CHECK (length(catalog_id) = 32),\n\
+      confirmed_at_unix_millis INTEGER NOT NULL CHECK (confirmed_at_unix_millis >= 0),\n\
+      PRIMARY KEY (worktree_id, revision),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE command_allowlist_entries (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      revision INTEGER NOT NULL CHECK (revision > 0),\n\
+      ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 255),\n\
+      command_id BLOB NOT NULL CHECK (length(command_id) = 32),\n\
+      PRIMARY KEY (worktree_id, revision, ordinal),\n\
+      UNIQUE (worktree_id, revision, command_id),\n\
+      FOREIGN KEY (worktree_id, revision)\n\
+        REFERENCES command_allowlist_revisions(worktree_id, revision)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE INDEX command_allowlist_latest_idx\n\
+        ON command_allowlist_revisions(worktree_id, revision DESC);\n\
+      CREATE TRIGGER command_allowlist_revisions_update_guard\n\
+      BEFORE UPDATE ON command_allowlist_revisions\n\
+      WHEN NEW.worktree_id = OLD.worktree_id OR NEW.revision <> OLD.revision\n\
+        OR NEW.catalog_id <> OLD.catalog_id\n\
+        OR NEW.confirmed_at_unix_millis <> OLD.confirmed_at_unix_millis\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'command allowlist revisions are immutable');\n\
+      END;\n\
+      CREATE TRIGGER command_allowlist_revisions_delete_guard\n\
+      BEFORE DELETE ON command_allowlist_revisions BEGIN\n\
+        SELECT RAISE(ABORT, 'command allowlist revisions are append-only');\n\
+      END;\n\
+      CREATE TRIGGER command_allowlist_entries_update_guard\n\
+      BEFORE UPDATE ON command_allowlist_entries\n\
+      WHEN NEW.worktree_id = OLD.worktree_id OR NEW.revision <> OLD.revision\n\
+        OR NEW.ordinal <> OLD.ordinal OR NEW.command_id <> OLD.command_id\n\
+      BEGIN\n\
+        SELECT RAISE(ABORT, 'command allowlist entries are immutable');\n\
+      END;\n\
+      CREATE TRIGGER command_allowlist_entries_delete_guard\n\
+      BEFORE DELETE ON command_allowlist_entries BEGIN\n\
+        SELECT RAISE(ABORT, 'command allowlist entries are append-only');\n\
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1801,6 +1851,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_TOOL_EVIDENCE_MIGRATION,
     KNOWLEDGE_AGENT_RECOVERY_MIGRATION,
     KNOWLEDGE_POLICY_APPROVAL_MIGRATION,
+    KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1833,7 +1884,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(18);
+    pub const CURRENT: Self = Self::new(19);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2243,11 +2294,12 @@ mod tests {
                      'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
                      'agent_runs', 'run_events', 'tool_runs', 'tool_evidence',\n\
                      'tool_run_attempts', 'approval_requests', 'approval_grants',\n\
-                     'policy_decisions'\n\
+                     'policy_decisions', 'command_allowlist_revisions',\n\
+                     'command_allowlist_entries'\n\
                      )",
                 )
                 .await?,
-                50
+                52
             );
             assert_eq!(
                 query_i64(
@@ -2298,6 +2350,67 @@ mod tests {
                 )
                 .await?,
                 2
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn command_allowlist_history_allows_only_identity_reconciliation_cascade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [1; 32];
+            let worktree_id = [2; 32];
+            super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+            connection
+                .execute(
+                    "INSERT INTO command_allowlist_revisions
+                     (worktree_id, revision, catalog_id, confirmed_at_unix_millis)
+                     VALUES (?1, 1, ?2, 1)",
+                    params![worktree_id.to_vec(), vec![3_u8; 32]],
+                )
+                .await?;
+            connection
+                .execute(
+                    "INSERT INTO command_allowlist_entries
+                     (worktree_id, revision, ordinal, command_id)
+                     VALUES (?1, 1, 0, ?2)",
+                    params![worktree_id.to_vec(), vec![4_u8; 32]],
+                )
+                .await?;
+            assert!(
+                connection
+                    .execute(
+                        "UPDATE command_allowlist_revisions SET catalog_id = ?1
+                         WHERE worktree_id = ?2 AND revision = 1",
+                        params![vec![5_u8; 32], worktree_id.to_vec()],
+                    )
+                    .await
+                    .is_err()
+            );
+
+            let reconciled_worktree_id = [6; 32];
+            connection
+                .execute(
+                    "UPDATE worktrees SET worktree_id = ?1 WHERE worktree_id = ?2",
+                    params![reconciled_worktree_id.to_vec(), worktree_id.to_vec()],
+                )
+                .await?;
+
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM command_allowlist_entries
+                     WHERE worktree_id = x'0606060606060606060606060606060606060606060606060606060606060606'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -3223,6 +3336,58 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
                      AND name = 'policy_decisions'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v19_upgrade_preserves_v18_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [62; 32];
+            let worktree_id = [63; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..18],
+                18,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TABLE command_allowlist_revisions (conflict INTEGER)",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 19, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 18);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('command_allowlist_revisions')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'command_allowlist_entries'",
                 )
                 .await?,
                 0

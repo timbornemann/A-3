@@ -118,6 +118,14 @@ stable_id!(
     /// Content-free identity of one external or executable policy resource.
     PolicyResourceId
 );
+stable_id!(
+    /// Stable identity of one manifest-evidenced discovered project command.
+    DiscoveredCommandId
+);
+stable_id!(
+    /// Stable identity of one complete project command catalog revision.
+    CommandCatalogId
+);
 
 fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     for byte in bytes {
@@ -129,10 +137,10 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, IndexRunId,
-        PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
-        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
-        VerificationSpecId, WorktreeAnchorId, WorktreeId,
+        AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
+        DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId,
+        RemoteIdentity, RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId,
+        TaskId, TaskStepId, ToolRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -162,5 +170,7 @@ mod tests {
         assert_eq!(ApprovalRequestId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(ApprovalId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(PolicyResourceId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(DiscoveredCommandId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(CommandCatalogId::from_bytes(bytes).as_bytes(), &bytes);
     }
 }
