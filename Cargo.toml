@@ -35,6 +35,7 @@ a3-storage-libsql = { path = "crates/a3-storage-libsql" }
 a3-storage-contract-tests = { path = "tests/storage-contract" }
 a3-workspace = { path = "crates/a3-workspace" }
 blake3 = "=1.8.5"
+command-group = { version = "=5.0.1", default-features = false }
 crossbeam-channel = "=0.5.16"
 futures = "=0.3.32"
 gix = { version = "=0.86.0", default-features = false, features = ["sha1", "sha256"] }

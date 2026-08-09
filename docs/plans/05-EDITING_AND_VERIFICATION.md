@@ -110,13 +110,13 @@ sechs E3-, sieben Project-Catalog- und 26 Shared-Storage-Contracts separat.
 
 Abhängigkeiten: E1
 
-- [ ] argv-basierter Start
-- [ ] CWD- und Executable-Policy
-- [ ] Env-Allowlist
-- [ ] Timeout und Cancellation
-- [ ] Outputcap und Stream Events
-- [ ] Prozessbaumbeendigung Windows, Linux, macOS
-- [ ] Network-Klassifikation
+- [x] argv-basierter Start
+- [x] CWD- und Executable-Policy
+- [x] Env-Allowlist
+- [x] Timeout und Cancellation
+- [x] Outputcap und Stream Events
+- [x] Prozessbaumbeendigung Windows, Linux, macOS
+- [x] Network-Klassifikation
 
 Akzeptanz:
 
@@ -124,6 +124,45 @@ Akzeptanz:
 - Endlosprozess endet nach Timeout;
 - Child-Prozess bleibt nach Cancel nicht bestehen;
 - Outputoverflow blockiert den Prozess nicht.
+
+Verifiziert am 2026-08-09: `ProcessSpecSchemaVersion::V1` bindet exakte argv-Grenzen, Run,
+Worktree, kanonisches CWD, Executable, eine sortierte Env-Allowlist, positive Timeout- und getrennte
+Outputlimits, Plan/Verification sowie Network Scope in einen domain-separierten Policy-Fingerprint.
+Shell Mode ist nicht konstruierbar. Nur plan-gebundene bekannte sichere Commands ohne Netzwerk
+können eine echte `SystemAutomatic`-Entscheidung konsumieren; Open- und Netzwerkaktionen bleiben
+freigabepflichtig. `AuthorizedProcessSpec` lehnt jede Abweichung von Run, Fingerprint, Scope,
+ActionClass oder Risiko ab.
+
+Der Workspace-Adapter startet ausschließlich `std::process::Command` mit einzelnen Argumenten,
+geschlossenem stdin, geleerter Umgebung und explizit injizierten Allowlist-Werten. CWD und
+Executable werden kanonisiert; relative Executables dürfen nur eine Komponente besitzen und werden
+in einem expliziten absoluten `PATH` gesucht. Windows akzeptiert keine `.bat`-/`.cmd`-Interpreter.
+`command-group` 5.0.1 kapselt Unix Process Groups und Windows Job Objects mit Kill-on-Close. Beide
+Reader-Threads, der Gruppenprozess und der begrenzte 32-Slot-Channel besitzen einen Owner; Timeout,
+Cancellation und Event-Backpressure beenden die Gruppe und joinen alle Reader. stdout und stderr
+werden in 8-KiB-Blöcken auch nach dem Retained Limit bis EOF gedraint. Nur valides, secret-geprüftes
+UTF-8 darf in lückenlose Stream-Events oder das Resultat gelangen; Bytezahl und BLAKE3-Digest
+umfassen dennoch den vollständigen Stream. `Denied` bleibt eine Policy-Klassifikation und behauptet
+keine OS-Netzwerksandbox.
+
+Sieben Domain-/Policy-Tests, zwei Application-Autorisierungstests und sechs öffentliche
+Workspace-Contracts prüfen Shell-Metazeichen als ein Argument, CWD-/Executable- und Env-Policy,
+Timeout, Kindprozess-Cancellation, 2-MiB-Overflow bei 1-KiB-Retention, Secret-Redaction,
+Eventsequenz und Event-Sink-Abbruch. Dieselbe Suite ist unter Windows und im vollständigen
+Linux-`quality`-Job grün. Der gemeinsame Unix-Pfad und Vertrag sind in der CI-Plattformmatrix für
+macOS ARM64 und x86_64 verdrahtet; das übergeordnete Drei-OS-Prozessbaumgate bleibt bis zu diesen
+echten Plattformläufen offen.
+
+Formatcheck, Workspace-Clippy über alle Targets/Features mit `-D warnings`, Rustdoc mit
+`-D warnings`, Node 24.14.0/pnpm 11.9.0, Frontendformat/Lint/Typecheck, 20 Frontend- und vier
+Tooltests, Build, 45 Markdown-Dateien mit 66 Links, der Lizenzbericht ohne unbekannte Lizenzen und
+der vollständige Linux-`quality`-Job über `act` sind grün. Zwei frische Windows-Workspace-
+Sammelläufe erreichten ausschließlich wegen der unveränderten nativen libSQL-Worker
+`index_run_lifecycle_serializes_mutation_and_never_false_publishes` beziehungsweise
+`verified_module_cards_publish_atomically_with_evidence_and_search_projection` keinen grünen
+Gesamtstatus; beide endeten mit `0xc0000005` und bestanden anschließend isoliert mit
+Abschlussmarker. Die vollständige `a3-workspace`-Suite mit allen sechs E4-Contracts ist separat
+grün.
 
 ## E5 Command Discovery
 

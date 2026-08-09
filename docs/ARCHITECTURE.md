@@ -289,6 +289,23 @@ TaskStep, Verification und Basissnapshot und liefert die sortierten Pfade für d
 nächsten Modellturn auszulösende Evidence- und Indexinvalidierung. Fehler nach einer bereits
 sichtbaren Operation tragen dieses Change-Set ausdrücklich, statt die Mutation zu verbergen.
 
+M7/E4 ergänzt `ProcessRunner` als Application-Port mit einer einmalig verbrauchbaren
+`AuthorizedProcessSpec`; der Port enthält keine Betriebssystem-, Tauri- oder Persistenztypen. Der
+Workspace-Adapter baut einen direkten `std::process::Command`, prüft das CWD gegen den kanonischen
+Worktree, löst das Executable als kanonische reguläre Datei auf, leert die Umgebung und übernimmt
+nur explizit injizierte Allowlist-Werte.
+`command-group` kapselt dabei die vorhandenen Plattformprimitiven für eine eigene Unix Process
+Group beziehungsweise ein Windows Job Object. Die Abhängigkeit bleibt ausschließlich im
+Infrastruktur-Adapter; Domain und Application kennen weder die Bibliothek noch Plattformtypen.
+
+Jede Ausführung besitzt den Gruppenprozess, beide Reader-Threads und einen begrenzten Channel. Der
+Adapter drainiert stdout und stderr auch nach Erreichen der Retained Limits, liefert lückenlos
+sequenzierte begrenzte Events und joint alle Reader vor dem terminalen Resultat. Timeout,
+Cancellation und Event-Sink-Fehler beenden die gesamte Gruppe und warten sie ein. Das Resultat
+enthält vollständige Bytezähler und Digests, aber nur secret-geprüfte begrenzte Inhalte. E4 führt
+weder Manifest-Command-Discovery aus E5 noch Verification-Klassifikation aus E6 oder die
+controllerweite Mutationsserialisierung und Evidence-Invalidierung aus E7 vorweg.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

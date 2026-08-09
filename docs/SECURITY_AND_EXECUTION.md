@@ -277,6 +277,34 @@ ein vollständiges oder partielles `PatchChangeSet` zurück, sodass die bereits 
 weiterem Reasoning invalidiert werden können. Fremde Änderungen werden nie automatisch
 zurückgesetzt.
 
+E4 führt ausschließlich bereits policy-autorisierte `ProcessSpecSchemaVersion::V1` direkt als
+argv aus. Der Workspace-Adapter kanonisiert den Worktree und das Arbeitsverzeichnis nach
+Symlinkauflösung. Absolute Executables müssen reguläre ausführbare Dateien sein; relative Namen
+dürfen nur genau eine Komponente besitzen und werden ausschließlich in einem explizit injizierten
+absoluten `PATH` gesucht. Unter Windows sind nur reguläre Dateien mit `.exe` zulässig; das OS
+validiert das Binärformat beim Start. `.bat` und `.cmd` werden abgelehnt, weil sie einen Command
+Interpreter benötigen. stdin ist immer geschlossen.
+
+Vor jedem Start wird die Prozessumgebung geleert. Nur in der Spezifikation erlaubte Namen werden
+aus dem expliziten `ProcessHostEnvironment` übernommen; der Runner liest keine vollständige
+Ambient-Umgebung und gibt Werte weder in Debugausgaben noch in Fehlern wieder. Timeout und
+wakebare Cancellation beenden nicht nur den direkten Prozess, sondern dessen gesamte
+Prozessgruppe: auf Unix über eine eigene Process Group und auf Windows über ein Job Object mit
+Kill-on-Close. Prozess, stdout-/stderr-Reader und alle Channels besitzen einen Owner und werden vor
+der Rückkehr beendet beziehungsweise gejoint.
+
+stdout und stderr werden in 8-KiB-Blöcken über einen begrenzten Channel mit Backpressure gelesen.
+Nach dem konfigurierten Retained Limit werden weitere Bytes bis EOF verworfen, aber weiterhin in
+Bytezahl und Digest einbezogen, damit ein schreibender Kindprozess nicht am vollen Pipe-Puffer
+hängen bleibt. Nur valides, secret-geprüftes UTF-8 ohne unsichere Steuerzeichen darf als begrenztes
+Stream-Event oder Resultat erscheinen. Überlauf und Redaction bleiben eigene typisierte Events.
+
+`ProcessNetworkScope::Denied` ist in E4 eine deklarative Policy-Grenze: nur so klassifizierte
+sichere bekannte oder validierte Commands können automatisch freigegeben werden. E4 behauptet
+keine betriebssystemseitige Netzwerksandbox. Ein Command mit angefordertem Netzwerk wird als
+`ActionClass::Network` und `ApprovalRequired` klassifiziert; eine echte OS-Netzwerkisolation wäre
+eine neue Trust-Boundary-Entscheidung und benötigt einen eigenen ADR.
+
 `UpdateLedger` akzeptiert für Resultate nur controllerseitig erzeugte, snapshotgleiche Tool-
 Evidence und kann einen Schritt damit lediglich zur objektiven Verifikation vorbereiten. Die
 Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- und Run-CAS-Ankern

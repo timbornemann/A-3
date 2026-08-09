@@ -152,7 +152,7 @@ pub enum ProcessPlanBinding {
 /// Network boundary declared by a process specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProcessNetworkScope {
-    /// The process is constrained to no network access.
+    /// Policy declares that the process must not use network access; V1 is not an OS sandbox.
     Denied,
     /// One explicit content-free network target is requested.
     Requested(PolicyResourceId),

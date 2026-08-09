@@ -33,6 +33,7 @@ mod module_remap_queue;
 mod open_project;
 mod policy;
 mod policy_store;
+mod process_runner;
 mod project_reconciliation;
 mod recent_projects;
 mod repository_discovery;
@@ -184,6 +185,10 @@ pub use policy::{
 pub use policy_store::{
     GrantPolicyApproval, GrantPolicyApprovalError, PersistPolicyEvaluation, PolicyStore,
     PolicyStoreFailure, PolicyStoreFuture, RevokePolicyApproval, RevokePolicyApprovalError,
+};
+pub use process_runner::{
+    AuthorizedProcessSpec, ProcessAuthorizationError, ProcessEventSink, ProcessEventSinkError,
+    ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
 };
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,

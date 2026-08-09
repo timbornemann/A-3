@@ -10,6 +10,7 @@ license.workspace = true
 a3-application.workspace = true
 a3-domain.workspace = true
 blake3.workspace = true
+command-group.workspace = true
 gix.workspace = true
 rustix.workspace = true
 

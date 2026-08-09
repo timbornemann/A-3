@@ -25,6 +25,7 @@ mod patch;
 mod path;
 mod policy;
 mod policy_decision;
+mod process;
 mod retrieval;
 mod retrieval_fusion;
 mod revision;
@@ -200,6 +201,16 @@ pub use policy::{
 pub use policy_decision::{
     PolicyDecision, PolicyDecisionError, PolicyDecisionOutcome, PolicyDecisionReason,
     PolicyEvaluationTiming, PolicyEvaluationTimingError,
+};
+pub use process::{
+    ProcessArgument, ProcessArgumentError, ProcessDuration, ProcessEnvironmentVariable,
+    ProcessEnvironmentVariableError, ProcessEvent, ProcessEventKind, ProcessEventSequence,
+    ProcessEventSequenceError, ProcessExecutable, ProcessExecutableError, ProcessExit,
+    ProcessExitError, ProcessOutputCapture, ProcessOutputCaptureError, ProcessOutputChunk,
+    ProcessOutputChunkError, ProcessOutputContent, ProcessOutputContentError, ProcessOutputDigest,
+    ProcessOutputLimit, ProcessOutputLimitError, ProcessOutputRedaction, ProcessRunResult,
+    ProcessRunResultError, ProcessSpec, ProcessSpecError, ProcessSpecSchemaVersion, ProcessStream,
+    ProcessTermination, ProcessTimeout, ProcessTimeoutError,
 };
 pub use retrieval::{
     ExactSearchCursor, ExactSearchCursorError, ExactSearchExplanation, ExactSearchHit,

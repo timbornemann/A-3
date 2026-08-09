@@ -561,6 +561,32 @@ liefert die eindeutigen geordneten Änderungspfade für nachfolgende Invalidieru
 ein bloß vorgeschlagenes Ergebnis noch ein gewöhnlicher Fehler bereits ausgeführte Änderungen als
 erfolgreiche Gesamtanwendung ausgeben oder verbergen.
 
+### ProcessSpec und ProcessRunResult
+
+`ProcessSpecSchemaVersion::V1` beschreibt genau einen direkten argv-Prozessstart. Die
+Spezifikation bindet Run, Worktree, Arbeitsverzeichnis, ausführbare Datei, höchstens 256 einzelne
+Argumente, eine kanonische Umgebungs-Variablen-Allowlist, Timeout, getrennte stdout-/stderr-Limits,
+Execution Mode, TaskStep, Verification und Network Scope. Argumentgrenzen bleiben erhalten; es
+gibt weder String-Splitting noch Shell-Interpretation. Ein domain-separiert abgeleiteter
+`PolicyResourceId` umfasst alle ausführungsrelevanten Felder und ist zugleich der exakte
+Policy-Fingerprint der Spezifikation.
+
+Nur `ProcessExecutionMode::KnownSafe` mit `ProcessPlanBinding::Validated`, ohne Netzwerk und im
+direkten Modus darf die zentrale Systempolicy um automatische Freigabe bitten. Open Commands,
+Shell Mode und Netzwerk bleiben approval-pflichtig beziehungsweise werden in V1 vor Ausführung
+abgelehnt. Eine
+`AuthorizedProcessSpec` ist eine einmalig verbrauchte Application-Capability; sie entsteht nur aus
+einer erlaubenden Entscheidung mit identischem Run, Fingerprint, Scope, Actionklasse und Risiko.
+
+`ProcessRunResult` bindet den ausgeführten Spec-Digest und die Policy-Entscheidung an genau eine
+Termination (`Exited`, `TimedOut` oder `Cancelled`), begrenzte Dauer sowie getrennte
+`ProcessOutputCapture`s. Jede Capture enthält den BLAKE3-Digest und die beobachtete Bytezahl der
+vollständigen Ausgabe, aber höchstens das vorab festgelegte Retained Limit. Nicht valides UTF-8,
+Secret-Kandidaten oder unsichere Steuerzeichen erzeugen nur eine content-freie
+`ProcessOutputRedaction`; Überlauf wird sichtbar markiert und dennoch vollständig bis EOF
+verworfen. Lückenlos sequenzierte Started-, Output-, Truncated-, Redacted- und Terminated-Events
+machen Fortschritt, Backpressure-Fehler und das terminale Ergebnis prüfbar.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.

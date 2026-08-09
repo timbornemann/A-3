@@ -190,6 +190,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   unveränderte UTF-8-BOM-, CRLF- und Nicht-ASCII-Bytes. Die öffentliche Workspace-Port-Suite prüft
   die begrenzte Vorschau, tatsächliche Post-Patch-Hashes, No-Replace, Useränderung zwischen Preview
   und Apply, Symlink-/Junction-Escape und ein explizites partielles Change-Set nach spätem Konflikt.
+- ProcessRunner-Contracts kompilieren dasselbe argv-basierte Fixture auf Windows, Linux und macOS.
+  Sie prüfen unveränderte Argumentgrenzen trotz Shell-Metazeichen, kanonisches CWD und Executable,
+  eine geleerte Umgebung mit expliziter Allowlist, Timeout eines Endlosprozesses, Beendigung eines
+  erzeugten Kindprozesses bei Cancellation und lückenlos terminierende Stream-Events. Ein
+  Mehr-MiB-Ausgabestrom muss trotz kleinem Retained Limit vollständig gedraint werden; Secret-
+  Kandidaten dürfen weder im Resultat noch in Stream-Events erscheinen.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

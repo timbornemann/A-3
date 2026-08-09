@@ -63,7 +63,12 @@ begrenzter exakter Vorschau, einmaliger exakter Policy-Autorisierung, konfliktge
 Anwendung und vollständigem oder explizit partiellem Post-Patch-Change-Set. Staging im
 Zielverzeichnis, erneute Hashprüfung unmittelbar vor der ersten Mutation und No-Replace für neue
 Ziele verhindern stilles Überschreiben; UTF-8-BOM, Line Endings und nicht-ASCII-Bytes bleiben
-unverändert. Als Nächstes folgt E4 mit dem argv-basierten ProcessRunner. Die
+unverändert. M7/E4 ergänzt einen streng argv-basierten `ProcessRunner` mit kanonischer CWD- und
+Executable-Prüfung, leerer Umgebung plus expliziter Variablen-Allowlist, wakebarer Cancellation,
+Timeout und vollständiger Prozessgruppenbeendigung. Begrenzte stdout-/stderr-Reader drainieren
+Überlauf ohne Deadlock; lückenlos sequenzierte Events und secret-geprüfte Resultate behalten nur
+freigegebene Inhalte, aber Digest und Bytezahl der vollständigen Ausgabe. Als Nächstes folgt E5
+mit der Manifest-Command-Discovery. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
