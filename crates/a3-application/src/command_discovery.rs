@@ -1,6 +1,6 @@
 use a3_domain::{
-    AgentRunId, AgentRunTimestamp, CommandCatalogError, CommandDiscoverySchemaVersion,
-    CommandEvidence, DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandId,
+    AgentRunId, AgentRunTimestamp, CommandCatalogError, CommandDiscoveryEvidence,
+    CommandDiscoverySchemaVersion, DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandId,
     DiscoveredCommandKind, DiscoveredCommandProcessError, FileRevision, ProcessSpec,
     ProjectCommandAllowlist, ProjectCommandAllowlistError, ProjectCommandCatalog, ProjectIdentity,
     PublishedIndex, RepositoryPath, RepositoryPathError, SyntaxProvider, TaskStepId,
@@ -306,7 +306,7 @@ fn discover_rust(
             continue;
         }
         let directory = workspace_directory(manifest.path())?;
-        let evidence = || vec![CommandEvidence::File(manifest.clone())];
+        let evidence = || vec![CommandDiscoveryEvidence::File(manifest.clone())];
         commands.push(DiscoveredCommand::try_new(
             DiscoveredCommandKind::Test,
             directory.clone(),
@@ -379,8 +379,8 @@ fn discover_node(
             manager.to_owned(),
             vec!["run".to_owned(), script.to_owned()],
             vec![
-                CommandEvidence::Source(candidate.evidence().clone()),
-                CommandEvidence::File(manager_evidence.clone()),
+                CommandDiscoveryEvidence::Source(candidate.evidence().clone()),
+                CommandDiscoveryEvidence::File(manager_evidence.clone()),
             ],
         )?);
     }
@@ -404,7 +404,7 @@ fn discover_python(
         }
     }
     for (root, manifests) in roots {
-        let mut references = BTreeMap::<String, CommandEvidence>::new();
+        let mut references = BTreeMap::<String, CommandDiscoveryEvidence>::new();
         let mut has_build = None;
         for candidate in index.publication().graph().unresolved() {
             if candidate.provider() != SyntaxProvider::Manifest
@@ -418,7 +418,7 @@ fn discover_python(
             let UnresolvedGraphTarget::Reference(reference) = candidate.target() else {
                 continue;
             };
-            let evidence = CommandEvidence::Source(candidate.evidence().clone());
+            let evidence = CommandDiscoveryEvidence::Source(candidate.evidence().clone());
             references
                 .entry(reference.as_str().to_ascii_lowercase())
                 .or_insert_with(|| evidence.clone());
@@ -483,7 +483,7 @@ fn python_command(
     kind: DiscoveredCommandKind,
     directory: WorkspaceDirectory,
     arguments: &[&str],
-    evidence: CommandEvidence,
+    evidence: CommandDiscoveryEvidence,
 ) -> Result<DiscoveredCommand, DiscoveredCommandError> {
     DiscoveredCommand::try_new(
         kind,
@@ -495,9 +495,9 @@ fn python_command(
 }
 
 fn first_reference(
-    references: &BTreeMap<String, CommandEvidence>,
+    references: &BTreeMap<String, CommandDiscoveryEvidence>,
     predicate: impl Fn(&str) -> bool,
-) -> Option<CommandEvidence> {
+) -> Option<CommandDiscoveryEvidence> {
     references
         .iter()
         .find(|(reference, _)| predicate(reference))

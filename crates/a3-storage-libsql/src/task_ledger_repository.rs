@@ -1,15 +1,18 @@
 use crate::{catalog::is_corruption, goal_contract_repository};
 use a3_application::{StoredTaskLedger, TaskLedgerStoreFailure, TaskLedgerStoreVersion};
 use a3_domain::{
-    AgentRunId, ExpectedTaskEvidence, GoalContractReference, GoalContractRevision, StepDependency,
+    AcceptanceCriterionId, AgentRunId, DiagnosticPolicy, DiffInvariantMode,
+    DiffInvariantVerification, DiscoveredCommandId, ExpectedTaskEvidence, GoalContractReference,
+    GoalContractRevision, MinimumTestCaseCount, PolicyResourceId, RepositoryPath, StepDependency,
     StepVerification, StepVerificationId, StepVerificationOutcome, TaskEvidenceId, TaskId,
     TaskLedger, TaskLedgerReplan, TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason,
     TaskStep, TaskStepAttempt, TaskStepAttemptDetails, TaskStepAttemptNumber,
     TaskStepAttemptOutcome, TaskStepAttemptTiming, TaskStepBlockingReason,
     TaskStepCancellationReason, TaskStepDefinition, TaskStepFailureReason, TaskStepId,
     TaskStepMaterializedState, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary,
-    TaskStepStaleCause, TaskStepStatus, VerificationFailureSummary, VerificationMethod,
-    VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
+    TaskStepStaleCause, TaskStepStatus, TestCaseSelector, TestCaseSelectorName,
+    VerificationFailureSummary, VerificationMethod, VerificationRequirement, VerificationScope,
+    VerificationSpec, VerificationSpecId, VerificationTarget, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -164,7 +167,13 @@ async fn write_projection(
     ledger: &TaskLedger,
 ) -> Result<(), TaskLedgerRepositoryError> {
     for step in ledger.steps() {
-        write_step(transaction, ledger.task_id(), step).await?;
+        write_step(
+            transaction,
+            ledger.task_id(),
+            ledger.goal_contract().revision(),
+            step,
+        )
+        .await?;
     }
     for replan in ledger.replans() {
         write_replan(transaction, ledger.task_id(), replan).await?;
@@ -175,6 +184,7 @@ async fn write_projection(
 async fn write_step(
     transaction: &Transaction,
     task_id: TaskId,
+    goal_revision: GoalContractRevision,
     step: &TaskStep,
 ) -> Result<(), TaskLedgerRepositoryError> {
     let definition = step.definition();
@@ -213,6 +223,24 @@ async fn write_step(
         )
         .await
         .map_err(classify_unexpected_constraint)?;
+
+    write_operational_spec(transaction, task_id, definition.verification_spec()).await?;
+    for criterion_id in definition.acceptance_criteria() {
+        transaction
+            .execute(
+                "INSERT INTO task_step_acceptance_criteria (
+                 task_id, step_id, goal_revision, criterion_id
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    id_bytes(task_id),
+                    id_bytes(definition.id()),
+                    i64::from(goal_revision.get()),
+                    id_bytes(*criterion_id)
+                ],
+            )
+            .await
+            .map_err(classify_unexpected_constraint)?;
+    }
 
     for (index, dependency) in definition.dependencies().iter().enumerate() {
         transaction
@@ -259,6 +287,126 @@ async fn write_step(
             evidence_ids,
         )
         .await?;
+    }
+    Ok(())
+}
+
+async fn write_operational_spec(
+    transaction: &Transaction,
+    task_id: TaskId,
+    spec: &VerificationSpec,
+) -> Result<(), TaskLedgerRepositoryError> {
+    match spec.target() {
+        VerificationTarget::Legacy(_) => return Ok(()),
+        VerificationTarget::Command { command_id, scope } => {
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, command_id, verification_scope
+                     ) VALUES (?1, ?2, 'command', ?3, ?4)",
+                    params![
+                        id_bytes(task_id),
+                        id_bytes(spec.id()),
+                        id_bytes(*command_id),
+                        verification_scope_text(*scope)
+                    ],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+        }
+        VerificationTarget::Test {
+            command_id,
+            selector,
+            minimum_cases,
+            scope,
+        } => {
+            let (selector_kind, selector_value) = match selector {
+                TestCaseSelector::All => ("all", None),
+                TestCaseSelector::Exact(name) => ("exact", Some(name.as_str())),
+            };
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, command_id, verification_scope,
+                     test_selector_kind, test_selector, minimum_test_cases
+                     ) VALUES (?1, ?2, 'test', ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        id_bytes(task_id),
+                        id_bytes(spec.id()),
+                        id_bytes(*command_id),
+                        verification_scope_text(*scope),
+                        selector_kind,
+                        selector_value,
+                        i64::from(minimum_cases.get())
+                    ],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+        }
+        VerificationTarget::DiffInvariant(invariant) => {
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, diff_mode
+                     ) VALUES (?1, ?2, 'diff_invariant', ?3)",
+                    params![
+                        id_bytes(task_id),
+                        id_bytes(spec.id()),
+                        diff_mode_text(invariant.mode())
+                    ],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+            for (index, path) in invariant.paths().iter().enumerate() {
+                transaction
+                    .execute(
+                        "INSERT INTO verification_spec_paths (
+                         task_id, verification_spec_id, item_sequence, repository_path
+                         ) VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            id_bytes(task_id),
+                            id_bytes(spec.id()),
+                            sequence_to_i64(index)?,
+                            path.as_bytes().to_vec()
+                        ],
+                    )
+                    .await
+                    .map_err(classify_unexpected_constraint)?;
+            }
+        }
+        VerificationTarget::Diagnostic {
+            command_id,
+            policy,
+            scope,
+        } => {
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, command_id, verification_scope,
+                     diagnostic_policy
+                     ) VALUES (?1, ?2, 'diagnostic', ?3, ?4, ?5)",
+                    params![
+                        id_bytes(task_id),
+                        id_bytes(spec.id()),
+                        id_bytes(*command_id),
+                        verification_scope_text(*scope),
+                        diagnostic_policy_text(*policy)
+                    ],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+        }
+        VerificationTarget::UserConfirm { scope_id } => {
+            transaction
+                .execute(
+                    "INSERT INTO verification_specs_v1 (
+                     task_id, verification_spec_id, target_kind, confirmation_scope_id
+                     ) VALUES (?1, ?2, 'user_confirm', ?3)",
+                    params![id_bytes(task_id), id_bytes(spec.id()), id_bytes(*scope_id)],
+                )
+                .await
+                .map_err(classify_unexpected_constraint)?;
+        }
     }
     Ok(())
 }
@@ -595,13 +743,25 @@ async fn read_step(
     let dependencies = read_dependencies(transaction, task_id, record.step_id).await?;
     let expected_evidence = read_expected_evidence(transaction, task_id, record.step_id).await?;
     let attempts = read_attempts(transaction, task_id, record.step_id).await?;
-    let verification_spec = VerificationSpec::new(
+    let legacy_method = parse_verification_method(&record.verification_method)?;
+    let requirement = VerificationRequirement::try_from_string(record.verification_requirement)
+        .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    let verification_spec = read_operational_spec(
+        transaction,
+        task_id,
         record.verification_spec_id,
-        parse_verification_method(&record.verification_method)?,
-        VerificationRequirement::try_from_string(record.verification_requirement)
-            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
-    );
-    let definition = TaskStepDefinition::new(
+        requirement.clone(),
+    )
+    .await?
+    .unwrap_or_else(|| {
+        VerificationSpec::new(record.verification_spec_id, legacy_method, requirement)
+    });
+    if verification_spec.method() != legacy_method {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    let acceptance_criteria =
+        read_acceptance_criteria(transaction, task_id, record.step_id).await?;
+    let mut definition = TaskStepDefinition::new(
         record.step_id,
         record.parent_step_id,
         TaskStepOutcome::try_from_string(record.intended_outcome)
@@ -613,6 +773,11 @@ async fn read_step(
         verification_spec,
     )
     .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    if !acceptance_criteria.is_empty() {
+        definition = definition
+            .with_acceptance_criteria(acceptance_criteria)
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?;
+    }
     let status = parse_step_status(&record.status)?;
     let blocking_reason = record
         .blocking_reason
@@ -639,6 +804,132 @@ async fn read_step(
         attempts,
     )
     .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)
+}
+
+async fn read_operational_spec(
+    transaction: &Transaction,
+    task_id: TaskId,
+    spec_id: VerificationSpecId,
+    requirement: VerificationRequirement,
+) -> Result<Option<VerificationSpec>, TaskLedgerRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT target_kind, command_id, verification_scope, test_selector_kind,
+             test_selector, minimum_test_cases, diff_mode, diagnostic_policy,
+             confirmation_scope_id
+             FROM verification_specs_v1
+             WHERE task_id = ?1 AND verification_spec_id = ?2",
+            params![id_bytes(task_id), id_bytes(spec_id)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? else {
+        return Ok(None);
+    };
+    let target = read_text(&row, 0)?;
+    let spec = match target.as_str() {
+        "command" => VerificationSpec::command(
+            spec_id,
+            requirement,
+            DiscoveredCommandId::from_bytes(read_id(&row, 1)?),
+            parse_verification_scope(&read_text(&row, 2)?)?,
+        ),
+        "test" => {
+            let selector = match read_text(&row, 3)?.as_str() {
+                "all" if read_optional_text(&row, 4)?.is_none() => TestCaseSelector::All,
+                "exact" => TestCaseSelector::Exact(
+                    TestCaseSelectorName::try_from_string(read_text(&row, 4)?)
+                        .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
+                ),
+                _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
+            };
+            VerificationSpec::test(
+                spec_id,
+                requirement,
+                DiscoveredCommandId::from_bytes(read_id(&row, 1)?),
+                selector,
+                MinimumTestCaseCount::new(read_u32(&row, 5)?)
+                    .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
+                parse_verification_scope(&read_text(&row, 2)?)?,
+            )
+        }
+        "diff_invariant" => VerificationSpec::diff_invariant(
+            spec_id,
+            requirement,
+            DiffInvariantVerification::new(
+                parse_diff_mode(&read_text(&row, 6)?)?,
+                read_verification_paths(transaction, task_id, spec_id).await?,
+            )
+            .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
+        ),
+        "diagnostic" => VerificationSpec::diagnostic(
+            spec_id,
+            requirement,
+            DiscoveredCommandId::from_bytes(read_id(&row, 1)?),
+            parse_diagnostic_policy(&read_text(&row, 7)?)?,
+            parse_verification_scope(&read_text(&row, 2)?)?,
+        ),
+        "user_confirm" => VerificationSpec::user_confirm(
+            spec_id,
+            requirement,
+            PolicyResourceId::from_bytes(read_id(&row, 8)?),
+        ),
+        _ => return Err(TaskLedgerRepositoryError::InvalidStoredData),
+    };
+    if rows
+        .next()
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(TaskLedgerRepositoryError::InvalidStoredData);
+    }
+    Ok(Some(spec))
+}
+
+async fn read_verification_paths(
+    transaction: &Transaction,
+    task_id: TaskId,
+    spec_id: VerificationSpecId,
+) -> Result<Vec<RepositoryPath>, TaskLedgerRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT item_sequence, repository_path FROM verification_spec_paths
+             WHERE task_id = ?1 AND verification_spec_id = ?2 ORDER BY item_sequence",
+            params![id_bytes(task_id), id_bytes(spec_id)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let mut paths = Vec::new();
+    while let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? {
+        validate_sequence(&row, paths.len())?;
+        let bytes: Vec<u8> = row.get(1).map_err(TaskLedgerRepositoryError::Read)?;
+        paths.push(
+            RepositoryPath::try_from_bytes(bytes)
+                .map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)?,
+        );
+    }
+    Ok(paths)
+}
+
+async fn read_acceptance_criteria(
+    transaction: &Transaction,
+    task_id: TaskId,
+    step_id: TaskStepId,
+) -> Result<Vec<AcceptanceCriterionId>, TaskLedgerRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT criterion_id FROM task_step_acceptance_criteria
+             WHERE task_id = ?1 AND step_id = ?2 ORDER BY criterion_id",
+            params![id_bytes(task_id), id_bytes(step_id)],
+        )
+        .await
+        .map_err(TaskLedgerRepositoryError::Read)?;
+    let mut criteria = Vec::new();
+    while let Some(row) = rows.next().await.map_err(TaskLedgerRepositoryError::Read)? {
+        criteria.push(AcceptanceCriterionId::from_bytes(read_id(&row, 0)?));
+    }
+    Ok(criteria)
 }
 
 async fn read_dependencies(
@@ -1082,6 +1373,55 @@ fn parse_verification_method(value: &str) -> Result<VerificationMethod, TaskLedg
     }
 }
 
+const fn verification_scope_text(scope: VerificationScope) -> &'static str {
+    match scope {
+        VerificationScope::Targeted => "targeted",
+        VerificationScope::Package => "package",
+        VerificationScope::Workspace => "workspace",
+    }
+}
+
+fn parse_verification_scope(value: &str) -> Result<VerificationScope, TaskLedgerRepositoryError> {
+    match value {
+        "targeted" => Ok(VerificationScope::Targeted),
+        "package" => Ok(VerificationScope::Package),
+        "workspace" => Ok(VerificationScope::Workspace),
+        _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
+    }
+}
+
+const fn diff_mode_text(mode: DiffInvariantMode) -> &'static str {
+    match mode {
+        DiffInvariantMode::NoChanges => "no_changes",
+        DiffInvariantMode::OnlyPaths => "only_paths",
+        DiffInvariantMode::ExactPaths => "exact_paths",
+    }
+}
+
+fn parse_diff_mode(value: &str) -> Result<DiffInvariantMode, TaskLedgerRepositoryError> {
+    match value {
+        "no_changes" => Ok(DiffInvariantMode::NoChanges),
+        "only_paths" => Ok(DiffInvariantMode::OnlyPaths),
+        "exact_paths" => Ok(DiffInvariantMode::ExactPaths),
+        _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
+    }
+}
+
+const fn diagnostic_policy_text(policy: DiagnosticPolicy) -> &'static str {
+    match policy {
+        DiagnosticPolicy::NoErrors => "no_errors",
+        DiagnosticPolicy::NoWarnings => "no_warnings",
+    }
+}
+
+fn parse_diagnostic_policy(value: &str) -> Result<DiagnosticPolicy, TaskLedgerRepositoryError> {
+    match value {
+        "no_errors" => Ok(DiagnosticPolicy::NoErrors),
+        "no_warnings" => Ok(DiagnosticPolicy::NoWarnings),
+        _ => Err(TaskLedgerRepositoryError::InvalidStoredData),
+    }
+}
+
 fn step_status_text(status: TaskStepStatus) -> &'static str {
     match status {
         TaskStepStatus::Pending => "pending",
@@ -1210,12 +1550,15 @@ macro_rules! stable_id_bytes {
 }
 
 stable_id_bytes!(
+    AcceptanceCriterionId,
     TaskId,
     TaskStepId,
     TaskEvidenceId,
     VerificationSpecId,
     StepVerificationId,
     AgentRunId,
+    DiscoveredCommandId,
+    PolicyResourceId,
     WorktreeId
 );
 
@@ -1242,6 +1585,10 @@ fn read_optional_id(
 
 fn read_i64(row: &libsql::Row, index: i32) -> Result<i64, TaskLedgerRepositoryError> {
     row.get(index).map_err(TaskLedgerRepositoryError::Read)
+}
+
+fn read_u32(row: &libsql::Row, index: i32) -> Result<u32, TaskLedgerRepositoryError> {
+    u32::try_from(read_i64(row, index)?).map_err(|_| TaskLedgerRepositoryError::InvalidStoredData)
 }
 
 fn read_text(row: &libsql::Row, index: i32) -> Result<String, TaskLedgerRepositoryError> {

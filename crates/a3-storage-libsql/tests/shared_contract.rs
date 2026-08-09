@@ -113,6 +113,11 @@ fn libsql_satisfies_shared_command_allowlist_contract() -> Result<(), ContractEr
 }
 
 #[test]
+fn libsql_satisfies_shared_verification_evidence_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::VerificationEvidence)
+}
+
+#[test]
 fn libsql_satisfies_shared_search_availability_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::SearchAvailability)
 }

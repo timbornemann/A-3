@@ -1832,6 +1832,230 @@ const KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION: Migration = Migration {
+    version: 20,
+    name: "typed_verification_engine",
+    sql: "ALTER TABLE acceptance_criteria ADD COLUMN requirement TEXT NOT NULL DEFAULT 'must'
+        CHECK (requirement IN ('must', 'should'));\n\
+      CREATE UNIQUE INDEX task_ledgers_goal_revision_idx
+        ON task_ledgers(task_id, goal_revision);\n\
+      CREATE TABLE task_step_acceptance_criteria (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      step_id BLOB NOT NULL CHECK (length(step_id) = 32),\n\
+      goal_revision INTEGER NOT NULL CHECK (goal_revision BETWEEN 1 AND 4294967295),\n\
+      criterion_id BLOB NOT NULL CHECK (length(criterion_id) = 32),\n\
+      PRIMARY KEY (task_id, step_id, criterion_id),\n\
+      FOREIGN KEY (task_id, step_id) REFERENCES task_steps(task_id, step_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, goal_revision) REFERENCES task_ledgers(task_id, goal_revision)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (task_id, goal_revision, criterion_id)\n\
+        REFERENCES acceptance_criteria(task_id, goal_revision, criterion_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_specs_v1 (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      verification_spec_id BLOB NOT NULL CHECK (length(verification_spec_id) = 32),\n\
+      target_kind TEXT NOT NULL CHECK (target_kind IN\n\
+        ('command', 'test', 'diff_invariant', 'diagnostic', 'user_confirm')),\n\
+      command_id BLOB CHECK (command_id IS NULL OR length(command_id) = 32),\n\
+      verification_scope TEXT CHECK (verification_scope IS NULL OR\n\
+        verification_scope IN ('targeted', 'package', 'workspace')),\n\
+      test_selector_kind TEXT CHECK (test_selector_kind IS NULL OR\n\
+        test_selector_kind IN ('all', 'exact')),\n\
+      test_selector TEXT CHECK (test_selector IS NULL OR\n\
+        length(CAST(test_selector AS BLOB)) BETWEEN 1 AND 1024),\n\
+      minimum_test_cases INTEGER CHECK (minimum_test_cases IS NULL OR\n\
+        minimum_test_cases BETWEEN 1 AND 1000000),\n\
+      diff_mode TEXT CHECK (diff_mode IS NULL OR\n\
+        diff_mode IN ('no_changes', 'only_paths', 'exact_paths')),\n\
+      diagnostic_policy TEXT CHECK (diagnostic_policy IS NULL OR\n\
+        diagnostic_policy IN ('no_errors', 'no_warnings')),\n\
+      confirmation_scope_id BLOB CHECK (confirmation_scope_id IS NULL OR\n\
+        length(confirmation_scope_id) = 32),\n\
+      CHECK ((target_kind = 'command' AND command_id IS NOT NULL\n\
+          AND verification_scope IS NOT NULL AND test_selector_kind IS NULL\n\
+          AND test_selector IS NULL AND minimum_test_cases IS NULL AND diff_mode IS NULL\n\
+          AND diagnostic_policy IS NULL AND confirmation_scope_id IS NULL) OR\n\
+        (target_kind = 'test' AND command_id IS NOT NULL AND verification_scope IS NOT NULL\n\
+          AND test_selector_kind IS NOT NULL\n\
+          AND ((test_selector_kind = 'all' AND test_selector IS NULL) OR\n\
+            (test_selector_kind = 'exact' AND test_selector IS NOT NULL))\n\
+          AND minimum_test_cases IS NOT NULL AND diff_mode IS NULL\n\
+          AND diagnostic_policy IS NULL AND confirmation_scope_id IS NULL) OR\n\
+        (target_kind = 'diff_invariant' AND command_id IS NULL\n\
+          AND verification_scope IS NULL AND test_selector_kind IS NULL\n\
+          AND test_selector IS NULL AND minimum_test_cases IS NULL\n\
+          AND diff_mode IS NOT NULL AND diagnostic_policy IS NULL\n\
+          AND confirmation_scope_id IS NULL) OR\n\
+        (target_kind = 'diagnostic' AND command_id IS NOT NULL\n\
+          AND verification_scope IS NOT NULL AND test_selector_kind IS NULL\n\
+          AND test_selector IS NULL AND minimum_test_cases IS NULL AND diff_mode IS NULL\n\
+          AND diagnostic_policy IS NOT NULL AND confirmation_scope_id IS NULL) OR\n\
+        (target_kind = 'user_confirm' AND command_id IS NULL\n\
+          AND verification_scope IS NULL AND test_selector_kind IS NULL\n\
+          AND test_selector IS NULL AND minimum_test_cases IS NULL AND diff_mode IS NULL\n\
+          AND diagnostic_policy IS NULL AND confirmation_scope_id IS NOT NULL)),\n\
+      PRIMARY KEY (task_id, verification_spec_id),\n\
+      FOREIGN KEY (task_id, verification_spec_id)\n\
+        REFERENCES task_steps(task_id, verification_spec_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_spec_paths (\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      verification_spec_id BLOB NOT NULL CHECK (length(verification_spec_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 64),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      PRIMARY KEY (task_id, verification_spec_id, item_sequence),\n\
+      UNIQUE (task_id, verification_spec_id, repository_path),\n\
+      FOREIGN KEY (task_id, verification_spec_id)\n\
+        REFERENCES verification_specs_v1(task_id, verification_spec_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_evidence (\n\
+      evidence_id BLOB PRIMARY KEY NOT NULL CHECK (length(evidence_id) = 32),\n\
+      task_id BLOB NOT NULL CHECK (length(task_id) = 32),\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      evidence_kind TEXT NOT NULL CHECK (evidence_kind IN\n\
+        ('command', 'test', 'diff_invariant', 'diagnostic', 'user_confirm')),\n\
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),\n\
+      verification_run_id BLOB NOT NULL CHECK (length(verification_run_id) = 32),\n\
+      verification_spec_id BLOB NOT NULL CHECK (length(verification_spec_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      FOREIGN KEY (task_id) REFERENCES tasks(task_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT,\n\
+      FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_process_evidence (\n\
+      evidence_id BLOB PRIMARY KEY NOT NULL CHECK (length(evidence_id) = 32),\n\
+      command_evidence_id BLOB NOT NULL CHECK (length(command_evidence_id) = 32),\n\
+      tool_run_id BLOB NOT NULL CHECK (length(tool_run_id) = 32),\n\
+      command_id BLOB NOT NULL CHECK (length(command_id) = 32),\n\
+      process_specification_id BLOB NOT NULL CHECK (length(process_specification_id) = 32),\n\
+      policy_decision_id BLOB NOT NULL CHECK (length(policy_decision_id) = 32),\n\
+      termination_kind TEXT NOT NULL CHECK (termination_kind IN ('exited', 'timed_out', 'cancelled')),\n\
+      exit_code INTEGER,\n\
+      duration_millis INTEGER NOT NULL CHECK (duration_millis >= 0),\n\
+      stdout_digest BLOB NOT NULL CHECK (length(stdout_digest) = 32),\n\
+      stdout_observed_bytes INTEGER NOT NULL CHECK (stdout_observed_bytes >= 0),\n\
+      stdout_retained_limit INTEGER NOT NULL CHECK (stdout_retained_limit BETWEEN 1 AND 4294967295),\n\
+      stdout_truncated INTEGER NOT NULL CHECK (stdout_truncated IN (0, 1)),\n\
+      stdout_redaction TEXT CHECK (stdout_redaction IS NULL OR stdout_redaction IN\n\
+        ('invalid_utf8', 'secret_candidate', 'unsafe_control')),\n\
+      stderr_digest BLOB NOT NULL CHECK (length(stderr_digest) = 32),\n\
+      stderr_observed_bytes INTEGER NOT NULL CHECK (stderr_observed_bytes >= 0),\n\
+      stderr_retained_limit INTEGER NOT NULL CHECK (stderr_retained_limit BETWEEN 1 AND 4294967295),\n\
+      stderr_truncated INTEGER NOT NULL CHECK (stderr_truncated IN (0, 1)),\n\
+      stderr_redaction TEXT CHECK (stderr_redaction IS NULL OR stderr_redaction IN\n\
+        ('invalid_utf8', 'secret_candidate', 'unsafe_control')),\n\
+      CHECK (termination_kind = 'exited' OR exit_code IS NULL),\n\
+      CHECK ((stdout_truncated = 1 AND stdout_observed_bytes > stdout_retained_limit) OR\n\
+        (stdout_truncated = 0 AND (stdout_redaction IS NOT NULL OR\n\
+          stdout_observed_bytes <= stdout_retained_limit))),\n\
+      CHECK ((stderr_truncated = 1 AND stderr_observed_bytes > stderr_retained_limit) OR\n\
+        (stderr_truncated = 0 AND (stderr_redaction IS NOT NULL OR\n\
+          stderr_observed_bytes <= stderr_retained_limit))),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (tool_run_id) REFERENCES tool_runs(tool_run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (policy_decision_id) REFERENCES policy_decisions(policy_decision_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_test_cases (\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 1000000),\n\
+      case_name TEXT NOT NULL CHECK (length(CAST(case_name AS BLOB)) BETWEEN 1 AND 1024),\n\
+      outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'ignored')),\n\
+      PRIMARY KEY (evidence_id, item_sequence),\n\
+      UNIQUE (evidence_id, case_name),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_process_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_diagnostic_reports (\n\
+      evidence_id BLOB PRIMARY KEY NOT NULL CHECK (length(evidence_id) = 32),\n\
+      error_count INTEGER NOT NULL CHECK (error_count BETWEEN 0 AND 4294967295),\n\
+      warning_count INTEGER NOT NULL CHECK (warning_count BETWEEN 0 AND 4294967295),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_process_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_diff_evidence (\n\
+      evidence_id BLOB PRIMARY KEY NOT NULL CHECK (length(evidence_id) = 32),\n\
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('patch', 'published_indexes')),\n\
+      action_digest BLOB CHECK (action_digest IS NULL OR length(action_digest) = 32),\n\
+      policy_decision_id BLOB CHECK (policy_decision_id IS NULL OR length(policy_decision_id) = 32),\n\
+      base_index_run_id BLOB CHECK (base_index_run_id IS NULL OR length(base_index_run_id) = 32),\n\
+      current_index_run_id BLOB CHECK (current_index_run_id IS NULL OR length(current_index_run_id) = 32),\n\
+      base_snapshot_id BLOB NOT NULL CHECK (length(base_snapshot_id) = 32),\n\
+      complete INTEGER NOT NULL CHECK (complete IN (0, 1)),\n\
+      CHECK ((source_kind = 'patch' AND action_digest IS NOT NULL\n\
+          AND policy_decision_id IS NOT NULL AND base_index_run_id IS NULL\n\
+          AND current_index_run_id IS NULL) OR\n\
+        (source_kind = 'published_indexes' AND action_digest IS NULL\n\
+          AND policy_decision_id IS NULL AND base_index_run_id IS NOT NULL\n\
+          AND current_index_run_id IS NOT NULL AND base_index_run_id <> current_index_run_id)),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (policy_decision_id) REFERENCES policy_decisions(policy_decision_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (base_index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (current_index_run_id) REFERENCES index_runs(index_run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (base_snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_diff_paths (\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 128),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      PRIMARY KEY (evidence_id, item_sequence),\n\
+      UNIQUE (evidence_id, repository_path),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_diff_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_user_confirmations (\n\
+      evidence_id BLOB PRIMARY KEY NOT NULL CHECK (length(evidence_id) = 32),\n\
+      scope_id BLOB NOT NULL CHECK (length(scope_id) = 32),\n\
+      confirmed_at_unix_millis INTEGER NOT NULL CHECK (confirmed_at_unix_millis >= 0),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE verification_evidence_dependencies (\n\
+      evidence_id BLOB NOT NULL CHECK (length(evidence_id) = 32),\n\
+      item_sequence INTEGER NOT NULL CHECK (item_sequence BETWEEN 1 AND 512),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      dependency_state TEXT NOT NULL CHECK (dependency_state IN ('present', 'absent')),\n\
+      content_hash BLOB CHECK (content_hash IS NULL OR length(content_hash) = 32),\n\
+      CHECK ((dependency_state = 'present') = (content_hash IS NOT NULL)),\n\
+      PRIMARY KEY (evidence_id, item_sequence),\n\
+      UNIQUE (evidence_id, repository_path),\n\
+      FOREIGN KEY (evidence_id) REFERENCES verification_evidence(evidence_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER verification_evidence_update_guard\n\
+      BEFORE UPDATE ON verification_evidence\n\
+      WHEN NEW.evidence_id <> OLD.evidence_id OR NEW.task_id <> OLD.task_id\n\
+        OR NEW.evidence_kind <> OLD.evidence_kind OR NEW.schema_version <> OLD.schema_version\n\
+        OR NEW.verification_run_id <> OLD.verification_run_id\n\
+        OR NEW.verification_spec_id <> OLD.verification_spec_id OR NEW.run_id <> OLD.run_id\n\
+        OR NEW.snapshot_id <> OLD.snapshot_id\n\
+      BEGIN SELECT RAISE(ABORT, 'verification evidence is immutable'); END;\n\
+      CREATE TRIGGER verification_evidence_delete_guard\n\
+      BEFORE DELETE ON verification_evidence\n\
+      BEGIN SELECT RAISE(ABORT, 'verification evidence is append-only'); END;\n\
+      CREATE INDEX verification_evidence_task_idx\n\
+        ON verification_evidence(task_id, verification_spec_id, evidence_id);\n\
+      CREATE INDEX verification_evidence_snapshot_idx\n\
+        ON verification_evidence(worktree_id, snapshot_id, evidence_id);",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -1852,6 +2076,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_RECOVERY_MIGRATION,
     KNOWLEDGE_POLICY_APPROVAL_MIGRATION,
     KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION,
+    KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -1884,7 +2109,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(19);
+    pub const CURRENT: Self = Self::new(20);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2295,11 +2520,16 @@ mod tests {
                      'agent_runs', 'run_events', 'tool_runs', 'tool_evidence',\n\
                      'tool_run_attempts', 'approval_requests', 'approval_grants',\n\
                      'policy_decisions', 'command_allowlist_revisions',\n\
-                     'command_allowlist_entries'\n\
+                     'command_allowlist_entries', 'task_step_acceptance_criteria',\n\
+                     'verification_specs_v1', 'verification_spec_paths',\n\
+                     'verification_evidence', 'verification_process_evidence',\n\
+                     'verification_test_cases', 'verification_diagnostic_reports',\n\
+                     'verification_diff_evidence', 'verification_diff_paths',\n\
+                     'verification_user_confirmations', 'verification_evidence_dependencies'\n\
                      )",
                 )
                 .await?,
-                52
+                63
             );
             assert_eq!(
                 query_i64(
@@ -3551,6 +3781,75 @@ mod tests {
                     "SELECT COUNT(*) FROM pragma_table_info('worktree_reconciliations') WHERE name = 'conflict'",
                 )
                 .await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v20_upgrade_preserves_v19_data_and_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [21; 32];
+            let worktree_id = [22; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..19],
+                19,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TABLE task_step_acceptance_criteria (conflict INTEGER)",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 20, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 19);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                19
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('acceptance_criteria')
+                     WHERE name = 'requirement'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('task_step_acceptance_criteria')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'verification_evidence'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM worktrees").await?,
                 1
             );
             Ok::<(), Box<dyn std::error::Error>>(())

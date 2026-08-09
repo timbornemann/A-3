@@ -1,6 +1,7 @@
 use super::{
-    AcceptanceCriterionId, AgentAction, AgentRunId, AgentRunTimestamp, GoalContract,
-    GoalContractReference, ModelTokenCount, SnapshotId, TaskEvidenceId, TaskLedgerRevision,
+    AcceptanceCriterionId, AcceptanceCriterionRequirement, AgentAction, AgentRunId,
+    AgentRunTimestamp, GoalContract, GoalContractReference, ModelTokenCount, SnapshotId,
+    TaskEvidenceId, TaskLedgerRevision,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -84,6 +85,7 @@ impl AcceptanceVerificationReceipt {
             .draft()
             .acceptance_criteria()
             .iter()
+            .filter(|criterion| criterion.requirement() == AcceptanceCriterionRequirement::Must)
             .map(|criterion| criterion.id())
             .collect::<BTreeSet<_>>();
         let actual = criteria

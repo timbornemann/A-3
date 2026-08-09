@@ -28,10 +28,11 @@ use a3_domain::{
     ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
     ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
     ModelToolCallMode, ModelTopP, Progress, ProjectIdentity, RunEventCode, RunEventId,
-    RunEventKind, SnapshotId, StepVerification, StepVerificationId, StepVerificationOutcome,
-    SuccessVerification, TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp,
-    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
-    VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
+    RunEventKind, RunMemoryCheckpoint, SnapshotId, StepVerification, StepVerificationId,
+    StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
+    TaskStepStatus, VerificationMethod, VerificationRequirement, VerificationSpec,
+    VerificationSpecId,
 };
 use a3_model_provider_contract_tests::{StubModelProvider, StubModelProviderBehavior};
 use a3_repo_index::{
@@ -446,11 +447,24 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .execute(&fixture.project, durable.ledger_version, &durable.ledger)
         .await?
         .version();
+    let published = fixture
+        .store
+        .latest_published_index(&fixture.project, &ActiveControl)
+        .await?
+        .ok_or_else(|| test_error("fixture published index is missing before acceptance"))?;
+    let run_memory = RunMemoryCheckpoint::compile(
+        &durable.goal,
+        &durable.ledger,
+        &durable.run,
+        &published,
+        Vec::new(),
+    )?;
     let request = AcceptanceVerificationRequest::new(
         fixture.project.clone(),
         &durable.run,
         durable.goal.clone(),
         durable.ledger.clone(),
+        run_memory,
     )?;
     let verifier = FixtureAcceptanceVerifier {
         criterion_id: durable.criterion_id,

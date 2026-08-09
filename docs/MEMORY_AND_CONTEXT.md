@@ -71,7 +71,7 @@ GoalContract
   previous_revision?
   revision_reason?
   objective
-  acceptance_criteria[]
+  acceptance_criteria[] { criterion_id, statement, requirement: must | should }
   constraints[]
   non_goals[]
   user_decisions[]
@@ -89,12 +89,15 @@ Revision eins besitzt weder Vorgänger noch Begründung. Jede spätere Revision 
 unmittelbaren Vorgänger, enthält eine nicht leere Begründung und ändert den Inhalt materiell.
 Zeitstempel dürfen nicht zurücklaufen.
 
-Die UI-Projektion `GoalContractV1` spiegelt diese Felder ohne Datenbankdetails und trägt immer eine
+Die UI-Projektion `GoalContractV1` spiegelt den bisherigen Must-only-Vertrag ohne Datenbankdetails
+und trägt immer eine
 explizite Protokollversion. 32-Byte-Identitäten werden als 64-stellige lowercase Hexwerte und Unix-
 Millisekunden als exakter Dezimalstring übertragen, damit die WebView keine 64-Bit-Präzision
 verliert. Die Rust-Wireform lehnt unbekannte Felder ab; der TypeScript-Runtimeparser prüft die
 Domainlängen, Listengrenzen, Identitäten und Revisionsbeziehungen erneut, bevor die WebView den
-Wert verwendet.
+Wert verwendet. E6 ändert diesen versionierten V1-Wirevertrag nicht still: Soll-Kriterien werden
+erst mit einem eigenen späteren Protokolltyp durch den Desktop exponiert; derzeit existiert keine
+Domain-zu-V1-Abbildung für solche Contracts.
 
 Nur ein vollständig validierter `GoalContract` kann eine `GoalContractReference` erzeugen. Diese
 Referenz bindet `TaskId` und konkrete Revision und ist die spätere run-seitige Eintrittskarte; rohe
@@ -114,6 +117,7 @@ TaskStep
   dependencies[]
   expected_evidence[]
   verification_spec
+  acceptance_criteria[]
   status
   attempts
   result_summary?
@@ -128,6 +132,12 @@ Regeln:
 - Eine Behauptung wie „Tests bestanden“ muss auf TestEvidence zeigen.
 - Ein fehlgeschlagener Versuch wird nicht überschrieben.
 - Replan verändert zukünftige Schritte und erhält die Historie.
+
+E6 macht `verification_spec` operational: Command, Test, DiffInvariant, Diagnostic und UserConfirm
+tragen statt bloßer Methodenbezeichnung ihre Command-ID, den Targeted-/Package-/Workspace-Scope
+und die jeweils nötige Test-, Pfad-, Diagnose- oder Confirmation-Semantik. Jeder neue Schritt
+ordnet sich konkreten Must-/Should-Kriterien derselben Goal-Revision zu. Nur Must-Zuordnungen
+erzwingen Completed vor Acceptance; Should bleibt sichtbar, aber nicht blockierend.
 
 Der implementierte Ledger-Aggregat erzwingt diese Regeln bereits ohne Infrastrukturabhängigkeit:
 Statuswechsel erfolgen nur über typisierte Methoden, `Completed` benötigt eine erfolgreiche,
@@ -214,9 +224,9 @@ Standard bei einem Modellkontext von 16.384 Tokens:
 | Bereich | Zielbudget |
 | --- | ---: |
 | System, Tools, Sicherheitsvertrag | höchstens 900 |
-| Goal Contract und Task Ledger | höchstens 900 |
+| Goal Contract und Task Ledger | höchstens 1.100 |
 | Project Map und Decisions | höchstens 1.200 |
-| Code und strukturierte Evidenz | höchstens 7.000 |
+| Code und strukturierte Evidenz | höchstens 6.800 |
 | aktuelle Toolresultate und Fehler | höchstens 1.500 |
 | Sicherheitsreserve | mindestens 900 |
 | Modelloutput | mindestens 3.500 |
@@ -230,11 +240,14 @@ Code/Evidence und Toolresultate werden lückenlos genau einer Sektion zugerechne
 bleiben 900 Tokens Sicherheitsreserve frei. Eine ungekürzte Pflichtsektion, die ihre Grenze
 überschreitet, bricht den Compile ab, statt still Inhalte zu verlieren.
 
-`ContextCompilerPolicyVersion::V2` reserviert den vollständigen kompakten L0-Repository-Anchor vor
+`ContextCompilerPolicyVersion::V3` behält den vollständigen kompakten L0-Repository-Anchor aus V2
+vor
 allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
 evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
-Anchor- beziehungsweise Detailgruppe bleibt stabil. V2 besitzt eine getrennte Digest-Domäne.
+Anchor- beziehungsweise Detailgruppe bleibt stabil. V3 injiziert zusätzlich Must-/Should-Status,
+Criterion-Mappings und operationalen Verification-Scope samt erwarteter Semantik vollständig in
+Goal/Ledger. V3 besitzt eine getrennte Digest-Domäne.
 
 Packregeln:
 
@@ -313,6 +326,17 @@ Locators; Query und Preview bleiben flüchtig. `UpdateLedger` darf ein Ergebnis 
 vom Controller übernommener Tool-Evidence auf `Verifying` setzen. Ledgerprojektion und zugehörige
 Runtransition werden atomar gespeichert. `Finish` fordert ausschließlich `Verify` an; `Done` bleibt
 dem separaten Acceptance-Verifier nach erfolgreicher objektiver Verifikation vorbehalten.
+
+E6 persistiert dafür immutable, schema-versionierte Verification-Evidence ohne Source- oder
+Prozessoutput. Command-Artifacts enthalten Process-/Policy-IDs, Termination, Dauer, vollständige
+Stream-Digests, Bytezahlen, Limits, Trunkierung/Redaction und die kanonische Menge betroffener
+FileRevisionen beziehungsweise bestätigter Abwesenheiten. Test-, Diagnostic-, Diff- und
+UserConfirm-Artifacts ergänzen ausschließlich ihre typisierte Semantik. Der Acceptance-Verifier
+lädt genau die Must-Evidence und den aktuellen Published Index in einer begrenzten konsistenten
+Operation, vergleicht Spec, Run, Snapshot, Semantik und Abhängigkeiten und verwendet denselben
+regenerierten Run-Memory-Checkpoint zum konservativen Ausschluss offener taskbezogener
+Hypothesen. Eine Useränderung macht nur Evidence mit betroffener Abhängigkeit stale; ein bloßer
+erfolgreicher Exitcode kann strukturierte Test- oder Diagnosesemantik nicht ersetzen.
 
 H11 persistiert vor dem eigentlichen Read-Toolaufruf einen content-freien `in_flight`-Versuch.
 Nur der gemeinsame Resultat-/Journal-Commit darf diesen Versuch erfolgreich abschließen; ein

@@ -304,7 +304,12 @@ fn render_anchor(
     for criterion in goal.draft().acceptance_criteria() {
         push_line(
             &mut text,
-            format_args!("- {} {}", criterion.id(), criterion.statement().as_str()),
+            format_args!(
+                "- {} requirement={} statement={}",
+                criterion.id(),
+                acceptance_requirement(criterion.requirement()),
+                criterion.statement().as_str()
+            ),
         );
     }
     for constraint in goal.draft().constraints() {
@@ -342,11 +347,19 @@ fn render_anchor(
     push_line(
         &mut text,
         format_args!(
-            "verification={} {}",
-            verification_method(definition.verification_spec().method()),
+            "verification_spec={} requirement={}",
+            definition.verification_spec().id(),
             definition.verification_spec().requirement().as_str()
         ),
     );
+    render_verification_target(&mut text, definition.verification_spec());
+    if definition.acceptance_criteria().is_empty() {
+        text.push_str("step_acceptance=legacy_unmapped\n");
+    } else {
+        for criterion_id in definition.acceptance_criteria() {
+            push_line(&mut text, format_args!("step_acceptance={criterion_id}"));
+        }
+    }
     let (pending, active, completed, stale, blocked) = ledger_status_counts(ledger);
     push_line(
         &mut text,
@@ -1130,5 +1143,112 @@ const fn verification_method(method: a3_domain::VerificationMethod) -> &'static 
         a3_domain::VerificationMethod::DiffInvariant => "diff_invariant",
         a3_domain::VerificationMethod::Diagnostic => "diagnostic",
         a3_domain::VerificationMethod::UserConfirm => "user_confirm",
+    }
+}
+
+const fn acceptance_requirement(
+    requirement: a3_domain::AcceptanceCriterionRequirement,
+) -> &'static str {
+    match requirement {
+        a3_domain::AcceptanceCriterionRequirement::Must => "must",
+        a3_domain::AcceptanceCriterionRequirement::Should => "should",
+    }
+}
+
+fn render_verification_target(text: &mut String, spec: &a3_domain::VerificationSpec) {
+    match spec.target() {
+        a3_domain::VerificationTarget::Legacy(method) => push_line(
+            text,
+            format_args!(
+                "verification_target=legacy method={}",
+                verification_method(*method)
+            ),
+        ),
+        a3_domain::VerificationTarget::Command { command_id, scope } => push_line(
+            text,
+            format_args!(
+                "verification_target=command command={} scope={}",
+                command_id,
+                verification_scope(*scope)
+            ),
+        ),
+        a3_domain::VerificationTarget::Test {
+            command_id,
+            selector,
+            minimum_cases,
+            scope,
+        } => match selector {
+            a3_domain::TestCaseSelector::All => push_line(
+                text,
+                format_args!(
+                    "verification_target=test command={} selector=all minimum_cases={} scope={}",
+                    command_id,
+                    minimum_cases.get(),
+                    verification_scope(*scope)
+                ),
+            ),
+            a3_domain::TestCaseSelector::Exact(name) => push_line(
+                text,
+                format_args!(
+                    "verification_target=test command={} selector=exact:{} minimum_cases={} scope={}",
+                    command_id,
+                    name.as_str(),
+                    minimum_cases.get(),
+                    verification_scope(*scope)
+                ),
+            ),
+        },
+        a3_domain::VerificationTarget::DiffInvariant(invariant) => {
+            push_line(
+                text,
+                format_args!(
+                    "verification_target=diff_invariant mode={}",
+                    diff_invariant_mode(invariant.mode())
+                ),
+            );
+            for path in invariant.paths() {
+                push_line(text, format_args!("verification_path={}", path_text(path)));
+            }
+        }
+        a3_domain::VerificationTarget::Diagnostic {
+            command_id,
+            policy,
+            scope,
+        } => push_line(
+            text,
+            format_args!(
+                "verification_target=diagnostic command={} policy={} scope={}",
+                command_id,
+                diagnostic_policy(*policy),
+                verification_scope(*scope)
+            ),
+        ),
+        a3_domain::VerificationTarget::UserConfirm { scope_id } => push_line(
+            text,
+            format_args!("verification_target=user_confirm scope={scope_id}"),
+        ),
+    }
+}
+
+const fn verification_scope(scope: a3_domain::VerificationScope) -> &'static str {
+    match scope {
+        a3_domain::VerificationScope::Targeted => "targeted",
+        a3_domain::VerificationScope::Package => "package",
+        a3_domain::VerificationScope::Workspace => "workspace",
+    }
+}
+
+const fn diff_invariant_mode(mode: a3_domain::DiffInvariantMode) -> &'static str {
+    match mode {
+        a3_domain::DiffInvariantMode::NoChanges => "no_changes",
+        a3_domain::DiffInvariantMode::OnlyPaths => "only_paths",
+        a3_domain::DiffInvariantMode::ExactPaths => "exact_paths",
+    }
+}
+
+const fn diagnostic_policy(policy: a3_domain::DiagnosticPolicy) -> &'static str {
+    match policy {
+        a3_domain::DiagnosticPolicy::NoErrors => "no_errors",
+        a3_domain::DiagnosticPolicy::NoWarnings => "no_warnings",
     }
 }

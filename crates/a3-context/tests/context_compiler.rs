@@ -10,32 +10,33 @@ use a3_application::{
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
-    AgentRun, AgentRunId, AgentRunIdentity, AgentRunMaterializedState, AgentRunTimestamp,
-    AgentRunTiming, CanonicalDirectory, Centrality, Confidence, ContentHash,
-    ContextCompilerPolicyVersion, ExactSearchCursor, ExactSearchExplanation, ExactSearchHit,
-    ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchSymbol, ExactSearchTarget,
-    ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract, GoalContractDraft,
-    GoalContractTimestamp, GoalObjective, GraphSymbol, GraphTraversalResult, IndexLanguage,
-    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus, LexicalScore,
-    LexicalSearchCursor, LexicalSearchExplanation, LexicalSearchHit, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph, LocalSymbolId, ModelCapabilities,
-    ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit, ModelProfile,
-    ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile,
-    ModelStopSequences, ModelStructuredOutputCapability, ModelTemperature,
-    ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
-    ModuleCardEvidenceId, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimStatement,
-    ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion,
-    ModuleProjection, ModuleRoot, ModuleSymbolSet, ParsedSymbol, ProjectIdentity, PublishedIndex,
-    QualifiedSymbolName, RankProjection, RankScore, RankingPolicyVersion, RepositoryCard,
-    RepositoryId, RepositoryIdentity, RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence,
-    RunEventSequence, RunMemoryCheckpoint, SnapshotId, SourcePosition, SourceRange, StepDependency,
-    StepVerification, StepVerificationId, StepVerificationOutcome, SymbolId, SymbolKind,
-    SymbolName, SymbolRank, SymbolRankSignals, TaskEvidenceId, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition, TaskStepId, TaskStepOutcome,
-    TaskStepRationale, TaskStepResultSummary, TraversalQuery, VerificationFailureSummary,
-    VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
-    VerifiedClaimKind, VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
+    AcceptanceCriterionStatement, AgentControllerState, AgentRun, AgentRunId, AgentRunIdentity,
+    AgentRunMaterializedState, AgentRunTimestamp, AgentRunTiming, CanonicalDirectory, Centrality,
+    Confidence, ContentHash, ContextCompilerPolicyVersion, DiscoveredCommandId, ExactSearchCursor,
+    ExactSearchExplanation, ExactSearchHit, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
+    ExactSearchSymbol, ExactSearchTarget, ExpectedTaskEvidence, FileRevision, GitHead,
+    GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
+    GraphSymbol, GraphTraversalResult, IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunSequence, IndexRunStatus, LexicalScore, LexicalSearchCursor, LexicalSearchExplanation,
+    LexicalSearchHit, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph,
+    LocalSymbolId, MinimumTestCaseCount, ModelCapabilities, ModelContextLimit, ModelId,
+    ModelOutputLimit, ModelParallelismLimit, ModelProfile, ModelProfileSettings,
+    ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
+    ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
+    ModelToolCallMode, ModelTopP, ModuleCardClaimId, ModuleCardEvidenceId, ModuleClaimPolarity,
+    ModuleClaimPredicate, ModuleClaimStatement, ModuleId, ModuleKind, ModuleMembership,
+    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
+    ParsedSymbol, ProjectIdentity, PublishedIndex, QualifiedSymbolName, RankProjection, RankScore,
+    RankingPolicyVersion, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
+    RepositoryPath, ResolvedModuleCardEvidence, RunEventSequence, RunMemoryCheckpoint, SnapshotId,
+    SourcePosition, SourceRange, StepDependency, StepVerification, StepVerificationId,
+    StepVerificationOutcome, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
+    TaskEvidenceId, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensClaim, TaskStepDefinition,
+    TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TestCaseSelector,
+    TraversalQuery, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
+    VerificationScope, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
+    VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use futures::executor::block_on;
 use std::error::Error;
@@ -62,7 +63,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V2);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V3);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);
@@ -78,7 +79,11 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
     assert!(pack.contains("objective=implement H7"));
     assert!(pack.contains("current_step="));
     assert!(pack.contains("outcome=compile context"));
-    assert!(pack.contains("verification=test run tests"));
+    assert!(pack.contains("requirement=should statement=pack is deterministic"));
+    assert!(pack.contains("verification_spec="));
+    assert!(pack.contains("verification_target=test command="));
+    assert!(pack.contains("selector=all minimum_cases=1 scope=targeted"));
+    assert!(pack.contains("step_acceptance="));
     assert!(pack.contains("[PROJECT_MAP]"));
     assert!(pack.contains("L0 repository"));
     assert!(pack.contains("L1 module"));
@@ -535,13 +540,15 @@ impl Fixture {
 }
 
 fn input(_snapshot_id: SnapshotId) -> Result<AgentContextCompileInput, Box<dyn Error>> {
+    let criterion_id = AcceptanceCriterionId::from_bytes([91; 32]);
     let goal = GoalContract::initial(
         TaskId::from_bytes([90; 32]),
         GoalContractDraft::new(
             GoalObjective::try_from_string("implement H7".to_owned())?,
-            vec![AcceptanceCriterion::new(
-                AcceptanceCriterionId::from_bytes([91; 32]),
+            vec![AcceptanceCriterion::with_requirement(
+                criterion_id,
                 AcceptanceCriterionStatement::try_from_string("pack is deterministic".to_owned())?,
+                AcceptanceCriterionRequirement::Should,
             )],
             Vec::new(),
             Vec::new(),
@@ -553,21 +560,27 @@ fn input(_snapshot_id: SnapshotId) -> Result<AgentContextCompileInput, Box<dyn E
     let step_id = TaskStepId::from_bytes([92; 32]);
     let ledger = TaskLedger::new(
         goal.reference(),
-        vec![TaskStepDefinition::new(
-            step_id,
-            None,
-            TaskStepOutcome::try_from_string("compile context".to_owned())?,
-            TaskStepRationale::try_from_string("prepare next turn".to_owned())?,
-            Vec::new(),
-            vec![ExpectedTaskEvidence::try_from_string(
-                "context digest".to_owned(),
-            )?],
-            VerificationSpec::new(
-                VerificationSpecId::from_bytes([93; 32]),
-                VerificationMethod::Test,
-                VerificationRequirement::try_from_string("run tests".to_owned())?,
-            ),
-        )?],
+        vec![
+            TaskStepDefinition::new(
+                step_id,
+                None,
+                TaskStepOutcome::try_from_string("compile context".to_owned())?,
+                TaskStepRationale::try_from_string("prepare next turn".to_owned())?,
+                Vec::new(),
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "context digest".to_owned(),
+                )?],
+                VerificationSpec::test(
+                    VerificationSpecId::from_bytes([93; 32]),
+                    VerificationRequirement::try_from_string("run tests".to_owned())?,
+                    DiscoveredCommandId::from_bytes([94; 32]),
+                    TestCaseSelector::All,
+                    MinimumTestCaseCount::new(1)?,
+                    VerificationScope::Targeted,
+                ),
+            )?
+            .with_acceptance_criteria(vec![criterion_id])?,
+        ],
         TaskLedgerTimestamp::from_unix_millis(1)?,
     )?;
     AgentContextCompileInput::new(

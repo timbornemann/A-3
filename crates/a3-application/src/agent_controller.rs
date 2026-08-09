@@ -1,9 +1,11 @@
 use a3_domain::{
-    AcceptanceVerificationReceipt, AgentBudgetDimension, AgentBudgetEvaluationError,
-    AgentBudgetExhaustion, AgentControllerState, AgentRun, AgentRunError, AgentRunId,
-    AgentRunTimestamp, GoalContract, ProjectIdentity, RunEvent, RunEventCode, RunEventId,
-    RunEventOutcome, RunEventPayload, SnapshotId, TaskLedger, TaskStepStatus,
+    AcceptanceCriterionRequirement, AcceptanceVerificationReceipt, AgentBudgetDimension,
+    AgentBudgetEvaluationError, AgentBudgetExhaustion, AgentControllerState, AgentRun,
+    AgentRunError, AgentRunId, AgentRunTimestamp, GoalContract, ProjectIdentity, RunEvent,
+    RunEventCode, RunEventId, RunEventOutcome, RunEventPayload, RunMemoryCheckpoint, SnapshotId,
+    TaskLedger, TaskStepStatus,
 };
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -294,16 +296,18 @@ pub struct AcceptanceVerificationRequest {
     run_id: AgentRunId,
     goal_contract: GoalContract,
     task_ledger: TaskLedger,
+    run_memory: RunMemoryCheckpoint,
     snapshot_id: SnapshotId,
 }
 
 impl AcceptanceVerificationRequest {
-    /// Validates exact run anchors and requires every active Ledger step to be Completed.
+    /// Validates exact anchors and requires every mandatory active Ledger step to be Completed.
     pub fn new(
         project: ProjectIdentity,
         run: &AgentRun,
         goal_contract: GoalContract,
         task_ledger: TaskLedger,
+        run_memory: RunMemoryCheckpoint,
     ) -> Result<Self, AcceptanceVerificationRequestError> {
         if run.state() != AgentControllerState::Verify {
             return Err(AcceptanceVerificationRequestError::InvalidRunState);
@@ -314,18 +318,44 @@ impl AcceptanceVerificationRequest {
         {
             return Err(AcceptanceVerificationRequestError::AnchorMismatch);
         }
-        if task_ledger
+        if run_memory.run_id() != run.id()
+            || run_memory.goal_contract() != goal_contract.reference()
+            || run_memory.ledger_revision() != task_ledger.revision()
+            || run_memory.snapshot_id() != run.current_snapshot_id()
+        {
+            return Err(AcceptanceVerificationRequestError::RunMemoryMismatch);
+        }
+        let criteria = goal_contract
+            .draft()
+            .acceptance_criteria()
+            .iter()
+            .map(|criterion| (criterion.id(), criterion.requirement()))
+            .collect::<BTreeMap<_, _>>();
+        for step in task_ledger
             .steps()
             .filter(|step| step.is_active_plan_step())
-            .any(|step| step.status() != TaskStepStatus::Completed)
         {
-            return Err(AcceptanceVerificationRequestError::IncompleteLedger);
+            let mapping = step.definition().acceptance_criteria();
+            if mapping
+                .iter()
+                .any(|criterion_id| !criteria.contains_key(criterion_id))
+            {
+                return Err(AcceptanceVerificationRequestError::CriterionMappingMismatch);
+            }
+            let mandatory = mapping.is_empty()
+                || mapping.iter().any(|criterion_id| {
+                    criteria.get(criterion_id) == Some(&AcceptanceCriterionRequirement::Must)
+                });
+            if mandatory && step.status() != TaskStepStatus::Completed {
+                return Err(AcceptanceVerificationRequestError::IncompleteLedger);
+            }
         }
         Ok(Self {
             project,
             run_id: run.id(),
             goal_contract,
             task_ledger,
+            run_memory,
             snapshot_id: run.current_snapshot_id(),
         })
     }
@@ -354,6 +384,12 @@ impl AcceptanceVerificationRequest {
         &self.task_ledger
     }
 
+    /// Returns the fresh authoritative projection used to detect unresolved task hypotheses.
+    #[must_use]
+    pub const fn run_memory(&self) -> &RunMemoryCheckpoint {
+        &self.run_memory
+    }
+
     /// Returns the repository snapshot whose evidence must remain current.
     #[must_use]
     pub const fn snapshot_id(&self) -> SnapshotId {
@@ -368,8 +404,12 @@ pub enum AcceptanceVerificationRequestError {
     InvalidRunState,
     /// Goal or Ledger revisions differed from the run.
     AnchorMismatch,
-    /// At least one active step lacked current successful verification.
+    /// At least one mandatory active step lacked current successful verification.
     IncompleteLedger,
+    /// One step referred to a criterion outside the exact Goal Contract revision.
+    CriterionMappingMismatch,
+    /// Regenerable run memory did not match the exact run, Goal, Ledger, and snapshot anchors.
+    RunMemoryMismatch,
 }
 
 impl fmt::Display for AcceptanceVerificationRequestError {
@@ -377,7 +417,13 @@ impl fmt::Display for AcceptanceVerificationRequestError {
         formatter.write_str(match self {
             Self::InvalidRunState => "acceptance verification requires Verify state",
             Self::AnchorMismatch => "acceptance verification anchors do not match the run",
-            Self::IncompleteLedger => "acceptance verification requires every active step complete",
+            Self::IncompleteLedger => {
+                "acceptance verification requires every mandatory active step complete"
+            }
+            Self::CriterionMappingMismatch => {
+                "task-step acceptance mapping does not match the Goal Contract"
+            }
+            Self::RunMemoryMismatch => "acceptance run memory does not match the request anchors",
         })
     }
 }
@@ -954,7 +1000,9 @@ mod tests {
             Err(AgentRunError::AcceptanceVerificationRequired)
         );
         let receipt = acceptance_receipt(&goal, &ledger)?;
-        let request = AcceptanceVerificationRequest::new(project()?, &run, goal, ledger.clone())?;
+        let run_memory = no_hypothesis_memory(&goal, &ledger, &run)?;
+        let request =
+            AcceptanceVerificationRequest::new(project()?, &run, goal, ledger.clone(), run_memory)?;
         let verifier = StaticVerifier(AcceptanceVerifierOutcome::Accepted(receipt));
 
         let advance = block_on(VerifyAgentAcceptance::new(&verifier).execute(
@@ -1095,6 +1143,58 @@ mod tests {
             GitHead::Unborn {
                 reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
             },
+        )?)
+    }
+
+    fn no_hypothesis_memory(
+        goal: &GoalContract,
+        ledger: &TaskLedger,
+        run: &AgentRun,
+    ) -> Result<RunMemoryCheckpoint, Box<dyn Error>> {
+        let graph = a3_domain::LinkedGraph::new(
+            snapshot(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let ranking = a3_domain::RankProjection::new(
+            snapshot(),
+            a3_domain::RankingPolicyVersion::v1(),
+            Vec::new(),
+        )?;
+        let policy = a3_domain::ModulePolicyVersion::v1();
+        let repository_card = a3_domain::RepositoryCard::new(
+            snapshot(),
+            policy,
+            Vec::new(),
+            Vec::new(),
+            a3_domain::ModuleSymbolSet::empty(),
+            0,
+            0,
+        )?;
+        let modules = a3_domain::ModuleProjection::new(
+            snapshot(),
+            policy,
+            Vec::new(),
+            Vec::new(),
+            repository_card,
+        )?;
+        let publication = a3_domain::IndexPublication::new(graph, ranking, Vec::new(), modules)?;
+        let index_run = a3_domain::IndexRunRecord::new(
+            a3_domain::IndexRunId::from_bytes([23; 32]),
+            snapshot(),
+            a3_domain::RankingPolicyVersion::v1(),
+            a3_domain::IndexRunSequence::new(1)?,
+            a3_domain::IndexRunStatus::Published,
+        );
+        let published = a3_domain::PublishedIndex::new(index_run, publication)?;
+        Ok(RunMemoryCheckpoint::compile(
+            goal,
+            ledger,
+            run,
+            &published,
+            Vec::new(),
         )?)
     }
 

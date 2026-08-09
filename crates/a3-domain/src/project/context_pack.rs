@@ -4,9 +4,9 @@ use std::fmt;
 
 const REFERENCE_CONTEXT_TOKENS: u32 = 16_384;
 const SYSTEM_REFERENCE_TOKENS: u32 = 900;
-const GOAL_LEDGER_REFERENCE_TOKENS: u32 = 900;
+const GOAL_LEDGER_REFERENCE_TOKENS: u32 = 1_100;
 const PROJECT_MAP_REFERENCE_TOKENS: u32 = 1_200;
-const CODE_EVIDENCE_REFERENCE_TOKENS: u32 = 7_000;
+const CODE_EVIDENCE_REFERENCE_TOKENS: u32 = 6_800;
 const TOOL_RESULTS_REFERENCE_TOKENS: u32 = 1_500;
 const SAFETY_REFERENCE_TOKENS: u32 = 900;
 const OUTPUT_REFERENCE_TOKENS: u32 = 3_500;
@@ -24,8 +24,11 @@ impl ContextCompilerPolicyVersion {
     /// M6 policy with a compact untruncatable L0 anchor before ranked L1/L2 detail.
     pub const V2: Self = Self(2);
 
+    /// E6 policy that injects Must/Should mappings and executable verification targets.
+    pub const V3: Self = Self(3);
+
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V2;
+    pub const CURRENT: Self = Self::V3;
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -384,13 +387,13 @@ mod tests {
     fn sixteen_k_budget_matches_the_documented_v1_profile() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V2
+            ContextCompilerPolicyVersion::V3
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);
-        assert_eq!(plan.allowance(ContextSection::GoalAndLedger), 900);
+        assert_eq!(plan.allowance(ContextSection::GoalAndLedger), 1_100);
         assert_eq!(plan.allowance(ContextSection::ProjectMap), 1_200);
-        assert_eq!(plan.allowance(ContextSection::CodeAndEvidence), 7_000);
+        assert_eq!(plan.allowance(ContextSection::CodeAndEvidence), 6_800);
         assert_eq!(plan.allowance(ContextSection::ToolResults), 1_500);
         assert_eq!(plan.safety_reserve(), 900);
         assert_eq!(plan.output_reserve(), 3_605);

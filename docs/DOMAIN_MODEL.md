@@ -339,6 +339,11 @@ optionalen gerankten L1-/L2-Details. L0 trägt kompakte Datei-, Symbol-, Package
 Anzahlen; konkrete Modul- und Symbolidentitäten bleiben in L1/L2. Die Policyversion und die neue
 Digest-Domäne verhindern, dass V1- und V2-Packs dieselbe Identität beanspruchen.
 
+Policy V3 injiziert zusätzlich Must-/Should-Klassifikation, Criterion-Mapping und alle operationalen
+VerificationSpec-Felder in den ungekürzten Anchor. Dafür steigt Goal/Ledger auf 1.100 Tokens und
+Code/Evidence sinkt auf 6.800 Tokens; Gesamt-, Sicherheits- und Outputreserve bleiben unverändert.
+Die eigene V3-Digest-Domäne verhindert Identitätsgleichheit mit Packs ohne E6-Vertrag.
+
 ## Aggregate
 
 ### Project
@@ -474,6 +479,11 @@ einzelne unveränderliche Revision; `GoalContractHistory` akzeptiert ausschließ
 lückenlose, zeitlich monotone Folge desselben Tasks. `GoalContractReference` kann nur aus einem
 validen Contract entstehen und bindet jeden späteren Run an eine konkrete Revision.
 
+E6 klassifiziert jedes Acceptance Criterion explizit als `Must` oder `Should`; der bestehende
+Konstruktor bleibt als Must-Voreinstellung erhalten. Task-Schritte ordnen sich einer kanonischen
+Menge konkreter Criterion-IDs derselben Goal-Revision zu. Ein leerer historischer Mappingfall gilt
+weiterhin als verpflichtend, kann aber nicht als operationaler E6-Nachweis ausgeführt werden.
+
 Invarianten:
 
 - Ein initialer Goal Contract ist Revision eins ohne Vorgänger und Revisionsbegründung.
@@ -485,6 +495,7 @@ Invarianten:
   konstruierbar; Debug-Ausgaben legen ihren Inhalt nicht offen.
 - Jeder Schritt besitzt Outcome, Status und VerificationSpec.
 - Completed benötigt erfolgreiche Verification.
+- Should-Kriterien dürfen unerfüllt bleiben; sie können `Done` nicht blockieren.
 - Ein Task ist Done, wenn alle Muss-Akzeptanzkriterien aktuell verifiziert sind und keine blockierende offene Hypothese existiert.
 
 ### Policy und Approvals
@@ -607,6 +618,36 @@ Application-Use-Case zusammen mit einer `TaskStepId` einen `KnownSafe`, netzwerk
 plan-gebundenen `ProcessSpec` bilden. Diese Bestätigung ersetzt weder die zentrale PolicyDecision
 noch eine einmalige privilegierte Freigabe und kann Workspace- oder Systempolicy nicht lockern.
 
+### VerificationSpec und VerificationEvidence
+
+E6 ersetzt frei interpretierbare Verifikationsmethoden für neue Schritte durch die geschlossene
+operationale Union `Command`, `Test`, `DiffInvariant`, `Diagnostic` und `UserConfirm`. Command,
+Test und Diagnostic binden eine bestätigte `DiscoveredCommandId`; Test bindet zusätzlich einen
+strukturierten All-/Exact-Selector und eine positive Mindestzahl bestandener Fälle. DiffInvariant
+bindet NoChanges, OnlyPaths oder ExactPaths an einen kanonischen begrenzten Pfadsatz. Scope ist
+explizit Targeted, Package oder Workspace. Historische Method-plus-Text-Spezifikationen bleiben
+lesbar, sind aber nicht executable.
+
+`OrderVerificationSpecs` sortiert deterministisch von targeted Diff-/Exact-Test-Prüfungen über
+Package bis Workspace und danach stabil nach Semantik und Spec-ID. Erfolg kann nicht vom Aufrufer
+behauptet werden: `EvaluateStepVerification` leitet ihn aus genau einem passenden, run- und
+snapshotgebundenen Artifact ab. `CommandEvidence` bewahrt content-frei Process-, Policy-, Stream-
+Digest- und Abhängigkeitsdaten; `TestEvidence` ergänzt eindeutige strukturierte Testfälle,
+`DiagnosticEvidence` Fehler-/Warnungszahlen, `DiffEvidence` den tatsächlichen vollständigen
+Change-Set-Pfadsatz aus dem E3-Patchresultat oder dem Vergleich zweier geordneter vollständiger
+Published Indexes und `UserConfirmationEvidence` den exakt bestätigten Scope. Dadurch ist auch
+`NoChanges` als leerer Indexdelta beweisbar, bleibt aber exakt an dessen aktuellen Snapshot
+gebunden. Exitcode 0 ohne
+erwartete Test-, Diagnose- oder Diffsemantik ist kein spezialisierter Nachweis.
+
+Freshness vergleicht jede präsente oder erwartbar abwesende Repository-Abhängigkeit mit dem
+aktuellen atomar publizierten Index. UserConfirmation ohne Dateiabängigkeit verlangt denselben
+Snapshot. Der produktive `DeterministicAcceptanceVerifier` lädt exakt die von abgeschlossenen
+Must-Schritten referenzierten Artifacts, prüft Spec, Run, Semantik, Freshness und Published Snapshot
+erneut und bindet zusätzlich einen ankergleichen regenerierten `RunMemoryCheckpoint`. Eine darin
+verbliebene aktive taskbezogene Hypothesis blockiert `Done` konservativ. Soll-only-Ziele können
+ohne Evidence abschließen, solange keine solche Hypothesis offen ist.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.
@@ -655,8 +696,8 @@ Published Snapshot oder konkurrierende Ledger-/Run-Schreiber.
 
 Ein normaler Zustandsübergang nach `Done` ist im Domain-Aggregat gesperrt. Nur
 `VerifyAgentAcceptance` darf einen vollständigen `AcceptanceVerificationReceipt` anwenden. Dieser
-bindet Run, Goal-Revision, Ledgerrevision und Snapshot und deckt jedes Akzeptanzkriterium exakt
-einmal mit mindestens einer Evidence-ID ab. Der Acceptance-Verifier ist damit der einzige
+bindet Run, Goal-Revision, Ledgerrevision und Snapshot und deckt jedes Must-Kriterium exakt einmal
+mit mindestens einer Evidence-ID ab. Der Acceptance-Verifier ist damit der einzige
 Application-Pfad nach `Done`; abgelehnte Verifikation führt abhängig vom Grund nach `Execute` oder
 `Replan` zurück.
 

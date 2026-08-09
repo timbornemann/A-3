@@ -9,10 +9,11 @@ use crate::{
     index_repository::IndexRepositoryError, lexical_search_repository, module_card_repository,
     module_remap_queue_repository, policy_repository, run_journal_repository,
     semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
+    verification_evidence_repository,
 };
 use a3_application::{
-    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentRecoveryStore,
-    AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, CommandAllowlistStore,
+    AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
+    AgentRecoveryStore, AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, CommandAllowlistStore,
     CommandAllowlistStoreFailure, CommandAllowlistStoreFuture, CommandAllowlistStoreVersion,
     EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
     GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
@@ -28,6 +29,7 @@ use a3_application::{
     TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
     TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
     TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
@@ -41,10 +43,11 @@ use a3_domain::{
     ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent,
     RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger,
     ToolRunId, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
-    VerifiedModuleCardBatch, WorktreeId,
+    VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 const MAX_SEARCH_DATABASES: usize = 4;
 const MAX_MUTATION_DATABASES: usize = 4;
@@ -938,6 +941,90 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     }
 }
 
+impl VerificationEvidenceStore for LibsqlKnowledgeStore {
+    fn append_verification_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        evidence: &'a VerificationEvidence,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> VerificationEvidenceStoreFuture<'a, ()> {
+        Box::pin(async move {
+            if timeout.is_zero() {
+                return Err(VerificationEvidenceStoreFailure::TimedOut);
+            }
+            let operation = VerificationIndexControl::new(control, timeout);
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(classify_verification_index_failure)?;
+            operation.checkpoint()?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
+            verification_evidence_repository::append(
+                knowledge.connection(),
+                project.worktree().id(),
+                evidence,
+                remaining,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_verification_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        expected_snapshot_id: SnapshotId,
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> VerificationEvidenceStoreFuture<'a, a3_application::StoredVerificationState> {
+        Box::pin(async move {
+            if timeout.is_zero() {
+                return Err(VerificationEvidenceStoreFailure::TimedOut);
+            }
+            let operation = VerificationIndexControl::new(control, timeout);
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(classify_verification_index_failure)?;
+            operation.checkpoint()?;
+            let published = index_publication::latest_published_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                &operation,
+            )
+            .await
+            .map_err(|error| operation.classify_index_failure(error.classify()))?
+            .ok_or(VerificationEvidenceStoreFailure::InvalidStoredData)?;
+            operation.checkpoint()?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
+            verification_evidence_repository::load_state(
+                knowledge.connection(),
+                verification_evidence_repository::VerificationStateQuery::new(
+                    project.worktree().id(),
+                    task_id,
+                    evidence_ids,
+                    expected_snapshot_id,
+                    published,
+                    remaining,
+                ),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
     fn publish<'a>(
         &'a self,
@@ -1683,6 +1770,72 @@ impl IndexPersistenceControl for SharedIndexControl<'_> {
     }
 }
 
+struct VerificationIndexControl<'a> {
+    parent: &'a dyn AgentControllerControl,
+    started: Instant,
+    timeout: Duration,
+}
+
+impl<'a> VerificationIndexControl<'a> {
+    fn new(parent: &'a dyn AgentControllerControl, timeout: Duration) -> Self {
+        Self {
+            parent,
+            started: Instant::now(),
+            timeout,
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    fn checkpoint(&self) -> Result<(), VerificationEvidenceStoreFailure> {
+        if self.parent.is_cancelled() {
+            return Err(VerificationEvidenceStoreFailure::Cancelled);
+        }
+        if self.elapsed() >= self.timeout {
+            return Err(VerificationEvidenceStoreFailure::TimedOut);
+        }
+        Ok(())
+    }
+
+    fn classify_index_failure(
+        &self,
+        failure: KnowledgeIndexFailure,
+    ) -> VerificationEvidenceStoreFailure {
+        if self.parent.is_cancelled() {
+            VerificationEvidenceStoreFailure::Cancelled
+        } else if self.elapsed() >= self.timeout {
+            VerificationEvidenceStoreFailure::TimedOut
+        } else {
+            classify_verification_index_failure(failure)
+        }
+    }
+}
+
+impl std::fmt::Debug for VerificationIndexControl<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("VerificationIndexControl")
+    }
+}
+
+impl IndexPersistenceControl for VerificationIndexControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.parent.is_cancelled() || self.elapsed() >= self.timeout
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        if self.is_cancelled() {
+            Err(a3_application::IndexPersistenceControlError::Unavailable)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -1751,6 +1904,36 @@ fn classify_knowledge_open_error(error: KnowledgeOpenError) -> KnowledgeStoreFai
         | KnowledgeOpenError::ApplyMigration { .. }
         | KnowledgeOpenError::RollbackMigration { .. }
         | KnowledgeOpenError::CommitMigration { .. } => KnowledgeStoreFailure::Unavailable,
+    }
+}
+
+const fn classify_verification_index_failure(
+    failure: KnowledgeIndexFailure,
+) -> VerificationEvidenceStoreFailure {
+    match failure {
+        KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::Unavailable)
+        | KnowledgeIndexFailure::ProgressUnavailable => {
+            VerificationEvidenceStoreFailure::Unavailable
+        }
+        KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::Corrupt) => {
+            VerificationEvidenceStoreFailure::Corrupt
+        }
+        KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::UnsupportedSchema) => {
+            VerificationEvidenceStoreFailure::UnsupportedSchema
+        }
+        KnowledgeIndexFailure::Cancelled => VerificationEvidenceStoreFailure::Cancelled,
+        KnowledgeIndexFailure::TimedOut => VerificationEvidenceStoreFailure::TimedOut,
+        KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::InvalidStoredData)
+        | KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::IdentityConflict)
+        | KnowledgeIndexFailure::SnapshotConflict
+        | KnowledgeIndexFailure::SnapshotNotFound
+        | KnowledgeIndexFailure::IndexRunAlreadyActive
+        | KnowledgeIndexFailure::IndexRunNotFound
+        | KnowledgeIndexFailure::InvalidIndexRunTransition
+        | KnowledgeIndexFailure::IndexPublicationMismatch
+        | KnowledgeIndexFailure::IndexPublicationTooLarge => {
+            VerificationEvidenceStoreFailure::InvalidStoredData
+        }
     }
 }
 

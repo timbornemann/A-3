@@ -5,7 +5,7 @@ use a3_application::{
     ConfirmProjectCommandAllowlistError, LoadProjectCommandAllowlist,
 };
 use a3_domain::{
-    AgentRunTimestamp, CommandDiscoverySchemaVersion, CommandEvidence, ContentHash,
+    AgentRunTimestamp, CommandDiscoveryEvidence, CommandDiscoverySchemaVersion, ContentHash,
     DiscoveredCommand, DiscoveredCommandKind, FileRevision, ProjectCommandCatalog, RepositoryId,
     RepositoryPath, WorkspaceDirectory, WorktreeId,
 };
@@ -131,7 +131,7 @@ fn catalog(worktree_id: WorktreeId, hash: [u8; 32]) -> ContractResult<ProjectCom
             "--offline".to_owned(),
             "--locked".to_owned(),
         ],
-        vec![CommandEvidence::File(FileRevision::new(
+        vec![CommandDiscoveryEvidence::File(FileRevision::new(
             RepositoryPath::try_from_bytes(b"Cargo.toml".to_vec())?,
             ContentHash::from_bytes(hash),
         ))],

@@ -38,6 +38,7 @@ mod task_ledger;
 mod task_lens;
 mod task_step;
 mod task_verification;
+mod verification_evidence;
 mod workspace_file;
 
 pub use agent_action::{
@@ -81,9 +82,10 @@ pub use claim_verification::{
     VerifiedModuleClaim,
 };
 pub use command_discovery::{
-    CommandCatalogError, CommandDiscoverySchemaVersion, CommandEvidence, DiscoveredCommand,
-    DiscoveredCommandError, DiscoveredCommandKind, DiscoveredCommandProcessError,
-    ProjectCommandAllowlist, ProjectCommandAllowlistError, ProjectCommandCatalog,
+    CommandCatalogError, CommandDiscoveryEvidence, CommandDiscoverySchemaVersion,
+    DiscoveredCommand, DiscoveredCommandError, DiscoveredCommandKind,
+    DiscoveredCommandProcessError, ProjectCommandAllowlist, ProjectCommandAllowlistError,
+    ProjectCommandCatalog,
 };
 pub use context_pack::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
@@ -122,13 +124,13 @@ pub use embedding::{
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
 pub use goal_contract::{
-    AcceptanceCriterion, AcceptanceCriterionStatement, GoalConstraint, GoalContract,
-    GoalContractCollection, GoalContractDraft, GoalContractDraftError, GoalContractHistory,
-    GoalContractHistoryError, GoalContractReference, GoalContractRestoreError,
-    GoalContractRevision, GoalContractRevisionError, GoalContractRevisionFailure,
-    GoalContractTextError, GoalContractTextField, GoalContractTextViolation, GoalContractTimestamp,
-    GoalContractTimestampError, GoalObjective, GoalRevisionReason, NonGoal, SuccessVerification,
-    UserDecision,
+    AcceptanceCriterion, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
+    GoalConstraint, GoalContract, GoalContractCollection, GoalContractDraft,
+    GoalContractDraftError, GoalContractHistory, GoalContractHistoryError, GoalContractReference,
+    GoalContractRestoreError, GoalContractRevision, GoalContractRevisionError,
+    GoalContractRevisionFailure, GoalContractTextError, GoalContractTextField,
+    GoalContractTextViolation, GoalContractTimestamp, GoalContractTimestampError, GoalObjective,
+    GoalRevisionReason, NonGoal, SuccessVerification, UserDecision,
 };
 pub use graph::{
     Centrality, CentralityError, EvidenceRef, GraphEdge, GraphEndpoint, GraphSymbol,
@@ -146,7 +148,7 @@ pub use id::{
     AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
     DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity,
     RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
-    ToolRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
@@ -274,10 +276,21 @@ pub use task_step::{
     TaskStepTextError, TaskStepTextViolation, TaskStepTransitionError,
 };
 pub use task_verification::{
-    ExpectedTaskEvidence, StepVerification, StepVerificationError, StepVerificationOutcome,
-    TaskLedgerTimestamp, TaskLedgerTimestampError, TaskVerificationTextError,
-    TaskVerificationTextViolation, VerificationFailureSummary, VerificationMethod,
-    VerificationRequirement, VerificationSpec,
+    DiagnosticPolicy, DiffInvariantMode, DiffInvariantVerification, DiffInvariantVerificationError,
+    ExpectedTaskEvidence, MinimumTestCaseCount, MinimumTestCaseCountError, StepVerification,
+    StepVerificationError, StepVerificationOutcome, TaskLedgerTimestamp, TaskLedgerTimestampError,
+    TaskVerificationTextError, TaskVerificationTextViolation, TestCaseSelector,
+    TestCaseSelectorName, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
+    VerificationScope, VerificationSpec, VerificationTarget,
+};
+pub use verification_evidence::{
+    CommandEvidence, CommandEvidenceContext, DiagnosticCount, DiagnosticEvidence, DiffEvidence,
+    DiffEvidenceSource, EvidenceDependency, EvidenceFreshness, EvidenceFreshnessFailure,
+    ProcessStreamEvidence, StoredDiffEvidenceContext, StoredProcessEvidence, TestCaseEvidence,
+    TestCaseName, TestCaseNameError, TestCaseOutcome, TestEvidence, UserConfirmationEvidence,
+    VerificationDependencies, VerificationDependenciesError, VerificationEvidence,
+    VerificationEvidenceBuildError, VerificationEvidenceEvaluation, VerificationEvidenceFailure,
+    VerificationEvidenceSchemaVersion,
 };
 pub use workspace_file::{
     DirectoryPageSize, DirectoryPageSizeError, WorkspaceDirectory, WorkspaceDirectoryEntry,

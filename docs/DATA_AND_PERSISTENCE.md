@@ -130,9 +130,18 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   exakten Katalog-Digest, Zeitpunkt und eine kanonische nicht leere Teilmenge von höchstens 256
   Command-IDs. Revisionen und Einträge sind append-only; ausschließlich die kontrollierte
   Worktree-Reconciliation darf ihre Worktree-ID über Fremdschlüssel-Cascade umschreiben.
+- Knowledge-Schema V20 ergänzt Must-/Should-Kriterien, Goal-revisionsgebundene Step-Mappings,
+  operationale VerificationSpec-Zeilen und immutable `verification_evidence`. Getrennte strikte
+  Variantentabellen speichern content-freie Command-/Test-/Diagnostic-/Diff-/UserConfirm-Semantik
+  sowie kanonische Present-/Absent-Abhängigkeiten. Diff-Quellen unterscheiden strikt autorisierte
+  Patchresultate von geordneten Published-Index-Vergleichen. Stable IDs werden beim Reopen aus allen
+  gespeicherten Feldern erneut abgeleitet; ein gleiches Evidence-ID-Append ist nur bei exakt
+  identischem Artifact idempotent. Append und Acceptance-Read sind abbrechbar, besitzen ein
+  Zeitlimit und prüfen bei mengenabhängigen Zeilen feste Checkpoints. Acceptance liest Evidence
+  und den weiterhin aktuellen Published Index begrenzt und in konsistenten Transaktionen.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
-  Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle und die
-  projektbezogene Command-Allowlist ausschließlich
+  Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
+  projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich
   über die Application-Ports. Der libSQL-Adapter liefert nur eine Factory für temporäre
   App-Data-Roots; engine-spezifische Migration-, Crash-, Korruptions- und Schema-Negativtests
   bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
@@ -459,6 +468,20 @@ verfügbar.
 
 ## Migrationen
 
+Das implementierte Knowledge-Schema V20 ergänzt V19 um die typed Verification Engine. Die
+Migration erweitert bestehende Acceptance Criteria rückwärtskompatibel mit `requirement = must`,
+bindet neue Step-Criterion-Mappings an exakt dieselbe Goal-Revision und persistiert operationale
+Specs getrennt von lesbaren Legacy-Spezifikationen. Elf neue normalisierte Tabellen bewahren
+Mappings, Specs, schema-versionierte Header, Processmetadaten, strukturierte Testfälle,
+Diagnosezahlen, strikt disjunkte Patch-/Published-Index-Diffquellen, Diffpfade,
+Userbestätigungen und Present-/Absent-Freshness-Abhängigkeiten. Der
+gemeinsame
+Adaptervertrag belegt Timeout und Cancellation ohne Teilwrite, idempotentes Append, Reopen aller
+Varianten und beider Diffquellen, Soll-Nichtblockierung,
+Acceptance und gezielte Stale-Erkennung nach einer neuen Indexpublikation. Migrationstests decken
+leeres Schema, jeden Vorgänger bis V19 und vollständigen Rollback eines fehlgeschlagenen
+V19→V20-Upgrades ab.
+
 Das implementierte Knowledge-Schema V19 ergänzt V18 um die dauerhafte projektbezogene
 Command-Allowlist. `command_allowlist_revisions` und `command_allowlist_entries` sind append-only,
 streng worktreegebunden und erlauben nur der kontrollierten Identitäts-Reconciliation ein
@@ -507,7 +530,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V19 in einer eigenen atomaren Migration.
+Vorgängerversion bis V20 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

@@ -27,6 +27,7 @@ mod run_journal_repository;
 mod semantic_embedding_repository;
 mod task_ledger_repository;
 mod task_lens_claim_repository;
+mod verification_evidence_repository;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};
 pub use knowledge::{KnowledgeDatabase, KnowledgeOpenError, KnowledgeVerification};

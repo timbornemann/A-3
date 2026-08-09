@@ -56,14 +56,14 @@ impl DiscoveredCommandKind {
 
 /// Exact indexed source evidence supporting one discovered command.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandEvidence {
+pub enum CommandDiscoveryEvidence {
     /// A complete manifest or package-manager marker revision.
     File(FileRevision),
     /// A precise manifest field or relationship range.
     Source(EvidenceRef),
 }
 
-impl CommandEvidence {
+impl CommandDiscoveryEvidence {
     /// Returns the immutable source-file revision.
     #[must_use]
     pub const fn revision(&self) -> &FileRevision {
@@ -86,7 +86,7 @@ pub struct DiscoveredCommand {
     timeout: ProcessTimeout,
     stdout_limit: ProcessOutputLimit,
     stderr_limit: ProcessOutputLimit,
-    evidence: Vec<CommandEvidence>,
+    evidence: Vec<CommandDiscoveryEvidence>,
 }
 
 impl DiscoveredCommand {
@@ -96,7 +96,7 @@ impl DiscoveredCommand {
         working_directory: WorkspaceDirectory,
         executable: String,
         arguments: Vec<String>,
-        mut evidence: Vec<CommandEvidence>,
+        mut evidence: Vec<CommandDiscoveryEvidence>,
     ) -> Result<Self, DiscoveredCommandError> {
         if evidence.is_empty() || evidence.len() > MAX_COMMAND_EVIDENCE {
             return Err(DiscoveredCommandError::InvalidEvidenceCount {
@@ -171,7 +171,7 @@ impl DiscoveredCommand {
 
     /// Returns every indexed revision or range supporting this command.
     #[must_use]
-    pub fn evidence(&self) -> &[CommandEvidence] {
+    pub fn evidence(&self) -> &[CommandDiscoveryEvidence] {
         &self.evidence
     }
 
@@ -555,7 +555,7 @@ impl Error for DiscoveredCommandProcessError {
     }
 }
 
-fn compare_evidence(left: &CommandEvidence, right: &CommandEvidence) -> Ordering {
+fn compare_evidence(left: &CommandDiscoveryEvidence, right: &CommandDiscoveryEvidence) -> Ordering {
     evidence_kind(left)
         .cmp(&evidence_kind(right))
         .then_with(|| left.revision().path().cmp(right.revision().path()))
@@ -567,17 +567,17 @@ fn compare_evidence(left: &CommandEvidence, right: &CommandEvidence) -> Ordering
         .then_with(|| evidence_range(left).cmp(&evidence_range(right)))
 }
 
-const fn evidence_kind(evidence: &CommandEvidence) -> u8 {
+const fn evidence_kind(evidence: &CommandDiscoveryEvidence) -> u8 {
     match evidence {
-        CommandEvidence::File(_) => 0,
-        CommandEvidence::Source(_) => 1,
+        CommandDiscoveryEvidence::File(_) => 0,
+        CommandDiscoveryEvidence::Source(_) => 1,
     }
 }
 
-const fn evidence_range(evidence: &CommandEvidence) -> Option<super::SourceRange> {
+const fn evidence_range(evidence: &CommandDiscoveryEvidence) -> Option<super::SourceRange> {
     match evidence {
-        CommandEvidence::File(_) => None,
-        CommandEvidence::Source(evidence) => Some(evidence.range()),
+        CommandDiscoveryEvidence::File(_) => None,
+        CommandDiscoveryEvidence::Source(evidence) => Some(evidence.range()),
     }
 }
 
@@ -586,7 +586,7 @@ fn derive_command_id(
     working_directory: &WorkspaceDirectory,
     executable: &ProcessExecutable,
     arguments: &[ProcessArgument],
-    evidence: &[CommandEvidence],
+    evidence: &[CommandDiscoveryEvidence],
 ) -> DiscoveredCommandId {
     let mut hasher = blake3::Hasher::new_derive_key("a3.discovered-command.v1");
     hasher.update(&[kind_code(kind)]);
@@ -738,7 +738,7 @@ mod tests {
                 "--offline".to_owned(),
                 "--locked".to_owned(),
             ],
-            vec![CommandEvidence::File(FileRevision::new(
+            vec![CommandDiscoveryEvidence::File(FileRevision::new(
                 RepositoryPath::try_from_bytes(path.as_bytes().to_vec())?,
                 ContentHash::from_bytes(hash),
             ))],

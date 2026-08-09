@@ -5,13 +5,14 @@ use a3_application::{
     TaskLedgerStoreVersion,
 };
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-    ExpectedTaskEvidence, GoalConstraint, GoalContract, GoalContractDraft, GoalContractTimestamp,
-    GoalObjective, NonGoal, RepositoryId, StepDependency, StepVerification, StepVerificationId,
-    StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepOutcome,
-    TaskStepRationale, TaskStepResultSummary, UserDecision, VerificationMethod,
-    VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
+    AcceptanceCriterionStatement, AgentRunId, DiscoveredCommandId, ExpectedTaskEvidence,
+    GoalConstraint, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
+    MinimumTestCaseCount, NonGoal, RepositoryId, StepDependency, StepVerification,
+    StepVerificationId, StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId,
+    TaskLedger, TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId,
+    TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TestCaseSelector, UserDecision,
+    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId, WorktreeId,
 };
 
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
@@ -255,23 +256,36 @@ fn step(
         vec![ExpectedTaskEvidence::try_from_string(
             "the deterministic check output".to_owned(),
         )?],
-        VerificationSpec::new(
+        VerificationSpec::test(
             VerificationSpecId::from_bytes([spec_id; 32]),
-            VerificationMethod::Test,
             VerificationRequirement::try_from_string("the targeted check passes".to_owned())?,
+            DiscoveredCommandId::from_bytes([spec_id.saturating_add(1); 32]),
+            TestCaseSelector::All,
+            MinimumTestCaseCount::new(1)?,
+            VerificationScope::Targeted,
         ),
-    )?)
+    )?
+    .with_acceptance_criteria(vec![AcceptanceCriterionId::from_bytes([241; 32])])?)
 }
 
 fn goal_draft() -> ContractResult<GoalContractDraft> {
     Ok(GoalContractDraft::new(
         GoalObjective::try_from_string("persist the verified Task Ledger".to_owned())?,
-        vec![AcceptanceCriterion::new(
-            AcceptanceCriterionId::from_bytes([241; 32]),
-            AcceptanceCriterionStatement::try_from_string(
-                "restart restores exact ledger state".to_owned(),
-            )?,
-        )],
+        vec![
+            AcceptanceCriterion::new(
+                AcceptanceCriterionId::from_bytes([241; 32]),
+                AcceptanceCriterionStatement::try_from_string(
+                    "restart restores exact ledger state".to_owned(),
+                )?,
+            ),
+            AcceptanceCriterion::with_requirement(
+                AcceptanceCriterionId::from_bytes([242; 32]),
+                AcceptanceCriterionStatement::try_from_string(
+                    "diagnostic detail remains convenient".to_owned(),
+                )?,
+                AcceptanceCriterionRequirement::Should,
+            ),
+        ],
         vec![GoalConstraint::try_from_string(
             "retain verification evidence".to_owned(),
         )?],

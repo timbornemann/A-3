@@ -1,6 +1,6 @@
 use super::{
-    AgentRunId, ExpectedTaskEvidence, StepVerification, TaskEvidenceId, TaskLedgerRevision,
-    TaskLedgerTimestamp, TaskStepId, VerificationSpec,
+    AcceptanceCriterionId, AgentRunId, ExpectedTaskEvidence, StepVerification, TaskEvidenceId,
+    TaskLedgerRevision, TaskLedgerTimestamp, TaskStepId, VerificationSpec,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -13,6 +13,7 @@ const MAX_STEP_REASON_BYTES: usize = 4 * 1_024;
 const MAX_STEP_DEPENDENCIES: usize = 64;
 const MAX_EXPECTED_EVIDENCE: usize = 32;
 const MAX_ATTEMPT_EVIDENCE: usize = 64;
+const MAX_STEP_ACCEPTANCE_CRITERIA: usize = 64;
 
 macro_rules! step_text_type {
     ($(#[$metadata:meta])* $name:ident, $field:literal, $maximum:expr) => {
@@ -204,6 +205,7 @@ pub struct TaskStepDefinition {
     dependencies: Vec<StepDependency>,
     expected_evidence: Vec<ExpectedTaskEvidence>,
     verification_spec: VerificationSpec,
+    acceptance_criteria: Vec<AcceptanceCriterionId>,
 }
 
 impl TaskStepDefinition {
@@ -251,7 +253,31 @@ impl TaskStepDefinition {
             dependencies,
             expected_evidence,
             verification_spec,
+            acceptance_criteria: Vec::new(),
         })
+    }
+
+    /// Attaches canonical Goal Contract criteria that this step's verification proves.
+    pub fn with_acceptance_criteria(
+        mut self,
+        mut acceptance_criteria: Vec<AcceptanceCriterionId>,
+    ) -> Result<Self, TaskStepDefinitionError> {
+        if acceptance_criteria.is_empty()
+            || acceptance_criteria.len() > MAX_STEP_ACCEPTANCE_CRITERIA
+        {
+            return Err(TaskStepDefinitionError::InvalidAcceptanceCriterionCount(
+                acceptance_criteria.len(),
+            ));
+        }
+        acceptance_criteria.sort_unstable();
+        if acceptance_criteria
+            .windows(2)
+            .any(|pair| pair[0] == pair[1])
+        {
+            return Err(TaskStepDefinitionError::DuplicateAcceptanceCriterion);
+        }
+        self.acceptance_criteria = acceptance_criteria;
+        Ok(self)
     }
 
     /// Returns the stable step identity.
@@ -295,6 +321,12 @@ impl TaskStepDefinition {
     pub const fn verification_spec(&self) -> &VerificationSpec {
         &self.verification_spec
     }
+
+    /// Returns Goal Contract criteria proven by this step, empty only for legacy definitions.
+    #[must_use]
+    pub fn acceptance_criteria(&self) -> &[AcceptanceCriterionId] {
+        &self.acceptance_criteria
+    }
 }
 
 /// Invalid local shape of one task-step definition.
@@ -312,6 +344,10 @@ pub enum TaskStepDefinitionError {
     InvalidExpectedEvidenceCount(usize),
     /// One expected evidence description appeared more than once.
     DuplicateExpectedEvidence,
+    /// An explicit E6 mapping requires between one and 64 Goal Contract criteria.
+    InvalidAcceptanceCriterionCount(usize),
+    /// One Goal Contract criterion appeared more than once in the mapping.
+    DuplicateAcceptanceCriterion,
 }
 
 impl fmt::Display for TaskStepDefinitionError {
@@ -332,6 +368,13 @@ impl fmt::Display for TaskStepDefinitionError {
             ),
             Self::DuplicateExpectedEvidence => {
                 formatter.write_str("task step contains duplicate expected evidence")
+            }
+            Self::InvalidAcceptanceCriterionCount(count) => write!(
+                formatter,
+                "task step has {count} acceptance criteria; expected 1 through {MAX_STEP_ACCEPTANCE_CRITERIA}"
+            ),
+            Self::DuplicateAcceptanceCriterion => {
+                formatter.write_str("task step repeats an acceptance criterion")
             }
         }
     }

@@ -47,6 +47,7 @@ mod semantic_embedding_store;
 mod semantic_embeddings;
 mod task_ledger;
 mod task_lens;
+mod verification;
 mod workspace_directory;
 mod workspace_patch;
 
@@ -249,6 +250,12 @@ pub use task_lens::{
     TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
     TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,
     TaskLensSemanticSearchFuture, TaskLensTimeout, TaskLensTimeoutError,
+};
+pub use verification::{
+    DeterministicAcceptanceVerifier, EvaluateStepVerification, EvaluateStepVerificationError,
+    OrderVerificationSpecs, StoredVerificationState, StoredVerificationStateError,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
+    VerificationOrderingError,
 };
 pub use workspace_directory::{
     WorkspaceDirectoryLister, WorkspaceDirectoryListerFuture, WorkspaceDirectoryProgressError,

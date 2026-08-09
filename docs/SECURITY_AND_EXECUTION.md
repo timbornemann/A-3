@@ -333,6 +333,22 @@ Ledgeränderung und Controllertransition werden atomar mit getrennten Ledger- un
 persistiert. `Finish` ist content-frei und wechselt nur in `Verify`; weder Modellausgabe noch
 Toolerfolg können `Done` setzen.
 
+E6 akzeptiert für `Done` ausschließlich immutable typisierte Evidence zu den Must-Kriterien der
+exakten Goal-/Ledgerrevision. Command-Evidence speichert keine stdout-/stderr-Inhalte, sondern nur
+vollständige Digests, Bytezahlen, Begrenzungs- und Redaction-Metadaten sowie bereits autorisierte
+Process-/Policy-Identitäten. Für Test, Diagnostic und Diff reicht ein Exitcode allein nicht:
+strukturierte Testfälle, Diagnosezahlen beziehungsweise der tatsächliche vollständige Change Set
+müssen die Spec-Semantik erfüllen. Ein leerer `NoChanges`-Nachweis kann nur aus zwei verschieden
+geordneten vollständigen Published Indexes entstehen und verlangt bei Acceptance exakt seinen
+aktuellen Snapshot. UserConfirm ist an einen exakten Policy-Scope gebunden.
+
+Vor Acceptance wird der jüngste Published Index vor und nach dem Evidence-Read bestätigt. Present-
+und Absent-Dateiabängigkeiten werden einzeln gegen ihn geprüft; ein Snapshotwechsel oder eine
+betroffene Useränderung blockiert `Done` als stale. Ein ankergleicher regenerierter
+Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktuellen
+taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
+LLM noch Storageadapter können den Success-Bool liefern.
+
 ## Netzwerk und Datenschutz
 
 V1 ist offline-first:

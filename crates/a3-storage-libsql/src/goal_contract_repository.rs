@@ -1,9 +1,10 @@
 use crate::catalog::is_corruption;
 use a3_application::GoalContractStoreFailure;
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, GoalConstraint,
-    GoalContract, GoalContractDraft, GoalContractRevision, GoalContractTimestamp, GoalObjective,
-    GoalRevisionReason, NonGoal, SuccessVerification, TaskId, UserDecision, WorktreeId,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
+    AcceptanceCriterionStatement, GoalConstraint, GoalContract, GoalContractDraft,
+    GoalContractRevision, GoalContractTimestamp, GoalObjective, GoalRevisionReason, NonGoal,
+    SuccessVerification, TaskId, UserDecision, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
@@ -206,14 +207,15 @@ async fn write_acceptance_criteria(
         transaction
             .execute(
                 "INSERT INTO acceptance_criteria (\n\
-                 task_id, goal_revision, item_sequence, criterion_id, statement\n\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                 task_id, goal_revision, item_sequence, criterion_id, statement, requirement\n\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     contract.task_id().as_bytes().to_vec(),
                     i64::from(contract.revision().get()),
                     sequence_to_i64(index)?,
                     criterion.id().as_bytes().to_vec(),
-                    criterion.statement().as_str()
+                    criterion.statement().as_str(),
+                    requirement_text(criterion.requirement())
                 ],
             )
             .await
@@ -347,7 +349,7 @@ async fn read_acceptance_criteria(
 ) -> Result<Vec<AcceptanceCriterion>, GoalContractRepositoryError> {
     let mut rows = transaction
         .query(
-            "SELECT item_sequence, criterion_id, statement FROM acceptance_criteria\n\
+            "SELECT item_sequence, criterion_id, statement, requirement FROM acceptance_criteria\n\
              WHERE task_id = ?1 AND goal_revision = ?2 ORDER BY item_sequence",
             params![task_id.as_bytes().to_vec(), i64::from(revision.get())],
         )
@@ -363,13 +365,31 @@ async fn read_acceptance_criteria(
         if criteria.len() == MAX_COLLECTION_ITEMS {
             return Err(GoalContractRepositoryError::ResourceLimit);
         }
-        criteria.push(AcceptanceCriterion::new(
+        criteria.push(AcceptanceCriterion::with_requirement(
             AcceptanceCriterionId::from_bytes(read_id(&row, 1)?),
             AcceptanceCriterionStatement::try_from_string(read_text(&row, 2)?)
                 .map_err(|_| GoalContractRepositoryError::InvalidStoredData)?,
+            parse_requirement(&read_text(&row, 3)?)?,
         ));
     }
     Ok(criteria)
+}
+
+const fn requirement_text(requirement: AcceptanceCriterionRequirement) -> &'static str {
+    match requirement {
+        AcceptanceCriterionRequirement::Must => "must",
+        AcceptanceCriterionRequirement::Should => "should",
+    }
+}
+
+fn parse_requirement(
+    value: &str,
+) -> Result<AcceptanceCriterionRequirement, GoalContractRepositoryError> {
+    match value {
+        "must" => Ok(AcceptanceCriterionRequirement::Must),
+        "should" => Ok(AcceptanceCriterionRequirement::Should),
+        _ => Err(GoalContractRepositoryError::InvalidStoredData),
+    }
 }
 
 async fn read_text_items(

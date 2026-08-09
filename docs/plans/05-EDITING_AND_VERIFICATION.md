@@ -213,18 +213,43 @@ Knowledge-Contracts einschließlich E5.
 
 Abhängigkeiten: E3 bis E5
 
-- [ ] VerificationSpec-Typen: Command, Test, DiffInvariant, Diagnostic, UserConfirm
-- [ ] schmalste relevante Prüfung zuerst
-- [ ] Ergebnisse als TestEvidence oder CommandEvidence
-- [ ] Muss- und Soll-Kriterien
-- [ ] Freshness und Snapshotbindung
-- [ ] Acceptance-Verifier
+- [x] VerificationSpec-Typen: Command, Test, DiffInvariant, Diagnostic, UserConfirm
+- [x] schmalste relevante Prüfung zuerst
+- [x] Ergebnisse als TestEvidence oder CommandEvidence
+- [x] Muss- und Soll-Kriterien
+- [x] Freshness und Snapshotbindung
+- [x] Acceptance-Verifier
 
 Akzeptanz:
 
 - Exitcode allein ohne erwartete Semantik genügt nicht bei spezialisierten Verifikationen;
 - Done wird bei fehlgeschlagenem Muss-Kriterium blockiert;
 - Useränderung nach Test macht betroffene Verification stale.
+
+Verifiziert am 2026-08-10: Neue Ledger-Schritte verwenden die geschlossene operationale
+`VerificationSpec`-Union mit deterministischer Narrow-to-Broad-Reihenfolge und konkretem
+Criterion-Mapping. Immutable V1-Artifacts bewahren content-freie Command-, strukturierte Test-,
+Diagnostic-, vollständige Diff- oder scopegenaue UserConfirm-Semantik samt Present-/Absent-
+Freshness-Abhängigkeiten. Diff-Evidence stammt entweder aus dem exakten E3-Patchresultat oder aus
+zwei geordneten vollständigen Published Indexes, sodass `NoChanges` operational und exakt
+snapshotgebunden beweisbar ist. Erfolg wird ausschließlich aus Spec, Artifact und aktuellem Published
+Index abgeleitet; Exitcode 0 ohne strukturierte Testsemantik scheitert. Der produktive
+`DeterministicAcceptanceVerifier` prüft exakt die Must-Evidence sowie einen ankergleichen
+regenerierten Run-Memory-Checkpoint; Should-only darf ohne Evidence abschließen, eine offene
+aktuelle taskbezogene Hypothesis blockiert weiterhin `Done`.
+
+Knowledge-Schema V20 persistiert Must/Should, Step-Mappings, operationale Specs und alle fünf
+Evidence-Varianten samt disjunkten Patch-/Index-Diffquellen mit stabiler ID-Rekonstruktion. Der
+gemeinsame Adaptervertrag belegt Timeout und Cancellation ohne Teilwrite, idempotentes Append,
+Reopen, Acceptance und gezielte Stale-Ablehnung nach einer betroffenen
+Useränderung; Migrationstests belegen leeres V20-Schema und vollständigen V19→V20-Rollback.
+Rustfmt, Workspace-Clippy über alle Targets/Features mit `-D warnings`, Rustdoc mit `-D warnings`,
+Node 24.14.0/pnpm 11.9.0, Frontendformat/Lint/Typecheck, 20 Frontend- und vier Tooltests, Build,
+45 Markdown-Dateien mit 66 Links, Lizenzbericht sowie der vollständige Linux-`quality`-Job über
+`act` sind grün. Der Windows-Sammellauf verlor erneut ausschließlich den bekannten nativen
+libSQL-Worker `knowledge_upgrades_from_every_supported_predecessor` nach drei Versuchen mit
+`0xc0000005`; die isolierten V20-Schema-/Rollbacktests und der vollständige Linux-Lauf bestanden,
+letzterer die gesamte Suite ohne Retry.
 
 ## E7 Mutating Controller
 

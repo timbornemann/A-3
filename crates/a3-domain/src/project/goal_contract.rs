@@ -207,18 +207,46 @@ fn normalize_text(
     Ok(trimmed.to_owned())
 }
 
-/// One stable mandatory success condition within a revisioned Goal Contract.
+/// Whether an acceptance criterion gates Done or remains advisory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AcceptanceCriterionRequirement {
+    /// Current passing evidence is mandatory before Done.
+    Must,
+    /// A best-effort outcome is reported but does not independently block Done.
+    Should,
+}
+
+/// One stable success condition within a revisioned Goal Contract.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AcceptanceCriterion {
     id: AcceptanceCriterionId,
     statement: AcceptanceCriterionStatement,
+    requirement: AcceptanceCriterionRequirement,
 }
 
 impl AcceptanceCriterion {
     /// Binds a stable criterion identity to a bounded verification statement.
     #[must_use]
     pub const fn new(id: AcceptanceCriterionId, statement: AcceptanceCriterionStatement) -> Self {
-        Self { id, statement }
+        Self {
+            id,
+            statement,
+            requirement: AcceptanceCriterionRequirement::Must,
+        }
+    }
+
+    /// Binds a stable criterion identity to an explicit Must or Should requirement.
+    #[must_use]
+    pub const fn with_requirement(
+        id: AcceptanceCriterionId,
+        statement: AcceptanceCriterionStatement,
+        requirement: AcceptanceCriterionRequirement,
+    ) -> Self {
+        Self {
+            id,
+            statement,
+            requirement,
+        }
     }
 
     /// Returns the stable criterion identity.
@@ -231,6 +259,12 @@ impl AcceptanceCriterion {
     #[must_use]
     pub const fn statement(&self) -> &AcceptanceCriterionStatement {
         &self.statement
+    }
+
+    /// Returns whether this criterion gates Done.
+    #[must_use]
+    pub const fn requirement(&self) -> AcceptanceCriterionRequirement {
+        self.requirement
     }
 }
 

@@ -16,12 +16,13 @@ mod run_journal;
 mod search;
 mod semantic;
 mod task_ledger;
+mod verification;
 
 use a3_application::{
     AgentActionStore, AgentRecoveryStore, CommandAllowlistStore, GoalContractStore,
     KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore,
     RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore,
-    TaskLensIndexStore, VerifiedModuleCardPublisher,
+    TaskLensIndexStore, VerificationEvidenceStore, VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -213,6 +214,7 @@ pub trait KnowledgeStoreContractFactory {
         + ModuleRemapQueueStore
         + TaskLensClaimStore
         + TaskLensIndexStore
+        + VerificationEvidenceStore
         + VerifiedModuleCardPublisher;
 
     /// Opens the store at `app_data_root`, preserving data across repeated calls.
@@ -256,6 +258,8 @@ pub enum KnowledgeStoreContractGroup {
     Policy,
     /// Append-only project command confirmations, CAS, reopen, and worktree isolation.
     CommandAllowlists,
+    /// Typed verification evidence, acceptance, idempotence, reopen, and freshness.
+    VerificationEvidence,
     /// Retrieval behavior before an index is published.
     SearchAvailability,
     /// Cancellation behavior across all retrieval channels.
@@ -330,6 +334,9 @@ where
         KnowledgeStoreContractGroup::Policy => policy::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::CommandAllowlists => {
             command_allowlist::verify(factory, &workspace).await
+        }
+        KnowledgeStoreContractGroup::VerificationEvidence => {
+            verification::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::SearchAvailability => {
             search::verify_phase(

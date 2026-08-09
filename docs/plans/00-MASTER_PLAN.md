@@ -108,10 +108,10 @@ Ein Nutzer kann:
 - [x] hashgeschützte PatchAction
 - [x] argv ProcessRunner
 - [x] evidenzgebundene Command Discovery und projektbezogene Allowlist
-- [ ] Test- und Buildverifikation
+- [x] Test- und Buildverifikation
 - [ ] Replan und Failure Recovery
 - [ ] ein Mutations-Lock pro Worktree
-- [ ] Done-Gate gegen Acceptance Criteria
+- [x] Done-Gate gegen Acceptance Criteria
 
 ### M8 Desktop Product
 

@@ -324,6 +324,18 @@ Allowlist und validierte `TaskStepId` ergeben einen automatisch policy-fähigen 
 Package-Manager kann ein bestätigtes Repositoryskript intern über seinen eigenen Interpreter
 ausführen; A^3 selbst fügt dabei keine Shell ein und bestätigt niemals einen rohen Skriptwert.
 
+M7/E6 hält die Verifikationsentscheidung im Domain-/Application-Kern und nicht im ProcessRunner
+oder Storageadapter. Der Ledger persistiert die geschlossene operationale Spec samt Must-/Should-
+Criterion-Mapping. Aus Process-, Patch-, zwei geordneten Published Indexes oder Userresultaten
+entstehen immutable typisierte
+Artifacts; der Erfolg wird ausschließlich aus Artifact-Semantik und aktuellem Published Index
+abgeleitet. `VerificationEvidenceStore` ist ein schmaler lokaler Port für zeitbegrenztes,
+abbrechbares Append/Reopen und einen
+begrenzten konsistenten Acceptance-Read. Der produktive `DeterministicAcceptanceVerifier` lädt
+genau die Must-Evidence, prüft Freshness und bindet einen aus Goal, Ledger, Run, Published Index und
+originalen Task-Lens-Claims regenerierten Run-Memory-Checkpoint. Weder libSQL-Zeilen noch
+Prozessoutput oder eine vom LLM behauptete Erfolgsentscheidung verlassen ihre Adaptergrenzen.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

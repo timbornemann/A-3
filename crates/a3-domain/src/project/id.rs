@@ -91,6 +91,10 @@ stable_id!(
     StepVerificationId
 );
 stable_id!(
+    /// Stable identity shared by every evidence artifact from one verification run.
+    VerificationRunId
+);
+stable_id!(
     /// Stable identity of one controlled agent run.
     AgentRunId
 );
@@ -140,7 +144,8 @@ mod tests {
         AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
         DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId,
         RemoteIdentity, RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId,
-        TaskId, TaskStepId, ToolRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+        TaskId, TaskStepId, ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId,
+        WorktreeId,
     };
 
     #[test]
@@ -163,6 +168,7 @@ mod tests {
         assert_eq!(TaskEvidenceId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(VerificationSpecId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(StepVerificationId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(VerificationRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(RunEventId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(ToolRunId::from_bytes(bytes).as_bytes(), &bytes);

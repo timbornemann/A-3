@@ -6,7 +6,7 @@ use a3_domain::{
     ContextSection, ModelProfile, TaskLens,
 };
 
-const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v2";
+const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v3";
 
 pub(super) fn context_digest(
     profile: &ModelProfile,
