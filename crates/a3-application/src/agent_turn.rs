@@ -282,9 +282,10 @@ pub enum AgentTurnRejectionReason {
     InvalidReadResult,
 }
 
-/// H9 turn use case composing fresh context, neutral provider, strict decoder, and read capability.
+/// Turn use case composing fresh context, neutral provider, strict decoding, and the bounded read
+/// capability. Mutating actions are returned to the E7 controller and never executed here.
 #[derive(Debug, Clone, Copy)]
-pub struct ExecuteReadOnlyAgentTurn<'a> {
+pub struct ExecuteAgentTurn<'a> {
     compiler: &'a dyn AgentContextCompiler,
     provider: &'a dyn ModelProvider,
     tools: &'a dyn AgentReadTools,
@@ -293,7 +294,7 @@ pub struct ExecuteReadOnlyAgentTurn<'a> {
     read_timeout: AgentReadTimeout,
 }
 
-impl<'a> ExecuteReadOnlyAgentTurn<'a> {
+impl<'a> ExecuteAgentTurn<'a> {
     /// Creates the H9 executor with fixed local model and read deadlines.
     #[must_use]
     pub const fn new(
@@ -312,7 +313,7 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
         }
     }
 
-    /// Compiles a fresh turn and executes at most one Search or Inspect action.
+    /// Compiles a fresh turn, executes at most one read, and returns mutations unexecuted.
     pub async fn execute<C>(
         self,
         run: &AgentRun,
@@ -360,7 +361,7 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
             }));
         }
         let (action, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
-            match DecodeAgentActionTurn::version_one().decode_primary(&primary.raw) {
+            match DecodeAgentActionTurn::current().decode_primary(&primary.raw) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
                     action,
                     primary.prompt_tokens,
@@ -461,7 +462,10 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
         let read_action = match &action {
             AgentAction::Search(action) => Some(AgentReadAction::Search(action.clone())),
             AgentAction::Inspect(action) => Some(AgentReadAction::Inspect(action.clone())),
-            AgentAction::UpdateLedger(_) | AgentAction::Finish(_) => None,
+            AgentAction::UpdateLedger(_)
+            | AgentAction::Finish(_)
+            | AgentAction::ApplyPatch(_)
+            | AgentAction::Run(_) => None,
         };
         let tool_result = if let Some(read_action) = read_action {
             let action_ordinal = run
@@ -546,6 +550,9 @@ impl<'a> ExecuteReadOnlyAgentTurn<'a> {
         })))
     }
 }
+
+/// Compatibility name retained for H9 callers; new code should use [`ExecuteAgentTurn`].
+pub type ExecuteReadOnlyAgentTurn<'a> = ExecuteAgentTurn<'a>;
 
 fn validate_turn_input(
     run: &AgentRun,
@@ -1014,6 +1021,18 @@ mod tests {
             })
         }
 
+        fn complete_agent_tool_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_last_sequence: RunEventSequence,
+            _run: &'a AgentRun,
+            _event: &'a RunEvent,
+            _tool_run_id: ToolRunId,
+            _attempt: a3_domain::AgentToolAttemptNumber,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentToolAttempt> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
+        }
+
         fn interrupt_agent_tool_attempts<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
@@ -1073,7 +1092,7 @@ mod tests {
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":1,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":2,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1179,7 +1198,7 @@ mod tests {
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
         let fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":1,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":2,"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1270,7 +1289,7 @@ mod tests {
             ModelMessageRole::User,
             "bounded controller context".to_owned(),
         )?;
-        let schema = StructuredOutputSchema::new(AgentActionJsonSchema::version_one().as_json()?)?;
+        let schema = StructuredOutputSchema::new(AgentActionJsonSchema::current().as_json()?)?;
         let request = ModelProviderRequest::new(profile.clone(), vec![message], Some(schema))?;
         let plan = ContextBudgetPlan::for_profile(&profile)?;
         let usage = ContextBudgetUsage::new(plan, 0, 0, 0, 0, 0)?;

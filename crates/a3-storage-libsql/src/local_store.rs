@@ -674,6 +674,31 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn complete_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::complete_tool_attempt(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+                tool_run_id,
+                attempt,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
         project: &'a ProjectIdentity,

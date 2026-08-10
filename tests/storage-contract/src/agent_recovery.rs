@@ -13,12 +13,12 @@ use a3_domain::{
     AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttemptNumber, AgentToolAttemptStatus,
     AgentToolEvidence, AgentToolEvidenceSet, ContentHash, ExpectedTaskEvidence, FileRevision,
     GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
-    ModelProfileReference, ModelProfileVersion, RepositoryId, RepositoryPath, RunEventId,
-    RunEventKind, RunEventOutcome, RunEventPayload, RunEventSequence, SnapshotChangeKind,
-    SnapshotId, StepVerification, StepVerificationId, StepVerificationOutcome, SuccessVerification,
-    TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome,
-    TaskStepRationale, TaskStepResultSummary, TaskStepStatus, ToolRunId, VerificationMethod,
-    VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
+    ModelProfileReference, ModelProfileVersion, RepositoryId, RepositoryPath, RunEventCode,
+    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventSequence, RunEventSubject,
+    SnapshotChangeKind, SnapshotId, StepVerification, StepVerificationId, StepVerificationOutcome,
+    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
+    TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TaskStepStatus, ToolRunId,
+    VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
 };
 
 #[derive(Debug)]
@@ -112,6 +112,58 @@ where
         .execute(&project, &agent_run, &start_event)
         .await?;
     advance_to_execute(&store, &project, &mut agent_run).await?;
+
+    let mutation_tool = ToolRunId::from_bytes([210; 32]);
+    let mutation_attempt = store
+        .begin_agent_tool_attempt(
+            &project,
+            run_id,
+            snapshot_one_id,
+            mutation_tool,
+            AgentRunTimestamp::from_unix_millis(16)?,
+        )
+        .await
+        .map_err(|error| std::io::Error::other(format!("mutation attempt failed: {error:?}")))?;
+    let expected_sequence = agent_run.last_event_sequence();
+    let mut mutation_run = agent_run.clone();
+    let mutation_event = mutation_run.record(
+        RunEventId::from_bytes([221; 32]),
+        RunEventKind::ToolAction,
+        RunEventPayload::new(RunEventCode::None, Some(RunEventOutcome::Succeeded), None),
+        snapshot_one_id,
+        Some(RunEventSubject::Tool(mutation_tool)),
+        AgentRunTimestamp::from_unix_millis(17)?,
+    )?;
+    assert_eq!(
+        store
+            .complete_agent_tool_attempt(
+                &project,
+                RunEventSequence::new(expected_sequence.get() - 1)?,
+                &mutation_run,
+                &mutation_event,
+                mutation_tool,
+                mutation_attempt.attempt(),
+            )
+            .await,
+        Err(AgentRecoveryStoreFailure::RunSequenceConflict),
+        "a stale journal CAS must roll back the tool-attempt update"
+    );
+    let completed_mutation = store
+        .complete_agent_tool_attempt(
+            &project,
+            expected_sequence,
+            &mutation_run,
+            &mutation_event,
+            mutation_tool,
+            mutation_attempt.attempt(),
+        )
+        .await
+        .map_err(|error| std::io::Error::other(format!("mutation completion failed: {error:?}")))?;
+    assert_eq!(
+        completed_mutation.status(),
+        AgentToolAttemptStatus::Succeeded
+    );
+    agent_run = mutation_run;
 
     let evidence = AgentToolEvidence::for_file(FileRevision::new(
         RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,

@@ -101,7 +101,7 @@ a3/
 │   ├── a3-provider/                # LLM- und Embedding-Adapter
 │   └── a3-workspace/               # Dateien, Patches und Prozesse
 ├── tests/
-│   ├── agent-harness/                # read-only End-to-End-Abnahme, dev-only
+│   ├── agent-harness/                # endliche Agent-End-to-End-Abnahme, dev-only
 │   ├── model-provider-contract/      # neutraler Provider-Stub, dev-only
 │   └── storage-contract/             # adapterneutrale Store-Verträge, dev-only
 ├── fixtures/                       # kleine, lizenzkompatible Test-Repositories
@@ -279,7 +279,7 @@ Patchwirkung. Add- und Update-Inhalte werden vollständig in demselben Zielverze
 vor Sichtbarkeit synchronisiert. Add und Move verwenden No-Replace-Semantik, Update nutzt die
 atomare Ersetzungs-Umbenennung der Plattform, Delete die atomare Dateientfernung soweit vom
 Dateisystem bereitgestellt. Ein adapterlokaler Worktree-Lease verhindert parallele Anwendung;
-die controllerweite Serialisierung aller Mutationstypen folgt weiterhin in E7.
+die controllerweite Serialisierung aller Mutationstypen übernimmt E7.
 
 `PatchPreview` speichert exakte unnormalisierte UTF-8-Präfixe mit vollständigem Hash, Bytezahl,
 Encoding-, Line-Ending- und Trunkierungsmetadaten. Sie ist auf 16 KiB pro Inhaltsseite und 64 KiB
@@ -335,6 +335,30 @@ begrenzten konsistenten Acceptance-Read. Der produktive `DeterministicAcceptance
 genau die Must-Evidence, prüft Freshness und bindet einen aus Goal, Ledger, Run, Published Index und
 originalen Task-Lens-Claims regenerierten Run-Memory-Checkpoint. Weder libSQL-Zeilen noch
 Prozessoutput oder eine vom LLM behauptete Erfolgsentscheidung verlassen ihre Adaptergrenzen.
+
+M7/E7 erweitert den allgemeinen Model-Turn ausschließlich um die streng dekodierten
+`ApplyPatch`- und `Run`-Varianten. Der Turn-Use-Case besitzt weiterhin nur den read-only
+`AgentReadTools`-Port und gibt Mutationen unausgeführt an `ExecuteMutatingAgentAction` zurück.
+Dieser Application-Use-Case komponiert die bereits vorhandenen schmalen Ports und hält dabei einen
+vom Composition Root injizierten `WorktreeMutationCoordinator`-Lease. Damit kann pro Worktree
+controllerweit nur eine Patch- oder Process-Mutation gleichzeitig laufen, ohne einen globalen
+Singleton oder einen Mutex-Guard über asynchrone Adapteraufrufe zu halten.
+
+Die Reihenfolge ist fest: Action-/Ledger-/Snapshotanker prüfen, Worktree-Lease erwerben,
+Patchvorschau gegebenenfalls bilden, zentrale Policyentscheidung samt Approvalzustand
+persistieren, Toolversuch vor Ausführung persistieren, genau ein Tool aufrufen und das Ergebnis
+auflösen. Erfolgreiche normalisierte Mutationen schließen Versuch, `tool_action`-Event und
+Runprojektion atomar ab. Jeder vollständige oder partielle Patchpfad läuft noch unter demselben
+Lease durch `RefreshRepositoryIndex`; nur dessen vollständig rekonstruierter neuer
+`PublishedIndex` darf Run und nächsten Context Pack fortschreiben. Ein fehlgeschlagener Refresh
+stoppt den Lauf, statt mit altem Kontext weiterzuarbeiten.
+
+`DiffInvariant` wird unmittelbar aus dem tatsächlichen `PatchChangeSet` gegen den neuen Index
+bewertet. Process-Evidence verwendet vollständig gedrainte Resultate und aktuelle Manifest-
+Abhängigkeiten; die konservative Standardfactory erzeugt nur Command-Semantik. Test und Diagnostic
+benötigen einen strukturierten Adapter und können deshalb nicht aus Exitcode allein erfolgreich
+werden. Der content-freie Fortschrittsdetektor erlaubt einen ersten identischen Fehlerretry mit
+frischem Kontext, wechselt beim zweiten nach `Replan` und stoppt jede weitere identische Serie.
 
 ### Agentenlauf nach Appneustart
 

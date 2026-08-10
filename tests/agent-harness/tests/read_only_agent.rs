@@ -319,7 +319,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),
         StubModelProviderBehavior::Events(provider_events(&format!(
-            r#"{{"schema_version":1,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
+            r#"{{"schema_version":2,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
             fixture.definition.query
         ))?),
     );
@@ -382,7 +382,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .await?;
 
     let update_document = format!(
-        r#"{{"schema_version":1,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
+        r#"{{"schema_version":2,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
         durable.step_id, fixture.definition.query
     );
     let update_provider = StubModelProvider::new(

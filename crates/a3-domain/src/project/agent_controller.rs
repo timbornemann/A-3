@@ -451,6 +451,10 @@ pub enum AgentTurnActionClass {
     UpdateLedger,
     /// Request for deterministic acceptance verification.
     Finish,
+    /// One complete structured full-file patch.
+    ApplyPatch,
+    /// One discovered and plan-bound direct process.
+    Run,
 }
 
 impl AgentTurnActionClass {
@@ -462,6 +466,8 @@ impl AgentTurnActionClass {
             AgentAction::Inspect(_) => Self::Inspect,
             AgentAction::UpdateLedger(_) => Self::UpdateLedger,
             AgentAction::Finish(_) => Self::Finish,
+            AgentAction::ApplyPatch(_) => Self::ApplyPatch,
+            AgentAction::Run(_) => Self::Run,
         }
     }
 }

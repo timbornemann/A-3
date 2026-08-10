@@ -112,7 +112,7 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Suchanfrage, Source-Text und begrenzte Toolvorschau werden nicht persistiert. Fremdschlüssel und
   ein Trigger binden jeden Toollauf an genau sein typisiertes Journal-Event.
 - Knowledge-Schema V17 ergänzt `tool_run_attempts` als content-freie Lifecycle-Projektion. Vor
-  jedem Read-Toolaufruf wird ein `in_flight`-Versuch mit Run-, Snapshot- und logischer ToolRunId
+  jedem Toolaufruf wird ein `in_flight`-Versuch mit Run-, Snapshot- und logischer ToolRunId
   committed. Nur der atomare Toolresultat-/Journal-Commit darf ihn auf den Ergebnisstatus setzen;
   Grenzfehler enden explizit als `failed`, `cancelled` oder `denied`. Beim Neustart werden
   verbliebene Versuche als `interrupted` abgeschlossen, während ein Retry derselben logischen
@@ -139,6 +139,13 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   identischem Artifact idempotent. Append und Acceptance-Read sind abbrechbar, besitzen ein
   Zeitlimit und prüfen bei mengenabhängigen Zeilen feste Checkpoints. Acceptance liest Evidence
   und den weiterhin aktuellen Published Index begrenzt und in konsistenten Transaktionen.
+- Knowledge-Schema V21 ergänzt `run_events.turn_action_kind_v2` als geschlossene, nullable
+  Projektion der sechs `AgentAction`-V2-Varianten. Ein Trigger verhindert gleichzeitig gesetzte
+  V1-/V2-Spalten und Actionwerte auf anderen Eventtypen; historische V1-Zeilen bleiben unverändert
+  lesbar. Erfolgreiche Mutationen schließen ihren bereits dauerhaften Toolversuch nach einem
+  typisierten Toolresultat gemeinsam mit content-freiem `tool_action`-Event und Runprojektion in
+  einer `IMMEDIATE`-Transaktion ab. Dadurch ist kein erfolgreich markierter Versuch ohne sein
+  Journalereignis sichtbar.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich
@@ -412,6 +419,7 @@ Eine einzelne DB-Transaktion darf:
   Approval-Verbrauch per Runsequenz-CAS committen;
 - genau einen Approval-Grant oder Widerruf zusammen mit seinem User-Audit-Event committen;
 - einen Toolrun und sein Ergebnis protokollieren.
+- einen erfolgreichen Mutationsversuch gemeinsam mit Event und Runprojektion abschließen.
 
 Sie darf keine Datei lesen, kein Modell aufrufen und keinen Prozess abwarten.
 
@@ -467,6 +475,15 @@ unverändert nutzbar; auch semantische Kandidaten bleiben über den begrenzten l
 verfügbar.
 
 ## Migrationen
+
+Das implementierte Knowledge-Schema V21 ergänzt V20 um die rückwärtskompatible Speicherung aller
+sechs `AgentAction`-V2-Klassen und den atomaren Erfolgsabschluss mutierender Toolversuche. Neue
+Model-Events schreiben ausschließlich `turn_action_kind_v2`; alte V1-Zeilen werden über eine
+`COALESCE`-Projektion weiterhin exakt rekonstruiert. Der gemeinsame Adapter- und E7-
+Integrationsvertrag belegt, dass erst die content-freie Toolaktion samt Journal- und Runprojektion
+einen Versuch auf `succeeded` setzt und ein Runsequenzkonflikt den Versuch vollständig zurückrollt.
+Migrationstests decken leeres Schema, jeden Vorgänger bis V20 und vollständigen Rollback eines
+fehlgeschlagenen V20→V21-Upgrades ab.
 
 Das implementierte Knowledge-Schema V20 ergänzt V19 um die typed Verification Engine. Die
 Migration erweitert bestehende Acceptance Criteria rückwärtskompatibel mit `requirement = must`,
@@ -530,7 +547,7 @@ neuen Agentenlaufs. Die Migration erhält bestehende Runprojektionen mit einem e
 Legacy-Nullpaar und installiert Guards gegen partielle Referenzen. Domain- und Adaptertests belegen
 Profil-ID/Schemaversion nach Reopen, journalunabhängiges Lesen des Legacyfalls und die Ablehnung
 eines einzelnen gesetzten Felds. Der generische Upgradevertrag migriert weiterhin jede unterstützte
-Vorgängerversion bis V20 in einer eigenen atomaren Migration.
+Vorgängerversion bis V21 in einer eigenen atomaren Migration.
 
 Das implementierte Knowledge-Schema V13 ergänzt V12 um `agent_runs` und `run_events`. Strikte
 Checks erzwingen die Startsequenz, geschlossene Event-, State-, Outcome- und Redaction-Werte,

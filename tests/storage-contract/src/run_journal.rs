@@ -161,7 +161,7 @@ where
     let turn_charge = AgentTurnCharge::new(
         ModelTokenCount::new(1_024),
         ModelTokenCount::new(64),
-        Some(AgentTurnActionClass::Inspect),
+        Some(AgentTurnActionClass::ApplyPatch),
         AgentTurnRepairUsage::One,
     );
     let redacted_event = current.record_turn(
@@ -263,7 +263,7 @@ where
     assert!(text.contains("\"redaction_source\":\"model_output\""));
     assert!(text.contains("\"turn_count\":1"));
     assert!(text.contains("\"turn_limit\":17"));
-    assert!(text.contains("\"turn_action_kind\":\"inspect\""));
+    assert!(text.contains("\"turn_action_kind\":\"apply_patch\""));
     assert!(text.contains("\"turn_repair_used\":true"));
     assert_eq!(control.last_completed()?, Some(4));
 

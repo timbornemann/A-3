@@ -443,8 +443,9 @@ Profil auf Ollama-Optionen ab.
 
 ### AgentAction und Promptvertrag
 
-`AgentActionSchemaVersion::V1` ist die geschlossene strukturierte Modellausgabe für die read-only
-Harnessphase. Die Union enthält ausschließlich `Search`, `Inspect`, `UpdateLedger` und `Finish`.
+`AgentActionSchemaVersion::V1` bleibt der lesbare historische Vertrag der read-only Harnessphase
+mit `Search`, `Inspect`, `UpdateLedger` und `Finish`. `AgentActionSchemaVersion::V2` ist der aktuelle
+geschlossene Vertrag und ergänzt ausschließlich `ApplyPatch` und `Run`.
 `Search` übergibt eine begrenzte Query und ein Limit an die spätere deterministische Retrieval-
 Pipeline, ohne einen Vertrauenskanal wählen zu können. `Inspect` adressiert genau eine begrenzte
 Dateiseite, eine Symbol-ID, eine typisierte Graphtraversierung, eine Claim-ID oder einen
@@ -454,15 +455,20 @@ Ausgaben redigiert.
 `UpdateLedger` kann nur ein nicht autoritatives Resultat vormerken, einen Blocker melden oder einen
 Replan anfordern. Kein Variant kann Verifikation oder Completion setzen. `Finish` enthält keine
 Modellbehauptung und fordert lediglich die spätere deterministische Acceptance-Verifikation an.
-Patch, Prozess, Shell, Git, Netzwerk, Publishing und destruktive Aktionen sind in V1 nicht
-darstellbar. H9 autorisiert nur den geschlossenen `AgentReadTools`-Port für `Search` und `Inspect`;
-die konkreten read-only Adapter und Ledger-/Finish-Use-Cases folgen in H10.
+Patch und Prozess sind in V1 nicht darstellbar. V2 bindet `ApplyPatch` vollständig an Run,
+Worktree, Published Snapshot, aktuellen TaskStep, VerificationSpec, Rationale, Pfade, erwartete
+Hashes und vollständige neue Inhalte. `Run` enthält nur aktuelle `TaskStepId` und
+`DiscoveredCommandId`; argv, Shell-, Git-, Netzwerk-, Install- oder Publishdaten können nicht aus
+der Modellausgabe entstehen. `ExecuteAgentTurn` autorisiert selbst weiterhin nur den geschlossenen
+`AgentReadTools`-Port für `Search` und `Inspect` und gibt beide Mutationstypen unausgeführt an den
+E7-Controller weiter.
 
-Das eingebettete `agent-action-v1`-JSON-Schema setzt auf jeder Objektebene
-`additionalProperties: false`; ein separater Runtime-Decoder prüft das vollständige Dokument bis
-64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen- und
-Textgrenzen sowie Domaininvarianten. Der statische Systemvertrag kostet mit der konservativen
-V1-Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
+Die eingebetteten `agent-action-v1`- und `agent-action-v2`-JSON-Schemas setzen auf jeder
+Objektebene `additionalProperties: false`; getrennte Runtime-Decoder prüfen das vollständige
+Dokument bis 64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen-,
+Text- und Patchgrößen sowie Domaininvarianten. V1 bleibt rückwärtskompatibel decodierbar, während
+neu kompilierter Kontext ausschließlich V2 verlangt. Der aktuelle statische Systemvertrag kostet
+mit der konservativen Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
 Structured Output vorbereitet werden. Profilabhängiges Schema-Grounding wiederholt bei Bedarf
 dieselbe kanonische Schemafassung. Ein ungültiges Primärergebnis erzeugt genau eine nicht clonebare,
 verbrauchbare Repair-Befugnis mit ausschließlich content-freiem Fehlercode. Auch deren ungültiges
@@ -672,8 +678,8 @@ ab. Cancellation und bereits erschöpfte Budgets haben vor einem neuen Turn Vorr
 Run geht aus `Execute` einmal sichtbar nach `AwaitApproval`; ohne einen neuen Run mit neuem Budget
 endet die nächste Fortsetzung deterministisch in `Failed`, statt erneut Modellarbeit zu starten.
 
-`ExecuteReadOnlyAgentTurn` kompiliert pro Turn frischen H7-Kontext, bindet Kontext, Provider und
-read-only Resultat an denselben Snapshot und akzeptiert erst nach einem terminalen Provider-Event
+`ExecuteAgentTurn` kompiliert pro Turn frischen H7-Kontext, bindet Kontext, Provider und
+optionales read-only Resultat an denselben Snapshot und akzeptiert erst nach einem terminalen Provider-Event
 eine strikt dekodierte Action. Ein ungültiges Ergebnis darf genau einmal über eine content-freie
 Repair-Anweisung korrigiert werden; der ungültige Originaltext wird nicht erneut in den Kontext
 gegeben und nie ausgeführt. Jede akzeptierte oder endgültig verworfene Modellausgabe wird als ein
@@ -685,6 +691,29 @@ Versuchsnummer, Run- und Snapshotanker sowie einem geschlossenen Lifecycle aus `
 `Succeeded`, `Failed`, `Cancelled`, `Denied` und `Interrupted`. Der Versuch muss vor dem Aufruf
 durabel sein. `Succeeded` entsteht ausschließlich gemeinsam mit dem normalisierten Toolresultat
 und dessen RunEvent; ein nach Neustart noch laufender Versuch wird terminal `Interrupted`.
+
+E7 komponiert Patch-, Process-, Policy-, Approval-, Recovery-, Index-, Context-, Ledger- und
+Verification-Ports in `ExecuteMutatingAgentAction`, ohne einen zweiten offenen Agentenloop zu
+erzeugen. Ein composition-root-eigener `WorktreeMutationCoordinator` vergibt genau einen nicht
+klonbaren Lease je Worktree über die gesamte Mutation einschließlich Post-Patch-Refresh. Der Lease
+hält während asynchroner Arbeit keinen Mutex-Guard. `MutationActionFingerprint` identifiziert nur
+vollständig strukturierte Patch- oder Command-Auswahl; read-only Aktionen können keinen Lease
+erhalten.
+
+Vor jeder Toolausführung wird die zentrale `PolicyDecision` samt optionalem Request oder
+Grantverbrauch persistiert. Ein erfolgreicher Mutationslauf schließt nach typisiertem Toolresultat
+Toolversuch, Runprojektion und content-freies `tool_action`-Event atomar. Jede tatsächlich sichtbare vollständige oder partielle
+Patchänderung erzeugt unmittelbar eine inkrementelle Repository-Änderungsmenge und muss einen
+vollständigen neuen Published Index liefern. Erst danach darf ein `ContextCompiled`-Event mit exakt
+diesem Snapshot entstehen. Diff-Schritte können nur über das tatsächliche `PatchChangeSet`
+erfolgreich werden; Test- und Diagnostic-Semantik benötigt einen injizierten strukturierten
+Evidence-Adapter und wird nie aus Exitcode allein erfunden.
+
+Der Fortschrittsdetektor speichert pro Run und Worktree nur Action-Fingerprint, content-freie
+Fehlerklasse und begrenzte Wiederholungszahl. Der erste identische Fehler darf über
+`Verify → Execute` genau einen frischen Retry-Kontext erhalten, der zweite erzwingt `Replan`, jeder
+weitere identische Fehler `Failed`. Eine andere Action oder ein vollständig erfolgreicher Lauf
+setzt die Serie zurück.
 
 `InspectAgentRunRecovery` rekonstruiert den nicht terminalen Run, sein revisionsgebundenes Ledger
 und den aktuellen Published Snapshot und klassifiziert nicht mehr auflösbare

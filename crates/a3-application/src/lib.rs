@@ -31,6 +31,8 @@ mod model_provider;
 mod module_card_claim_codec;
 mod module_card_verification;
 mod module_remap_queue;
+mod mutating_agent_controller;
+mod mutation_coordinator;
 mod open_project;
 mod policy;
 mod policy_store;
@@ -84,7 +86,7 @@ pub use agent_source_reader::{
 pub use agent_turn::{
     AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,
     AgentReadToolsFuture, AgentTurnExecution, AgentTurnOutcome, AgentTurnRejectionReason,
-    ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
+    ExecuteAgentTurn, ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
@@ -180,6 +182,17 @@ pub use module_remap_queue::{
     LoadPendingModuleRemaps, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
     ModuleRemapQueueStore, PendingRemapQueue, PendingRemapQueueError, RemapQueueControl,
     RemapQueueControlError, RemapQueueLimit, RemapQueueLimitError,
+};
+pub use mutating_agent_controller::{
+    ConservativeProcessVerificationEvidenceFactory, ExecuteMutatingAgentAction,
+    MutationCommandSelection, MutationContextSeed, MutationControllerFailure,
+    MutationControllerOutcome, MutationExecutionIds, ProcessVerificationEvidenceFactory,
+    ProcessVerificationEvidenceFailure, ProcessVerificationEvidenceRequest,
+};
+pub use mutation_coordinator::{
+    MutationActionFingerprint, MutationActionFingerprintError, MutationFailureClass,
+    MutationProgressDecision, WorktreeMutationBusy, WorktreeMutationCoordinator,
+    WorktreeMutationLease,
 };
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,

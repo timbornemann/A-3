@@ -1,16 +1,20 @@
 use a3_domain::{
     AgentAction, AgentActionSchemaVersion, AgentFileInspection, AgentFileLineCount,
     AgentFileStartLine, AgentFinishAction, AgentGraphInspection, AgentInspectAction,
-    AgentInspectTarget, AgentLedgerUpdate, AgentSearchAction, AgentSearchLimit, AgentSearchQuery,
-    AgentTestSelector, AgentUpdateLedgerAction, ModuleCardClaimId, RepositoryPath, SymbolId,
-    SyntaxRelationKind, TaskReplanReason, TaskStepBlockingReason, TaskStepId,
-    TaskStepResultSummary, TraversalDepth, TraversalDirection, TraversalResultLimit,
+    AgentInspectTarget, AgentLedgerUpdate, AgentRunAction, AgentRunId, AgentSearchAction,
+    AgentSearchLimit, AgentSearchQuery, AgentTestSelector, AgentUpdateLedgerAction, ContentHash,
+    DiscoveredCommandId, FileRevision, ModuleCardClaimId, PatchAction, PatchActionSchemaVersion,
+    PatchAdd, PatchFileContent, PatchMove, PatchOperation, PatchRationale, PatchUpdate,
+    RepositoryPath, SnapshotId, SymbolId, SyntaxRelationKind, TaskReplanReason,
+    TaskStepBlockingReason, TaskStepId, TaskStepResultSummary, TraversalDepth, TraversalDirection,
+    TraversalResultLimit, VerificationSpecId, WorktreeId,
 };
 use serde_json::{Map, Value};
 use std::error::Error;
 use std::fmt;
 
 const AGENT_ACTION_SCHEMA_V1: &str = include_str!("../schemas/agent-action-v1.schema.json");
+const AGENT_ACTION_SCHEMA_V2: &str = include_str!("../schemas/agent-action-v2.schema.json");
 const MAX_AGENT_ACTION_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Versioned JSON Schema supplied to a structured-output model provider.
@@ -28,6 +32,20 @@ impl AgentActionJsonSchema {
         }
     }
 
+    /// Returns the editing-phase V2 AgentAction schema.
+    #[must_use]
+    pub const fn version_two() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V2,
+        }
+    }
+
+    /// Returns the schema used for newly compiled controller turns.
+    #[must_use]
+    pub const fn current() -> Self {
+        Self::version_two()
+    }
+
     /// Returns the schema version named by the document.
     #[must_use]
     pub const fn version(self) -> AgentActionSchemaVersion {
@@ -37,7 +55,11 @@ impl AgentActionJsonSchema {
     /// Returns the embedded provider-neutral JSON Schema.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        AGENT_ACTION_SCHEMA_V1
+        match self.version {
+            AgentActionSchemaVersion::V1 => AGENT_ACTION_SCHEMA_V1,
+            AgentActionSchemaVersion::V2 => AGENT_ACTION_SCHEMA_V2,
+            _ => AGENT_ACTION_SCHEMA_V2,
+        }
     }
 
     /// Parses the statically embedded schema for the neutral provider request boundary.
@@ -73,12 +95,32 @@ impl DecodeAgentAction {
         }
     }
 
+    /// Creates the editing-phase V2 decoder.
+    #[must_use]
+    pub const fn version_two() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V2,
+        }
+    }
+
+    /// Creates the decoder used for newly compiled controller turns.
+    #[must_use]
+    pub const fn current() -> Self {
+        Self::version_two()
+    }
+
     /// Returns the exact JSON Schema paired with this decoder.
     #[must_use]
     pub const fn json_schema(self) -> AgentActionJsonSchema {
         AgentActionJsonSchema {
             version: self.version,
         }
+    }
+
+    /// Returns the exact runtime schema version enforced by this decoder.
+    #[must_use]
+    pub const fn version(self) -> AgentActionSchemaVersion {
+        self.version
     }
 
     /// Validates one complete untrusted JSON document and every domain boundary.
@@ -93,18 +135,124 @@ impl DecodeAgentAction {
         if unsigned(root, "schema_version")? != u64::from(self.version.get()) {
             return Err(AgentActionDecodeError::UnsupportedVersion);
         }
-        decode_action(object(required(root, "action")?)?)
+        decode_action(self.version, object(required(root, "action")?)?)
     }
 }
 
-fn decode_action(action: &Map<String, Value>) -> Result<AgentAction, AgentActionDecodeError> {
+fn decode_action(
+    version: AgentActionSchemaVersion,
+    action: &Map<String, Value>,
+) -> Result<AgentAction, AgentActionDecodeError> {
     match string(action, "kind")? {
         "search" => decode_search(action),
         "inspect" => decode_inspect(action),
         "update_ledger" => decode_update_ledger(action),
         "finish" => decode_finish(action),
+        "apply_patch" if version == AgentActionSchemaVersion::V2 => decode_apply_patch(action),
+        "run" if version == AgentActionSchemaVersion::V2 => decode_run(action),
         _ => Err(AgentActionDecodeError::UnknownAction),
     }
+}
+
+fn decode_apply_patch(action: &Map<String, Value>) -> Result<AgentAction, AgentActionDecodeError> {
+    exact_keys(
+        action,
+        &[
+            "kind",
+            "run_id",
+            "worktree_id",
+            "snapshot_id",
+            "step_id",
+            "verification_spec_id",
+            "rationale",
+            "operations",
+        ],
+    )?;
+    let operations = required(action, "operations")?
+        .as_array()
+        .ok_or(AgentActionDecodeError::InvalidShape)?
+        .iter()
+        .map(|operation| decode_patch_operation(object(operation)?))
+        .collect::<Result<Vec<_>, _>>()?;
+    let patch = PatchAction::new(
+        PatchActionSchemaVersion::V1,
+        AgentRunId::from_bytes(hex_id(string(action, "run_id")?)?),
+        WorktreeId::from_bytes(hex_id(string(action, "worktree_id")?)?),
+        SnapshotId::from_bytes(hex_id(string(action, "snapshot_id")?)?),
+        TaskStepId::from_bytes(hex_id(string(action, "step_id")?)?),
+        VerificationSpecId::from_bytes(hex_id(string(action, "verification_spec_id")?)?),
+        PatchRationale::try_from_string(string(action, "rationale")?.to_owned())
+            .map_err(|_| AgentActionDecodeError::InvalidValue)?,
+        operations,
+    )
+    .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+    Ok(AgentAction::ApplyPatch(Box::new(patch)))
+}
+
+fn decode_patch_operation(
+    operation: &Map<String, Value>,
+) -> Result<PatchOperation, AgentActionDecodeError> {
+    match string(operation, "kind")? {
+        "add" => {
+            exact_keys(operation, &["kind", "path", "content"])?;
+            Ok(PatchOperation::Add(PatchAdd::new(
+                repository_path(operation, "path")?,
+                patch_content(operation, "content")?,
+            )))
+        }
+        "update" => {
+            exact_keys(operation, &["kind", "path", "expected_hash", "content"])?;
+            let expected = file_revision(operation)?;
+            let update = PatchUpdate::new(expected, patch_content(operation, "content")?)
+                .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+            Ok(PatchOperation::Update(update))
+        }
+        "move" => {
+            exact_keys(operation, &["kind", "path", "expected_hash", "destination"])?;
+            let movement = PatchMove::new(
+                file_revision(operation)?,
+                repository_path(operation, "destination")?,
+            )
+            .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+            Ok(PatchOperation::Move(movement))
+        }
+        "delete" => {
+            exact_keys(operation, &["kind", "path", "expected_hash"])?;
+            Ok(PatchOperation::Delete(file_revision(operation)?))
+        }
+        _ => Err(AgentActionDecodeError::InvalidValue),
+    }
+}
+
+fn file_revision(operation: &Map<String, Value>) -> Result<FileRevision, AgentActionDecodeError> {
+    Ok(FileRevision::new(
+        repository_path(operation, "path")?,
+        ContentHash::from_bytes(hex_id(string(operation, "expected_hash")?)?),
+    ))
+}
+
+fn repository_path(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<RepositoryPath, AgentActionDecodeError> {
+    RepositoryPath::try_from_bytes(string(object, key)?.as_bytes().to_vec())
+        .map_err(|_| AgentActionDecodeError::InvalidValue)
+}
+
+fn patch_content(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<PatchFileContent, AgentActionDecodeError> {
+    PatchFileContent::try_from_bytes(string(object, key)?.as_bytes().to_vec())
+        .map_err(|_| AgentActionDecodeError::InvalidValue)
+}
+
+fn decode_run(action: &Map<String, Value>) -> Result<AgentAction, AgentActionDecodeError> {
+    exact_keys(action, &["kind", "step_id", "command_id"])?;
+    Ok(AgentAction::Run(AgentRunAction::new(
+        TaskStepId::from_bytes(hex_id(string(action, "step_id")?)?),
+        DiscoveredCommandId::from_bytes(hex_id(string(action, "command_id")?)?),
+    )))
 }
 
 fn decode_search(action: &Map<String, Value>) -> Result<AgentAction, AgentActionDecodeError> {
@@ -473,6 +621,81 @@ mod tests {
                 r#"{"schema_version":1,"action":{"kind":"inspect","target":{"kind":"file","path":"../secret","start_line":0,"line_count":501}}}"#,
             ),
             Err(AgentActionDecodeError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn version_two_adds_only_structured_patch_and_discovered_run_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let schema = AgentActionJsonSchema::version_two();
+        let document = schema.as_json()?;
+        let decoder = DecodeAgentAction::version_two();
+        assert_eq!(schema.version(), AgentActionSchemaVersion::V2);
+        assert_eq!(document["properties"]["schema_version"]["const"], 2);
+        assert!(schema.as_str().contains("apply_patch"));
+        assert!(schema.as_str().contains("command_id"));
+        assert!(!schema.as_str().contains("argv"));
+        assert!(!schema.as_str().contains("shell"));
+
+        assert!(matches!(
+            decoder.decode(
+                r#"{"schema_version":2,"action":{"kind":"search","query":"ModelProfile","limit":20}}"#,
+            )?,
+            AgentAction::Search(_)
+        ));
+        assert!(matches!(
+            decoder.decode(
+                r#"{"schema_version":2,"action":{"kind":"inspect","target":{"kind":"test","selector":"provider::contract"}}}"#,
+            )?,
+            AgentAction::Inspect(_)
+        ));
+
+        let id = "11".repeat(32);
+        let update = format!(
+            r#"{{"schema_version":2,"action":{{"kind":"update_ledger","step_id":"{id}","update":{{"kind":"record_result","summary":"bounded unverified result"}}}}}}"#
+        );
+        assert!(matches!(
+            decoder.decode(&update)?,
+            AgentAction::UpdateLedger(_)
+        ));
+        assert_eq!(
+            decoder.decode(r#"{"schema_version":2,"action":{"kind":"finish"}}"#)?,
+            AgentAction::Finish(AgentFinishAction)
+        );
+        let patch = format!(
+            r#"{{"schema_version":2,"action":{{"kind":"apply_patch","run_id":"{id}","worktree_id":"{id}","snapshot_id":"{id}","step_id":"{id}","verification_spec_id":"{id}","rationale":"add bounded source","operations":[{{"kind":"add","path":"src/new.rs","content":"pub fn added() {{}}\n"}}]}}}}"#
+        );
+        assert!(matches!(
+            decoder.decode(&patch)?,
+            AgentAction::ApplyPatch(_)
+        ));
+        let run = format!(
+            r#"{{"schema_version":2,"action":{{"kind":"run","step_id":"{id}","command_id":"{id}"}}}}"#
+        );
+        assert!(matches!(decoder.decode(&run)?, AgentAction::Run(_)));
+        assert_eq!(
+            DecodeAgentAction::version_one().decode(&run),
+            Err(AgentActionDecodeError::UnsupportedVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn version_two_rejects_patch_hash_mismatch_overlap_and_raw_process_fields() {
+        let id = "22".repeat(32);
+        let duplicate = format!(
+            r#"{{"schema_version":2,"action":{{"kind":"apply_patch","run_id":"{id}","worktree_id":"{id}","snapshot_id":"{id}","step_id":"{id}","verification_spec_id":"{id}","rationale":"invalid overlap","operations":[{{"kind":"add","path":"src/new.rs","content":"a"}},{{"kind":"add","path":"src/new.rs","content":"b"}}]}}}}"#
+        );
+        assert_eq!(
+            DecodeAgentAction::version_two().decode(&duplicate),
+            Err(AgentActionDecodeError::InvalidValue)
+        );
+        let raw = format!(
+            r#"{{"schema_version":2,"action":{{"kind":"run","step_id":"{id}","command_id":"{id}","argv":["sh","-c"]}}}}"#
+        );
+        assert_eq!(
+            DecodeAgentAction::version_two().decode(&raw),
+            Err(AgentActionDecodeError::UnknownOrMissingField)
         );
     }
 }

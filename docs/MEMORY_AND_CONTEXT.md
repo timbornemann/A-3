@@ -150,8 +150,10 @@ validiert das Domain-Aggregat erneut.
 ## Context Compiler
 
 Der vorgezogene H6-Systemvertrag bleibt mit der konservativen ModelProfile-Zählung unter 900
-Tokens. Er definiert ausschließlich das geschlossene `AgentAction`-V1-Schema für Search, Inspect,
-sichere Ledger-Intents und eine Finish-Anforderung. Repository- und Context-Inhalte werden darin
+Tokens. Neu kompilierter Kontext verwendet das geschlossene `AgentAction`-V2-Schema für Search,
+Inspect, vollständig gebundene ApplyPatch-Aktionen, ausschließlich per `DiscoveredCommandId`
+adressierte Runs, sichere Ledger-Intents und eine Finish-Anforderung. Der historische V1-Vertrag
+bleibt separat lesbar. Repository- und Context-Inhalte werden darin
 explizit als untrusted data bezeichnet. Das Structured-Output-Schema liegt gleichzeitig im
 Provider-Formatfeld; nur Profile mit `RepeatSchemaInPrompt` erhalten zusätzlich dieselbe
 kanonische Schemafassung als getrennte User-Nachricht. Diese optionale Nachricht zählt der
@@ -338,7 +340,16 @@ regenerierten Run-Memory-Checkpoint zum konservativen Ausschluss offener taskbez
 Hypothesen. Eine Useränderung macht nur Evidence mit betroffener Abhängigkeit stale; ein bloßer
 erfolgreicher Exitcode kann strukturierte Test- oder Diagnosesemantik nicht ersetzen.
 
-H11 persistiert vor dem eigentlichen Read-Toolaufruf einen content-freien `in_flight`-Versuch.
+E7 gibt einen mutierenden Model-Turn nie direkt an einen Adapter. Der zentrale Controller hält
+zuerst den einzigen Worktree-Mutations-Lease, persistiert Policy beziehungsweise Approval und
+führt höchstens eine strukturierte Patch- oder kataloggebundene Run-Aktion aus. Nach jedem
+tatsächlich sichtbaren Patch werden die exakten `PatchChangeSet.changed_paths` sofort über den
+normalen vollständigen Indexpublish verarbeitet. Ein weiterer Modellturn ist nur zulässig, wenn
+der neu kompilierte Context Pack, die Runprojektion und der jüngste Published Index denselben neuen
+Snapshot tragen; andernfalls stoppt der Lauf content-frei. Der erste identische Fehler erhält
+höchstens einen solchen frischen Retry-Kontext, die zweite Wiederholung wechselt nach `Replan`.
+
+H11 persistiert vor dem eigentlichen Toolaufruf einen content-freien `in_flight`-Versuch.
 Nur der gemeinsame Resultat-/Journal-Commit darf diesen Versuch erfolgreich abschließen; ein
 Boundaryfehler wird als Failed, Cancelled oder Denied gespeichert. Bleibt ein Versuch durch einen
 Appabbruch offen, markiert der nächste Recovery-Load ihn als Interrupted. Ein erneuter Aufruf

@@ -1,7 +1,8 @@
 use super::{
-    GraphEndpoint, ModuleCardClaimId, RepositoryPath, SymbolId, SyntaxRelationKind,
-    TaskReplanReason, TaskStepBlockingReason, TaskStepId, TaskStepResultSummary, TraversalDepth,
-    TraversalDirection, TraversalQuery, TraversalResultLimit,
+    DiscoveredCommandId, GraphEndpoint, ModuleCardClaimId, PatchAction, RepositoryPath, SymbolId,
+    SyntaxRelationKind, TaskReplanReason, TaskStepBlockingReason, TaskStepId,
+    TaskStepResultSummary, TraversalDepth, TraversalDirection, TraversalQuery,
+    TraversalResultLimit,
 };
 use std::error::Error;
 use std::fmt;
@@ -18,13 +19,17 @@ pub struct AgentActionSchemaVersion(u16);
 impl AgentActionSchemaVersion {
     /// First read-only-phase AgentAction schema.
     pub const V1: Self = Self(1);
+    /// Editing-phase schema adding structured patch and discovered-command actions.
+    pub const V2: Self = Self(2);
+    /// Schema emitted for newly compiled mutating-controller turns.
+    pub const CURRENT: Self = Self::V2;
 
-    /// Reconstructs the only schema version understood by this build.
+    /// Reconstructs a schema version understood by this build.
     pub const fn from_u16(value: u16) -> Result<Self, AgentActionSchemaVersionError> {
-        if value == Self::V1.0 {
-            Ok(Self::V1)
-        } else {
-            Err(AgentActionSchemaVersionError { value })
+        match value {
+            1 => Ok(Self::V1),
+            2 => Ok(Self::V2),
+            _ => Err(AgentActionSchemaVersionError { value }),
         }
     }
 
@@ -531,7 +536,37 @@ impl AgentUpdateLedgerAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AgentFinishAction;
 
-/// Strict V1 union of model-selected actions available before workspace mutation exists.
+/// Plan-bound request to execute one current, discovered, explicitly confirmed command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AgentRunAction {
+    step_id: TaskStepId,
+    command_id: DiscoveredCommandId,
+}
+
+impl AgentRunAction {
+    /// Binds a command identity to the exact current Task Ledger step.
+    #[must_use]
+    pub const fn new(step_id: TaskStepId, command_id: DiscoveredCommandId) -> Self {
+        Self {
+            step_id,
+            command_id,
+        }
+    }
+
+    /// Returns the step that must own the active attempt.
+    #[must_use]
+    pub const fn step_id(self) -> TaskStepId {
+        self.step_id
+    }
+
+    /// Returns the current discovered-command identity to resolve through the E5 catalog.
+    #[must_use]
+    pub const fn command_id(self) -> DiscoveredCommandId {
+        self.command_id
+    }
+}
+
+/// Closed versioned union of model-selected controller actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentAction {
     /// Query deterministic retrieval without selecting a trust channel.
@@ -542,13 +577,17 @@ pub enum AgentAction {
     UpdateLedger(AgentUpdateLedgerAction),
     /// Request final acceptance verification; the model cannot declare success itself.
     Finish(AgentFinishAction),
+    /// Apply one complete E3 patch after central policy and exact approval.
+    ApplyPatch(Box<PatchAction>),
+    /// Run one E5-discovered command; raw argv and shell text are not representable here.
+    Run(AgentRunAction),
 }
 
 impl AgentAction {
-    /// V1 has no file-write, process, shell, Git, network, or publishing action.
+    /// Conservatively classifies both patching and process execution as worktree mutations.
     #[must_use]
     pub const fn mutates_workspace(&self) -> bool {
-        false
+        matches!(self, Self::ApplyPatch(_) | Self::Run(_))
     }
 }
 
@@ -593,5 +632,16 @@ mod tests {
         assert!(!action.mutates_workspace());
         assert!(!format!("{action:?}").contains("unverified model summary"));
         Ok(())
+    }
+
+    #[test]
+    fn mutating_actions_are_plan_bound_without_raw_command_text() {
+        let action = AgentAction::Run(AgentRunAction::new(
+            TaskStepId::from_bytes([4; 32]),
+            DiscoveredCommandId::from_bytes([5; 32]),
+        ));
+
+        assert!(action.mutates_workspace());
+        assert!(matches!(action, AgentAction::Run(_)));
     }
 }

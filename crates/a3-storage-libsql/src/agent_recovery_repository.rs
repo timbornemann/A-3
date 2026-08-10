@@ -3,8 +3,8 @@ use a3_application::{AgentRecoveryStoreFailure, TaskLedgerStoreFailure, TaskLedg
 use a3_domain::{
     AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber,
     AgentToolAttemptStatus, AgentToolEvidence, ContentHash, EvidenceRef, FileRevision,
-    RepositoryPath, RunEvent, RunEventSequence, SnapshotId, SourcePosition, SourceRange,
-    TaskEvidenceId, TaskLedger, ToolRunId, WorktreeId,
+    RepositoryPath, RunEvent, RunEventKind, RunEventOutcome, RunEventSequence, RunEventSubject,
+    SnapshotId, SourcePosition, SourceRange, TaskEvidenceId, TaskLedger, ToolRunId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::collections::BTreeSet;
@@ -114,6 +114,76 @@ pub(crate) async fn finish_tool_attempt(
             status,
             existing.started_at(),
             finished_at,
+        )
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_tool_attempt(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<AgentToolAttempt, AgentRecoveryRepositoryError> {
+    if event.kind() != RunEventKind::ToolAction
+        || event.subject() != Some(RunEventSubject::Tool(tool_run_id))
+        || event.payload().outcome() != Some(RunEventOutcome::Succeeded)
+        || event.run_id() != run.id()
+    {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        let existing = read_tool_attempt(&transaction, worktree_id, tool_run_id, attempt)
+            .await?
+            .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
+        if existing.status() != AgentToolAttemptStatus::InFlight
+            || existing.run_id() != run.id()
+            || event.occurred_at() < existing.started_at()
+        {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        run_journal_repository::append_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            event,
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+        let changed = transaction
+            .execute(
+                "UPDATE tool_run_attempts SET status = 'succeeded', updated_at_unix_millis = ?1
+                 WHERE tool_run_id = ?2 AND attempt_sequence = ?3 AND status = 'in_flight'",
+                params![
+                    timestamp_to_i64(event.occurred_at()),
+                    id_bytes(tool_run_id),
+                    i64::from(attempt.get())
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        AgentToolAttempt::new(
+            tool_run_id,
+            attempt,
+            existing.run_id(),
+            existing.snapshot_id(),
+            AgentToolAttemptStatus::Succeeded,
+            existing.started_at(),
+            event.occurred_at(),
         )
         .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
     }

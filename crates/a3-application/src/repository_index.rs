@@ -6,8 +6,8 @@ use crate::{
 };
 use a3_domain::{
     DiscoveryResult, IndexPublication, IndexRunId, IndexRunStart, IndexRunTerminalOutcome,
-    Progress, ProjectIdentity, RankingPolicyVersion, RepositoryFileState, RepositoryPath, Snapshot,
-    SnapshotDelta,
+    Progress, ProjectIdentity, PublishedIndex, RankingPolicyVersion, RepositoryFileState,
+    RepositoryPath, Snapshot, SnapshotDelta,
 };
 use std::error::Error;
 use std::fmt;
@@ -188,6 +188,7 @@ pub struct RepositoryIndexRefresh {
     snapshot: Snapshot,
     hashed_paths: Vec<RepositoryPath>,
     compilation: RepositoryIndexCompilation,
+    published_index: PublishedIndex,
     published: bool,
 }
 
@@ -208,6 +209,12 @@ impl RepositoryIndexRefresh {
     #[must_use]
     pub const fn compilation(&self) -> &RepositoryIndexCompilation {
         &self.compilation
+    }
+
+    /// Returns the exact complete index visible after this refresh.
+    #[must_use]
+    pub const fn published_index(&self) -> &PublishedIndex {
+        &self.published_index
     }
 
     /// Returns whether this refresh made a new run atomically visible.
@@ -350,10 +357,20 @@ impl RefreshRepositoryIndex {
         }
         report_phase(control, 4)?;
 
+        let published_index = self
+            .store
+            .latest_published_index(project, &muted)
+            .await?
+            .ok_or(RefreshRepositoryIndexError::InvalidBaseline)?;
+        if published_index.run().snapshot_id() != snapshot.id() {
+            return Err(RefreshRepositoryIndexError::InvalidBaseline);
+        }
+
         Ok(RepositoryIndexRefresh {
             snapshot,
             hashed_paths,
             compilation,
+            published_index,
             published: active_run.is_some(),
         })
     }

@@ -1,6 +1,6 @@
 [package]
 name = "a3-agent-harness-tests"
-description = "Offline end-to-end acceptance contracts for the A^3 durable read-only harness"
+description = "Offline end-to-end acceptance contracts for the A^3 finite durable agent harness"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

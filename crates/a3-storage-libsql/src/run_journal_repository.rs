@@ -448,7 +448,8 @@ pub(crate) async fn load_events(
                  payload_schema_version, payload_code, payload_outcome, redaction_source,
                  redaction_observed_bytes, redaction_source_truncated, payload_digest,
                  snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
-                 turn_output_tokens, turn_action_kind, turn_repair_used
+                 turn_output_tokens, COALESCE(turn_action_kind_v2, turn_action_kind),
+                 turn_repair_used
                  FROM run_events WHERE run_id = ?1 AND event_sequence > ?2
                  ORDER BY event_sequence LIMIT ?3",
                 params![
@@ -725,7 +726,7 @@ async fn write_event(
              payload_schema_version, payload_code, payload_outcome, redaction_source,
              redaction_observed_bytes, redaction_source_truncated, payload_digest,
              snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
-             turn_output_tokens, turn_action_kind, turn_repair_used
+             turn_output_tokens, turn_action_kind_v2, turn_repair_used
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12,
              ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
@@ -770,7 +771,8 @@ async fn read_event(
              payload_schema_version, payload_code, payload_outcome, redaction_source,
              redaction_observed_bytes, redaction_source_truncated, payload_digest,
              snapshot_id, subject_kind, subject_id, turn_prompt_tokens,
-             turn_output_tokens, turn_action_kind, turn_repair_used
+             turn_output_tokens, COALESCE(turn_action_kind_v2, turn_action_kind),
+             turn_repair_used
              FROM run_events WHERE run_id = ?1 AND event_sequence = ?2",
             params![id_bytes(run_id), sequence_to_i64(sequence)?],
         )
@@ -999,6 +1001,8 @@ fn turn_action_class_text(action: AgentTurnActionClass) -> &'static str {
         AgentTurnActionClass::Inspect => "inspect",
         AgentTurnActionClass::UpdateLedger => "update_ledger",
         AgentTurnActionClass::Finish => "finish",
+        AgentTurnActionClass::ApplyPatch => "apply_patch",
+        AgentTurnActionClass::Run => "run",
     }
 }
 
@@ -1008,6 +1012,8 @@ fn parse_turn_action_class(value: &str) -> Result<AgentTurnActionClass, RunJourn
         "inspect" => Ok(AgentTurnActionClass::Inspect),
         "update_ledger" => Ok(AgentTurnActionClass::UpdateLedger),
         "finish" => Ok(AgentTurnActionClass::Finish),
+        "apply_patch" => Ok(AgentTurnActionClass::ApplyPatch),
+        "run" => Ok(AgentTurnActionClass::Run),
         _ => Err(RunJournalRepositoryError::InvalidStoredData),
     }
 }

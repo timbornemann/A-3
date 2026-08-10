@@ -65,6 +65,13 @@ impl VerificationDependencies {
         Ok(Self(dependencies))
     }
 
+    /// Derives the exact post-patch path states required before patch evidence can stay fresh.
+    pub fn from_patch_change_set(
+        changes: &PatchChangeSet,
+    ) -> Result<Self, VerificationDependenciesError> {
+        Self::new(changed_path_dependencies(changes.changes()))
+    }
+
     /// Returns canonical dependencies in repository-path order.
     #[must_use]
     pub fn as_slice(&self) -> &[EvidenceDependency] {

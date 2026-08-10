@@ -1,7 +1,7 @@
 # Qualitätsgates und Definition of Done
 
 Status: verbindliche Baseline  
-Stand: 2026-08-06
+Stand: 2026-08-11
 
 ## Grundsatz
 
@@ -60,6 +60,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   monotone Revisionen, vollständigen Rollback eines veralteten CAS und Worktree-Isolation. Die
   Migrationstests prüfen zusätzlich V18→V19-Rollback, unveränderliche Revisionen und die allein
   erlaubte Worktree-Reconciliation-Cascade.
+- V20-Verification-Contracts prüfen alle fünf typisierten Evidence-Varianten, Must-/Should-
+  Acceptance, Timeout und Cancellation ohne Teilwrite, idempotentes Append, Reopen sowie gezielte
+  Freshness-Ablehnung nach einer betroffenen Indexpublikation. Migrationstests decken leeres
+  Schema, jeden Vorgänger bis V19 und vollständigen V19→V20-Rollback ab.
+- V21-Contracts prüfen die rückwärtskompatible Rekonstruktion historischer V1-Actionklassen, alle
+  sechs V2-Actionklassen und den atomaren Erfolgsabschluss eines mutierenden Toolversuchs zusammen
+  mit content-freiem Journal-Event und Runprojektion einschließlich vollständigem Rollback bei
+  Runsequenzkonflikt. Migrationstests decken leeres Schema, jeden Vorgänger bis V20 und
+  vollständigen V20→V21-Rollback ab.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
@@ -133,13 +142,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 
 ### AgentAction und Prompt
 
-- Domain-Tests prüfen Grenzen und Redaction für Search, paged File Inspect, Testselektor und
-  nicht-verifizierende Ledger-Intents; jede V1-Action bestätigt konstruktiv null Workspace-
-  Mutation.
-- Schema- und Decoder-Tests akzeptieren alle vier Top-Level-Actions und sämtliche fünf Inspect-
-  Ziele, lehnen aber unbekannte Toolnamen und Felder, Trailing Text, Traversalpfade, nicht
-  kanonische IDs sowie übergroße oder kontrollzeichenhaltige Werte ab. Schema und Decoder werden
-  unabhängig geprüft; jede Objektebene ist geschlossen.
+- Domain-Tests prüfen Grenzen und Redaction für Search, paged File Inspect, Testselektor,
+  nicht-verifizierende Ledger-Intents sowie die eindeutige Mutationsklassifikation. V1 bleibt als
+  read-only Historienvertrag lesbar; V2 ergänzt ausschließlich strukturierte ApplyPatch- und
+  kataloggebundene Run-Aktionen.
+- Schema- und Decoder-Tests akzeptieren alle sechs V2-Top-Level-Actions und sämtliche fünf Inspect-
+  Ziele, lehnen aber unbekannte Toolnamen und Felder, Trailing Text, Traversalpfade, rohe argv-/
+  Shellfelder, nicht kanonische IDs, widersprüchliche Patchanker sowie übergroße oder
+  kontrollzeichenhaltige Werte ab. V1 bleibt getrennt rückwärtskompatibel dekodierbar; Schema und
+  Decoder werden unabhängig geprüft und jede Objektebene ist geschlossen.
 - Prompttests zählen den statischen Vertrag mit dem ModelProfile-Counter gegen das feste
   900-Token-Budget, blockieren Profile ohne verifizierten Structured Output und vergleichen die
   optionale kanonische Schemawiederholung mit demselben Provider-Schema.
@@ -152,6 +163,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   `Done`. Der Repository-Dateibaum bleibt bytegleich. Ein Negativlauf über denselben Stack verlangt
   nach ungültiger Primär- und Reparaturausgabe null Toolaufrufe, null durable Toolversuche und null
   Tool-Journalereignisse.
+- Die Gate-E7-End-to-End-Abnahme führt reale Patch- und Prozesspfade über libSQL, zentrale Policy,
+  Approval, Workspace-Adapter, Fast Index, Context Compiler, Verification Engine und Run Journal.
+  Sie belegt einen unveränderten Worktree während `AwaitApproval`, genau einen Worktree-Lease,
+  unmittelbares Reindexieren sichtbarer Patchänderungen, ausschließlich neuen Snapshotkontext,
+  Diff-Completion erst nach typisierter Evidence und `Replan` nach der zweiten identischen
+  fehlgeschlagenen Run-Aktion.
 
 ### Compaction
 
@@ -206,6 +223,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Installationskategorie sowie plan-ungebundene, nicht automatisch erlaubte `ProcessSpec`-
   Vorschauen. Das Node-Fixture besitzt bewusst keine Lockdatei; dennoch wird kein Installversuch
   erzeugt oder gestartet.
+- Mutationsgrenztests lehnen rohe Modell-argv und Shellfelder ab, serialisieren alle Patch- und
+  Prozessaktionen desselben Worktrees, persistieren Policy und Approval vor Ausführung und geben
+  nach einer sichtbaren Patchänderung niemals Kontext auf Basis des alten Snapshots aus.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

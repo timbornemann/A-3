@@ -656,6 +656,8 @@ fn export_turn_action_class(action: AgentTurnActionClass) -> &'static str {
         AgentTurnActionClass::Inspect => "inspect",
         AgentTurnActionClass::UpdateLedger => "update_ledger",
         AgentTurnActionClass::Finish => "finish",
+        AgentTurnActionClass::ApplyPatch => "apply_patch",
+        AgentTurnActionClass::Run => "run",
     }
 }
 

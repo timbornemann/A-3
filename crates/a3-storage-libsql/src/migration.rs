@@ -2056,6 +2056,21 @@ const KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION: Migration = Migration {
         ON verification_evidence(worktree_id, snapshot_id, evidence_id);",
 };
 
+const KNOWLEDGE_AGENT_ACTION_V2_MIGRATION: Migration = Migration {
+    version: 21,
+    name: "agent_action_v2",
+    sql: "ALTER TABLE run_events ADD COLUMN turn_action_kind_v2 TEXT
+        CHECK (turn_action_kind_v2 IS NULL OR turn_action_kind_v2 IN
+          ('search', 'inspect', 'update_ledger', 'finish', 'apply_patch', 'run'));\n\
+      CREATE TRIGGER run_events_turn_action_v2_insert_guard
+      BEFORE INSERT ON run_events
+      WHEN (NEW.turn_action_kind IS NOT NULL AND NEW.turn_action_kind_v2 IS NOT NULL)
+        OR (NEW.event_kind <> 'model_interaction' AND NEW.turn_action_kind_v2 IS NOT NULL)
+      BEGIN
+        SELECT RAISE(ABORT, 'run event v2 turn action is invalid');
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2077,6 +2092,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_POLICY_APPROVAL_MIGRATION,
     KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION,
     KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION,
+    KNOWLEDGE_AGENT_ACTION_V2_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2109,7 +2125,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(20);
+    pub const CURRENT: Self = Self::new(21);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2556,10 +2572,10 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM pragma_table_info('run_events') WHERE name IN (
                      'turn_prompt_tokens', 'turn_output_tokens', 'turn_action_kind',
-                     'turn_repair_used')",
+                     'turn_repair_used', 'turn_action_kind_v2')",
                 )
                 .await?,
-                4
+                5
             );
             assert_eq!(
                 query_i64(
@@ -2576,10 +2592,11 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
                      'agent_runs_budget_immutable_guard',
-                     'run_events_turn_charge_insert_guard')",
+                     'run_events_turn_charge_insert_guard',
+                     'run_events_turn_action_v2_insert_guard')",
                 )
                 .await?,
-                2
+                3
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
@@ -3851,6 +3868,62 @@ mod tests {
             assert_eq!(
                 query_i64(&connection, "SELECT COUNT(*) FROM worktrees").await?,
                 1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v21_upgrade_preserves_v20_data_and_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [23; 32];
+            let worktree_id = [24; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..20],
+                20,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "ALTER TABLE run_events ADD COLUMN turn_action_kind_v2 INTEGER",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 21, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 20);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                20
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('run_events')
+                     WHERE name = 'turn_action_kind_v2' AND type = 'INTEGER'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name = 'run_events_turn_action_v2_insert_guard'",
+                )
+                .await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

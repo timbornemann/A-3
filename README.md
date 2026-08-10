@@ -73,7 +73,17 @@ Python-Test-/Build-/Lint-/Formatbefehle aus dem atomar publizierten Fast Index a
 plan-ungebundene `ProcessSpec`-Vorschauen und bindet eine Ausführung an eine append-only
 projektbezogene Benutzer-Allowlist plus validierten Task-Schritt. Package-CWDs bleiben erhalten;
 Installationsbefehle werden nicht dargestellt, und ein Manifestwechsel macht die Bestätigung
-stale. Als Nächstes folgt E6 mit der Verification Engine. Die
+stale. M7/E6 ergänzt operationale Command-, Test-, DiffInvariant-, Diagnostic- und UserConfirm-
+Spezifikationen, immutable snapshotgebundene Evidence, Must-/Should-Kriterien und den einzigen
+Acceptance-verifizierten Weg nach `Done`. M7/E7 erweitert den aktuellen `AgentAction`-Vertrag um
+vollständig gebundene `ApplyPatch`- und ausschließlich katalogreferenzierende `Run`-Aktionen. Ein
+injizierter Worktree-Koordinator serialisiert beide Mutationstypen; zentrale Policy und exakte
+Approval werden vor der Toolgrenze persistiert. Jeder sichtbare Patch wird noch unter demselben
+Lease in einen neuen vollständigen Published Index überführt, bevor ein weiterer Context Pack
+entstehen darf. Erfolgreiche Toolversuche und Auditereignisse werden atomar abgeschlossen,
+typisierte Verifikation allein darf Schritte abschließen, und ein wiederholter identischer Fehler
+erzwingt deterministisch Replan beziehungsweise Stop. Als Nächstes folgt E8 mit der
+zustandsgenauen Failure Recovery. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -150,7 +160,7 @@ tests/storage-contract/
 tests/model-provider-contract/
                     Neutraler Provider-Stub und gemeinsamer Adaptervertrag (nur Entwicklung und CI)
 tests/agent-harness/
-                    Offline-End-to-End-Abnahme des read-only Harness (nur Entwicklung und CI)
+                    Offline-End-to-End-Abnahme des endlichen Agent Harness (nur Entwicklung und CI)
 fixtures/           kleine lizenzkompatible Test-Repositories
 docs/               verbindliche Architektur, ADRs und Pläne
 ```

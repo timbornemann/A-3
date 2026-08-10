@@ -349,6 +349,26 @@ Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktue
 taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
 LLM noch Storageadapter können den Success-Bool liefern.
 
+E7 lässt nur das geschlossene `AgentAction`-V2-Schema über die Modellgrenze. `ApplyPatch` enthält
+sämtliche bestehenden E3-Anker und vollständige Inhalte; `Run` enthält ausschließlich Step- und
+aktuelle kataloggebundene Command-ID. Rohe argv, Shell, Git, Netzwerk, Install und Publishing sind
+im Modellvertrag nicht darstellbar. Der Model-Turn besitzt selbst keine mutierende Capability.
+
+`ExecuteMutatingAgentAction` hält den einzigen injizierten Worktree-Lease, bevor eine Policy-
+Entscheidung entsteht. Approval-Request beziehungsweise exakter One-time-Verbrauch sind durable,
+bevor Patch oder Prozess aufgerufen wird. Ein erfolgreicher Mutationsversuch wird nur atomar mit
+seinem content-freien `tool_action`-Event terminal; ein Adapterfehler kann keinen Erfolg
+materialisieren. stdout und stderr werden im Journal ausschließlich als Redaction-, Bytezahl- und
+Trunkierungsmetadaten repräsentiert.
+
+Nach jeder sichtbaren vollständigen oder partiellen Patchwirkung muss der normale Indexpfad alle
+betroffenen Pfade hashen, Evidence invalidieren und einen vollständigen neuen Published Index
+rekonstruieren. Ohne diesen Nachweis stoppt der Run. Ein Context Pack darf erst anschließend und
+nur mit identischem Run-, Ledger- und neuem Snapshotanker kompiliert werden. Ein
+content-identischer Fehler darf einmal mit frischem Kontext wiederholt werden; die zweite
+Wiederholung erzwingt `Replan`, weitere Wiederholungen `Failed`, sodass das Modell keine
+unbegrenzte Fehlerschleife erzeugen kann.
+
 ## Netzwerk und Datenschutz
 
 V1 ist offline-first:

@@ -45,8 +45,9 @@ pub use agent_action::{
     AgentAction, AgentActionSchemaVersion, AgentActionSchemaVersionError, AgentActionTextError,
     AgentActionTextViolation, AgentFileInspection, AgentFileLineCount, AgentFileLineCountError,
     AgentFileStartLine, AgentFileStartLineError, AgentFinishAction, AgentGraphInspection,
-    AgentInspectAction, AgentInspectTarget, AgentLedgerUpdate, AgentSearchAction, AgentSearchLimit,
-    AgentSearchLimitError, AgentSearchQuery, AgentTestSelector, AgentUpdateLedgerAction,
+    AgentInspectAction, AgentInspectTarget, AgentLedgerUpdate, AgentRunAction, AgentSearchAction,
+    AgentSearchLimit, AgentSearchLimitError, AgentSearchQuery, AgentTestSelector,
+    AgentUpdateLedgerAction,
 };
 pub use agent_controller::{
     AcceptanceCriterionVerification, AcceptanceVerificationError, AcceptanceVerificationReceipt,

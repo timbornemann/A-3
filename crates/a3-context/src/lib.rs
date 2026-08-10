@@ -58,7 +58,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         let profile = input.model_profile();
         let budget_plan =
             ContextBudgetPlan::for_profile(profile).map_err(ContextCompileFailure::Budget)?;
-        let prompt = AgentPromptContract::version_one()
+        let prompt = AgentPromptContract::current()
             .prepare(profile)
             .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
         let current_step = input

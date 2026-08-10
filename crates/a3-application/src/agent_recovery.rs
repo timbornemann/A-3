@@ -45,6 +45,18 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         finished_at: AgentRunTimestamp,
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt>;
 
+    /// Atomically journals one normalized successful tool event and closes its in-flight attempt.
+    #[allow(clippy::too_many_arguments)]
+    fn complete_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt>;
+
     /// Marks every attempt left in flight by an application stop as interrupted.
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
