@@ -255,19 +255,46 @@ letzterer die gesamte Suite ohne Retry.
 
 Abhängigkeiten: E1, E3, E6
 
-- [ ] ApplyPatch- und Run-Action-Schemas
-- [ ] ein Mutations-Lock pro Worktree
-- [ ] Policy und Approval vor Ausführung
-- [ ] sofortige Indexinvalidierung nach Patch
-- [ ] Context Recompile
-- [ ] Verify und Replan
-- [ ] Fortschrittsdetektor
+- [x] ApplyPatch- und Run-Action-Schemas
+- [x] ein Mutations-Lock pro Worktree
+- [x] Policy und Approval vor Ausführung
+- [x] sofortige Indexinvalidierung nach Patch
+- [x] Context Recompile
+- [x] Verify und Replan
+- [x] Fortschrittsdetektor
 
 Akzeptanz:
 
 - kein zweiter mutierender Turn parallel;
 - Modell arbeitet nach Patch nicht mit altem Codekontext weiter;
 - wiederholte identische Fehlaktion triggert Replan oder Stop.
+
+Verifiziert am 2026-08-11: `AgentAction` V2 erweitert den rückwärtskompatibel lesbaren V1-Vertrag
+ausschließlich um vollständig strukturierte `ApplyPatch`- und kataloggebundene `Run`-Aktionen;
+rohe argv- oder Shellfelder sind in Schema und Runtime-Decoder nicht darstellbar. Der injizierte,
+nicht globale `WorktreeMutationCoordinator` hält genau einen nicht klonbaren Lease pro Worktree
+für Patch und Prozess und zählt content-identische Fehler deterministisch als Retry, Replan und
+Stop. `ExecuteMutatingAgentAction` prüft Run-, Ledger-, Step-, Snapshot- und Command-Anker,
+persistiert zentrale Policy und scopegenaue Approval vor dem Adapteraufruf und schließt einen
+erfolgreichen Toolversuch atomar mit content-freiem ToolEvent und Runprojektion ab. Knowledge-
+Schema V21 bewahrt historische V1-Actionklassen, speichert alle sechs V2-Klassen geschlossen und
+rollt den atomaren Abschluss bei Runsequenzkonflikt vollständig zurück. Jede sichtbare vollständige
+oder partielle Patchwirkung publiziert zuerst die exakten Änderungspfade; nur ein Context Pack mit
+dem neuen Run-/Ledger-/Published-Snapshot darf anschließend entstehen. Diff-Schritte schließen
+ausschließlich mit typisierter aktueller Evidence ab; Test- und Diagnostic-Semantik wird nie aus
+Exitcode allein erfunden.
+
+Die reale E7-End-to-End-Suite belegt einen unveränderten Worktree während `AwaitApproval`, exakten
+One-time-Grantverbrauch, Patch plus Reindex vor Context, Diff-Verifikation sowie Worktree-
+Serialisierung und `Replan` nach der zweiten identischen fehlgeschlagenen Run-Aktion. Rustfmt,
+Workspace-Clippy über alle Targets/Features mit `-D warnings`, Rustdoc mit `-D warnings`, die
+gezielten Domain-/Application-/Storage-/E7-Verträge, Node 24.14.0/pnpm 11.9.0,
+Frontendformat/Lint/Typecheck, 20 Frontend- und vier Tooltests, Build, 45 Markdown-Dateien mit 66
+Links, Lizenzbericht sowie der vollständige Linux-`quality`-Job über `act` sind grün. Der Windows-
+Sammellauf verlor ausschließlich den bereits dokumentierten nativen libSQL-Worker
+`knowledge_upgrades_from_every_supported_predecessor` nach drei erfolgreichen fachlichen Läufen
+beim Teardown mit `0xc0000005`; die isolierten V21-Schema-, Rollback-, Run-Journal-, Recovery- und
+E7-Verträge sowie der vollständige Linux-Lauf bestanden ohne Retry.
 
 ## E8 Failure Recovery
 
