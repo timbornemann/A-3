@@ -41,6 +41,16 @@ pub enum ErrorCodeV1 {
     ProjectNotInList,
     /// The active project could not be safely removed from the project list.
     ProjectRemovalUnavailable,
+    /// No live-verified mapping model and complete Deep-Map executor are configured.
+    DeepMapUnavailable,
+    /// The supplied token, wall-time, or read-only-tool budget was outside fixed bounds.
+    InvalidDeepMapBudget,
+    /// A start or resume was requested while another Deep-Map action was pending.
+    DeepMapAlreadyPending,
+    /// Pause or cancel was requested without a running Deep-Map attempt.
+    DeepMapNotRunning,
+    /// Resume was requested without a validated paused checkpoint.
+    DeepMapNotPaused,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -107,6 +117,19 @@ impl CommandErrorV1 {
             ErrorCodeV1::ProjectRemovalUnavailable => {
                 "The active worktree could not be safely removed from the A^3 project list."
             }
+            ErrorCodeV1::DeepMapUnavailable => {
+                "Deep Map requires a live-verified local mapping model."
+            }
+            ErrorCodeV1::InvalidDeepMapBudget => {
+                "The selected Deep Map budget is outside the supported limits."
+            }
+            ErrorCodeV1::DeepMapAlreadyPending => {
+                "A Deep Map action or paused checkpoint is already active for the worktree."
+            }
+            ErrorCodeV1::DeepMapNotRunning => "No Deep Map attempt is currently running.",
+            ErrorCodeV1::DeepMapNotPaused => {
+                "No validated paused Deep Map checkpoint is available."
+            }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."
             }
@@ -123,6 +146,12 @@ impl CommandErrorV1 {
     /// Creates a safe active-project removal failure.
     #[must_use]
     pub fn project_removal(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
+    }
+
+    /// Creates a safe Deep-Map lifecycle failure.
+    #[must_use]
+    pub fn deep_map(code: ErrorCodeV1) -> Self {
         Self::project_open(code)
     }
 

@@ -1,11 +1,12 @@
 use crate::CompositionRoot;
 use a3_protocol::{
-    CommandErrorV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexOverviewResponseV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
-    OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion, QueryIndexActivityRequestV1,
+    CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
+    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
+    ListRecentProjectsRequestV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
     QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1,
     RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
-    RemoveProjectResponseV1,
+    RemoveProjectResponseV1, StartDeepMapRequestV1,
 };
 use tauri::State;
 
@@ -52,6 +53,51 @@ pub async fn query_index_overview(
     root: State<'_, CompositionRoot>,
 ) -> Result<IndexOverviewResponseV1, CommandErrorV1> {
     execute_query_index_overview(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns verified pre-start configuration and the Core-owned Deep-Map lifecycle.
+pub fn query_deep_map(
+    request: QueryDeepMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapStatusResponseV1, CommandErrorV1> {
+    execute_query_deep_map(request, root.inner())
+}
+
+#[tauri::command]
+/// Explicitly starts Deep Map with the supplied bounded budget and no WebView-selected identity.
+pub fn start_deep_map(
+    request: StartDeepMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    execute_start_deep_map(request, root.inner())
+}
+
+#[tauri::command]
+/// Requests a checkpoint-producing cooperative pause of the active Deep Map.
+pub fn pause_deep_map(
+    request: ControlDeepMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    execute_control_deep_map(request, root.inner(), CompositionRoot::pause_deep_map)
+}
+
+#[tauri::command]
+/// Resumes the exact plan prefix retained by a completed pause.
+pub fn resume_deep_map(
+    request: ControlDeepMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    execute_control_deep_map(request, root.inner(), CompositionRoot::resume_deep_map)
+}
+
+#[tauri::command]
+/// Cancels active work or discards a retained paused checkpoint.
+pub fn cancel_deep_map(
+    request: ControlDeepMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    execute_control_deep_map(request, root.inner(), CompositionRoot::cancel_deep_map)
 }
 
 #[tauri::command]
@@ -147,6 +193,37 @@ async fn execute_query_index_overview(
     root.query_index_overview().await
 }
 
+fn execute_query_deep_map(
+    request: QueryDeepMapRequestV1,
+    root: &CompositionRoot,
+) -> Result<DeepMapStatusResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    Ok(root.query_deep_map_status())
+}
+
+fn execute_start_deep_map(
+    request: StartDeepMapRequestV1,
+    root: &CompositionRoot,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.start_deep_map(request.budget())
+}
+
+fn execute_control_deep_map(
+    request: ControlDeepMapRequestV1,
+    root: &CompositionRoot,
+    operation: fn(&CompositionRoot) -> Result<DeepMapControlResponseV1, CommandErrorV1>,
+) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    operation(root)
+}
+
 fn execute_rebuild_project_index(
     request: RebuildProjectIndexRequestV1,
     root: &CompositionRoot,
@@ -172,9 +249,10 @@ async fn execute_remove_project(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_list_recent_projects, execute_open_project, execute_query_health,
-        execute_query_index_activity, execute_query_index_overview, execute_query_project_status,
-        execute_rebuild_project_index, execute_remove_project,
+        execute_control_deep_map, execute_list_recent_projects, execute_open_project,
+        execute_query_deep_map, execute_query_health, execute_query_index_activity,
+        execute_query_index_overview, execute_query_project_status, execute_rebuild_project_index,
+        execute_remove_project, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -186,10 +264,11 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
-        ListRecentProjectsRequestV1, OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion,
+        ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
+        HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
+        OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryDeepMapRequestV1,
         QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1,
-        RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        RebuildProjectIndexRequestV1, RemoveProjectRequestV1, StartDeepMapRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -402,6 +481,51 @@ mod tests {
         };
 
         assert_eq!(error.code(), ErrorCodeV1::UnsupportedProtocolVersion);
+        Ok(())
+    }
+
+    #[test]
+    fn deep_map_commands_are_pathless_and_require_core_owned_project_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let status = execute_query_deep_map(QueryDeepMapRequestV1::current(), &root)
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(status.result(), DeepMapStatusResultV1::NoProject));
+
+        let start = execute_start_deep_map(
+            StartDeepMapRequestV1::new(
+                ProtocolVersion::CURRENT,
+                DeepMapBudgetV1::new(32_000, 120_000, 64),
+            ),
+            &root,
+        );
+        assert_eq!(
+            start.map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
+        );
+
+        let pause = execute_control_deep_map(
+            ControlDeepMapRequestV1::current(),
+            &root,
+            CompositionRoot::pause_deep_map,
+        );
+        assert_eq!(
+            pause.map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deep_map_rejects_unsupported_protocol_before_lifecycle_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let result =
+            execute_query_deep_map(QueryDeepMapRequestV1::new(ProtocolVersion::new(999)), &root);
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
         Ok(())
     }
 

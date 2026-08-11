@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
+import type { DeepMapControlResponseV1, DeepMapStatusResponseV1 } from './lib/deep-map';
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
@@ -117,6 +118,37 @@ const publishedIndexOverview: IndexOverviewResponseV1 = {
   },
 };
 
+const idleDeepMapStatus: DeepMapStatusResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    status: 'available',
+    configuration: {
+      model: {
+        profileId: '5'.repeat(64),
+        profileVersion: 1,
+        providerId: 'ollama',
+        modelId: 'mapper:latest',
+        contextTokens: 16_384,
+        outputTokens: 2_048,
+      },
+      minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
+      defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      maximumBudget: {
+        tokenLimit: 1_000_000,
+        timeLimitMillis: 86_400_000,
+        toolCallLimit: 4_096,
+      },
+    },
+    activity: {
+      state: 'idle',
+      budget: null,
+      progress: null,
+      confirmedSteps: '0',
+      totalSteps: '0',
+    },
+  },
+};
+
 const removedProject: RemoveProjectResponseV1 = {
   protocolVersion: 1,
   result: { retainedPrivateStorage: true, status: 'removed' },
@@ -179,6 +211,46 @@ describe('A^3 desktop shell', () => {
     expect(screen.getAllByText(/80,00\s%/)).toHaveLength(2);
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
     expect(screen.getByText(/Syntaxfehler · syntax error/)).toBeTruthy();
+  });
+
+  it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {
+    const deepMapStarter = vi.fn<
+      (budget: {
+        tokenLimit: number;
+        timeLimitMillis: number;
+        toolCallLimit: number;
+      }) => Promise<DeepMapControlResponseV1>
+    >(async () => ({ accepted: true, protocolVersion: 1 }));
+    render(App, {
+      props: {
+        deepMapStarter,
+        deepMapStatusLoader: async () => idleDeepMapStatus,
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByText('ollama / mapper:latest')).toBeTruthy();
+    expect(screen.getByText('Bereit für einen bewussten Start')).toBeTruthy();
+    expect(deepMapStarter).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Tokenbudget') as HTMLInputElement).valueAsNumber).toBe(32_000);
+    expect(
+      (screen.getByLabelText('Zeitbudget in Millisekunden') as HTMLInputElement).valueAsNumber,
+    ).toBe(120_000);
+    expect(
+      (screen.getByLabelText('Read-only-Werkzeugaufrufe') as HTMLInputElement).valueAsNumber,
+    ).toBe(64);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Deep Map bewusst starten' }));
+
+    await waitFor(() => {
+      expect(deepMapStarter).toHaveBeenCalledWith({
+        tokenLimit: 32_000,
+        timeLimitMillis: 120_000,
+        toolCallLimit: 64,
+      });
+    });
   });
 
   it('shows a safe error and supports retry', async () => {

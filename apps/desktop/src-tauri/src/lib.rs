@@ -3,29 +3,35 @@
 mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
+mod deep_map_manager;
+mod job_ids;
 mod platform;
 mod project_picker;
 mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
-    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
-    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, JobEventStream,
-    JobScheduler, JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
-    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
-    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    DeepMapExecutor, GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError,
+    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
+    GetPublishedIndexOverviewError, HealthQuery, IndexPersistenceControl,
+    IndexPersistenceControlError, JobEventStream, JobScheduler, JobSchedulerConfig,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
+    KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError,
+    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
+    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
     ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
     ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
     RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexLanguage, IndexRunStatus,
-    ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
+    ApplicationVersion, ApplicationVersionError, ExploreBudget, GitHead, Health, IndexLanguage,
+    IndexRunStatus, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId,
+    ProjectIdentity,
 };
 use a3_protocol::{
-    CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
+    CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
+    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,
+    DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
     IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
     IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
     IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, OpenProjectResponseV1,
@@ -38,6 +44,10 @@ use a3_storage_libsql::{
 };
 use a3_workspace::RepositoryInspector;
 use clock::SystemJobClock;
+use deep_map_manager::{
+    DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
+};
+use job_ids::DesktopJobIds;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
@@ -67,6 +77,7 @@ pub struct CompositionRoot {
     active_project: Mutex<Option<ActiveProject>>,
     project_operation_active: AtomicBool,
     index_manager: Option<RepositoryIndexManager>,
+    deep_map_manager: Option<DeepMapManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
 }
@@ -124,6 +135,17 @@ impl CompositionRoot {
             manager
                 .activate_project(project.as_ref().clone())
                 .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageUnavailable))?;
+        }
+        if let OpenProjectOutcome::Opened { project, .. } = &outcome
+            && let Some(manager) = &self.deep_map_manager
+            && manager.activate_project(project.as_ref().clone()).is_err()
+        {
+            if let Some(index_manager) = &self.index_manager {
+                let _deactivated = index_manager.deactivate_project();
+            }
+            return Err(CommandErrorV1::project_open(
+                ErrorCodeV1::DeepMapUnavailable,
+            ));
         }
         if let OpenProjectOutcome::Opened {
             project,
@@ -218,6 +240,86 @@ impl CompositionRoot {
             })
     }
 
+    /// Returns only Core-owned Deep-Map configuration and in-memory lifecycle state.
+    #[must_use]
+    pub fn query_deep_map_status(&self) -> DeepMapStatusResponseV1 {
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return DeepMapStatusResponseV1::no_project();
+        }
+        let Some(manager) = &self.deep_map_manager else {
+            return DeepMapStatusResponseV1::unavailable();
+        };
+        let model = manager.model();
+        DeepMapStatusResponseV1::available(
+            DeepMapConfigurationV1::new(
+                DeepMapModelV1::new(
+                    model.profile().id().to_string(),
+                    model.profile().version().get(),
+                    model.provider_id().to_owned(),
+                    model.model_id().to_owned(),
+                    model.context_tokens(),
+                    model.output_tokens(),
+                ),
+                map_deep_map_budget_to_v1(ExploreBudget::MINIMUM),
+                map_deep_map_budget_to_v1(ExploreBudget::DEFAULT),
+                map_deep_map_budget_to_v1(ExploreBudget::MAXIMUM),
+            ),
+            map_deep_map_activity_to_v1(manager.activity()),
+        )
+    }
+
+    /// Starts model work only after the explicit bounded WebView request was validated.
+    pub fn start_deep_map(
+        &self,
+        budget: DeepMapBudgetV1,
+    ) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        }
+        let budget = ExploreBudget::new(
+            budget.token_limit(),
+            budget.time_limit_millis(),
+            budget.tool_call_limit(),
+        )
+        .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::InvalidDeepMapBudget))?;
+        self.deep_map_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?
+            .start_mapping(budget)
+            .map_err(map_deep_map_control_error)?;
+        Ok(DeepMapControlResponseV1::accepted())
+    }
+
+    /// Requests checkpoint-producing cooperative cancellation of the active mapping attempt.
+    pub fn pause_deep_map(&self) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+        self.control_deep_map(DeepMapManager::pause)
+    }
+
+    /// Starts a new owned scheduler attempt from the exact paused plan prefix.
+    pub fn resume_deep_map(&self) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+        self.control_deep_map(DeepMapManager::resume)
+    }
+
+    /// Cancels and discards either the active attempt or retained paused checkpoint.
+    pub fn cancel_deep_map(&self) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+        self.control_deep_map(DeepMapManager::cancel)
+    }
+
+    fn control_deep_map(
+        &self,
+        operation: fn(&DeepMapManager) -> Result<(), DeepMapManagerControlError>,
+    ) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        }
+        let manager = self
+            .deep_map_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        operation(manager).map_err(map_deep_map_control_error)?;
+        Ok(DeepMapControlResponseV1::accepted())
+    }
+
     /// Queues a bounded rebuild for the Core-owned active project.
     pub fn rebuild_project_index(&self) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
         let _operation = self.acquire_project_operation(CommandErrorV1::project_rebuild)?;
@@ -253,9 +355,26 @@ impl CompositionRoot {
             let _restored = manager.activate_project(active.project.clone());
             return Err(map_deactivation_error_to_v1(error));
         }
+        if let Some(deep_map_manager) = &self.deep_map_manager
+            && deep_map_manager.deactivate_project().is_err()
+        {
+            let _restored = manager.activate_project(active.project.clone());
+            return Err(CommandErrorV1::project_removal(
+                ErrorCodeV1::ProjectRemovalUnavailable,
+            ));
+        }
         let outcome = remove.execute(&active.project, active.project_id).await;
         if let Err(error) = outcome {
             if manager.activate_project(active.project.clone()).is_err() {
+                return Err(CommandErrorV1::project_removal(
+                    ErrorCodeV1::ProjectRemovalUnavailable,
+                ));
+            }
+            if let Some(deep_map_manager) = &self.deep_map_manager
+                && deep_map_manager
+                    .activate_project(active.project.clone())
+                    .is_err()
+            {
                 return Err(CommandErrorV1::project_removal(
                     ErrorCodeV1::ProjectRemovalUnavailable,
                 ));
@@ -369,6 +488,14 @@ struct CompositionBase {
     job_events: JobEventStream,
 }
 
+#[derive(Default)]
+struct OptionalCompositionPorts {
+    index_store: Option<Arc<dyn KnowledgeIndexStore>>,
+    project_storage: Option<Arc<dyn ProjectStorageStore>>,
+    project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
+    deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
+}
+
 impl CompositionBase {
     fn new(
         application_version: ApplicationVersion,
@@ -403,9 +530,7 @@ impl CompositionBase {
             project_directory_picker,
             project_reconciliation_confirmer,
             store,
-            None,
-            None,
-            None,
+            OptionalCompositionPorts::default(),
         )
     }
 
@@ -422,9 +547,12 @@ impl CompositionBase {
             project_directory_picker,
             project_reconciliation_confirmer,
             store,
-            Some(index_store),
-            Some(project_storage),
-            Some(project_catalog_admin),
+            OptionalCompositionPorts {
+                index_store: Some(index_store),
+                project_storage: Some(project_storage),
+                project_catalog_admin: Some(project_catalog_admin),
+                deep_map_executor: None,
+            },
         )
     }
 
@@ -433,20 +561,44 @@ impl CompositionBase {
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
-        index_store: Option<Arc<dyn KnowledgeIndexStore>>,
-        project_storage: Option<Arc<dyn ProjectStorageStore>>,
-        project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
+        ports: OptionalCompositionPorts,
     ) -> Result<CompositionRoot, CompositionRootError> {
-        let project_status = index_store.clone().map(GetProjectIndexStatus::new);
-        let index_overview = index_store.clone().map(GetPublishedIndexOverview::new);
-        let index_manager = index_store
+        let job_ids = Arc::new(DesktopJobIds::new());
+        let project_status = ports.index_store.clone().map(GetProjectIndexStatus::new);
+        let index_overview = ports
+            .index_store
+            .clone()
+            .map(GetPublishedIndexOverview::new);
+        let index_manager = ports
+            .index_store
             .map(|store| {
                 let submitter = self
                     .job_scheduler
                     .submitter()
                     .map_err(|_| CompositionRootError::IndexManagerUnavailable)?;
-                RepositoryIndexManager::start(submitter, self.job_events.clone(), store)
-                    .map_err(|_| CompositionRootError::IndexManager)
+                RepositoryIndexManager::start(
+                    submitter,
+                    self.job_events.clone(),
+                    store,
+                    Arc::clone(&job_ids),
+                )
+                .map_err(|_| CompositionRootError::IndexManager)
+            })
+            .transpose()?;
+        let deep_map_manager = ports
+            .deep_map_executor
+            .map(|executor| {
+                let submitter = self
+                    .job_scheduler
+                    .submitter()
+                    .map_err(|_| CompositionRootError::DeepMapManagerUnavailable)?;
+                DeepMapManager::start(
+                    submitter,
+                    self.job_events.clone(),
+                    executor,
+                    Arc::clone(&job_ids),
+                )
+                .map_err(|_| CompositionRootError::DeepMapManager)
             })
             .transpose()?;
         Ok(CompositionRoot {
@@ -460,11 +612,12 @@ impl CompositionBase {
             recent_projects: ListRecentProjects::new(store),
             project_status,
             index_overview,
-            project_storage: project_storage.map(GetProjectStorageUsage::new),
-            remove_project: project_catalog_admin.map(RemoveProjectFromList::new),
+            project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
+            remove_project: ports.project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
             project_operation_active: AtomicBool::new(false),
             index_manager,
+            deep_map_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
         })
@@ -505,14 +658,19 @@ pub fn run() -> Result<(), DesktopRunError> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::cancel_deep_map,
             commands::list_recent_projects,
             commands::open_project,
+            commands::pause_deep_map,
+            commands::query_deep_map,
             commands::query_project_status,
             commands::query_index_activity,
             commands::query_index_overview,
             commands::query_health,
             commands::rebuild_project_index,
-            commands::remove_project
+            commands::resume_deep_map,
+            commands::remove_project,
+            commands::start_deep_map
         ])
         .run(tauri::generate_context!())
         .map_err(DesktopRunError::Tauri)
@@ -690,6 +848,51 @@ fn map_index_overview_to_v1(overview: &PublishedIndexOverview) -> IndexOverviewV
             .collect(),
         overview.diagnostic_files_truncated(),
     )
+}
+
+const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
+    DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
+}
+
+fn map_deep_map_activity_to_v1(activity: DeepMapActivity) -> DeepMapActivityV1 {
+    let progress = activity.progress().and_then(|progress| {
+        progress
+            .completed()
+            .zip(progress.total())
+            .map(|(completed, total)| {
+                DeepMapProgressV1::new(completed.to_string(), total.to_string())
+            })
+    });
+    DeepMapActivityV1::new(
+        match activity.state() {
+            DeepMapActivityState::Idle => DeepMapActivityStateV1::Idle,
+            DeepMapActivityState::Queued => DeepMapActivityStateV1::Queued,
+            DeepMapActivityState::Running => DeepMapActivityStateV1::Running,
+            DeepMapActivityState::Pausing => DeepMapActivityStateV1::Pausing,
+            DeepMapActivityState::Paused => DeepMapActivityStateV1::Paused,
+            DeepMapActivityState::Cancelling => DeepMapActivityStateV1::Cancelling,
+            DeepMapActivityState::Succeeded => DeepMapActivityStateV1::Succeeded,
+            DeepMapActivityState::Failed => DeepMapActivityStateV1::Failed,
+            DeepMapActivityState::Cancelled => DeepMapActivityStateV1::Cancelled,
+        },
+        activity.budget().map(map_deep_map_budget_to_v1),
+        progress,
+        activity.completed_steps().to_string(),
+        activity.total_steps().to_string(),
+    )
+}
+
+fn map_deep_map_control_error(error: DeepMapManagerControlError) -> CommandErrorV1 {
+    let code = match error {
+        DeepMapManagerControlError::NoActiveProject => ErrorCodeV1::NoActiveProject,
+        DeepMapManagerControlError::NotRunning => ErrorCodeV1::DeepMapNotRunning,
+        DeepMapManagerControlError::NotPaused => ErrorCodeV1::DeepMapNotPaused,
+        DeepMapManagerControlError::AlreadyPending => ErrorCodeV1::DeepMapAlreadyPending,
+        DeepMapManagerControlError::QueueFull
+        | DeepMapManagerControlError::JobIdsExhausted
+        | DeepMapManagerControlError::CoordinatorStopped => ErrorCodeV1::DeepMapUnavailable,
+    };
+    CommandErrorV1::deep_map(code)
 }
 
 const fn map_rebuild_state_to_v1(state: RepositoryIndexRebuildState) -> RebuildStateV1 {
@@ -875,6 +1078,10 @@ pub enum CompositionRootError {
     IndexManagerUnavailable,
     /// The owned repository-index coordinator could not be started.
     IndexManager,
+    /// The scheduler stopped before the Deep-Map coordinator could acquire a submit capability.
+    DeepMapManagerUnavailable,
+    /// The owned Deep-Map coordinator could not be started.
+    DeepMapManager,
     /// Tauri could not resolve the private application-data directory.
     AppDataPath(tauri::Error),
     /// The private application-data storage boundary could not be established.
@@ -897,6 +1104,10 @@ impl fmt::Display for CompositionRootError {
                 formatter.write_str("repository index manager is unavailable")
             }
             Self::IndexManager => formatter.write_str("repository index manager failed"),
+            Self::DeepMapManagerUnavailable => {
+                formatter.write_str("Deep Map manager is unavailable")
+            }
+            Self::DeepMapManager => formatter.write_str("Deep Map manager failed"),
             Self::AppDataPath(_) => formatter.write_str("application data path is unavailable"),
             Self::StorageLayout(error) => write!(formatter, "storage layout failed: {error}"),
             Self::Catalog(error) => write!(formatter, "catalog open failed: {error}"),
@@ -912,6 +1123,7 @@ impl Error for CompositionRootError {
             Self::JobScheduler(error) => Some(error),
             Self::IndexManagerUnavailable => None,
             Self::IndexManager => None,
+            Self::DeepMapManagerUnavailable | Self::DeepMapManager => None,
             Self::AppDataPath(error) => Some(error),
             Self::StorageLayout(error) => Some(error),
             Self::Catalog(error) => Some(error),

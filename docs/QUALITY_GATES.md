@@ -46,6 +46,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   kontrollzeichenfreie Pfad-/Meldungsanzeigen, Trunkierungswahrheit und widerspruchsfreie
   Aggregatzahlen. Der Component-Test zeigt Dateien, Symbole, Diagnostics, Coverage und einen
   file-lokalen Fehler gleichzeitig mit dem weiterhin lesbaren publizierten Snapshot.
+- Der U3-Deep-Map-Contract beweist, dass vor dem ausdrücklichen Start kein Executoraufruf erfolgt,
+  nur ein live verifiziertes Structured-Output-Profil als verfügbar projiziert wird und die
+  WebView weder Pfad, Profil noch Job-ID liefern kann. Start validiert Token-, Zeit- und
+  Read-only-Toolbudget vor dem Scheduler. Ein laufender Versuch muss über `Pausing` zu einem
+  validierten `Paused`-Checkpoint gelangen, Resume einen neuen besessenen Versuch ohne Wiederholung
+  bestätigter Schritte starten und Cancel den Checkpoint verwerfen. Queued Work darf nicht fälschlich
+  als checkpoint-sicher pausiert gelten; Projektwechsel und Shutdown dürfen keinen Worker ablösen.
+  Rust-/TypeScript-Contracts lehnen unbekannte Felder, widersprüchliche Zustände, nicht kanonische
+  Zähler und unbekannte Fehlercodes ab. Der Component-Test muss außerdem zeigen, dass weder Mount
+  noch Polling Modellarbeit startet und der Start exakt das zuvor sichtbare Budget übergibt.
 
 ### Persistenz
 

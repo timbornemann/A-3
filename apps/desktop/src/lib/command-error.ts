@@ -20,7 +20,12 @@ export type ErrorCodeV1 =
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
   | 'projectNotInList'
-  | 'projectRemovalUnavailable';
+  | 'projectRemovalUnavailable'
+  | 'deepMapUnavailable'
+  | 'invalidDeepMapBudget'
+  | 'deepMapAlreadyPending'
+  | 'deepMapNotRunning'
+  | 'deepMapNotPaused';
 
 export interface CommandErrorV1 {
   code: ErrorCodeV1;
@@ -47,6 +52,11 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'projectOperationBusy',
   'projectNotInList',
   'projectRemovalUnavailable',
+  'deepMapUnavailable',
+  'invalidDeepMapBudget',
+  'deepMapAlreadyPending',
+  'deepMapNotRunning',
+  'deepMapNotPaused',
 ]);
 
 export function parseCommandErrorV1(value: unknown): CommandErrorV1 | null {
@@ -147,6 +157,27 @@ export function projectActionRecoveryMessage(error: unknown, action: 'rebuild' |
   return (
     (code === undefined ? undefined : removal[code]) ??
     'Der Worktree konnte nicht sicher entfernt werden. Aktualisiere den Status und versuche es erneut.'
+  );
+}
+
+export function deepMapRecoveryMessage(error: unknown): string {
+  const code = parseCommandErrorV1(error)?.code;
+  const messages: Partial<Record<ErrorCodeV1, string>> = {
+    unsupportedProtocolVersion:
+      'UI und Core verwenden unterschiedliche Protokollversionen. Starte A^3 neu.',
+    noActiveProject: 'Öffne zuerst einen lokalen Git-Worktree.',
+    deepMapUnavailable:
+      'Für Deep Map ist noch kein live verifiziertes lokales Mapping-Modell verfügbar.',
+    invalidDeepMapBudget:
+      'Das gewählte Token-, Zeit- oder Werkzeugbudget liegt außerhalb der festen Grenzen.',
+    deepMapAlreadyPending:
+      'Eine Deep-Map-Aktion oder ein pausierter Checkpoint ist bereits aktiv. Aktualisiere den Status.',
+    deepMapNotRunning: 'Es läuft kein Deep-Map-Job, der pausiert oder abgebrochen werden kann.',
+    deepMapNotPaused: 'Es ist kein validierter pausierter Deep-Map-Checkpoint vorhanden.',
+  };
+  return (
+    (code === undefined ? undefined : messages[code]) ??
+    'Die Deep-Map-Aktion konnte nicht sicher ausgeführt werden. Aktualisiere den Status und versuche es erneut.'
   );
 }
 

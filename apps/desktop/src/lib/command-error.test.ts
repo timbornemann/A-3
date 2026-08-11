@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deepMapRecoveryMessage,
   parseCommandErrorV1,
   projectActionRecoveryMessage,
   projectOpenRecoveryMessage,
@@ -48,5 +49,13 @@ describe('command error recovery', () => {
     expect(
       projectActionRecoveryMessage(commandError('projectRemovalUnavailable'), 'remove'),
     ).toContain('starte A^3');
+  });
+
+  it('maps only known Deep Map codes and never renders a raw boundary message', () => {
+    const secret = 'http://private-provider:11434/api/chat';
+    expect(deepMapRecoveryMessage(commandError('deepMapNotPaused', secret))).toContain(
+      'kein validierter pausierter',
+    );
+    expect(deepMapRecoveryMessage(commandError('unknownCode', secret))).not.toContain(secret);
   });
 });

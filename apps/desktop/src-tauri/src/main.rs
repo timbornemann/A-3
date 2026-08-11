@@ -16,8 +16,9 @@ mod tests {
     use a3_desktop::CompositionRoot;
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        CommandErrorV1, ErrorCodeV1, HealthResponseV1, HealthStatusV1, OpenProjectResponseV1,
-        OpenProjectResultV1, PlatformV1, ProtocolVersion, RecentProjectsResponseV1,
+        CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
+        HealthResponseV1, HealthStatusV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
+        ProtocolVersion, RecentProjectsResponseV1,
     };
     use serde_json::json;
     use std::error::Error;
@@ -98,14 +99,19 @@ mod tests {
         let app = mock_builder()
             .manage(root)
             .invoke_handler(tauri::generate_handler![
+                a3_desktop::commands::cancel_deep_map,
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
+                a3_desktop::commands::pause_deep_map,
+                a3_desktop::commands::query_deep_map,
                 a3_desktop::commands::query_project_status,
                 a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_index_overview,
                 a3_desktop::commands::query_health,
                 a3_desktop::commands::rebuild_project_index,
-                a3_desktop::commands::remove_project
+                a3_desktop::commands::remove_project,
+                a3_desktop::commands::resume_deep_map,
+                a3_desktop::commands::start_deep_map
             ])
             .build(tauri::generate_context!())?;
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build()?;
@@ -171,6 +177,51 @@ mod tests {
         .map_err(|error| io::Error::other(error.to_string()))?
         .deserialize::<RecentProjectsResponseV1>()?;
         assert!(recent_response.projects().is_empty());
+
+        let deep_map_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_deep_map".into(),
+                callback: CallbackFn(12),
+                error: CallbackFn(13),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<DeepMapStatusResponseV1>()?;
+        assert!(matches!(
+            deep_map_response.result(),
+            DeepMapStatusResultV1::NoProject
+        ));
+
+        let untrusted_deep_map_scope = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "start_deep_map".into(),
+                callback: CallbackFn(14),
+                error: CallbackFn(15),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "budget": {
+                            "tokenLimit": 32_000,
+                            "timeLimitMillis": 120_000,
+                            "toolCallLimit": 64
+                        },
+                        "profileId": "11".repeat(32)
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        );
+        assert!(untrusted_deep_map_scope.is_err());
 
         let untrusted_project_path = get_ipc_response(
             &webview,
@@ -248,13 +299,18 @@ mod tests {
             capability.get("permissions"),
             Some(&json!([
                 "allow-list-recent-projects",
+                "allow-cancel-deep-map",
                 "allow-open-project",
+                "allow-pause-deep-map",
+                "allow-query-deep-map",
                 "allow-query-index-activity",
                 "allow-query-index-overview",
                 "allow-query-project-status",
                 "allow-query-health",
                 "allow-rebuild-project-index",
-                "allow-remove-project"
+                "allow-remove-project",
+                "allow-resume-deep-map",
+                "allow-start-deep-map"
             ]))
         );
         Ok(())

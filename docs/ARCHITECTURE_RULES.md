@@ -47,6 +47,9 @@ Stand: 2026-08-03
 5. Große Dateien werden gestreamt oder begrenzt gelesen.
 6. Datenbanktransaktionen bleiben kurz; LLM-, Datei- oder Prozessaufrufe innerhalb einer offenen Transaktion sind verboten.
 7. Backpressure ist sichtbar und darf keine stillen Datenverluste erzeugen.
+8. Produktspezifische Pausezustände DÜRFEN den gemeinsamen Scheduler-Automaten nicht umgehen. Eine
+   Deep Map gilt erst nach terminaler kooperativer Cancellation und validiertem Checkpoint als
+   pausiert; Resume ist ein neuer besessener Job mit unverändertem Budget.
 
 ## 6. Persistenz
 
@@ -131,4 +134,3 @@ Vor Abschluss MUSS Codex beantworten können:
 - Welche Daten oder Berechtigungen kann ein kompromittiertes Frontend erreichen?
 - Welche Messung stützt eine Performanceaussage?
 - Welche Dokumentation oder ADR wurde aktualisiert?
-

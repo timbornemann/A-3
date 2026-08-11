@@ -25,8 +25,10 @@ WebView-Rand verwenden `camelCase`. Eingaben lehnen unbekannte Felder ab.
 
 ## Gemeinsamer V1-Request
 
-Die Commands `query_health`, `open_project` und `list_recent_projects` erhalten genau ein Argument
-`request`. Ihr V1-Request enthält ausschließlich:
+Die pfadlosen Status- und Control-Commands erhalten genau ein Argument `request`. Das gilt neben
+`query_health`, `open_project` und `list_recent_projects` auch für Projekt-, Index- und
+Deep-Map-Status sowie für `pause_deep_map`, `resume_deep_map` und `cancel_deep_map`. Ihr gemeinsamer
+V1-Request enthält ausschließlich:
 
 | JSON-Feld | Typ | Invariante |
 | --- | --- | --- |
@@ -35,6 +37,22 @@ Die Commands `query_health`, `open_project` und `list_recent_projects` erhalten 
 Zusätzliche Felder, ein fehlender Request oder ein nicht numerischer Versionswert werden vor
 Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_project` keinen Pfad und
 `list_recent_projects` weder einen Pfad noch ein WebView-gesteuertes Limit.
+
+## Deep Map V1
+
+`query_deep_map` liefert genau `noProject`, `unavailable` oder `available`. Nur `available` enthält
+die sichere Identität eines live verifizierten ModelProfiles, Context- und Outputlimit, den festen
+Minimum-/Default-/Maximum-Budgetrahmen sowie den Core-eigenen Lifecycle. Endpoints, Credentials,
+Repositorypfade, Providerpayloads und Job-IDs bleiben intern. Zähler werden als kanonische
+verlustfreie u64-Dezimaltexte übertragen.
+
+`start_deep_map` akzeptiert zusätzlich zur Protokollversion ausschließlich ein geschlossenes
+`budget` mit positiven Token-, Millisekunden- und Read-only-Toollimits innerhalb des
+Domainrahmens. Profil und Projekt stammen aus dem Core. Pause, Resume und Cancel nehmen nur die
+Protokollversion an und quittieren ausschließlich eine vom Core akzeptierte Transition. Der
+geschlossene Lifecycle lautet `idle`, `queued`, `running`, `pausing`, `paused`, `cancelling`,
+`succeeded`, `failed` oder `cancelled`; `paused` darf erst nach abgeschlossenem kooperativem Abbruch
+mit validiertem Checkpoint sichtbar werden.
 
 ## Health Response V1
 
@@ -92,6 +110,8 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 
 ## Tauri-Capability
 
-Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich
-`allow-query-health`, `allow-open-project` und `allow-list-recent-projects`. Es gibt keine generische
-Datei-, Dialog-, Shell- oder SQL-Capability.
+Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
+Health-, Project-, Index- und Deep-Map-Commands. Für Deep Map sind das
+`allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
+`allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
+Shell-, Provider-, Netzwerk- oder SQL-Capability.

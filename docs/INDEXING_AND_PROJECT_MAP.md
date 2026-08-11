@@ -306,6 +306,20 @@ Statuswechsel rollen die gesamte Mutation zurück; der zuvor veröffentlichte In
 
 ## Deep Map
 
+Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrücklichen Aktion
+`start_deep_map`. Vorher zeigt sie das live verifizierte Mapping-Profil mit Provider-, Modell- und
+Profilidentität, Context- und Outputlimit sowie das gewählte Token-, Zeit- und Read-only-Toolbudget.
+Die WebView wählt weder Projekt, Profil noch Job-ID. Ohne ein durch Capability Probe verifiziertes
+Mapping-Profil bleibt die Funktion sichtbar `unavailable`; A^3 bleibt als Indexbrowser nutzbar und
+startet weder Provider- noch GPU-Arbeit. Die spätere U8-Konfiguration liefert den optionalen
+Executor an den Composition Root, ohne diesen U3-Startvertrag zu verändern.
+
+Pause verwendet kooperative Scheduler-Cancellation. Nur ein vollständiger, plan- und
+snapshotgebundener `ExplorerCheckpoint` darf den Core-eigenen Zustand `Paused` erzeugen. Resume
+startet einen neuen besessenen Versuch ab dem ersten unbestätigten Schritt unter dem unveränderten
+Startbudget; Cancel verwirft den Checkpoint. Statuspolling liest nur das begrenzte in-memory
+Read-Model und löst keine Exploration, Storage-Rekonstruktion oder Modellausführung aus.
+
 Phasen:
 
 ~~~text

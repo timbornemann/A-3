@@ -1,3 +1,4 @@
+use crate::job_ids::DesktopJobIds;
 use a3_application::{
     JobCompletion, JobEventStream, JobSchedulerSubmitError, JobSubmitter, KnowledgeIndexStore,
     RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
@@ -33,6 +34,7 @@ impl RepositoryIndexManager {
         submitter: JobSubmitter,
         events: JobEventStream,
         store: Arc<dyn KnowledgeIndexStore>,
+        job_ids: Arc<DesktopJobIds>,
     ) -> Result<Self, RepositoryIndexManagerStartError> {
         let (commands, receiver) = bounded(2);
         let activity = Arc::new(Mutex::new(RepositoryIndexActivity::idle()));
@@ -46,6 +48,7 @@ impl RepositoryIndexManager {
                     submitter,
                     events,
                     store,
+                    job_ids,
                     receiver,
                     worker_activity,
                     worker_rebuild_state,
@@ -190,6 +193,7 @@ fn coordinator_loop(
     submitter: JobSubmitter,
     events: JobEventStream,
     store: Arc<dyn KnowledgeIndexStore>,
+    job_ids: Arc<DesktopJobIds>,
     commands: Receiver<ManagerCommand>,
     activity: Arc<Mutex<RepositoryIndexActivity>>,
     rebuild_state: Arc<Mutex<RepositoryIndexRebuildState>>,
@@ -200,8 +204,6 @@ fn coordinator_loop(
         Arc::new(Blake3IndexRunIdFactory),
     ));
     let mut active: Option<ActiveProject> = None;
-    let mut next_job_id = 1u64;
-
     loop {
         while events.try_next().ok().flatten().is_some() {}
         match commands.try_recv() {
@@ -277,8 +279,11 @@ fn coordinator_loop(
         }
 
         if state.active_job.is_none() && state.pending_rebuild {
-            let job_id = JobId::new(next_job_id);
-            next_job_id = next_job_id.saturating_add(1);
+            let Ok(job_id) = job_ids.allocate() else {
+                state.pending_rebuild = false;
+                set_rebuild_state(&rebuild_state, RepositoryIndexRebuildState::Failed);
+                continue;
+            };
             let task_project = state.project.clone();
             let task_store = Arc::clone(&store);
             match submitter.submit(job_id, INDEX_JOB_OWNER, move |context| {
@@ -322,8 +327,10 @@ fn coordinator_loop(
         if state.active_job.is_none()
             && let Some(batch) = state.pending.take()
         {
-            let job_id = JobId::new(next_job_id);
-            next_job_id = next_job_id.saturating_add(1);
+            let Ok(job_id) = job_ids.allocate() else {
+                set_index_activity_from_job(&activity, JobStatus::Failed, None);
+                continue;
+            };
             let task_project = state.project.clone();
             let task_compiler = Arc::clone(&state.compiler);
             let task_refresh = Arc::clone(&refresh);

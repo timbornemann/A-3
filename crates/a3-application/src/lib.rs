@@ -11,6 +11,7 @@ mod agent_turn;
 mod command_discovery;
 mod context_compiler;
 mod deep_map_action_codec;
+mod deep_map_execution;
 mod deep_map_explorer;
 mod deep_map_planner;
 mod deep_map_read_tools;
@@ -108,6 +109,11 @@ pub use context_compiler::{
 };
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
+};
+pub use deep_map_execution::{
+    DeepMapExecutionFailure, DeepMapExecutionFuture, DeepMapExecutionOutcome,
+    DeepMapExecutionRequest, DeepMapExecutor, DeepMapModelDescriptor, DeepMapModelDescriptorError,
+    DeepMapResumeState,
 };
 pub use deep_map_explorer::{
     DeepMapExplorerFailure, DeepMapExplorerFuture, DeepMapExplorerOutcome, DeepMapExplorerStatus,

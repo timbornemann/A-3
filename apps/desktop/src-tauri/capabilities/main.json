@@ -1,16 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "description": "Allows the main window to invoke only typed A^3 health and project commands.",
+  "description": "Allows the main window to invoke only typed A^3 product commands.",
   "windows": ["main"],
   "permissions": [
     "allow-list-recent-projects",
+    "allow-cancel-deep-map",
     "allow-open-project",
+    "allow-pause-deep-map",
+    "allow-query-deep-map",
     "allow-query-index-activity",
     "allow-query-index-overview",
     "allow-query-project-status",
     "allow-query-health",
     "allow-rebuild-project-index",
-    "allow-remove-project"
+    "allow-remove-project",
+    "allow-resume-deep-map",
+    "allow-start-deep-map"
   ]
 }

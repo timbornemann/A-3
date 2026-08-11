@@ -54,6 +54,16 @@ Lifecycle, aktuelle Phase und `completed/6` in einen kleinen Mutex-geschützten 
 `query_index_activity` liest ausschließlich diesen Zustand; Polling rekonstruiert weder den Index,
 misst Storage noch liest es Repositorydateien. Der Scheduler bleibt alleiniger Besitzer des Jobs.
 
+Der Deep-Map-Produktzustand ergänzt darüber bewusst `Pausing` und `Paused`, ohne den verbindlichen
+Scheduler-Automaten um einen nicht terminalen Pausezustand zu erweitern. `pause_deep_map` ist nur
+für einen tatsächlich laufenden Versuch zulässig und fordert kooperative Cancellation an. Erst
+nach dem terminalen Schedulerstatus `Cancelled` und einem gegen den unveränderten `ExplorePlan`
+validierten `ExplorerCheckpoint` wird der Produktzustand `Paused`; dann läuft keine Modellarbeit.
+`resume_deep_map` erzeugt einen neuen Scheduler-eigenen Versuch mit demselben Startbudget und setzt
+am ersten unbestätigten Planschritt fort. Cancel verwirft den Checkpoint. Projektwechsel,
+Projektentfernung und Shutdown fordern ebenfalls Cancellation an und lassen keinen detached Worker
+zurück.
+
 Der Scheduler besitzt jeden Worker-Thread und akzeptiert nach Beginn des Shutdowns keine Arbeit mehr. `Drain` beendet die Queue kontrolliert und wartet anschließend auf alle Worker. `CancelAndWait` fordert zusätzlich für alle aktiven Jobs Cancellation an und wartet ebenfalls auf alle Worker. Der Destruktor verwendet als Sicherheitsnetz `CancelAndWait`; es gibt keinen detached Worker-Pfad.
 
 Der Shutdown-Report enthält die Anzahl gejointer Worker, geordnete finale Job-Snapshots und noch nicht konsumierte Ereignisse. Ein Panic innerhalb einer Aufgabe wird an einer Laufzeitgrenze abgefangen und als `Failed` abgeschlossen; ein Panic außerhalb dieser Grenze wird als Shutdown-Fehler gemeldet.

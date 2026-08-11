@@ -1,6 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { projectActionRecoveryMessage, projectOpenRecoveryMessage } from './lib/command-error';
+  import {
+    deepMapRecoveryMessage,
+    projectActionRecoveryMessage,
+    projectOpenRecoveryMessage,
+  } from './lib/command-error';
+  import {
+    cancelDeepMap,
+    pauseDeepMap,
+    queryDeepMap,
+    resumeDeepMap,
+    startDeepMap,
+    type DeepMapActivityStateV1,
+    type DeepMapBudgetV1,
+    type DeepMapControlResponseV1,
+    type DeepMapStatusResponseV1,
+  } from './lib/deep-map';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import {
     queryIndexActivity,
@@ -32,6 +47,11 @@
 
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
+    deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV1>;
+    deepMapStarter?: (budget: DeepMapBudgetV1) => Promise<DeepMapControlResponseV1>;
+    deepMapPauser?: () => Promise<DeepMapControlResponseV1>;
+    deepMapResumer?: () => Promise<DeepMapControlResponseV1>;
+    deepMapCanceller?: () => Promise<DeepMapControlResponseV1>;
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
@@ -68,6 +88,17 @@
         result: Extract<IndexOverviewResponseV1['result'], { status: 'published' }>;
       }
     | { kind: 'error' };
+  type DeepMapView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'unavailable' }
+    | {
+        kind: 'available';
+        result: Extract<DeepMapStatusResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type DeepMapActionView =
+    { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
   type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
   type RemovalView =
     | { kind: 'idle' }
@@ -80,6 +111,11 @@
 
   let {
     healthLoader = queryHealth,
+    deepMapStatusLoader = queryDeepMap,
+    deepMapStarter = startDeepMap,
+    deepMapPauser = pauseDeepMap,
+    deepMapResumer = resumeDeepMap,
+    deepMapCanceller = cancelDeepMap,
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
     projectOpener = openProject,
@@ -93,6 +129,14 @@
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
+  let deepMapView = $state<DeepMapView>({ kind: 'loading' });
+  let deepMapActionView = $state<DeepMapActionView>({ kind: 'idle' });
+  let deepMapBudget = $state<DeepMapBudgetV1>({
+    tokenLimit: 32_000,
+    timeLimitMillis: 120_000,
+    toolCallLimit: 64,
+  });
+  let deepMapBudgetProfile = $state<string | null>(null);
   let rebuildView = $state<RebuildView>({ kind: 'idle' });
   let removalView = $state<RemovalView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
@@ -114,8 +158,10 @@
     void loadRecentProjects();
     void loadIndexActivity();
     void loadIndexOverview();
+    void loadDeepMap();
     const activityTimer = window.setInterval(() => {
       void loadIndexActivity();
+      void loadDeepMap();
     }, 500);
     return () => window.clearInterval(activityTimer);
   });
@@ -162,6 +208,27 @@
     }
   }
 
+  async function loadDeepMap(): Promise<void> {
+    try {
+      const response = await deepMapStatusLoader();
+      if (response.result.status === 'available') {
+        deepMapView = { kind: 'available', result: response.result };
+        if (deepMapBudgetProfile !== response.result.configuration.model.profileId) {
+          deepMapBudget = { ...response.result.configuration.defaultBudget };
+          deepMapBudgetProfile = response.result.configuration.model.profileId;
+        }
+      } else if (response.result.status === 'unavailable') {
+        deepMapView = { kind: 'unavailable' };
+        deepMapBudgetProfile = null;
+      } else {
+        deepMapView = { kind: 'noProject' };
+        deepMapBudgetProfile = null;
+      }
+    } catch {
+      deepMapView = { kind: 'error' };
+    }
+  }
+
   async function loadProjectStatus(): Promise<void> {
     projectStatusView = { kind: 'loading' };
     try {
@@ -179,7 +246,7 @@
   }
 
   async function refreshProjectDetails(): Promise<void> {
-    await Promise.all([loadProjectStatus(), loadIndexOverview()]);
+    await Promise.all([loadProjectStatus(), loadIndexOverview(), loadDeepMap()]);
   }
 
   async function loadRecentProjects(): Promise<void> {
@@ -203,6 +270,7 @@
         await loadProjectStatus();
         await loadIndexActivity();
         await loadIndexOverview();
+        await loadDeepMap();
         await loadRecentProjects();
       } else {
         projectView = { kind: 'cancelled' };
@@ -226,6 +294,30 @@
     }
   }
 
+  async function requestDeepMapStart(): Promise<void> {
+    deepMapActionView = { kind: 'submitting' };
+    try {
+      await deepMapStarter({ ...deepMapBudget });
+      deepMapActionView = { kind: 'idle' };
+      await loadDeepMap();
+    } catch (error) {
+      deepMapActionView = { kind: 'error', message: deepMapRecoveryMessage(error) };
+    }
+  }
+
+  async function requestDeepMapControl(
+    control: () => Promise<DeepMapControlResponseV1>,
+  ): Promise<void> {
+    deepMapActionView = { kind: 'submitting' };
+    try {
+      await control();
+      deepMapActionView = { kind: 'idle' };
+      await loadDeepMap();
+    } catch (error) {
+      deepMapActionView = { kind: 'error', message: deepMapRecoveryMessage(error) };
+    }
+  }
+
   function requestRemovalConfirmation(): void {
     removalView = { kind: 'confirming' };
   }
@@ -243,6 +335,9 @@
       projectStatusView = { kind: 'noProject' };
       indexActivityView = { kind: 'noProject' };
       indexOverviewView = { kind: 'noProject' };
+      deepMapView = { kind: 'noProject' };
+      deepMapActionView = { kind: 'idle' };
+      deepMapBudgetProfile = null;
       indexActivityObserved = false;
       await loadRecentProjects();
     } catch (error) {
@@ -358,6 +453,25 @@
       warning: 'Warnung',
     };
     return labels[severity];
+  }
+
+  function deepMapStateLabel(state: DeepMapActivityStateV1): string {
+    const labels: Record<DeepMapActivityStateV1, string> = {
+      idle: 'Bereit für einen bewussten Start',
+      queued: 'Deep Map wartet auf einen Worker',
+      running: 'Deep Map läuft mit dem angezeigten Budget',
+      pausing: 'Pause wird kontrolliert und checkpoint-sicher vorbereitet',
+      paused: 'Pausiert; es läuft keine Modellarbeit',
+      cancelling: 'Deep Map wird kontrolliert abgebrochen',
+      succeeded: 'Deep Map abgeschlossen',
+      failed: 'Deep Map fehlgeschlagen',
+      cancelled: 'Deep Map abgebrochen',
+    };
+    return labels[state];
+  }
+
+  function deepMapCanStart(state: DeepMapActivityStateV1): boolean {
+    return ['idle', 'succeeded', 'failed', 'cancelled'].includes(state);
   }
 </script>
 
@@ -601,6 +715,154 @@
             <div class="recent-projects-error" role="alert">
               <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadIndexOverview}>Indexübersicht erneut laden</button>
+            </div>
+          {/if}
+        </div>
+        <div class="deep-map-panel" aria-labelledby="deep-map-heading">
+          <div class="deep-map-heading">
+            <div>
+              <h4 id="deep-map-heading">Deep Map</h4>
+              <p>
+                Startet niemals automatisch. Modell und harte Budgets werden vor jeder neuen
+                Exploration sichtbar festgelegt.
+              </p>
+            </div>
+            <button type="button" onclick={loadDeepMap}>Status aktualisieren</button>
+          </div>
+          {#if deepMapView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Deep-Map-Status wird geladen …
+            </p>
+          {:else if deepMapView.kind === 'unavailable'}
+            <div class="deep-map-unavailable" role="status">
+              <strong>Keine Modellarbeit aktiv</strong>
+              <p>
+                Es ist noch kein live verifiziertes lokales Mapping-Modell konfiguriert. Fast Index
+                und veröffentlichte Daten bleiben ohne Modell vollständig nutzbar.
+              </p>
+              <button type="button" disabled>Deep Map bewusst starten</button>
+            </div>
+          {:else if deepMapView.kind === 'available'}
+            <p class="deep-map-state" role="status" aria-live="polite">
+              {deepMapStateLabel(deepMapView.result.activity.state)}
+            </p>
+            <dl class="deep-map-model">
+              <div>
+                <dt>Mapping-Modell</dt>
+                <dd>
+                  {deepMapView.result.configuration.model.providerId} /
+                  {deepMapView.result.configuration.model.modelId}
+                </dd>
+              </div>
+              <div>
+                <dt>Kontextlimit</dt>
+                <dd>
+                  {countLabel(String(deepMapView.result.configuration.model.contextTokens))} Tokens
+                </dd>
+              </div>
+              <div>
+                <dt>Outputlimit je Antwort</dt>
+                <dd>
+                  {countLabel(String(deepMapView.result.configuration.model.outputTokens))} Tokens
+                </dd>
+              </div>
+              <div>
+                <dt>Verifiziertes Profil</dt>
+                <dd><code>{deepMapView.result.configuration.model.profileId}</code></dd>
+              </div>
+            </dl>
+            <fieldset
+              class="deep-map-budget"
+              disabled={deepMapActionView.kind === 'submitting' ||
+                !deepMapCanStart(deepMapView.result.activity.state)}
+            >
+              <legend>Harte Budgets vor Start</legend>
+              <label>
+                Tokenbudget
+                <input
+                  type="number"
+                  min={deepMapView.result.configuration.minimumBudget.tokenLimit}
+                  max={deepMapView.result.configuration.maximumBudget.tokenLimit}
+                  bind:value={deepMapBudget.tokenLimit}
+                />
+              </label>
+              <label>
+                Zeitbudget in Millisekunden
+                <input
+                  type="number"
+                  min={deepMapView.result.configuration.minimumBudget.timeLimitMillis}
+                  max={deepMapView.result.configuration.maximumBudget.timeLimitMillis}
+                  bind:value={deepMapBudget.timeLimitMillis}
+                />
+              </label>
+              <label>
+                Read-only-Werkzeugaufrufe
+                <input
+                  type="number"
+                  min={deepMapView.result.configuration.minimumBudget.toolCallLimit}
+                  max={deepMapView.result.configuration.maximumBudget.toolCallLimit}
+                  bind:value={deepMapBudget.toolCallLimit}
+                />
+              </label>
+            </fieldset>
+            {#if deepMapView.result.activity.budget !== null}
+              <p class="deep-map-run-budget">
+                Laufbudget: {countLabel(String(deepMapView.result.activity.budget.tokenLimit))}
+                Tokens · {countLabel(String(deepMapView.result.activity.budget.timeLimitMillis))} ms ·
+                {countLabel(String(deepMapView.result.activity.budget.toolCallLimit))} Read-Aufrufe
+              </p>
+            {/if}
+            {#if deepMapView.result.activity.progress !== null}
+              <progress
+                aria-label="Deep-Map-Fortschritt"
+                max={deepMapView.result.activity.progress.total}
+                value={deepMapView.result.activity.progress.completed}
+              ></progress>
+            {/if}
+            {#if deepMapView.result.activity.totalSteps !== '0'}
+              <p>
+                Bestätigte Schritte:
+                {countLabel(deepMapView.result.activity.confirmedSteps)} von
+                {countLabel(deepMapView.result.activity.totalSteps)}
+              </p>
+            {/if}
+            <div class="project-actions deep-map-actions">
+              <button
+                class="primary-action"
+                type="button"
+                disabled={deepMapActionView.kind === 'submitting' ||
+                  !deepMapCanStart(deepMapView.result.activity.state)}
+                onclick={requestDeepMapStart}>Deep Map bewusst starten</button
+              >
+              <button
+                type="button"
+                disabled={deepMapActionView.kind === 'submitting' ||
+                  deepMapView.result.activity.state !== 'running'}
+                onclick={() => requestDeepMapControl(deepMapPauser)}>Pausieren</button
+              >
+              <button
+                type="button"
+                disabled={deepMapActionView.kind === 'submitting' ||
+                  deepMapView.result.activity.state !== 'paused'}
+                onclick={() => requestDeepMapControl(deepMapResumer)}>Fortsetzen</button
+              >
+              <button
+                class="risk-action"
+                type="button"
+                disabled={deepMapActionView.kind === 'submitting' ||
+                  !['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(
+                    deepMapView.result.activity.state,
+                  )}
+                onclick={() => requestDeepMapControl(deepMapCanceller)}>Abbrechen</button
+              >
+            </div>
+            {#if deepMapActionView.kind === 'error'}
+              <p class="project-error" role="alert">{deepMapActionView.message}</p>
+            {/if}
+          {:else if deepMapView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der Deep-Map-Status konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={loadDeepMap}>Erneut laden</button>
             </div>
           {/if}
         </div>

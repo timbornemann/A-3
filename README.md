@@ -87,8 +87,12 @@ Patchkonflikte, partielle Wirkung, Prozessfehler und unbekannte Mutationsergebni
 den vollständigen Codingpfad mit reproduzierbaren lokalen E2E-Aufgaben, Replan, Useränderung und
 Context Compaction. Die Desktop-Projects-Fläche öffnet validierte Worktrees, zeigt Recent Projects,
 Branch, Index, Snapshot und private Storagegröße, baut ausschließlich regenerierbare Indexdaten neu
-auf und entfernt Projekte aus der Liste, ohne Repository oder privates Wissen zu löschen. Als
-nächster Desktop-Schnitt folgt U3 Index Experience. Die
+auf und entfernt Projekte aus der Liste, ohne Repository oder privates Wissen zu löschen. U3 zeigt
+inzwischen live die sechs Fast-Index-Phasen, den weiterhin lesbaren veröffentlichten Snapshot,
+Dateien, Symbole, Coverage und file-lokale Diagnostics. Der explizite Deep-Map-Lifecycle zeigt ein
+verifiziertes Modell und harte Budgets vor dem Start, kann checkpoint-sicher pausieren,
+fortsetzen und abbrechen und bleibt ohne konfiguriertes Mapping-Modell sicher deaktiviert. Als
+nächster U3-Schnitt folgt die sichtbare Stale-/NeedsReview-Projektion. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

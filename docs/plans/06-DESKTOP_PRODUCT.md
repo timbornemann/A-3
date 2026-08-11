@@ -70,18 +70,40 @@ isoliert nun auch Project-Catalog- und Knowledge-Contracts pro Test, wiederholt 
 
 Abhängigkeiten: Fast Index, Deep Map
 
-- [ ] Fast-Index-Fortschritt nach Phasen
-- [ ] Dateien, Symbole, Diagnostics und Coverage
-- [ ] Deep Map bewusst starten, pausieren, fortsetzen und abbrechen
-- [ ] Token-, Zeit- und Modellbudget vor Start
+- [x] Fast-Index-Fortschritt nach Phasen
+- [x] Dateien, Symbole, Diagnostics und Coverage
+- [x] Deep Map bewusst starten, pausieren, fortsetzen und abbrechen
+- [x] Token-, Zeit- und Modellbudget vor Start
 - [ ] stale und NeedsReview sichtbar
-- [ ] Indexfehler pro Datei statt globalem Blank State
+- [x] Indexfehler pro Datei statt globalem Blank State
 
 Akzeptanz:
 
 - UI bleibt während Cold Index responsiv;
 - Nutzer kann mit veröffentlichtem alten Snapshot lesen, während neuer gebaut wird;
 - Deep Map startet nicht unbemerkt GPU-lastig.
+
+Teilabnahme vom 2026-08-11: Der pfadlose Fast-Index-Status projiziert die sechs festen Phasen aus
+dem Core-eigenen in-memory Read-Model. Die getrennte begrenzte Übersicht hält den letzten
+atomar veröffentlichten Snapshot während eines neuen Laufs lesbar und zeigt Dateien, Symbole,
+bytegewichtete Coverage sowie sichere file-lokale Diagnostics statt eines globalen Blank States.
+
+Deep Map besitzt nun einen expliziten, ebenfalls pfadlosen Produkt-Lifecycle. Vor dem Start zeigt
+die UI ausschließlich ein durch Capability Probe verifiziertes Mapping-Profil samt Context- und
+Outputlimit sowie Token-, Zeit- und Read-only-Toolbudget. Ohne später in U8 konfigurierten Executor
+bleibt die Funktion sichtbar `unavailable` und startet keine Modell- oder GPU-Arbeit. Start,
+Pause, Resume und Cancel laufen über den besessenen Scheduler; `Paused` wird erst nach terminaler
+kooperativer Cancellation und einem plan-, snapshot- und budgetgebundenen Checkpoint sichtbar.
+Resume erzeugt einen neuen Versuch ohne bestätigte Schritte zu wiederholen. Queued Work kann keinen
+Pause-Checkpoint vortäuschen, Projektwechsel verwirft alten Zustand, und ein anderes
+Checkpointbudget endet sicher als Fehler.
+
+Verifiziert wurden Rustfmt, 28 Desktoptests einschließlich fünf Lifecycle-Randfällen, sämtliche
+Workspace-Tests mit allen Features, Workspace-Clippy mit Warnings denied, Rustdoc, 50
+Frontendtests, Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, Tooltests, 47
+Markdown-Dateien mit 74 lokalen Links, Dependency-/Lizenzbericht und der native
+Tauri-Release-Build ohne Bundle. Offen innerhalb U3 bleibt ausschließlich die sichtbare
+Stale-/NeedsReview-Projektion.
 
 ## U4 Project Map
 

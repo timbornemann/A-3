@@ -284,6 +284,101 @@ h1 {
   background: #f7f9f7;
 }
 
+.deep-map-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  padding: 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent));
+}
+
+.deep-map-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.deep-map-heading h4,
+.deep-map-heading p,
+.deep-map-unavailable p,
+.deep-map-run-budget,
+.deep-map-state {
+  margin: 0;
+}
+
+.deep-map-unavailable {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px dashed var(--line);
+  border-radius: 0.7rem;
+}
+
+.deep-map-model {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.deep-map-model div {
+  min-width: 0;
+  padding: 0.75rem;
+  border-radius: 0.7rem;
+  background: var(--surface);
+}
+
+.deep-map-model dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.deep-map-model dd {
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.deep-map-budget {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.deep-map-budget legend {
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.deep-map-budget label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.deep-map-budget input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+
+.deep-map-actions {
+  align-items: center;
+}
+
 .index-overview h4,
 .index-overview h5 {
   margin: 0;

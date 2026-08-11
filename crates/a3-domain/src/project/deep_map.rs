@@ -528,6 +528,20 @@ impl ExploreBudget {
         tool_calls: 64,
     };
 
+    /// Smallest constructively valid budget in every dimension.
+    pub const MINIMUM: Self = Self {
+        tokens: 1,
+        milliseconds: 1,
+        tool_calls: 1,
+    };
+
+    /// Fixed global resource ceiling accepted by version-one exploration.
+    pub const MAXIMUM: Self = Self {
+        tokens: MAX_EXPLORE_TOKENS,
+        milliseconds: MAX_EXPLORE_MILLISECONDS,
+        tool_calls: MAX_EXPLORE_TOOL_CALLS,
+    };
+
     /// Returns the maximum reserved model tokens.
     #[must_use]
     pub const fn tokens(self) -> u32 {
