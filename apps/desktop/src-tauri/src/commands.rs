@@ -2,21 +2,25 @@ use crate::{
     CompositionRoot, map_module_card_detail_query_from_v1, map_module_card_evidence_query_from_v1,
     map_module_dependency_graph_query_from_v1, map_module_runtime_flow_query_from_v1,
     map_module_runtime_map_query_from_v1, map_module_tree_query_from_v1,
-    map_repository_tree_query_from_v1,
+    map_project_map_search_query_from_v1, map_repository_tree_query_from_v1,
+    map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
 };
 use a3_protocol::{
-    CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
-    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    CommandErrorV1, CompileTaskLensRequestV1, ControlDeepMapRequestV1, DeepMapControlResponseV1,
+    DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
+    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
     ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
     QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
     QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
     QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
+    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
     RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
     RemoveProjectResponseV1, RepositoryTreeResponseV1, StartDeepMapRequestV1,
+    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -126,6 +130,42 @@ pub async fn query_module_runtime_flow(
     root: State<'_, CompositionRoot>,
 ) -> Result<ModuleRuntimeFlowResponseV1, CommandErrorV1> {
     execute_query_module_runtime_flow(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Searches exact and lexical current-index projections after an explicit user request.
+pub async fn query_project_map_search(
+    request: QueryProjectMapSearchRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapSearchResponseV1, CommandErrorV1> {
+    execute_query_project_map_search(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Lists bounded durable tasks without accepting a project identity or path.
+pub async fn query_task_lens_tasks(
+    request: QueryTaskLensTasksRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<TaskLensTasksResponseV1, CommandErrorV1> {
+    execute_query_task_lens_tasks(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads current active-plan steps for one opaque durable task identity.
+pub async fn query_task_lens_task(
+    request: QueryTaskLensTaskRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<TaskLensTaskResponseV1, CommandErrorV1> {
+    execute_query_task_lens_task(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Compiles one selected current task/step through the bounded deterministic R10 pipeline.
+pub async fn compile_task_lens(
+    request: CompileTaskLensRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<TaskLensCompileResponseV1, CommandErrorV1> {
+    execute_compile_task_lens(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -352,6 +392,49 @@ async fn execute_query_module_runtime_flow(
     root.query_module_runtime_flow(&query).await
 }
 
+async fn execute_query_project_map_search(
+    request: QueryProjectMapSearchRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapSearchResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_project_map_search_query_from_v1(&request)?;
+    root.query_project_map_search(&query).await
+}
+
+async fn execute_query_task_lens_tasks(
+    request: QueryTaskLensTasksRequestV1,
+    root: &CompositionRoot,
+) -> Result<TaskLensTasksResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_task_lens_tasks().await
+}
+
+async fn execute_query_task_lens_task(
+    request: QueryTaskLensTaskRequestV1,
+    root: &CompositionRoot,
+) -> Result<TaskLensTaskResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_task_lens_task_id_from_v1(&request)?;
+    root.query_task_lens_task(task_id).await
+}
+
+async fn execute_compile_task_lens(
+    request: CompileTaskLensRequestV1,
+    root: &CompositionRoot,
+) -> Result<TaskLensCompileResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let (task_id, step_id) = map_task_lens_selection_from_v1(&request)?;
+    root.compile_task_lens(task_id, step_id).await
+}
+
 async fn execute_query_repository_tree(
     request: QueryRepositoryTreeRequestV1,
     root: &CompositionRoot,
@@ -419,14 +502,15 @@ async fn execute_remove_project(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_control_deep_map, execute_list_recent_projects, execute_open_project,
-        execute_query_deep_map, execute_query_health, execute_query_index_activity,
-        execute_query_index_overview, execute_query_module_card_detail,
-        execute_query_module_card_evidence, execute_query_module_card_freshness,
-        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
-        execute_query_module_runtime_map, execute_query_module_tree, execute_query_project_status,
-        execute_query_repository_tree, execute_rebuild_project_index, execute_remove_project,
-        execute_start_deep_map,
+        execute_compile_task_lens, execute_control_deep_map, execute_list_recent_projects,
+        execute_open_project, execute_query_deep_map, execute_query_health,
+        execute_query_index_activity, execute_query_index_overview,
+        execute_query_module_card_detail, execute_query_module_card_evidence,
+        execute_query_module_card_freshness, execute_query_module_dependency_graph,
+        execute_query_module_runtime_flow, execute_query_module_runtime_map,
+        execute_query_module_tree, execute_query_project_map_search, execute_query_project_status,
+        execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
+        execute_rebuild_project_index, execute_remove_project, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -438,18 +522,20 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
-        HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
-        ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
-        ModuleRuntimeMapResultV1, ModuleTreeResultV1, OpenProjectRequestV1, ProjectStatusResultV1,
-        ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-        QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-        QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-        QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectStatusRequestV1,
-        QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
-        RepositoryTreeResultV1, StartDeepMapRequestV1,
+        CompileTaskLensRequestV1, ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
+        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
+        ListRecentProjectsRequestV1, ModuleCardDetailResultV1, ModuleCardEvidenceResultV1,
+        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
+        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
+        OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
+        QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+        QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+        QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+        QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+        QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
+        RemoveProjectRequestV1, RepositoryTreeResultV1, StartDeepMapRequestV1,
+        TaskLensCompileResultV1, TaskLensTaskResultV1, TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -1097,6 +1183,112 @@ mod tests {
         ));
         assert_eq!(
             result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn project_map_search_is_pathless_and_validates_version_before_query()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let response = block_on(execute_query_project_map_search(
+            QueryProjectMapSearchRequestV1::new(
+                ProtocolVersion::CURRENT,
+                "launch parser".to_owned(),
+            ),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            ProjectMapSearchResultV1::NoProject
+        ));
+
+        let invalid = block_on(execute_query_project_map_search(
+            QueryProjectMapSearchRequestV1::new(ProtocolVersion::CURRENT, "ab".to_owned()),
+            &root,
+        ));
+        assert_eq!(
+            invalid.map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidProjectMapSearchQuery)
+        );
+
+        let unsupported = block_on(execute_query_project_map_search(
+            QueryProjectMapSearchRequestV1::new(ProtocolVersion::new(999), "ab".to_owned()),
+            &root,
+        ));
+        assert_eq!(
+            unsupported.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn task_lens_commands_are_pathless_and_validate_versions_before_opaque_selections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let stable_task_id = "11".repeat(32);
+        let stable_step_id = "22".repeat(32);
+
+        let tasks = block_on(execute_query_task_lens_tasks(
+            QueryTaskLensTasksRequestV1::new(ProtocolVersion::CURRENT),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(tasks.result(), TaskLensTasksResultV1::NoProject));
+
+        let task = block_on(execute_query_task_lens_task(
+            QueryTaskLensTaskRequestV1::new(ProtocolVersion::CURRENT, stable_task_id.clone()),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(task.result(), TaskLensTaskResultV1::NoProject));
+
+        let lens = block_on(execute_compile_task_lens(
+            CompileTaskLensRequestV1::new(
+                ProtocolVersion::CURRENT,
+                stable_task_id.clone(),
+                stable_step_id,
+            ),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(lens.result(), TaskLensCompileResultV1::NoProject));
+
+        let invalid_task = block_on(execute_query_task_lens_task(
+            QueryTaskLensTaskRequestV1::new(ProtocolVersion::CURRENT, "not-an-id".to_owned()),
+            &root,
+        ));
+        assert_eq!(
+            invalid_task.map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidTaskLensSelection)
+        );
+
+        let invalid_step = block_on(execute_compile_task_lens(
+            CompileTaskLensRequestV1::new(
+                ProtocolVersion::CURRENT,
+                stable_task_id,
+                "not-an-id".to_owned(),
+            ),
+            &root,
+        ));
+        assert_eq!(
+            invalid_step.map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidTaskLensSelection)
+        );
+
+        let unsupported = block_on(execute_compile_task_lens(
+            CompileTaskLensRequestV1::new(
+                ProtocolVersion::new(999),
+                "not-a-task".to_owned(),
+                "not-a-step".to_owned(),
+            ),
+            &root,
+        ));
+        assert_eq!(
+            unsupported.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
         Ok(())

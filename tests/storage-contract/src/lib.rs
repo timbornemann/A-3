@@ -16,13 +16,15 @@ mod run_journal;
 mod search;
 mod semantic;
 mod task_ledger;
+mod task_lens_workspace;
 mod verification;
 
 use a3_application::{
     AgentActionStore, AgentRecoveryStore, CommandAllowlistStore, GoalContractStore,
     KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore,
     RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore,
-    TaskLensIndexStore, VerificationEvidenceStore, VerifiedModuleCardPublisher,
+    TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore,
+    VerifiedModuleCardPublisher,
 };
 use a3_domain::{
     FileRevision, GraphEndpoint, IndexLanguage, LinkedGraph, ModuleId, ModuleKind,
@@ -214,6 +216,7 @@ pub trait KnowledgeStoreContractFactory {
         + ModuleRemapQueueStore
         + TaskLensClaimStore
         + TaskLensIndexStore
+        + TaskLensWorkspaceStore
         + VerificationEvidenceStore
         + VerifiedModuleCardPublisher;
 
@@ -250,6 +253,8 @@ pub enum KnowledgeStoreContractGroup {
     GoalContracts,
     /// Versioned Task Ledger state, attempt history, replans, invalidation, and reopen behavior.
     TaskLedgers,
+    /// Consistent bounded Goal Contract and Task Ledger reads for the desktop Task Lens.
+    TaskLensWorkspace,
     /// Atomic append-only run journal, safe export, reopen, and worktree isolation.
     RunJournals,
     /// Restart loading, interrupted attempts, snapshot CAS, and stale-evidence recovery.
@@ -327,6 +332,9 @@ where
             goal_contract::verify(factory, &workspace).await
         }
         KnowledgeStoreContractGroup::TaskLedgers => task_ledger::verify(factory, &workspace).await,
+        KnowledgeStoreContractGroup::TaskLensWorkspace => {
+            task_lens_workspace::verify(factory, &workspace).await
+        }
         KnowledgeStoreContractGroup::RunJournals => run_journal::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::AgentRecovery => {
             agent_recovery::verify(factory, &workspace).await

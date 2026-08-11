@@ -12,7 +12,7 @@ use crate::{
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
     policy_repository, repository_tree_repository, run_journal_repository,
     semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
-    verification_evidence_repository,
+    task_lens_workspace_repository, verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
@@ -45,8 +45,11 @@ use a3_application::{
     TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
     TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
     TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
-    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
-    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceFuture,
+    TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore, TaskLensWorkspaceTask,
+    TaskLensWorkspaceTaskLimit, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
+    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
@@ -426,6 +429,50 @@ impl TaskLedgerStore for LibsqlKnowledgeStore {
             task_ledger_repository::load(database.connection(), project.worktree().id(), task_id)
                 .await
                 .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl TaskLensWorkspaceStore for LibsqlKnowledgeStore {
+    fn list_current_goal_contracts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        limit: TaskLensWorkspaceTaskLimit,
+        control: &'a dyn TaskLensWorkspaceControl,
+    ) -> TaskLensWorkspaceFuture<'a, TaskLensWorkspaceGoalPage> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_task_lens_workspace(project)
+                .await?;
+            task_lens_workspace_repository::list_current_goal_contracts(
+                database.connection(),
+                project.worktree().id(),
+                limit,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_current_task<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        control: &'a dyn TaskLensWorkspaceControl,
+    ) -> TaskLensWorkspaceFuture<'a, Option<TaskLensWorkspaceTask>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_task_lens_workspace(project)
+                .await?;
+            task_lens_workspace_repository::load_current_task(
+                database.connection(),
+                project.worktree().id(),
+                task_id,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
         })
     }
 }
@@ -1749,6 +1796,29 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_mutation_database(database))
     }
 
+    async fn open_project_knowledge_for_task_lens_workspace(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, TaskLensWorkspaceFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(classify_task_lens_workspace_storage_failure)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_task_lens_workspace_storage_failure)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
     async fn open_project_knowledge_for_run_journal(
         &self,
         project: &ProjectIdentity,
@@ -2513,6 +2583,19 @@ fn classify_task_ledger_storage_failure(error: KnowledgeStoreFailure) -> TaskLed
         KnowledgeStoreFailure::UnsupportedSchema => TaskLedgerStoreFailure::UnsupportedSchema,
         KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
             TaskLedgerStoreFailure::InvalidStoredData
+        }
+    }
+}
+
+const fn classify_task_lens_workspace_storage_failure(
+    error: KnowledgeStoreFailure,
+) -> TaskLensWorkspaceFailure {
+    match error {
+        KnowledgeStoreFailure::Unavailable => TaskLensWorkspaceFailure::Unavailable,
+        KnowledgeStoreFailure::Corrupt => TaskLensWorkspaceFailure::Corrupt,
+        KnowledgeStoreFailure::UnsupportedSchema => TaskLensWorkspaceFailure::UnsupportedSchema,
+        KnowledgeStoreFailure::InvalidStoredData | KnowledgeStoreFailure::IdentityConflict => {
+            TaskLensWorkspaceFailure::InvalidStoredData
         }
     }
 }

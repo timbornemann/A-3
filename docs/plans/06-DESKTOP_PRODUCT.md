@@ -131,7 +131,7 @@ Abhängigkeiten: Gate M5
 - [x] Module Card
 - [x] Evidence Inspector
 - [x] Confidence, Coverage und Freshness
-- [ ] Suche und Task-Lens-Umschaltung
+- [x] Suche und Task-Lens-Umschaltung
 
 Akzeptanz:
 
@@ -303,6 +303,41 @@ Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
 Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der Browser-QA-Lauf
 bestätigte Klickpfad und progressive Details, 1280- und exakt 720-px-breite Layouts ohne
 Horizontaloverflow sowie eine warnungs- und fehlerfreie direkte App-Konsole.
+
+Abnahme Suche und Task-Lens-Umschaltung vom 2026-08-11: Die Project-Map-Suche startet nur nach
+bewusstem Submit und führt die bestehenden Exact- und Lexical-Adapter gegen dieselbe jüngste
+atomare Publikation aus. Je Kanal gelangen höchstens 100 Kandidaten in R4; höchstens 20
+deduplizierte Ziele behalten Run, Snapshot, typisierte native Begründung, normalisierte Scores und
+exakte File- oder Declaration-Evidence. Projekt, Cursor und Limits bleiben Core-eigen. Unbekannte
+Projektionsstände, gemischte Publikationen und widersprüchliche Ziele werden als vollständige
+Zustände beziehungsweise Fehler behandelt statt teilweise gerendert. Source-Inhalt,
+Dateisystemzugriff und Storagehandles überschreiten IPC nicht.
+
+Die Task-Lens-Auswahl liest höchstens 20 aktuelle Goal Contracts in stabiler Reihenfolge. Nach
+einer opaken `TaskId` werden aktueller Goal Contract und Task Ledger in genau einer kurzen
+libSQL-Transaktion gelesen; fehlendes Ledger und Goal-Revisionsabweichung bleiben explizit. Vor
+jeder Kompilierung lädt der Application-Use-Case beide Aggregate erneut, akzeptiert nur einen
+weiterhin aktiven Plan-Schritt und leitet die UTF-8-sicher auf je 4 KiB begrenzten Goal-/Step-Seeds
+selbst ab. Die WebView kann weder Seeds noch Projekt-, Pfad-, Ledger-, Run- oder Snapshotanker
+erfinden.
+
+Die bestehende R10-Pipeline kompiliert danach Exact → Lexical → Graph/Test → aktuelle Claims →
+optional Semantic unter festen Kandidaten-, Token-, Fortschritts-, Cancellation- und
+30-Sekunden-Grenzen. IPC und der unabhängige TypeScript-Decoder binden höchstens 64 L0–L3-Einträge,
+128 aktuelle Claims und begrenzte Evidence gemeinsam an Task, Goal, Ledger/Store, Run, Snapshot und
+Policy. Evidence wird progressiv geöffnet. Semantic erscheint ausdrücklich nur als Kandidat und
+niemals als Beweis; eine Architekturabsicht ohne Evidence ist visuell als unbewiesene Hypothese
+getrennt. Ein erfolgreicher Publish verwirft die sichtbare Lens.
+
+Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features einschließlich
+29 libSQL-Contracts und der realen No-Embeddings-App-Abnahme, Workspace-Clippy über alle Targets und
+Features mit Warnings denied, Rustdoc, 44 Desktop-Libtests plus zwei Desktop-Binary- und drei
+Desktop-Integrationstests, 106 Frontendtests, Formatter, ESLint, Svelte-Typecheck,
+Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
+Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Component-Tests belegen
+den bewussten Tab-/Auswahl-/Compile-Pfad, progressive Evidence sowie die semantische und visuelle
+Fact-/Hypothesis-Trennung. Damit sind die drei U4-Akzeptanzkriterien vollständig verifiziert und U4
+ist abgeschlossen.
 
 ## U5 Agent Workspace
 

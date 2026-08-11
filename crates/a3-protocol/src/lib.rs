@@ -13,11 +13,13 @@ mod module_dependency_graph;
 mod module_runtime;
 mod module_tree;
 mod project;
+mod project_map_search;
 mod project_rebuild;
 mod project_removal;
 mod project_status;
 mod recent_projects;
 mod repository_tree;
+mod task_lens;
 mod version;
 
 pub use deep_map::{
@@ -76,6 +78,13 @@ pub use module_tree::{
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };
+pub use project_map_search::{
+    ProjectMapExactExplanationV1, ProjectMapLexicalExplanationV1, ProjectMapSearchChannelV1,
+    ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1, ProjectMapSearchPriorityV1,
+    ProjectMapSearchResponseV1, ProjectMapSearchResultV1, ProjectMapSearchSourceV1,
+    ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1, ProjectMapSearchV1,
+    QueryProjectMapSearchRequestV1,
+};
 pub use project_rebuild::{RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1};
 pub use project_removal::{RemoveProjectRequestV1, RemoveProjectResponseV1, RemoveProjectResultV1};
 pub use project_status::{
@@ -88,5 +97,14 @@ pub use recent_projects::{
 pub use repository_tree::{
     QueryRepositoryTreeRequestV1, RepositoryTreeEntryKindV1, RepositoryTreeEntryV1,
     RepositoryTreePageV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
+};
+pub use task_lens::{
+    CompileTaskLensRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
+    TaskLensClaimEvidenceV1, TaskLensClaimKindV1, TaskLensClaimPolarityV1,
+    TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1, TaskLensCompileResultV1,
+    TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
+    TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
+    TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskResultV1,
+    TaskLensTaskSummaryV1, TaskLensTasksResponseV1, TaskLensTasksResultV1, TaskLensV1,
 };
 pub use version::ProtocolVersion;

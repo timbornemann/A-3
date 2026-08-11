@@ -136,6 +136,21 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   oder generische Graphparameter. Der Component-Test startet den Read erst nach Evidence-Klick,
   zeigt Card-Lifecycle und Evidence-Freshness unabhängig und entfernt alte Evidence bei
   Card-Reload oder Auswahlwechsel sofort. Kein Inspector-Read läuft im 500-ms-Statuspolling.
+- Der U4-Search-/Task-Lens-Contract führt einen bewusst abgeschickten Suchtext über die echten
+  Exact- und Lexical-Adapter derselben Publikation sowie die R4-Fusion. Ein reales No-Embeddings-
+  Fixture verlangt aktuelle Evidence, deterministische Wiederholung, mindestens einen Exact-
+  Treffer und keinerlei vorgetäuschte Semantic-Evidence. Rust-, IPC- und TypeScript-Tests prüfen
+  geschlossene Formen, Kanal-/Zielordnung, Deduplizierung, Run-/Snapshotbindung, Score- und
+  Trunkierungswahrheit sowie pfadlose Commands mit Versionsprüfung vor Nutzdatenvalidierung.
+  Für die Task Lens lesen Adapter-Contracts eine begrenzte aktuelle Goal-Liste sowie ausgewählten
+  Goal Contract und Task Ledger atomar, worktree-isoliert und nach Reopen identisch; Cancellation,
+  fehlendes Ledger und Revisionsabweichung sind Pflichtfälle. Der Application-Contract lädt Goal
+  und Ledger vor jeder R10-Kompilierung erneut, akzeptiert nur aktive Schritte und leitet beide
+  4-KiB-Seeds selbst ab. TypeScript revalidiert höchstens 64 L0–L3-Einträge, Tokenrechnung,
+  Retrievalquellen, höchstens 128 aktuelle Claims und deren exakte Evidence. Der Component-Test
+  beweist, dass Task-/Lens-Reads erst nach Umschaltung beziehungsweise Auswahl starten, Semantic
+  sichtbar „kein Beweis“ bleibt und eine evidencefreie Architekturabsicht als unbewiesene,
+  visuell getrennte Hypothese erscheint. Weder Suche noch Task Lens laufen im 500-ms-Statuspolling.
 
 ### Persistenz
 

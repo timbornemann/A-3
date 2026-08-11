@@ -74,6 +74,16 @@
     type ModuleRuntimeSymbolV1,
   } from './lib/module-runtime';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
+  import {
+    queryProjectMapSearch,
+    type ProjectMapExactExplanationV1,
+    type ProjectMapLexicalExplanationV1,
+    type ProjectMapSearchQueryV1,
+    type ProjectMapSearchResponseV1,
+    type ProjectMapSearchSourceV1,
+    type ProjectMapSearchSymbolKindV1,
+    type ProjectMapSearchTargetV1,
+  } from './lib/project-map-search';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
   import {
@@ -93,6 +103,21 @@
     type RepositoryTreeQueryV1,
     type RepositoryTreeResponseV1,
   } from './lib/repository-tree';
+  import {
+    compileTaskLens,
+    queryTaskLensTask,
+    queryTaskLensTasks,
+    type TaskLensClaimPredicateV1,
+    type TaskLensClaimV1,
+    type TaskLensCompileQueryV1,
+    type TaskLensCompileResponseV1,
+    type TaskLensEntryTargetV1,
+    type TaskLensRetrievalChannelV1,
+    type TaskLensStepStatusV1,
+    type TaskLensTaskQueryV1,
+    type TaskLensTaskResponseV1,
+    type TaskLensTasksResponseV1,
+  } from './lib/task-lens';
 
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
@@ -121,11 +146,17 @@
     ) => Promise<ModuleRuntimeFlowResponseV1>;
     moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    projectMapSearchLoader?: (
+      query: ProjectMapSearchQueryV1,
+    ) => Promise<ProjectMapSearchResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
     recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
     repositoryTreeLoader?: (query: RepositoryTreeQueryV1) => Promise<RepositoryTreeResponseV1>;
+    taskLensTasksLoader?: () => Promise<TaskLensTasksResponseV1>;
+    taskLensTaskLoader?: (query: TaskLensTaskQueryV1) => Promise<TaskLensTaskResponseV1>;
+    taskLensCompiler?: (query: TaskLensCompileQueryV1) => Promise<TaskLensCompileResponseV1>;
   }
 
   type ViewState =
@@ -199,6 +230,52 @@
     | {
         kind: 'available';
         result: Extract<RepositoryTreeResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type ProjectMapSearchView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { channel: 'exact' | 'lexical'; kind: 'projectionUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ProjectMapSearchResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type TaskLensTasksView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | {
+        kind: 'available';
+        result: Extract<TaskLensTasksResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type TaskLensTaskView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'taskNotFound' }
+    | { kind: 'ledgerUnavailable' }
+    | { currentGoalRevision: number; kind: 'goalRevisionMismatch'; ledgerGoalRevision: number }
+    | {
+        kind: 'available';
+        result: Extract<TaskLensTaskResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type TaskLensView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'taskNotFound' }
+    | { kind: 'ledgerUnavailable' }
+    | { currentGoalRevision: number; kind: 'goalRevisionMismatch'; ledgerGoalRevision: number }
+    | { kind: 'stepUnavailable' }
+    | { kind: 'noPublishedIndex' }
+    | {
+        kind: 'available';
+        result: Extract<TaskLensCompileResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
   type ModuleTreeView =
@@ -305,11 +382,15 @@
     moduleRuntimeFlowLoader = queryModuleRuntimeFlow,
     moduleTreeLoader = queryModuleTree,
     projectOpener = openProject,
+    projectMapSearchLoader = queryProjectMapSearch,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
     projectStatusLoader = queryProjectStatus,
     recentProjectsLoader = listRecentProjects,
     repositoryTreeLoader = queryRepositoryTree,
+    taskLensTasksLoader = queryTaskLensTasks,
+    taskLensTaskLoader = queryTaskLensTask,
+    taskLensCompiler = compileTaskLens,
   }: Props = $props();
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
@@ -336,6 +417,14 @@
   let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
   let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
   let repositoryTreeLoadingMore = $state(false);
+  let projectMapSearchText = $state('');
+  let projectMapSearchView = $state<ProjectMapSearchView>({ kind: 'idle' });
+  let projectMapMode = $state<'search' | 'taskLens'>('search');
+  let taskLensTasksView = $state<TaskLensTasksView>({ kind: 'idle' });
+  let taskLensTaskView = $state<TaskLensTaskView>({ kind: 'idle' });
+  let taskLensView = $state<TaskLensView>({ kind: 'idle' });
+  let selectedTaskLensTaskId = $state('');
+  let selectedTaskLensStepId = $state('');
   let deepMapView = $state<DeepMapView>({ kind: 'loading' });
   let deepMapActionView = $state<DeepMapActionView>({ kind: 'idle' });
   let deepMapBudget = $state<DeepMapBudgetV1>({
@@ -352,6 +441,10 @@
   let moduleRuntimeFlowRequestSequence = 0;
   let moduleCardDetailRequestSequence = 0;
   let moduleCardEvidenceRequestSequence = 0;
+  let projectMapSearchRequestSequence = 0;
+  let taskLensTasksRequestSequence = 0;
+  let taskLensTaskRequestSequence = 0;
+  let taskLensCompileRequestSequence = 0;
 
   function resetModuleCardEvidence(): void {
     moduleCardEvidenceRequestSequence += 1;
@@ -375,6 +468,22 @@
     moduleRuntimeEntrypointLimit = 20;
     moduleRuntimeTestLimit = 20;
     selectedModuleRuntimeEvidence = null;
+  }
+
+  function resetProjectMapSearch(kind: 'idle' | 'noProject'): void {
+    projectMapSearchRequestSequence += 1;
+    projectMapSearchView = { kind };
+  }
+
+  function resetTaskLens(kind: 'idle' | 'noProject'): void {
+    taskLensTasksRequestSequence += 1;
+    taskLensTaskRequestSequence += 1;
+    taskLensCompileRequestSequence += 1;
+    taskLensTasksView = { kind };
+    taskLensTaskView = { kind };
+    taskLensView = { kind };
+    selectedTaskLensTaskId = '';
+    selectedTaskLensStepId = '';
   }
 
   async function loadHealth(): Promise<void> {
@@ -435,6 +544,9 @@
         if (moduleCardSelection !== null) {
           void loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
         }
+        resetProjectMapSearch('idle');
+        taskLensCompileRequestSequence += 1;
+        taskLensView = { kind: 'idle' };
         void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
@@ -448,6 +560,8 @@
         resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
+        resetProjectMapSearch('noProject');
+        resetTaskLens('noProject');
       }
       indexActivityObserved = true;
     } catch {
@@ -831,6 +945,167 @@
     }
   }
 
+  async function submitProjectMapSearch(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    await runProjectMapSearch();
+  }
+
+  async function runProjectMapSearch(): Promise<void> {
+    const query = projectMapSearchText.trim();
+    if (query.length < 3 || projectMapSearchView.kind === 'loading') return;
+    const requestSequence = ++projectMapSearchRequestSequence;
+    projectMapSearchView = { kind: 'loading' };
+    try {
+      const response = await projectMapSearchLoader({ query });
+      if (requestSequence !== projectMapSearchRequestSequence) return;
+      if (response.result.status === 'available') {
+        projectMapSearchView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'projectionUnavailable') {
+        projectMapSearchView = {
+          channel: response.result.channel,
+          kind: 'projectionUnavailable',
+        };
+      } else if (response.result.status === 'noPublishedIndex') {
+        projectMapSearchView = { kind: 'noPublishedIndex' };
+      } else {
+        projectMapSearchView = { kind: 'noProject' };
+      }
+    } catch {
+      if (requestSequence === projectMapSearchRequestSequence) {
+        projectMapSearchView = { kind: 'error' };
+      }
+    }
+  }
+
+  function showProjectMapSearch(): void {
+    projectMapMode = 'search';
+  }
+
+  function showTaskLens(): void {
+    projectMapMode = 'taskLens';
+    if (taskLensTasksView.kind === 'idle') void loadTaskLensTasks();
+  }
+
+  async function loadTaskLensTasks(): Promise<void> {
+    const requestSequence = ++taskLensTasksRequestSequence;
+    taskLensTasksView = { kind: 'loading' };
+    taskLensTaskRequestSequence += 1;
+    taskLensCompileRequestSequence += 1;
+    taskLensTaskView = { kind: 'idle' };
+    taskLensView = { kind: 'idle' };
+    selectedTaskLensTaskId = '';
+    selectedTaskLensStepId = '';
+    try {
+      const response = await taskLensTasksLoader();
+      if (requestSequence !== taskLensTasksRequestSequence) return;
+      taskLensTasksView =
+        response.result.status === 'available'
+          ? { kind: 'available', result: response.result }
+          : { kind: 'noProject' };
+    } catch {
+      if (requestSequence === taskLensTasksRequestSequence) taskLensTasksView = { kind: 'error' };
+    }
+  }
+
+  async function selectTaskLensTask(event: Event): Promise<void> {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) return;
+    selectedTaskLensTaskId = target.value;
+    selectedTaskLensStepId = '';
+    taskLensCompileRequestSequence += 1;
+    taskLensView = { kind: 'idle' };
+    if (selectedTaskLensTaskId === '') {
+      taskLensTaskRequestSequence += 1;
+      taskLensTaskView = { kind: 'idle' };
+      return;
+    }
+    const requestSequence = ++taskLensTaskRequestSequence;
+    taskLensTaskView = { kind: 'loading' };
+    try {
+      const response = await taskLensTaskLoader({ taskId: selectedTaskLensTaskId });
+      if (requestSequence !== taskLensTaskRequestSequence) return;
+      switch (response.result.status) {
+        case 'available':
+          taskLensTaskView = { kind: 'available', result: response.result };
+          break;
+        case 'ledgerUnavailable':
+          taskLensTaskView = { kind: 'ledgerUnavailable' };
+          break;
+        case 'goalRevisionMismatch':
+          taskLensTaskView = {
+            currentGoalRevision: response.result.currentGoalRevision,
+            kind: 'goalRevisionMismatch',
+            ledgerGoalRevision: response.result.ledgerGoalRevision,
+          };
+          break;
+        case 'taskNotFound':
+          taskLensTaskView = { kind: 'taskNotFound' };
+          break;
+        case 'noProject':
+          taskLensTaskView = { kind: 'noProject' };
+          break;
+      }
+    } catch {
+      if (requestSequence === taskLensTaskRequestSequence) taskLensTaskView = { kind: 'error' };
+    }
+  }
+
+  function selectTaskLensStep(event: Event): void {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) return;
+    selectedTaskLensStepId = target.value;
+    taskLensCompileRequestSequence += 1;
+    taskLensView = { kind: 'idle' };
+  }
+
+  async function runTaskLensCompile(): Promise<void> {
+    if (
+      selectedTaskLensTaskId === '' ||
+      selectedTaskLensStepId === '' ||
+      taskLensView.kind === 'loading'
+    ) {
+      return;
+    }
+    const requestSequence = ++taskLensCompileRequestSequence;
+    taskLensView = { kind: 'loading' };
+    try {
+      const response = await taskLensCompiler({
+        stepId: selectedTaskLensStepId,
+        taskId: selectedTaskLensTaskId,
+      });
+      if (requestSequence !== taskLensCompileRequestSequence) return;
+      switch (response.result.status) {
+        case 'available':
+          taskLensView = { kind: 'available', result: response.result };
+          break;
+        case 'goalRevisionMismatch':
+          taskLensView = {
+            currentGoalRevision: response.result.currentGoalRevision,
+            kind: 'goalRevisionMismatch',
+            ledgerGoalRevision: response.result.ledgerGoalRevision,
+          };
+          break;
+        case 'ledgerUnavailable':
+          taskLensView = { kind: 'ledgerUnavailable' };
+          break;
+        case 'taskNotFound':
+          taskLensView = { kind: 'taskNotFound' };
+          break;
+        case 'stepUnavailable':
+          taskLensView = { kind: 'stepUnavailable' };
+          break;
+        case 'noPublishedIndex':
+          taskLensView = { kind: 'noPublishedIndex' };
+          break;
+        case 'noProject':
+          taskLensView = { kind: 'noProject' };
+          break;
+      }
+    } catch {
+      if (requestSequence === taskLensCompileRequestSequence) taskLensView = { kind: 'error' };
+    }
+  }
+
   async function loadRepositoryTreeRoot(): Promise<void> {
     repositoryTreeBreadcrumbs = [];
     await loadRepositoryTree(null);
@@ -909,6 +1184,8 @@
         resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
+        resetProjectMapSearch('noProject');
+        resetTaskLens('noProject');
       }
     } catch {
       projectStatusView = { kind: 'error' };
@@ -950,6 +1227,10 @@
         selectedDependencyEvidence = null;
         resetModuleCardDetail('idle');
         resetModuleRuntime('idle');
+        projectMapSearchText = '';
+        resetProjectMapSearch('idle');
+        projectMapMode = 'search';
+        resetTaskLens('idle');
         await loadProjectStatus();
         await loadIndexActivity();
         await loadIndexOverview();
@@ -1029,6 +1310,10 @@
       selectedDependencyEvidence = null;
       resetModuleCardDetail('noProject');
       resetModuleRuntime('noProject');
+      projectMapSearchText = '';
+      resetProjectMapSearch('noProject');
+      projectMapMode = 'search';
+      resetTaskLens('noProject');
       repositoryTreeView = { kind: 'noProject' };
       repositoryTreeBreadcrumbs = [];
       deepMapView = { kind: 'noProject' };
@@ -1179,6 +1464,148 @@
           : character;
       })
       .join('');
+  }
+
+  function projectMapSearchTargetLabel(target: ProjectMapSearchTargetV1): string {
+    return target.kind === 'symbol' ? target.qualifiedName : target.evidence.pathDisplay;
+  }
+
+  function projectMapSearchSourceLabel(source: ProjectMapSearchSourceV1): string {
+    return source.channel === 'exact' ? 'Exact' : 'Lexical';
+  }
+
+  function projectMapSearchExplanationLabel(source: ProjectMapSearchSourceV1): string {
+    if (source.channel === 'lexical') {
+      const labels: Record<ProjectMapLexicalExplanationV1, string> = {
+        path: 'Pfad',
+        qualifiedName: 'qualifizierter Name',
+        signature: 'Signatur',
+        symbolName: 'Symbolname',
+      };
+      return labels[source.explanation];
+    }
+    const labels: Record<ProjectMapExactExplanationV1, string> = {
+      entrypointRole: 'Entry-Point-Rolle',
+      manifestRole: 'Manifest-Rolle',
+      normalizedPathExact: 'exakter Pfad',
+      qualifiedNameExact: 'exakter qualifizierter Name',
+      qualifiedNamePrefix: 'Präfix des qualifizierten Namens',
+      signatureExact: 'exakte Signatur',
+      signaturePrefix: 'Signaturpräfix',
+      symbolNameExact: 'exakter Symbolname',
+      symbolNamePrefix: 'Symbolpräfix',
+      testRole: 'Test-Rolle',
+    };
+    return labels[source.explanation];
+  }
+
+  function projectMapSearchSymbolKindLabel(kind: ProjectMapSearchSymbolKindV1): string {
+    const labels: Record<ProjectMapSearchSymbolKindV1, string> = {
+      class: 'Klasse',
+      constant: 'Konstante',
+      enum: 'Enum',
+      field: 'Feld',
+      function: 'Funktion',
+      implementation: 'Implementierung',
+      interface: 'Interface',
+      method: 'Methode',
+      module: 'Modul',
+      namespace: 'Namespace',
+      parameter: 'Parameter',
+      static: 'Static',
+      struct: 'Struct',
+      trait: 'Trait',
+      typeAlias: 'Typalias',
+      variable: 'Variable',
+      variant: 'Variante',
+    };
+    return labels[kind];
+  }
+
+  function taskLensStepStatusLabel(status: TaskLensStepStatusV1): string {
+    const labels: Record<TaskLensStepStatusV1, string> = {
+      awaitingApproval: 'wartet auf Freigabe',
+      blocked: 'blockiert',
+      cancelled: 'abgebrochen',
+      completed: 'verifiziert abgeschlossen',
+      failed: 'fehlgeschlagen',
+      inProgress: 'in Arbeit',
+      pending: 'wartet auf Abhängigkeiten',
+      ready: 'bereit',
+      stale: 'erneut zu verifizieren',
+      verifying: 'wird verifiziert',
+    };
+    return labels[status];
+  }
+
+  function taskLensTargetLabel(target: TaskLensEntryTargetV1): string {
+    switch (target.kind) {
+      case 'repository':
+        return 'Repository-Anchor';
+      case 'module':
+        return target.root?.pathDisplay ?? `Graph-Community ${target.moduleId.slice(0, 12)}…`;
+      case 'file':
+        return target.evidence.pathDisplay;
+      case 'symbol':
+        return target.name;
+      case 'sourceSpan':
+        return `${target.evidence.pathDisplay} · Deklaration`;
+    }
+  }
+
+  function taskLensTargetLevel(target: TaskLensEntryTargetV1): string {
+    switch (target.kind) {
+      case 'repository':
+        return 'L0 Repository';
+      case 'module':
+        return 'L1 Modul';
+      case 'symbol':
+        return 'L2 Symbol';
+      case 'file':
+      case 'sourceSpan':
+        return 'L3 Source/Evidence';
+    }
+  }
+
+  function taskLensChannelLabel(channel: TaskLensRetrievalChannelV1): string {
+    const labels: Record<TaskLensRetrievalChannelV1, string> = {
+      exact: 'Exact',
+      graph: 'Graph',
+      lexical: 'Lexical',
+      memory: 'Memory + Evidence',
+      semantic: 'Semantic · nur Kandidat',
+      test: 'Test-Beziehung',
+    };
+    return labels[channel];
+  }
+
+  function taskLensClaimKindLabel(kind: TaskLensClaimV1['kind']): string {
+    const labels: Record<TaskLensClaimV1['kind'], string> = {
+      fact: 'Fact',
+      hypothesis: 'Hypothese · unbewiesen',
+      observation: 'Observation',
+    };
+    return labels[kind];
+  }
+
+  function taskLensPredicateLabel(predicate: TaskLensClaimPredicateV1): string {
+    switch (predicate.kind) {
+      case 'path':
+        return `Pfad ${predicate.path.pathDisplay}`;
+      case 'symbol':
+        return `Symbol ${predicate.symbolId}`;
+      case 'relation':
+        return `${taskLensEndpointLabel(predicate.source)} ${predicate.relation} ${taskLensEndpointLabel(predicate.target)}`;
+      case 'observed':
+      case 'architecturalIntent':
+        return predicate.statement;
+    }
+  }
+
+  function taskLensEndpointLabel(
+    endpoint: Extract<TaskLensClaimPredicateV1, { kind: 'relation' }>['source'],
+  ): string {
+    return endpoint.kind === 'symbol' ? endpoint.symbolId : endpoint.pathHex;
   }
 
   function moduleCardFreshnessReasonLabel(reason: ModuleCardFreshnessReasonV1): string {
@@ -1541,6 +1968,515 @@
             </div>
           {/if}
         </div>
+        <section
+          class="repository-tree-panel project-map-search"
+          aria-labelledby="project-map-search-heading"
+        >
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="project-map-search-heading">Project Map</h4>
+              <p>Wechsle zwischen bewusster Repository-Suche und dauerhafter Task Lens.</p>
+            </div>
+          </div>
+          <div class="project-map-mode-switch" role="tablist" aria-label="Project-Map-Ansicht">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={projectMapMode === 'search'}
+              class:active={projectMapMode === 'search'}
+              onclick={showProjectMapSearch}>Suche</button
+            >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={projectMapMode === 'taskLens'}
+              class:active={projectMapMode === 'taskLens'}
+              onclick={showTaskLens}>Task Lens</button
+            >
+          </div>
+          {#if projectMapMode === 'search'}
+            <form class="project-map-search-form" role="search" onsubmit={submitProjectMapSearch}>
+              <label for="project-map-search-query">Pfad, Symbol oder Signatur suchen</label>
+              <div>
+                <input
+                  id="project-map-search-query"
+                  name="query"
+                  type="search"
+                  autocomplete="off"
+                  maxlength="4096"
+                  bind:value={projectMapSearchText}
+                  disabled={projectMapSearchView.kind === 'loading'}
+                  aria-describedby="project-map-search-help"
+                />
+                <button
+                  type="submit"
+                  disabled={projectMapSearchText.trim().length < 3 ||
+                    projectMapSearchView.kind === 'loading'}
+                >
+                  {projectMapSearchView.kind === 'loading' ? 'Suche läuft …' : 'Suchen'}
+                </button>
+              </div>
+              <p id="project-map-search-help">
+                Mindestens ein durchsuchbarer Begriff mit drei Zeichen. Source wird nicht an die
+                WebView übertragen.
+              </p>
+            </form>
+            {#if projectMapSearchView.kind === 'idle'}
+              <p class="project-status">
+                Die Suche läuft nie automatisch. Gib einen konkreten Identifier, Pfad oder eine
+                Signatur ein.
+              </p>
+            {:else if projectMapSearchView.kind === 'loading'}
+              <p class="project-status" role="status" aria-live="polite">
+                Exact- und Lexical-Projektion werden begrenzt gelesen und fusioniert …
+              </p>
+            {:else if projectMapSearchView.kind === 'noProject'}
+              <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+            {:else if projectMapSearchView.kind === 'noPublishedIndex'}
+              <p class="project-status">
+                Noch kein veröffentlichter Index für die Suche verfügbar.
+              </p>
+            {:else if projectMapSearchView.kind === 'projectionUnavailable'}
+              <p class="project-status">
+                Die {projectMapSearchView.channel === 'exact' ? 'Exact-' : 'Lexical-'}Projektion
+                fehlt im historischen Index. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
+              </p>
+            {:else if projectMapSearchView.kind === 'available'}
+              {@const search = projectMapSearchView.result.search}
+              <div class="project-map-search-summary">
+                <p>
+                  <strong>{search.hits.length} Treffer</strong> für „{search.query}“ · Fusion V{search.fusionPolicyVersion}
+                </p>
+                <p>
+                  Indexlauf <code>{search.indexRunId}</code> · Snapshot
+                  <code>{search.snapshotId}</code>
+                </p>
+              </div>
+              <p class="module-card-safety-note">
+                Exact und Lexical liefern aktuelle Index-Evidence. Semantische Ähnlichkeit ist in
+                dieser faktentragenden Trefferliste nicht zugelassen und wäre niemals ein Beweis.
+              </p>
+              {#if search.truncated}
+                <p class="project-map-search-truncated" role="status">
+                  Die begrenzte Ansicht lässt weitere Kandidaten sichtbar aus. Verfeinere die Suche,
+                  um andere Treffer zu prüfen.
+                </p>
+              {/if}
+              {#if search.hits.length === 0}
+                <p class="project-status">Keine aktuellen Exact- oder Lexical-Treffer.</p>
+              {:else}
+                <ol class="project-map-search-results" aria-label="Project-Map-Suchergebnisse">
+                  {#each search.hits as hit (hit.rank)}
+                    <li>
+                      <div class="project-map-search-hit-heading">
+                        <div>
+                          <span>#{hit.rank}</span>
+                          <strong>{projectMapSearchTargetLabel(hit.target)}</strong>
+                        </div>
+                        <span class:project-map-search-exact={hit.priority === 'exact'}>
+                          {hit.priority === 'exact' ? 'Exact-Priorität' : 'Evidence-Priorität'}
+                        </span>
+                      </div>
+                      <p class="project-map-search-target-kind">
+                        {hit.target.kind === 'symbol'
+                          ? projectMapSearchSymbolKindLabel(hit.target.symbolKind)
+                          : 'Dateirevision'}
+                        · Fusionsscore {countLabel(String(hit.finalScore))}
+                      </p>
+                      <ul
+                        class="project-map-search-sources"
+                        aria-label={`Herkunft von Treffer ${hit.rank}`}
+                      >
+                        {#each hit.sources as source (source.channel)}
+                          <li>
+                            <strong>{projectMapSearchSourceLabel(source)}</strong>
+                            <span>{projectMapSearchExplanationLabel(source)}</span>
+                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
+                          </li>
+                        {/each}
+                      </ul>
+                      <details class="project-map-search-evidence">
+                        <summary>Evidence anzeigen</summary>
+                        <dl>
+                          <div>
+                            <dt>Aktueller Pfad</dt>
+                            <dd><code>{hit.target.evidence.pathDisplay}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Content-Hash</dt>
+                            <dd><code>{hit.target.evidence.contentHash}</code></dd>
+                          </div>
+                          {#if hit.target.kind === 'symbol'}
+                            <div>
+                              <dt>Symbol-ID</dt>
+                              <dd><code>{hit.target.symbolId}</code></dd>
+                            </div>
+                            {#if hit.target.signature !== null}
+                              <div>
+                                <dt>Signatur</dt>
+                                <dd><code>{hit.target.signature}</code></dd>
+                              </div>
+                            {/if}
+                          {/if}
+                          {#if hit.target.evidence.declarationRange !== null}
+                            <div>
+                              <dt>Deklaration</dt>
+                              <dd>
+                                Bytes {hit.target.evidence.declarationRange.startByte}–{hit.target
+                                  .evidence.declarationRange.endByte}
+                              </dd>
+                            </div>
+                          {/if}
+                        </dl>
+                      </details>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            {:else if projectMapSearchView.kind === 'error'}
+              <div class="recent-projects-error" role="alert">
+                <p>Die Project-Map-Suche konnte nicht sicher ausgewertet werden.</p>
+                <button type="button" onclick={runProjectMapSearch}>
+                  Suche erneut ausführen
+                </button>
+              </div>
+            {/if}
+          {:else}
+            <div class="task-lens-selector" aria-label="Dauerhafte Task-Lens-Anker">
+              <p class="module-card-safety-note">
+                Goal Contract und aktiver Plan-Schritt kommen ausschließlich aus dem aktuellen Task
+                Ledger. Die WebView kann weder Seeds noch Projektpfade erfinden.
+              </p>
+              {#if taskLensTasksView.kind === 'idle' || taskLensTasksView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Dauerhafte Tasks werden begrenzt gelesen …
+                </p>
+              {:else if taskLensTasksView.kind === 'noProject'}
+                <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+              {:else if taskLensTasksView.kind === 'error'}
+                <div class="recent-projects-error" role="alert">
+                  <p>Die dauerhaften Task-Anker konnten nicht sicher gelesen werden.</p>
+                  <button type="button" onclick={loadTaskLensTasks}>Tasks erneut laden</button>
+                </div>
+              {:else}
+                <label for="task-lens-task">Goal Contract</label>
+                <select
+                  id="task-lens-task"
+                  value={selectedTaskLensTaskId}
+                  onchange={selectTaskLensTask}
+                  disabled={taskLensTaskView.kind === 'loading' || taskLensView.kind === 'loading'}
+                >
+                  <option value="">Task auswählen …</option>
+                  {#each taskLensTasksView.result.tasks as task (task.taskId)}
+                    <option value={task.taskId}>R{task.goalRevision} · {task.objective}</option>
+                  {/each}
+                </select>
+                {#if taskLensTasksView.result.truncated}
+                  <p class="project-map-search-truncated" role="status">
+                    Die Auswahl zeigt höchstens 20 Tasks; weitere aktuelle Goal Contracts bleiben
+                    sichtbar ausgelassen.
+                  </p>
+                {/if}
+                {#if taskLensTasksView.result.tasks.length === 0}
+                  <p class="project-status">
+                    Noch kein dauerhafter Goal Contract. Task-Erstellung folgt im Agent Workspace.
+                  </p>
+                {/if}
+
+                {#if taskLensTaskView.kind === 'loading'}
+                  <p class="project-status" role="status">Aktueller Task Ledger wird gelesen …</p>
+                {:else if taskLensTaskView.kind === 'ledgerUnavailable'}
+                  <p class="project-status">
+                    Für diesen Goal Contract existiert noch kein materialisierter Task Ledger.
+                  </p>
+                {:else if taskLensTaskView.kind === 'goalRevisionMismatch'}
+                  <p class="project-map-search-truncated" role="status">
+                    Goal R{taskLensTaskView.currentGoalRevision} ist aktueller als Ledger-Goal R{taskLensTaskView.ledgerGoalRevision}.
+                    Die Lens bleibt gesperrt, bis der Plan neu erstellt wurde.
+                  </p>
+                {:else if taskLensTaskView.kind === 'taskNotFound'}
+                  <p class="project-status">Der ausgewählte Task ist nicht mehr aktuell.</p>
+                {:else if taskLensTaskView.kind === 'noProject'}
+                  <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+                {:else if taskLensTaskView.kind === 'error'}
+                  <p class="project-status" role="alert">
+                    Der aktuelle Task Ledger konnte nicht sicher gelesen werden.
+                  </p>
+                {:else if taskLensTaskView.kind === 'available'}
+                  <label for="task-lens-step">Aktueller Fokus-Schritt</label>
+                  <select
+                    id="task-lens-step"
+                    value={selectedTaskLensStepId}
+                    onchange={selectTaskLensStep}
+                    disabled={taskLensView.kind === 'loading'}
+                  >
+                    <option value="">Plan-Schritt auswählen …</option>
+                    {#each taskLensTaskView.result.steps as step (step.stepId)}
+                      <option value={step.stepId}>
+                        {taskLensStepStatusLabel(step.status)} · {step.intendedOutcome}
+                      </option>
+                    {/each}
+                  </select>
+                  <p>
+                    Ledger R{taskLensTaskView.result.ledgerRevision} · Store-Version
+                    {taskLensTaskView.result.ledgerStoreVersion}
+                  </p>
+                  <button
+                    type="button"
+                    onclick={runTaskLensCompile}
+                    disabled={selectedTaskLensStepId === '' || taskLensView.kind === 'loading'}
+                  >
+                    {taskLensView.kind === 'loading'
+                      ? 'Task Lens wird kompiliert …'
+                      : 'Task Lens aktualisieren'}
+                  </button>
+                {/if}
+              {/if}
+            </div>
+
+            {#if taskLensView.kind === 'idle'}
+              <p class="project-status">
+                Wähle Task und aktiven Plan-Schritt; die Lens läuft nie als offener Chat-Loop.
+              </p>
+            {:else if taskLensView.kind === 'loading'}
+              <p class="project-status" role="status" aria-live="polite">
+                Exact → Lexical → Graph/Test → aktuelle Claims werden begrenzt kompiliert …
+              </p>
+            {:else if taskLensView.kind === 'noPublishedIndex'}
+              <p class="project-status">Noch kein veröffentlichter Index für die Task Lens.</p>
+            {:else if taskLensView.kind === 'stepUnavailable'}
+              <p class="project-map-search-truncated" role="status">
+                Der ausgewählte Schritt wurde inzwischen entfernt oder retirert. Lade den Task
+                erneut.
+              </p>
+            {:else if taskLensView.kind === 'goalRevisionMismatch'}
+              <p class="project-map-search-truncated" role="status">
+                Goal R{taskLensView.currentGoalRevision} und Ledger-Goal R{taskLensView.ledgerGoalRevision}
+                stimmen nicht mehr überein.
+              </p>
+            {:else if taskLensView.kind === 'ledgerUnavailable' || taskLensView.kind === 'taskNotFound'}
+              <p class="project-status">Der dauerhafte Task-Anker ist nicht mehr verfügbar.</p>
+            {:else if taskLensView.kind === 'noProject'}
+              <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+            {:else if taskLensView.kind === 'error'}
+              <div class="recent-projects-error" role="alert">
+                <p>Die Task Lens konnte nicht sicher aus aktueller Evidence kompiliert werden.</p>
+                <button type="button" onclick={runTaskLensCompile}>Erneut kompilieren</button>
+              </div>
+            {:else if taskLensView.kind === 'available'}
+              {@const lens = taskLensView.result.lens}
+              <div class="project-map-search-summary task-lens-summary">
+                <p>
+                  <strong>{lens.entries.length} Einträge · {lens.claims.length} Claims</strong>
+                  · {countLabel(String(lens.estimatedTokens))}/{countLabel(
+                    String(lens.tokenBudget),
+                  )}
+                  Tokens
+                </p>
+                <p>
+                  Goal R{lens.goalRevision} · Ledger R{lens.ledgerRevision} · Task-Lens V{lens.policyVersion}
+                  · Fusion V{lens.fusionPolicyVersion}
+                </p>
+                <p>
+                  Indexlauf <code>{lens.indexRunId}</code> · Snapshot
+                  <code>{lens.snapshotId}</code>
+                </p>
+              </div>
+              <p class="module-card-safety-note">
+                Semantische Ähnlichkeit erzeugt ausschließlich Kandidaten. Facts benötigen weiterhin
+                aktuelle, aufgelöste Evidence; {lens.excludedStaleClaims} stale Claims wurden vollständig
+                ausgeschlossen.
+              </p>
+              {#if lens.truncated}
+                <p class="project-map-search-truncated" role="status">
+                  Mindestens eine feste Kandidaten-, Manifest-, Claim- oder Token-Grenze hat weitere
+                  Details sichtbar ausgelassen.
+                </p>
+              {/if}
+              <ol
+                class="project-map-search-results task-lens-entries"
+                aria-label="Task-Lens-Einträge"
+              >
+                {#each lens.entries as entry (entry.position)}
+                  <li>
+                    <div class="project-map-search-hit-heading">
+                      <div>
+                        <span>#{entry.position}</span>
+                        <strong>{taskLensTargetLabel(entry.target)}</strong>
+                      </div>
+                      <span>{taskLensTargetLevel(entry.target)}</span>
+                    </div>
+                    <p class="project-map-search-target-kind">
+                      {entry.estimatedTokens} geschätzte Tokens
+                      {#if entry.reason.kind === 'repositoryAnchor'}
+                        · deterministischer Pflichtanker
+                      {:else if entry.reason.kind === 'claim'}
+                        · Claim <code>{entry.reason.claimId}</code>
+                      {:else}
+                        · Fusionsrang {entry.reason.rank} · Score {countLabel(
+                          String(entry.reason.finalScore),
+                        )}
+                      {/if}
+                    </p>
+                    {#if entry.reason.kind === 'retrieval'}
+                      <ul
+                        class="project-map-search-sources"
+                        aria-label={`Herkunft von Lens-Eintrag ${entry.position}`}
+                      >
+                        {#each entry.reason.sources as source (source.channel)}
+                          <li class:task-lens-semantic-source={source.channel === 'semantic'}>
+                            <strong>{taskLensChannelLabel(source.channel)}</strong>
+                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
+                            {#if source.channel === 'semantic'}<span>kein Beweis</span>{/if}
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                    <details class="project-map-search-evidence">
+                      <summary>Evidence anzeigen</summary>
+                      <dl>
+                        {#if entry.target.kind === 'repository'}
+                          <div>
+                            <dt>Publikation</dt>
+                            <dd><code>{lens.indexRunId}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Snapshot</dt>
+                            <dd><code>{lens.snapshotId}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Struktur</dt>
+                            <dd>
+                              {entry.target.fileCount} Dateien · {entry.target.symbolCount} Symbole
+                            </dd>
+                          </div>
+                        {:else if entry.target.kind === 'module'}
+                          <div>
+                            <dt>Modul-ID</dt>
+                            <dd><code>{entry.target.moduleId}</code></dd>
+                          </div>
+                          {#if entry.target.root !== null}
+                            <div>
+                              <dt>Grenze</dt>
+                              <dd><code>{entry.target.root.pathDisplay}</code></dd>
+                            </div>
+                          {/if}
+                          {#each entry.target.manifests as manifest (manifest.pathHex)}
+                            <div>
+                              <dt>Manifest</dt>
+                              <dd>
+                                <code>{manifest.pathDisplay}</code> ·
+                                <code>{manifest.contentHash}</code>
+                              </dd>
+                            </div>
+                          {/each}
+                          {#if entry.target.manifests.length === 0}
+                            <div>
+                              <dt>Projektion</dt>
+                              <dd>
+                                Strukturell an Indexlauf und Snapshot gebunden; keine eigenständige
+                                Source-Behauptung.
+                              </dd>
+                            </div>
+                          {/if}
+                        {:else}
+                          <div>
+                            <dt>Pfad</dt>
+                            <dd><code>{entry.target.evidence.pathDisplay}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Content-Hash</dt>
+                            <dd><code>{entry.target.evidence.contentHash}</code></dd>
+                          </div>
+                          {#if entry.target.kind === 'symbol' || entry.target.kind === 'sourceSpan'}
+                            <div>
+                              <dt>Symbol-ID</dt>
+                              <dd><code>{entry.target.symbolId}</code></dd>
+                            </div>
+                          {/if}
+                          {#if entry.target.evidence.declarationRange !== null}
+                            <div>
+                              <dt>Deklaration</dt>
+                              <dd>
+                                Bytes {entry.target.evidence.declarationRange.startByte}–{entry
+                                  .target.evidence.declarationRange.endByte}
+                              </dd>
+                            </div>
+                          {/if}
+                        {/if}
+                      </dl>
+                    </details>
+                  </li>
+                {/each}
+              </ol>
+
+              <div class="task-lens-claims" aria-label="Aktuelle Task-Lens-Claims">
+                <h5>Evidence-gebundene Claims</h5>
+                {#if lens.claims.length === 0}
+                  <p class="project-status">Keine aktuellen Claims für die ausgewählten Ziele.</p>
+                {:else}
+                  <ul>
+                    {#each lens.claims as claim (claim.claimId)}
+                      <li class:task-lens-hypothesis={claim.kind === 'hypothesis'}>
+                        <div class="project-map-search-hit-heading">
+                          <strong>{taskLensClaimKindLabel(claim.kind)}</strong>
+                          <span>{percentageLabel(claim.confidenceBasisPoints)}</span>
+                        </div>
+                        <p>{taskLensPredicateLabel(claim.predicate)}</p>
+                        <details class="project-map-search-evidence">
+                          <summary>Evidence / Beweisstatus</summary>
+                          {#if claim.evidence.length === 0}
+                            <p>
+                              Keine beweisende Evidence vorhanden. Diese Architekturabsicht bleibt
+                              ausdrücklich eine Hypothese.
+                            </p>
+                          {:else}
+                            <dl>
+                              {#each claim.evidence as evidence (evidence.kind === 'graphEdge' ? evidence.edge.evidenceId : evidence.evidenceId)}
+                                {#if evidence.kind === 'graphEdge'}
+                                  <div>
+                                    <dt>Graph-Edge</dt>
+                                    <dd>
+                                      {evidence.relation} · <code>{evidence.edge.evidenceId}</code>
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Source-Pfad (hex)</dt>
+                                    <dd><code>{evidence.edge.pathHex}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Range</dt>
+                                    <dd>
+                                      Bytes {evidence.edge.range.startByte}–{evidence.edge.range
+                                        .endByte}
+                                    </dd>
+                                  </div>
+                                {:else}
+                                  <div>
+                                    <dt>Evidence-ID</dt>
+                                    <dd><code>{evidence.evidenceId}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Pfad</dt>
+                                    <dd><code>{evidence.revision.pathDisplay}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Content-Hash</dt>
+                                    <dd><code>{evidence.revision.contentHash}</code></dd>
+                                  </div>
+                                {/if}
+                              {/each}
+                            </dl>
+                          {/if}
+                        </details>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+        </section>
         <div class="repository-tree-panel" aria-labelledby="repository-tree-heading">
           <div class="repository-tree-heading">
             <div>

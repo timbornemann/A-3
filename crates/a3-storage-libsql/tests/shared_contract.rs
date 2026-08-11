@@ -93,6 +93,11 @@ fn libsql_satisfies_shared_task_ledger_contract() -> Result<(), ContractError> {
 }
 
 #[test]
+fn libsql_satisfies_shared_task_lens_workspace_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::TaskLensWorkspace)
+}
+
+#[test]
 fn libsql_satisfies_shared_run_journal_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::RunJournals)
 }

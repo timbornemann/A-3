@@ -12,11 +12,17 @@ import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-gr
 import type { ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1 } from './lib/module-runtime';
 import type { ModuleTreeResponseV1 } from './lib/module-tree';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
+import type { ProjectMapSearchResponseV1 } from './lib/project-map-search';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
 import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 import type { RepositoryTreeResponseV1 } from './lib/repository-tree';
+import type {
+  TaskLensCompileResponseV1,
+  TaskLensTaskResponseV1,
+  TaskLensTasksResponseV1,
+} from './lib/task-lens';
 
 const health: HealthResponseV1 = {
   applicationVersion: '0.1.0',
@@ -141,6 +147,190 @@ const moduleCardFreshness: ModuleCardFreshnessResponseV1 = {
         { count: '1', reason: 'directDependencyChanged', status: 'needsReview' },
       ],
       snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const projectMapSearch: ProjectMapSearchResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    search: {
+      fusionPolicyVersion: 1,
+      hits: [
+        {
+          finalScore: 52_478,
+          priority: 'exact',
+          rank: 1,
+          sources: [
+            {
+              channel: 'exact',
+              explanation: 'qualifiedNameExact',
+              normalizedScoreBasisPoints: 10_000,
+            },
+            {
+              channel: 'lexical',
+              explanation: 'symbolName',
+              nativeScore: 80_000,
+              normalizedScoreBasisPoints: 8_000,
+            },
+          ],
+          target: {
+            evidence: {
+              contentHash: 'c'.repeat(64),
+              declarationRange: {
+                end: { column: 11, row: 0 },
+                endByte: 11,
+                start: { column: 0, row: 0 },
+                startByte: 0,
+              },
+              pathDisplay: 'src/lib.rs',
+              pathHex: '7372632f6c69622e7273',
+            },
+            kind: 'symbol',
+            name: 'launch',
+            qualifiedName: 'crate::launch',
+            signature: 'fn launch()',
+            symbolId: 'd'.repeat(64),
+            symbolKind: 'function',
+          },
+        },
+      ],
+      indexRunId: '6'.repeat(64),
+      query: 'launch parser',
+      snapshotId: '4'.repeat(64),
+      truncated: true,
+    },
+    status: 'available',
+  },
+};
+
+const taskLensTaskId = '7'.repeat(64);
+const taskLensStepId = '8'.repeat(64);
+const taskLensTasks: TaskLensTasksResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    status: 'available',
+    tasks: [{ goalRevision: 3, objective: 'Project Map abschließen', taskId: taskLensTaskId }],
+    truncated: false,
+  },
+};
+const taskLensTask: TaskLensTaskResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    ledgerRevision: 5,
+    ledgerStoreVersion: '9',
+    status: 'available',
+    steps: [
+      {
+        intendedOutcome: 'Suche und Task Lens sicher umschalten',
+        status: 'inProgress',
+        stepId: taskLensStepId,
+      },
+    ],
+    task: {
+      goalRevision: 3,
+      objective: 'Project Map abschließen',
+      taskId: taskLensTaskId,
+    },
+  },
+};
+const taskLensCompilation: TaskLensCompileResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    lens: {
+      claims: [
+        {
+          claimId: 'd'.repeat(64),
+          confidenceBasisPoints: 10_000,
+          evidence: [
+            {
+              evidenceId: 'f'.repeat(64),
+              kind: 'file',
+              revision: {
+                contentHash: 'c'.repeat(64),
+                declarationRange: null,
+                pathDisplay: 'src/lib.rs',
+                pathHex: '7372632f6c69622e7273',
+              },
+            },
+          ],
+          kind: 'fact',
+          moduleId: 'a'.repeat(64),
+          polarity: 'affirms',
+          predicate: {
+            kind: 'path',
+            path: { pathDisplay: 'src/lib.rs', pathHex: '7372632f6c69622e7273' },
+          },
+        },
+        {
+          claimId: 'e'.repeat(64),
+          confidenceBasisPoints: 5_000,
+          evidence: [],
+          kind: 'hypothesis',
+          moduleId: 'a'.repeat(64),
+          polarity: 'affirms',
+          predicate: {
+            kind: 'architecturalIntent',
+            statement: 'Kann die Orchestrierung besitzen',
+          },
+        },
+      ],
+      digest: '9'.repeat(64),
+      entries: [
+        {
+          estimatedTokens: 100,
+          position: 1,
+          reason: { kind: 'repositoryAnchor' },
+          target: {
+            entrypointCount: 1,
+            fileCount: 4,
+            kind: 'repository',
+            languageCount: 1,
+            modulePolicyVersion: 1,
+            packageCount: 1,
+            symbolCount: 8,
+          },
+        },
+        {
+          estimatedTokens: 50,
+          position: 2,
+          reason: {
+            finalScore: 60_000,
+            kind: 'retrieval',
+            priority: 'exact',
+            rank: 1,
+            sources: [
+              { channel: 'exact', normalizedScoreBasisPoints: 10_000 },
+              { channel: 'semantic', normalizedScoreBasisPoints: 7_000 },
+            ],
+          },
+          target: {
+            evidence: {
+              contentHash: 'c'.repeat(64),
+              declarationRange: null,
+              pathDisplay: 'src/lib.rs',
+              pathHex: '7372632f6c69622e7273',
+            },
+            kind: 'file',
+          },
+        },
+      ],
+      estimatedTokens: 150,
+      excludedStaleClaims: 2,
+      fusionPolicyVersion: 1,
+      goalRevision: 3,
+      goalSeed: 'Project Map abschließen',
+      indexRunId: '6'.repeat(64),
+      ledgerRevision: 5,
+      ledgerStoreVersion: '9',
+      policyVersion: 1,
+      snapshotId: '4'.repeat(64),
+      stepId: taskLensStepId,
+      stepSeed: 'Suche und Task Lens sicher umschalten',
+      taskId: taskLensTaskId,
+      tokenBudget: 8_200,
+      truncated: true,
     },
     status: 'available',
   },
@@ -653,6 +843,114 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('NeedsReview')).toBeTruthy();
     expect(screen.getByText(/Direkte Evidenz geändert · 2/)).toBeTruthy();
     expect(screen.getByText(/Direkte Abhängigkeit geändert · 1/)).toBeTruthy();
+  });
+
+  it('runs Project Map search only on submit and exposes bounded provenance and evidence', async () => {
+    const projectMapSearchLoader = vi.fn(async () => projectMapSearch);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectMapSearchLoader,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    const input = await screen.findByRole('searchbox', {
+      name: 'Pfad, Symbol oder Signatur suchen',
+    });
+    expect(projectMapSearchLoader).not.toHaveBeenCalled();
+    await fireEvent.input(input, { target: { value: 'launch parser' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
+
+    await waitFor(() => expect(projectMapSearchLoader).toHaveBeenCalledTimes(1));
+    expect(projectMapSearchLoader).toHaveBeenCalledWith({ query: 'launch parser' });
+    expect(await screen.findByText('crate::launch')).toBeTruthy();
+    expect(screen.getByText('Exact')).toBeTruthy();
+    expect(screen.getByText('Lexical')).toBeTruthy();
+    expect(screen.getByText('exakter qualifizierter Name')).toBeTruthy();
+    expect(screen.getByText(/weitere Kandidaten sichtbar aus/)).toBeTruthy();
+    expect(screen.getByText(/Semantische Ähnlichkeit.*niemals ein Beweis/)).toBeTruthy();
+
+    const evidence = screen.getByText('Evidence anzeigen').parentElement;
+    if (!(evidence instanceof HTMLDetailsElement)) {
+      throw new Error('Project Map search Evidence details are missing.');
+    }
+    await fireEvent.click(screen.getByText('Evidence anzeigen'));
+    expect(evidence.open).toBe(true);
+    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+    expect(screen.getByText('Bytes 0–11')).toBeTruthy();
+  });
+
+  it('switches explicitly to a durable Task Lens and keeps semantic candidates and hypotheses unproven', async () => {
+    const taskLensTasksLoader = vi.fn(async () => taskLensTasks);
+    const taskLensTaskLoader = vi.fn(async () => taskLensTask);
+    const taskLensCompiler = vi.fn(async () => taskLensCompilation);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+        taskLensCompiler,
+        taskLensTaskLoader,
+        taskLensTasksLoader,
+      },
+    });
+
+    await screen.findByRole('searchbox', { name: 'Pfad, Symbol oder Signatur suchen' });
+    expect(taskLensTasksLoader).not.toHaveBeenCalled();
+    expect(taskLensTaskLoader).not.toHaveBeenCalled();
+    expect(taskLensCompiler).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Task Lens' }));
+    await waitFor(() => expect(taskLensTasksLoader).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/WebView kann weder Seeds noch Projektpfade erfinden/)).toBeTruthy();
+
+    await fireEvent.change(screen.getByLabelText('Goal Contract'), {
+      target: { value: taskLensTaskId },
+    });
+    await waitFor(() =>
+      expect(taskLensTaskLoader).toHaveBeenCalledWith({ taskId: taskLensTaskId }),
+    );
+    expect(taskLensCompiler).not.toHaveBeenCalled();
+
+    await fireEvent.change(screen.getByLabelText('Aktueller Fokus-Schritt'), {
+      target: { value: taskLensStepId },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Task Lens aktualisieren' }));
+    await waitFor(() =>
+      expect(taskLensCompiler).toHaveBeenCalledWith({
+        stepId: taskLensStepId,
+        taskId: taskLensTaskId,
+      }),
+    );
+
+    expect(await screen.findByText('Semantic · nur Kandidat')).toBeTruthy();
+    expect(screen.getByText('kein Beweis')).toBeTruthy();
+    expect(screen.getByText(/2 stale Claims wurden vollständig ausgeschlossen/)).toBeTruthy();
+    expect(screen.getByText('Hypothese · unbewiesen')).toBeTruthy();
+    expect(
+      screen
+        .getByText('Hypothese · unbewiesen')
+        .closest('li')
+        ?.classList.contains('task-lens-hypothesis'),
+    ).toBe(true);
+
+    const fileEvidence = screen.getAllByText('Evidence anzeigen')[1]?.parentElement;
+    if (!(fileEvidence instanceof HTMLDetailsElement)) {
+      throw new Error('Task Lens file Evidence details are missing.');
+    }
+    await fireEvent.click(screen.getAllByText('Evidence anzeigen')[1]);
+    expect(fileEvidence.open).toBe(true);
+    expect(screen.getAllByText('c'.repeat(64)).length).toBeGreaterThan(0);
+
+    const hypothesisEvidence = screen.getAllByText('Evidence / Beweisstatus')[1]?.parentElement;
+    if (!(hypothesisEvidence instanceof HTMLDetailsElement)) {
+      throw new Error('Task Lens hypothesis proof status is missing.');
+    }
+    await fireEvent.click(screen.getAllByText('Evidence / Beweisstatus')[1]);
+    expect(hypothesisEvidence.open).toBe(true);
+    expect(screen.getByText(/Keine beweisende Evidence vorhanden/)).toBeTruthy();
   });
 
   it('navigates the bounded published repository tree one directory at a time', async () => {

@@ -429,6 +429,48 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    Maps, größere Präfixe und Flows nur nach einer expliziten Aktion oder nach erfolgreichem Publish;
    das 500-ms-Statuspolling führt keinen Runtime-Read aus.
 
+### Bewusste Project-Map-Suche
+
+1. `query_project_map_search` akzeptiert ausschließlich Protokollversion und einen begrenzten,
+   kontrollzeichenfreien Suchtext. Projekt, Worktree, Pfad-Capability, Cursor und Resultlimit
+   stammen nicht aus der WebView.
+2. Der Application-Use-Case führt die bestehenden Exact- und Lexical-Ports nacheinander gegen den
+   jüngsten publizierten Run aus und übergibt höchstens 100 Kandidaten je Kanal an die unveränderte
+   R4-Fusion. Das feste Ergebnispräfix umfasst höchstens 20 deduplizierte Ziele.
+3. Treffer behalten Run, Snapshot, aktuelle Revision, typisierte Matchbegründung, normalisierten
+   Kanalscore und sichtbare Trunkierung. Gemischte Publikationen, unbekannte Projektionsversionen
+   und widersprüchliche Ziele werden vollständig abgelehnt.
+4. IPC V1 projiziert nur sichere Pfad-/Symbolanzeigen und exakte File- oder Declaration-Evidence.
+   Source-Inhalt, Datenbankzeilen, autoritative Betriebssystempfade und generische Such- oder
+   Dateibefugnisse verlassen den Core nicht.
+5. Die UI startet die Suche ausschließlich nach bewusstem Submit. Evidence wird progressiv
+   aufgeklappt; Semantic wird als möglicher künftiger Kandidatenkanal erklärt, nie als Beweis. Der
+   Read läuft nicht im 500-ms-Statuspolling.
+
+### Dauerhafte Task-Lens-Auswahl
+
+1. `query_task_lens_tasks` ist pfad- und identitätslos und liefert höchstens 20 aktuelle Goal
+   Contracts in stabiler `TaskId`-Reihenfolge. `query_task_lens_task` akzeptiert nur eine opake
+   `TaskId` und projiziert höchstens die 256 aktiven Plan-Schritte des aktuellen Task Ledgers.
+2. Der libSQL-Adapter liest den ausgewählten Goal Contract und sein Task Ledger in genau einer
+   Deferred-Transaktion. Fehlendes Ledger und eine abweichende Goal-Revision sind explizite
+   Zustände; Persistenzzeilen oder Handles verlassen den Adapter nicht.
+3. `compile_task_lens` akzeptiert nur opake `TaskId` und `TaskStepId`. Der Core lädt Goal und Ledger
+   unmittelbar erneut, verlangt dieselbe Goal-Revision und einen weiterhin aktiven Schritt und
+   erzeugt die höchstens 4 KiB großen Goal-/Step-Seeds selbst. Die WebView kann weder Seeds noch
+   Index-, Projekt- oder Pfadanker liefern.
+4. Erst danach läuft die bestehende R10-Pipeline Exact → Lexical → Graph/Test → aktuelle Claims →
+   optional Semantic unter ihrem festen Token-, Kandidaten-, Fortschritts-, Cancellation- und
+   30-Sekunden-Gesamtbudget. Die Antwort bindet Task-, Goal-, Ledger-, Store-, Run-, Snapshot-,
+   Policy- und Seedmetadaten gemeinsam.
+5. IPC V1 projiziert höchstens 64 L0–L3-Einträge, 128 aktuelle Claims und je 16
+   Claim-Evidence-Objekte beziehungsweise Modulmanifeste. Der TypeScript-Rand revalidiert Ordnung,
+   Identitäten, Tokenrechnung, Claim-Klassifikation und Evidence-Konsistenz.
+6. Die Oberfläche kompiliert erst nach ausdrücklicher Task-/Schrittauswahl. Semantic bleibt sichtbar
+   „nur Kandidat“; eine Architekturabsicht ohne beweisende Evidence bleibt visuell eine
+   `Hypothesis`. Nach erfolgreichem Index-Publish wird die sichtbare Lens verworfen und muss gegen
+   die neuen dauerhaften Anker erneut kompiliert werden.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

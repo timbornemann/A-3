@@ -49,6 +49,12 @@ pub enum ErrorCodeV1 {
     InvalidModuleCardDetailQuery,
     /// A Card, publication, module, or Evidence anchor violated the Inspector contract.
     InvalidModuleCardEvidenceQuery,
+    /// Search text was empty, oversized, or lacked a searchable token.
+    InvalidProjectMapSearchQuery,
+    /// A task or active-plan step identity violated the strict Task Lens selector contract.
+    InvalidTaskLensSelection,
+    /// Durable anchors or deterministic Task Lens retrieval could not be read safely.
+    TaskLensUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -148,6 +154,15 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::InvalidModuleCardEvidenceQuery => {
                 "The Module Card Evidence request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidProjectMapSearchQuery => {
+                "The Project Map search query is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidTaskLensSelection => {
+                "The Task Lens task or step selection is outside the supported bounds."
+            }
+            ErrorCodeV1::TaskLensUnavailable => {
+                "The current Task Lens could not be compiled from local evidence."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

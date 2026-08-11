@@ -46,6 +46,7 @@ mod open_project;
 mod policy;
 mod policy_store;
 mod process_runner;
+mod project_map_search;
 mod project_reconciliation;
 mod project_removal;
 mod project_status;
@@ -62,6 +63,7 @@ mod semantic_embedding_store;
 mod semantic_embeddings;
 mod task_ledger;
 mod task_lens;
+mod task_lens_workspace;
 mod verification;
 mod workspace_directory;
 mod workspace_patch;
@@ -279,6 +281,9 @@ pub use process_runner::{
     AuthorizedProcessSpec, ProcessAuthorizationError, ProcessEventSink, ProcessEventSinkError,
     ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
 };
+pub use project_map_search::{
+    ProjectMapSearchQuery, ProjectMapSearchQueryError, SearchProjectMap, SearchProjectMapFailure,
+};
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,
     ProjectReconciliationEvidence, ProjectReconciliationProposal,
@@ -351,6 +356,14 @@ pub use task_lens::{
     TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
     TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,
     TaskLensSemanticSearchFuture, TaskLensTimeout, TaskLensTimeoutError,
+};
+pub use task_lens_workspace::{
+    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
+    GetTaskLensTask, ListTaskLensTasks, TaskLensCompilation, TaskLensTaskAnchor,
+    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage, TaskLensWorkspaceGoalPageError,
+    TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit,
+    TaskLensWorkspaceTaskLimitError,
 };
 pub use verification::{
     DeterministicAcceptanceVerifier, EvaluateStepVerification, EvaluateStepVerificationError,

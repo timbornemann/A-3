@@ -680,6 +680,24 @@ identitätsgebundener Shared-Index-Cache vermeidet pro Lens eine tiefe Kopie von
 Symbolen. Jeder Zugriff vergleicht zuvor den aktuellen dauerhaften Run; Publish ersetzt und Rebuild
 entfernt den Eintrag.
 
+Die U4-Desktopintegration wählt die beiden Pflichtseeds nicht aus freiem UI-Text. Eine pfadlose
+Abfrage liefert höchstens 20 aktuelle Goal Contracts; nach Auswahl einer opaken `TaskId` liest der
+libSQL-Adapter aktuellen Goal Contract und Task Ledger atomar und projiziert nur aktive Plan-
+Schritte. Fehlendes Ledger und eine abweichende Goal-Revision bleiben eigenständige Zustände. Vor
+jeder Kompilierung lädt der Application-Use-Case beide Aggregate erneut, verlangt einen weiterhin
+aktiven `TaskStepId` und begrenzt Ziel und Intended Outcome UTF-8-sicher auf je 4 KiB. Damit kann die
+WebView weder Seed-, Revisions-, Projekt- noch Pfadautorität erfinden.
+
+Der V1-Desktopvertrag bindet die resultierende Lens gemeinsam an Task-, Goal-, Ledger-/Store-, Run-
+und Snapshotanker sowie R10-/Fusionspolicy und Tokenbudget. Höchstens 64 L0–L3-Einträge, 128
+aktuelle Claims, 16 Claim-Evidence-Objekte und 16 Manifeste pro Modul überschreiten IPC. Ein
+unabhängiger TypeScript-Decoder prüft geschlossene Formen, stabile Reihenfolge, Token-Summe,
+Quellpriorität, Revisionen, Evidence-Identitäten und die zulässige Claim-Klassifikation erneut.
+Semantic-Provenienz bleibt sichtbar als Kandidat ohne Beweiskraft; Architekturabsichten ohne
+Evidence werden ausdrücklich und visuell als unbewiesene Hypothesen dargestellt. Die UI lädt erst
+nach Umschaltung und kompiliert erst nach Task-/Schrittauswahl; ein erfolgreicher Index-Publish
+verwirft die sichtbare Lens.
+
 ## Inkrementelle Aktualisierung
 
 Der implementierte V1-Watcher verwendet keine neue Plattform- oder Netzwerkabhängigkeit. Ein
@@ -766,6 +784,15 @@ Queue. Task-Lens-Claim-Reads wählen nur die neueste `Published`-Card mit `Activ
 lösen deren Evidence erneut gegen den aktuellen Run auf und liefern dadurch keine stale Facts.
 
 ## Hybride Suche
+
+Die U4-Project-Map-Suche verwendet die vorhandenen Exact- und Lexical-Projektionen als bewussten
+read-only Produktpfad. Die WebView liefert nur Protokollversion und einen gemeinsamen validierten
+Suchtext; Projekt, Cursor und Grenzen bleiben Core-eigen. Je Kanal gelangen höchstens 100 aktuelle
+Kandidaten aus derselben Publikation in R4, daraus werden höchstens 20 Ziele sichtbar. Jeder Treffer
+behält typisierte native Begründung, normalisierten Kanalscore, Run, Snapshot und exakte File- oder
+Declaration-Evidence. Die Suche startet nur nach Submit, läuft nicht im Statuspolling und öffnet
+Evidence progressiv. Widersprüchliche Publikationen oder Projektionen werden nicht teilweise
+gerendert; Source-Inhalt und autoritative Pfade bleiben im Core.
 
 ### Implementierter Exact-Kanal
 

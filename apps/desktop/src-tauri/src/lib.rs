@@ -11,14 +11,16 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
+    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
     DeepMapExecutor, GetHealth, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
     GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus,
     GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
-    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery,
-    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
-    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
-    ListRecentProjects, ListRecentProjectsError, ModuleCardClaimState, ModuleCardCoverageBand,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
+    GetTaskLensTask, HealthQuery, IndexPersistenceControl, IndexPersistenceControlError,
+    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
+    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
+    ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState, ModuleCardCoverageBand,
     ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
     ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
     ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
@@ -38,31 +40,37 @@ use a3_application::{
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
     ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
     ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
-    ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
-    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
-    RecentProject, RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, TraceModuleRuntimeFlow,
+    ProjectInspectionFailure, ProjectMapSearchQuery, ProjectReconciliationConfirmer,
+    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
+    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
+    RepositoryTreeQuery, RepositoryTreeStore, SearchProjectMap, SearchProjectMapFailure,
+    TaskLensClaimStore, TaskLensCompilation, TaskLensControl, TaskLensControlError,
+    TaskLensIndexStore, TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, ExactSearchTarget, ExploreBudget, FileRevision,
-    GitHead, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage,
-    IndexRunId, IndexRunStatus, InvalidationReason, LinkResolution, ModuleCardEvidenceId,
-    ModuleCardField, ModuleCardId, ModuleId, ModuleRoot, ParseDiagnosticCode,
-    ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath,
-    SnapshotId, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TraversalResultLimit,
-    VerifiedClaimKind,
+    ApplicationVersion, ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget,
+    ExploreBudget, FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GraphEdge,
+    GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage, IndexRunId,
+    IndexRunStatus, InvalidationReason, LexicalSearchExplanation, LinkResolution,
+    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleId, ModuleKind, ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform,
+    Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ResultSourceExplanation, RetrievalCandidateReason, SnapshotId, SourceChannel, SymbolId,
+    SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId, TaskLensEntryReason, TaskLensTarget,
+    TaskStepId, TaskStepStatus, TraversalResultLimit, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use a3_protocol::{
-    CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
-    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,
-    DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
-    IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
-    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
-    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1,
-    ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
+    CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1,
+    DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1,
+    DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1,
+    IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1,
+    IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1,
+    IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
+    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
+    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
     ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
     ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
     ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
@@ -78,14 +86,23 @@ use a3_protocol::{
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
-    OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
-    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectMapExactExplanationV1,
+    ProjectMapLexicalExplanationV1, ProjectMapSearchChannelV1, ProjectMapSearchEvidenceV1,
+    ProjectMapSearchHitV1, ProjectMapSearchPriorityV1, ProjectMapSearchResponseV1,
+    ProjectMapSearchSourceV1, ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1,
+    ProjectMapSearchV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
+    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+    QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1,
+    RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
     RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
-    RepositoryTreeResponseV1,
+    RepositoryTreeResponseV1, TaskLensClaimEvidenceV1, TaskLensClaimKindV1,
+    TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1,
+    TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
+    TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
+    TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
+    TaskLensTasksResponseV1, TaskLensV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -126,6 +143,10 @@ pub struct CompositionRoot {
     module_dependency_graph: Option<GetModuleDependencyGraph>,
     module_runtime_map: Option<GetModuleRuntimeMap>,
     module_runtime_flow: Option<TraceModuleRuntimeFlow>,
+    project_map_search: Option<SearchProjectMap>,
+    task_lens_tasks: Option<ListTaskLensTasks>,
+    task_lens_task: Option<GetTaskLensTask>,
+    task_lens_compile: Option<CompileWorkspaceTaskLens>,
     module_tree: Option<GetModuleTreePage>,
     repository_tree: Option<GetRepositoryTreePage>,
     project_storage: Option<GetProjectStorageUsage>,
@@ -552,6 +573,166 @@ impl CompositionRoot {
             })
     }
 
+    /// Searches current deterministic projections without exposing source or storage capabilities.
+    pub async fn query_project_map_search(
+        &self,
+        query: &ProjectMapSearchQuery,
+    ) -> Result<ProjectMapSearchResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapSearchResponseV1::no_project());
+        };
+        let Some(search) = &self.project_map_search else {
+            return Ok(ProjectMapSearchResponseV1::no_published_index());
+        };
+        match search
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+        {
+            Ok(result) => map_project_map_search_to_v1(query, &result)
+                .map(ProjectMapSearchResponseV1::available)
+                .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)),
+            Err(SearchProjectMapFailure::Search(
+                a3_application::KnowledgeSearchFailure::IndexUnavailable,
+            )) => Ok(ProjectMapSearchResponseV1::no_published_index()),
+            Err(SearchProjectMapFailure::Search(
+                a3_application::KnowledgeSearchFailure::ProjectionUnavailable(channel),
+            )) => map_project_map_search_channel_to_v1(channel)
+                .map(ProjectMapSearchResponseV1::projection_unavailable)
+                .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)),
+            Err(error) => Err(map_project_map_search_error_to_v1(error)),
+        }
+    }
+
+    /// Lists bounded durable Goal Contracts available for Task Lens selection.
+    pub async fn query_task_lens_tasks(&self) -> Result<TaskLensTasksResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(TaskLensTasksResponseV1::no_project());
+        };
+        let reader = self
+            .task_lens_tasks
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::TaskLensUnavailable))?;
+        let page = reader
+            .execute(&active.project, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_task_lens_workspace_error_to_v1)?;
+        Ok(TaskLensTasksResponseV1::available(
+            page.goals()
+                .iter()
+                .map(map_task_lens_summary_to_v1)
+                .collect(),
+            page.truncated(),
+        ))
+    }
+
+    /// Loads current active-plan steps for one opaque durable task identity.
+    pub async fn query_task_lens_task(
+        &self,
+        task_id: TaskId,
+    ) -> Result<TaskLensTaskResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(TaskLensTaskResponseV1::no_project());
+        };
+        let reader = self
+            .task_lens_task
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::TaskLensUnavailable))?;
+        match reader
+            .execute(&active.project, task_id, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_task_lens_workspace_error_to_v1)?
+        {
+            TaskLensTaskLoadResult::NotFound => Ok(TaskLensTaskResponseV1::task_not_found()),
+            TaskLensTaskLoadResult::LedgerUnavailable { goal_contract } => {
+                Ok(TaskLensTaskResponseV1::ledger_unavailable(
+                    map_task_lens_summary_to_v1(&goal_contract),
+                ))
+            }
+            TaskLensTaskLoadResult::GoalRevisionMismatch {
+                current_goal,
+                ledger_goal,
+            } => Ok(TaskLensTaskResponseV1::goal_revision_mismatch(
+                current_goal.task_id().to_string(),
+                current_goal.revision().get(),
+                ledger_goal.revision().get(),
+            )),
+            TaskLensTaskLoadResult::Available(anchor) => {
+                let stored = anchor.task_ledger();
+                let steps = stored
+                    .ledger()
+                    .steps()
+                    .filter(|step| step.is_active_plan_step())
+                    .map(|step| {
+                        TaskLensStepV1::new(
+                            step.definition().id().to_string(),
+                            step.definition().intended_outcome().as_str().to_owned(),
+                            map_task_lens_step_status_to_v1(step.status()),
+                        )
+                    })
+                    .collect();
+                Ok(TaskLensTaskResponseV1::available(
+                    map_task_lens_summary_to_v1(anchor.goal_contract()),
+                    stored.ledger().revision().get(),
+                    stored.version().get().to_string(),
+                    steps,
+                ))
+            }
+        }
+    }
+
+    /// Recompiles the selected current durable task/step through the existing R10 pipeline.
+    pub async fn compile_task_lens(
+        &self,
+        task_id: TaskId,
+        step_id: TaskStepId,
+    ) -> Result<TaskLensCompileResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(TaskLensCompileResponseV1::no_project());
+        };
+        let compiler = self
+            .task_lens_compile
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::TaskLensUnavailable))?;
+        let control = DesktopBoundedReadControl::new();
+        let result = compiler
+            .execute(&active.project, task_id, step_id, &control, &control)
+            .await
+            .map_err(map_task_lens_compile_error_to_v1)?;
+        match result {
+            CompileWorkspaceTaskLensResult::TaskNotFound => {
+                Ok(TaskLensCompileResponseV1::task_not_found())
+            }
+            CompileWorkspaceTaskLensResult::LedgerUnavailable => {
+                Ok(TaskLensCompileResponseV1::ledger_unavailable())
+            }
+            CompileWorkspaceTaskLensResult::GoalRevisionMismatch {
+                current_goal,
+                ledger_goal,
+            } => Ok(TaskLensCompileResponseV1::goal_revision_mismatch(
+                current_goal.task_id().to_string(),
+                current_goal.revision().get(),
+                ledger_goal.revision().get(),
+            )),
+            CompileWorkspaceTaskLensResult::StepUnavailable => {
+                Ok(TaskLensCompileResponseV1::step_unavailable())
+            }
+            CompileWorkspaceTaskLensResult::IndexUnavailable => {
+                Ok(TaskLensCompileResponseV1::no_published_index())
+            }
+            CompileWorkspaceTaskLensResult::Available(compilation) => {
+                map_task_lens_to_v1(&compilation)
+                    .map(TaskLensCompileResponseV1::available)
+                    .ok_or_else(|| {
+                        CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+                    })
+            }
+        }
+    }
+
     /// Returns only Core-owned Deep-Map configuration and in-memory lifecycle state.
     #[must_use]
     pub fn query_deep_map_status(&self) -> DeepMapStatusResponseV1 {
@@ -931,6 +1112,39 @@ impl ModuleRuntimeControl for DesktopBoundedReadControl {
     }
 }
 
+impl KnowledgeSearchControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+impl TaskLensWorkspaceControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+impl TaskLensControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), TaskLensControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(TaskLensControlError::Unavailable)?;
+        let total = progress.total().ok_or(TaskLensControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(TaskLensControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl DesktopProjectStorageControl {
     fn new() -> Self {
         Self {
@@ -970,6 +1184,9 @@ struct OptionalCompositionPorts {
     module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
     module_runtime_store: Option<Arc<dyn ModuleRuntimeStore>>,
     knowledge_search_store: Option<Arc<dyn KnowledgeSearchStore>>,
+    task_lens_index_store: Option<Arc<dyn TaskLensIndexStore>>,
+    task_lens_claim_store: Option<Arc<dyn TaskLensClaimStore>>,
+    task_lens_workspace_store: Option<Arc<dyn TaskLensWorkspaceStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
@@ -985,6 +1202,9 @@ struct IndexingCompositionPorts {
     module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
     module_runtime_store: Arc<dyn ModuleRuntimeStore>,
     knowledge_search_store: Arc<dyn KnowledgeSearchStore>,
+    task_lens_index_store: Arc<dyn TaskLensIndexStore>,
+    task_lens_claim_store: Arc<dyn TaskLensClaimStore>,
+    task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
@@ -1048,6 +1268,9 @@ impl CompositionBase {
                 module_dependency_graph_store: Some(ports.module_dependency_graph_store),
                 module_runtime_store: Some(ports.module_runtime_store),
                 knowledge_search_store: Some(ports.knowledge_search_store),
+                task_lens_index_store: Some(ports.task_lens_index_store),
+                task_lens_claim_store: Some(ports.task_lens_claim_store),
+                task_lens_workspace_store: Some(ports.task_lens_workspace_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
@@ -1086,8 +1309,36 @@ impl CompositionBase {
             .map(GetModuleRuntimeMap::new);
         let module_runtime_flow = ports
             .module_runtime_store
-            .zip(ports.knowledge_search_store)
+            .zip(ports.knowledge_search_store.clone())
             .map(|(runtime, search)| TraceModuleRuntimeFlow::new(runtime, search));
+        let project_map_search = ports
+            .knowledge_search_store
+            .clone()
+            .map(SearchProjectMap::new);
+        let task_lens_tasks = ports
+            .task_lens_workspace_store
+            .clone()
+            .map(ListTaskLensTasks::new);
+        let task_lens_task = ports
+            .task_lens_workspace_store
+            .clone()
+            .map(GetTaskLensTask::new);
+        let task_lens_compile = match (
+            ports.task_lens_workspace_store.as_ref(),
+            ports.task_lens_index_store.as_ref(),
+            ports.knowledge_search_store.as_ref(),
+            ports.task_lens_claim_store.as_ref(),
+        ) {
+            (Some(workspace), Some(index), Some(search), Some(claims)) => {
+                Some(CompileWorkspaceTaskLens::new(
+                    Arc::clone(workspace),
+                    Arc::clone(index),
+                    Arc::clone(search),
+                    Arc::clone(claims),
+                ))
+            }
+            _ => None,
+        };
         let module_tree = ports.module_tree_store.map(GetModuleTreePage::new);
         let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
@@ -1139,6 +1390,10 @@ impl CompositionBase {
             module_dependency_graph,
             module_runtime_map,
             module_runtime_flow,
+            project_map_search,
+            task_lens_tasks,
+            task_lens_task,
+            task_lens_compile,
             module_tree,
             repository_tree,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
@@ -1178,6 +1433,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
             let module_runtime_store: Arc<dyn ModuleRuntimeStore> = store.clone();
             let knowledge_search_store: Arc<dyn KnowledgeSearchStore> = store.clone();
+            let task_lens_index_store: Arc<dyn TaskLensIndexStore> = store.clone();
+            let task_lens_claim_store: Arc<dyn TaskLensClaimStore> = store.clone();
+            let task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
@@ -1196,6 +1454,9 @@ pub fn run() -> Result<(), DesktopRunError> {
                     module_dependency_graph_store,
                     module_runtime_store,
                     knowledge_search_store,
+                    task_lens_index_store,
+                    task_lens_claim_store,
+                    task_lens_workspace_store,
                     module_tree_store,
                     repository_tree_store,
                     project_storage,
@@ -1206,6 +1467,7 @@ pub fn run() -> Result<(), DesktopRunError> {
         })
         .invoke_handler(tauri::generate_handler![
             commands::cancel_deep_map,
+            commands::compile_task_lens,
             commands::list_recent_projects,
             commands::open_project,
             commands::pause_deep_map,
@@ -1220,6 +1482,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
             commands::query_module_tree,
+            commands::query_project_map_search,
+            commands::query_task_lens_task,
+            commands::query_task_lens_tasks,
             commands::query_repository_tree,
             commands::query_health,
             commands::rebuild_project_index,
@@ -1911,6 +2176,531 @@ fn map_module_dependency_endpoint_to_v1(endpoint: &GraphEndpoint) -> ModuleDepen
     }
 }
 
+fn map_project_map_search_to_v1(
+    query: &ProjectMapSearchQuery,
+    result: &FusedRetrievalResult,
+) -> Option<ProjectMapSearchV1> {
+    let mut rank = 0_u16;
+    let mut hits = Vec::with_capacity(result.hits().len());
+    for hit in result.hits() {
+        rank = rank.checked_add(1)?;
+        let priority = match hit.explanation().priority() {
+            FusionPriority::Exact => ProjectMapSearchPriorityV1::Exact,
+            FusionPriority::Evidence => ProjectMapSearchPriorityV1::Evidence,
+            FusionPriority::Semantic => return None,
+        };
+        let sources = hit
+            .explanation()
+            .sources()
+            .iter()
+            .map(map_project_map_search_source_to_v1)
+            .collect::<Option<Vec<_>>>()?;
+        hits.push(ProjectMapSearchHitV1::new(
+            rank,
+            priority,
+            hit.explanation().final_score().get(),
+            sources,
+            map_project_map_search_target_to_v1(hit.target()),
+        ));
+    }
+    Some(ProjectMapSearchV1::new(
+        query.lexical().term().as_str().to_owned(),
+        result.index_run_id().to_string(),
+        result.snapshot_id().to_string(),
+        result.policy_version().get(),
+        hits,
+        result.truncated(),
+    ))
+}
+
+fn map_project_map_search_source_to_v1(
+    source: &ResultSourceExplanation,
+) -> Option<ProjectMapSearchSourceV1> {
+    match source.reason() {
+        RetrievalCandidateReason::Exact(explanation) => Some(ProjectMapSearchSourceV1::Exact {
+            explanation: map_project_map_exact_explanation_to_v1(*explanation),
+            normalized_score_basis_points: source.normalized_score().get(),
+        }),
+        RetrievalCandidateReason::Lexical { explanation, score } => {
+            Some(ProjectMapSearchSourceV1::Lexical {
+                explanation: map_project_map_lexical_explanation_to_v1(*explanation),
+                native_score: score.get(),
+                normalized_score_basis_points: source.normalized_score().get(),
+            })
+        }
+        RetrievalCandidateReason::Graph(_)
+        | RetrievalCandidateReason::Test(_)
+        | RetrievalCandidateReason::Memory(_)
+        | RetrievalCandidateReason::Semantic(_) => None,
+    }
+}
+
+fn map_project_map_search_target_to_v1(target: &ExactSearchTarget) -> ProjectMapSearchTargetV1 {
+    match target {
+        ExactSearchTarget::File(revision) => ProjectMapSearchTargetV1::File {
+            evidence: map_project_map_search_evidence_to_v1(revision, None),
+        },
+        ExactSearchTarget::Symbol(symbol) => {
+            let parsed = symbol.symbol().parsed();
+            ProjectMapSearchTargetV1::Symbol {
+                symbol_id: symbol.symbol().id().to_string(),
+                symbol_kind: map_project_map_search_symbol_kind_to_v1(parsed.kind()),
+                name: parsed.name().as_str().to_owned(),
+                qualified_name: symbol.qualified_name().as_str().to_owned(),
+                signature: parsed.signature().map(|value| value.as_str().to_owned()),
+                evidence: map_project_map_search_evidence_to_v1(
+                    symbol.symbol().revision(),
+                    Some(parsed.declaration_range()),
+                ),
+            }
+        }
+    }
+}
+
+fn map_project_map_search_evidence_to_v1(
+    revision: &FileRevision,
+    declaration_range: Option<a3_domain::SourceRange>,
+) -> ProjectMapSearchEvidenceV1 {
+    ProjectMapSearchEvidenceV1::new(
+        repository_path_display(revision.path()),
+        encode_hex(revision.path().as_bytes()),
+        encode_hex(revision.content_hash().as_bytes()),
+        declaration_range.map(|range| {
+            let start = range.start_position();
+            let end = range.end_position();
+            ModuleDependencySourceRangeV1::new(
+                range.start_byte(),
+                range.end_byte(),
+                ModuleDependencySourcePositionV1::new(start.row(), start.column()),
+                ModuleDependencySourcePositionV1::new(end.row(), end.column()),
+            )
+        }),
+    )
+}
+
+fn repository_path_display(path: &RepositoryPath) -> String {
+    String::from_utf8_lossy(path.as_bytes())
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                '\u{fffd}'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+const fn map_project_map_search_channel_to_v1(
+    channel: a3_domain::SourceChannel,
+) -> Option<ProjectMapSearchChannelV1> {
+    match channel {
+        a3_domain::SourceChannel::Exact => Some(ProjectMapSearchChannelV1::Exact),
+        a3_domain::SourceChannel::Lexical => Some(ProjectMapSearchChannelV1::Lexical),
+        a3_domain::SourceChannel::Graph
+        | a3_domain::SourceChannel::Test
+        | a3_domain::SourceChannel::Memory
+        | a3_domain::SourceChannel::Semantic => None,
+    }
+}
+
+const fn map_project_map_exact_explanation_to_v1(
+    explanation: ExactSearchExplanation,
+) -> ProjectMapExactExplanationV1 {
+    match explanation {
+        ExactSearchExplanation::NormalizedPathExact => {
+            ProjectMapExactExplanationV1::NormalizedPathExact
+        }
+        ExactSearchExplanation::QualifiedNameExact => {
+            ProjectMapExactExplanationV1::QualifiedNameExact
+        }
+        ExactSearchExplanation::SymbolNameExact => ProjectMapExactExplanationV1::SymbolNameExact,
+        ExactSearchExplanation::SignatureExact => ProjectMapExactExplanationV1::SignatureExact,
+        ExactSearchExplanation::QualifiedNamePrefix => {
+            ProjectMapExactExplanationV1::QualifiedNamePrefix
+        }
+        ExactSearchExplanation::SymbolNamePrefix => ProjectMapExactExplanationV1::SymbolNamePrefix,
+        ExactSearchExplanation::SignaturePrefix => ProjectMapExactExplanationV1::SignaturePrefix,
+        ExactSearchExplanation::ManifestRole => ProjectMapExactExplanationV1::ManifestRole,
+        ExactSearchExplanation::EntrypointRole => ProjectMapExactExplanationV1::EntrypointRole,
+        ExactSearchExplanation::TestRole => ProjectMapExactExplanationV1::TestRole,
+    }
+}
+
+const fn map_project_map_lexical_explanation_to_v1(
+    explanation: LexicalSearchExplanation,
+) -> ProjectMapLexicalExplanationV1 {
+    match explanation {
+        LexicalSearchExplanation::Path => ProjectMapLexicalExplanationV1::Path,
+        LexicalSearchExplanation::QualifiedName => ProjectMapLexicalExplanationV1::QualifiedName,
+        LexicalSearchExplanation::SymbolName => ProjectMapLexicalExplanationV1::SymbolName,
+        LexicalSearchExplanation::Signature => ProjectMapLexicalExplanationV1::Signature,
+    }
+}
+
+const fn map_project_map_search_symbol_kind_to_v1(
+    kind: SymbolKind,
+) -> ProjectMapSearchSymbolKindV1 {
+    match kind {
+        SymbolKind::Module => ProjectMapSearchSymbolKindV1::Module,
+        SymbolKind::Namespace => ProjectMapSearchSymbolKindV1::Namespace,
+        SymbolKind::Function => ProjectMapSearchSymbolKindV1::Function,
+        SymbolKind::Method => ProjectMapSearchSymbolKindV1::Method,
+        SymbolKind::Struct => ProjectMapSearchSymbolKindV1::Struct,
+        SymbolKind::Enum => ProjectMapSearchSymbolKindV1::Enum,
+        SymbolKind::Trait => ProjectMapSearchSymbolKindV1::Trait,
+        SymbolKind::Interface => ProjectMapSearchSymbolKindV1::Interface,
+        SymbolKind::Class => ProjectMapSearchSymbolKindV1::Class,
+        SymbolKind::Implementation => ProjectMapSearchSymbolKindV1::Implementation,
+        SymbolKind::TypeAlias => ProjectMapSearchSymbolKindV1::TypeAlias,
+        SymbolKind::Constant => ProjectMapSearchSymbolKindV1::Constant,
+        SymbolKind::Static => ProjectMapSearchSymbolKindV1::Static,
+        SymbolKind::Variable => ProjectMapSearchSymbolKindV1::Variable,
+        SymbolKind::Field => ProjectMapSearchSymbolKindV1::Field,
+        SymbolKind::Variant => ProjectMapSearchSymbolKindV1::Variant,
+        SymbolKind::Parameter => ProjectMapSearchSymbolKindV1::Parameter,
+    }
+}
+
+fn map_task_lens_summary_to_v1(goal: &a3_domain::GoalContract) -> TaskLensTaskSummaryV1 {
+    TaskLensTaskSummaryV1::new(
+        goal.task_id().to_string(),
+        goal.revision().get(),
+        goal.draft().objective().as_str().to_owned(),
+    )
+}
+
+const fn map_task_lens_step_status_to_v1(status: TaskStepStatus) -> TaskLensStepStatusV1 {
+    match status {
+        TaskStepStatus::Pending => TaskLensStepStatusV1::Pending,
+        TaskStepStatus::Ready => TaskLensStepStatusV1::Ready,
+        TaskStepStatus::InProgress => TaskLensStepStatusV1::InProgress,
+        TaskStepStatus::Blocked => TaskLensStepStatusV1::Blocked,
+        TaskStepStatus::AwaitingApproval => TaskLensStepStatusV1::AwaitingApproval,
+        TaskStepStatus::Verifying => TaskLensStepStatusV1::Verifying,
+        TaskStepStatus::Completed => TaskLensStepStatusV1::Completed,
+        TaskStepStatus::Failed => TaskLensStepStatusV1::Failed,
+        TaskStepStatus::Cancelled => TaskLensStepStatusV1::Cancelled,
+        TaskStepStatus::Stale => TaskLensStepStatusV1::Stale,
+    }
+}
+
+fn map_task_lens_to_v1(compilation: &TaskLensCompilation) -> Option<TaskLensV1> {
+    let lens = compilation.lens();
+    let mut position = 0_u16;
+    let mut boundary_truncated = false;
+    let mut entries = Vec::with_capacity(lens.entries().len());
+    for entry in lens.entries() {
+        position = position.checked_add(1)?;
+        let (target, target_truncated) = map_task_lens_target_to_v1(entry.target())?;
+        boundary_truncated |= target_truncated;
+        entries.push(TaskLensEntryV1::new(
+            position,
+            entry.estimated_tokens().get(),
+            map_task_lens_entry_reason_to_v1(entry.reason())?,
+            target,
+        ));
+    }
+    let claims = lens
+        .claims()
+        .iter()
+        .map(map_task_lens_claim_to_v1)
+        .collect::<Option<Vec<_>>>()?;
+    Some(TaskLensV1::new(
+        compilation.goal_contract().task_id().to_string(),
+        compilation.goal_contract().revision().get(),
+        compilation.ledger_revision().get(),
+        compilation.ledger_store_version().get().to_string(),
+        compilation.step_id().to_string(),
+        lens.index_run_id().to_string(),
+        lens.snapshot_id().to_string(),
+        lens.policy_version().get(),
+        lens.fusion_policy_version().get(),
+        lens.token_budget().get(),
+        lens.estimated_tokens(),
+        lens.seeds().goal().as_str().to_owned(),
+        lens.seeds().step().as_str().to_owned(),
+        encode_hex(&lens.digest().as_bytes()),
+        lens.excluded_stale_claims(),
+        entries,
+        claims,
+        lens.truncated() || boundary_truncated,
+    ))
+}
+
+fn map_task_lens_entry_reason_to_v1(reason: &TaskLensEntryReason) -> Option<TaskLensEntryReasonV1> {
+    match reason {
+        TaskLensEntryReason::RepositoryAnchor => Some(TaskLensEntryReasonV1::RepositoryAnchor),
+        TaskLensEntryReason::Retrieval { rank, explanation } => {
+            let sources = explanation
+                .sources()
+                .iter()
+                .map(|source| {
+                    Some(TaskLensRetrievalSourceV1::new(
+                        map_task_lens_channel_to_v1(source.reason().source_channel()),
+                        source.normalized_score().get(),
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(TaskLensEntryReasonV1::Retrieval {
+                rank: *rank,
+                priority: match explanation.priority() {
+                    FusionPriority::Exact => TaskLensPriorityV1::Exact,
+                    FusionPriority::Evidence => TaskLensPriorityV1::Evidence,
+                    FusionPriority::Semantic => TaskLensPriorityV1::Semantic,
+                },
+                final_score: explanation.final_score().get(),
+                sources,
+            })
+        }
+        TaskLensEntryReason::Claim(claim_id) => Some(TaskLensEntryReasonV1::Claim {
+            claim_id: encode_hex(claim_id.as_bytes()),
+        }),
+    }
+}
+
+const fn map_task_lens_channel_to_v1(channel: SourceChannel) -> TaskLensRetrievalChannelV1 {
+    match channel {
+        SourceChannel::Exact => TaskLensRetrievalChannelV1::Exact,
+        SourceChannel::Lexical => TaskLensRetrievalChannelV1::Lexical,
+        SourceChannel::Graph => TaskLensRetrievalChannelV1::Graph,
+        SourceChannel::Test => TaskLensRetrievalChannelV1::Test,
+        SourceChannel::Memory => TaskLensRetrievalChannelV1::Memory,
+        SourceChannel::Semantic => TaskLensRetrievalChannelV1::Semantic,
+    }
+}
+
+fn map_task_lens_target_to_v1(target: &TaskLensTarget) -> Option<(TaskLensEntryTargetV1, bool)> {
+    const MAX_VISIBLE_MANIFESTS: usize = 16;
+    match target {
+        TaskLensTarget::Repository(card) => Some((
+            TaskLensEntryTargetV1::Repository {
+                module_policy_version: card.policy_version().get(),
+                package_count: u32::try_from(card.packages().len()).ok()?,
+                language_count: u32::try_from(card.languages().len()).ok()?,
+                entrypoint_count: u32::try_from(card.entrypoints().symbols().len()).ok()?,
+                file_count: card.file_count(),
+                symbol_count: card.symbol_count(),
+            },
+            false,
+        )),
+        TaskLensTarget::Module(module) => {
+            let manifests_truncated = module.manifests().len() > MAX_VISIBLE_MANIFESTS;
+            let manifests = module
+                .manifests()
+                .iter()
+                .take(MAX_VISIBLE_MANIFESTS)
+                .map(|revision| map_project_map_search_evidence_to_v1(revision, None))
+                .collect();
+            Some((
+                TaskLensEntryTargetV1::Module {
+                    module_id: module.id().to_string(),
+                    module_kind: match module.kind() {
+                        ModuleKind::ManifestBoundary => TaskLensModuleKindV1::ManifestBoundary,
+                        ModuleKind::PathBoundary => TaskLensModuleKindV1::PathBoundary,
+                        ModuleKind::GraphCommunity => TaskLensModuleKindV1::GraphCommunity,
+                    },
+                    root: module.root().and_then(|root| match root {
+                        ModuleRoot::Repository => None,
+                        ModuleRoot::Directory(path) => Some(map_task_lens_path_to_v1(path)),
+                    }),
+                    manifests,
+                    manifests_truncated,
+                },
+                manifests_truncated,
+            ))
+        }
+        TaskLensTarget::File(revision) => Some((
+            TaskLensEntryTargetV1::File {
+                evidence: map_project_map_search_evidence_to_v1(revision, None),
+            },
+            false,
+        )),
+        TaskLensTarget::Symbol(symbol) => {
+            let parsed = symbol.parsed();
+            Some((
+                TaskLensEntryTargetV1::Symbol {
+                    symbol_id: symbol.id().to_string(),
+                    symbol_kind: map_project_map_search_symbol_kind_to_v1(parsed.kind()),
+                    name: parsed.name().as_str().to_owned(),
+                    signature: parsed.signature().map(|value| value.as_str().to_owned()),
+                    evidence: map_project_map_search_evidence_to_v1(
+                        symbol.revision(),
+                        Some(parsed.declaration_range()),
+                    ),
+                },
+                false,
+            ))
+        }
+        TaskLensTarget::SourceSpan {
+            symbol_id,
+            evidence,
+        } => Some((
+            TaskLensEntryTargetV1::SourceSpan {
+                symbol_id: symbol_id.to_string(),
+                evidence: map_project_map_search_evidence_to_v1(
+                    evidence.revision(),
+                    Some(evidence.range()),
+                ),
+            },
+            false,
+        )),
+    }
+}
+
+fn map_task_lens_path_to_v1(path: &RepositoryPath) -> TaskLensPathV1 {
+    TaskLensPathV1::new(repository_path_display(path), encode_hex(path.as_bytes()))
+}
+
+fn map_task_lens_claim_to_v1(claim: &a3_domain::TaskLensClaim) -> Option<TaskLensClaimV1> {
+    if claim.status() != VerifiedClaimStatus::Active {
+        return None;
+    }
+    let evidence = claim
+        .evidence()
+        .iter()
+        .map(map_task_lens_claim_evidence_to_v1)
+        .collect::<Option<Vec<_>>>()?;
+    Some(TaskLensClaimV1::new(
+        encode_hex(claim.id().as_bytes()),
+        claim.module_id().to_string(),
+        match claim.kind() {
+            VerifiedClaimKind::Fact => TaskLensClaimKindV1::Fact,
+            VerifiedClaimKind::Observation => TaskLensClaimKindV1::Observation,
+            VerifiedClaimKind::Hypothesis => TaskLensClaimKindV1::Hypothesis,
+        },
+        match claim.polarity() {
+            ModuleClaimPolarity::Affirms => TaskLensClaimPolarityV1::Affirms,
+            ModuleClaimPolarity::Denies => TaskLensClaimPolarityV1::Denies,
+        },
+        claim.confidence().basis_points(),
+        map_task_lens_claim_predicate_to_v1(claim.predicate())?,
+        evidence,
+    ))
+}
+
+fn map_task_lens_claim_predicate_to_v1(
+    predicate: &ModuleClaimPredicate,
+) -> Option<TaskLensClaimPredicateV1> {
+    match predicate {
+        ModuleClaimPredicate::Path(path) => Some(TaskLensClaimPredicateV1::Path {
+            path: map_task_lens_path_to_v1(path),
+        }),
+        ModuleClaimPredicate::Symbol(symbol_id) => Some(TaskLensClaimPredicateV1::Symbol {
+            symbol_id: symbol_id.to_string(),
+        }),
+        ModuleClaimPredicate::Relation {
+            source,
+            target,
+            kind,
+        } => Some(TaskLensClaimPredicateV1::Relation {
+            source: map_module_dependency_endpoint_to_v1(source),
+            target: map_module_dependency_endpoint_to_v1(target),
+            relation: map_syntax_relation_to_v1(*kind)?,
+        }),
+        ModuleClaimPredicate::Observed(statement) => Some(TaskLensClaimPredicateV1::Observed {
+            statement: statement.as_str().to_owned(),
+        }),
+        ModuleClaimPredicate::ArchitecturalIntent(statement) => {
+            Some(TaskLensClaimPredicateV1::ArchitecturalIntent {
+                statement: statement.as_str().to_owned(),
+            })
+        }
+    }
+}
+
+fn map_task_lens_claim_evidence_to_v1(
+    evidence: &ResolvedModuleCardEvidence,
+) -> Option<TaskLensClaimEvidenceV1> {
+    match evidence {
+        ResolvedModuleCardEvidence::File { id, revision } => Some(TaskLensClaimEvidenceV1::File {
+            evidence_id: encode_hex(id.as_bytes()),
+            revision: map_project_map_search_evidence_to_v1(revision, None),
+        }),
+        ResolvedModuleCardEvidence::Symbol { id, symbol } => {
+            let parsed = symbol.parsed();
+            Some(TaskLensClaimEvidenceV1::Symbol {
+                evidence_id: encode_hex(id.as_bytes()),
+                symbol_id: symbol.id().to_string(),
+                symbol_kind: map_project_map_search_symbol_kind_to_v1(parsed.kind()),
+                name: parsed.name().as_str().to_owned(),
+                signature: parsed.signature().map(|value| value.as_str().to_owned()),
+                revision: map_project_map_search_evidence_to_v1(
+                    symbol.revision(),
+                    Some(parsed.declaration_range()),
+                ),
+            })
+        }
+        ResolvedModuleCardEvidence::GraphEdge { id, edge } => {
+            Some(TaskLensClaimEvidenceV1::GraphEdge {
+                relation: map_syntax_relation_to_v1(edge.kind())?,
+                edge: map_task_lens_graph_edge_evidence_to_v1(*id, edge),
+            })
+        }
+    }
+}
+
+fn map_task_lens_graph_edge_evidence_to_v1(
+    evidence_id: ModuleCardEvidenceId,
+    edge: &GraphEdge,
+) -> ModuleDependencyEdgeEvidenceV1 {
+    let evidence = edge.evidence();
+    let range = evidence.range();
+    let start = range.start_position();
+    let end = range.end_position();
+    ModuleDependencyEdgeEvidenceV1::new(
+        encode_hex(evidence_id.as_bytes()),
+        map_module_dependency_endpoint_to_v1(edge.source()),
+        map_module_dependency_endpoint_to_v1(edge.target()),
+        encode_hex(evidence.revision().path().as_bytes()),
+        encode_hex(evidence.revision().content_hash().as_bytes()),
+        ModuleDependencySourceRangeV1::new(
+            range.start_byte(),
+            range.end_byte(),
+            ModuleDependencySourcePositionV1::new(start.row(), start.column()),
+            ModuleDependencySourcePositionV1::new(end.row(), end.column()),
+        ),
+        match edge.provider() {
+            SyntaxProvider::TreeSitter => ModuleDependencyProviderV1::TreeSitter,
+            SyntaxProvider::Manifest => ModuleDependencyProviderV1::Manifest,
+            SyntaxProvider::LanguageHeuristic => ModuleDependencyProviderV1::LanguageHeuristic,
+        },
+        edge.confidence().basis_points(),
+        match edge.resolution() {
+            LinkResolution::AdapterLocalSymbol => ModuleDependencyResolutionV1::AdapterLocalSymbol,
+            LinkResolution::AdapterFile => ModuleDependencyResolutionV1::AdapterFile,
+            LinkResolution::ExactModuleReference => {
+                ModuleDependencyResolutionV1::ExactModuleReference
+            }
+            LinkResolution::UniqueFileLocalName => {
+                ModuleDependencyResolutionV1::UniqueFileLocalName
+            }
+            LinkResolution::UniqueQualifiedName => {
+                ModuleDependencyResolutionV1::UniqueQualifiedName
+            }
+        },
+    )
+}
+
+const fn map_syntax_relation_to_v1(
+    relation: SyntaxRelationKind,
+) -> Option<ModuleDependencyRelationV1> {
+    match relation {
+        SyntaxRelationKind::Imports => Some(ModuleDependencyRelationV1::Imports),
+        SyntaxRelationKind::Exports => Some(ModuleDependencyRelationV1::Exports),
+        SyntaxRelationKind::Calls => Some(ModuleDependencyRelationV1::Calls),
+        SyntaxRelationKind::Implements => Some(ModuleDependencyRelationV1::Implements),
+        SyntaxRelationKind::Extends => Some(ModuleDependencyRelationV1::Extends),
+        SyntaxRelationKind::Reads => Some(ModuleDependencyRelationV1::Reads),
+        SyntaxRelationKind::Writes => Some(ModuleDependencyRelationV1::Writes),
+        SyntaxRelationKind::Configures => Some(ModuleDependencyRelationV1::Configures),
+        SyntaxRelationKind::Tests => Some(ModuleDependencyRelationV1::Tests),
+        SyntaxRelationKind::Builds => Some(ModuleDependencyRelationV1::Builds),
+        SyntaxRelationKind::Documents => Some(ModuleDependencyRelationV1::Documents),
+        SyntaxRelationKind::Contains | SyntaxRelationKind::Defines => None,
+    }
+}
+
 pub(crate) fn map_module_runtime_map_query_from_v1(
     request: &QueryModuleRuntimeMapRequestV1,
 ) -> Result<ModuleRuntimeMapQuery, CommandErrorV1> {
@@ -1952,6 +2742,33 @@ pub(crate) fn map_module_runtime_flow_query_from_v1(
         kind,
         result_limit,
     ))
+}
+
+pub(crate) fn map_project_map_search_query_from_v1(
+    request: &QueryProjectMapSearchRequestV1,
+) -> Result<ProjectMapSearchQuery, CommandErrorV1> {
+    ProjectMapSearchQuery::try_from_string(request.query().to_owned())
+        .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectMapSearchQuery))
+}
+
+pub(crate) fn map_task_lens_task_id_from_v1(
+    request: &QueryTaskLensTaskRequestV1,
+) -> Result<TaskId, CommandErrorV1> {
+    decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidTaskLensSelection))
+}
+
+pub(crate) fn map_task_lens_selection_from_v1(
+    request: &CompileTaskLensRequestV1,
+) -> Result<(TaskId, TaskStepId), CommandErrorV1> {
+    let task_id = decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidTaskLensSelection))?;
+    let step_id = decode_stable_id(request.step_id())
+        .map(TaskStepId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidTaskLensSelection))?;
+    Ok((task_id, step_id))
 }
 
 fn map_module_runtime_map_to_v1(map: &ModuleRuntimeMap) -> ModuleRuntimeMapV1 {
@@ -2470,6 +3287,86 @@ fn map_module_runtime_error_to_v1(error: ModuleRuntimeFailure) -> CommandErrorV1
         ModuleRuntimeFailure::Cancelled
         | ModuleRuntimeFailure::TimedOut
         | ModuleRuntimeFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_project_map_search_error_to_v1(error: SearchProjectMapFailure) -> CommandErrorV1 {
+    let code = match error {
+        SearchProjectMapFailure::Search(a3_application::KnowledgeSearchFailure::Storage(error)) => {
+            map_storage_error_to_v1(error)
+        }
+        SearchProjectMapFailure::Search(
+            a3_application::KnowledgeSearchFailure::Cancelled
+            | a3_application::KnowledgeSearchFailure::TimedOut,
+        )
+        | SearchProjectMapFailure::Cancelled => ErrorCodeV1::LocalStorageUnavailable,
+        SearchProjectMapFailure::Search(
+            a3_application::KnowledgeSearchFailure::IndexUnavailable
+            | a3_application::KnowledgeSearchFailure::ProjectionUnavailable(_)
+            | a3_application::KnowledgeSearchFailure::SeedUnavailable
+            | a3_application::KnowledgeSearchFailure::InvalidCursor
+            | a3_application::KnowledgeSearchFailure::InvalidStoredProjection,
+        )
+        | SearchProjectMapFailure::InvalidCandidateSet(_)
+        | SearchProjectMapFailure::InvalidPublication(_)
+        | SearchProjectMapFailure::Fusion(_)
+        | SearchProjectMapFailure::ResourceLimit => ErrorCodeV1::LocalStorageInvalidData,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_task_lens_workspace_error_to_v1(error: TaskLensWorkspaceFailure) -> CommandErrorV1 {
+    let code = match error {
+        TaskLensWorkspaceFailure::Unavailable | TaskLensWorkspaceFailure::Cancelled => {
+            ErrorCodeV1::LocalStorageUnavailable
+        }
+        TaskLensWorkspaceFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+        TaskLensWorkspaceFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+        TaskLensWorkspaceFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_task_lens_compile_error_to_v1(error: CompileWorkspaceTaskLensFailure) -> CommandErrorV1 {
+    use a3_application::{
+        CompileTaskLensFailure, KnowledgeSearchFailure, TaskLensClaimStoreFailure,
+    };
+    let code = match error {
+        CompileWorkspaceTaskLensFailure::Workspace(error) => {
+            return map_task_lens_workspace_error_to_v1(error);
+        }
+        CompileWorkspaceTaskLensFailure::InvalidDurableAnchor => {
+            ErrorCodeV1::LocalStorageInvalidData
+        }
+        CompileWorkspaceTaskLensFailure::Compile(CompileTaskLensFailure::Index(
+            KnowledgeIndexFailure::Storage(error),
+        ))
+        | CompileWorkspaceTaskLensFailure::Compile(CompileTaskLensFailure::Search(
+            KnowledgeSearchFailure::Storage(error),
+        ))
+        | CompileWorkspaceTaskLensFailure::Compile(CompileTaskLensFailure::Claims(
+            TaskLensClaimStoreFailure::Storage(error),
+        )) => map_storage_error_to_v1(error),
+        CompileWorkspaceTaskLensFailure::Compile(
+            CompileTaskLensFailure::InvalidSeedQuery
+            | CompileTaskLensFailure::InvalidChannelProjection
+            | CompileTaskLensFailure::CandidateSet(_)
+            | CompileTaskLensFailure::CandidateSets(_)
+            | CompileTaskLensFailure::Fusion(_)
+            | CompileTaskLensFailure::Compile(_)
+            | CompileTaskLensFailure::ResourceLimit,
+        ) => ErrorCodeV1::LocalStorageInvalidData,
+        CompileWorkspaceTaskLensFailure::Compile(
+            CompileTaskLensFailure::IndexUnavailable
+            | CompileTaskLensFailure::Index(_)
+            | CompileTaskLensFailure::Search(_)
+            | CompileTaskLensFailure::Claims(_)
+            | CompileTaskLensFailure::Semantic(_)
+            | CompileTaskLensFailure::Cancelled
+            | CompileTaskLensFailure::TimedOut
+            | CompileTaskLensFailure::ProgressUnavailable,
+        ) => ErrorCodeV1::TaskLensUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

@@ -5,10 +5,10 @@ mod support;
 use a3_application::{
     CompileTaskLens, EmbeddingExecutionMode, EmbeddingOperationControl, EmbeddingProgressError,
     GenerateSemanticEmbeddings, GenerateSemanticEmbeddingsOutcome, IndexPersistenceControl,
-    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeStore, PlanDeepMap,
-    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
-    RepositoryIndexControlError, RepositoryRescanReason, SemanticEmbeddingJobControl,
-    TaskLensControl, TaskLensControlError,
+    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeStore,
+    PlanDeepMap, ProjectMapSearchQuery, RefreshRepositoryIndex, RepositoryChangeBatch,
+    RepositoryIndexControl, RepositoryIndexControlError, RepositoryRescanReason, SearchProjectMap,
+    SemanticEmbeddingJobControl, TaskLensControl, TaskLensControlError,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
@@ -108,6 +108,12 @@ impl TaskLensControl for OfflineControl {
     }
 }
 
+impl KnowledgeSearchControl for OfflineControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
 impl EmbeddingOperationControl for OfflineControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -164,6 +170,45 @@ fn current_app_core_runs_end_to_end_without_embeddings() -> Result<(), Box<dyn E
             .ok_or("no-embeddings acceptance publication is missing")?;
         if published.run().snapshot_id() != indexed.snapshot().id() {
             return Err("no-embeddings acceptance read a different snapshot".into());
+        }
+
+        let search = SearchProjectMap::new(store.clone())
+            .execute(
+                &project,
+                &ProjectMapSearchQuery::try_from_string("launch".to_owned())?,
+                &OfflineControl,
+            )
+            .await?;
+        if search.index_run_id() != published.run().id()
+            || search.snapshot_id() != published.run().snapshot_id()
+            || search.hits().is_empty()
+        {
+            return Err("Project Map search did not retain its current publication".into());
+        }
+        let launch = search
+            .hits()
+            .iter()
+            .find(|hit| {
+                matches!(
+                    hit.target(),
+                    a3_domain::ExactSearchTarget::Symbol(symbol)
+                        if symbol.symbol().parsed().name().as_str() == "launch"
+                )
+            })
+            .ok_or("Project Map search did not find the launch symbol")?;
+        let search_channels = launch
+            .explanation()
+            .sources()
+            .iter()
+            .map(|source| source.reason().source_channel())
+            .collect::<BTreeSet<_>>();
+        if !search_channels.contains(&SourceChannel::Exact)
+            || !search_channels.contains(&SourceChannel::Lexical)
+            || search_channels.contains(&SourceChannel::Semantic)
+        {
+            return Err(
+                "Project Map search did not preserve deterministic source provenance".into(),
+            );
         }
 
         let coverage = ModuleCoverageSnapshot::empty(
