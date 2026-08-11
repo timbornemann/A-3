@@ -108,6 +108,19 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Rootauswahl, bindet ihn an den sichtbaren Run/Snapshot und öffnet genaue Symbol-, Ziel- und
   Kanten-Evidence. Nach `publicationChanged` werden alte Roots und Evidence bis zum erneuten
   atomaren Read ausgeblendet. Kein Runtime-Read läuft im 500-ms-Statuspolling.
+- Der U4-Module-Card-Detail-Contract liest die deterministisch jüngste dauerhafte Card eines
+  explizit ausgewählten aktuellen Primärmoduls in derselben kurzen Transaktion wie die jüngste
+  atomare Indexpublikation. Storage-Tests prüfen getrennte aktuelle und historische
+  Publikationsanker, die Current→Stale-Invalidierung nach geänderter Evidence, ein-Hop-
+  `NeedsReview`, Cancellation sowie die Ablehnung widersprüchlicher Feld-, Claim-, Evidence- und
+  Lifecycle-Zeilen. Rust- und TypeScript-Grenztests lehnen unbekannte Felder, nicht kanonische IDs,
+  Schema-/Mapperabweichungen, übergroße oder falsch geordnete V1-Felder, Evidence außerhalb des
+  Feldes, doppelte Claims und eine Lifecycle-Propagation ab, durch die ein stale oder zu prüfender
+  Claim als current erscheinen könnte. Der reale Tauri-IPC-Test erreicht ausschließlich die enge
+  Capability mit einer Modul-ID und ohne Projekt-, Pfad-, Card-, Claim- oder Evidence-Parameter.
+  Der Component-Test lädt erst nach expliziter Modulauswahl, entfernt alte Card-Daten während eines
+  Reloads und zeigt Claim-Typ, Confidence sowie `Current`, `Stale` oder `NeedsReview` unabhängig.
+  Kein Card-Detail-Read läuft im 500-ms-Statuspolling.
 
 ### Persistenz
 

@@ -11,41 +11,43 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
-    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
-    GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery, IndexPersistenceControl,
-    IndexPersistenceControlError, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
-    ListRecentProjectsError, ModuleCardFreshness, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
-    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
-    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
-    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
-    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
-    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
-    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
-    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
-    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
-    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
-    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
-    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
-    ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
-    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
-    RecentProject, RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, TraceModuleRuntimeFlow,
+    DeepMapExecutor, GetHealth, GetModuleCardDetail, GetModuleCardFreshness,
+    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus,
+    GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
+    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
+    ListRecentProjects, ListRecentProjectsError, ModuleCardClaimState, ModuleCardDetail,
+    ModuleCardDetailControl, ModuleCardDetailControlError, ModuleCardDetailFailure,
+    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardFreshness,
+    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
+    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
+    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
+    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
+    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
+    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
+    ModuleRuntimeFlowQuery, ModuleRuntimeMap, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
+    ModuleRuntimeRoot, ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootSet,
+    ModuleRuntimeStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
+    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
+    OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
+    ProjectIndexStatus, ProjectInspectionFailure, ProjectReconciliationConfirmer,
+    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
+    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
+    RepositoryTreeQuery, RepositoryTreeStore, TraceModuleRuntimeFlow,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, ExactSearchTarget, ExploreBudget, FileRevision,
     GitHead, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage,
-    IndexRunId, IndexRunStatus, InvalidationReason, LinkResolution, ModuleCardEvidenceId, ModuleId,
-    ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId,
-    ProjectIdentity, RepositoryPath, SnapshotId, SymbolId, SymbolKind, SyntaxProvider,
-    TraversalResultLimit,
+    IndexRunId, IndexRunStatus, InvalidationReason, LinkResolution, ModuleCardEvidenceId,
+    ModuleCardField, ModuleId, ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform,
+    Progress, ProjectId, ProjectIdentity, RepositoryPath, SnapshotId, SymbolId, SymbolKind,
+    SyntaxProvider, TraversalResultLimit, VerifiedClaimKind,
 };
 use a3_protocol::{
     CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
@@ -53,9 +55,11 @@ use a3_protocol::{
     DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
     IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
     IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
-    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
-    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
-    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
+    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1,
+    ModuleCardDetailV1, ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1,
+    ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1,
+    ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
     ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
     ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
     ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
@@ -67,12 +71,12 @@ use a3_protocol::{
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
     OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
-    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
-    RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
-    RepositoryTreeResponseV1,
+    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleCardDetailRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryRepositoryTreeRequestV1,
+    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
+    RecentProjectsResponseV1, RemoveProjectResponseV1, RepositoryTreeEntryKindV1,
+    RepositoryTreeEntryV1, RepositoryTreePageV1, RepositoryTreeResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -108,6 +112,7 @@ pub struct CompositionRoot {
     project_status: Option<GetProjectIndexStatus>,
     index_overview: Option<GetPublishedIndexOverview>,
     module_card_freshness: Option<GetModuleCardFreshness>,
+    module_card_detail: Option<GetModuleCardDetail>,
     module_dependency_graph: Option<GetModuleDependencyGraph>,
     module_runtime_map: Option<GetModuleRuntimeMap>,
     module_runtime_flow: Option<TraceModuleRuntimeFlow>,
@@ -353,6 +358,41 @@ impl CompositionRoot {
                 }
                 ModuleTreeLoadResult::Page(page) => {
                     ModuleTreeResponseV1::available(map_module_tree_page_to_v1(&page))
+                }
+            })
+    }
+
+    /// Returns the latest durable verified Card for one explicit current primary module.
+    pub async fn query_module_card_detail(
+        &self,
+        query: &ModuleCardDetailQuery,
+    ) -> Result<ModuleCardDetailResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ModuleCardDetailResponseV1::no_project());
+        };
+        let Some(reader) = &self.module_card_detail else {
+            return Ok(ModuleCardDetailResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_module_card_detail_error_to_v1)
+            .map(|result| match result {
+                ModuleCardDetailLoadResult::NoPublishedIndex => {
+                    ModuleCardDetailResponseV1::no_published_index()
+                }
+                ModuleCardDetailLoadResult::ProjectionUnavailable => {
+                    ModuleCardDetailResponseV1::projection_unavailable()
+                }
+                ModuleCardDetailLoadResult::ModuleUnavailable => {
+                    ModuleCardDetailResponseV1::module_unavailable()
+                }
+                ModuleCardDetailLoadResult::CardUnavailable => {
+                    ModuleCardDetailResponseV1::card_unavailable()
+                }
+                ModuleCardDetailLoadResult::Detail(detail) => {
+                    ModuleCardDetailResponseV1::available(map_module_card_detail_to_v1(&detail))
                 }
             })
     }
@@ -702,6 +742,29 @@ impl ModuleCardFreshnessControl for DesktopBoundedReadControl {
     }
 }
 
+impl ModuleCardDetailControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ModuleCardDetailControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ModuleCardDetailControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ModuleCardDetailControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ModuleCardDetailControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl RepositoryTreeControl for DesktopBoundedReadControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -828,6 +891,7 @@ struct CompositionBase {
 struct OptionalCompositionPorts {
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
+    module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
     module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
     module_runtime_store: Option<Arc<dyn ModuleRuntimeStore>>,
     knowledge_search_store: Option<Arc<dyn KnowledgeSearchStore>>,
@@ -841,6 +905,7 @@ struct OptionalCompositionPorts {
 struct IndexingCompositionPorts {
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
+    module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
     module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
     module_runtime_store: Arc<dyn ModuleRuntimeStore>,
     knowledge_search_store: Arc<dyn KnowledgeSearchStore>,
@@ -902,6 +967,7 @@ impl CompositionBase {
             OptionalCompositionPorts {
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
+                module_card_detail_store: Some(ports.module_card_detail_store),
                 module_dependency_graph_store: Some(ports.module_dependency_graph_store),
                 module_runtime_store: Some(ports.module_runtime_store),
                 knowledge_search_store: Some(ports.knowledge_search_store),
@@ -930,6 +996,7 @@ impl CompositionBase {
         let module_card_freshness = ports
             .module_card_freshness_store
             .map(GetModuleCardFreshness::new);
+        let module_card_detail = ports.module_card_detail_store.map(GetModuleCardDetail::new);
         let module_dependency_graph = ports
             .module_dependency_graph_store
             .map(GetModuleDependencyGraph::new);
@@ -987,6 +1054,7 @@ impl CompositionBase {
             project_status,
             index_overview,
             module_card_freshness,
+            module_card_detail,
             module_dependency_graph,
             module_runtime_map,
             module_runtime_flow,
@@ -1024,6 +1092,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
+            let module_card_detail_store: Arc<dyn ModuleCardDetailStore> = store.clone();
             let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
             let module_runtime_store: Arc<dyn ModuleRuntimeStore> = store.clone();
             let knowledge_search_store: Arc<dyn KnowledgeSearchStore> = store.clone();
@@ -1040,6 +1109,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 IndexingCompositionPorts {
                     index_store,
                     module_card_freshness_store,
+                    module_card_detail_store,
                     module_dependency_graph_store,
                     module_runtime_store,
                     knowledge_search_store,
@@ -1061,6 +1131,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_index_activity,
             commands::query_index_overview,
             commands::query_module_card_freshness,
+            commands::query_module_card_detail,
             commands::query_module_dependency_graph,
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
@@ -1293,6 +1364,131 @@ fn map_module_card_freshness_to_v1(freshness: &ModuleCardFreshness) -> ModuleCar
             })
             .collect(),
     )
+}
+
+pub(crate) fn map_module_card_detail_query_from_v1(
+    request: &QueryModuleCardDetailRequestV1,
+) -> Result<ModuleCardDetailQuery, CommandErrorV1> {
+    decode_module_id(request.module_id())
+        .map(ModuleCardDetailQuery::new)
+        .map_err(|()| invalid_module_card_detail_query())
+}
+
+fn map_module_card_detail_to_v1(detail: &ModuleCardDetail) -> ModuleCardDetailV1 {
+    ModuleCardDetailV1::new(
+        detail.current_index_run_id().to_string(),
+        detail.current_snapshot_id().to_string(),
+        detail.source_index_run_id().to_string(),
+        detail.source_snapshot_id().to_string(),
+        encode_hex(detail.id().as_bytes()),
+        detail.module_id().to_string(),
+        detail.schema_version().get(),
+        detail.mapper_profile_version().get(),
+        detail.confidence().basis_points(),
+        match detail.lifecycle() {
+            a3_application::ModuleCardLifecycle::Current => ModuleCardLifecycleV1::Current,
+            a3_application::ModuleCardLifecycle::Stale {
+                invalidated_by_index_run_id,
+                reason,
+            } => ModuleCardLifecycleV1::Stale {
+                invalidated_by_index_run_id: invalidated_by_index_run_id.to_string(),
+                reason: map_invalidation_reason_to_v1(reason),
+            },
+            a3_application::ModuleCardLifecycle::NeedsReview {
+                invalidated_by_index_run_id,
+                reason,
+            } => ModuleCardLifecycleV1::NeedsReview {
+                invalidated_by_index_run_id: invalidated_by_index_run_id.to_string(),
+                reason: map_invalidation_reason_to_v1(reason),
+            },
+        },
+        detail
+            .fields()
+            .iter()
+            .map(|field| {
+                ModuleCardDetailFieldV1::new(
+                    map_module_card_field_to_v1(field.field()),
+                    field
+                        .evidence_ids()
+                        .iter()
+                        .map(|id| encode_hex(id.as_bytes()))
+                        .collect(),
+                    field
+                        .values()
+                        .iter()
+                        .map(|value| {
+                            let claim = value.claim();
+                            ModuleCardValueV1::new(
+                                value.value().to_owned(),
+                                ModuleCardClaimV1::new(
+                                    encode_hex(claim.id().as_bytes()),
+                                    match claim.kind() {
+                                        VerifiedClaimKind::Fact => ModuleCardClaimKindV1::Fact,
+                                        VerifiedClaimKind::Observation => {
+                                            ModuleCardClaimKindV1::Observation
+                                        }
+                                        VerifiedClaimKind::Hypothesis => {
+                                            ModuleCardClaimKindV1::Hypothesis
+                                        }
+                                    },
+                                    match claim.state() {
+                                        ModuleCardClaimState::Current => {
+                                            ModuleCardClaimStateV1::Current
+                                        }
+                                        ModuleCardClaimState::Stale => {
+                                            ModuleCardClaimStateV1::Stale
+                                        }
+                                        ModuleCardClaimState::NeedsReview => {
+                                            ModuleCardClaimStateV1::NeedsReview
+                                        }
+                                    },
+                                    claim.confidence().basis_points(),
+                                    claim
+                                        .evidence_ids()
+                                        .iter()
+                                        .map(|id| encode_hex(id.as_bytes()))
+                                        .collect(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+const fn map_module_card_field_to_v1(field: ModuleCardField) -> ModuleCardFieldKindV1 {
+    match field {
+        ModuleCardField::Title => ModuleCardFieldKindV1::Title,
+        ModuleCardField::Paths => ModuleCardFieldKindV1::Paths,
+        ModuleCardField::Purpose => ModuleCardFieldKindV1::Purpose,
+        ModuleCardField::Responsibilities => ModuleCardFieldKindV1::Responsibilities,
+        ModuleCardField::PublicSurface => ModuleCardFieldKindV1::PublicSurface,
+        ModuleCardField::Entrypoints => ModuleCardFieldKindV1::Entrypoints,
+        ModuleCardField::Dependencies => ModuleCardFieldKindV1::Dependencies,
+        ModuleCardField::DataFlows => ModuleCardFieldKindV1::DataFlows,
+        ModuleCardField::Invariants => ModuleCardFieldKindV1::Invariants,
+        ModuleCardField::Tests => ModuleCardFieldKindV1::Tests,
+        ModuleCardField::Risks => ModuleCardFieldKindV1::Risks,
+        ModuleCardField::OpenQuestions => ModuleCardFieldKindV1::OpenQuestions,
+    }
+}
+
+const fn map_invalidation_reason_to_v1(reason: InvalidationReason) -> ModuleCardFreshnessReasonV1 {
+    match reason {
+        InvalidationReason::EvidenceChanged => ModuleCardFreshnessReasonV1::EvidenceChanged,
+        InvalidationReason::ModuleRemoved => ModuleCardFreshnessReasonV1::ModuleRemoved,
+        InvalidationReason::ParserVersionChanged => {
+            ModuleCardFreshnessReasonV1::ParserVersionChanged
+        }
+        InvalidationReason::MapperVersionChanged => {
+            ModuleCardFreshnessReasonV1::MapperVersionChanged
+        }
+        InvalidationReason::DirectDependencyChanged => {
+            ModuleCardFreshnessReasonV1::DirectDependencyChanged
+        }
+    }
 }
 
 pub(crate) fn map_module_tree_query_from_v1(
@@ -1858,6 +2054,10 @@ fn invalid_module_runtime_flow_query() -> CommandErrorV1 {
     CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleRuntimeFlowQuery)
 }
 
+fn invalid_module_card_detail_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleCardDetailQuery)
+}
+
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
     DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
 }
@@ -2009,6 +2209,17 @@ fn map_module_card_freshness_error_to_v1(error: ModuleCardFreshnessFailure) -> C
         ModuleCardFreshnessFailure::Cancelled
         | ModuleCardFreshnessFailure::TimedOut
         | ModuleCardFreshnessFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_module_card_detail_error_to_v1(error: ModuleCardDetailFailure) -> CommandErrorV1 {
+    let code = match error {
+        ModuleCardDetailFailure::Storage(error) => map_storage_error_to_v1(error),
+        ModuleCardDetailFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        ModuleCardDetailFailure::Cancelled
+        | ModuleCardDetailFailure::TimedOut
+        | ModuleCardDetailFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

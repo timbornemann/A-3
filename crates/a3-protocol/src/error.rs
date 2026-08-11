@@ -45,6 +45,8 @@ pub enum ErrorCodeV1 {
     InvalidModuleRuntimeMapQuery,
     /// A publication, module, root, preset, or result limit violated the runtime-flow contract.
     InvalidModuleRuntimeFlowQuery,
+    /// A module ID violated the strict Module Card detail contract.
+    InvalidModuleCardDetailQuery,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -138,6 +140,9 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::InvalidModuleRuntimeFlowQuery => {
                 "The module runtime-flow request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidModuleCardDetailQuery => {
+                "The Module Card detail request is outside the supported bounds."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

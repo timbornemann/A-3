@@ -5,6 +5,7 @@ import type { DeepMapControlResponseV1, DeepMapStatusResponseV1 } from './lib/de
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
+import type { ModuleCardDetailResponseV1 } from './lib/module-card-detail';
 import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
 import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-graph';
 import type { ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1 } from './lib/module-runtime';
@@ -139,6 +140,47 @@ const moduleCardFreshness: ModuleCardFreshnessResponseV1 = {
         { count: '1', reason: 'directDependencyChanged', status: 'needsReview' },
       ],
       snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const staleModuleCard: ModuleCardDetailResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    detail: {
+      cardId: 'e'.repeat(64),
+      confidenceBasisPoints: 8_000,
+      currentIndexRunId: '6'.repeat(64),
+      currentSnapshotId: '4'.repeat(64),
+      fields: [
+        {
+          evidenceIds: ['f'.repeat(64)],
+          kind: 'publicSurface',
+          values: [
+            {
+              claim: {
+                claimId: '1'.repeat(64),
+                confidenceBasisPoints: 7_000,
+                evidenceIds: ['f'.repeat(64)],
+                kind: 'fact',
+                state: 'stale',
+              },
+              value: 'exports main',
+            },
+          ],
+        },
+      ],
+      lifecycle: {
+        invalidatedByIndexRunId: '6'.repeat(64),
+        reason: 'evidenceChanged',
+        status: 'stale',
+      },
+      mapperProfileVersion: 1,
+      moduleId: 'a'.repeat(64),
+      schemaVersion: 1,
+      sourceIndexRunId: '5'.repeat(64),
+      sourceSnapshotId: '3'.repeat(64),
     },
     status: 'available',
   },
@@ -650,6 +692,52 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
     expect(screen.getByText('c'.repeat(64))).toBeTruthy();
     expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
+  });
+
+  it('loads a Module Card only after selection and never presents a stale Fact as current', async () => {
+    let resolveReload: ((response: ModuleCardDetailResponseV1) => void) | undefined;
+    const pendingReload = new Promise<ModuleCardDetailResponseV1>((resolve) => {
+      resolveReload = resolve;
+    });
+    const moduleCardDetailLoader = vi
+      .fn<() => Promise<ModuleCardDetailResponseV1>>()
+      .mockResolvedValueOnce(staleModuleCard)
+      .mockReturnValueOnce(pendingReload);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleCardDetailLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Module Card' })).toBeTruthy();
+    expect(moduleCardDetailLoader).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
+
+    await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(1));
+    expect(moduleCardDetailLoader).toHaveBeenCalledWith({ moduleId: 'a'.repeat(64) });
+    expect(await screen.findByText('Stale — keine aktuelle Faktenquelle')).toBeTruthy();
+    expect(screen.getByText('Fact')).toBeTruthy();
+    expect(screen.getByText('exports main')).toBeTruthy();
+    expect(screen.getByText(/Ein als „Fact“ klassifizierter/)).toBeTruthy();
+    expect(screen.getByText('1 Claim-Evidence-ID(s)')).toBeTruthy();
+
+    const cardPanel = screen.getByRole('heading', { name: 'Module Card' }).parentElement
+      ?.parentElement;
+    const refreshButton = cardPanel?.querySelector('button');
+    if (!(refreshButton instanceof HTMLButtonElement)) {
+      throw new Error('Module Card refresh button is missing.');
+    }
+    await fireEvent.click(refreshButton);
+    await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('exports main')).toBeNull();
+    expect(screen.getByText(/wird atomar gelesen/)).toBeTruthy();
+
+    resolveReload?.(staleModuleCard);
+    expect(await screen.findByText('exports main')).toBeTruthy();
   });
 
   it('loads runtime roots only after selection and traces a publication-bound evidence path', async () => {

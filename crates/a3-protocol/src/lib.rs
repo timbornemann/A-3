@@ -6,6 +6,7 @@ mod goal_contract;
 mod health;
 mod index_activity;
 mod index_overview;
+mod module_card_detail;
 mod module_card_freshness;
 mod module_dependency_graph;
 mod module_runtime;
@@ -34,6 +35,12 @@ pub use index_overview::{
     IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1,
     IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewResultV1,
     IndexOverviewV1, QueryIndexOverviewRequestV1,
+};
+pub use module_card_detail::{
+    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardDetailFieldV1,
+    ModuleCardDetailResponseV1, ModuleCardDetailResultV1, ModuleCardDetailV1,
+    ModuleCardFieldKindV1, ModuleCardLifecycleV1, ModuleCardValueV1,
+    QueryModuleCardDetailRequestV1,
 };
 pub use module_card_freshness::{
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,

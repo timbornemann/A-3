@@ -476,7 +476,8 @@ h1 {
   margin-left: 0.3rem;
 }
 
-.module-dependency-open {
+.module-dependency-open,
+.module-card-open {
   justify-self: start;
   padding: 0.4rem 0.65rem;
   border: 1px solid rgb(20 105 78 / 24%);
@@ -496,9 +497,217 @@ h1 {
   justify-self: start;
 }
 
-.module-dependency-open[aria-pressed='true'] {
+.module-dependency-open[aria-pressed='true'],
+.module-card-open[aria-pressed='true'] {
   border-color: #14694e;
   background: #e3f2eb;
+}
+
+.module-card-panel {
+  gap: 1rem;
+}
+
+.module-card-lifecycle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  align-items: center;
+  padding: 0.75rem 0.85rem;
+  border-left: 0.3rem solid #14694e;
+  border-radius: 0.55rem;
+  color: #29443c;
+  background: #e8f5ee;
+}
+
+.module-card-lifecycle-stale {
+  border-left-color: #a44035;
+  color: #6d2721;
+  background: #fff0ed;
+}
+
+.module-card-lifecycle-review {
+  border-left-color: #b97913;
+  color: #624712;
+  background: #fff7e7;
+}
+
+.module-card-safety-note {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgb(65 79 75 / 18%);
+  border-radius: 0.65rem;
+  color: #41534d;
+  background: #f4f6f5;
+  line-height: 1.5;
+}
+
+.module-card-envelope {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.module-card-envelope > div {
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.6rem;
+  background: #eef3ef;
+}
+
+.module-card-envelope dt {
+  color: #657770;
+  font-size: 0.72rem;
+}
+
+.module-card-envelope dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.module-card-fields {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.module-card-field {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid rgb(22 63 54 / 12%);
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.module-card-field-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.module-card-field-heading h5 {
+  margin: 0;
+}
+
+.module-card-field-heading span {
+  color: #657770;
+  font-size: 0.72rem;
+}
+
+.module-card-field > ol {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.module-card-field > ol > li {
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border-left: 0.25rem solid #14694e;
+  border-radius: 0.6rem;
+  background: #f4faf7;
+}
+
+.module-card-field > ol > li.module-card-value-stale {
+  border-left-color: #a44035;
+  background: #fff5f3;
+}
+
+.module-card-field > ol > li.module-card-value-review {
+  border-left-color: #b97913;
+  background: #fffaef;
+}
+
+.module-card-claim-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  color: #657770;
+  font-size: 0.72rem;
+}
+
+.module-card-claim-kind,
+.module-card-claim-state {
+  display: inline-flex;
+  padding: 0.18rem 0.45rem;
+  border: 1px solid #86938f;
+  border-radius: 999px;
+  color: #344740;
+  background: #fff;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.module-card-claim-fact {
+  border-color: #14694e;
+  color: #0f5b43;
+  background: #edf8f2;
+}
+
+.module-card-claim-observation {
+  border-color: #467565;
+  color: #29443c;
+  background: #eef6f1;
+}
+
+.module-card-claim-hypothesis {
+  border-color: #75628a;
+  color: #4f3d64;
+  background: #f5f0fa;
+}
+
+.module-card-claim-current {
+  border-color: #14694e;
+  color: #0f5b43;
+  background: #e8f5ee;
+}
+
+.module-card-claim-stale {
+  border-color: #a44035;
+  color: #792e26;
+  background: #ffe9e5;
+}
+
+.module-card-claim-needsReview {
+  border-color: #b97913;
+  color: #6a4b10;
+  background: #fff0cc;
+}
+
+.module-card-field > ol > li > p {
+  margin: 0.6rem 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.module-card-evidence-identities {
+  color: #657770;
+  font-size: 0.75rem;
+}
+
+.module-card-evidence-identities summary {
+  cursor: pointer;
+}
+
+.module-card-evidence-identities p,
+.module-card-evidence-identities ul {
+  margin: 0.45rem 0 0;
+}
+
+.module-card-evidence-identities ul {
+  display: grid;
+  gap: 0.25rem;
+  padding-left: 1.1rem;
+}
+
+.module-card-evidence-identities code {
+  overflow-wrap: anywhere;
 }
 
 .module-runtime-panel {

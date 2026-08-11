@@ -1,20 +1,22 @@
 use crate::{
-    CompositionRoot, map_module_dependency_graph_query_from_v1,
-    map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
-    map_module_tree_query_from_v1, map_repository_tree_query_from_v1,
+    CompositionRoot, map_module_card_detail_query_from_v1,
+    map_module_dependency_graph_query_from_v1, map_module_runtime_flow_query_from_v1,
+    map_module_runtime_map_query_from_v1, map_module_tree_query_from_v1,
+    map_repository_tree_query_from_v1,
 };
 use a3_protocol::{
     CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
     HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
-    QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
-    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
-    RemoveProjectResponseV1, RepositoryTreeResponseV1, StartDeepMapRequestV1,
+    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardFreshnessResponseV1,
+    ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
+    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1,
+    ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectStatusRequestV1,
+    QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    RepositoryTreeResponseV1, StartDeepMapRequestV1,
 };
 use tauri::State;
 
@@ -70,6 +72,15 @@ pub async fn query_module_card_freshness(
     root: State<'_, CompositionRoot>,
 ) -> Result<ModuleCardFreshnessResponseV1, CommandErrorV1> {
     execute_query_module_card_freshness(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns the latest durable classified Card for one explicit current primary module.
+pub async fn query_module_card_detail(
+    request: QueryModuleCardDetailRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ModuleCardDetailResponseV1, CommandErrorV1> {
+    execute_query_module_card_detail(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -266,6 +277,17 @@ async fn execute_query_module_card_freshness(
     root.query_module_card_freshness().await
 }
 
+async fn execute_query_module_card_detail(
+    request: QueryModuleCardDetailRequestV1,
+    root: &CompositionRoot,
+) -> Result<ModuleCardDetailResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_module_card_detail_query_from_v1(&request)?;
+    root.query_module_card_detail(&query).await
+}
+
 async fn execute_query_module_tree(
     request: QueryModuleTreeRequestV1,
     root: &CompositionRoot,
@@ -379,11 +401,11 @@ mod tests {
     use super::{
         execute_control_deep_map, execute_list_recent_projects, execute_open_project,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
-        execute_query_index_overview, execute_query_module_card_freshness,
-        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
-        execute_query_module_runtime_map, execute_query_module_tree, execute_query_project_status,
-        execute_query_repository_tree, execute_rebuild_project_index, execute_remove_project,
-        execute_start_deep_map,
+        execute_query_index_overview, execute_query_module_card_detail,
+        execute_query_module_card_freshness, execute_query_module_dependency_graph,
+        execute_query_module_runtime_flow, execute_query_module_runtime_map,
+        execute_query_module_tree, execute_query_project_status, execute_query_repository_tree,
+        execute_rebuild_project_index, execute_remove_project, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -397,14 +419,15 @@ mod tests {
     use a3_protocol::{
         ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
-        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
-        OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryDeepMapRequestV1,
-        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
-        QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-        QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-        QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
-        RemoveProjectRequestV1, RepositoryTreeResultV1, StartDeepMapRequestV1,
+        ModuleCardDetailResultV1, ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1,
+        ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1,
+        ModuleTreeResultV1, OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
+        QueryModuleCardDetailRequestV1, QueryModuleCardFreshnessRequestV1,
+        QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectStatusRequestV1,
+        QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        RepositoryTreeResultV1, StartDeepMapRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -648,6 +671,54 @@ mod tests {
             &root,
         ));
 
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn module_card_detail_reports_no_project_and_rejects_untrusted_module_tokens()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let response = block_on(execute_query_module_card_detail(
+            QueryModuleCardDetailRequestV1::new(ProtocolVersion::CURRENT, "11".repeat(32)),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            ModuleCardDetailResultV1::NoProject
+        ));
+
+        for module_id in [
+            "aa".repeat(31),
+            "GG".repeat(32),
+            format!("{}A", "a".repeat(63)),
+        ] {
+            let result = block_on(execute_query_module_card_detail(
+                QueryModuleCardDetailRequestV1::new(ProtocolVersion::CURRENT, module_id),
+                &root,
+            ));
+            assert_eq!(
+                result.map_err(|error| error.code()),
+                Err(ErrorCodeV1::InvalidModuleCardDetailQuery)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn module_card_detail_rejects_version_before_module_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let result = block_on(execute_query_module_card_detail(
+            QueryModuleCardDetailRequestV1::new(
+                ProtocolVersion::new(999),
+                "not-a-module-id".to_owned(),
+            ),
+            &root()?,
+        ));
         assert_eq!(
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)

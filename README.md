@@ -109,7 +109,12 @@ autoritative Betriebssystempfade überschreiten dafür die WebView-Grenze. Ein w
 U4-Ausschnitt zeigt die aktuellen ranggeordneten Entry Points und Tests eines Primärmoduls. Nur
 nach Rootauswahl verfolgt A^3 entweder höchstens zwei strukturell beobachtete `Calls`-Kanten oder
 eine direkte `Tests`-Kante; Run, Snapshot, Rolle und Evidence bleiben gebunden und ein
-Publikationswechsel wird nicht mit alten Roots vermischt. Die verbindliche
+Publikationswechsel wird nicht mit alten Roots vermischt. Die explizite Module-Card-Ansicht liest
+für ein ausgewähltes Primärmodul die deterministisch jüngste verifizierte Card atomar gegen die
+aktuelle Publikation. Felder zeigen `Fact`, `Observation` oder `Hypothesis` stets getrennt von
+Confidence und `Current`, `Stale` oder `NeedsReview`; ein historischer stale Fact erscheint daher
+nie als aktuelles Faktum. Quell- und aktuelle Publikationsanker sowie stabile Evidence-IDs bleiben
+erhalten, ohne der WebView Source-, Datei- oder SQL-Zugriff zu geben. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -153,7 +158,7 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Runtime-, Module-Card-Freshness- und Deep-Map-Commands aufrufen.
+Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail- und Deep-Map-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
@@ -167,7 +172,9 @@ Core-eigen.
 `query_module_runtime_map` akzeptiert nur eine primäre Modul-ID und zwei Rootpräfixlimits;
 `query_module_runtime_flow` zusätzlich nur sichtbare Publikations-/Rootanker, ein festes
 rollenabhängiges Preset und ein Ergebnislimit. Eine generische Graphtraversierung ist nicht
-exponiert. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
+exponiert. `query_module_card_detail` akzeptiert nur die stabile ID eines ausgewählten aktuellen
+Primärmoduls; Card-, Claim-, Evidence- und Publikationsanker stammen vollständig aus dem Core.
+Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
 Diese Pfade erweitern die WebView-Capabilities nicht.

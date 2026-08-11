@@ -31,6 +31,13 @@
     type IndexOverviewResponseV1,
   } from './lib/index-overview';
   import {
+    queryModuleCardDetail,
+    type ModuleCardClaimKindV1,
+    type ModuleCardDetailQueryV1,
+    type ModuleCardDetailResponseV1,
+    type ModuleCardFieldKindV1,
+  } from './lib/module-card-detail';
+  import {
     queryModuleCardFreshness,
     type ModuleCardFreshnessReasonV1,
     type ModuleCardFreshnessResponseV1,
@@ -91,6 +98,9 @@
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
     moduleCardFreshnessLoader?: () => Promise<ModuleCardFreshnessResponseV1>;
+    moduleCardDetailLoader?: (
+      query: ModuleCardDetailQueryV1,
+    ) => Promise<ModuleCardDetailResponseV1>;
     moduleDependencyGraphLoader?: (
       query: ModuleDependencyGraphQueryV1,
     ) => Promise<ModuleDependencyGraphResponseV1>;
@@ -143,6 +153,19 @@
     | {
         kind: 'available';
         result: Extract<ModuleCardFreshnessResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type ModuleCardDetailView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | { kind: 'moduleUnavailable' }
+    | { kind: 'cardUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleCardDetailResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
   type RepositoryTreeView =
@@ -251,6 +274,7 @@
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
     moduleCardFreshnessLoader = queryModuleCardFreshness,
+    moduleCardDetailLoader = queryModuleCardDetail,
     moduleDependencyGraphLoader = queryModuleDependencyGraph,
     moduleRuntimeMapLoader = queryModuleRuntimeMap,
     moduleRuntimeFlowLoader = queryModuleRuntimeFlow,
@@ -268,6 +292,8 @@
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
   let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
+  let moduleCardDetailView = $state<ModuleCardDetailView>({ kind: 'idle' });
+  let moduleCardSelection = $state<{ moduleId: string; name: string } | null>(null);
   let moduleTreeView = $state<ModuleTreeView>({ kind: 'loading' });
   let moduleTreeBreadcrumbs = $state<ModuleTreeBreadcrumb[]>([]);
   let moduleTreeLoadingMore = $state(false);
@@ -297,6 +323,13 @@
   let indexActivityObserved = false;
   let moduleRuntimeMapRequestSequence = 0;
   let moduleRuntimeFlowRequestSequence = 0;
+  let moduleCardDetailRequestSequence = 0;
+
+  function resetModuleCardDetail(kind: 'idle' | 'noProject'): void {
+    moduleCardDetailRequestSequence += 1;
+    moduleCardDetailView = { kind };
+    moduleCardSelection = null;
+  }
 
   function resetModuleRuntime(kind: 'idle' | 'noProject'): void {
     moduleRuntimeMapRequestSequence += 1;
@@ -364,6 +397,9 @@
         if (moduleRuntimeSelection !== null) {
           void loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
         }
+        if (moduleCardSelection !== null) {
+          void loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
+        }
         void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
@@ -373,6 +409,7 @@
         moduleDependencyGraphView = { kind: 'noProject' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleCardDetail('noProject');
         resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
@@ -466,6 +503,42 @@
     } finally {
       moduleTreeLoadingMore = false;
     }
+  }
+
+  async function loadModuleCardDetail(moduleId: string, name: string): Promise<void> {
+    const requestSequence = ++moduleCardDetailRequestSequence;
+    moduleCardSelection = { moduleId, name };
+    moduleCardDetailView = { kind: 'loading' };
+    try {
+      const response = await moduleCardDetailLoader({ moduleId });
+      if (requestSequence !== moduleCardDetailRequestSequence) return;
+      if (response.result.status === 'available') {
+        moduleCardDetailView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'cardUnavailable') {
+        moduleCardDetailView = { kind: 'cardUnavailable' };
+      } else if (response.result.status === 'moduleUnavailable') {
+        moduleCardDetailView = { kind: 'moduleUnavailable' };
+      } else if (response.result.status === 'projectionUnavailable') {
+        moduleCardDetailView = { kind: 'projectionUnavailable' };
+      } else if (response.result.status === 'noPublishedIndex') {
+        moduleCardDetailView = { kind: 'noPublishedIndex' };
+      } else {
+        resetModuleCardDetail('noProject');
+      }
+    } catch {
+      if (requestSequence === moduleCardDetailRequestSequence) {
+        moduleCardDetailView = { kind: 'error' };
+      }
+    }
+  }
+
+  async function openModuleCard(entry: ModuleTreeEntryV1): Promise<void> {
+    await loadModuleCardDetail(entry.moduleId, entry.name);
+  }
+
+  async function reloadModuleCardDetail(): Promise<void> {
+    if (moduleCardSelection === null) return;
+    await loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
   }
 
   async function loadModuleTreeRoot(): Promise<void> {
@@ -767,6 +840,7 @@
         moduleDependencyGraphView = { kind: 'noProject' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleCardDetail('noProject');
         resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
@@ -781,6 +855,7 @@
       loadProjectStatus(),
       loadIndexOverview(),
       loadModuleCardFreshness(),
+      reloadModuleCardDetail(),
       loadModuleTreeRoot(),
       loadRepositoryTreeRoot(),
       loadDeepMap(),
@@ -808,6 +883,7 @@
         moduleDependencyGraphView = { kind: 'idle' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleCardDetail('idle');
         resetModuleRuntime('idle');
         await loadProjectStatus();
         await loadIndexActivity();
@@ -886,6 +962,7 @@
       moduleDependencyGraphView = { kind: 'noProject' };
       moduleDependencySelection = null;
       selectedDependencyEvidence = null;
+      resetModuleCardDetail('noProject');
       resetModuleRuntime('noProject');
       repositoryTreeView = { kind: 'noProject' };
       repositoryTreeBreadcrumbs = [];
@@ -1048,6 +1125,33 @@
       parserVersionChanged: 'Parser-Version geändert',
     };
     return labels[reason];
+  }
+
+  function moduleCardFieldLabel(field: ModuleCardFieldKindV1): string {
+    const labels: Record<ModuleCardFieldKindV1, string> = {
+      dataFlows: 'Datenflüsse',
+      dependencies: 'Abhängigkeiten',
+      entrypoints: 'Entry Points',
+      invariants: 'Invarianten',
+      openQuestions: 'Offene Fragen',
+      paths: 'Pfade',
+      publicSurface: 'Öffentliche Oberfläche',
+      purpose: 'Zweck',
+      responsibilities: 'Verantwortlichkeiten',
+      risks: 'Risiken',
+      tests: 'Tests',
+      title: 'Titel',
+    };
+    return labels[field];
+  }
+
+  function moduleCardClaimKindLabel(kind: ModuleCardClaimKindV1): string {
+    const labels: Record<ModuleCardClaimKindV1, string> = {
+      fact: 'Fact',
+      hypothesis: 'Hypothesis',
+      observation: 'Observation',
+    };
+    return labels[kind];
   }
 
   function coverageLabel(value: number | null): string {
@@ -1551,6 +1655,14 @@
                     </p>
                     <div class="module-entry-actions">
                       <button
+                        class="module-card-open"
+                        type="button"
+                        aria-pressed={moduleCardSelection?.moduleId === entry.moduleId}
+                        onclick={() => openModuleCard(entry)}
+                      >
+                        Module Card
+                      </button>
+                      <button
                         class="module-dependency-open"
                         type="button"
                         aria-pressed={moduleRuntimeSelection?.moduleId === entry.moduleId}
@@ -1585,6 +1697,145 @@
             <div class="recent-projects-error" role="alert">
               <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
+            </div>
+          {/if}
+        </div>
+        <div class="repository-tree-panel module-card-panel" aria-labelledby="module-card-heading">
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="module-card-heading">Module Card</h4>
+              <p>Verifizierte Felder mit getrennt sichtbarer Klassifikation und Aktualität.</p>
+            </div>
+            <button
+              type="button"
+              disabled={moduleCardSelection === null || moduleCardDetailView.kind === 'loading'}
+              onclick={reloadModuleCardDetail}
+            >
+              Aktualisieren
+            </button>
+          </div>
+          {#if moduleCardDetailView.kind === 'idle' || moduleCardDetailView.kind === 'noProject'}
+            <p class="project-status">
+              Wähle im Modulbaum „Module Card“, um die neueste dauerhaft verifizierte Karte bewusst
+              zu laden.
+            </p>
+          {:else if moduleCardDetailView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Module Card für {moduleCardSelection?.name ?? 'das Modul'} wird atomar gelesen …
+            </p>
+          {:else if moduleCardDetailView.kind === 'noPublishedIndex'}
+            <p class="project-status">Noch kein veröffentlichter Index.</p>
+          {:else if moduleCardDetailView.kind === 'projectionUnavailable'}
+            <p class="project-status">
+              Der historische Index enthält noch keine deterministische Modulprojektion. Ein Rebuild
+              erzeugt sie mit dem aktuellen Schema.
+            </p>
+          {:else if moduleCardDetailView.kind === 'moduleUnavailable'}
+            <div class="recent-projects-error" role="status">
+              <p>Das ausgewählte primäre Modul gehört nicht mehr zur aktuellen Publikation.</p>
+              <button type="button" onclick={loadModuleTreeRoot}>Modulbaum neu laden</button>
+            </div>
+          {:else if moduleCardDetailView.kind === 'cardUnavailable'}
+            <p class="project-status">
+              Für {moduleCardSelection?.name ?? 'dieses Modul'} wurde noch keine verifizierte Module Card
+              veröffentlicht.
+            </p>
+          {:else if moduleCardDetailView.kind === 'available'}
+            {@const card = moduleCardDetailView.result.detail}
+            <div
+              class:module-card-lifecycle-current={card.lifecycle.status === 'current'}
+              class:module-card-lifecycle-stale={card.lifecycle.status === 'stale'}
+              class:module-card-lifecycle-review={card.lifecycle.status === 'needsReview'}
+              class="module-card-lifecycle"
+              role={card.lifecycle.status === 'current' ? 'note' : 'alert'}
+            >
+              <strong>
+                {card.lifecycle.status === 'current'
+                  ? 'Current'
+                  : card.lifecycle.status === 'stale'
+                    ? 'Stale — keine aktuelle Faktenquelle'
+                    : 'NeedsReview — keine aktuelle Faktenquelle'}
+              </strong>
+              {#if card.lifecycle.status !== 'current'}
+                <span>{moduleCardFreshnessReasonLabel(card.lifecycle.reason)}</span>
+              {/if}
+            </div>
+            <p class="module-card-safety-note" role="note">
+              Claim-Typ und Aktualität sind unabhängig. Ein als „Fact“ klassifizierter, aber „Stale“
+              oder „NeedsReview“ markierter Wert wird nicht als aktuelles Faktum verwendet.
+            </p>
+            <dl class="module-card-envelope">
+              <div>
+                <dt>Ausgewähltes Modul</dt>
+                <dd>{moduleCardSelection?.name ?? card.moduleId.slice(0, 12)}</dd>
+              </div>
+              <div>
+                <dt>Card Confidence</dt>
+                <dd>{coverageLabel(card.confidenceBasisPoints)}</dd>
+              </div>
+              <div>
+                <dt>Aktueller Indexlauf</dt>
+                <dd><code>{card.currentIndexRunId}</code></dd>
+              </div>
+              <div>
+                <dt>Verifiziert in</dt>
+                <dd><code>{card.sourceIndexRunId}</code></dd>
+              </div>
+            </dl>
+            <div class="module-card-fields">
+              {#each card.fields as field (field.kind)}
+                <section class="module-card-field" aria-labelledby={`module-card-${field.kind}`}>
+                  <div class="module-card-field-heading">
+                    <h5 id={`module-card-${field.kind}`}>{moduleCardFieldLabel(field.kind)}</h5>
+                    <span>{field.evidenceIds.length} Feld-Evidence</span>
+                  </div>
+                  <ol>
+                    {#each field.values as item (item.claim.claimId)}
+                      <li
+                        class:module-card-value-current={item.claim.state === 'current'}
+                        class:module-card-value-stale={item.claim.state === 'stale'}
+                        class:module-card-value-review={item.claim.state === 'needsReview'}
+                      >
+                        <div class="module-card-claim-badges">
+                          <span
+                            class={`module-card-claim-kind module-card-claim-${item.claim.kind}`}
+                          >
+                            {moduleCardClaimKindLabel(item.claim.kind)}
+                          </span>
+                          <span
+                            class={`module-card-claim-state module-card-claim-${item.claim.state}`}
+                          >
+                            {item.claim.state === 'current'
+                              ? 'Current'
+                              : item.claim.state === 'stale'
+                                ? 'Stale'
+                                : 'NeedsReview'}
+                          </span>
+                          <span>{coverageLabel(item.claim.confidenceBasisPoints)}</span>
+                        </div>
+                        <p>{item.value}</p>
+                        <details class="module-card-evidence-identities">
+                          <summary>{item.claim.evidenceIds.length} Claim-Evidence-ID(s)</summary>
+                          {#if item.claim.evidenceIds.length === 0}
+                            <p>Architecture-Hypothese ohne deterministische Evidence.</p>
+                          {:else}
+                            <ul>
+                              {#each item.claim.evidenceIds as evidenceId (evidenceId)}
+                                <li><code>{evidenceId}</code></li>
+                              {/each}
+                            </ul>
+                          {/if}
+                        </details>
+                      </li>
+                    {/each}
+                  </ol>
+                </section>
+              {/each}
+            </div>
+          {:else if moduleCardDetailView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Die Module Card konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={reloadModuleCardDetail}>Erneut laden</button>
             </div>
           {/if}
         </div>

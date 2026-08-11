@@ -269,6 +269,34 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    absichtlich keinen Remapauftrag besitzen; eine neu publizierte Card verdrängt dagegen ihre
    ältere stale Historie aus der aktuellen Projektion.
 
+### Evidenzgebundene Module-Card-Detailansicht
+
+1. `query_module_card_detail` wählt ausschließlich die Core-eigene aktive `ProjectIdentity` und
+   akzeptiert als untrusted Eingabe nur eine stabile `ModuleId`. Pfade, Card-/Claim-IDs,
+   Publikationsanker und SQL-Parameter sind keine WebView-Eingaben.
+2. Der libSQL-Adapter liest jüngste Publikation, V8-Projektionsmarker, aktuelles Primärmodul,
+   deterministisch jüngste dauerhafte Card, Felder, Werte, Claims und Evidence-IDs in genau einer
+   kurzen Deferred-Transaktion. Aktueller Run/Snapshot und historischer Card-Quell-Run/Snapshot
+   bleiben getrennte Provenienzanker.
+3. Die Auswahlrangfolge entspricht R11: Snapshotgeneration absteigend, aktuelle Quelle bevorzugt,
+   danach Runsequenz und stabile Card-ID. Ein kompatibler älterer Quell-Run darf deshalb eine
+   aktuelle Card liefern; ein direkter oder abhängiger Invalidierungslauf bleibt dagegen sichtbar.
+4. Das Application-Read-Model rekonstruiert die V1-Feldgrenzen, lückenlose Wertindizes, genau einen
+   eindeutigen Claim je Wert, kanonische Evidence-IDs und Claim-Evidence als Teilmenge der
+   Feld-Evidence. Gesamttext, Evidence-Union und Claim-Evidence besitzen die unveränderten
+   R9-Grenzen; widersprüchliche Persistenz wird nicht teilweise gerendert.
+5. Epistemischer Claim-Typ, Confidence und Freshness sind unabhängige Typen. Card-Lifecycle wird
+   zwingend auf jeden sichtbaren Claim propagiert: Eine stale Card kann einen historisch als
+   `Fact` verifizierten Claim enthalten, dessen effektiver Anzeigezustand jedoch ausschließlich
+   `Stale` lautet; `NeedsReview` verhält sich entsprechend.
+6. IPC überträgt nur begrenzte Card-Werte, Klassifikation, Confidence, Lifecycle-Provenienz und
+   stabile Evidence-IDs. Source, aufgelöste Evidence-Payloads, Claim-Prädikate, Datenbankzeilen und
+   autoritative Pfade bleiben im Core. Die IDs bilden den schmalen Anschluss für den folgenden
+   Evidence Inspector und sind selbst keine Zugriffsberechtigung.
+7. Der Read prüft Cancellation, endet nach spätestens zwei Sekunden und läuft erst nach bewusster
+   Modulauswahl, Aktualisierung oder erfolgreichem Publish. Während eines Reloads entfernt die UI
+   die vorherige Card aus der sichtbaren Fläche; das 500-ms-Statuspolling liest keine Card-Inhalte.
+
 ### Progressiver Repository-Baum
 
 1. `query_repository_tree` wählt wie die übrigen Desktop-Reads ausschließlich die Core-eigene aktive

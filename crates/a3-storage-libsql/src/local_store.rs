@@ -7,9 +7,9 @@ use crate::{
     agent_recovery_repository, command_allowlist_repository, exact_search_repository,
     goal_contract_repository, graph_traversal_repository, index_publication, index_repository,
     index_repository::IndexRepositoryError, lexical_search_repository,
-    module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
-    module_remap_queue_repository, module_runtime_repository, module_tree_repository,
-    policy_repository, repository_tree_repository, run_journal_repository,
+    module_card_detail_repository, module_card_freshness_repository, module_card_repository,
+    module_dependency_graph_repository, module_remap_queue_repository, module_runtime_repository,
+    module_tree_repository, policy_repository, repository_tree_repository, run_journal_repository,
     semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
     verification_evidence_repository,
 };
@@ -21,19 +21,20 @@ use a3_application::{
     EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
     IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
-    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardFreshnessControl,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessFuture, ModuleCardFreshnessStore,
-    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleDependencyGraphControl,
-    ModuleDependencyGraphFailure, ModuleDependencyGraphFuture, ModuleDependencyGraphQuery,
-    ModuleDependencyGraphStore, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
-    ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure, ModuleRuntimeFlowQuery,
-    ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture, ModuleRuntimeMapLoadResult,
-    ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
-    ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
-    PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectOpenPreparation,
-    ProjectReconciliationProposal, ProjectStorageControl, ProjectStorageFailure,
-    ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
-    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
+    ModuleCardDetailFailure, ModuleCardDetailFuture, ModuleCardDetailQuery, ModuleCardDetailStore,
+    ModuleCardFreshnessControl, ModuleCardFreshnessFailure, ModuleCardFreshnessFuture,
+    ModuleCardFreshnessStore, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
+    ModuleDependencyGraphControl, ModuleDependencyGraphFailure, ModuleDependencyGraphFuture,
+    ModuleDependencyGraphQuery, ModuleDependencyGraphStore, ModuleRemapQueueFailure,
+    ModuleRemapQueueFuture, ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure,
+    ModuleRuntimeFlowQuery, ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl,
+    ModuleTreeFailure, ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore,
+    PolicyStoreFailure, PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture,
+    ProjectOpenPreparation, ProjectReconciliationProposal, ProjectStorageControl,
+    ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage,
+    RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
     RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
     RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
     RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
@@ -1421,6 +1422,29 @@ impl ModuleTreeStore for LibsqlKnowledgeStore {
     }
 }
 
+impl ModuleCardDetailStore for LibsqlKnowledgeStore {
+    fn load_module_card_detail<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ModuleCardDetailQuery,
+        control: &'a dyn ModuleCardDetailControl,
+    ) -> ModuleCardDetailFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge_for_module_card_detail(project)
+                .await?;
+            module_card_detail_repository::load(
+                knowledge.connection(),
+                project.worktree().id(),
+                query,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl ModuleDependencyGraphStore for LibsqlKnowledgeStore {
     fn load_module_dependency_graph<'a>(
         &'a self,
@@ -1980,6 +2004,29 @@ impl LibsqlKnowledgeStore {
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(ModuleTreeFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_module_card_detail(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, ModuleCardDetailFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(ModuleCardDetailFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleCardDetailFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
     }

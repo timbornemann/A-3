@@ -3,11 +3,13 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
-    GetModuleTreePage, GetRepositoryTreePage, IndexPersistenceControl,
+    CompileTaskLens, GetModuleCardDetail, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleRuntimeMap, GetModuleTreePage, GetRepositoryTreePage, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
+    ModuleCardDetailQuery, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
+    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardLifecycle,
     ModuleCardVerificationControl, ModuleCardVerificationControlError,
     ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
     ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyNodeLimit,
@@ -140,6 +142,23 @@ impl ModuleCardFreshnessControl for TestIndexControl {
     }
 }
 
+impl ModuleCardDetailControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardDetailControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleCardDetailControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 impl RepositoryTreeControl for TestIndexControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -230,6 +249,19 @@ impl ModuleCardVerificationControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleCardVerificationControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleCardDetailControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardDetailControlError> {
         Ok(())
     }
 }
@@ -928,6 +960,13 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
             .await?
             .ok_or("published fixture index is missing")?;
         let batch = verified_card_batch(&published)?;
+        let module_id = published
+            .publication()
+            .modules()
+            .modules()
+            .first()
+            .ok_or("published fixture module is missing")?
+            .id();
         let publisher = PublishVerifiedModuleCards::new(&store);
         let knowledge_path = fixture
             .layout
@@ -977,6 +1016,59 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(receipt.snapshot_id(), initial_snapshot.id());
         assert_eq!(receipt.card_count(), 1);
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+
+        let detail_reader =
+            GetModuleCardDetail::new(Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?));
+        assert_eq!(
+            detail_reader
+                .execute(
+                    &fixture.project,
+                    &ModuleCardDetailQuery::new(module_id),
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(ModuleCardDetailFailure::Cancelled)
+        );
+        let current_detail = match detail_reader
+            .execute(
+                &fixture.project,
+                &ModuleCardDetailQuery::new(module_id),
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardDetailLoadResult::Detail(detail) => detail,
+            other => {
+                return Err(format!("expected current Module Card detail, got {other:?}").into());
+            }
+        };
+        assert_eq!(current_detail.current_index_run_id(), initial_run.id());
+        assert_eq!(current_detail.current_snapshot_id(), initial_snapshot.id());
+        assert_eq!(current_detail.source_index_run_id(), initial_run.id());
+        assert_eq!(current_detail.source_snapshot_id(), initial_snapshot.id());
+        assert_eq!(current_detail.lifecycle(), ModuleCardLifecycle::Current);
+        assert_eq!(
+            current_detail
+                .fields()
+                .iter()
+                .map(|field| field.field())
+                .collect::<Vec<_>>(),
+            vec![ModuleCardField::Purpose, ModuleCardField::PublicSurface]
+        );
+        assert!(
+            current_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .all(|value| value.claim().state() == ModuleCardClaimState::Current)
+        );
+        assert!(
+            current_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .any(|value| value.claim().kind() == VerifiedClaimKind::Fact)
+        );
         assert_eq!(read_count(&knowledge_path, "module_card_fields").await?, 2);
         assert_eq!(
             read_count(&knowledge_path, "module_card_field_values").await?,
@@ -1089,6 +1181,45 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
             1
         );
         assert_eq!(read_count(&knowledge_path, "module_remap_queue").await?, 1);
+        let stale_detail = match detail_reader
+            .execute(
+                &fixture.project,
+                &ModuleCardDetailQuery::new(module_id),
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardDetailLoadResult::Detail(detail) => detail,
+            other => return Err(format!("expected stale Module Card detail, got {other:?}").into()),
+        };
+        assert_eq!(stale_detail.current_index_run_id(), changed_run.id());
+        assert_eq!(stale_detail.current_snapshot_id(), changed_snapshot.id());
+        assert_eq!(stale_detail.source_index_run_id(), initial_run.id());
+        assert_eq!(stale_detail.source_snapshot_id(), initial_snapshot.id());
+        assert_eq!(
+            stale_detail.lifecycle(),
+            ModuleCardLifecycle::Stale {
+                invalidated_by_index_run_id: changed_run.id(),
+                reason: InvalidationReason::EvidenceChanged,
+            }
+        );
+        assert!(
+            stale_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .all(|value| value.claim().state() == ModuleCardClaimState::Stale)
+        );
+        assert!(
+            stale_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .any(|value| {
+                    value.claim().kind() == VerifiedClaimKind::Fact
+                        && value.claim().state() == ModuleCardClaimState::Stale
+                })
+        );
         let remaps = LoadPendingModuleRemaps::new(&store)
             .execute(
                 &fixture.project,
@@ -1432,6 +1563,40 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
         assert_eq!(
             freshness.reason_counts()[1].reason(),
             InvalidationReason::DirectDependencyChanged
+        );
+        let dependent_detail = match GetModuleCardDetail::new(store.clone())
+            .execute(
+                &fixture.project,
+                &ModuleCardDetailQuery::new(ModuleId::from_bytes([202; 32])),
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardDetailLoadResult::Detail(detail) => detail,
+            other => {
+                return Err(format!("expected dependent Module Card detail, got {other:?}").into());
+            }
+        };
+        assert_eq!(
+            dependent_detail.lifecycle(),
+            ModuleCardLifecycle::NeedsReview {
+                invalidated_by_index_run_id: changed_run.id(),
+                reason: InvalidationReason::DirectDependencyChanged,
+            }
+        );
+        assert!(
+            dependent_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .all(|value| value.claim().state() == ModuleCardClaimState::NeedsReview)
+        );
+        assert!(
+            dependent_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.values())
+                .any(|value| value.claim().kind() == VerifiedClaimKind::Fact)
         );
 
         let lens = CompileTaskLens::new(store.as_ref(), store.as_ref(), store.as_ref())

@@ -31,6 +31,7 @@ mod lexical_search;
 mod model_capability;
 mod model_provider;
 mod module_card_claim_codec;
+mod module_card_detail;
 mod module_card_freshness;
 mod module_card_verification;
 mod module_dependency_graph;
@@ -188,6 +189,13 @@ pub use model_provider::{
 };
 pub use module_card_claim_codec::{
     DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
+};
+pub use module_card_detail::{
+    GetModuleCardDetail, ModuleCardClaimPresentation, ModuleCardClaimPresentationError,
+    ModuleCardClaimState, ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailField, ModuleCardDetailFieldError,
+    ModuleCardDetailFuture, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardDetailStore, ModuleCardLifecycle, ModuleCardValuePresentation,
 };
 pub use module_card_freshness::{
     GetModuleCardFreshness, ModuleCardFreshness, ModuleCardFreshnessControl,

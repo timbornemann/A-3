@@ -470,6 +470,7 @@ mod tests {
                 "allow-query-index-activity",
                 "allow-query-index-overview",
                 "allow-query-module-card-freshness",
+                "allow-query-module-card-detail",
                 "allow-query-module-dependency-graph",
                 "allow-query-module-runtime-flow",
                 "allow-query-module-runtime-map",

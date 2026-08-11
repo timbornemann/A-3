@@ -128,7 +128,7 @@ Abhängigkeiten: Gate M5
 - [x] Repository- und Modulbaum
 - [x] Abhängigkeitsgraph mit begrenzter Knotenzahl
 - [x] Entry Points, Tests und Runtime Flows
-- [ ] Module Card
+- [x] Module Card
 - [ ] Evidence Inspector
 - [ ] Confidence, Coverage und Freshness
 - [ ] Suche und Task-Lens-Umschaltung
@@ -223,6 +223,35 @@ lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohn
 Windows-libSQL-Contract mit 23 isolierten Fällen bestand nach der begrenzten Teardown-
 Stabilisierung zweimal vollständig sowie im grünen Workspace-Gesamtlauf. Die lokale visuelle
 Prüfung bestätigte Desktop- und 720-px-Layout ohne Horizontaloverflow oder Browser-Consolefehler.
+
+Abnahme Module Card vom 2026-08-11: Für ein explizit ausgewähltes aktuelles Primärmodul liest A^3
+die deterministisch jüngste dauerhafte Card gemeinsam mit der jüngsten atomaren Indexpublikation
+in genau einer kurzen Deferred-Transaktion. Aktueller Run/Snapshot und historischer
+Quell-Run/Snapshot bleiben getrennt. Die Auswahl folgt R11; V1-Schema, Mapperprofil, lückenlose
+Wertindizes, Feldgrenzen, Gesamttext, eindeutige Claims, kanonische Evidence-IDs und
+Claim-Evidence-Teilmengen werden an Storage-, Application-, IPC- und TypeScript-Grenze erneut
+validiert. Cancellation und das feste Zwei-Sekunden-Limit schließen den Read kontrolliert ab.
+
+Claim-Typ (`Fact`, `Observation`, `Hypothesis`), Confidence und effektiver Lifecycle sind
+unabhängig sichtbar. `Stale` beziehungsweise `NeedsReview` werden zwingend auf jeden angezeigten
+Claim propagiert, sodass ein historisch verifizierter Fact nie wie eine aktuelle Faktenquelle
+erscheint. Reale libSQL-Fixtures belegen Current→Stale nach geänderter Evidence und ein-Hop-
+NeedsReview bei direkter Abhängigkeitsänderung. Die UI lädt erst nach bewusster Modulauswahl,
+entfernt alte Card-Daten während eines Reloads und läuft nicht im 500-ms-Statuspolling. Stabile
+Evidence-IDs bleiben als Hooks erhalten; ihre sichere Auflösung und Navigation ist bewusst der
+nachfolgenden offenen Teilaufgabe Evidence Inspector vorbehalten.
+
+Die WebView darf nur Protokollversion und aktuelle primäre Modul-ID liefern. Card-, Claim-,
+Evidence-, Run- und Snapshotanker stammen aus dem Core; Source-, Datei-, Shell-, SQL-, Provider-
+oder generische Claim-Befugnisse werden nicht exponiert. Der Abschlussnachweis umfasst Rustfmt,
+sämtliche Workspace-Tests mit allen Features, Workspace-Clippy über alle Targets und Features mit
+Warnings denied, Rustdoc, 40 Desktop-Libtests plus zwei Desktop-Binary- und drei
+Desktop-Integrationstests, 89 Frontendtests, Formatter, ESLint, Svelte-Typecheck,
+Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
+Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der Windows-libSQL-
+Contract mit 23 isolierten Fällen bestand zweimal vollständig sowie im grünen Workspace-
+Gesamtlauf. Der Browser-QA-Lauf bestätigte explizite Auswahl, dominante Stale-Darstellung,
+Desktop- und 720-px-Layout ohne Horizontaloverflow sowie eine warnungs- und fehlerfreie Konsole.
 
 ## U5 Agent Workspace
 

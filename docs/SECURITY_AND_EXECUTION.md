@@ -51,8 +51,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
-  `query_module_card_freshness`, `query_repository_tree`, `query_module_tree`,
-  `query_module_dependency_graph`, `query_deep_map`,
+  `query_module_card_freshness`, `query_module_card_detail`, `query_repository_tree`,
+  `query_module_tree`, `query_module_dependency_graph`, `query_deep_map`,
   `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
@@ -83,6 +83,16 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   typisierte Ursachen. Weder Card-Inhalte, Claims, Evidence, Remapqueue-Zeilen, Source noch Pfade
   werden übertragen. Die UI ruft auch diese Storage-Abfrage nur bei Open, manueller Aktualisierung
   oder erfolgreichem Publish auf, nicht im 500-ms-Polling.
+- `query_module_card_detail` akzeptiert ausschließlich Protokollversion und eine stabile aktuelle
+  primäre `ModuleId`; Projekt, Pfade, Card-/Claim-IDs, Run-/Snapshotanker und Evidence stammen nicht
+  aus der WebView. Eine kurze, auf zwei Sekunden begrenzte Read-Transaktion bindet die
+  deterministisch jüngste dauerhafte Card atomar an die aktuelle Publikation und behält ihren
+  historischen Quell-Run getrennt. Werte bleiben unter den V1-Feld- und 65.536-Byte-Grenzen;
+  Evidence wird ausschließlich als kanonische IDs übertragen. Claim-Typ, Confidence und effektiver
+  Lifecycle werden getrennt übertragen, wobei `Stale` und `NeedsReview` zwingend jeden Claim der
+  Card überstimmen. Der Command gewährt weder Source-, Datei-, Shell-, SQL-, Claim-Prädikat- noch
+  Providerzugriff und läuft nur nach bewusster Auswahl, Aktualisierung oder erfolgreichem Publish,
+  nie im 500-ms-Polling.
 - `query_repository_tree` akzeptiert ausschließlich Protokollversion, eine optionale relative
   RepositoryPath als kleingeschriebenes Hex-Token, einen optionalen direkten Kind-Cursor und ein
   Limit von 1 bis 100. Projekt und Worktree stammen aus dem Core. Der Adapter liest nur direkte

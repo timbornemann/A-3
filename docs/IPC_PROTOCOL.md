@@ -69,6 +69,40 @@ ihre Summen müssen exakt den beiden invaliden Aggregatzählern entsprechen, und
 Statuszähler müssen `totalCount` ergeben. Projektidentitäten, Pfade, Card-Inhalte, Claims, Evidence,
 Datenbankzeilen und Remapqueue-Einträge überschreiten diese Grenze nicht.
 
+## Module Card Detail V1
+
+`query_module_card_detail` akzeptiert genau `protocolVersion` und die 64-stellige
+kleingeschriebene `moduleId` eines bewusst ausgewählten aktuellen Primärmoduls. Projekt, Worktree,
+Card-ID, Run, Snapshot, Pfade, Claims und Evidence sind keine Requestfelder. Eine ungültige ID
+liefert `invalidModuleCardDetailQuery`. Die Antwort unterscheidet `noProject`,
+`noPublishedIndex`, `projectionUnavailable`, `moduleUnavailable`, `cardUnavailable` und
+`available`.
+
+Eine verfügbare Antwort bindet `currentIndexRunId` und `currentSnapshotId` an die jüngste atomare
+Indexpublikation. `sourceIndexRunId` und `sourceSnapshotId` benennen getrennt den historischen Run,
+in dem die deterministisch jüngste Card verifiziert wurde. Dazu kommen `cardId`, `moduleId`, die
+festen V1-Schema-/Mapperversionen, `confidenceBasisPoints`, ein expliziter `lifecycle` und ein bis
+zwölf kanonisch geordnete Card-Felder. `current` trägt keine Invalidierungsdaten; `stale` trägt
+eine direkte Ursache; `needsReview` ausschließlich `directDependencyChanged`. Ein invalidierter
+Run muss eine nicht spätere veröffentlichte Publikation desselben Worktrees sein.
+
+Jedes Feld besitzt mindestens einen begrenzten, kontrollzeichenfreien Wert und mindestens eine
+kanonisch sortierte `evidenceId`. Die V1-Grenzen gelten pro Feld unverändert; die gesamte
+Wertnutzlast bleibt bei höchstens 65.536 UTF-8-Bytes und die Evidence-Union bei höchstens 512 IDs.
+Jeder Wert besitzt genau einen eindeutigen Claim mit unabhängigem `kind` (`fact`, `observation`
+oder `hypothesis`), `confidenceBasisPoints`, höchstens 16 Evidence-IDs und einem effektiven `state`.
+Claim-Evidence muss Teil der Feld-Evidence sein. Evidence-freie Claims sind nur als Hypothese
+darstellbar.
+
+Der effektive Claim-State muss für die ganze Card exakt `current`, `stale` oder `needsReview`
+entsprechen. Dadurch bleibt beispielsweise die historische epistemische Klassifikation `fact`
+erhalten, kann bei einer stale Card aber nie als aktuelles Faktum erscheinen. Der unabhängige
+TypeScript-Decoder prüft Envelope, Schemaordnung, UTF-8-Grenzen, ID-Reihenfolge,
+Evidence-Teilmengen, Claim-Eindeutigkeit und diese Lifecycle-Propagation erneut. Der Command läuft
+nur nach expliziter Modulauswahl, Aktualisierung oder erfolgreichem Publish, nicht im
+500-ms-Statuspolling. Die gelieferten Evidence-IDs sind stabile Hooks für den nachfolgenden
+Evidence-Inspector-Schnitt und verleihen für sich weder Source- noch Dateizugriff.
+
 ## Repository Tree V1
 
 `query_repository_tree` akzeptiert genau `protocolVersion`, `directoryPathHex`, `afterNameHex` und
@@ -252,11 +286,14 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Runtime-, Module-Card-Freshness- und Deep-Map-Commands. Repository- und Modulbaum besitzen
+Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail- und Deep-Map-Commands. Repository- und
+Modulbaum besitzen
 ausschließlich `allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der
 Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist
 `allow-query-module-card-freshness`. Runtime-Roots und feste Flows besitzen ausschließlich
-`allow-query-module-runtime-map` und `allow-query-module-runtime-flow`. Für Deep Map sind das
+`allow-query-module-runtime-map` und `allow-query-module-runtime-flow`.
+`allow-query-module-card-detail` ist die einzige Capability für Card-Inhalte und akzeptiert nur
+eine stabile Modul-ID. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.

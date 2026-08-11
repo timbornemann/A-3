@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-module-card-detail"
+description = "Enables the query_module_card_detail command without any pre-configured scope."
+commands.allow = ["query_module_card_detail"]
+
+[[permission]]
+identifier = "deny-query-module-card-detail"
+description = "Denies the query_module_card_detail command without any pre-configured scope."
+commands.deny = ["query_module_card_detail"]
