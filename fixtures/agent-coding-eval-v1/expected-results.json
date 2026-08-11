@@ -1,0 +1,17 @@
+{
+  "schema": "a3.agent-coding-eval.v1",
+  "cases": [
+    {
+      "id": "small-local-bugfix",
+      "final_state": "done",
+      "goal": true,
+      "step": true,
+      "patch": true,
+      "evidence": true,
+      "verification": true,
+      "foreign_change_preserved": true,
+      "replan_count": 0,
+      "compaction_count": 0
+    }
+  ]
+}

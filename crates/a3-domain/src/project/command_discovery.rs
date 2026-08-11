@@ -114,10 +114,13 @@ impl DiscoveredCommand {
             .map(ProcessArgument::try_from_string)
             .collect::<Result<Vec<_>, _>>()
             .map_err(DiscoveredCommandError::Argument)?;
-        let environment_allowlist = vec![
-            ProcessEnvironmentVariable::try_from_string("PATH".to_owned())
-                .map_err(DiscoveredCommandError::Environment)?,
-        ];
+        let environment_allowlist = ["PATH", "TEMP", "TMP", "TMPDIR"]
+            .into_iter()
+            .map(|name| {
+                ProcessEnvironmentVariable::try_from_string(name.to_owned())
+                    .map_err(DiscoveredCommandError::Environment)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let timeout = ProcessTimeout::from_millis(kind.timeout_millis())
             .map_err(DiscoveredCommandError::Timeout)?;
         let stdout_limit = ProcessOutputLimit::new(RETAINED_OUTPUT_BYTES)
@@ -674,6 +677,14 @@ mod tests {
         )?;
         let preview = catalog.preview(AgentRunId::from_bytes([3; 32]), command_id)?;
         assert_eq!(preview.plan_binding(), ProcessPlanBinding::Unbound);
+        assert_eq!(
+            preview
+                .environment_allowlist()
+                .iter()
+                .map(ProcessEnvironmentVariable::as_str)
+                .collect::<Vec<_>>(),
+            ["PATH", "TEMP", "TMP", "TMPDIR"]
+        );
 
         let allowlist = ProjectCommandAllowlist::confirm(
             &catalog,

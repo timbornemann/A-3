@@ -138,6 +138,9 @@ Der Workspace-Adapter startet ausschließlich `std::process::Command` mit einzel
 geschlossenem stdin, geleerter Umgebung und explizit injizierten Allowlist-Werten. CWD und
 Executable werden kanonisiert; relative Executables dürfen nur eine Komponente besitzen und werden
 in einem expliziten absoluten `PATH` gesucht. Windows akzeptiert keine `.bat`-/`.cmd`-Interpreter.
+Entdeckte Commands erlauben neben `PATH` nur `TEMP`, `TMP` und `TMPDIR`; explizite Temp-Werte
+verhindern insbesondere, dass Compiler bei geleerter Umgebung auf geschützte Windows-Verzeichnisse
+zurückfallen.
 `command-group` 5.0.1 kapselt Unix Process Groups und Windows Job Objects mit Kill-on-Close. Beide
 Reader-Threads, der Gruppenprozess und der begrenzte 32-Slot-Channel besitzen einen Owner; Timeout,
 Cancellation und Event-Backpressure beenden die Gruppe und joinen alle Reader. stdout und stderr

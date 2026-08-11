@@ -320,7 +320,11 @@ Interpreter benötigen. stdin ist immer geschlossen.
 
 Vor jedem Start wird die Prozessumgebung geleert. Nur in der Spezifikation erlaubte Namen werden
 aus dem expliziten `ProcessHostEnvironment` übernommen; der Runner liest keine vollständige
-Ambient-Umgebung und gibt Werte weder in Debugausgaben noch in Fehlern wieder. Timeout und
+Ambient-Umgebung und gibt Werte weder in Debugausgaben noch in Fehlern wieder. Entdeckte Commands
+erlauben ausschließlich `PATH` sowie die plattformüblichen temporären Laufzeitnamen `TEMP`, `TMP`
+und `TMPDIR`; der Composition Root muss dafür explizite Werte bereitstellen. So können unter
+anderem Compiler temporäre Dateien auch unter Windows außerhalb geschützter Systemverzeichnisse
+anlegen. Timeout und
 wakebare Cancellation beenden nicht nur den direkten Prozess, sondern dessen gesamte
 Prozessgruppe: auf Unix über eine eigene Process Group und auf Windows über ein Job Object mit
 Kill-on-Close. Prozess, stdout-/stderr-Reader und alle Channels besitzen einen Owner und werden vor
