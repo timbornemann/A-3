@@ -555,6 +555,14 @@ async fn evaluate_result(
         .store
         .load_current_goal_contract(&fixture.project, durable.goal.task_id())
         .await?;
+    let stored_ledger = fixture
+        .store
+        .load_task_ledger(&fixture.project, durable.goal.task_id())
+        .await?;
+    let stored_run = fixture
+        .store
+        .load_agent_run(&fixture.project, durable.run.id())
+        .await?;
     let first = durable
         .ledger
         .step(first_step_id)
@@ -591,7 +599,11 @@ async fn evaluate_result(
         } else {
             "not_done"
         },
-        goal: stored_goal.as_ref() == Some(&durable.goal),
+        goal: stored_goal.as_ref() == Some(&durable.goal)
+            && stored_ledger.as_ref().is_some_and(|stored| {
+                stored.ledger() == &durable.ledger && stored.version() == durable.ledger_version
+            })
+            && stored_run.as_ref() == Some(&durable.run),
         step: first.status() == TaskStepStatus::Completed
             && second.status() == TaskStepStatus::Completed,
         patch: std::fs::read(fixture.repository.path().join("arithmetic.py"))? == UPDATED

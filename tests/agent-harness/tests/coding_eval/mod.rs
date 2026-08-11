@@ -9,8 +9,8 @@ use a3_application::{
     MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
     ProcessEventSink, ProcessEventSinkError, ProcessRunControl, RefreshRepositoryIndex,
     RepositoryChangeBatch, RepositoryIndexControl, RepositoryIndexControlError,
-    RepositoryRescanReason, RunEventPageLimit, RunJournalStore, TaskLedgerStoreVersion,
-    TaskLensControlError, VerifyAgentAcceptance, WorkspacePatchControl,
+    RepositoryRescanReason, RunEventPageLimit, RunJournalStore, TaskLedgerStore,
+    TaskLedgerStoreVersion, TaskLensControlError, VerifyAgentAcceptance, WorkspacePatchControl,
     WorkspacePatchProgressError, WorktreeMutationCoordinator,
 };
 use a3_context::DeterministicAgentContextCompiler;
@@ -268,14 +268,12 @@ fn test_addition() -> CodingCase {
 #[test]
 fn coding_eval_v1_matches_reviewed_results() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
-        let results = [
-            evaluate_case(small_local_bugfix()).await?,
-            evaluate_case(two_module_change()).await?,
-            evaluate_case(test_addition()).await?,
-            replan::evaluate().await?,
-            compaction::evaluate().await?,
-        ];
-        let actual = render_results(&results);
+        let first = evaluate_suite().await?;
+        let repeated = evaluate_suite().await?;
+        if first != repeated {
+            return Err(test_error("coding eval results were not reproducible"));
+        }
+        let actual = render_results(&first);
         if actual.trim() != EXPECTED_RESULTS.trim() {
             return Err(std::io::Error::other(format!(
                 "coding eval result changed\nexpected:\n{}\nactual:\n{}",
@@ -286,6 +284,16 @@ fn coding_eval_v1_matches_reviewed_results() -> Result<(), Box<dyn Error>> {
         }
         Ok(())
     })
+}
+
+async fn evaluate_suite() -> Result<Vec<CodingEvalResult>, Box<dyn Error>> {
+    Ok(vec![
+        evaluate_case(small_local_bugfix()).await?,
+        evaluate_case(two_module_change()).await?,
+        evaluate_case(test_addition()).await?,
+        replan::evaluate().await?,
+        compaction::evaluate().await?,
+    ])
 }
 
 async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Error>> {
@@ -492,6 +500,14 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
         .store
         .load_current_goal_contract(&fixture.project, durable.goal.task_id())
         .await?;
+    let stored_ledger = fixture
+        .store
+        .load_task_ledger(&fixture.project, durable.goal.task_id())
+        .await?;
+    let stored_run = fixture
+        .store
+        .load_agent_run(&fixture.project, durable.run.id())
+        .await?;
     let step = durable
         .ledger
         .step(step_id)
@@ -530,7 +546,11 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
         } else {
             "not_done"
         },
-        goal: stored_goal.as_ref() == Some(&durable.goal),
+        goal: stored_goal.as_ref() == Some(&durable.goal)
+            && stored_ledger.as_ref().is_some_and(|stored| {
+                stored.ledger() == &durable.ledger && stored.version() == durable.ledger_version
+            })
+            && stored_run.as_ref() == Some(&durable.run),
         step: step.status() == TaskStepStatus::Completed,
         patch: patch_present && tool_event_count >= 2,
         evidence: verification.is_some_and(|value| value.evidence_ids() == [evidence_id]),

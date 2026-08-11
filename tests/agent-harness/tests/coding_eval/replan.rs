@@ -1,5 +1,5 @@
 use super::*;
-use a3_application::AgentActionStore;
+use a3_application::{AcceptanceVerificationRequestError, AgentActionStore};
 use a3_domain::{RunEventCode, RunEventOutcome, RunEventPayload, TaskReplanReason};
 
 const PYPROJECT: &[u8] =
@@ -176,6 +176,7 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
             "first failed Must-test did not take one bounded retry",
         ));
     }
+    reject_red_completion(&fixture, &mut durable, &wrong_index).await?;
     let second_failure = controller
         .execute(
             &fixture.project,
@@ -515,6 +516,53 @@ async fn apply_replan(
     Ok(())
 }
 
+async fn reject_red_completion(
+    fixture: &CodingFixture,
+    durable: &mut DurableCodingTask,
+    index: &PublishedIndex,
+) -> Result<(), Box<dyn Error>> {
+    advance(
+        fixture.store.as_ref(),
+        &fixture.project,
+        &mut durable.run,
+        AgentControllerSignal::TurnNeedsVerification,
+        RunEventId::from_bytes(id(111)),
+        timestamp(30)?,
+    )
+    .await?;
+    let memory = RunMemoryCheckpoint::compile(
+        &durable.goal,
+        &durable.ledger,
+        &durable.run,
+        index,
+        Vec::new(),
+    )?;
+    let request = AcceptanceVerificationRequest::new(
+        fixture.project.clone(),
+        &durable.run,
+        durable.goal.clone(),
+        durable.ledger.clone(),
+        memory,
+    );
+    if !matches!(
+        request,
+        Err(AcceptanceVerificationRequestError::IncompleteLedger)
+    ) || durable.run.state() == AgentControllerState::Done
+    {
+        return Err(test_error("red Must-test was allowed to complete the task"));
+    }
+    advance(
+        fixture.store.as_ref(),
+        &fixture.project,
+        &mut durable.run,
+        AgentControllerSignal::VerificationNeedsExecution,
+        RunEventId::from_bytes(id(112)),
+        timestamp(30)?,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn accept(
     fixture: &CodingFixture,
     durable: &mut DurableCodingTask,
@@ -567,6 +615,14 @@ async fn evaluate_result(
         .store
         .load_current_goal_contract(&fixture.project, durable.goal.task_id())
         .await?;
+    let stored_ledger = fixture
+        .store
+        .load_task_ledger(&fixture.project, durable.goal.task_id())
+        .await?;
+    let stored_run = fixture
+        .store
+        .load_agent_run(&fixture.project, durable.run.id())
+        .await?;
     let failed = durable
         .ledger
         .step(failed_step_id)
@@ -602,7 +658,11 @@ async fn evaluate_result(
         } else {
             "not_done"
         },
-        goal: stored_goal.as_ref() == Some(&durable.goal),
+        goal: stored_goal.as_ref() == Some(&durable.goal)
+            && stored_ledger.as_ref().is_some_and(|stored| {
+                stored.ledger() == &durable.ledger && stored.version() == durable.ledger_version
+            })
+            && stored_run.as_ref() == Some(&durable.run),
         step: has_failed_verification(failed)
             && failed.retired_in_revision().is_some()
             && replacement.status() == TaskStepStatus::Completed,
