@@ -3,7 +3,7 @@ use a3_protocol::{
     CommandErrorV1, HealthRequestV1, HealthResponseV1, ListRecentProjectsRequestV1,
     OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
     QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
 };
 use tauri::State;
 
@@ -41,6 +41,15 @@ pub fn rebuild_project_index(
     root: State<'_, CompositionRoot>,
 ) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
     execute_rebuild_project_index(request, root.inner())
+}
+
+#[tauri::command]
+/// Removes only the Core-owned active worktree's recent-list projection.
+pub async fn remove_project(
+    request: RemoveProjectRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+    execute_remove_project(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -107,11 +116,22 @@ fn execute_rebuild_project_index(
     root.rebuild_project_index()
 }
 
+async fn execute_remove_project(
+    request: RemoveProjectRequestV1,
+    root: &CompositionRoot,
+) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.remove_project().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         execute_list_recent_projects, execute_open_project, execute_query_health,
-        execute_query_project_status, execute_rebuild_project_index,
+        execute_query_project_status, execute_rebuild_project_index, execute_remove_project,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -125,7 +145,7 @@ mod tests {
     use a3_protocol::{
         ErrorCodeV1, HealthRequestV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
         ProjectStatusResultV1, ProtocolVersion, QueryProjectStatusRequestV1,
-        RebuildProjectIndexRequestV1,
+        RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -298,6 +318,54 @@ mod tests {
         assert_eq!(
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_command_requires_a_core_owned_active_project()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = execute_rebuild_project_index(RebuildProjectIndexRequestV1::current(), &root);
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn removal_command_rejects_unsupported_version_before_core_state_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_remove_project(
+            RemoveProjectRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn removal_command_requires_a_core_owned_active_project()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_remove_project(
+            RemoveProjectRequestV1::current(),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
         );
         Ok(())
     }

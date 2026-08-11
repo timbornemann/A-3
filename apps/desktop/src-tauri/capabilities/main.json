@@ -8,6 +8,7 @@
     "allow-open-project",
     "allow-query-project-status",
     "allow-query-health",
-    "allow-rebuild-project-index"
+    "allow-rebuild-project-index",
+    "allow-remove-project"
   ]
 }

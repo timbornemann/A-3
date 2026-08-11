@@ -3,12 +3,14 @@
 mod support;
 
 use a3_application::{
-    KnowledgeStore, KnowledgeStoreFailure, ProjectOpenPreparation, ProjectReconciliationEvidence,
-    ProjectReconciliationProposal, RecentProjectLimit,
+    KnowledgeStore, KnowledgeStoreFailure, ProjectCatalogAdmin, ProjectCatalogAdminFailure,
+    ProjectOpenPreparation, ProjectReconciliationEvidence, ProjectReconciliationProposal,
+    RecentProjectLimit,
 };
 use a3_domain::{
-    CanonicalDirectory, GitHead, GitObjectId, GitReferenceName, ProjectIdentity, RemoteIdentity,
-    RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    CanonicalDirectory, GitHead, GitObjectId, GitReferenceName, ProjectId, ProjectIdentity,
+    RemoteIdentity, RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeId,
+    WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -119,6 +121,106 @@ fn linked_worktrees_share_one_catalog_project() -> Result<(), Box<dyn std::error
             .await?;
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].worktree_id(), linked.worktree().id());
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn removing_one_worktree_retains_linked_entries_private_data_and_stable_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    run_project_catalog_test(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let common = create_directory(temporary.path().join("common-git"))?;
+        let root_a = create_directory(temporary.path().join("primary"))?;
+        let root_b = create_directory(temporary.path().join("linked"))?;
+        let moved_root = create_directory(temporary.path().join("moved-primary"))?;
+        let primary = project_fixture(
+            [13; 32],
+            [131; 32],
+            &common,
+            &root_a,
+            Some([7; 32]),
+            unborn_head()?,
+        )?;
+        let linked = project_fixture(
+            [13; 32],
+            [132; 32],
+            &common,
+            &root_b,
+            Some([7; 32]),
+            unborn_head()?,
+        )?;
+        let moved_primary = project_fixture_with_anchor(
+            [13; 32],
+            [133; 32],
+            [131; 32],
+            &common,
+            &moved_root,
+            Some([7; 32]),
+            unborn_head()?,
+        )?;
+
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
+        let primary_id = catalog.record_opened_project(&primary).await?;
+        let linked_id = catalog.record_opened_project(&linked).await?;
+        assert_eq!(primary_id, linked_id);
+        let private_layout = layout.prepare_project(primary.worktree())?;
+        assert!(private_layout.knowledge_path().is_file());
+        let proposal = match catalog.prepare_project_open(&moved_primary).await? {
+            ProjectOpenPreparation::ConfirmationRequired(proposal) => proposal,
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "expected move confirmation, received {other:?}"
+                ))
+                .into());
+            }
+        };
+        insert_prepared_reconciliation(&layout, &moved_primary, &proposal).await?;
+        assert_eq!(reconciliation_intent_count(&layout).await?, 1);
+
+        catalog.remove_recent_worktree(&primary, primary_id).await?;
+
+        let recent = catalog
+            .list_recent_projects(RecentProjectLimit::DEFAULT)
+            .await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].worktree_id(), linked.worktree().id());
+        assert_eq!(reconciliation_intent_count(&layout).await?, 0);
+        assert!(private_layout.knowledge_path().is_file());
+        assert_eq!(catalog.record_opened_project(&primary).await?, primary_id);
+        assert!(private_layout.knowledge_path().is_file());
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn removal_rejects_a_mismatched_project_id_without_changing_the_list()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    run_project_catalog_test(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let common = create_directory(temporary.path().join("common-git"))?;
+        let root = create_directory(temporary.path().join("worktree"))?;
+        let project = project_fixture([14; 32], [141; 32], &common, &root, None, unborn_head()?)?;
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
+        let project_id = catalog.record_opened_project(&project).await?;
+        let wrong_project_id = ProjectId::from_bytes([255; 32]);
+        assert_ne!(project_id, wrong_project_id);
+
+        assert_eq!(
+            catalog
+                .remove_recent_worktree(&project, wrong_project_id)
+                .await,
+            Err(ProjectCatalogAdminFailure::IdentityConflict)
+        );
+        let recent = catalog
+            .list_recent_projects(RecentProjectLimit::DEFAULT)
+            .await?;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].project_id(), project_id);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }

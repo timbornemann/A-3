@@ -35,6 +35,12 @@ pub enum ErrorCodeV1 {
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
     IndexRebuildUnavailable,
+    /// Another Core-owned project lifecycle operation is still in progress.
+    ProjectOperationBusy,
+    /// The exact active worktree was no longer present in the project list.
+    ProjectNotInList,
+    /// The active project could not be safely removed from the project list.
+    ProjectRemovalUnavailable,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -94,6 +100,13 @@ impl CommandErrorV1 {
             ErrorCodeV1::IndexRebuildUnavailable => {
                 "The local index coordinator could not accept the rebuild request."
             }
+            ErrorCodeV1::ProjectOperationBusy => "Another project operation is still in progress.",
+            ErrorCodeV1::ProjectNotInList => {
+                "The active worktree is no longer in the A^3 project list."
+            }
+            ErrorCodeV1::ProjectRemovalUnavailable => {
+                "The active worktree could not be safely removed from the A^3 project list."
+            }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."
             }
@@ -104,6 +117,12 @@ impl CommandErrorV1 {
     /// Creates a safe active-project rebuild failure.
     #[must_use]
     pub fn project_rebuild(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
+    }
+
+    /// Creates a safe active-project removal failure.
+    #[must_use]
+    pub fn project_removal(code: ErrorCodeV1) -> Self {
         Self::project_open(code)
     }
 

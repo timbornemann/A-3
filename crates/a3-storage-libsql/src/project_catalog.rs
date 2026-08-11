@@ -1,8 +1,8 @@
 use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
-    KnowledgeStoreFailure, ProjectCatalogRevision, ProjectOpenPreparation, ProjectPathDisplay,
-    ProjectReconciliationEvidence, ProjectReconciliationProposal, RecentProject,
-    RecentProjectLimit,
+    KnowledgeStoreFailure, ProjectCatalogAdminFailure, ProjectCatalogRevision,
+    ProjectOpenPreparation, ProjectPathDisplay, ProjectReconciliationEvidence,
+    ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
 };
 use a3_domain::{
     GitHead, GitObjectId, GitReferenceName, ProjectId, ProjectIdentity, RemoteIdentity,
@@ -112,6 +112,78 @@ impl CatalogDatabase {
         }
         Ok(projects)
     }
+
+    pub(crate) async fn remove_recent_worktree(
+        &self,
+        project: &ProjectIdentity,
+        project_id: ProjectId,
+    ) -> Result<(), ProjectCatalogError> {
+        let connection = self
+            .connection_for_operation()
+            .await
+            .map_err(ProjectCatalogError::Open)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .map_err(ProjectCatalogError::Begin)?;
+        let result = remove_recent_worktree_in_transaction(&transaction, project, project_id).await;
+        rollback_on_error(transaction, result).await
+    }
+}
+
+async fn remove_recent_worktree_in_transaction(
+    transaction: &Transaction,
+    project: &ProjectIdentity,
+    project_id: ProjectId,
+) -> Result<(), ProjectCatalogError> {
+    let worktree_id = project.worktree().id().as_bytes().to_vec();
+    let mut rows = transaction
+        .query(
+            "SELECT project_id, repository_id FROM recent_worktrees WHERE worktree_id = ?1",
+            [worktree_id.clone()],
+        )
+        .await
+        .map_err(ProjectCatalogError::Read)?;
+    let Some(row) = rows.next().await.map_err(ProjectCatalogError::Read)? else {
+        return Err(ProjectCatalogError::NotFound);
+    };
+    let stored_project_id = ProjectId::from_bytes(read_stable_id(&row, 0)?);
+    let stored_repository_id = RepositoryId::from_bytes(read_stable_id(&row, 1)?);
+    if rows
+        .next()
+        .await
+        .map_err(ProjectCatalogError::Read)?
+        .is_some()
+        || stored_project_id != project_id
+        || stored_repository_id != project.repository().id()
+    {
+        return Err(ProjectCatalogError::IdentityConflict);
+    }
+
+    transaction
+        .execute(
+            "DELETE FROM worktree_reconciliations\n\
+             WHERE project_id = ?1 AND (source_worktree_id = ?2 OR target_worktree_id = ?2)",
+            params![project_id.as_bytes().to_vec(), worktree_id.clone()],
+        )
+        .await
+        .map_err(ProjectCatalogError::Write)?;
+    let deleted = transaction
+        .execute(
+            "DELETE FROM recent_worktrees\n\
+             WHERE worktree_id = ?1 AND project_id = ?2 AND repository_id = ?3",
+            params![
+                worktree_id,
+                project_id.as_bytes().to_vec(),
+                project.repository().id().as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(ProjectCatalogError::Write)?;
+    if deleted != 1 {
+        return Err(ProjectCatalogError::IdentityConflict);
+    }
+    Ok(())
 }
 
 async fn rollback_on_error<T>(
@@ -1120,6 +1192,7 @@ pub(crate) enum ProjectCatalogError {
     Commit(libsql::Error),
     InvalidStoredData,
     IdentityConflict,
+    NotFound,
     SequenceExhausted,
 }
 
@@ -1142,6 +1215,7 @@ impl ProjectCatalogError {
             )
             | Self::InvalidStoredData => KnowledgeStoreFailure::InvalidStoredData,
             Self::IdentityConflict => KnowledgeStoreFailure::IdentityConflict,
+            Self::NotFound => KnowledgeStoreFailure::InvalidStoredData,
             Self::Write(ref source) if sqlite_primary_code(source) == Some(SQLITE_CONSTRAINT) => {
                 KnowledgeStoreFailure::IdentityConflict
             }
@@ -1152,6 +1226,38 @@ impl ProjectCatalogError {
             | Self::Rollback(_)
             | Self::Commit(_)
             | Self::SequenceExhausted => KnowledgeStoreFailure::Unavailable,
+        }
+    }
+
+    pub(crate) fn classify_admin(self) -> ProjectCatalogAdminFailure {
+        match self {
+            Self::Open(
+                CatalogOpenError::CorruptDatabase | CatalogOpenError::IntegrityCheckFailed,
+            ) => ProjectCatalogAdminFailure::Corrupt,
+            Self::Read(ref source) | Self::Write(ref source) if is_corruption(source) => {
+                ProjectCatalogAdminFailure::Corrupt
+            }
+            Self::Open(CatalogOpenError::NewerSchema { .. }) => {
+                ProjectCatalogAdminFailure::UnsupportedSchema
+            }
+            Self::Open(
+                CatalogOpenError::MigrationHistoryMismatch { .. }
+                | CatalogOpenError::UnexpectedSchemaVersion { .. }
+                | CatalogOpenError::ConnectionPolicyMismatch,
+            )
+            | Self::InvalidStoredData => ProjectCatalogAdminFailure::InvalidStoredData,
+            Self::IdentityConflict => ProjectCatalogAdminFailure::IdentityConflict,
+            Self::NotFound => ProjectCatalogAdminFailure::NotFound,
+            Self::Write(ref source) if sqlite_primary_code(source) == Some(SQLITE_CONSTRAINT) => {
+                ProjectCatalogAdminFailure::IdentityConflict
+            }
+            Self::Open(_)
+            | Self::Begin(_)
+            | Self::Read(_)
+            | Self::Write(_)
+            | Self::Rollback(_)
+            | Self::Commit(_)
+            | Self::SequenceExhausted => ProjectCatalogAdminFailure::Unavailable,
         }
     }
 }
@@ -1167,6 +1273,7 @@ impl fmt::Display for ProjectCatalogError {
             Self::Commit(_) => formatter.write_str("could not commit project catalog data"),
             Self::InvalidStoredData => formatter.write_str("project catalog data is invalid"),
             Self::IdentityConflict => formatter.write_str("project catalog identity conflicts"),
+            Self::NotFound => formatter.write_str("project is not in the recent-project list"),
             Self::SequenceExhausted => formatter.write_str("project open sequence is exhausted"),
         }
     }
@@ -1181,7 +1288,10 @@ impl Error for ProjectCatalogError {
             | Self::Write(source)
             | Self::Rollback(source)
             | Self::Commit(source) => Some(source),
-            Self::InvalidStoredData | Self::IdentityConflict | Self::SequenceExhausted => None,
+            Self::InvalidStoredData
+            | Self::IdentityConflict
+            | Self::NotFound
+            | Self::SequenceExhausted => None,
         }
     }
 }

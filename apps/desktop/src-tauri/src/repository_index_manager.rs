@@ -87,6 +87,19 @@ impl RepositoryIndexManager {
         }
     }
 
+    pub(crate) fn deactivate_project(&self) -> Result<(), RepositoryIndexDeactivationError> {
+        let (response, receiver) = bounded(1);
+        match self.commands.try_send(ManagerCommand::Deactivate(response)) {
+            Ok(()) => receiver
+                .recv_timeout(Duration::from_secs(1))
+                .map_err(|_| RepositoryIndexDeactivationError::CoordinatorStopped)?,
+            Err(TrySendError::Full(_)) => Err(RepositoryIndexDeactivationError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => {
+                Err(RepositoryIndexDeactivationError::CoordinatorStopped)
+            }
+        }
+    }
+
     pub(crate) fn rebuild_state(&self) -> RepositoryIndexRebuildState {
         *lock_recovering_poison(&self.rebuild_state)
     }
@@ -124,6 +137,7 @@ impl Drop for RepositoryIndexManager {
 
 enum ManagerCommand {
     Activate(Box<ProjectActivation>),
+    Deactivate(Sender<Result<(), RepositoryIndexDeactivationError>>),
     Rebuild(Sender<Result<(), RepositoryIndexRebuildRequestError>>),
     Shutdown,
 }
@@ -136,12 +150,13 @@ struct ProjectActivation {
 
 struct ActiveProject {
     project: ProjectIdentity,
-    watcher: PollingRepositoryWatcher,
+    watcher: Option<PollingRepositoryWatcher>,
     compiler: Arc<Mutex<Box<BuiltinIncrementalIndexCompiler>>>,
     pending: Option<RepositoryChangeBatch>,
     active_job: Option<ManagedJob>,
     pending_rebuild: bool,
     watcher_failed: bool,
+    deactivated: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -221,6 +236,14 @@ fn coordinator_loop(
             }
         }
 
+        if state.deactivated {
+            if state.active_job.is_none() {
+                active = None;
+            }
+            thread::sleep(COORDINATOR_TICK);
+            continue;
+        }
+
         if state.active_job.is_none() && state.pending_rebuild {
             let job_id = JobId::new(next_job_id);
             next_job_id = next_job_id.saturating_add(1);
@@ -247,7 +270,11 @@ fn coordinator_loop(
             && state.pending.is_none()
             && !state.watcher_failed
         {
-            match state.watcher.next_batch(COORDINATOR_TICK) {
+            let Some(watcher) = state.watcher.as_mut() else {
+                state.watcher_failed = true;
+                continue;
+            };
+            match watcher.next_batch(COORDINATOR_TICK) {
                 Ok(batch) => state.pending = batch,
                 Err(_) => {
                     state.watcher_failed = true;
@@ -306,12 +333,14 @@ fn handle_manager_command(
             if let Some(job) = retiring_job {
                 let _cancellation = submitter.cancel(job.id);
             }
-            if let Some(previous) = active.take() {
-                let _shutdown = previous.watcher.shutdown();
+            if let Some(mut previous) = active.take()
+                && let Some(watcher) = previous.watcher.take()
+            {
+                let _shutdown = watcher.shutdown();
             }
             *active = Some(ActiveProject {
                 project: activation.project,
-                watcher: activation.watcher,
+                watcher: Some(activation.watcher),
                 compiler: Arc::new(Mutex::new(activation.compiler)),
                 pending: None,
                 active_job: retiring_job.map(|job| ManagedJob {
@@ -320,13 +349,43 @@ fn handle_manager_command(
                 }),
                 pending_rebuild: false,
                 watcher_failed: false,
+                deactivated: false,
             });
             set_rebuild_state(rebuild_state, RepositoryIndexRebuildState::Idle);
+            false
+        }
+        ManagerCommand::Deactivate(response) => {
+            let result = match active.as_mut() {
+                None => Err(RepositoryIndexDeactivationError::NoActiveProject),
+                Some(state) if state.deactivated => {
+                    Err(RepositoryIndexDeactivationError::AlreadyPending)
+                }
+                Some(state) => {
+                    if let Some(job) = state.active_job {
+                        let _cancellation = submitter.cancel(job.id);
+                    }
+                    state.pending = None;
+                    state.pending_rebuild = false;
+                    state.watcher_failed = true;
+                    state.deactivated = true;
+                    set_rebuild_state(rebuild_state, RepositoryIndexRebuildState::Idle);
+                    match state.watcher.take() {
+                        Some(watcher) => watcher
+                            .shutdown()
+                            .map_err(|_| RepositoryIndexDeactivationError::WatcherShutdown),
+                        None => Ok(()),
+                    }
+                }
+            };
+            let _response = response.send(result);
             false
         }
         ManagerCommand::Rebuild(response) => {
             let result = match active.as_mut() {
                 None => Err(RepositoryIndexRebuildRequestError::NoActiveProject),
+                Some(state) if state.deactivated => {
+                    Err(RepositoryIndexRebuildRequestError::NoActiveProject)
+                }
                 Some(state)
                     if state.pending_rebuild
                         || state
@@ -349,11 +408,13 @@ fn handle_manager_command(
             false
         }
         ManagerCommand::Shutdown => {
-            if let Some(state) = active.take() {
+            if let Some(mut state) = active.take() {
                 if let Some(job) = state.active_job {
                     let _cancellation = submitter.cancel(job.id);
                 }
-                let _shutdown = state.watcher.shutdown();
+                if let Some(watcher) = state.watcher.take() {
+                    let _shutdown = watcher.shutdown();
+                }
             }
             true
         }
@@ -453,6 +514,23 @@ impl fmt::Display for RepositoryIndexRebuildRequestError {
 
 impl Error for RepositoryIndexRebuildRequestError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepositoryIndexDeactivationError {
+    NoActiveProject,
+    AlreadyPending,
+    WatcherShutdown,
+    QueueFull,
+    CoordinatorStopped,
+}
+
+impl fmt::Display for RepositoryIndexDeactivationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("repository indexing could not be deactivated")
+    }
+}
+
+impl Error for RepositoryIndexDeactivationError {}
+
 #[derive(Debug)]
 pub(crate) enum RepositoryIndexActivationError {
     Watcher(RepositoryWatcherStartError),
@@ -496,8 +574,8 @@ impl Error for RepositoryIndexManagerShutdownError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagerCommand, ProjectActivation, RepositoryIndexRebuildRequestError,
-        RepositoryIndexRebuildState, handle_manager_command,
+        ManagerCommand, ProjectActivation, RepositoryIndexDeactivationError,
+        RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState, handle_manager_command,
     };
     use crate::clock::SystemJobClock;
     use a3_application::{JobScheduler, JobSchedulerConfig, ProjectInspector, ShutdownMode};
@@ -537,6 +615,30 @@ mod tests {
             RepositoryIndexRebuildState::Idle
         );
 
+        scheduler.shutdown(ShutdownMode::CancelAndWait)?;
+        Ok(())
+    }
+
+    #[test]
+    fn deactivation_without_an_active_project_is_rejected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let config = JobSchedulerConfig::new(1, 1, 8)?;
+        let (scheduler, _events) = JobScheduler::new(config, Arc::new(SystemJobClock::new()))?;
+        let submitter = scheduler.submitter()?;
+        let (response, receiver) = bounded(1);
+        let mut active = None;
+        let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
+
+        assert!(!handle_manager_command(
+            ManagerCommand::Deactivate(response),
+            &submitter,
+            &mut active,
+            &rebuild_state,
+        ));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1))?,
+            Err(RepositoryIndexDeactivationError::NoActiveProject)
+        );
         scheduler.shutdown(ShutdownMode::CancelAndWait)?;
         Ok(())
     }
@@ -585,6 +687,28 @@ mod tests {
                 .lock()
                 .map_err(|_| std::io::Error::other("rebuild state mutex was poisoned"))?,
             RepositoryIndexRebuildState::Queued
+        );
+        let (response, receiver) = bounded(1);
+        assert!(!handle_manager_command(
+            ManagerCommand::Deactivate(response),
+            &submitter,
+            &mut active,
+            &rebuild_state,
+        ));
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(1))?, Ok(()));
+        assert!(active.as_ref().is_some_and(|state| {
+            state.deactivated && state.watcher.is_none() && !state.pending_rebuild
+        }));
+        let (response, receiver) = bounded(1);
+        assert!(!handle_manager_command(
+            ManagerCommand::Rebuild(response),
+            &submitter,
+            &mut active,
+            &rebuild_state,
+        ));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1))?,
+            Err(RepositoryIndexRebuildRequestError::NoActiveProject)
         );
         assert!(handle_manager_command(
             ManagerCommand::Shutdown,

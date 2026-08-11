@@ -4,6 +4,7 @@ import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
+import type { RemoveProjectResponseV1 } from './lib/project-removal';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
 import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 
@@ -61,6 +62,11 @@ const activeProjectStatus: ProjectStatusResponseV1 = {
 const queuedRebuildStatus: ProjectStatusResponseV1 = {
   ...activeProjectStatus,
   result: { ...activeProjectResult, rebuildState: 'queued' },
+};
+
+const removedProject: RemoveProjectResponseV1 = {
+  protocolVersion: 1,
+  result: { retainedPrivateStorage: true, status: 'removed' },
 };
 
 const recentProjects: RecentProjectsResponseV1 = {
@@ -240,5 +246,38 @@ describe('A^3 desktop shell', () => {
 
     expect(await screen.findByText('C:\\worktree')).toBeTruthy();
     expect(screen.getByText('C:\\linked-worktree')).toBeTruthy();
+  });
+
+  it('requires explicit confirmation and explains non-destructive project removal', async () => {
+    const projectRemover = vi.fn(async () => removedProject);
+    const recentProjectsLoader = vi
+      .fn<() => Promise<RecentProjectsResponseV1>>()
+      .mockResolvedValueOnce(recentProjects)
+      .mockResolvedValueOnce(emptyRecentProjects);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectRemover,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader,
+      },
+    });
+
+    const removeButton = await screen.findByRole('button', { name: 'Nur aus A^3 entfernen' });
+    expect(
+      screen.getByText(/Repository-Dateien werden nie gelöscht.*Private A\^3-Daten bleiben/s),
+    ).toBeTruthy();
+    await fireEvent.click(removeButton);
+    expect(projectRemover).not.toHaveBeenCalled();
+    expect(screen.getByText(/Der lokale Worktree bleibt vollständig bestehen/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Entfernen bestätigen' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Worktree aus der A\^3-Projektliste entfernt/)).toBeTruthy();
+      expect(screen.getByText('Noch keine Projekte gespeichert.')).toBeTruthy();
+    });
+    expect(projectRemover).toHaveBeenCalledTimes(1);
+    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
   });
 });

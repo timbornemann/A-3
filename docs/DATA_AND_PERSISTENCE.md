@@ -668,6 +668,11 @@ Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Do
 ## Retention und Wiederaufbau
 
 - Index und Embeddings dürfen sicher gelöscht und aufgebaut werden.
+- „Aus A^3 entfernen“ löscht nur den exakt identitätsgebundenen `recent_worktrees`-Eintrag und
+  offene Reconciliation-Absichten dieses Worktrees. `projects`, `repository_observations`, andere
+  Linked Worktrees und `projects/<WorktreeId>/knowledge.db` bleiben bestehen. Wiederöffnen verwendet
+  deshalb dieselbe stabile `ProjectId` und alle privaten Knowledge-, Task-, Decision- und
+  Evidence-Daten weiter; Repositorydateien gehören nie zum Löschumfang.
 - Der Desktop-Rebuild entfernt über `KnowledgeIndexStore::rebuild_regenerable_index` nur die
   regenerierbaren deterministischen Indexprojektionen und ihre IndexRun-Zeilen. Snapshotkette,
   verifizierte Herkunft, Tasks, Decisions, User-Evidence und Repositoryinhalte bleiben erhalten;

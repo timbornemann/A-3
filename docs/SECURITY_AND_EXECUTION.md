@@ -50,7 +50,7 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
-  `rebuild_project_index` und `query_health`, aber keine
+  `rebuild_project_index`, `remove_project` und `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
@@ -69,6 +69,11 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   serialisiert den Rebuild über den vorhandenen IndexStore-Vertrag und fordert nach Erfolg einen
   vollständigen Refresh an. Der Command kann weder Repositorypfade noch eine Löschmenge vorgeben;
   Quellcode, Snapshotkette, Tasks, Decisions und User-Evidence werden nicht gelöscht.
+- `remove_project` akzeptiert ebenfalls nur die Protokollversion und entfernt ausschließlich die
+  Core-eigene aktive Worktree-Projektion aus `recent_worktrees` sowie zugehörige offene
+  Reconciliation-Absichten. Der Command erhält keine Löschpfade. Repositorydateien, stabile
+  Identitätsanker und das private `projects/<WorktreeId>`-Verzeichnis bleiben erhalten; ein
+  zweistufiger UI-Dialog erklärt diese feste Semantik vor der Ausführung.
 - Worktree-Laufzeitdaten liegen ausschließlich unter dem kanonischen App-Data-Root in
   `projects/<WorktreeId>`. Die `WorktreeId` stammt aus der privilegierten Repository-Inspektion und
   nicht aus der WebView. App-Data innerhalb des ausgewählten Worktrees, Symlinks sowie falsche

@@ -21,11 +21,11 @@ use a3_application::{
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
     ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
-    ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture,
-    ProjectOpenPreparation, ProjectReconciliationProposal, ProjectStorageControl,
-    ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage,
-    RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
-    RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
+    ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture, ProjectCatalogAdmin,
+    ProjectCatalogAdminFuture, ProjectOpenPreparation, ProjectReconciliationProposal,
+    ProjectStorageControl, ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore,
+    ProjectStorageUsage, RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl,
+    RemapQueueLimit, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
     RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
     SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredProjectCommandAllowlist,
     TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
@@ -253,6 +253,21 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .read_recent_projects(limit)
                 .await
                 .map_err(ProjectCatalogError::classify)
+        })
+    }
+}
+
+impl ProjectCatalogAdmin for LibsqlKnowledgeStore {
+    fn remove_recent_worktree<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        project_id: ProjectId,
+    ) -> ProjectCatalogAdminFuture<'a, ()> {
+        Box::pin(async move {
+            self.catalog
+                .remove_recent_worktree(project, project_id)
+                .await
+                .map_err(ProjectCatalogError::classify_admin)
         })
     }
 }

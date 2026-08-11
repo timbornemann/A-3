@@ -237,6 +237,23 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    fehlgeschlagener oder abgebrochener Rebuild veröffentlicht keinen partiellen Indexzustand; der
    geschlossene Rebuildstatus bleibt über `query_project_status` sichtbar.
 
+### Worktree aus der Projektliste entfernen
+
+1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch
+   Projekt-, Repository- oder Worktree-ID vorgeben; der Composition-Root verwendet den aktiven,
+   bereits validierten Zustand.
+2. Ein Core-eigener Lifecycle-Permit serialisiert Öffnen, Rebuild-Anforderung und Entfernen. Der
+   `RepositoryIndexManager` beendet den Watcher, fordert für einen laufenden Job Cancellation an und
+   behält dessen Ownership bis zum terminalen Schedulerzustand.
+3. `RemoveProjectFromList` löscht über den schmalen `ProjectCatalogAdmin`-Port atomar nur die exakt
+   passende Zeile in `recent_worktrees` und zugehörige offene Reconciliation-Absichten. Andere
+   Linked Worktrees desselben Projekts bleiben sichtbar.
+4. `projects`, `repository_observations` und `projects/<WorktreeId>/knowledge.db` bleiben erhalten.
+   Dadurch behält derselbe Worktree beim Wiederöffnen seine stabile `ProjectId` und sein privates
+   Wissen. Repositoryinhalte werden von diesem Ablauf nie geöffnet oder verändert.
+5. Scheitert die Katalogtransaktion nach der Index-Deaktivierung, reaktiviert der Composition-Root
+   den vorherigen Worktree und gibt nur einen stabilen, redigierten Fehler zurück.
+
 ### Agentenlauf
 
 1. Ein Goal Contract wird erstellt oder bestätigt.

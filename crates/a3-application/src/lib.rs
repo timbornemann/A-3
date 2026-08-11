@@ -39,6 +39,7 @@ mod policy;
 mod policy_store;
 mod process_runner;
 mod project_reconciliation;
+mod project_removal;
 mod project_status;
 mod project_storage;
 mod recent_projects;
@@ -220,6 +221,10 @@ pub use process_runner::{
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,
     ProjectReconciliationEvidence, ProjectReconciliationProposal,
+};
+pub use project_removal::{
+    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectCatalogAdminFuture,
+    RemoveProjectFromList, RemoveProjectFromListError, RemovedProject,
 };
 pub use project_status::{
     GetProjectIndexStatus, GetProjectIndexStatusError, ProjectIndexStatus, ProjectSnapshotStatus,

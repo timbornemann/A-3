@@ -3,6 +3,7 @@
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
+  import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
   import {
     queryProjectStatus,
     type IndexStateV1,
@@ -19,6 +20,7 @@
     healthLoader?: () => Promise<HealthResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
+    projectRemover?: () => Promise<RemoveProjectResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
     recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
   }
@@ -37,6 +39,12 @@
     | { kind: 'active'; result: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
   type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error' };
+  type RemovalView =
+    | { kind: 'idle' }
+    | { kind: 'confirming' }
+    | { kind: 'submitting' }
+    | { kind: 'removed' }
+    | { kind: 'error' };
   type RecentProjectsView =
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
@@ -44,6 +52,7 @@
     healthLoader = queryHealth,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
+    projectRemover = removeProject,
     projectStatusLoader = queryProjectStatus,
     recentProjectsLoader = listRecentProjects,
   }: Props = $props();
@@ -51,6 +60,7 @@
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let rebuildView = $state<RebuildView>({ kind: 'idle' });
+  let removalView = $state<RemovalView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
 
   async function loadHealth(): Promise<void> {
@@ -98,6 +108,7 @@
       const response = await projectOpener();
       if (response.result.status === 'opened') {
         projectView = { kind: 'opened' };
+        removalView = { kind: 'idle' };
         await loadProjectStatus();
         await loadRecentProjects();
       } else {
@@ -116,6 +127,27 @@
       await loadProjectStatus();
     } catch {
       rebuildView = { kind: 'error' };
+    }
+  }
+
+  function requestRemovalConfirmation(): void {
+    removalView = { kind: 'confirming' };
+  }
+
+  function cancelRemoval(): void {
+    removalView = { kind: 'idle' };
+  }
+
+  async function confirmProjectRemoval(): Promise<void> {
+    removalView = { kind: 'submitting' };
+    try {
+      await projectRemover();
+      removalView = { kind: 'removed' };
+      projectView = { kind: 'idle' };
+      projectStatusView = { kind: 'noProject' };
+      await loadRecentProjects();
+    } catch {
+      removalView = { kind: 'error' };
     }
   }
 
@@ -312,12 +344,60 @@
             </p>
           {/if}
         </div>
+        <div class="project-maintenance project-removal" aria-labelledby="removal-heading">
+          <h4 id="removal-heading">Worktree aus A^3 entfernen</h4>
+          <p>
+            Entfernt nur diesen Eintrag aus der A^3-Projektliste. Repository-Dateien werden nie
+            gelöscht. Private A^3-Daten bleiben erhalten und stehen beim sicheren Wiederöffnen
+            erneut bereit.
+          </p>
+          {#if removalView.kind === 'confirming'}
+            <div class="removal-confirmation" role="group" aria-labelledby="removal-confirmation">
+              <p id="removal-confirmation">
+                Wirklich nur aus der Projektliste entfernen? Der lokale Worktree bleibt vollständig
+                bestehen.
+              </p>
+              <div class="project-actions">
+                <button class="risk-action" type="button" onclick={confirmProjectRemoval}
+                  >Entfernen bestätigen</button
+                >
+                <button type="button" onclick={cancelRemoval}>Abbrechen</button>
+              </div>
+            </div>
+          {:else}
+            <div class="project-actions">
+              <button
+                class="risk-action"
+                type="button"
+                disabled={removalView.kind === 'submitting'}
+                onclick={requestRemovalConfirmation}
+              >
+                {removalView.kind === 'submitting'
+                  ? 'Worktree wird entfernt …'
+                  : 'Nur aus A^3 entfernen'}
+              </button>
+            </div>
+          {/if}
+          {#if removalView.kind === 'error'}
+            <p class="project-error" role="alert">
+              Der Worktree konnte nicht sicher aus der Projektliste entfernt werden. Repository und
+              private A^3-Daten wurden nicht gelöscht.
+            </p>
+          {/if}
+        </div>
       </div>
     {:else if projectStatusView.kind === 'error'}
       <div class="recent-projects-error" role="alert">
         <p>Der aktive Projektstatus konnte nicht sicher geladen werden.</p>
         <button type="button" onclick={loadProjectStatus}>Status erneut laden</button>
       </div>
+    {/if}
+
+    {#if removalView.kind === 'removed'}
+      <p class="ready-label" role="status" aria-live="polite">
+        Worktree aus der A^3-Projektliste entfernt. Repository und private A^3-Daten bleiben
+        erhalten.
+      </p>
     {/if}
 
     <div class="recent-projects" aria-labelledby="recent-projects-heading">

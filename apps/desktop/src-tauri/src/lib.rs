@@ -13,9 +13,11 @@ use a3_application::{
     GetProjectStorageUsageError, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
     JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
     KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError,
-    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker, ProjectIndexStatus,
+    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
+    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
     ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
     ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, RecentProject,
+    RemoveProjectFromList, RemoveProjectFromListError,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexRunStatus, Platform,
@@ -25,7 +27,7 @@ use a3_protocol::{
     CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexStateV1, OpenProjectResponseV1,
     PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
     RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
-    RecentProjectsResponseV1,
+    RecentProjectsResponseV1, RemoveProjectResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -36,12 +38,13 @@ use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
 use repository_index_manager::{
-    RepositoryIndexManager, RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
+    RepositoryIndexDeactivationError, RepositoryIndexManager, RepositoryIndexRebuildRequestError,
+    RepositoryIndexRebuildState,
 };
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
 
@@ -55,7 +58,9 @@ pub struct CompositionRoot {
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
     project_storage: Option<GetProjectStorageUsage>,
+    remove_project: Option<RemoveProjectFromList>,
     active_project: Mutex<Option<ActiveProject>>,
+    project_operation_active: AtomicBool,
     index_manager: Option<RepositoryIndexManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
@@ -102,6 +107,7 @@ impl CompositionRoot {
 
     /// Executes one user-controlled native project selection and maps it to IPC V1.
     pub async fn open_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_open)?;
         let outcome = self
             .open_project
             .execute()
@@ -175,6 +181,12 @@ impl CompositionRoot {
 
     /// Queues a bounded rebuild for the Core-owned active project.
     pub fn rebuild_project_index(&self) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_rebuild)?;
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return Err(CommandErrorV1::project_rebuild(
+                ErrorCodeV1::NoActiveProject,
+            ));
+        }
         let manager = self
             .index_manager
             .as_ref()
@@ -183,6 +195,59 @@ impl CompositionRoot {
             .request_rebuild()
             .map_err(map_rebuild_request_error_to_v1)?;
         Ok(RebuildProjectIndexResponseV1::queued())
+    }
+
+    /// Removes the Core-owned active worktree from A^3 while retaining source and private data.
+    pub async fn remove_project(&self) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_removal)?;
+        let active = lock_recovering_poison(&self.active_project)
+            .clone()
+            .ok_or_else(|| CommandErrorV1::project_removal(ErrorCodeV1::NoActiveProject))?;
+        let manager = self.index_manager.as_ref().ok_or_else(|| {
+            CommandErrorV1::project_removal(ErrorCodeV1::ProjectRemovalUnavailable)
+        })?;
+        let remove = self.remove_project.as_ref().ok_or_else(|| {
+            CommandErrorV1::project_removal(ErrorCodeV1::ProjectRemovalUnavailable)
+        })?;
+
+        if let Err(error) = manager.deactivate_project() {
+            let _restored = manager.activate_project(active.project.clone());
+            return Err(map_deactivation_error_to_v1(error));
+        }
+        let outcome = remove.execute(&active.project, active.project_id).await;
+        if let Err(error) = outcome {
+            if manager.activate_project(active.project.clone()).is_err() {
+                return Err(CommandErrorV1::project_removal(
+                    ErrorCodeV1::ProjectRemovalUnavailable,
+                ));
+            }
+            return Err(map_project_removal_error_to_v1(error));
+        }
+
+        *lock_recovering_poison(&self.active_project) = None;
+        Ok(RemoveProjectResponseV1::removed())
+    }
+
+    fn acquire_project_operation(
+        &self,
+        error: fn(ErrorCodeV1) -> CommandErrorV1,
+    ) -> Result<ProjectOperationPermit<'_>, CommandErrorV1> {
+        self.project_operation_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ProjectOperationPermit {
+                active: &self.project_operation_active,
+            })
+            .map_err(|_| error(ErrorCodeV1::ProjectOperationBusy))
+    }
+}
+
+struct ProjectOperationPermit<'a> {
+    active: &'a AtomicBool,
+}
+
+impl Drop for ProjectOperationPermit<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
     }
 }
 
@@ -263,6 +328,7 @@ impl CompositionBase {
             store,
             None,
             None,
+            None,
         )
     }
 
@@ -273,6 +339,7 @@ impl CompositionBase {
         store: Arc<dyn KnowledgeStore>,
         index_store: Arc<dyn KnowledgeIndexStore>,
         project_storage: Arc<dyn ProjectStorageStore>,
+        project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         self.finish_internal(
             project_directory_picker,
@@ -280,6 +347,7 @@ impl CompositionBase {
             store,
             Some(index_store),
             Some(project_storage),
+            Some(project_catalog_admin),
         )
     }
 
@@ -290,6 +358,7 @@ impl CompositionBase {
         store: Arc<dyn KnowledgeStore>,
         index_store: Option<Arc<dyn KnowledgeIndexStore>>,
         project_storage: Option<Arc<dyn ProjectStorageStore>>,
+        project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         let project_status = index_store.clone().map(GetProjectIndexStatus::new);
         let index_manager = index_store
@@ -313,7 +382,9 @@ impl CompositionBase {
             recent_projects: ListRecentProjects::new(store),
             project_status,
             project_storage: project_storage.map(GetProjectStorageUsage::new),
+            remove_project: project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
+            project_operation_active: AtomicBool::new(false),
             index_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
@@ -339,6 +410,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     .map_err(CompositionRootError::Catalog)?,
             );
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
+            let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store;
             app.manage(base.finish_with_indexing(
@@ -349,6 +421,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 catalog_store,
                 index_store,
                 project_storage,
+                project_catalog_admin,
             )?);
             Ok(())
         })
@@ -357,7 +430,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::open_project,
             commands::query_project_status,
             commands::query_health,
-            commands::rebuild_project_index
+            commands::rebuild_project_index,
+            commands::remove_project
         ])
         .run(tauri::generate_context!())
         .map_err(DesktopRunError::Tauri)
@@ -550,6 +624,32 @@ fn map_rebuild_request_error_to_v1(error: RepositoryIndexRebuildRequestError) ->
         }
     };
     CommandErrorV1::project_rebuild(code)
+}
+
+fn map_deactivation_error_to_v1(error: RepositoryIndexDeactivationError) -> CommandErrorV1 {
+    let code = match error {
+        RepositoryIndexDeactivationError::NoActiveProject => ErrorCodeV1::NoActiveProject,
+        RepositoryIndexDeactivationError::AlreadyPending => ErrorCodeV1::ProjectOperationBusy,
+        RepositoryIndexDeactivationError::WatcherShutdown
+        | RepositoryIndexDeactivationError::QueueFull
+        | RepositoryIndexDeactivationError::CoordinatorStopped => {
+            ErrorCodeV1::ProjectRemovalUnavailable
+        }
+    };
+    CommandErrorV1::project_removal(code)
+}
+
+fn map_project_removal_error_to_v1(error: RemoveProjectFromListError) -> CommandErrorV1 {
+    let RemoveProjectFromListError::Storage(error) = error;
+    let code = match error {
+        ProjectCatalogAdminFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+        ProjectCatalogAdminFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+        ProjectCatalogAdminFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+        ProjectCatalogAdminFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
+        ProjectCatalogAdminFailure::IdentityConflict => ErrorCodeV1::ProjectIdentityConflict,
+        ProjectCatalogAdminFailure::NotFound => ErrorCodeV1::ProjectNotInList,
+    };
+    CommandErrorV1::project_removal(code)
 }
 
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

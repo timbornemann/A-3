@@ -5,6 +5,7 @@ mod goal_contract;
 mod health;
 mod project;
 mod project_rebuild;
+mod project_removal;
 mod project_status;
 mod recent_projects;
 mod version;
@@ -16,6 +17,7 @@ pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };
 pub use project_rebuild::{RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1};
+pub use project_removal::{RemoveProjectRequestV1, RemoveProjectResponseV1, RemoveProjectResultV1};
 pub use project_status::{
     IndexStateV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1,
     ProjectStatusResultV1, QueryProjectStatusRequestV1, RebuildStateV1,
