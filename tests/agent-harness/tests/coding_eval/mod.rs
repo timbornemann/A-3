@@ -44,6 +44,7 @@ use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod compaction;
 mod replan;
 
 const EXPECTED_RESULTS: &str =
@@ -272,6 +273,7 @@ fn coding_eval_v1_matches_reviewed_results() -> Result<(), Box<dyn Error>> {
             evaluate_case(two_module_change()).await?,
             evaluate_case(test_addition()).await?,
             replan::evaluate().await?,
+            compaction::evaluate().await?,
         ];
         let actual = render_results(&results);
         if actual.trim() != EXPECTED_RESULTS.trim() {
