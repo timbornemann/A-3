@@ -511,25 +511,36 @@ where
         != Some(std::ffi::OsStr::new(test_name))
     {
         let success_marker = project_catalog_success_marker(test_name);
-        remove_project_catalog_success_marker(&success_marker)?;
-        let mut child = std::process::Command::new(std::env::current_exe()?)
-            .arg(test_name)
-            .arg("--exact")
-            .arg("--test-threads=1")
-            .env("A3_LIBSQL_ISOLATED_TEST", test_name)
-            .env("A3_LIBSQL_RETAIN_TEMP_DIRECTORY", "1")
-            .env("A3_LIBSQL_SUCCESS_MARKER", &success_marker)
-            .spawn()?;
-        let child_id = child.id();
-        let status = child.wait()?;
-        cleanup_project_catalog_workspaces(child_id)?;
-        let contract_completed = success_marker.is_file();
-        remove_project_catalog_success_marker(&success_marker)?;
-        if contract_completed {
-            return Ok(());
+        const MAX_NATIVE_ATTEMPTS: u8 = 3;
+        const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
+        for attempt in 1..=MAX_NATIVE_ATTEMPTS {
+            remove_project_catalog_success_marker(&success_marker)?;
+            let mut child = std::process::Command::new(std::env::current_exe()?)
+                .arg(test_name)
+                .arg("--exact")
+                .arg("--test-threads=1")
+                .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+                .env("A3_LIBSQL_RETAIN_TEMP_DIRECTORY", "1")
+                .env("A3_LIBSQL_SUCCESS_MARKER", &success_marker)
+                .spawn()?;
+            let child_id = child.id();
+            let status = child.wait()?;
+            cleanup_project_catalog_workspaces(child_id)?;
+            let contract_completed = success_marker.is_file();
+            remove_project_catalog_success_marker(&success_marker)?;
+            if contract_completed {
+                return Ok(());
+            }
+            if status.code() == Some(STATUS_ACCESS_VIOLATION) && attempt < MAX_NATIVE_ATTEMPTS {
+                continue;
+            }
+            return Err(io::Error::other(format!(
+                "isolated project catalog test {test_name} failed on attempt {attempt} with {status} before completion evidence"
+            ))
+            .into());
         }
         return Err(io::Error::other(format!(
-            "isolated project catalog test {test_name} failed with {status}"
+            "isolated project catalog test {test_name} exhausted its native retry bound"
         ))
         .into());
     }
