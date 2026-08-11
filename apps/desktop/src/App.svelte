@@ -35,6 +35,12 @@
     type ModuleCardFreshnessReasonV1,
     type ModuleCardFreshnessResponseV1,
   } from './lib/module-card-freshness';
+  import {
+    queryModuleTree,
+    type ModuleTreeEntryV1,
+    type ModuleTreeQueryV1,
+    type ModuleTreeResponseV1,
+  } from './lib/module-tree';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
@@ -66,6 +72,7 @@
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
     moduleCardFreshnessLoader?: () => Promise<ModuleCardFreshnessResponseV1>;
+    moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
@@ -119,6 +126,20 @@
         result: Extract<RepositoryTreeResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
+  type ModuleTreeView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleTreeResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  interface ModuleTreeBreadcrumb {
+    moduleId: string;
+    name: string;
+  }
   interface RepositoryTreeBreadcrumb {
     name: string;
     pathHex: string;
@@ -154,6 +175,7 @@
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
     moduleCardFreshnessLoader = queryModuleCardFreshness,
+    moduleTreeLoader = queryModuleTree,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
@@ -167,6 +189,9 @@
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
   let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
+  let moduleTreeView = $state<ModuleTreeView>({ kind: 'loading' });
+  let moduleTreeBreadcrumbs = $state<ModuleTreeBreadcrumb[]>([]);
+  let moduleTreeLoadingMore = $state(false);
   let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
   let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
   let repositoryTreeLoadingMore = $state(false);
@@ -200,6 +225,7 @@
     void loadIndexActivity();
     void loadIndexOverview();
     void loadModuleCardFreshness();
+    void loadModuleTreeRoot();
     void loadRepositoryTreeRoot();
     void loadDeepMap();
     const activityTimer = window.setInterval(() => {
@@ -227,10 +253,13 @@
       ) {
         void loadIndexOverview();
         void loadModuleCardFreshness();
+        void loadModuleTreeRoot();
         void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
         moduleCardFreshnessView = { kind: 'noProject' };
+        moduleTreeView = { kind: 'noProject' };
+        moduleTreeBreadcrumbs = [];
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -270,6 +299,91 @@
     } catch {
       moduleCardFreshnessView = { kind: 'error' };
     }
+  }
+
+  async function loadModuleTree(
+    parentModuleId: string | null,
+    afterModuleId: string | null = null,
+  ): Promise<void> {
+    const append = afterModuleId !== null;
+    if (append) {
+      moduleTreeLoadingMore = true;
+    } else {
+      moduleTreeView = { kind: 'loading' };
+    }
+    try {
+      const response = await moduleTreeLoader({ afterModuleId, limit: 50, parentModuleId });
+      if (response.result.status === 'available') {
+        if (append && moduleTreeView.kind === 'available') {
+          const current = moduleTreeView.result.page;
+          const next = response.result.page;
+          const compatible =
+            current.indexRunId === next.indexRunId &&
+            current.snapshotId === next.snapshotId &&
+            current.parentModuleId === next.parentModuleId &&
+            current.nextAfterModuleId === afterModuleId &&
+            !next.entries.some((entry) =>
+              current.entries.some((currentEntry) => currentEntry.moduleId === entry.moduleId),
+            );
+          if (!compatible) {
+            moduleTreeView = { kind: 'error' };
+            return;
+          }
+          moduleTreeView = {
+            kind: 'available',
+            result: {
+              page: { ...next, entries: [...current.entries, ...next.entries] },
+              status: 'available',
+            },
+          };
+        } else {
+          moduleTreeView = { kind: 'available', result: response.result };
+        }
+      } else if (response.result.status === 'projectionUnavailable') {
+        moduleTreeView = { kind: 'projectionUnavailable' };
+      } else if (response.result.status === 'noPublishedIndex') {
+        moduleTreeView = { kind: 'noPublishedIndex' };
+      } else {
+        moduleTreeView = { kind: 'noProject' };
+        moduleTreeBreadcrumbs = [];
+      }
+    } catch {
+      moduleTreeView = { kind: 'error' };
+    } finally {
+      moduleTreeLoadingMore = false;
+    }
+  }
+
+  async function loadModuleTreeRoot(): Promise<void> {
+    moduleTreeBreadcrumbs = [];
+    await loadModuleTree(null);
+  }
+
+  async function openModule(entry: ModuleTreeEntryV1): Promise<void> {
+    if (entry.childState !== 'hasChildren') return;
+    moduleTreeBreadcrumbs = [
+      ...moduleTreeBreadcrumbs,
+      { moduleId: entry.moduleId, name: entry.name },
+    ];
+    await loadModuleTree(entry.moduleId);
+  }
+
+  async function openModuleBreadcrumb(index: number): Promise<void> {
+    if (index < 0) {
+      await loadModuleTreeRoot();
+      return;
+    }
+    const target = moduleTreeBreadcrumbs[index];
+    if (target === undefined) return;
+    moduleTreeBreadcrumbs = moduleTreeBreadcrumbs.slice(0, index + 1);
+    await loadModuleTree(target.moduleId);
+  }
+
+  async function loadMoreModules(): Promise<void> {
+    if (moduleTreeView.kind !== 'available') return;
+    const page = moduleTreeView.result.page;
+    if (page.nextAfterModuleId === null) return;
+    await loadModuleTree(page.parentModuleId, page.nextAfterModuleId);
   }
 
   async function loadRepositoryTree(
@@ -396,6 +510,8 @@
       if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
         moduleCardFreshnessView = { kind: 'noProject' };
+        moduleTreeView = { kind: 'noProject' };
+        moduleTreeBreadcrumbs = [];
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -409,6 +525,7 @@
       loadProjectStatus(),
       loadIndexOverview(),
       loadModuleCardFreshness(),
+      loadModuleTreeRoot(),
       loadRepositoryTreeRoot(),
       loadDeepMap(),
     ]);
@@ -436,6 +553,7 @@
         await loadIndexActivity();
         await loadIndexOverview();
         await loadModuleCardFreshness();
+        await loadModuleTreeRoot();
         await loadRepositoryTreeRoot();
         await loadDeepMap();
         await loadRecentProjects();
@@ -503,6 +621,8 @@
       indexActivityView = { kind: 'noProject' };
       indexOverviewView = { kind: 'noProject' };
       moduleCardFreshnessView = { kind: 'noProject' };
+      moduleTreeView = { kind: 'noProject' };
+      moduleTreeBreadcrumbs = [];
       repositoryTreeView = { kind: 'noProject' };
       repositoryTreeBreadcrumbs = [];
       deepMapView = { kind: 'noProject' };
@@ -583,6 +703,14 @@
 
   function countLabel(value: string): string {
     return new Intl.NumberFormat('de-DE').format(BigInt(value));
+  }
+
+  function moduleKindLabel(entry: ModuleTreeEntryV1): string {
+    return entry.kind === 'manifestBoundary' ? 'Manifest-Grenze' : 'Pfad-Grenze';
+  }
+
+  function moduleFeatureLabel(feature: ModuleTreeEntryV1['centralSymbols']): string {
+    return `${countLabel(feature.count)}${feature.truncated ? '+' : ''}`;
   }
 
   function moduleCardFreshnessReasonLabel(reason: ModuleCardFreshnessReasonV1): string {
@@ -976,6 +1104,143 @@
             <div class="recent-projects-error" role="alert">
               <p>Der Repository-Baum konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadRepositoryTreeRoot}>Vom Root neu laden</button>
+            </div>
+          {/if}
+        </div>
+        <div class="repository-tree-panel module-tree-panel" aria-labelledby="module-tree-heading">
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="module-tree-heading">Modulbaum</h4>
+              <p>Direkte deterministische Modulgrenzen; Graph-Communities bleiben Zusatzsignale.</p>
+            </div>
+            <button type="button" onclick={loadModuleTreeRoot}>Zum Root</button>
+          </div>
+          {#if moduleTreeView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">Modulbaum wird gelesen …</p>
+          {:else if moduleTreeView.kind === 'noPublishedIndex'}
+            <p class="project-status">
+              Noch kein vollständiger Snapshot veröffentlicht; der Modulbaum bleibt leer.
+            </p>
+          {:else if moduleTreeView.kind === 'projectionUnavailable'}
+            <p class="project-status">
+              Der veröffentlichte historische Index enthält noch keine deterministische
+              Modulprojektion. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
+            </p>
+          {:else if moduleTreeView.kind === 'available'}
+            <p class="index-snapshot">
+              Indexlauf <code>{moduleTreeView.result.page.indexRunId}</code>
+            </p>
+            <dl class="module-tree-summary">
+              <div>
+                <dt>Primäre Module</dt>
+                <dd>{countLabel(moduleTreeView.result.page.primaryModuleCount)}</dd>
+              </div>
+              <div>
+                <dt>Graph-Communities</dt>
+                <dd>{countLabel(moduleTreeView.result.page.graphCommunityCount)}</dd>
+              </div>
+            </dl>
+            <nav class="repository-tree-breadcrumbs" aria-label="Modulpfad">
+              <button type="button" onclick={() => openModuleBreadcrumb(-1)}>Modul-Root</button>
+              {#each moduleTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.moduleId)}
+                <span aria-hidden="true">/</span>
+                <button
+                  type="button"
+                  aria-current={breadcrumbIndex === moduleTreeBreadcrumbs.length - 1
+                    ? 'page'
+                    : undefined}
+                  onclick={() => openModuleBreadcrumb(breadcrumbIndex)}
+                >
+                  {breadcrumb.name}
+                </button>
+              {/each}
+            </nav>
+            {#if moduleTreeView.result.page.entries.length === 0}
+              <p class="ready-label">Keine direkten primären Module in diesem Bereich.</p>
+            {:else}
+              <ul class="module-tree-entries">
+                {#each moduleTreeView.result.page.entries as entry (entry.moduleId)}
+                  <li>
+                    <div class="module-tree-entry-heading">
+                      {#if entry.childState === 'hasChildren'}
+                        <button
+                          type="button"
+                          aria-label={`Modul ${entry.name} öffnen`}
+                          onclick={() => openModule(entry)}
+                        >
+                          <span aria-hidden="true">▸</span>
+                          <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
+                        </button>
+                      {:else}
+                        <div>
+                          <span aria-hidden="true">·</span>
+                          <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
+                        </div>
+                      {/if}
+                      <span>{moduleKindLabel(entry)}</span>
+                    </div>
+                    <dl class="module-tree-entry-metrics">
+                      <div>
+                        <dt>Manifeste</dt>
+                        <dd>{countLabel(entry.manifestCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Dateien</dt>
+                        <dd>{countLabel(entry.fileCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Symbole</dt>
+                        <dd>{countLabel(entry.symbolCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Zentral</dt>
+                        <dd>{moduleFeatureLabel(entry.centralSymbols)}</dd>
+                      </div>
+                      <div>
+                        <dt>Einstiege</dt>
+                        <dd>{moduleFeatureLabel(entry.entrypoints)}</dd>
+                      </div>
+                      <div>
+                        <dt>Tests</dt>
+                        <dd>{moduleFeatureLabel(entry.tests)}</dd>
+                      </div>
+                    </dl>
+                    <p class="module-tree-evidence">
+                      {#if entry.boundaryEvidence.manifestRevision !== null}
+                        Manifest-Evidenz
+                        <code
+                          >{entry.boundaryEvidence.manifestRevision.contentHash.slice(0, 12)}</code
+                        >
+                      {:else if entry.boundaryEvidence.representativeRevision !== null}
+                        Repräsentative Revision
+                        <code
+                          >{entry.boundaryEvidence.representativeRevision.contentHash.slice(
+                            0,
+                            12,
+                          )}</code
+                        >
+                      {:else}
+                        Leeres strukturelles Modul ohne Revisionsrepräsentant
+                      {/if}
+                    </p>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if moduleTreeView.result.page.nextAfterModuleId !== null}
+              <button
+                class="repository-tree-more"
+                type="button"
+                disabled={moduleTreeLoadingMore}
+                onclick={loadMoreModules}
+              >
+                {moduleTreeLoadingMore ? 'Weitere Module werden geladen …' : 'Weitere Module laden'}
+              </button>
+            {/if}
+          {:else if moduleTreeView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
             </div>
           {/if}
         </div>

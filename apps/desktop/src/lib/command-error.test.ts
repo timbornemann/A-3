@@ -51,6 +51,15 @@ describe('command error recovery', () => {
     ).toContain('starte A^3');
   });
 
+  it.each([
+    'invalidRepositoryTreeQuery',
+    'repositoryTreeDirectoryUnavailable',
+    'invalidModuleTreeQuery',
+    'moduleTreeParentUnavailable',
+  ])('recognizes the narrow indexed-navigation error code %s', (code) => {
+    expect(parseCommandErrorV1(commandError(code))?.code).toBe(code);
+  });
+
   it('maps only known Deep Map codes and never renders a raw boundary message', () => {
     const secret = 'http://private-provider:11434/api/chat';
     expect(deepMapRecoveryMessage(commandError('deepMapNotPaused', secret))).toContain(

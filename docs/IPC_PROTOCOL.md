@@ -93,6 +93,39 @@ mindestens einen Dateinachfahren und keinen synthetischen Hash. Unbekannte Felde
 nicht kanonische Tokens, widersprüchliche Evidenz, Reihenfolge- oder Cursorfehler werden sowohl am
 Rust- als auch am TypeScript-Rand abgelehnt.
 
+## Module Tree V1
+
+`query_module_tree` akzeptiert genau `protocolVersion`, `parentModuleId`, `afterModuleId` und
+`limit`. Beide IDs sind `null` oder 64-stellige kleingeschriebene Hexwerte; `limit` liegt
+einschließlich zwischen 1 und 100. Die IDs wählen nur einen Knoten beziehungsweise exklusiven
+Cursor innerhalb der aktuellen publizierten Modulprojektion. Projekt, Worktree, Repositorypfad und
+Dateisystempfad sind keine Requestfelder. Eine ungültige Query liefert
+`invalidModuleTreeQuery`; ein nicht mehr aktueller oder zusätzlicher Community-Elternknoten
+`moduleTreeParentUnavailable`.
+
+Die Antwort liefert genau `noProject`, `noPublishedIndex`, `projectionUnavailable` oder `available`.
+`projectionUnavailable` bezeichnet eine historische Publikation ohne V8-Modulmarker und ist von
+einer verfügbaren leeren Projektion getrennt. Eine verfügbare Seite enthält `indexRunId`,
+`snapshotId`, das angeforderte `parentModuleId`, die verlustfreien u64-Dezimaltexte
+`primaryModuleCount` und `graphCommunityCount`, höchstens 100 strikt nach `moduleId` geordnete
+direkte primäre Kinder sowie optional `nextAfterModuleId`. Ein vorhandener Folgeseiten-Cursor
+entspricht exakt dem letzten ausgelieferten Modul.
+
+Ein Eintrag enthält `moduleId`, `kind` (`manifestBoundary` oder `pathBoundary`), optionales
+kanonisches relatives `rootPathHex`, einen nicht leeren kontrollzeichenfreien `name` mit höchstens
+256 Zeichen und `nameTruncated`. `manifestCount`, `fileCount` und `symbolCount` sind verlustfreie
+u64-Dezimaltexte. `centralSymbols`, `entrypoints` und `tests` enthalten jeweils `count` und eine
+explizite `truncated`-Angabe; ein trunkierter leerer Präfix ist ungültig. `childState` ist `leaf`
+oder `hasChildren`.
+
+`boundaryEvidence` enthält eine `representativeRevision`, sobald `symbolCount` positiv ist, und nur
+bei einer Manifestgrenze zusätzlich eine `manifestRevision`. Jede Revision besteht aus kanonischem
+relativem `pathHex` und exakt 64-stelligem `contentHash`; Source-Inhalt wird nicht übertragen. Eine
+Manifestgrenze besitzt mindestens ein Manifest, eine Pfadgrenze keines. Unbekannte Felder,
+Graph-Community-Knoten, widersprüchliche Counts, Evidence- oder Trunkierungsformen, nicht kanonische
+IDs und Pfade sowie Reihenfolge-, Eltern- oder Cursorfehler werden am Rust- beziehungsweise
+TypeScript-Rand abgelehnt.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -150,9 +183,10 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 ## Tauri-Capability
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
-Health-, Project-, Index-, Repository-Tree-, Module-Card-Freshness- und Deep-Map-Commands. Der
-Repository-Baum besitzt ausschließlich `allow-query-repository-tree`; die Freshness-Capability ist
-`allow-query-module-card-freshness`. Für Deep Map sind das
+Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Card-Freshness- und
+Deep-Map-Commands. Repository- und Modulbaum besitzen ausschließlich
+`allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; die Freshness-Capability
+ist `allow-query-module-card-freshness`. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.

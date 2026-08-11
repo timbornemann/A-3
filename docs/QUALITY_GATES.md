@@ -71,6 +71,18 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Nichtkanonik-Tokens, indirekte oder doppelte Kinder, widersprüchliche File-Evidence und falsche
   Cursor ab. Der reale Tauri-IPC-Test muss die Capability ohne Pfad- oder Projektparameter
   erreichen; der Component-Test navigiert ein Unterverzeichnis und hält dessen Run-/Snapshotbindung.
+- Der U4-Module-Tree-Contract liest ausschließlich die V8-Modulprojektion des jüngsten atomar
+  publizierten Runs. Storage-Tests prüfen den expliziten Zustand vor der ersten Publikation,
+  primäre Root- und nächste direkte Kindgrenzen, Ausschluss transitiver Nachfahren und
+  Graph-Communities aus dem Baum, exakte primäre/Community-, Manifest-, Datei-, Symbol- und
+  Featurezahlen, aktuelle Revisions-Evidence, Vorwärtspaginierung, Cancellation, ungültige Eltern
+  sowie den vollständigen Wechsel nach einem Replacement-Publish. Rust- und
+  TypeScript-Grenztests lehnen unbekannte Felder, nicht kanonische IDs/Pfade/Zähler, Community-
+  Knoten, widersprüchliche Manifest-, Representative- und Trunkierungsevidence, Duplikate,
+  falsche Reihenfolge, Elternschleifen und Cursor ab. Der reale Tauri-IPC-Test erreicht nur die
+  enge Capability ohne Projekt- oder Pfadparameter; der Component-Test navigiert zu einem direkten
+  primären Kind, hält Run-, Snapshot-, Eltern- und Cursorbindung und stellt Graph-Communities nur
+  als Zähler dar. Kein Modulbaum-Read läuft im Statuspolling.
 
 ### Persistenz
 

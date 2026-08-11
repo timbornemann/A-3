@@ -322,6 +322,32 @@ Pfade und persistierte Korruption ab. Der libSQL-Read prüft Cancellation und be
 Zwei-Sekunden-Limit. Die Hexdarstellung an der IPC-Grenze ist ein opaker Indexschlüssel und gewährt
 weder einen Source-Read noch Zugriff auf einen Betriebssystempfad.
 
+### Progressiver Modulbaum
+
+Der Modulbaum liest die bereits mit V8 atomar publizierten Tabellen `modules`, `module_projections`,
+`module_members`, `module_manifests` sowie die drei begrenzten Featurelisten, ohne einen vollständigen
+`PublishedIndex` zu rekonstruieren. Ein vorhandener `module_projections.module_count` markiert die
+vollständige Projektion und muss exakt mit primären Manifest-/Pfadmodulen plus zusätzlichen
+Graph-Communities übereinstimmen. Fehlt dieser Marker bei einem historischen publizierten Run, ist
+die Projektion explizit nicht verfügbar; null aktuelle Module sind dagegen eine gültige leere
+Projektion.
+
+Primäre Module besitzen genau einen kanonischen Repository- oder Verzeichnisroot. Die Rootquery
+liefert nur Module ohne primären Root-Vorfahren. Eine Childquery liefert nur Nachfahren des gewählten
+primären Elternroots, zwischen denen kein weiterer primärer Root liegt. Gleiche primäre Roots,
+zusätzliche statt primäre Membership-Kinds und widersprüchliche Manifestformen gelten als
+persistierte Korruption. Graph-Communities werden niemals als Eltern oder Kinder interpretiert;
+ihre exakte Gesamtzahl bleibt als Zusatzsignal erhalten.
+
+Eine kurze Read-Transaktion bindet Run, Snapshot, Elternknoten, Counts, Boundary-Evidence, Seite und
+Cursor atomar. Jede Seite enthält höchstens 100 nach `ModuleId` geordnete direkte Kinder; `limit + 1`
+bestimmt, ob der letzte ausgelieferte Schlüssel als exklusiver Folgeseiten-Cursor erscheint. Pro
+Knoten werden exakte Manifest-, distinct-File- und primäre Membership-Zahlen, die gespeicherten
+bounded Central-/Entrypoint-/Test-Zahlen samt Trunkierungswahrheit sowie ein Child-Signal gelesen.
+Eine vorhandene strukturelle Membership liefert eine repräsentative aktuelle `FileRevision`; eine
+Manifestgrenze liefert zusätzlich ihre erste kanonische aktuelle Manifestrevision. Der Read ist
+cancellable, auf zwei Sekunden begrenzt und öffnet weder Live-Dateisystem noch Source-Inhalt.
+
 ## Deep Map
 
 Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrücklichen Aktion

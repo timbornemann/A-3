@@ -35,6 +35,10 @@ pub enum ErrorCodeV1 {
     InvalidRepositoryTreeQuery,
     /// A previously visible indexed directory is absent from the current publication.
     RepositoryTreeDirectoryUnavailable,
+    /// A parent module ID, cursor, or limit violated the strict module-tree contract.
+    InvalidModuleTreeQuery,
+    /// A previously visible primary module is absent from the current projection.
+    ModuleTreeParentUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -113,6 +117,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::RepositoryTreeDirectoryUnavailable => {
                 "The selected directory is no longer present in the published index."
+            }
+            ErrorCodeV1::InvalidModuleTreeQuery => {
+                "The module tree request is outside the supported bounds."
+            }
+            ErrorCodeV1::ModuleTreeParentUnavailable => {
+                "The selected module is no longer present in the published index."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

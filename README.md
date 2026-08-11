@@ -94,12 +94,14 @@ verifiziertes Modell und harte Budgets vor dem Start, kann checkpoint-sicher pau
 fortsetzen und abbrechen und bleibt ohne konfiguriertes Mapping-Modell sicher deaktiviert. Als
 abschließender U3-Schnitt zeigt eine an den aktuellen veröffentlichten Index gebundene
 Module-Card-Aktualität mit `Current`, `Stale`, `NeedsReview` und typisierten
-Invalidierungsursachen. U4 hat mit einem progressiven Repository-Baum begonnen: Die Desktopansicht
-liest höchstens 100 direkte Kinder pro Seite aus genau einer atomaren Indexpublikation, navigiert
-verlustfrei über opake relative Tokens und zeigt für Dateien den exakten veröffentlichten
-Inhaltshash. Weder ein Vollgraph noch das Live-Dateisystem oder autoritative Betriebssystempfade
-überschreiten dafür die WebView-Grenze; der zugehörige Modulbaum bleibt der nächste U4-Schnitt. Die
-verbindliche Architektur- und Entwicklungsbaseline liegt unter
+Invalidierungsursachen. Der erste U4-Schritt liefert progressive Repository- und Modulbäume: Die
+Desktopansicht liest höchstens 100 direkte Kinder pro Seite aus genau einer atomaren
+Indexpublikation, navigiert verlustfrei über opake relative Tokens beziehungsweise stabile
+Modul-IDs und zeigt aktuelle Revisions-Evidence. Der Modulbaum enthält ausschließlich
+deterministische primäre Manifest- und Pfadgrenzen; Graph-Communities bleiben als exakter
+Zusatzsignal-Zähler sichtbar. Weder ein Vollgraph noch das Live-Dateisystem, Source-Inhalt oder
+autoritative Betriebssystempfade überschreiten dafür die WebView-Grenze. Die verbindliche
+Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
 
@@ -141,13 +143,16 @@ pnpm tauri build --no-bundle
 ```
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
-Health-, Project-, Index-, Repository-Tree-, Module-Card-Freshness- und Deep-Map-Commands aufrufen.
+Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Card-Freshness- und
+Deep-Map-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
 Anzeigeprojektionen aus dem lokalen Katalog. `query_repository_tree` akzeptiert nur relative
 verlustfreie Indextokens, einen exklusiven Kind-Cursor und ein Limit von 1 bis 100; Projekt und
-Worktree stammen aus dem Core. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
+Worktree stammen aus dem Core. `query_module_tree` akzeptiert entsprechend nur stabile Modul-IDs,
+einen exklusiven Cursor und dieselbe Seitengrenze; Graph-Communities verleihen keine
+Navigationsbefugnis. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
 Diese Pfade erweitern die WebView-Capabilities nicht.

@@ -7,6 +7,7 @@ mod health;
 mod index_activity;
 mod index_overview;
 mod module_card_freshness;
+mod module_tree;
 mod project;
 mod project_rebuild;
 mod project_removal;
@@ -36,6 +37,11 @@ pub use module_card_freshness::{
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
     ModuleCardFreshnessResponseV1, ModuleCardFreshnessResultV1, ModuleCardFreshnessStatusV1,
     ModuleCardFreshnessV1, QueryModuleCardFreshnessRequestV1,
+};
+pub use module_tree::{
+    ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
+    ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeResultV1,
+    ModuleTreeRevisionV1, QueryModuleTreeRequestV1,
 };
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,

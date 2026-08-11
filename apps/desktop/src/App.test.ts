@@ -6,6 +6,7 @@ import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
 import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
+import type { ModuleTreeResponseV1 } from './lib/module-tree';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
@@ -135,6 +136,85 @@ const moduleCardFreshness: ModuleCardFreshnessResponseV1 = {
         { count: '2', reason: 'evidenceChanged', status: 'stale' },
         { count: '1', reason: 'directDependencyChanged', status: 'needsReview' },
       ],
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const moduleTreeRoot: ModuleTreeResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    page: {
+      entries: [
+        {
+          boundaryEvidence: {
+            manifestRevision: {
+              contentHash: '7'.repeat(64),
+              pathHex: '436172676f2e746f6d6c',
+            },
+            representativeRevision: {
+              contentHash: '8'.repeat(64),
+              pathHex: '7372632f6c69622e7273',
+            },
+          },
+          centralSymbols: { count: '1', truncated: false },
+          childState: 'hasChildren',
+          entrypoints: { count: '1', truncated: false },
+          fileCount: '1',
+          kind: 'manifestBoundary',
+          manifestCount: '1',
+          moduleId: 'a'.repeat(64),
+          name: 'Repository',
+          nameTruncated: false,
+          rootPathHex: null,
+          symbolCount: '1',
+          tests: { count: '0', truncated: false },
+        },
+      ],
+      graphCommunityCount: '1',
+      indexRunId: '6'.repeat(64),
+      nextAfterModuleId: null,
+      parentModuleId: null,
+      primaryModuleCount: '2',
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const moduleTreeRepository: ModuleTreeResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    page: {
+      entries: [
+        {
+          boundaryEvidence: {
+            manifestRevision: null,
+            representativeRevision: {
+              contentHash: '9'.repeat(64),
+              pathHex: '746f6f6c732f6d61696e2e7273',
+            },
+          },
+          centralSymbols: { count: '1', truncated: true },
+          childState: 'leaf',
+          entrypoints: { count: '0', truncated: false },
+          fileCount: '1',
+          kind: 'pathBoundary',
+          manifestCount: '0',
+          moduleId: 'b'.repeat(64),
+          name: 'tools',
+          nameTruncated: false,
+          rootPathHex: '746f6f6c73',
+          symbolCount: '1',
+          tests: { count: '0', truncated: false },
+        },
+      ],
+      graphCommunityCount: '1',
+      indexRunId: '6'.repeat(64),
+      nextAfterModuleId: null,
+      parentModuleId: 'a'.repeat(64),
+      primaryModuleCount: '2',
       snapshotId: '4'.repeat(64),
     },
     status: 'available',
@@ -330,6 +410,37 @@ describe('A^3 desktop shell', () => {
       afterNameHex: null,
       directoryPathHex: '737263',
       limit: 50,
+    });
+  });
+
+  it('navigates only direct primary modules while exposing graph communities as a count', async () => {
+    const moduleTreeLoader = vi.fn(async (query: { parentModuleId: string | null }) =>
+      query.parentModuleId === null ? moduleTreeRoot : moduleTreeRepository,
+    );
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleTreeLoader,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Modulbaum' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+    expect(screen.getByText('Graph-Communities')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Graph-Community/ })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Modul Repository öffnen' }));
+
+    expect(await screen.findByText('tools')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Repository' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(moduleTreeLoader).toHaveBeenCalledWith({
+      afterModuleId: null,
+      limit: 50,
+      parentModuleId: 'a'.repeat(64),
     });
   });
 

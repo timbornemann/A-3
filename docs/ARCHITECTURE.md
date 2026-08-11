@@ -290,6 +290,35 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    nur bei identischer Run-, Snapshot-, Verzeichnis- und Cursorbindung an; sie fragt Storage nicht im
    500-ms-Indexpolling ab.
 
+### Progressiver Modulbaum
+
+1. `query_module_tree` wählt ausschließlich die Core-eigene aktive `ProjectIdentity`. Als
+   untrusted Eingaben akzeptiert die WebView nur optionale 32-Byte-`ModuleId`s für Elternknoten und
+   exklusiven Cursor sowie eine Seitengröße von 1 bis 100; Pfade und Projektidentitäten sind keine
+   Requestfelder.
+2. Der Application-Vertrag macht nur `ManifestBoundary` und `PathBoundary` als navigierbare
+   `ModuleTreeEntryKind` darstellbar. `GraphCommunity` kann keinen Baumknoten bilden und wird nur als
+   exakter globaler Zusatzsignal-Zähler projiziert.
+3. Der libSQL-Adapter liest den jüngsten publizierten Run und seinen V8-Projektionsmarker in einer
+   kurzen Read-Transaktion. Fehlt der Marker bei einer historischen Publikation, lautet der Zustand
+   explizit `projectionUnavailable`; eine vorhandene leere Projektion bleibt davon unterscheidbar.
+4. Die Rootseite enthält primäre Grenzen ohne primären Vorfahren. Unter einem Elternknoten werden
+   ausschließlich die nächsten primären Nachfahren ohne dazwischenliegende primäre Grenze geliefert.
+   Ein Repository-Root und beliebig tiefe Verzeichnisgrenzen bilden so einen echten progressiven
+   Baum, nicht eine flache oder transitive Liste.
+5. Jede Seite ist strikt nach stabiler `ModuleId` geordnet und verwendet `limit + 1` für
+   Vorwärtspaginierung. Sie trägt denselben Run-/Snapshotanker, exakte Gesamtzahlen für primäre
+   Module und Graph-Communities sowie pro Knoten Manifest-, Datei-, Symbol- und begrenzte
+   Featurezahlen.
+6. Boundary-Evidence besteht aus einer aktuellen repräsentativen `FileRevision`, wenn das Modul
+   Symbole besitzt, und bei einer Manifestgrenze zusätzlich aus einer aktuellen Manifestrevision.
+   Relative Pfadbytes passieren IPC nur als kanonische kleingeschriebene Hexwerte; die UI rendert
+   ausschließlich die getrennte kontrollzeichenfreie, auf 256 Zeichen begrenzte Anzeige.
+7. Der Read prüft Cancellation, besitzt ein festes Zwei-Sekunden-Limit und läuft nur bei Open,
+   erfolgreichem Publish, Navigation, expliziter Aktualisierung oder Nachladen. Eine Folgeseite wird
+   nur bei identischer Run-, Snapshot-, Eltern- und Cursorbindung angehängt; das 500-ms-Polling löst
+   keinen Storage-Read aus.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

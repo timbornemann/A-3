@@ -16,6 +16,10 @@ export type ErrorCodeV1 =
   | 'localStorageInvalidData'
   | 'projectIdentityConflict'
   | 'noActiveProject'
+  | 'invalidRepositoryTreeQuery'
+  | 'repositoryTreeDirectoryUnavailable'
+  | 'invalidModuleTreeQuery'
+  | 'moduleTreeParentUnavailable'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -47,6 +51,10 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'localStorageInvalidData',
   'projectIdentityConflict',
   'noActiveProject',
+  'invalidRepositoryTreeQuery',
+  'repositoryTreeDirectoryUnavailable',
+  'invalidModuleTreeQuery',
+  'moduleTreeParentUnavailable',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

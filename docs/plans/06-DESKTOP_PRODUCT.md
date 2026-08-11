@@ -125,7 +125,7 @@ verifiziert und abgeschlossen.
 
 Abhängigkeiten: Gate M5
 
-- [ ] Repository- und Modulbaum
+- [x] Repository- und Modulbaum
 - [ ] Abhängigkeitsgraph mit begrenzter Knotenzahl
 - [ ] Entry Points, Tests und Runtime Flows
 - [ ] Module Card
@@ -139,20 +139,29 @@ Akzeptanz:
 - Hypothesen sind visuell klar von Facts getrennt;
 - große Projekte zeigen progressive Details statt unbrauchbarem Vollgraph.
 
-Teilabnahme Repository-Baum vom 2026-08-11: Der erste U4-Schnitt liest Root und Unterverzeichnisse
-progressiv aus genau einer atomaren Indexpublikation. Jede Seite enthält höchstens 100 direkte,
-verlustfrei byteweise geordnete Kinder; ein exklusiver Cursor macht weitere Seiten explizit.
-Dateien tragen den exakten veröffentlichten ContentHash, Verzeichnisse eine exakte
-Nachfahren-Dateizahl. Opake relative Hex-Tokens bleiben von sicheren Anzeigen getrennt und gewähren
-weder Live-Dateisystem- noch Sourcezugriff. Der Read ist cancellable, auf zwei Sekunden begrenzt und
-wird nicht im Statuspolling ausgeführt. Die gemeinsame Checkbox „Repository- und Modulbaum“ bleibt
-bis zum vollständigen Modulbaum bewusst offen.
+Abnahme Repository- und Modulbaum vom 2026-08-11: Der Repository-Baum liest Root und
+Unterverzeichnisse progressiv aus genau einer atomaren Indexpublikation. Jede Seite enthält
+höchstens 100 direkte, verlustfrei byteweise geordnete Kinder; Dateien tragen den exakten
+veröffentlichten ContentHash, Verzeichnisse eine exakte Nachfahren-Dateizahl. Der Modulbaum liest
+aus derselben Publikationsgrenze ausschließlich deterministische primäre Manifest- und
+Pfadgrenzen. Root und nächster primärer Nachfahre bilden eine echte Hierarchie; transitive
+Nachfahren und Graph-Communities erscheinen nicht als Kinder. Die exakte Community-Anzahl bleibt
+als getrenntes Zusatzsignal sichtbar.
 
-Der Teilnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features, Workspace-Clippy
-über alle Targets und Features mit Warnings denied, Rustdoc, 32 Desktop-Libtests plus zwei
-Desktop-Binary- und drei Desktop-Integrationstests, 59 Frontendtests, Formatter, ESLint,
-Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
-Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle.
+Jeder Modulbaumknoten trägt aktuelle repräsentative und gegebenenfalls Manifest-`FileRevision`-
+Evidence, exakte Manifest-/Datei-/Symbolzahlen sowie bounded Central-/Entrypoint-/Testzahlen mit
+expliziter Trunkierung. Eine historische Publikation ohne V8-Projektionsmarker bleibt als
+`projectionUnavailable` von einer gültigen leeren Projektion unterscheidbar. Beide Bäume verwenden
+stabile exklusive Cursor, Cancellation und ein Zwei-Sekunden-Limit. Folgeseiten werden nur mit
+identischer Run-, Snapshot-, Eltern-/Verzeichnis- und Cursorbindung angehängt. Opake Hex-Tokens und
+stabile Modul-IDs bleiben von sicheren Anzeigen getrennt und gewähren weder Live-Dateisystem-,
+Source-, Projekt- noch Pfadautorität; kein Baumread läuft im 500-ms-Statuspolling.
+
+Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features,
+Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 34
+Desktop-Libtests plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 69 Frontendtests,
+Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74
+lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle.
 
 ## U5 Agent Workspace
 

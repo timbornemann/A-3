@@ -18,9 +18,9 @@ mod tests {
     use a3_protocol::{
         CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
-        ModuleCardFreshnessResultV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
-        ProtocolVersion, RecentProjectsResponseV1, RepositoryTreeResponseV1,
-        RepositoryTreeResultV1,
+        ModuleCardFreshnessResultV1, ModuleTreeResponseV1, ModuleTreeResultV1,
+        OpenProjectResponseV1, OpenProjectResultV1, PlatformV1, ProtocolVersion,
+        RecentProjectsResponseV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
     };
     use serde_json::json;
     use std::error::Error;
@@ -110,6 +110,7 @@ mod tests {
                 a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_index_overview,
                 a3_desktop::commands::query_module_card_freshness,
+                a3_desktop::commands::query_module_tree,
                 a3_desktop::commands::query_repository_tree,
                 a3_desktop::commands::query_health,
                 a3_desktop::commands::rebuild_project_index,
@@ -161,6 +162,32 @@ mod tests {
         assert!(matches!(
             freshness_response.result(),
             ModuleCardFreshnessResultV1::NoProject
+        ));
+
+        let module_tree_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_module_tree".into(),
+                callback: CallbackFn(20),
+                error: CallbackFn(21),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "parentModuleId": null,
+                        "afterModuleId": null,
+                        "limit": 50
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<ModuleTreeResponseV1>()?;
+        assert!(matches!(
+            module_tree_response.result(),
+            ModuleTreeResultV1::NoProject
         ));
 
         let repository_tree_response = get_ipc_response(
@@ -357,6 +384,7 @@ mod tests {
                 "allow-query-index-activity",
                 "allow-query-index-overview",
                 "allow-query-module-card-freshness",
+                "allow-query-module-tree",
                 "allow-query-repository-tree",
                 "allow-query-project-status",
                 "allow-query-health",

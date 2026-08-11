@@ -34,6 +34,7 @@ mod module_card_claim_codec;
 mod module_card_freshness;
 mod module_card_verification;
 mod module_remap_queue;
+mod module_tree;
 mod mutating_agent_controller;
 mod mutation_coordinator;
 mod mutation_reconciliation;
@@ -206,6 +207,13 @@ pub use module_remap_queue::{
     LoadPendingModuleRemaps, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
     ModuleRemapQueueStore, PendingRemapQueue, PendingRemapQueueError, RemapQueueControl,
     RemapQueueControlError, RemapQueueLimit, RemapQueueLimitError,
+};
+pub use module_tree::{
+    GetModuleTreePage, ModuleTreeBoundaryEvidence, ModuleTreeChildState, ModuleTreeControl,
+    ModuleTreeControlError, ModuleTreeDisplayName, ModuleTreeEntry, ModuleTreeEntryError,
+    ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeFuture, ModuleTreeLoadResult, ModuleTreePage,
+    ModuleTreePageError, ModuleTreePageSize, ModuleTreePageSizeError, ModuleTreeQuery,
+    ModuleTreeStore,
 };
 pub use mutating_agent_controller::{
     ConservativeProcessVerificationEvidenceFactory, ExecuteMutatingAgentAction,

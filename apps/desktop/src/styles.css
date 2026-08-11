@@ -387,6 +387,95 @@ h1 {
   justify-self: start;
 }
 
+.module-tree-summary,
+.module-tree-entry-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.module-tree-summary div,
+.module-tree-entry-metrics div {
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.55rem;
+  background: #eef3ef;
+}
+
+.module-tree-summary dt,
+.module-tree-entry-metrics dt {
+  color: #657770;
+  font-size: 0.72rem;
+}
+
+.module-tree-summary dd,
+.module-tree-entry-metrics dd {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+}
+
+.module-tree-entries {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.module-tree-entries > li {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid rgb(22 63 54 / 10%);
+  border-radius: 0.7rem;
+  background: #fff;
+}
+
+.module-tree-entry-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.module-tree-entry-heading button,
+.module-tree-entry-heading > div {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.module-tree-entry-heading button {
+  padding: 0;
+  border: 0;
+  color: #29443c;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.module-tree-entry-heading strong {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.module-tree-entry-heading > span {
+  color: #657770;
+  font-size: 0.75rem;
+}
+
+.module-tree-evidence {
+  margin: 0;
+  color: #657770;
+  font-size: 0.78rem;
+}
+
+.module-tree-evidence code {
+  margin-left: 0.3rem;
+}
+
 .deep-map-panel {
   display: grid;
   gap: 1rem;

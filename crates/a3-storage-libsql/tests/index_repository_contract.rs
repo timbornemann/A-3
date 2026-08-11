@@ -3,11 +3,13 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardFreshness, GetRepositoryTreePage, IndexPersistenceControl,
-    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardVerificationControl, ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    CompileTaskLens, GetModuleCardFreshness, GetModuleTreePage, GetRepositoryTreePage,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
+    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessStatus, ModuleCardVerificationControl, ModuleCardVerificationControlError,
+    ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError, ModuleTreeFailure,
+    ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery, PublishVerifiedModuleCards,
     PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
     RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
     RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl,
@@ -15,7 +17,7 @@ use a3_application::{
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
-    GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
+    FileRevision, GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
     IndexPublication, IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
     IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason, LanguageAdapterRevision,
     LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion,
@@ -147,6 +149,20 @@ impl RepositoryTreeControl for TestIndexControl {
     }
 }
 
+impl ModuleTreeControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: a3_domain::Progress) -> Result<(), ModuleTreeControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleTreeControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -185,6 +201,19 @@ impl RepositoryTreeControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), RepositoryTreeControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleTreeControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleTreeControlError> {
         Ok(())
     }
 }
@@ -1948,6 +1977,246 @@ fn repository_tree_pages_root_and_directories_losslessly_against_latest_publicat
     })
 }
 
+#[test]
+fn module_tree_pages_only_direct_primary_boundaries_from_the_latest_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([81; 32], [82; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let query = GetModuleTreePage::new(store.clone());
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleTreeQuery::new(None, None, ModuleTreePageSize::DEFAULT),
+                    &control,
+                )
+                .await?,
+            ModuleTreeLoadResult::NoPublishedIndex
+        );
+
+        let files = nested_module_files();
+        let first_snapshot = snapshot(
+            [83; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([84; 32], first_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &nested_module_publication(first_snapshot.id())?,
+                &control,
+            )
+            .await?;
+
+        let root_page = match query
+            .execute(
+                &fixture.project,
+                &ModuleTreeQuery::new(None, None, ModuleTreePageSize::DEFAULT),
+                &control,
+            )
+            .await?
+        {
+            ModuleTreeLoadResult::Page(page) => page,
+            other => return Err(format!("unexpected module-tree state: {other:?}").into()),
+        };
+        assert_eq!(root_page.index_run_id(), first_run.id());
+        assert_eq!(root_page.snapshot_id(), first_snapshot.id());
+        assert_eq!(root_page.primary_module_count(), 4);
+        assert_eq!(root_page.graph_community_count(), 1);
+        assert_eq!(root_page.entries().len(), 1);
+        let repository = &root_page.entries()[0];
+        assert_eq!(repository.module_id(), ModuleId::from_bytes([210; 32]));
+        assert_eq!(repository.root(), &ModuleRoot::Repository);
+        assert_eq!(
+            repository.kind(),
+            a3_application::ModuleTreeEntryKind::ManifestBoundary
+        );
+        assert_eq!(repository.manifest_count(), 1);
+        assert_eq!(repository.file_count(), 1);
+        assert_eq!(repository.symbol_count(), 1);
+        assert_eq!(repository.central_symbol_count(), 1);
+        assert!(!repository.central_symbols_truncated());
+        assert_eq!(repository.entrypoint_count(), 0);
+        assert!(!repository.entrypoints_truncated());
+        assert_eq!(repository.test_count(), 0);
+        assert!(!repository.tests_truncated());
+        assert_eq!(repository.child_state(), ModuleTreeChildState::HasChildren);
+        assert_eq!(
+            repository
+                .boundary_evidence()
+                .representative_revision()
+                .ok_or("root representative evidence is missing")?
+                .path()
+                .as_bytes(),
+            b"src/main.rs"
+        );
+        assert_eq!(
+            repository
+                .boundary_evidence()
+                .manifest_revision()
+                .ok_or("root manifest evidence is missing")?
+                .path()
+                .as_bytes(),
+            b"Cargo.toml"
+        );
+
+        let repository_id = repository.module_id();
+        let first_children = match query
+            .execute(
+                &fixture.project,
+                &ModuleTreeQuery::new(Some(repository_id), None, ModuleTreePageSize::new(1)?),
+                &control,
+            )
+            .await?
+        {
+            ModuleTreeLoadResult::Page(page) => page,
+            other => return Err(format!("unexpected child module state: {other:?}").into()),
+        };
+        assert_eq!(first_children.entries().len(), 1);
+        assert_eq!(
+            first_children.entries()[0].module_id(),
+            ModuleId::from_bytes([211; 32])
+        );
+        let cursor = first_children
+            .next_cursor()
+            .ok_or("direct module page should be truncated")?;
+        let second_children = match query
+            .execute(
+                &fixture.project,
+                &ModuleTreeQuery::new(
+                    Some(repository_id),
+                    Some(cursor),
+                    ModuleTreePageSize::new(1)?,
+                ),
+                &control,
+            )
+            .await?
+        {
+            ModuleTreeLoadResult::Page(page) => page,
+            other => return Err(format!("unexpected child module state: {other:?}").into()),
+        };
+        assert_eq!(second_children.entries().len(), 1);
+        assert_eq!(
+            second_children.entries()[0].module_id(),
+            ModuleId::from_bytes([213; 32])
+        );
+        assert!(second_children.next_cursor().is_none());
+
+        let package_id = ModuleId::from_bytes([211; 32]);
+        let package_children = match query
+            .execute(
+                &fixture.project,
+                &ModuleTreeQuery::new(Some(package_id), None, ModuleTreePageSize::DEFAULT),
+                &control,
+            )
+            .await?
+        {
+            ModuleTreeLoadResult::Page(page) => page,
+            other => return Err(format!("unexpected nested module state: {other:?}").into()),
+        };
+        assert_eq!(package_children.entries().len(), 1);
+        assert_eq!(
+            package_children.entries()[0].module_id(),
+            ModuleId::from_bytes([212; 32])
+        );
+        assert_eq!(
+            package_children.entries()[0].child_state(),
+            ModuleTreeChildState::Leaf
+        );
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleTreeQuery::new(
+                        Some(ModuleId::from_bytes([214; 32])),
+                        None,
+                        ModuleTreePageSize::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await,
+            Err(ModuleTreeFailure::ParentUnavailable)
+        );
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleTreeQuery::new(None, None, ModuleTreePageSize::DEFAULT),
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(ModuleTreeFailure::Cancelled)
+        );
+
+        let next_snapshot = snapshot(
+            [85; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Delete))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &next_snapshot)
+            .await?;
+        let next_run = store
+            .start_index_run(&fixture.project, run([86; 32], next_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                next_run.id(),
+                &empty_publication(next_snapshot.id())?,
+                &control,
+            )
+            .await?;
+        let latest = match query
+            .execute(
+                &fixture.project,
+                &ModuleTreeQuery::new(None, None, ModuleTreePageSize::DEFAULT),
+                &control,
+            )
+            .await?
+        {
+            ModuleTreeLoadResult::Page(page) => page,
+            other => return Err(format!("unexpected replacement state: {other:?}").into()),
+        };
+        assert_eq!(latest.index_run_id(), next_run.id());
+        assert_eq!(latest.snapshot_id(), next_snapshot.id());
+        assert_eq!(latest.primary_module_count(), 0);
+        assert_eq!(latest.graph_community_count(), 0);
+        assert!(latest.entries().is_empty());
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleTreeQuery::new(Some(repository_id), None, ModuleTreePageSize::DEFAULT,),
+                    &control,
+                )
+                .await,
+            Err(ModuleTreeFailure::ParentUnavailable)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 struct ProjectFixture {
     _temporary: TempDirectory,
     layout: StorageLayout,
@@ -2088,6 +2357,224 @@ fn files_publication(
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
     let modules = support::module_projection(&graph, &ranking, &[])?;
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn nested_module_files() -> Vec<(Vec<u8>, [u8; 32])> {
+    vec![
+        (b"Cargo.toml".to_vec(), [31; 32]),
+        (b"src/main.rs".to_vec(), [32; 32]),
+        (b"packages/a/package.json".to_vec(), [33; 32]),
+        (b"packages/a/src/lib.ts".to_vec(), [34; 32]),
+        (b"packages/a/internal/mod.ts".to_vec(), [35; 32]),
+        (b"tools/build.rs".to_vec(), [36; 32]),
+    ]
+}
+
+fn nested_module_publication(
+    snapshot_id: SnapshotId,
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let files = nested_module_files()
+        .into_iter()
+        .map(|(path, hash)| {
+            RepositoryPath::try_from_bytes(path)
+                .map(|path| FileRevision::new(path, ContentHash::from_bytes(hash)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let cargo_manifest = files[0].clone();
+    let package_manifest = files[2].clone();
+    let symbol_revisions = [
+        files[1].clone(),
+        files[3].clone(),
+        files[4].clone(),
+        files[5].clone(),
+    ];
+    let symbol_ids = [
+        SymbolId::from_bytes([101; 32]),
+        SymbolId::from_bytes([102; 32]),
+        SymbolId::from_bytes([103; 32]),
+        SymbolId::from_bytes([104; 32]),
+    ];
+    let names = ["root_main", "package_api", "internal_api", "build_tool"];
+    let range = SourceRange::new(0, 4, SourcePosition::new(0, 0), SourcePosition::new(0, 4))?;
+    let symbols = symbol_revisions
+        .iter()
+        .zip(symbol_ids)
+        .zip(names)
+        .map(
+            |((revision, id), name)| -> Result<GraphSymbol, Box<dyn std::error::Error>> {
+                Ok(GraphSymbol::new(
+                    id,
+                    revision.clone(),
+                    ParsedSymbol::new(
+                        LocalSymbolId::new(1)?,
+                        SymbolKind::Function,
+                        SymbolName::try_from_string(name.to_owned())?,
+                        range,
+                        range,
+                    )?,
+                ))
+            },
+        )
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let community_evidence = EvidenceRef::new(symbol_revisions[1].clone(), range);
+    let community_edge = GraphEdge::new(
+        GraphEndpoint::Symbol(symbol_ids[1]),
+        GraphEndpoint::Symbol(symbol_ids[2]),
+        SyntaxRelationKind::Calls,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterLocalSymbol,
+        snapshot_id,
+        community_evidence.clone(),
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        files,
+        symbols,
+        vec![community_edge],
+        Vec::new(),
+    )?;
+    let ranks = symbol_ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let score = u64::try_from(symbol_ids.len() - index)? * 1_000;
+            Ok(SymbolRank::new(
+                *id,
+                RankScore::try_from_sum(score)?,
+                SymbolRankSignals {
+                    in_degree: 0,
+                    out_degree: 0,
+                    centrality: Centrality::from_basis_points(0)?,
+                    degree_contribution: 0,
+                    centrality_contribution: 0,
+                    entrypoint_contribution: 0,
+                    public_export_contribution: 0,
+                    manifest_contribution: 0,
+                    test_contribution: 0,
+                },
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), ranks)?;
+    let repository_id = ModuleId::from_bytes([210; 32]);
+    let package_id = ModuleId::from_bytes([211; 32]);
+    let internal_id = ModuleId::from_bytes([212; 32]);
+    let tools_id = ModuleId::from_bytes([213; 32]);
+    let community_id = ModuleId::from_bytes([214; 32]);
+    let modules = vec![
+        RepositoryModule::new(
+            repository_id,
+            ModuleKind::ManifestBoundary,
+            Some(ModuleRoot::Repository),
+            vec![cargo_manifest.clone()],
+            ModuleSymbolSet::new(vec![symbol_ids[0]], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?,
+        RepositoryModule::new(
+            package_id,
+            ModuleKind::ManifestBoundary,
+            Some(ModuleRoot::Directory(RepositoryPath::try_from_bytes(
+                b"packages/a".to_vec(),
+            )?)),
+            vec![package_manifest.clone()],
+            ModuleSymbolSet::new(vec![symbol_ids[1]], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?,
+        RepositoryModule::new(
+            internal_id,
+            ModuleKind::PathBoundary,
+            Some(ModuleRoot::Directory(RepositoryPath::try_from_bytes(
+                b"packages/a/internal".to_vec(),
+            )?)),
+            Vec::new(),
+            ModuleSymbolSet::new(vec![symbol_ids[2]], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?,
+        RepositoryModule::new(
+            tools_id,
+            ModuleKind::PathBoundary,
+            Some(ModuleRoot::Directory(RepositoryPath::try_from_bytes(
+                b"tools".to_vec(),
+            )?)),
+            Vec::new(),
+            ModuleSymbolSet::new(vec![symbol_ids[3]], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?,
+        RepositoryModule::new(
+            community_id,
+            ModuleKind::GraphCommunity,
+            None,
+            Vec::new(),
+            ModuleSymbolSet::new(vec![symbol_ids[1], symbol_ids[2]], false)?,
+            ModuleSymbolSet::empty(),
+            ModuleSymbolSet::empty(),
+        )?,
+    ];
+    let memberships = vec![
+        ModuleMembership::new(
+            repository_id,
+            symbol_ids[0],
+            ModuleMembershipEvidence::manifest(symbol_revisions[0].clone(), cargo_manifest.clone()),
+        ),
+        ModuleMembership::new(
+            package_id,
+            symbol_ids[1],
+            ModuleMembershipEvidence::manifest(
+                symbol_revisions[1].clone(),
+                package_manifest.clone(),
+            ),
+        ),
+        ModuleMembership::new(
+            internal_id,
+            symbol_ids[2],
+            ModuleMembershipEvidence::path(symbol_revisions[2].clone()),
+        ),
+        ModuleMembership::new(
+            tools_id,
+            symbol_ids[3],
+            ModuleMembershipEvidence::path(symbol_revisions[3].clone()),
+        ),
+        ModuleMembership::new(
+            community_id,
+            symbol_ids[1],
+            ModuleMembershipEvidence::graph(
+                symbol_revisions[1].clone(),
+                vec![community_evidence.clone()],
+            )?,
+        ),
+        ModuleMembership::new(
+            community_id,
+            symbol_ids[2],
+            ModuleMembershipEvidence::graph(symbol_revisions[2].clone(), vec![community_evidence])?,
+        ),
+    ];
+    let card = RepositoryCard::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        vec![repository_id, package_id, internal_id, tools_id],
+        vec![IndexLanguage::Generic],
+        ModuleSymbolSet::empty(),
+        6,
+        4,
+    )?;
+    let projection = ModuleProjection::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        modules,
+        memberships,
+        card,
+    )?;
+    Ok(IndexPublication::new(
+        graph,
+        ranking,
+        vec![cargo_manifest, package_manifest],
+        projection,
+    )?)
 }
 
 fn empty_publication(
