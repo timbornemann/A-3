@@ -507,14 +507,101 @@ h1 {
   gap: 1rem;
 }
 
-.module-card-lifecycle {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem 0.8rem;
-  align-items: center;
-  padding: 0.75rem 0.85rem;
-  border-left: 0.3rem solid #14694e;
+.module-card-signals {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.module-card-signals-heading h5,
+.module-card-signals-heading p,
+.module-card-signal h6,
+.module-card-signal p {
+  margin: 0;
+}
+
+.module-card-signals-heading p,
+.module-card-signal p {
+  color: #657770;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.module-card-signals-heading p {
+  margin-top: 0.25rem;
+}
+
+.module-card-signal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.module-card-signal {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.8rem 0.85rem;
+  border-left: 0.3rem solid #467565;
   border-radius: 0.55rem;
+  background: #eef6f1;
+}
+
+.module-card-signal h6 {
+  color: #657770;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.module-card-signal > strong {
+  overflow-wrap: anywhere;
+  color: #29443c;
+  font-size: 1rem;
+}
+
+.module-card-confidence {
+  border-left-color: #75628a;
+  background: #f5f0fa;
+}
+
+.module-card-coverage {
+  border-left-color: #467565;
+  background: #eef6f1;
+}
+
+.module-card-coverage-gaps summary {
+  color: #14694e;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.module-card-coverage-gaps > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgb(22 63 54 / 12%);
+}
+
+.module-card-coverage-gaps h6 {
+  color: #41534d;
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.module-card-coverage-gaps ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+  color: #41534d;
+  font-size: 0.75rem;
+}
+
+.module-card-lifecycle {
+  border-left: 0.3rem solid #14694e;
   color: #29443c;
   background: #e8f5ee;
 }

@@ -20,6 +20,31 @@ const available: ModuleCardDetailResponseV1 = {
     detail: {
       cardId,
       confidenceBasisPoints: 8_000,
+      coverage: {
+        basisPoints: 833,
+        coveredFieldCount: 1,
+        must: {
+          basisPoints: 1_250,
+          coveredFieldCount: 1,
+          missingFields: [
+            'title',
+            'paths',
+            'purpose',
+            'responsibilities',
+            'dependencies',
+            'invariants',
+            'tests',
+          ],
+          totalFieldCount: 8,
+        },
+        should: {
+          basisPoints: 0,
+          coveredFieldCount: 0,
+          missingFields: ['entrypoints', 'dataFlows', 'risks', 'openQuestions'],
+          totalFieldCount: 4,
+        },
+        totalFieldCount: 12,
+      },
       currentIndexRunId: currentRunId,
       currentSnapshotId,
       fields: [
@@ -167,6 +192,41 @@ describe('Module Card detail V1 boundary', () => {
         },
       }),
     ).toThrow(/unordered/);
+  });
+
+  it('rejects coverage that contradicts the visible V1 fields or missing-field order', () => {
+    if (available.result.status !== 'available') throw new Error('fixture is unavailable');
+    const detail = available.result.detail;
+    expect(() =>
+      parseModuleCardDetailResponseV1({
+        ...available,
+        result: {
+          detail: {
+            ...detail,
+            coverage: { ...detail.coverage, coveredFieldCount: 2 },
+          },
+          status: 'available',
+        },
+      }),
+    ).toThrow(/coverage/);
+    expect(() =>
+      parseModuleCardDetailResponseV1({
+        ...available,
+        result: {
+          detail: {
+            ...detail,
+            coverage: {
+              ...detail.coverage,
+              must: {
+                ...detail.coverage.must,
+                missingFields: [...detail.coverage.must.missingFields].reverse(),
+              },
+            },
+          },
+          status: 'available',
+        },
+      }),
+    ).toThrow(/coverage gaps/);
   });
 
   it('accepts precise unavailable states without invented Card content', () => {

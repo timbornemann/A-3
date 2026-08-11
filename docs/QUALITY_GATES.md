@@ -116,11 +116,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Lifecycle-Zeilen. Rust- und TypeScript-Grenztests lehnen unbekannte Felder, nicht kanonische IDs,
   Schema-/Mapperabweichungen, übergroße oder falsch geordnete V1-Felder, Evidence außerhalb des
   Feldes, doppelte Claims und eine Lifecycle-Propagation ab, durch die ein stale oder zu prüfender
-  Claim als current erscheinen könnte. Der reale Tauri-IPC-Test erreicht ausschließlich die enge
-  Capability mit einer Modul-ID und ohne Projekt-, Pfad-, Card-, Claim- oder Evidence-Parameter.
-  Der Component-Test lädt erst nach expliziter Modulauswahl, entfernt alte Card-Daten während eines
-  Reloads und zeigt Claim-Typ, Confidence sowie `Current`, `Stale` oder `NeedsReview` unabhängig.
-  Kein Card-Detail-Read läuft im 500-ms-Statuspolling.
+  Claim als current erscheinen könnte. Die schema-gebundene Coverage muss Gesamt-, acht Muss- und
+  vier Soll-Felder exakt aus den ausgelieferten verifizierten Feldern ableiten; Rust- und
+  TypeScript-Contracts prüfen Zähler, ganzzahlige Basispunkte, kanonische Lücken und ihre
+  Unabhängigkeit von Confidence und Lifecycle. Der reale Tauri-IPC-Test erreicht ausschließlich
+  die enge Capability mit einer Modul-ID und ohne Projekt-, Pfad-, Card-, Claim- oder
+  Evidence-Parameter. Der Component-Test lädt erst nach expliziter Modulauswahl, entfernt alte
+  Card-Daten während eines Reloads und zeigt Claim-Typ, Confidence, progressive Muss-/Soll-Coverage
+  sowie `Current`, `Stale` oder `NeedsReview` unabhängig. Kein Card-Detail-Read läuft im
+  500-ms-Statuspolling.
 - Der U4-Evidence-Inspector-Contract löst ausschließlich eine Evidence-ID auf, die zur exakt
   verankerten deterministisch neuesten sichtbaren Module Card gehört. Reale libSQL-Fixtures prüfen
   aktuelle File-, Symbol- und Graph-Payloads, stale historische Graph-Provenienz,

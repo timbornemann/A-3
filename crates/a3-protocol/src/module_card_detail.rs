@@ -127,6 +127,7 @@ pub struct ModuleCardDetailV1 {
     schema_version: u16,
     mapper_profile_version: u16,
     confidence_basis_points: u16,
+    coverage: ModuleCardCoverageV1,
     lifecycle: ModuleCardLifecycleV1,
     fields: Vec<ModuleCardDetailFieldV1>,
 }
@@ -145,6 +146,7 @@ impl ModuleCardDetailV1 {
         schema_version: u16,
         mapper_profile_version: u16,
         confidence_basis_points: u16,
+        coverage: ModuleCardCoverageV1,
         lifecycle: ModuleCardLifecycleV1,
         fields: Vec<ModuleCardDetailFieldV1>,
     ) -> Self {
@@ -158,8 +160,68 @@ impl ModuleCardDetailV1 {
             schema_version,
             mapper_profile_version,
             confidence_basis_points,
+            coverage,
             lifecycle,
             fields,
+        }
+    }
+}
+
+/// Verified field coverage against the exact accepted Module Card schema.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModuleCardCoverageV1 {
+    basis_points: u16,
+    covered_field_count: u16,
+    total_field_count: u16,
+    must: ModuleCardCoverageBandV1,
+    should: ModuleCardCoverageBandV1,
+}
+
+impl ModuleCardCoverageV1 {
+    /// Creates one application-derived coverage projection.
+    #[must_use]
+    pub const fn new(
+        basis_points: u16,
+        covered_field_count: u16,
+        total_field_count: u16,
+        must: ModuleCardCoverageBandV1,
+        should: ModuleCardCoverageBandV1,
+    ) -> Self {
+        Self {
+            basis_points,
+            covered_field_count,
+            total_field_count,
+            must,
+            should,
+        }
+    }
+}
+
+/// Mandatory or best-effort field coverage with explicit canonical gaps.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModuleCardCoverageBandV1 {
+    basis_points: u16,
+    covered_field_count: u16,
+    total_field_count: u16,
+    missing_fields: Vec<ModuleCardFieldKindV1>,
+}
+
+impl ModuleCardCoverageBandV1 {
+    /// Creates one application-derived schema band.
+    #[must_use]
+    pub const fn new(
+        basis_points: u16,
+        covered_field_count: u16,
+        total_field_count: u16,
+        missing_fields: Vec<ModuleCardFieldKindV1>,
+    ) -> Self {
+        Self {
+            basis_points,
+            covered_field_count,
+            total_field_count,
+            missing_fields,
         }
     }
 }
@@ -329,6 +391,36 @@ mod tests {
             1,
             1,
             8_000,
+            ModuleCardCoverageV1::new(
+                833,
+                1,
+                12,
+                ModuleCardCoverageBandV1::new(
+                    1_250,
+                    1,
+                    8,
+                    vec![
+                        ModuleCardFieldKindV1::Title,
+                        ModuleCardFieldKindV1::Paths,
+                        ModuleCardFieldKindV1::Purpose,
+                        ModuleCardFieldKindV1::Responsibilities,
+                        ModuleCardFieldKindV1::Dependencies,
+                        ModuleCardFieldKindV1::Invariants,
+                        ModuleCardFieldKindV1::Tests,
+                    ],
+                ),
+                ModuleCardCoverageBandV1::new(
+                    0,
+                    0,
+                    4,
+                    vec![
+                        ModuleCardFieldKindV1::Entrypoints,
+                        ModuleCardFieldKindV1::DataFlows,
+                        ModuleCardFieldKindV1::Risks,
+                        ModuleCardFieldKindV1::OpenQuestions,
+                    ],
+                ),
+            ),
             ModuleCardLifecycleV1::Stale {
                 invalidated_by_index_run_id: "11".repeat(32),
                 reason: ModuleCardFreshnessReasonV1::EvidenceChanged,
@@ -350,6 +442,7 @@ mod tests {
         ));
         let value = serde_json::to_value(response)?;
         assert_eq!(value["result"]["detail"]["lifecycle"]["status"], "stale");
+        assert_eq!(value["result"]["detail"]["coverage"]["basisPoints"], 833);
         assert_eq!(
             value["result"]["detail"]["fields"][0]["values"][0]["claim"]["kind"],
             "fact"

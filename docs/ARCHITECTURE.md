@@ -284,15 +284,19 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 4. Das Application-Read-Model rekonstruiert die V1-Feldgrenzen, lückenlose Wertindizes, genau einen
    eindeutigen Claim je Wert, kanonische Evidence-IDs und Claim-Evidence als Teilmenge der
    Feld-Evidence. Gesamttext, Evidence-Union und Claim-Evidence besitzen die unveränderten
-   R9-Grenzen; widersprüchliche Persistenz wird nicht teilweise gerendert.
+   R9-Grenzen. Aus den vorhandenen verifizierten Feldern und `ModuleCardSchema::V1` leitet es
+   zusätzlich Gesamt-, Muss- und Soll-Coverage samt kanonischen Lücken ab; die WebView berechnet
+   diese Fachsemantik nicht. Widersprüchliche Persistenz wird nicht teilweise gerendert.
 5. Epistemischer Claim-Typ, Confidence und Freshness sind unabhängige Typen. Card-Lifecycle wird
    zwingend auf jeden sichtbaren Claim propagiert: Eine stale Card kann einen historisch als
    `Fact` verifizierten Claim enthalten, dessen effektiver Anzeigezustand jedoch ausschließlich
    `Stale` lautet; `NeedsReview` verhält sich entsprechend.
-6. IPC überträgt nur begrenzte Card-Werte, Klassifikation, Confidence, Lifecycle-Provenienz und
-   stabile Evidence-IDs. Source, aufgelöste Evidence-Payloads, Claim-Prädikate, Datenbankzeilen und
-   autoritative Pfade bleiben im Core. Die IDs bilden den schmalen Anschluss für den folgenden
-   Evidence Inspector und sind selbst keine Zugriffsberechtigung.
+6. IPC überträgt nur begrenzte Card-Werte, Klassifikation, getrennte Confidence/Coverage,
+   Lifecycle-Provenienz und stabile Evidence-IDs. Der unabhängige Frontenddecoder gleicht
+   Coverage-Zähler, Basispunkte und fehlende Felder nochmals mit der sichtbaren V1-Feldmenge ab.
+   Source, aufgelöste Evidence-Payloads, Claim-Prädikate, Datenbankzeilen und autoritative Pfade
+   bleiben im Core. Die IDs bilden den schmalen Anschluss für den Evidence Inspector und sind
+   selbst keine Zugriffsberechtigung.
 7. Der Read prüft Cancellation, endet nach spätestens zwei Sekunden und läuft erst nach bewusster
    Modulauswahl, Aktualisierung oder erfolgreichem Publish. Während eines Reloads entfernt die UI
    die vorherige Card aus der sichtbaren Fläche; das 500-ms-Statuspolling liest keine Card-Inhalte.

@@ -64,9 +64,25 @@ export interface ModuleCardDetailFieldV1 {
   values: ModuleCardValueV1[];
 }
 
+export interface ModuleCardCoverageBandV1 {
+  basisPoints: number;
+  coveredFieldCount: number;
+  missingFields: ModuleCardFieldKindV1[];
+  totalFieldCount: number;
+}
+
+export interface ModuleCardCoverageV1 {
+  basisPoints: number;
+  coveredFieldCount: number;
+  must: ModuleCardCoverageBandV1;
+  should: ModuleCardCoverageBandV1;
+  totalFieldCount: number;
+}
+
 export interface ModuleCardDetailV1 {
   cardId: string;
   confidenceBasisPoints: number;
+  coverage: ModuleCardCoverageV1;
   currentIndexRunId: string;
   currentSnapshotId: string;
   fields: ModuleCardDetailFieldV1[];
@@ -155,6 +171,7 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
     !hasExactKeys(value, [
       'cardId',
       'confidenceBasisPoints',
+      'coverage',
       'currentIndexRunId',
       'currentSnapshotId',
       'fields',
@@ -187,6 +204,7 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
   if (!isCanonicalFieldOrder(fields)) {
     throw new Error('Module Card detail fields are duplicated or unordered.');
   }
+  const coverage = parseCoverage(value.coverage, fields);
   const cardEvidence = new Set(fields.flatMap((field) => field.evidenceIds));
   const claimIds = fields.flatMap((field) => field.values.map((item) => item.claim.claimId));
   const documentBytes = fields.reduce(
@@ -204,6 +222,7 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
   return {
     cardId: value.cardId,
     confidenceBasisPoints: value.confidenceBasisPoints,
+    coverage,
     currentIndexRunId: value.currentIndexRunId,
     currentSnapshotId: value.currentSnapshotId,
     fields,
@@ -213,6 +232,84 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
     schemaVersion: 1,
     sourceIndexRunId: value.sourceIndexRunId,
     sourceSnapshotId: value.sourceSnapshotId,
+  };
+}
+
+function parseCoverage(value: unknown, fields: ModuleCardDetailFieldV1[]): ModuleCardCoverageV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'basisPoints',
+      'coveredFieldCount',
+      'must',
+      'should',
+      'totalFieldCount',
+    ]) ||
+    !isCoverageCount(value.coveredFieldCount) ||
+    !isCoverageCount(value.totalFieldCount) ||
+    !isConfidence(value.basisPoints)
+  ) {
+    throw new Error('Module Card detail contains invalid schema coverage.');
+  }
+  const present = new Set(fields.map((field) => field.kind));
+  const must = parseCoverageBand(value.must, MUST_FIELD_ORDER, present);
+  const should = parseCoverageBand(value.should, SHOULD_FIELD_ORDER, present);
+  if (
+    value.coveredFieldCount !== fields.length ||
+    value.totalFieldCount !== FIELD_ORDER.length ||
+    value.coveredFieldCount !== must.coveredFieldCount + should.coveredFieldCount ||
+    value.totalFieldCount !== must.totalFieldCount + should.totalFieldCount ||
+    value.basisPoints !== coverageBasisPoints(value.coveredFieldCount, value.totalFieldCount)
+  ) {
+    throw new Error('Module Card detail schema coverage contradicts visible fields.');
+  }
+  return {
+    basisPoints: value.basisPoints,
+    coveredFieldCount: value.coveredFieldCount,
+    must,
+    should,
+    totalFieldCount: value.totalFieldCount,
+  };
+}
+
+function parseCoverageBand(
+  value: unknown,
+  expectedFields: ModuleCardFieldKindV1[],
+  present: Set<ModuleCardFieldKindV1>,
+): ModuleCardCoverageBandV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'basisPoints',
+      'coveredFieldCount',
+      'missingFields',
+      'totalFieldCount',
+    ]) ||
+    !isCoverageCount(value.coveredFieldCount) ||
+    !isCoverageCount(value.totalFieldCount) ||
+    !isConfidence(value.basisPoints) ||
+    !Array.isArray(value.missingFields) ||
+    value.missingFields.some((field) => !isFieldKind(field))
+  ) {
+    throw new Error('Module Card detail contains an invalid coverage band.');
+  }
+  const expectedMissing = expectedFields.filter((field) => !present.has(field));
+  const missingFields = value.missingFields as ModuleCardFieldKindV1[];
+  const coveredFieldCount = expectedFields.length - expectedMissing.length;
+  if (
+    missingFields.length !== expectedMissing.length ||
+    missingFields.some((field, index) => field !== expectedMissing[index]) ||
+    value.coveredFieldCount !== coveredFieldCount ||
+    value.totalFieldCount !== expectedFields.length ||
+    value.basisPoints !== coverageBasisPoints(coveredFieldCount, expectedFields.length)
+  ) {
+    throw new Error('Module Card detail coverage gaps contradict the V1 schema.');
+  }
+  return {
+    basisPoints: value.basisPoints,
+    coveredFieldCount: value.coveredFieldCount,
+    missingFields,
+    totalFieldCount: value.totalFieldCount,
   };
 }
 
@@ -357,6 +454,24 @@ const FIELD_ORDER: ModuleCardFieldKindV1[] = [
   'openQuestions',
 ];
 
+const MUST_FIELD_ORDER: ModuleCardFieldKindV1[] = [
+  'title',
+  'paths',
+  'purpose',
+  'responsibilities',
+  'publicSurface',
+  'dependencies',
+  'invariants',
+  'tests',
+];
+
+const SHOULD_FIELD_ORDER: ModuleCardFieldKindV1[] = [
+  'entrypoints',
+  'dataFlows',
+  'risks',
+  'openQuestions',
+];
+
 const FIELD_SPECS: Record<ModuleCardFieldKindV1, { maxItemBytes: number; maxItems: number }> = {
   title: { maxItemBytes: 256, maxItems: 1 },
   paths: { maxItemBytes: 1_024, maxItems: 32 },
@@ -404,6 +519,15 @@ function isStaleReason(
 
 function isConfidence(value: unknown): value is number {
   return Number.isInteger(value) && typeof value === 'number' && value >= 0 && value <= 10_000;
+}
+
+function isCoverageCount(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === 'number' && value >= 0 && value <= MAX_FIELDS;
+}
+
+function coverageBasisPoints(covered: number, total: number): number {
+  if (total <= 0 || covered < 0 || covered > total) return -1;
+  return Math.floor((covered * 10_000) / total);
 }
 
 function isStableId(value: unknown): value is string {

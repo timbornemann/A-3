@@ -152,6 +152,31 @@ const staleModuleCard: ModuleCardDetailResponseV1 = {
     detail: {
       cardId: 'e'.repeat(64),
       confidenceBasisPoints: 8_000,
+      coverage: {
+        basisPoints: 833,
+        coveredFieldCount: 1,
+        must: {
+          basisPoints: 1_250,
+          coveredFieldCount: 1,
+          missingFields: [
+            'title',
+            'paths',
+            'purpose',
+            'responsibilities',
+            'dependencies',
+            'invariants',
+            'tests',
+          ],
+          totalFieldCount: 8,
+        },
+        should: {
+          basisPoints: 0,
+          coveredFieldCount: 0,
+          missingFields: ['entrypoints', 'dataFlows', 'risks', 'openQuestions'],
+          totalFieldCount: 4,
+        },
+        totalFieldCount: 12,
+      },
       currentIndexRunId: '6'.repeat(64),
       currentSnapshotId: '4'.repeat(64),
       fields: [
@@ -752,6 +777,15 @@ describe('A^3 desktop shell', () => {
     await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(1));
     expect(moduleCardDetailLoader).toHaveBeenCalledWith({ moduleId: 'a'.repeat(64) });
     expect(await screen.findByText('Stale — keine aktuelle Faktenquelle')).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Confidence, Coverage und Freshness' }),
+    ).toBeTruthy();
+    expect(screen.getByText(/1 von 12 Feldern/)).toBeTruthy();
+    expect(screen.getByText(/1 von 8 Muss-Feldern/)).toBeTruthy();
+    expect(screen.getByText(/Numerische Einschätzung/)).toBeTruthy();
+    await fireEvent.click(screen.getByText('Feldabdeckung im Detail'));
+    expect(screen.getByRole('heading', { name: 'Fehlende Muss-Felder' })).toBeTruthy();
+    expect(screen.getByText('Titel')).toBeTruthy();
     expect(screen.getByText('Fact')).toBeTruthy();
     expect(screen.getByText('exports main')).toBeTruthy();
     expect(screen.getByText(/Ein als „Fact“ klassifizierter/)).toBeTruthy();

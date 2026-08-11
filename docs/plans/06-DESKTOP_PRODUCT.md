@@ -130,7 +130,7 @@ Abhängigkeiten: Gate M5
 - [x] Entry Points, Tests und Runtime Flows
 - [x] Module Card
 - [x] Evidence Inspector
-- [ ] Confidence, Coverage und Freshness
+- [x] Confidence, Coverage und Freshness
 - [ ] Suche und Task-Lens-Umschaltung
 
 Akzeptanz:
@@ -279,6 +279,30 @@ File/Symbol/Graph, historische stale Graph-Evidence, Current-Evidence auf `Needs
 Cancellation, fremde IDs und Selectionwechsel ab. Der Browser-QA-Lauf bestätigte den vollständigen
 Klickpfad, dominante Stale-Darstellung, 1280- und 720-px-Layout ohne Horizontaloverflow sowie eine
 warnungs- und fehlerfreie Konsole.
+
+Abnahme Confidence, Coverage und Freshness vom 2026-08-11: Das Application-Read-Model leitet die
+Coverage jeder sichtbaren Module Card ausschließlich aus den tatsächlich ausgelieferten
+verifizierten, evidenzgebundenen Feldern und `ModuleCardSchema::V1` ab. Gesamt-, acht Muss- und vier
+Soll-Felder tragen exakte Zähler, ganzzahlige Basispunkte und kanonische Missing-Field-Listen. Es
+entsteht weder eine neue Persistenzprojektion noch eine Datei-, Graph-, Modell- oder generische
+Read-Capability; Coverage bleibt an denselben atomaren, cancellable und auf zwei Sekunden
+begrenzten Card-Read gebunden.
+
+Der strikte Rust-/TypeScript-IPC-Vertrag revalidiert Feldmenge, Zähler, Prozentwerte, Muss-/Soll-
+Zuordnung, Lücken und Reihenfolge. Confidence bleibt eine numerische Einschätzung und kann weder
+Claim-Klassifikation noch Lifecycle ändern; Freshness stammt ausschließlich aus `Current`, `Stale`
+oder `NeedsReview`. Die UI zeigt alle drei Signale gemeinsam, aber unverrechnet. Fehlende Felder
+werden erst nach explizitem Öffnen progressiv sichtbar; Hypothesen behalten ihre eigenständige
+visuelle Klassifikation und stale Facts bleiben weiterhin dominant als nicht aktuell markiert.
+
+Der Abschlussnachweis umfasst Rustfmt, den seriell grünen Workspace-Test mit allen Features,
+Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, den realen
+libSQL-Card-Publish-/Read-Contract, 42 Desktop-Libtests plus zwei Desktop-Binary- und drei
+Desktop-Integrationstests, 94 Frontendtests, Formatter, ESLint, Svelte-Typecheck,
+Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
+Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der Browser-QA-Lauf
+bestätigte Klickpfad und progressive Details, 1280- und exakt 720-px-breite Layouts ohne
+Horizontaloverflow sowie eine warnungs- und fehlerfreie direkte App-Konsole.
 
 ## U5 Agent Workspace
 

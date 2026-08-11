@@ -1,8 +1,9 @@
 use crate::{JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    Confidence, IndexRunId, InvalidationReason, MapperProfileVersion, ModuleCardClaimId,
-    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardSchemaVersion, ModuleId,
-    Progress, ProjectIdentity, ProposedModuleCardField, SnapshotId, VerifiedClaimKind,
+    Confidence, CoverageRequirement, IndexRunId, InvalidationReason, MapperProfileVersion,
+    ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardSchema,
+    ModuleCardSchemaVersion, ModuleId, Progress, ProjectIdentity, ProposedModuleCardField,
+    SnapshotId, VerifiedClaimKind,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -247,6 +248,148 @@ impl fmt::Display for ModuleCardDetailFieldError {
 
 impl Error for ModuleCardDetailFieldError {}
 
+/// One schema-defined coverage band kept separate from confidence and freshness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleCardCoverageBand {
+    basis_points: u16,
+    covered_field_count: u16,
+    total_field_count: u16,
+    missing_fields: Vec<ModuleCardField>,
+}
+
+impl ModuleCardCoverageBand {
+    /// Returns the completed share of this schema band in basis points.
+    #[must_use]
+    pub const fn basis_points(&self) -> u16 {
+        self.basis_points
+    }
+
+    /// Returns how many fields contain verified, evidence-bound values.
+    #[must_use]
+    pub const fn covered_field_count(&self) -> u16 {
+        self.covered_field_count
+    }
+
+    /// Returns how many fields the accepted schema assigns to this band.
+    #[must_use]
+    pub const fn total_field_count(&self) -> u16 {
+        self.total_field_count
+    }
+
+    /// Returns missing fields in canonical schema order.
+    #[must_use]
+    pub fn missing_fields(&self) -> &[ModuleCardField] {
+        &self.missing_fields
+    }
+}
+
+/// Verified field coverage of one Card against its exact accepted schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleCardCoverage {
+    basis_points: u16,
+    covered_field_count: u16,
+    total_field_count: u16,
+    must: ModuleCardCoverageBand,
+    should: ModuleCardCoverageBand,
+}
+
+impl ModuleCardCoverage {
+    fn from_fields(fields: &[ModuleCardDetailField]) -> Result<Self, ModuleCardDetailFieldError> {
+        let schema = ModuleCardSchema::v1();
+        let covered = fields
+            .iter()
+            .map(ModuleCardDetailField::field)
+            .collect::<BTreeSet<_>>();
+        let mut missing_must = Vec::new();
+        let mut missing_should = Vec::new();
+        let mut covered_must = 0_u16;
+        let mut covered_should = 0_u16;
+        let mut total_must = 0_u16;
+        let mut total_should = 0_u16;
+        for spec in schema.fields() {
+            let (covered_count, total_count, missing) = match spec.requirement() {
+                CoverageRequirement::Must => {
+                    (&mut covered_must, &mut total_must, &mut missing_must)
+                }
+                CoverageRequirement::Should => {
+                    (&mut covered_should, &mut total_should, &mut missing_should)
+                }
+            };
+            *total_count = total_count
+                .checked_add(1)
+                .ok_or(ModuleCardDetailFieldError)?;
+            if covered.contains(&spec.field()) {
+                *covered_count = covered_count
+                    .checked_add(1)
+                    .ok_or(ModuleCardDetailFieldError)?;
+            } else {
+                missing.push(spec.field());
+            }
+        }
+        let covered_field_count = covered_must
+            .checked_add(covered_should)
+            .ok_or(ModuleCardDetailFieldError)?;
+        let total_field_count = total_must
+            .checked_add(total_should)
+            .ok_or(ModuleCardDetailFieldError)?;
+        Ok(Self {
+            basis_points: coverage_basis_points(covered_field_count, total_field_count)?,
+            covered_field_count,
+            total_field_count,
+            must: ModuleCardCoverageBand {
+                basis_points: coverage_basis_points(covered_must, total_must)?,
+                covered_field_count: covered_must,
+                total_field_count: total_must,
+                missing_fields: missing_must,
+            },
+            should: ModuleCardCoverageBand {
+                basis_points: coverage_basis_points(covered_should, total_should)?,
+                covered_field_count: covered_should,
+                total_field_count: total_should,
+                missing_fields: missing_should,
+            },
+        })
+    }
+
+    /// Returns overall verified field coverage in basis points.
+    #[must_use]
+    pub const fn basis_points(&self) -> u16 {
+        self.basis_points
+    }
+
+    /// Returns all present fields across both coverage bands.
+    #[must_use]
+    pub const fn covered_field_count(&self) -> u16 {
+        self.covered_field_count
+    }
+
+    /// Returns all fields defined by the exact accepted schema.
+    #[must_use]
+    pub const fn total_field_count(&self) -> u16 {
+        self.total_field_count
+    }
+
+    /// Returns mandatory field coverage.
+    #[must_use]
+    pub const fn must(&self) -> &ModuleCardCoverageBand {
+        &self.must
+    }
+
+    /// Returns best-effort field coverage.
+    #[must_use]
+    pub const fn should(&self) -> &ModuleCardCoverageBand {
+        &self.should
+    }
+}
+
+fn coverage_basis_points(covered: u16, total: u16) -> Result<u16, ModuleCardDetailFieldError> {
+    if total == 0 || covered > total {
+        return Err(ModuleCardDetailFieldError);
+    }
+    u16::try_from((u32::from(covered) * 10_000) / u32::from(total))
+        .map_err(|_| ModuleCardDetailFieldError)
+}
+
 /// Latest durable Module Card bound to one latest atomic index publication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleCardDetail {
@@ -260,6 +403,7 @@ pub struct ModuleCardDetail {
     mapper_profile_version: MapperProfileVersion,
     confidence: Confidence,
     lifecycle: ModuleCardLifecycle,
+    coverage: ModuleCardCoverage,
     fields: Vec<ModuleCardDetailField>,
 }
 
@@ -324,6 +468,7 @@ impl ModuleCardDetail {
         {
             return Err(ModuleCardDetailFieldError);
         }
+        let coverage = ModuleCardCoverage::from_fields(&fields)?;
         Ok(Self {
             current_index_run_id,
             current_snapshot_id,
@@ -335,6 +480,7 @@ impl ModuleCardDetail {
             mapper_profile_version,
             confidence,
             lifecycle,
+            coverage,
             fields,
         })
     }
@@ -397,6 +543,12 @@ impl ModuleCardDetail {
     #[must_use]
     pub const fn lifecycle(&self) -> ModuleCardLifecycle {
         self.lifecycle
+    }
+
+    /// Returns schema-bound field coverage independently from confidence and freshness.
+    #[must_use]
+    pub const fn coverage(&self) -> &ModuleCardCoverage {
+        &self.coverage
     }
 
     /// Returns present V1 fields in canonical schema order.
@@ -711,6 +863,43 @@ mod tests {
                 invalid_detail.fields.drain(..).collect(),
             )
             .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn card_derives_must_and_should_coverage_from_the_v1_schema() -> Result<(), Box<dyn Error>> {
+        let detail = detail(ModuleId::from_bytes([4; 32]))?;
+        let coverage = detail.coverage();
+        assert_eq!(coverage.covered_field_count(), 1);
+        assert_eq!(coverage.total_field_count(), 12);
+        assert_eq!(coverage.basis_points(), 833);
+        assert_eq!(coverage.must().covered_field_count(), 1);
+        assert_eq!(coverage.must().total_field_count(), 8);
+        assert_eq!(coverage.must().basis_points(), 1_250);
+        assert_eq!(
+            coverage.must().missing_fields(),
+            &[
+                ModuleCardField::Paths,
+                ModuleCardField::Purpose,
+                ModuleCardField::Responsibilities,
+                ModuleCardField::PublicSurface,
+                ModuleCardField::Dependencies,
+                ModuleCardField::Invariants,
+                ModuleCardField::Tests,
+            ]
+        );
+        assert_eq!(coverage.should().covered_field_count(), 0);
+        assert_eq!(coverage.should().total_field_count(), 4);
+        assert_eq!(coverage.should().basis_points(), 0);
+        assert_eq!(
+            coverage.should().missing_fields(),
+            &[
+                ModuleCardField::Entrypoints,
+                ModuleCardField::DataFlows,
+                ModuleCardField::Risks,
+                ModuleCardField::OpenQuestions,
+            ]
         );
         Ok(())
     }

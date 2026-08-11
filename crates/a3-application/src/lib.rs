@@ -193,10 +193,11 @@ pub use module_card_claim_codec::{
 };
 pub use module_card_detail::{
     GetModuleCardDetail, ModuleCardClaimPresentation, ModuleCardClaimPresentationError,
-    ModuleCardClaimState, ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
-    ModuleCardDetailFailure, ModuleCardDetailField, ModuleCardDetailFieldError,
-    ModuleCardDetailFuture, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
-    ModuleCardDetailStore, ModuleCardLifecycle, ModuleCardValuePresentation,
+    ModuleCardClaimState, ModuleCardCoverage, ModuleCardCoverageBand, ModuleCardDetail,
+    ModuleCardDetailControl, ModuleCardDetailControlError, ModuleCardDetailFailure,
+    ModuleCardDetailField, ModuleCardDetailFieldError, ModuleCardDetailFuture,
+    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardLifecycle,
+    ModuleCardValuePresentation,
 };
 pub use module_card_evidence::{
     GetModuleCardEvidence, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,

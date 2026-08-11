@@ -152,6 +152,12 @@ Plannerpolicy, Hartbudget, reservierte Gesamtkosten, geordnete Schritte und den 
 Stopgrund. Jeder Schritt nennt Ziel, erwartetes Ergebnis als Feldmenge, exakte Evidenzanforderung,
 Verifikationsmethode, Status und positive Token-, Zeit- und Toolkosten.
 
+Die Desktopprojektion `ModuleCardCoverage` rekonstruiert dieselbe Schemabedeutung aus den
+tatsächlich ausgelieferten verifizierten Card-Feldern. Sie trennt die acht Muss- von den vier
+Soll-Feldern, behält kanonisch geordnete Lücken und berechnet jede Quote ganzzahlig in Basispunkten.
+Coverage ist weder `Confidence` noch Lebenszyklus: Vollständige Felder können stale sein, und eine
+hohe Confidence kann ein fehlendes Muss-Feld nicht ersetzen.
+
 Seed-Ranking und erwarteter Informationsgewinn verwenden ausschließlich Manifestrevisionen,
 Entrypoints, rankgeordnete zentrale Symbole, Test-Roots, Graphcommunities und fehlende Coverage aus
 der veröffentlichten Modulprojektion. Höchstens 16.384 Kandidaten bleiben nach deterministischem

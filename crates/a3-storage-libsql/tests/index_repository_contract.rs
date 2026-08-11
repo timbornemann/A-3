@@ -1080,6 +1080,14 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(current_detail.source_index_run_id(), initial_run.id());
         assert_eq!(current_detail.source_snapshot_id(), initial_snapshot.id());
         assert_eq!(current_detail.lifecycle(), ModuleCardLifecycle::Current);
+        assert_eq!(current_detail.coverage().covered_field_count(), 2);
+        assert_eq!(current_detail.coverage().total_field_count(), 12);
+        assert_eq!(current_detail.coverage().basis_points(), 1_666);
+        assert_eq!(current_detail.coverage().must().covered_field_count(), 2);
+        assert_eq!(current_detail.coverage().must().total_field_count(), 8);
+        assert_eq!(current_detail.coverage().must().basis_points(), 2_500);
+        assert_eq!(current_detail.coverage().should().covered_field_count(), 0);
+        assert_eq!(current_detail.coverage().should().total_field_count(), 4);
         assert_eq!(
             current_detail
                 .fields()

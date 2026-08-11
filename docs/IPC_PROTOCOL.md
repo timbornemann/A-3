@@ -82,9 +82,13 @@ Eine verfügbare Antwort bindet `currentIndexRunId` und `currentSnapshotId` an d
 Indexpublikation. `sourceIndexRunId` und `sourceSnapshotId` benennen getrennt den historischen Run,
 in dem die deterministisch jüngste Card verifiziert wurde. Dazu kommen `cardId`, `moduleId`, die
 festen V1-Schema-/Mapperversionen, `confidenceBasisPoints`, ein expliziter `lifecycle` und ein bis
-zwölf kanonisch geordnete Card-Felder. `current` trägt keine Invalidierungsdaten; `stale` trägt
-eine direkte Ursache; `needsReview` ausschließlich `directDependencyChanged`. Ein invalidierter
-Run muss eine nicht spätere veröffentlichte Publikation desselben Worktrees sein.
+zwölf kanonisch geordnete Card-Felder. Die getrennte `coverage` enthält Gesamt-, Muss- und
+Soll-Abdeckung mit ganzzahligen Basispunkten, exakten Feldzählern und kanonisch geordneten
+fehlenden Feldern. V1 umfasst zwölf Felder, davon acht Muss- und vier Soll-Felder. Als abgedeckt
+gilt ausschließlich ein tatsächlich ausgeliefertes, bereits verifiziertes und evidenzgebundenes
+Feld. `current` trägt keine Invalidierungsdaten; `stale` trägt eine direkte Ursache;
+`needsReview` ausschließlich `directDependencyChanged`. Ein invalidierter Run muss eine nicht
+spätere veröffentlichte Publikation desselben Worktrees sein.
 
 Jedes Feld besitzt mindestens einen begrenzten, kontrollzeichenfreien Wert und mindestens eine
 kanonisch sortierte `evidenceId`. Die V1-Grenzen gelten pro Feld unverändert; die gesamte
@@ -98,8 +102,10 @@ Der effektive Claim-State muss für die ganze Card exakt `current`, `stale` oder
 entsprechen. Dadurch bleibt beispielsweise die historische epistemische Klassifikation `fact`
 erhalten, kann bei einer stale Card aber nie als aktuelles Faktum erscheinen. Der unabhängige
 TypeScript-Decoder prüft Envelope, Schemaordnung, UTF-8-Grenzen, ID-Reihenfolge,
-Evidence-Teilmengen, Claim-Eindeutigkeit und diese Lifecycle-Propagation erneut. Der Command läuft
-nur nach expliziter Modulauswahl, Aktualisierung oder erfolgreichem Publish, nicht im
+Evidence-Teilmengen, Claim-Eindeutigkeit, Coverage-Zähler/-Prozente/-Lücken und diese
+Lifecycle-Propagation erneut. Confidence, Coverage und Freshness bleiben unabhängige Signale; ein
+hoher Prozentwert kann weder fehlende Muss-Felder noch stale Evidence kompensieren. Der Command
+läuft nur nach expliziter Modulauswahl, Aktualisierung oder erfolgreichem Publish, nicht im
 500-ms-Statuspolling. Die gelieferten Evidence-IDs sind stabile Hooks für den nachfolgenden
 Evidence-Inspector-Schnitt und verleihen für sich weder Source- noch Dateizugriff.
 

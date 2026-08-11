@@ -1238,7 +1238,7 @@
     return labels[relation];
   }
 
-  function coverageLabel(value: number | null): string {
+  function percentageLabel(value: number | null): string {
     return value === null
       ? 'Keine strukturellen Parserdaten'
       : new Intl.NumberFormat('de-DE', {
@@ -1485,7 +1485,7 @@
               </div>
               <div>
                 <dt>Parse Coverage</dt>
-                <dd>{coverageLabel(indexOverviewView.result.overview.coverageBasisPoints)}</dd>
+                <dd>{percentageLabel(indexOverviewView.result.overview.coverageBasisPoints)}</dd>
               </div>
             </dl>
             <p class="index-coverage-note">
@@ -1506,7 +1506,7 @@
                       </div>
                       <p>
                         {countLabel(file.diagnosticCount)} Diagnostics · Coverage
-                        {coverageLabel(file.coverageBasisPoints)}
+                        {percentageLabel(file.coverageBasisPoints)}
                       </p>
                       <ul>
                         {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
@@ -1826,27 +1826,85 @@
             </p>
           {:else if moduleCardDetailView.kind === 'available'}
             {@const card = moduleCardDetailView.result.detail}
-            <div
-              class:module-card-lifecycle-current={card.lifecycle.status === 'current'}
-              class:module-card-lifecycle-stale={card.lifecycle.status === 'stale'}
-              class:module-card-lifecycle-review={card.lifecycle.status === 'needsReview'}
-              class="module-card-lifecycle"
-              role={card.lifecycle.status === 'current' ? 'note' : 'alert'}
-            >
-              <strong>
-                {card.lifecycle.status === 'current'
-                  ? 'Current'
-                  : card.lifecycle.status === 'stale'
-                    ? 'Stale — keine aktuelle Faktenquelle'
-                    : 'NeedsReview — keine aktuelle Faktenquelle'}
-              </strong>
-              {#if card.lifecycle.status !== 'current'}
-                <span>{moduleCardFreshnessReasonLabel(card.lifecycle.reason)}</span>
-              {/if}
-            </div>
+            <section class="module-card-signals" aria-labelledby="module-card-signals-heading">
+              <div class="module-card-signals-heading">
+                <h5 id="module-card-signals-heading">Confidence, Coverage und Freshness</h5>
+                <p>Drei unabhängige Signale der ausgewählten, publikationsgebundenen Card.</p>
+              </div>
+              <div class="module-card-signal-grid">
+                <article class="module-card-signal module-card-confidence">
+                  <h6>Confidence</h6>
+                  <strong>{percentageLabel(card.confidenceBasisPoints)}</strong>
+                  <p>Numerische Einschätzung der verifizierten Card, kein Faktenstatus.</p>
+                </article>
+                <article class="module-card-signal module-card-coverage">
+                  <h6>Coverage</h6>
+                  <strong>
+                    {card.coverage.coveredFieldCount} von {card.coverage.totalFieldCount} Feldern ·
+                    {percentageLabel(card.coverage.basisPoints)}
+                  </strong>
+                  <p>
+                    {card.coverage.must.coveredFieldCount} von {card.coverage.must.totalFieldCount}
+                    Muss-Feldern · {card.coverage.should.coveredFieldCount} von
+                    {card.coverage.should.totalFieldCount} Soll-Feldern
+                  </p>
+                  <details class="module-card-coverage-gaps">
+                    <summary>Feldabdeckung im Detail</summary>
+                    <div>
+                      <section aria-labelledby="module-card-missing-must">
+                        <h6 id="module-card-missing-must">Fehlende Muss-Felder</h6>
+                        {#if card.coverage.must.missingFields.length === 0}
+                          <p>Alle Muss-Felder sind verifiziert abgedeckt.</p>
+                        {:else}
+                          <ul>
+                            {#each card.coverage.must.missingFields as field (field)}
+                              <li>{moduleCardFieldLabel(field)}</li>
+                            {/each}
+                          </ul>
+                        {/if}
+                      </section>
+                      <section aria-labelledby="module-card-missing-should">
+                        <h6 id="module-card-missing-should">Fehlende Soll-Felder</h6>
+                        {#if card.coverage.should.missingFields.length === 0}
+                          <p>Alle Soll-Felder sind verifiziert abgedeckt.</p>
+                        {:else}
+                          <ul>
+                            {#each card.coverage.should.missingFields as field (field)}
+                              <li>{moduleCardFieldLabel(field)}</li>
+                            {/each}
+                          </ul>
+                        {/if}
+                      </section>
+                    </div>
+                  </details>
+                </article>
+                <article
+                  class:module-card-lifecycle-current={card.lifecycle.status === 'current'}
+                  class:module-card-lifecycle-stale={card.lifecycle.status === 'stale'}
+                  class:module-card-lifecycle-review={card.lifecycle.status === 'needsReview'}
+                  class="module-card-signal module-card-lifecycle"
+                  role={card.lifecycle.status === 'current' ? 'note' : 'alert'}
+                >
+                  <h6>Freshness</h6>
+                  <strong>
+                    {card.lifecycle.status === 'current'
+                      ? 'Current'
+                      : card.lifecycle.status === 'stale'
+                        ? 'Stale — keine aktuelle Faktenquelle'
+                        : 'NeedsReview — keine aktuelle Faktenquelle'}
+                  </strong>
+                  <p>
+                    {card.lifecycle.status === 'current'
+                      ? 'Card und sichtbare Claims lösen gegen die aktuelle Publikation auf.'
+                      : moduleCardFreshnessReasonLabel(card.lifecycle.reason)}
+                  </p>
+                </article>
+              </div>
+            </section>
             <p class="module-card-safety-note" role="note">
-              Claim-Typ und Aktualität sind unabhängig. Ein als „Fact“ klassifizierter, aber „Stale“
-              oder „NeedsReview“ markierter Wert wird nicht als aktuelles Faktum verwendet.
+              Confidence, Coverage, Claim-Typ und Aktualität werden nicht miteinander verrechnet.
+              Ein als „Fact“ klassifizierter, aber „Stale“ oder „NeedsReview“ markierter Wert wird
+              nicht als aktuelles Faktum verwendet.
             </p>
             <dl class="module-card-envelope">
               <div>
@@ -1854,8 +1912,8 @@
                 <dd>{moduleCardSelection?.name ?? card.moduleId.slice(0, 12)}</dd>
               </div>
               <div>
-                <dt>Card Confidence</dt>
-                <dd>{coverageLabel(card.confidenceBasisPoints)}</dd>
+                <dt>Schema und Mapper</dt>
+                <dd>V{card.schemaVersion} · Mapper V{card.mapperProfileVersion}</dd>
               </div>
               <div>
                 <dt>Aktueller Indexlauf</dt>
@@ -1895,7 +1953,7 @@
                                 ? 'Stale'
                                 : 'NeedsReview'}
                           </span>
-                          <span>{coverageLabel(item.claim.confidenceBasisPoints)}</span>
+                          <span>{percentageLabel(item.claim.confidenceBasisPoints)}</span>
                         </div>
                         <p>{item.value}</p>
                         <details class="module-card-evidence-identities">
@@ -2101,7 +2159,7 @@
                       <div>
                         <dt>Beobachtung</dt>
                         <dd>
-                          {edge.provider} · {edge.resolution} · {coverageLabel(
+                          {edge.provider} · {edge.resolution} · {percentageLabel(
                             edge.confidenceBasisPoints,
                           )}
                         </dd>
@@ -2427,7 +2485,7 @@
                     </div>
                     <div>
                       <dt>Confidence</dt>
-                      <dd>{coverageLabel(selectedEdge.confidenceBasisPoints)}</dd>
+                      <dd>{percentageLabel(selectedEdge.confidenceBasisPoints)}</dd>
                     </div>
                   </dl>
                 {:else}
@@ -2617,7 +2675,7 @@
                   </div>
                   <div>
                     <dt>Confidence</dt>
-                    <dd>{coverageLabel(selectedDependencyEvidence.confidenceBasisPoints)}</dd>
+                    <dd>{percentageLabel(selectedDependencyEvidence.confidenceBasisPoints)}</dd>
                   </div>
                 </dl>
               </aside>

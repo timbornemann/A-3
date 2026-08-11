@@ -18,16 +18,16 @@ use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
     JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
     KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure,
-    ListRecentProjects, ListRecentProjectsError, ModuleCardClaimState, ModuleCardDetail,
-    ModuleCardDetailControl, ModuleCardDetailControlError, ModuleCardDetailFailure,
-    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore,
-    ModuleCardEvidenceControl, ModuleCardEvidenceControlError, ModuleCardEvidenceDetail,
-    ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult,
-    ModuleCardEvidencePayload, ModuleCardEvidenceQuery, ModuleCardEvidenceStore,
-    ModuleCardFreshness, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardFreshnessStore,
-    ModuleDependencyEdge, ModuleDependencyGraph, ModuleDependencyGraphControl,
-    ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    ListRecentProjects, ListRecentProjectsError, ModuleCardClaimState, ModuleCardCoverageBand,
+    ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
+    ModuleCardEvidenceDetail, ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness,
+    ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload, ModuleCardEvidenceQuery,
+    ModuleCardEvidenceStore, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
+    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
     ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
     ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
     ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
@@ -61,12 +61,13 @@ use a3_protocol::{
     IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
     IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
     IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
-    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1,
-    ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1,
-    ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1,
-    ModuleCardEvidenceV1, ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1,
-    ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1,
-    ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
+    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1,
+    ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
+    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
+    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
+    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
+    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
+    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
     ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
     ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
     ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
@@ -1557,6 +1558,13 @@ fn map_module_card_detail_to_v1(detail: &ModuleCardDetail) -> ModuleCardDetailV1
         detail.schema_version().get(),
         detail.mapper_profile_version().get(),
         detail.confidence().basis_points(),
+        ModuleCardCoverageV1::new(
+            detail.coverage().basis_points(),
+            detail.coverage().covered_field_count(),
+            detail.coverage().total_field_count(),
+            map_module_card_coverage_band_to_v1(detail.coverage().must()),
+            map_module_card_coverage_band_to_v1(detail.coverage().should()),
+        ),
         map_module_card_lifecycle_to_v1(detail.lifecycle()),
         detail
             .fields()
@@ -1610,6 +1618,19 @@ fn map_module_card_detail_to_v1(detail: &ModuleCardDetail) -> ModuleCardDetailV1
                         .collect(),
                 )
             })
+            .collect(),
+    )
+}
+
+fn map_module_card_coverage_band_to_v1(band: &ModuleCardCoverageBand) -> ModuleCardCoverageBandV1 {
+    ModuleCardCoverageBandV1::new(
+        band.basis_points(),
+        band.covered_field_count(),
+        band.total_field_count(),
+        band.missing_fields()
+            .iter()
+            .copied()
+            .map(map_module_card_field_to_v1)
             .collect(),
     )
 }

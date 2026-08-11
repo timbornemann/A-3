@@ -610,6 +610,23 @@ lesbar. Card-Lifecycle und Evidence-Freshness bleiben getrennt; `NeedsReview` da
 weiterhin aktuelle Evidence zeigen. Der Inspector liest weder Source noch Live-Dateisystem, läuft
 erst nach explizitem Klick und ist auf zwei Sekunden begrenzt und cancellable.
 
+### Confidence, Coverage und Freshness
+
+U4 zeigt diese drei Signale gemeinsam, verrechnet sie aber nie miteinander. `Confidence` bleibt
+die vorhandene numerische Einschätzung einer Card oder eines Claims und kann weder Classification
+noch Aktualität ändern. `Freshness` stammt weiterhin ausschließlich aus dem gegen die jüngste
+atomare Publikation ausgewerteten Card-Lifecycle `Current`, `Stale` oder `NeedsReview`.
+
+`Coverage` wird im Application-Read-Model aus der akzeptierten `ModuleCardSchemaVersion::V1` und
+den tatsächlich vorhandenen verifizierten, evidenzgebundenen Feldern der ausgewählten Card
+abgeleitet. Gesamt-, acht Muss- und vier Soll-Felder besitzen exakte Zähler, ganzzahlige
+Basispunkte sowie kanonische Missing-Field-Listen. Der unabhängige TypeScript-Decoder berechnet die
+erwarteten Werte aus der sichtbaren Feldmenge erneut und lehnt widersprüchliche Zähler, Prozente,
+Reihenfolgen oder Lücken ab. Fehlende Felder werden erst progressiv im Detail geöffnet; dadurch
+bleibt die Standardansicht auch bei informationsreichen Cards kompakt. Coverage erhält keine neue
+Persistenz-, Datei-, Graph- oder Modell-Capability und läuft innerhalb des bestehenden atomaren,
+cancellable und auf zwei Sekunden begrenzten Card-Reads.
+
 ## Task Lens
 
 Seeds:

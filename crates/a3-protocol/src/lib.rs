@@ -38,10 +38,10 @@ pub use index_overview::{
     IndexOverviewV1, QueryIndexOverviewRequestV1,
 };
 pub use module_card_detail::{
-    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardDetailFieldV1,
-    ModuleCardDetailResponseV1, ModuleCardDetailResultV1, ModuleCardDetailV1,
-    ModuleCardFieldKindV1, ModuleCardLifecycleV1, ModuleCardValueV1,
-    QueryModuleCardDetailRequestV1,
+    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
+    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1,
+    ModuleCardDetailResultV1, ModuleCardDetailV1, ModuleCardFieldKindV1, ModuleCardLifecycleV1,
+    ModuleCardValueV1, QueryModuleCardDetailRequestV1,
 };
 pub use module_card_evidence::{
     ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
