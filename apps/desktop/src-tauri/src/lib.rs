@@ -11,22 +11,24 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    DeepMapExecutor, GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError,
-    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
-    GetPublishedIndexOverviewError, HealthQuery, IndexPersistenceControl,
-    IndexPersistenceControlError, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
-    KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError,
-    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
-    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetProjectIndexStatus,
+    GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
+    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
+    ListRecentProjectsError, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardFreshnessStore, OpenProject, OpenProjectError, OpenProjectOutcome,
+    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
     ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
     ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
     RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, ExploreBudget, GitHead, Health, IndexLanguage,
-    IndexRunStatus, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId,
-    ProjectIdentity,
+    IndexRunStatus, InvalidationReason, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform,
+    Progress, ProjectId, ProjectIdentity,
 };
 use a3_protocol::{
     CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
@@ -34,10 +36,12 @@ use a3_protocol::{
     DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
     IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
     IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
-    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, OpenProjectResponseV1,
-    PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
-    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
-    RecentProjectsResponseV1, RemoveProjectResponseV1,
+    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
+    ProjectStatusResponseV1, ProjectSummaryV1, RebuildProjectIndexResponseV1, RebuildStateV1,
+    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -72,6 +76,7 @@ pub struct CompositionRoot {
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
     index_overview: Option<GetPublishedIndexOverview>,
+    module_card_freshness: Option<GetModuleCardFreshness>,
     project_storage: Option<GetProjectStorageUsage>,
     remove_project: Option<RemoveProjectFromList>,
     active_project: Mutex<Option<ActiveProject>>,
@@ -229,7 +234,7 @@ impl CompositionRoot {
             return Ok(IndexOverviewResponseV1::no_published_index());
         };
         query
-            .execute(&active.project, &DesktopIndexOverviewControl::new())
+            .execute(&active.project, &DesktopBoundedReadControl::new())
             .await
             .map_err(map_index_overview_error_to_v1)
             .map(|overview| match overview {
@@ -237,6 +242,29 @@ impl CompositionRoot {
                     IndexOverviewResponseV1::published(map_index_overview_to_v1(&overview))
                 }
                 None => IndexOverviewResponseV1::no_published_index(),
+            })
+    }
+
+    /// Returns authoritative latest-card lifecycle counts without card contents or paths.
+    pub async fn query_module_card_freshness(
+        &self,
+    ) -> Result<ModuleCardFreshnessResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ModuleCardFreshnessResponseV1::no_project());
+        };
+        let Some(query) = &self.module_card_freshness else {
+            return Ok(ModuleCardFreshnessResponseV1::no_published_index());
+        };
+        query
+            .execute(&active.project, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_module_card_freshness_error_to_v1)
+            .map(|freshness| match freshness {
+                Some(freshness) => ModuleCardFreshnessResponseV1::available(
+                    map_module_card_freshness_to_v1(&freshness),
+                ),
+                None => ModuleCardFreshnessResponseV1::no_published_index(),
             })
     }
 
@@ -421,12 +449,12 @@ struct DesktopProjectStorageControl {
 }
 
 #[derive(Debug)]
-struct DesktopIndexOverviewControl {
+struct DesktopBoundedReadControl {
     completed: AtomicU64,
     total: AtomicU64,
 }
 
-impl DesktopIndexOverviewControl {
+impl DesktopBoundedReadControl {
     fn new() -> Self {
         Self {
             completed: AtomicU64::new(0),
@@ -435,7 +463,7 @@ impl DesktopIndexOverviewControl {
     }
 }
 
-impl IndexPersistenceControl for DesktopIndexOverviewControl {
+impl IndexPersistenceControl for DesktopBoundedReadControl {
     fn is_cancelled(&self) -> bool {
         false
     }
@@ -451,6 +479,29 @@ impl IndexPersistenceControl for DesktopIndexOverviewControl {
         let previous_total = self.total.load(Ordering::Acquire);
         if completed < previous_completed || (previous_total != 0 && total != previous_total) {
             return Err(IndexPersistenceControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
+impl ModuleCardFreshnessControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ModuleCardFreshnessControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ModuleCardFreshnessControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ModuleCardFreshnessControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ModuleCardFreshnessControlError::Unavailable);
         }
         self.total.store(total, Ordering::Release);
         self.completed.store(completed, Ordering::Release);
@@ -491,9 +542,17 @@ struct CompositionBase {
 #[derive(Default)]
 struct OptionalCompositionPorts {
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
+    module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
     project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
+}
+
+struct IndexingCompositionPorts {
+    index_store: Arc<dyn KnowledgeIndexStore>,
+    module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
+    project_storage: Arc<dyn ProjectStorageStore>,
+    project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
 }
 
 impl CompositionBase {
@@ -539,18 +598,17 @@ impl CompositionBase {
         project_directory_picker: Arc<dyn ProjectDirectoryPicker>,
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
-        index_store: Arc<dyn KnowledgeIndexStore>,
-        project_storage: Arc<dyn ProjectStorageStore>,
-        project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
+        ports: IndexingCompositionPorts,
     ) -> Result<CompositionRoot, CompositionRootError> {
         self.finish_internal(
             project_directory_picker,
             project_reconciliation_confirmer,
             store,
             OptionalCompositionPorts {
-                index_store: Some(index_store),
-                project_storage: Some(project_storage),
-                project_catalog_admin: Some(project_catalog_admin),
+                index_store: Some(ports.index_store),
+                module_card_freshness_store: Some(ports.module_card_freshness_store),
+                project_storage: Some(ports.project_storage),
+                project_catalog_admin: Some(ports.project_catalog_admin),
                 deep_map_executor: None,
             },
         )
@@ -569,6 +627,9 @@ impl CompositionBase {
             .index_store
             .clone()
             .map(GetPublishedIndexOverview::new);
+        let module_card_freshness = ports
+            .module_card_freshness_store
+            .map(GetModuleCardFreshness::new);
         let index_manager = ports
             .index_store
             .map(|store| {
@@ -612,6 +673,7 @@ impl CompositionBase {
             recent_projects: ListRecentProjects::new(store),
             project_status,
             index_overview,
+            module_card_freshness,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
             remove_project: ports.project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
@@ -643,6 +705,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             );
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
+            let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store;
             app.manage(base.finish_with_indexing(
@@ -651,9 +714,12 @@ pub fn run() -> Result<(), DesktopRunError> {
                     app.handle().clone(),
                 )),
                 catalog_store,
-                index_store,
-                project_storage,
-                project_catalog_admin,
+                IndexingCompositionPorts {
+                    index_store,
+                    module_card_freshness_store,
+                    project_storage,
+                    project_catalog_admin,
+                },
             )?);
             Ok(())
         })
@@ -666,6 +732,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_project_status,
             commands::query_index_activity,
             commands::query_index_overview,
+            commands::query_module_card_freshness,
             commands::query_health,
             commands::rebuild_project_index,
             commands::resume_deep_map,
@@ -850,6 +917,51 @@ fn map_index_overview_to_v1(overview: &PublishedIndexOverview) -> IndexOverviewV
     )
 }
 
+fn map_module_card_freshness_to_v1(freshness: &ModuleCardFreshness) -> ModuleCardFreshnessV1 {
+    ModuleCardFreshnessV1::new(
+        freshness.index_run_id().to_string(),
+        freshness.snapshot_id().to_string(),
+        ModuleCardFreshnessCountsV1::new(
+            freshness.published_count().to_string(),
+            freshness.stale_count().to_string(),
+            freshness.needs_review_count().to_string(),
+            freshness.total_count().to_string(),
+        ),
+        freshness
+            .reason_counts()
+            .iter()
+            .map(|reason| {
+                ModuleCardFreshnessReasonCountV1::new(
+                    match reason.status() {
+                        ModuleCardFreshnessStatus::Stale => ModuleCardFreshnessStatusV1::Stale,
+                        ModuleCardFreshnessStatus::NeedsReview => {
+                            ModuleCardFreshnessStatusV1::NeedsReview
+                        }
+                    },
+                    match reason.reason() {
+                        InvalidationReason::EvidenceChanged => {
+                            ModuleCardFreshnessReasonV1::EvidenceChanged
+                        }
+                        InvalidationReason::ModuleRemoved => {
+                            ModuleCardFreshnessReasonV1::ModuleRemoved
+                        }
+                        InvalidationReason::ParserVersionChanged => {
+                            ModuleCardFreshnessReasonV1::ParserVersionChanged
+                        }
+                        InvalidationReason::MapperVersionChanged => {
+                            ModuleCardFreshnessReasonV1::MapperVersionChanged
+                        }
+                        InvalidationReason::DirectDependencyChanged => {
+                            ModuleCardFreshnessReasonV1::DirectDependencyChanged
+                        }
+                    },
+                    reason.count().to_string(),
+                )
+            })
+            .collect(),
+    )
+}
+
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
     DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
 }
@@ -992,6 +1104,17 @@ fn map_index_overview_error_to_v1(error: GetPublishedIndexOverviewError) -> Comm
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
     }
+}
+
+fn map_module_card_freshness_error_to_v1(error: ModuleCardFreshnessFailure) -> CommandErrorV1 {
+    let code = match error {
+        ModuleCardFreshnessFailure::Storage(error) => map_storage_error_to_v1(error),
+        ModuleCardFreshnessFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        ModuleCardFreshnessFailure::Cancelled
+        | ModuleCardFreshnessFailure::TimedOut
+        | ModuleCardFreshnessFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
 }
 
 fn map_project_storage_error_to_v1(error: GetProjectStorageUsageError) -> CommandErrorV1 {

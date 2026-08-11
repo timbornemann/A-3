@@ -51,8 +51,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
-  `query_deep_map`, `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie
-  `query_health`, aber keine
+  `query_module_card_freshness`, `query_deep_map`, `start_deep_map`, `pause_deep_map`,
+  `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
@@ -76,6 +76,12 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Basispunkte, Dateien auf 64, Diagnostics pro Datei auf acht, Meldungen auf 1.024 Bytes und
   nicht-autoritative Pfadanzeigen auf 512 kontrollzeichenfreie Zeichen begrenzt. Die UI ruft diese
   tiefere Storage-Abfrage nur bei Open, manueller Aktualisierung oder erfolgreichem Publish auf.
+- `query_module_card_freshness` akzeptiert ebenfalls nur die Protokollversion und wählt den
+  Worktree aus dem Core-eigenen aktiven Zustand. Die auf zwei Sekunden begrenzte Read-Transaktion
+  liefert ausschließlich aktuellen Run-/Snapshotanker, vier verlustfreie Zähler und höchstens fünf
+  typisierte Ursachen. Weder Card-Inhalte, Claims, Evidence, Remapqueue-Zeilen, Source noch Pfade
+  werden übertragen. Die UI ruft auch diese Storage-Abfrage nur bei Open, manueller Aktualisierung
+  oder erfolgreichem Publish auf, nicht im 500-ms-Polling.
 - Die fünf Deep-Map-Commands akzeptieren niemals einen Projektpfad, eine Projektidentität, ein
   ModelProfile oder eine Job-ID aus der WebView. Nur der explizite Start trägt ein dreidimensionales,
   gegen feste Domainminima und -maxima validiertes Budget. Statuspolling liest ausschließlich das

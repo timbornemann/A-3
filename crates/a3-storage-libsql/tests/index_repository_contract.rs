@@ -3,9 +3,11 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
-    ModuleCardVerificationControl, ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    CompileTaskLens, GetModuleCardFreshness, IndexPersistenceControl, IndexPersistenceControlError,
+    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    LoadPendingModuleRemaps, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
+    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardVerificationControl,
+    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
     PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
     TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
 };
@@ -13,9 +15,9 @@ use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
     GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
     IndexPublication, IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
-    IndexSchemaVersion, IndexedFileAnalysis, LanguageAdapterRevision, LanguageAdapterVersion,
-    LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion, ModuleCardClaimId,
-    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
+    IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason, LanguageAdapterRevision,
+    LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion,
+    ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
     ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
     ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
     ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence,
@@ -35,7 +37,7 @@ use std::fs;
 use std::future::Future;
 use std::io;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use support::TempDirectory;
 
 // libSQL's Windows native test runtime is not safe when separate local database
@@ -109,6 +111,23 @@ impl RemapQueueControl for TestIndexControl {
     }
 }
 
+impl ModuleCardFreshnessControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardFreshnessControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleCardFreshnessControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -173,7 +192,7 @@ fn snapshot_roundtrip_retains_canonical_reproducibility_state()
     let _test_lock = lock_index_repository_test()?;
     run_index_test(async {
         let fixture = ProjectFixture::new([1; 32], [11; 32])?;
-        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
         store.record_opened_project(&fixture.project).await?;
         let snapshot = snapshot(
             [21; 32],
@@ -187,6 +206,12 @@ fn snapshot_roundtrip_retains_canonical_reproducibility_state()
         )?;
 
         store.append_snapshot(&fixture.project, &snapshot).await?;
+        assert_eq!(
+            GetModuleCardFreshness::new(store.clone())
+                .execute(&fixture.project, &TestIndexControl::default())
+                .await?,
+            None
+        );
         assert_eq!(
             store.latest_snapshot(&fixture.project).await?,
             Some(snapshot.clone())
@@ -1149,7 +1174,7 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
     let _test_lock = lock_index_repository_test()?;
     run_index_test(async {
         let fixture = ProjectFixture::new([101; 32], [102; 32])?;
-        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
         let initial_snapshot = snapshot(
             [103; 32],
             fixture.project.worktree().id(),
@@ -1181,7 +1206,7 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
             .latest_published_index(&fixture.project, &TestIndexControl::default())
             .await?
             .ok_or("multi-module fixture index is missing")?;
-        PublishVerifiedModuleCards::new(&store)
+        PublishVerifiedModuleCards::new(store.as_ref())
             .execute(
                 &fixture.project,
                 &multi_module_card_batch(&initial)?,
@@ -1217,7 +1242,7 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
             )
             .await?;
 
-        let remaps = LoadPendingModuleRemaps::new(&store)
+        let remaps = LoadPendingModuleRemaps::new(store.as_ref())
             .execute(
                 &fixture.project,
                 RemapQueueLimit::DEFAULT,
@@ -1241,8 +1266,36 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
                 .iter()
                 .all(|entry| entry.module_id() != ModuleId::from_bytes([203; 32]))
         );
+        let freshness_query = GetModuleCardFreshness::new(store.clone());
+        let freshness = freshness_query
+            .execute(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("freshness projection is missing")?;
+        assert_eq!(freshness.index_run_id(), changed_run.id());
+        assert_eq!(freshness.snapshot_id(), changed_snapshot.id());
+        assert_eq!(freshness.published_count(), 1);
+        assert_eq!(freshness.stale_count(), 1);
+        assert_eq!(freshness.needs_review_count(), 1);
+        assert_eq!(freshness.total_count(), 3);
+        assert_eq!(freshness.reason_counts().len(), 2);
+        assert_eq!(
+            freshness.reason_counts()[0].status(),
+            ModuleCardFreshnessStatus::Stale
+        );
+        assert_eq!(
+            freshness.reason_counts()[0].reason(),
+            InvalidationReason::EvidenceChanged
+        );
+        assert_eq!(
+            freshness.reason_counts()[1].status(),
+            ModuleCardFreshnessStatus::NeedsReview
+        );
+        assert_eq!(
+            freshness.reason_counts()[1].reason(),
+            InvalidationReason::DirectDependencyChanged
+        );
 
-        let lens = CompileTaskLens::new(&store, &store, &store)
+        let lens = CompileTaskLens::new(store.as_ref(), store.as_ref(), store.as_ref())
             .execute(
                 &fixture.project,
                 TaskLensSeedSet::new(
@@ -1263,6 +1316,140 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
             ModuleId::from_bytes([203; 32])
         );
         assert_eq!(lens.claims()[0].kind(), VerifiedClaimKind::Fact);
+
+        let changed = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("changed multi-module fixture index is missing")?;
+        PublishVerifiedModuleCards::new(store.as_ref())
+            .execute(
+                &fixture.project,
+                &multi_module_card_batch(&changed)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let remapped = freshness_query
+            .execute(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("remapped freshness projection is missing")?;
+        assert_eq!(remapped.published_count(), 3);
+        assert_eq!(remapped.stale_count(), 0);
+        assert_eq!(remapped.needs_review_count(), 0);
+        assert_eq!(remapped.total_count(), 3);
+        assert!(remapped.reason_counts().is_empty());
+
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "DELETE FROM module_card_lifecycle WHERE card_id = x'9797979797979797979797979797979797979797979797979797979797979797'",
+        )
+        .await?;
+        assert_eq!(
+            freshness_query
+                .execute(&fixture.project, &TestIndexControl::default())
+                .await,
+            Err(ModuleCardFreshnessFailure::InvalidStoredProjection)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn removed_module_remains_visible_as_stale_without_a_remap_request()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([131; 32], [132; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let initial_snapshot = snapshot(
+            [133; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(
+                b"src/lib.rs",
+                [134; 32],
+                SnapshotChangeKind::Upsert,
+            )?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &initial_snapshot)
+            .await?;
+        let initial_run = store
+            .start_index_run(&fixture.project, run([135; 32], initial_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                initial_run.id(),
+                &symbol_publication(initial_snapshot.id(), b"src/lib.rs", [134; 32])?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let initial = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("initial index is missing")?;
+        PublishVerifiedModuleCards::new(store.as_ref())
+            .execute(
+                &fixture.project,
+                &verified_file_card_batch(&initial)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let removed_snapshot = snapshot(
+            [136; 32],
+            fixture.project.worktree().id(),
+            Some(initial_snapshot.id()),
+            2,
+            vec![change(
+                b"src/lib.rs",
+                [134; 32],
+                SnapshotChangeKind::Delete,
+            )?],
+        )?;
+        store
+            .append_snapshot(&fixture.project, &removed_snapshot)
+            .await?;
+        let removed_run = store
+            .start_index_run(&fixture.project, run([137; 32], removed_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                removed_run.id(),
+                &empty_publication(removed_snapshot.id())?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        let remaps = LoadPendingModuleRemaps::new(store.as_ref())
+            .execute(
+                &fixture.project,
+                RemapQueueLimit::DEFAULT,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert!(remaps.entries().is_empty());
+        let freshness = GetModuleCardFreshness::new(store)
+            .execute(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("removed-module freshness projection is missing")?;
+        assert_eq!(freshness.index_run_id(), removed_run.id());
+        assert_eq!(freshness.published_count(), 0);
+        assert_eq!(freshness.stale_count(), 1);
+        assert_eq!(freshness.needs_review_count(), 0);
+        assert_eq!(freshness.total_count(), 1);
+        assert_eq!(freshness.reason_counts().len(), 1);
+        assert_eq!(
+            freshness.reason_counts()[0].reason(),
+            InvalidationReason::ModuleRemoved
+        );
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1641,6 +1828,29 @@ fn file_only_publication(
     )?;
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
     let modules = support::module_projection(&graph, &ranking, &[])?;
+    Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn empty_publication(
+    snapshot_id: SnapshotId,
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let graph = LinkedGraph::new(snapshot_id, Vec::new(), Vec::new(), Vec::new(), Vec::new())?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+    let modules = ModuleProjection::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        Vec::new(),
+        Vec::new(),
+        RepositoryCard::new(
+            snapshot_id,
+            ModulePolicyVersion::v1(),
+            Vec::new(),
+            Vec::new(),
+            ModuleSymbolSet::empty(),
+            0,
+            0,
+        )?,
+    )?;
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
 }
 

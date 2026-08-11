@@ -31,6 +31,7 @@ mod lexical_search;
 mod model_capability;
 mod model_provider;
 mod module_card_claim_codec;
+mod module_card_freshness;
 mod module_card_verification;
 mod module_remap_queue;
 mod mutating_agent_controller;
@@ -183,6 +184,12 @@ pub use model_provider::{
 };
 pub use module_card_claim_codec::{
     DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
+};
+pub use module_card_freshness::{
+    GetModuleCardFreshness, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessFuture, ModuleCardFreshnessReasonCount, ModuleCardFreshnessReasonCountError,
+    ModuleCardFreshnessStatus, ModuleCardFreshnessStore,
 };
 pub use module_card_verification::{
     ModuleCardEvidenceResolutionTimeout, ModuleCardEvidenceResolutionTimeoutError,

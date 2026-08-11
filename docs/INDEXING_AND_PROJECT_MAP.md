@@ -589,6 +589,15 @@ maximal 512 Zeichen lange Anzeigeprojektionen; Source-Inhalt, Hashes und autorit
 Dateisystempfade überschreiten die IPC-Grenze nicht. Ein Dateifehler erscheint damit lokal, ohne
 andere Indexdaten in einen globalen Blank State zu verwandeln.
 
+Die separate U3-Freshness-Projektion liest innerhalb einer auf zwei Sekunden begrenzten
+Deferred-Transaktion die Lebenszyklen der jeweils neuesten veröffentlichten Card jedes Moduls. Sie
+liefert exakte Zähler für `Current`, `Stale`, `NeedsReview` und Gesamt sowie höchstens fünf positive,
+kanonisch geordnete Ursachen. Die Projektion wird gemeinsam mit aktuellem `IndexRunId` und
+`SnapshotId` zurückgegeben. `module-removed` bleibt damit sichtbar, obwohl dieser Zustand bewusst
+keinen Remapqueue-Eintrag erzeugt; nach Veröffentlichung einer neu verifizierten Card wird deren
+ältere stale Version nicht mehr als aktueller Modulzustand gezählt. Card-Inhalte, Claims, Evidence,
+Source und Pfade sind nicht Teil dieser Desktop-Projektion.
+
 ~~~mermaid
 flowchart TD
     Change["Bestätigtes Change Set"]

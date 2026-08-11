@@ -56,6 +56,13 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Rust-/TypeScript-Contracts lehnen unbekannte Felder, widersprüchliche Zustände, nicht kanonische
   Zähler und unbekannte Fehlercodes ab. Der Component-Test muss außerdem zeigen, dass weder Mount
   noch Polling Modellarbeit startet und der Start exakt das zuvor sichtbare Budget übergibt.
+- Der pfadlose U3-Module-Card-Freshness-Contract zählt ausschließlich die jeweils neueste Card pro
+  Modul gegen den aktuellen veröffentlichten Run. Storage-Regressionsprüfungen verlangen direkte
+  `Stale`-, ein-Hop-`NeedsReview`- und unabhängige `Published`-Zustände, sichtbare entfernte Module
+  trotz leerer Remapqueue und das Verdrängen historischer stale Cards nach einer Neupublikation.
+  Rust- und TypeScript-Contracts prüfen IDs, verlustfreie Summen, höchstens fünf positive kanonische
+  Ursachen und legale Status/Ursachen-Paare. Der Component-Test zeigt `Stale`, `NeedsReview` und
+  ihre Ursachen gemeinsam, ohne Card-Inhalt oder autoritative Pfade zu erhalten.
 
 ### Persistenz
 

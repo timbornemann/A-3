@@ -6,6 +6,7 @@ mod goal_contract;
 mod health;
 mod index_activity;
 mod index_overview;
+mod module_card_freshness;
 mod project;
 mod project_rebuild;
 mod project_removal;
@@ -29,6 +30,11 @@ pub use index_overview::{
     IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1,
     IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewResultV1,
     IndexOverviewV1, QueryIndexOverviewRequestV1,
+};
+pub use module_card_freshness::{
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessResultV1, ModuleCardFreshnessStatusV1,
+    ModuleCardFreshnessV1, QueryModuleCardFreshnessRequestV1,
 };
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,

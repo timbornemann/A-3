@@ -385,6 +385,26 @@ h1 {
   color: #314b44;
 }
 
+.module-card-freshness-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.module-card-freshness-heading p {
+  margin: 0.35rem 0 0;
+  color: #496059;
+}
+
+.module-card-freshness-reasons {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.8rem 0 0;
+  padding-left: 1.25rem;
+}
+
 .index-snapshot,
 .index-coverage-note {
   margin: 0.75rem 0 0;

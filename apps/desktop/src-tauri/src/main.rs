@@ -17,7 +17,8 @@ mod tests {
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
         CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
-        HealthResponseV1, HealthStatusV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
+        HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
+        ModuleCardFreshnessResultV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
         ProtocolVersion, RecentProjectsResponseV1,
     };
     use serde_json::json;
@@ -107,6 +108,7 @@ mod tests {
                 a3_desktop::commands::query_project_status,
                 a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_index_overview,
+                a3_desktop::commands::query_module_card_freshness,
                 a3_desktop::commands::query_health,
                 a3_desktop::commands::rebuild_project_index,
                 a3_desktop::commands::remove_project,
@@ -137,6 +139,27 @@ mod tests {
         assert_eq!(response.application_version(), "1.2.3");
         assert_eq!(response.platform(), PlatformV1::Windows);
         assert_eq!(response.status(), HealthStatusV1::Ready);
+
+        let freshness_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_module_card_freshness".into(),
+                callback: CallbackFn(16),
+                error: CallbackFn(17),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": { "protocolVersion": 1 }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<ModuleCardFreshnessResponseV1>()?;
+        assert!(matches!(
+            freshness_response.result(),
+            ModuleCardFreshnessResultV1::NoProject
+        ));
 
         let project_response = get_ipc_response(
             &webview,
@@ -305,6 +328,7 @@ mod tests {
                 "allow-query-deep-map",
                 "allow-query-index-activity",
                 "allow-query-index-overview",
+                "allow-query-module-card-freshness",
                 "allow-query-project-status",
                 "allow-query-health",
                 "allow-rebuild-project-index",

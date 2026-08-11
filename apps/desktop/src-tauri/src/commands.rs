@@ -2,11 +2,12 @@ use crate::CompositionRoot;
 use a3_protocol::{
     CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
     HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1,
-    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
-    RemoveProjectResponseV1, StartDeepMapRequestV1,
+    ListRecentProjectsRequestV1, ModuleCardFreshnessResponseV1, OpenProjectRequestV1,
+    OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    StartDeepMapRequestV1,
 };
 use tauri::State;
 
@@ -53,6 +54,15 @@ pub async fn query_index_overview(
     root: State<'_, CompositionRoot>,
 ) -> Result<IndexOverviewResponseV1, CommandErrorV1> {
     execute_query_index_overview(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns exact current Module Card lifecycle counts without accepting an identity or path.
+pub async fn query_module_card_freshness(
+    request: QueryModuleCardFreshnessRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ModuleCardFreshnessResponseV1, CommandErrorV1> {
+    execute_query_module_card_freshness(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -193,6 +203,17 @@ async fn execute_query_index_overview(
     root.query_index_overview().await
 }
 
+async fn execute_query_module_card_freshness(
+    request: QueryModuleCardFreshnessRequestV1,
+    root: &CompositionRoot,
+) -> Result<ModuleCardFreshnessResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.query_module_card_freshness().await
+}
+
 fn execute_query_deep_map(
     request: QueryDeepMapRequestV1,
     root: &CompositionRoot,
@@ -251,8 +272,9 @@ mod tests {
     use super::{
         execute_control_deep_map, execute_list_recent_projects, execute_open_project,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
-        execute_query_index_overview, execute_query_project_status, execute_rebuild_project_index,
-        execute_remove_project, execute_start_deep_map,
+        execute_query_index_overview, execute_query_module_card_freshness,
+        execute_query_project_status, execute_rebuild_project_index, execute_remove_project,
+        execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -266,8 +288,9 @@ mod tests {
     use a3_protocol::{
         ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryDeepMapRequestV1,
-        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1,
+        ModuleCardFreshnessResultV1, OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
+        QueryModuleCardFreshnessRequestV1, QueryProjectStatusRequestV1,
         RebuildProjectIndexRequestV1, RemoveProjectRequestV1, StartDeepMapRequestV1,
     };
     use futures::executor::block_on;
@@ -481,6 +504,41 @@ mod tests {
         };
 
         assert_eq!(error.code(), ErrorCodeV1::UnsupportedProtocolVersion);
+        Ok(())
+    }
+
+    #[test]
+    fn module_card_freshness_is_pathless_and_reports_no_project_before_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let response = block_on(execute_query_module_card_freshness(
+            QueryModuleCardFreshnessRequestV1::current(),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+
+        assert!(matches!(
+            response.result(),
+            ModuleCardFreshnessResultV1::NoProject
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn module_card_freshness_rejects_unsupported_version_before_reading_core_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_query_module_card_freshness(
+            QueryModuleCardFreshnessRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
         Ok(())
     }
 

@@ -30,6 +30,11 @@
     type IndexLanguageV1,
     type IndexOverviewResponseV1,
   } from './lib/index-overview';
+  import {
+    queryModuleCardFreshness,
+    type ModuleCardFreshnessReasonV1,
+    type ModuleCardFreshnessResponseV1,
+  } from './lib/module-card-freshness';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
@@ -54,6 +59,7 @@
     deepMapCanceller?: () => Promise<DeepMapControlResponseV1>;
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
+    moduleCardFreshnessLoader?: () => Promise<ModuleCardFreshnessResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
@@ -88,6 +94,15 @@
         result: Extract<IndexOverviewResponseV1['result'], { status: 'published' }>;
       }
     | { kind: 'error' };
+  type ModuleCardFreshnessView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleCardFreshnessResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
   type DeepMapView =
     | { kind: 'loading' }
     | { kind: 'noProject' }
@@ -118,6 +133,7 @@
     deepMapCanceller = cancelDeepMap,
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
+    moduleCardFreshnessLoader = queryModuleCardFreshness,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
@@ -129,6 +145,7 @@
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
+  let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
   let deepMapView = $state<DeepMapView>({ kind: 'loading' });
   let deepMapActionView = $state<DeepMapActionView>({ kind: 'idle' });
   let deepMapBudget = $state<DeepMapBudgetV1>({
@@ -158,6 +175,7 @@
     void loadRecentProjects();
     void loadIndexActivity();
     void loadIndexOverview();
+    void loadModuleCardFreshness();
     void loadDeepMap();
     const activityTimer = window.setInterval(() => {
       void loadIndexActivity();
@@ -183,8 +201,10 @@
         !previousSucceeded
       ) {
         void loadIndexOverview();
+        void loadModuleCardFreshness();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
+        moduleCardFreshnessView = { kind: 'noProject' };
       }
       indexActivityObserved = true;
     } catch {
@@ -205,6 +225,22 @@
       }
     } catch {
       indexOverviewView = { kind: 'error' };
+    }
+  }
+
+  async function loadModuleCardFreshness(): Promise<void> {
+    moduleCardFreshnessView = { kind: 'loading' };
+    try {
+      const response = await moduleCardFreshnessLoader();
+      if (response.result.status === 'available') {
+        moduleCardFreshnessView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'noPublishedIndex') {
+        moduleCardFreshnessView = { kind: 'noPublishedIndex' };
+      } else {
+        moduleCardFreshnessView = { kind: 'noProject' };
+      }
+    } catch {
+      moduleCardFreshnessView = { kind: 'error' };
     }
   }
 
@@ -239,6 +275,7 @@
           : { kind: 'noProject' };
       if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
+        moduleCardFreshnessView = { kind: 'noProject' };
       }
     } catch {
       projectStatusView = { kind: 'error' };
@@ -246,7 +283,12 @@
   }
 
   async function refreshProjectDetails(): Promise<void> {
-    await Promise.all([loadProjectStatus(), loadIndexOverview(), loadDeepMap()]);
+    await Promise.all([
+      loadProjectStatus(),
+      loadIndexOverview(),
+      loadModuleCardFreshness(),
+      loadDeepMap(),
+    ]);
   }
 
   async function loadRecentProjects(): Promise<void> {
@@ -270,6 +312,7 @@
         await loadProjectStatus();
         await loadIndexActivity();
         await loadIndexOverview();
+        await loadModuleCardFreshness();
         await loadDeepMap();
         await loadRecentProjects();
       } else {
@@ -335,6 +378,7 @@
       projectStatusView = { kind: 'noProject' };
       indexActivityView = { kind: 'noProject' };
       indexOverviewView = { kind: 'noProject' };
+      moduleCardFreshnessView = { kind: 'noProject' };
       deepMapView = { kind: 'noProject' };
       deepMapActionView = { kind: 'idle' };
       deepMapBudgetProfile = null;
@@ -413,6 +457,17 @@
 
   function countLabel(value: string): string {
     return new Intl.NumberFormat('de-DE').format(BigInt(value));
+  }
+
+  function moduleCardFreshnessReasonLabel(reason: ModuleCardFreshnessReasonV1): string {
+    const labels: Record<ModuleCardFreshnessReasonV1, string> = {
+      directDependencyChanged: 'Direkte Abhängigkeit geändert',
+      evidenceChanged: 'Direkte Evidenz geändert',
+      mapperVersionChanged: 'Mapper-Version geändert',
+      moduleRemoved: 'Modul entfernt',
+      parserVersionChanged: 'Parser-Version geändert',
+    };
+    return labels[reason];
   }
 
   function coverageLabel(value: number | null): string {
@@ -715,6 +770,71 @@
             <div class="recent-projects-error" role="alert">
               <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadIndexOverview}>Indexübersicht erneut laden</button>
+            </div>
+          {/if}
+        </div>
+        <div
+          class="index-overview module-card-freshness"
+          aria-labelledby="module-card-freshness-heading"
+        >
+          <div class="module-card-freshness-heading">
+            <div>
+              <h4 id="module-card-freshness-heading">Module-Card-Aktualität</h4>
+              <p>Autoritative Lebenszyklen der jeweils neuesten Karte pro Modul.</p>
+            </div>
+            <button type="button" onclick={loadModuleCardFreshness}>Aktualisieren</button>
+          </div>
+          {#if moduleCardFreshnessView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Module-Card-Aktualität wird gelesen …
+            </p>
+          {:else if moduleCardFreshnessView.kind === 'noPublishedIndex'}
+            <p class="project-status">
+              Noch kein veröffentlichter Index; daher existiert noch keine aktuelle
+              Lebenszyklusprojektion.
+            </p>
+          {:else if moduleCardFreshnessView.kind === 'available'}
+            <p class="index-snapshot">
+              Indexlauf <code>{moduleCardFreshnessView.result.freshness.indexRunId}</code>
+            </p>
+            <dl class="index-metrics module-card-freshness-metrics">
+              <div>
+                <dt>Current</dt>
+                <dd>
+                  {countLabel(moduleCardFreshnessView.result.freshness.counts.publishedCount)}
+                </dd>
+              </div>
+              <div>
+                <dt>Stale</dt>
+                <dd>{countLabel(moduleCardFreshnessView.result.freshness.counts.staleCount)}</dd>
+              </div>
+              <div>
+                <dt>NeedsReview</dt>
+                <dd>
+                  {countLabel(moduleCardFreshnessView.result.freshness.counts.needsReviewCount)}
+                </dd>
+              </div>
+              <div>
+                <dt>Gesamt</dt>
+                <dd>{countLabel(moduleCardFreshnessView.result.freshness.counts.totalCount)}</dd>
+              </div>
+            </dl>
+            {#if moduleCardFreshnessView.result.freshness.reasons.length === 0}
+              <p class="ready-label">Alle bekannten Module Cards sind aktuell.</p>
+            {:else}
+              <ul class="module-card-freshness-reasons">
+                {#each moduleCardFreshnessView.result.freshness.reasons as reason (reason.status + reason.reason)}
+                  <li>
+                    <strong>{reason.status === 'stale' ? 'Stale' : 'NeedsReview'}:</strong>
+                    {moduleCardFreshnessReasonLabel(reason.reason)} · {countLabel(reason.count)}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          {:else if moduleCardFreshnessView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Die Module-Card-Aktualität konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={loadModuleCardFreshness}>Erneut laden</button>
             </div>
           {/if}
         </div>

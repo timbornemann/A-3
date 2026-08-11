@@ -261,6 +261,13 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    Application-Port. IPC V1 liefert verlustfreie Zähler, aggregierte Coverage und höchstens 64
    fehlerhafte Dateien mit je acht sicheren Diagnostics; Repository-Pfade werden nur als
    kontrollzeichenfreie, auf 512 Zeichen begrenzte Anzeige ausgegeben.
+6. `query_module_card_freshness` ist eine zweite bounded Storage-Projektion. Sie zählt pro Modul nur
+   die Card aus dem neuesten veröffentlichten Quell-Run, bindet das Ergebnis an aktuellen Run und
+   Snapshot und liefert ausschließlich `Current`, `Stale`, `NeedsReview` sowie höchstens fünf
+   typisierte Ursachen. Sie läuft bei Open, manueller Aktualisierung und erfolgreichem Publish,
+   niemals im 500-ms-Statuspolling. Dadurch bleiben auch entfernte Module sichtbar, obwohl sie
+   absichtlich keinen Remapauftrag besitzen; eine neu publizierte Card verdrängt dagegen ihre
+   ältere stale Historie aus der aktuellen Projektion.
 
 ### Worktree aus der Projektliste entfernen
 

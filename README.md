@@ -92,7 +92,9 @@ inzwischen live die sechs Fast-Index-Phasen, den weiterhin lesbaren veröffentli
 Dateien, Symbole, Coverage und file-lokale Diagnostics. Der explizite Deep-Map-Lifecycle zeigt ein
 verifiziertes Modell und harte Budgets vor dem Start, kann checkpoint-sicher pausieren,
 fortsetzen und abbrechen und bleibt ohne konfiguriertes Mapping-Modell sicher deaktiviert. Als
-nächster U3-Schnitt folgt die sichtbare Stale-/NeedsReview-Projektion. Die
+abschließender U3-Schnitt zeigt eine an den aktuellen veröffentlichten Index gebundene
+Module-Card-Aktualität mit `Current`, `Stale`, `NeedsReview` und typisierten
+Invalidierungsursachen. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

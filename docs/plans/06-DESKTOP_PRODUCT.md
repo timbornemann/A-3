@@ -74,7 +74,7 @@ Abhängigkeiten: Fast Index, Deep Map
 - [x] Dateien, Symbole, Diagnostics und Coverage
 - [x] Deep Map bewusst starten, pausieren, fortsetzen und abbrechen
 - [x] Token-, Zeit- und Modellbudget vor Start
-- [ ] stale und NeedsReview sichtbar
+- [x] stale und NeedsReview sichtbar
 - [x] Indexfehler pro Datei statt globalem Blank State
 
 Akzeptanz:
@@ -98,12 +98,28 @@ Resume erzeugt einen neuen Versuch ohne bestätigte Schritte zu wiederholen. Que
 Pause-Checkpoint vortäuschen, Projektwechsel verwirft alten Zustand, und ein anderes
 Checkpointbudget endet sicher als Fehler.
 
-Verifiziert wurden Rustfmt, 28 Desktoptests einschließlich fünf Lifecycle-Randfällen, sämtliche
+Bei dieser Teilabnahme wurden Rustfmt, 28 Desktoptests einschließlich fünf Lifecycle-Randfällen,
+sowie sämtliche
 Workspace-Tests mit allen Features, Workspace-Clippy mit Warnings denied, Rustdoc, 50
 Frontendtests, Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, Tooltests, 47
 Markdown-Dateien mit 74 lokalen Links, Dependency-/Lizenzbericht und der native
-Tauri-Release-Build ohne Bundle. Offen innerhalb U3 bleibt ausschließlich die sichtbare
-Stale-/NeedsReview-Projektion.
+Tauri-Release-Build ohne Bundle.
+
+Abnahme vom 2026-08-11: Der letzte U3-Schnitt projiziert die Lebenszyklen der jeweils neuesten
+Module Card pro Modul gegen den aktuellen atomar veröffentlichten Run. `Current`, `Stale` und
+`NeedsReview` werden mit exakten verlustfreien Zählern und höchstens fünf typisierten Ursachen
+sichtbar. Storage-Contracts belegen direkte und ein-Hop-Invalidierung, entfernte Module ohne
+Remapauftrag, das Verdrängen historischer stale Cards nach Neupublikation und die Ablehnung einer
+fehlenden Lifecycle-Zeile. Der pfadlose IPC- und TypeScript-Contract lehnt unbekannte Felder,
+inkonsistente Summen, falsche Reihenfolge und illegale Status/Ursachen-Paare ab; die Storage-Abfrage
+läuft nicht im 500-ms-Polling.
+
+Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features, Workspace-
+Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 30 Desktop-Libtests plus zwei
+Desktop-Binary- und drei Desktop-Integrationstests, 54 Frontendtests, Formatter, ESLint,
+Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
+Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Damit ist U3 vollständig
+verifiziert und abgeschlossen.
 
 ## U4 Project Map
 

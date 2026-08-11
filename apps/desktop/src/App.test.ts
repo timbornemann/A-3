@@ -5,6 +5,7 @@ import type { DeepMapControlResponseV1, DeepMapStatusResponseV1 } from './lib/de
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
+import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
@@ -118,6 +119,27 @@ const publishedIndexOverview: IndexOverviewResponseV1 = {
   },
 };
 
+const moduleCardFreshness: ModuleCardFreshnessResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    freshness: {
+      counts: {
+        needsReviewCount: '1',
+        publishedCount: '7',
+        staleCount: '2',
+        totalCount: '10',
+      },
+      indexRunId: '6'.repeat(64),
+      reasons: [
+        { count: '2', reason: 'evidenceChanged', status: 'stale' },
+        { count: '1', reason: 'directDependencyChanged', status: 'needsReview' },
+      ],
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
 const idleDeepMapStatus: DeepMapStatusResponseV1 = {
   protocolVersion: 1,
   result: {
@@ -211,6 +233,23 @@ describe('A^3 desktop shell', () => {
     expect(screen.getAllByText(/80,00\s%/)).toHaveLength(2);
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
     expect(screen.getByText(/Syntaxfehler · syntax error/)).toBeTruthy();
+  });
+
+  it('shows authoritative Stale and NeedsReview Module Card counts with causes', async () => {
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleCardFreshnessLoader: async () => moduleCardFreshness,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Module-Card-Aktualität' })).toBeTruthy();
+    expect(screen.getByText('Stale')).toBeTruthy();
+    expect(screen.getByText('NeedsReview')).toBeTruthy();
+    expect(screen.getByText(/Direkte Evidenz geändert · 2/)).toBeTruthy();
+    expect(screen.getByText(/Direkte Abhängigkeit geändert · 1/)).toBeTruthy();
   });
 
   it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {

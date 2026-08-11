@@ -54,6 +54,21 @@ geschlossene Lifecycle lautet `idle`, `queued`, `running`, `pausing`, `paused`, 
 `succeeded`, `failed` oder `cancelled`; `paused` darf erst nach abgeschlossenem kooperativem Abbruch
 mit validiertem Checkpoint sichtbar werden.
 
+## Module Card Freshness V1
+
+`query_module_card_freshness` akzeptiert ausschließlich den gemeinsamen pfadlosen V1-Request und
+liefert `noProject`, `noPublishedIndex` oder `available`. `available` enthält die 64-stelligen
+kleingeschriebenen Hex-IDs des aktuellen veröffentlichten Indexlaufs und Snapshots, vier
+verlustfreie u64-Dezimalzähler für `publishedCount`, `staleCount`, `needsReviewCount` und
+`totalCount` sowie höchstens fünf positive Ursachenzeilen.
+
+Eine Ursachenzeile enthält `status`, `reason` und den verlustfreien `count`. `stale` ist nur mit
+`evidenceChanged`, `moduleRemoved`, `parserVersionChanged` oder `mapperVersionChanged` gültig;
+`needsReview` ausschließlich mit `directDependencyChanged`. Die Zeilen sind kanonisch geordnet,
+ihre Summen müssen exakt den beiden invaliden Aggregatzählern entsprechen, und alle drei
+Statuszähler müssen `totalCount` ergeben. Projektidentitäten, Pfade, Card-Inhalte, Claims, Evidence,
+Datenbankzeilen und Remapqueue-Einträge überschreiten diese Grenze nicht.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -111,7 +126,8 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 ## Tauri-Capability
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
-Health-, Project-, Index- und Deep-Map-Commands. Für Deep Map sind das
+Health-, Project-, Index-, Module-Card-Freshness- und Deep-Map-Commands. Die Freshness-Capability ist
+`allow-query-module-card-freshness`. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.
