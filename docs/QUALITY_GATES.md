@@ -161,7 +161,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   nutzerverfassten Goal- oder Adaptertext ausgeben. Component-Tests beweisen, dass ohne aktives
   Projekt kein Read startet, Neuanlage nur `null`-Kriterien-IDs sendet, Revisionen stabile IDs
   behalten und der neu geladene aktuelle Goal Contract samt Must-/Should-Kennzeichnung sichtbar
-  bleibt. Speichern startet weder Ledger noch Run noch Modellarbeit.
+  bleibt. Der Ledger-Component-Contract bindet den Read an dieselbe sichtbare `TaskId`, zeigt
+  Revision und Store-Version, markiert nur einen tatsächlich laufenden/wartenden/verifizierenden/
+  blockierten Schritt als aktuell und hält ihn gemeinsam mit dem Goal im Sticky Anchor. Fehlendes
+  Ledger und Goal-Revisionsabweichung bleiben explizit; Speichern startet weder Ledger noch Run
+  noch Modellarbeit.
 
 ### Persistenz
 

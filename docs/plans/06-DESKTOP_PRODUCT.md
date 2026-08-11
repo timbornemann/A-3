@@ -345,7 +345,7 @@ Abhängigkeiten: Gate M7
 
 - [x] Goal Contract
 - [x] Acceptance Criteria
-- [ ] Task Ledger und aktueller Step
+- [x] Task Ledger und aktueller Step
 - [ ] kompakte Conversation- und Action Timeline
 - [ ] Context- und Budgetanzeige
 - [ ] Pause, Cancel, Resume und Replan
@@ -369,6 +369,14 @@ Workspace-Tests, Clippy mit `-D warnings`, Rustdoc, `ci:frontend`, Link-/Depende
 Tauri-Release-Build ohne Bundle waren grün. Die direkte `getrandom`-Deklaration verwendet die
 bereits transitiv aufgelöste Version als injizierte OS-Identitätsquelle; sie fügt kein neues Paket
 zum Lockfile-Graph hinzu. Ledger, Run und Modellarbeit werden durch diesen Schnitt nicht gestartet.
+
+Abnahme des Ledger-Schnitts am 2026-08-11: Der Workspace lädt das bereits durable Task Ledger
+ausschließlich über den bestehenden worktreegebundenen Task-Lens-Read und zeigt Ledgerrevision,
+optimistische Store-Version sowie alle aktiven Planschritte. Nur `InProgress`,
+`AwaitingApproval`, `Verifying` oder `Blocked` kann den sichtbaren aktuellen Schritt stellen; Ziel
+und Schritt bleiben in einem gemeinsamen Sticky Anchor erhalten. Component-Tests belegen dieselbe
+Task-ID-Bindung und die gleichzeitige Sichtbarkeit. Fehlendes Ledger, Revisionsabweichung,
+Projektwechsel und Readfehler bleiben explizit; die read-only UI erzeugt keinen erfundenen Plan.
 
 ## U6 Diff und Verification
 

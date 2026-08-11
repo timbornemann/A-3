@@ -491,9 +491,15 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    Eindeutigkeit, Revisionsverkettung und stabile IDs. Debug-Ausgaben enthalten nur Längen,
    Anzahlen und sichere Identitätsmetadaten, niemals nutzerverfassten Goal-Text.
 6. Die WebView zeigt den aktuell neu geladenen Goal Contract und dessen Akzeptanzkriterien getrennt
-   vom Editor. Das Speichern erzeugt weder Task Ledger noch Run und ruft kein Modell auf; diese
-   Übergänge bleiben eigenen U5-Schnitten vorbehalten.
-7. Die Desktop-Metadatenquelle verwendet die bereits transitiv aufgelöste, exakt gepinnte
+   vom Editor. Nach jedem Goal-Read lädt sie über den bestehenden strikten
+   `query_task_lens_task`-Read Revision, Store-Version und aktive Planschritte. Ein Schritt gilt in
+   der Anzeige nur bei `InProgress`, `AwaitingApproval`, `Verifying` oder `Blocked` als aktuell;
+   Ready- oder Pending-Schritte werden nicht fälschlich als laufend bezeichnet. Ziel und aktueller
+   Schritt bilden einen gemeinsamen workspaceweiten Sticky Anchor. Fehlendes Ledger,
+   Goal-Revisionsabweichung und Readfehler bleiben explizite Zustände.
+7. Das Speichern eines Goal Contracts erzeugt weder Task Ledger noch Run und ruft kein Modell auf;
+   die Ledger-Anzeige ist read-only und erfindet ohne Controllerzustand keinen Plan.
+8. Die Desktop-Metadatenquelle verwendet die bereits transitiv aufgelöste, exakt gepinnte
    `getrandom`-Implementierung für 32-Byte-OS-Identitäten. Sie ist direkt deklariert, weil die
    gepinnte Standardbibliothek keine gleichwertige plattformübergreifende OS-Zufallsquelle bietet;
    Uhrzeit und Zufall bleiben hinter dem injizierten Core-Port testbar.

@@ -127,7 +127,11 @@ vollständige Aufgabe mit Must-/Should-Akzeptanzkriterien, Constraints, Non-Goal
 Nutzerentscheidungen und Abschlussprüfung anlegen oder gegen die sichtbar geladene Revision einen
 materiellen unveränderlichen Nachfolger anhängen. Task-, Kriterien- und Zeitanker erzeugt nur der
 Rust-Core; die WebView erhält weder Datenbankzugriff noch die Befugnis, durch das Speichern bereits
-einen Agentenlauf zu starten. Die verbindliche
+einen Agentenlauf zu starten. Für den ausgewählten Contract lädt derselbe Workspace außerdem das
+dauerhafte Task Ledger mit Revision, Store-Version und allen aktiven Planschritten. Ein tatsächlich
+laufender, auf Freigabe wartender, zu verifizierender oder blockierter Schritt bleibt gemeinsam mit
+dem Ziel in einem workspaceweiten Sticky Anchor sichtbar; fehlendes Ledger und eine abweichende
+Goal-Revision erscheinen als eigene sichere Zustände. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

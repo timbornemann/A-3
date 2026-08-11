@@ -7,7 +7,7 @@ import type {
   AgentGoalMutationResponseV1,
   AgentGoalResponseV1,
 } from './agent-goal';
-import type { TaskLensTasksResponseV1 } from './task-lens';
+import type { TaskLensTaskResponseV1, TaskLensTasksResponseV1 } from './task-lens';
 
 const taskId = '1'.repeat(64);
 const criterionId = '2'.repeat(64);
@@ -164,5 +164,41 @@ describe('AgentGoalWorkspace', () => {
       screen.getByRole('heading', { name: 'Agent Workspace vollständig aufbauen' }),
     ).toBeTruthy();
     expect(screen.getByText('Änderungsgrund: Ziel präzisiert')).toBeTruthy();
+  });
+
+  it('keeps the durable goal and owned current step visible together', async () => {
+    const ledgerLoader = vi.fn<(query: { taskId: string }) => Promise<TaskLensTaskResponseV1>>(
+      async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [
+            {
+              intendedOutcome: 'Core-Grenze implementieren',
+              status: 'inProgress',
+              stepId: '3'.repeat(64),
+            },
+            { intendedOutcome: 'Gesamtgate ausführen', status: 'pending', stepId: '4'.repeat(64) },
+          ],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+    );
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader,
+      tasksLoader: async () => tasks(1),
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Core-Grenze implementieren' })).toBeTruthy();
+    expect(screen.getByText('Ledger R3 · Store 7')).toBeTruthy();
+    expect(screen.getAllByText('In Arbeit')).toHaveLength(2);
+    expect(screen.getByText('Gesamtgate ausführen')).toBeTruthy();
+    expect(ledgerLoader).toHaveBeenCalledWith({ taskId });
   });
 });

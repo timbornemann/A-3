@@ -12,6 +12,9 @@
   import GoalTextList from './GoalTextList.svelte';
   import {
     queryTaskLensTasks,
+    queryTaskLensTask,
+    type TaskLensStepV1,
+    type TaskLensTaskResponseV1,
     type TaskLensTaskSummaryV1,
     type TaskLensTasksResponseV1,
   } from './task-lens';
@@ -26,6 +29,7 @@
       reason: string,
       draft: AgentGoalDraftInputV1,
     ) => Promise<AgentGoalMutationResponseV1>;
+    ledgerLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     tasksLoader?: () => Promise<TaskLensTasksResponseV1>;
   }
 
@@ -42,17 +46,24 @@
     | { kind: 'notFound' }
     | { kind: 'error' };
   type EditorMode = 'closed' | 'create' | 'revise';
+  type LedgerView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'result'; result: TaskLensTaskResponseV1['result'] };
 
   let {
     activeProject,
     goalCreator = createAgentGoal,
     goalLoader = queryAgentGoal,
     goalReviser = reviseAgentGoal,
+    ledgerLoader = queryTaskLensTask,
     tasksLoader = queryTaskLensTasks,
   }: Props = $props();
 
   let taskView = $state<TaskView>({ kind: 'idle' });
   let goalView = $state<GoalView>({ kind: 'idle' });
+  let ledgerView = $state<LedgerView>({ kind: 'idle' });
   let selectedTaskId = $state('');
   let editorMode = $state<EditorMode>('closed');
   let draft = $state<AgentGoalDraftInputV1>(emptyDraft());
@@ -63,6 +74,12 @@
   let observedProject = false;
   let taskRequest = 0;
   let goalRequest = 0;
+  let ledgerRequest = 0;
+  let currentLedgerStep = $derived(
+    ledgerView.kind === 'result' && ledgerView.result.status === 'available'
+      ? selectCurrentStep(ledgerView.result.steps)
+      : null,
+  );
 
   $effect(() => {
     if (activeProject && !observedProject) {
@@ -124,9 +141,22 @@
         goalView = { kind: 'notFound' };
       } else {
         goalView = { kind: 'available', goal: response.result.goal };
+        await loadLedger(taskId);
       }
     } catch {
       if (request === goalRequest) goalView = { kind: 'error' };
+    }
+  }
+
+  async function loadLedger(taskId: string): Promise<void> {
+    const request = ++ledgerRequest;
+    ledgerView = { kind: 'loading' };
+    try {
+      const response = await ledgerLoader({ taskId });
+      if (request !== ledgerRequest || taskId !== selectedTaskId) return;
+      ledgerView = { kind: 'result', result: response.result };
+    } catch {
+      if (request === ledgerRequest) ledgerView = { kind: 'error' };
     }
   }
 
@@ -202,6 +232,8 @@
   function resetSelection(): void {
     selectedTaskId = '';
     goalView = { kind: 'idle' };
+    ledgerRequest += 1;
+    ledgerView = { kind: 'idle' };
   }
 
   function resetWorkspace(): void {
@@ -238,6 +270,29 @@
 
   function requirementLabel(requirement: 'must' | 'should'): string {
     return requirement === 'must' ? 'Muss' : 'Soll';
+  }
+
+  function selectCurrentStep(steps: TaskLensStepV1[]): TaskLensStepV1 | null {
+    const priority = ['inProgress', 'awaitingApproval', 'verifying', 'blocked'] as const;
+    return (
+      priority.map((status) => steps.find((step) => step.status === status)).find(Boolean) ?? null
+    );
+  }
+
+  function stepStatusLabel(status: TaskLensStepV1['status']): string {
+    const labels: Record<TaskLensStepV1['status'], string> = {
+      awaitingApproval: 'Wartet auf Freigabe',
+      blocked: 'Blockiert',
+      cancelled: 'Abgebrochen',
+      completed: 'Abgeschlossen',
+      failed: 'Fehlgeschlagen',
+      inProgress: 'In Arbeit',
+      pending: 'Ausstehend',
+      ready: 'Bereit',
+      stale: 'Veraltet',
+      verifying: 'Wird verifiziert',
+    };
+    return labels[status];
   }
 </script>
 
@@ -281,6 +336,73 @@
     {/if}
   {/if}
 
+  {#if goalView.kind === 'available'}
+    <div class="persistent-anchors">
+      <div>
+        <span>Aktuelles Ziel · Revision {goalView.goal.revision}</span>
+        <h3 id="current-goal-heading">{goalView.goal.objective}</h3>
+      </div>
+      <div>
+        <span>Aktueller Schritt</span>
+        <h4 id="current-step-heading">
+          {#if currentLedgerStep !== null}
+            {currentLedgerStep.intendedOutcome}
+          {:else if ledgerView.kind === 'loading'}
+            Wird geladen …
+          {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
+            Noch kein dauerhafter Plan
+          {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
+            Replan erforderlich
+          {:else}
+            Kein Schritt wird gerade ausgeführt
+          {/if}
+        </h4>
+        {#if currentLedgerStep !== null}<strong>{stepStatusLabel(currentLedgerStep.status)}</strong
+          >{/if}
+      </div>
+    </div>
+    <section class="task-ledger" aria-labelledby="task-ledger-heading">
+      <header>
+        <p>Durable Plan</p>
+        <h3 id="task-ledger-heading">Task Ledger</h3>
+      </header>
+      {#if ledgerView.kind === 'loading'}
+        <p role="status" aria-live="polite">Task Ledger wird geladen …</p>
+      {:else if ledgerView.kind === 'error'}
+        <div class="error-state" role="alert">
+          <p>Das Task Ledger konnte nicht sicher gelesen werden.</p>
+          <button type="button" onclick={() => loadLedger(selectedTaskId)}>Erneut laden</button>
+        </div>
+      {:else if ledgerView.kind === 'result' && (ledgerView.result.status === 'noProject' || ledgerView.result.status === 'taskNotFound')}
+        <p class="error-state" role="alert">
+          Aufgabe oder aktiver Worktree haben sich geändert. Lade die dauerhaften Aufgaben neu.
+        </p>
+      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
+        <p class="empty-state">
+          Für diesen Goal Contract wurde noch kein dauerhafter Plan erzeugt.
+        </p>
+      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
+        <p class="error-state" role="alert">
+          Das Ledger gehört zu Goal-Revision {ledgerView.result.ledgerGoalRevision}; aktuell ist
+          Revision {ledgerView.result.currentGoalRevision}. Vor Ausführung ist ein Replan
+          erforderlich.
+        </p>
+      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'available'}
+        <p class="ledger-metadata">
+          Ledger R{ledgerView.result.ledgerRevision} · Store {ledgerView.result.ledgerStoreVersion}
+        </p>
+        <ol class="ledger-steps">
+          {#each ledgerView.result.steps as step (step.stepId)}
+            <li class:current={step.stepId === currentLedgerStep?.stepId}>
+              <span>{stepStatusLabel(step.status)}</span>
+              <p>{step.intendedOutcome}</p>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </section>
+  {/if}
+
   {#if goalView.kind === 'loading'}
     <p role="status" aria-live="polite">Aktueller Goal Contract wird geladen …</p>
   {:else if goalView.kind === 'notFound'}
@@ -291,12 +413,9 @@
       <button type="button" onclick={() => loadGoal(selectedTaskId)}>Erneut laden</button>
     </div>
   {:else if goalView.kind === 'available'}
-    <article class="goal-contract" aria-labelledby="current-goal-heading">
-      <header class="goal-anchor">
-        <div>
-          <span>Aktuelles Ziel · Revision {goalView.goal.revision}</span>
-          <h3 id="current-goal-heading">{goalView.goal.objective}</h3>
-        </div>
+    <article class="goal-contract" aria-labelledby="goal-details-heading">
+      <header class="goal-actions">
+        <h3 id="goal-details-heading">Vertragsdetails</h3>
         <button type="button" onclick={startRevision}>Neue Revision</button>
       </header>
       <div class="goal-metadata">
@@ -466,7 +585,7 @@
 
   .workspace-heading,
   .editor-heading,
-  .goal-anchor,
+  .goal-actions,
   .editor-actions {
     align-items: start;
     display: flex;
@@ -516,24 +635,36 @@
     overflow: clip;
   }
 
-  .goal-anchor {
+  .persistent-anchors {
     background: var(--surface, #ffffff);
-    border-bottom: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--line, #d8d9df);
+    border-radius: 0.9rem;
+    box-shadow: 0 0.4rem 1rem rgb(17 39 30 / 8%);
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 1rem;
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: 3;
   }
 
-  .goal-anchor span,
+  .persistent-anchors span,
   .bounded-note,
   .goal-metadata {
     color: var(--muted, #646b79);
     font-size: 0.85rem;
   }
 
-  .goal-anchor h3 {
+  .persistent-anchors h3,
+  .persistent-anchors h4 {
     margin: 0.3rem 0 0;
+  }
+
+  .goal-actions {
+    background: var(--surface, #ffffff);
+    border-bottom: 1px solid var(--line, #d8d9df);
+    padding: 1rem;
   }
 
   .goal-metadata {
@@ -609,6 +740,64 @@
     padding: 1rem;
   }
 
+  .task-ledger {
+    border: 1px solid var(--line, #d8d9df);
+    border-radius: 0.9rem;
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+  }
+
+  .task-ledger header p,
+  .persistent-anchors > div > span {
+    color: var(--muted, #646b79);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    margin: 0 0 0.25rem;
+    text-transform: uppercase;
+  }
+
+  .task-ledger header h3,
+  .persistent-anchors h4 {
+    margin: 0;
+  }
+
+  .ledger-metadata {
+    color: var(--muted, #646b79);
+    font-size: 0.85rem;
+    margin: 0;
+  }
+
+  .ledger-steps {
+    display: grid;
+    gap: 0.55rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .ledger-steps li {
+    border: 1px solid var(--line, #d8d9df);
+    border-radius: 0.55rem;
+    display: grid;
+    gap: 0.55rem;
+    grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+    padding: 0.7rem;
+  }
+
+  .ledger-steps li.current {
+    border-color: #153c70;
+  }
+
+  .ledger-steps span {
+    font-weight: 700;
+  }
+
+  .ledger-steps p {
+    margin: 0;
+  }
+
   .criteria-editor {
     border: 1px solid var(--line, #d8d9df);
     border-radius: 0.75rem;
@@ -652,12 +841,20 @@
     .criterion-editor {
       grid-template-columns: 1fr;
     }
+
+    .persistent-anchors {
+      grid-template-columns: 1fr;
+    }
+
+    .ledger-steps li {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 560px) {
     .workspace-heading,
     .editor-heading,
-    .goal-anchor,
+    .goal-actions,
     .editor-actions {
       align-items: stretch;
       flex-direction: column;
