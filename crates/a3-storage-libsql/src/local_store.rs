@@ -33,17 +33,19 @@ use a3_application::{
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
-    AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber,
-    AgentToolAttemptStatus, AgentToolEvidence, ApprovalGrant, ApprovalGrantState, ApprovalId,
-    ApprovalRequest, ApprovalRequestId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
+    AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
+    AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
+    AgentToolEvidence, ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest,
+    ApprovalRequestId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
     ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
     IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, PolicyDecision, PolicyDecisionId,
-    ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent,
-    RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger,
-    ToolRunId, TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
-    VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, MutationActionFingerprint,
+    PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist, ProjectId, ProjectIdentity,
+    PublishedIndex, RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot,
+    SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery,
+    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerificationEvidence,
+    VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -651,6 +653,33 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn begin_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        fingerprint: MutationActionFingerprint,
+        kind: AgentMutationKind,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::begin_mutation_attempt(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+                snapshot_id,
+                tool_run_id,
+                fingerprint,
+                kind,
+                started_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn finish_agent_tool_attempt<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -667,6 +696,31 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 tool_run_id,
                 attempt,
                 status,
+                finished_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn finish_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        status: AgentToolAttemptStatus,
+        disposition: AgentMutationDisposition,
+        finished_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::finish_mutation_attempt(
+                database.connection(),
+                project.worktree().id(),
+                tool_run_id,
+                attempt,
+                status,
+                disposition,
                 finished_at,
             )
             .await
@@ -699,6 +753,31 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn complete_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::complete_mutation_attempt(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+                tool_run_id,
+                attempt,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -712,6 +791,48 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 project.worktree().id(),
                 run_id,
                 interrupted_at,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_agent_mutation_attempts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> AgentRecoveryStoreFuture<'a, Vec<AgentMutationAttempt>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::load_mutation_attempts(
+                database.connection(),
+                project.worktree().id(),
+                run_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn reconcile_agent_mutation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_recovery(project).await?;
+            agent_recovery_repository::reconcile_mutation(
+                database.connection(),
+                project.worktree().id(),
+                expected_last_sequence,
+                run,
+                event,
+                tool_run_id,
+                attempt,
             )
             .await
             .map_err(|error| error.classify())

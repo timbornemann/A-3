@@ -1,10 +1,12 @@
 use crate::{catalog::is_corruption, run_journal_repository, task_ledger_repository};
 use a3_application::{AgentRecoveryStoreFailure, TaskLedgerStoreFailure, TaskLedgerStoreVersion};
 use a3_domain::{
-    AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber,
-    AgentToolAttemptStatus, AgentToolEvidence, ContentHash, EvidenceRef, FileRevision,
-    RepositoryPath, RunEvent, RunEventKind, RunEventOutcome, RunEventSequence, RunEventSubject,
-    SnapshotId, SourcePosition, SourceRange, TaskEvidenceId, TaskLedger, ToolRunId, WorktreeId,
+    AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
+    AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
+    AgentToolEvidence, ContentHash, EvidenceRef, FileRevision, MutationActionFingerprint,
+    MutationReconciliation, RepositoryPath, RunEvent, RunEventCode, RunEventKind, RunEventOutcome,
+    RunEventSequence, RunEventSubject, SnapshotId, SourcePosition, SourceRange, TaskEvidenceId,
+    TaskLedger, ToolRunId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, Value, params, params_from_iter};
 use std::collections::BTreeSet;
@@ -14,6 +16,7 @@ use std::fmt;
 const SQLITE_CONSTRAINT: i32 = 19;
 const EVIDENCE_QUERY_BATCH: usize = 512;
 const MAX_RECOVERY_EVIDENCE: usize = 16_384;
+const MAX_MUTATION_ATTEMPTS: usize = 4_096;
 
 pub(crate) async fn begin_tool_attempt(
     connection: &Connection,
@@ -61,6 +64,79 @@ pub(crate) async fn begin_tool_attempt(
     close_write_transaction(transaction, result).await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn begin_mutation_attempt(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+    snapshot_id: SnapshotId,
+    tool_run_id: ToolRunId,
+    fingerprint: MutationActionFingerprint,
+    kind: AgentMutationKind,
+    started_at: AgentRunTimestamp,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    if kind == AgentMutationKind::UnclassifiedLegacy {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        validate_active_run_snapshot(&transaction, worktree_id, run_id, snapshot_id).await?;
+        if has_unreconciled_mutation(&transaction, worktree_id).await? {
+            return Err(AgentRecoveryRepositoryError::MutationReconciliationRequired);
+        }
+        let next_attempt = next_attempt_number(&transaction, tool_run_id).await?;
+        transaction
+            .execute(
+                "INSERT INTO tool_run_attempts (
+                 tool_run_id, attempt_sequence, run_id, snapshot_id, status,
+                 started_at_unix_millis, updated_at_unix_millis
+                 ) VALUES (?1, ?2, ?3, ?4, 'in_flight', ?5, ?5)",
+                params![
+                    id_bytes(tool_run_id),
+                    i64::from(next_attempt.get()),
+                    id_bytes(run_id),
+                    id_bytes(snapshot_id),
+                    timestamp_to_i64(started_at)
+                ],
+            )
+            .await
+            .map_err(classify_attempt_constraint)?;
+        transaction
+            .execute(
+                "INSERT INTO mutation_attempts (
+                 tool_run_id, attempt_sequence, action_fingerprint, action_kind,
+                 application_state, reconciliation_state, reconciled_snapshot_id,
+                 reconciled_at_unix_millis
+                 ) VALUES (?1, ?2, ?3, ?4, 'unknown', 'required', NULL, NULL)",
+                params![
+                    id_bytes(tool_run_id),
+                    i64::from(next_attempt.get()),
+                    fingerprint.as_bytes().to_vec(),
+                    mutation_kind_text(kind)
+                ],
+            )
+            .await
+            .map_err(classify_attempt_constraint)?;
+        mutation_attempt(
+            tool_run_id,
+            next_attempt,
+            run_id,
+            snapshot_id,
+            AgentToolAttemptStatus::InFlight,
+            started_at,
+            started_at,
+            fingerprint,
+            kind,
+            AgentMutationDisposition::Unknown(MutationReconciliation::Required),
+        )
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
 pub(crate) async fn finish_tool_attempt(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -87,6 +163,7 @@ pub(crate) async fn finish_tool_attempt(
             .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
         if existing.status() != AgentToolAttemptStatus::InFlight
             || finished_at < existing.started_at()
+            || mutation_attempt_exists(&transaction, tool_run_id, attempt).await?
         {
             return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
         }
@@ -121,6 +198,94 @@ pub(crate) async fn finish_tool_attempt(
     close_write_transaction(transaction, result).await
 }
 
+pub(crate) async fn finish_mutation_attempt(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+    status: AgentToolAttemptStatus,
+    disposition: AgentMutationDisposition,
+    finished_at: AgentRunTimestamp,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    if !matches!(
+        status,
+        AgentToolAttemptStatus::Failed
+            | AgentToolAttemptStatus::Cancelled
+            | AgentToolAttemptStatus::Denied
+    ) || matches!(
+        disposition,
+        AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled { .. })
+    ) {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        let existing = read_mutation_attempt(&transaction, worktree_id, tool_run_id, attempt)
+            .await?
+            .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
+        let tool_attempt = existing.tool_attempt();
+        if tool_attempt.status() != AgentToolAttemptStatus::InFlight
+            || existing.disposition()
+                != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+            || finished_at < tool_attempt.started_at()
+        {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        let changed = transaction
+            .execute(
+                "UPDATE tool_run_attempts SET status = ?1, updated_at_unix_millis = ?2
+                 WHERE tool_run_id = ?3 AND attempt_sequence = ?4 AND status = 'in_flight'",
+                params![
+                    attempt_status_text(status),
+                    timestamp_to_i64(finished_at),
+                    id_bytes(tool_run_id),
+                    i64::from(attempt.get())
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        let (application_state, reconciliation_state) = disposition_text(disposition)?;
+        let changed = transaction
+            .execute(
+                "UPDATE mutation_attempts
+                 SET application_state = ?1, reconciliation_state = ?2
+                 WHERE tool_run_id = ?3 AND attempt_sequence = ?4
+                   AND application_state = 'unknown' AND reconciliation_state = 'required'",
+                params![
+                    application_state,
+                    reconciliation_state,
+                    id_bytes(tool_run_id),
+                    i64::from(attempt.get())
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        mutation_attempt(
+            tool_run_id,
+            attempt,
+            tool_attempt.run_id(),
+            tool_attempt.snapshot_id(),
+            status,
+            tool_attempt.started_at(),
+            finished_at,
+            existing.fingerprint(),
+            existing.kind(),
+            disposition,
+        )
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn complete_tool_attempt(
     connection: &Connection,
@@ -149,6 +314,7 @@ pub(crate) async fn complete_tool_attempt(
         if existing.status() != AgentToolAttemptStatus::InFlight
             || existing.run_id() != run.id()
             || event.occurred_at() < existing.started_at()
+            || mutation_attempt_exists(&transaction, tool_run_id, attempt).await?
         {
             return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
         }
@@ -191,6 +357,94 @@ pub(crate) async fn complete_tool_attempt(
     close_write_transaction(transaction, result).await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_mutation_attempt(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    if event.kind() != RunEventKind::ToolAction
+        || event.subject() != Some(RunEventSubject::Tool(tool_run_id))
+        || event.payload().outcome() != Some(RunEventOutcome::Succeeded)
+        || event.run_id() != run.id()
+    {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        let existing = read_mutation_attempt(&transaction, worktree_id, tool_run_id, attempt)
+            .await?
+            .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
+        let tool_attempt = existing.tool_attempt();
+        if tool_attempt.status() != AgentToolAttemptStatus::InFlight
+            || tool_attempt.run_id() != run.id()
+            || event.occurred_at() < tool_attempt.started_at()
+            || existing.disposition()
+                != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+        {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        run_journal_repository::append_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            event,
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+        let changed = transaction
+            .execute(
+                "UPDATE tool_run_attempts SET status = 'succeeded', updated_at_unix_millis = ?1
+                 WHERE tool_run_id = ?2 AND attempt_sequence = ?3 AND status = 'in_flight'",
+                params![
+                    timestamp_to_i64(event.occurred_at()),
+                    id_bytes(tool_run_id),
+                    i64::from(attempt.get())
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        let changed = transaction
+            .execute(
+                "UPDATE mutation_attempts
+                 SET application_state = 'applied', reconciliation_state = 'not_required'
+                 WHERE tool_run_id = ?1 AND attempt_sequence = ?2
+                   AND application_state = 'unknown' AND reconciliation_state = 'required'",
+                params![id_bytes(tool_run_id), i64::from(attempt.get())],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        mutation_attempt(
+            tool_run_id,
+            attempt,
+            tool_attempt.run_id(),
+            tool_attempt.snapshot_id(),
+            AgentToolAttemptStatus::Succeeded,
+            tool_attempt.started_at(),
+            event.occurred_at(),
+            existing.fingerprint(),
+            existing.kind(),
+            AgentMutationDisposition::Applied,
+        )
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
 pub(crate) async fn interrupt_tool_attempts(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -214,6 +468,145 @@ pub(crate) async fn interrupt_tool_attempts(
             .await
             .map_err(AgentRecoveryRepositoryError::Write)?;
         u32::try_from(changed).map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)
+    }
+    .await;
+    close_write_transaction(transaction, result).await
+}
+
+pub(crate) async fn load_mutation_attempts(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+) -> Result<Vec<AgentMutationAttempt>, AgentRecoveryRepositoryError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        ensure_run_exists(&transaction, worktree_id, run_id).await?;
+        let mut rows = transaction
+            .query(
+                "SELECT tool_run_attempts.tool_run_id, tool_run_attempts.attempt_sequence,
+                 tool_run_attempts.snapshot_id, tool_run_attempts.status,
+                 tool_run_attempts.started_at_unix_millis,
+                 tool_run_attempts.updated_at_unix_millis,
+                 mutation_attempts.action_fingerprint, mutation_attempts.action_kind,
+                 mutation_attempts.application_state, mutation_attempts.reconciliation_state,
+                 mutation_attempts.reconciled_snapshot_id
+                 FROM mutation_attempts
+                 JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
+                 JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
+                 WHERE tool_run_attempts.run_id = ?1 AND tasks.worktree_id = ?2
+                 ORDER BY tool_run_attempts.tool_run_id, tool_run_attempts.attempt_sequence
+                 LIMIT ?3",
+                params![
+                    id_bytes(run_id),
+                    id_bytes(worktree_id),
+                    i64::try_from(MAX_MUTATION_ATTEMPTS + 1)
+                        .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Read)?;
+        let mut attempts = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(AgentRecoveryRepositoryError::Read)?
+        {
+            attempts.push(read_mutation_row(&row, run_id)?);
+            if attempts.len() > MAX_MUTATION_ATTEMPTS {
+                return Err(AgentRecoveryRepositoryError::ResourceLimit);
+            }
+        }
+        Ok(attempts)
+    }
+    .await;
+    close_read_transaction(transaction, result).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reconcile_mutation(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_last_sequence: RunEventSequence,
+    run: &AgentRun,
+    event: &RunEvent,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    if event.kind() != RunEventKind::Diagnostic
+        || event.subject() != Some(RunEventSubject::Tool(tool_run_id))
+        || event.payload().code() != RunEventCode::StateRecovered
+        || event.payload().outcome() != Some(RunEventOutcome::Succeeded)
+        || event.run_id() != run.id()
+        || event.snapshot_id() != run.current_snapshot_id()
+    {
+        return Err(AgentRecoveryRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentRecoveryRepositoryError::Begin)?;
+    let result = async {
+        let existing = read_mutation_attempt(&transaction, worktree_id, tool_run_id, attempt)
+            .await?
+            .ok_or(AgentRecoveryRepositoryError::ToolAttemptConflict)?;
+        let tool_attempt = existing.tool_attempt();
+        if !tool_attempt.status().is_terminal()
+            || tool_attempt.run_id() != run.id()
+            || event.occurred_at() < tool_attempt.updated_at()
+            || existing.disposition()
+                != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+        {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        if latest_published_snapshot(&transaction, worktree_id).await? != Some(event.snapshot_id())
+        {
+            return Err(AgentRecoveryRepositoryError::PublishedSnapshotConflict);
+        }
+        run_journal_repository::append_in_transaction(
+            &transaction,
+            worktree_id,
+            expected_last_sequence,
+            run,
+            event,
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+        let changed = transaction
+            .execute(
+                "UPDATE mutation_attempts
+                 SET reconciliation_state = 'reconciled', reconciled_snapshot_id = ?1,
+                   reconciled_at_unix_millis = ?2
+                 WHERE tool_run_id = ?3 AND attempt_sequence = ?4
+                   AND application_state = 'unknown' AND reconciliation_state = 'required'",
+                params![
+                    id_bytes(event.snapshot_id()),
+                    timestamp_to_i64(event.occurred_at()),
+                    id_bytes(tool_run_id),
+                    i64::from(attempt.get())
+                ],
+            )
+            .await
+            .map_err(AgentRecoveryRepositoryError::Write)?;
+        if changed != 1 {
+            return Err(AgentRecoveryRepositoryError::ToolAttemptConflict);
+        }
+        mutation_attempt(
+            tool_run_id,
+            attempt,
+            tool_attempt.run_id(),
+            tool_attempt.snapshot_id(),
+            tool_attempt.status(),
+            tool_attempt.started_at(),
+            tool_attempt.updated_at(),
+            existing.fingerprint(),
+            existing.kind(),
+            AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled {
+                snapshot_id: event.snapshot_id(),
+            }),
+        )
     }
     .await;
     close_write_transaction(transaction, result).await
@@ -451,6 +844,196 @@ async fn read_tool_attempt(
     .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
 }
 
+async fn read_mutation_attempt(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<Option<AgentMutationAttempt>, AgentRecoveryRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT tool_run_attempts.run_id, tool_run_attempts.snapshot_id,
+             tool_run_attempts.status, tool_run_attempts.started_at_unix_millis,
+             tool_run_attempts.updated_at_unix_millis,
+             mutation_attempts.action_fingerprint, mutation_attempts.action_kind,
+             mutation_attempts.application_state, mutation_attempts.reconciliation_state,
+             mutation_attempts.reconciled_snapshot_id
+             FROM mutation_attempts
+             JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
+             JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
+             WHERE tool_run_attempts.tool_run_id = ?1
+               AND tool_run_attempts.attempt_sequence = ?2 AND tasks.worktree_id = ?3",
+            params![
+                id_bytes(tool_run_id),
+                i64::from(attempt.get()),
+                id_bytes(worktree_id)
+            ],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+    else {
+        return Ok(None);
+    };
+    let run_id = AgentRunId::from_bytes(read_id(&row, 0)?);
+    let snapshot_id = SnapshotId::from_bytes(read_id(&row, 1)?);
+    let status: String = row
+        .get(2)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let started_at = read_timestamp(&row, 3)?;
+    let updated_at = read_timestamp(&row, 4)?;
+    let fingerprint = MutationActionFingerprint::from_bytes(read_id(&row, 5)?);
+    let kind: String = row
+        .get(6)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let application_state: String = row
+        .get(7)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let reconciliation_state: String = row
+        .get(8)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let reconciled_snapshot_id = read_optional_id(&row, 9)?.map(SnapshotId::from_bytes);
+    mutation_attempt(
+        tool_run_id,
+        attempt,
+        run_id,
+        snapshot_id,
+        parse_attempt_status(&status)?,
+        started_at,
+        updated_at,
+        fingerprint,
+        parse_mutation_kind(&kind)?,
+        parse_mutation_disposition(
+            &application_state,
+            &reconciliation_state,
+            reconciled_snapshot_id,
+        )?,
+    )
+    .map(Some)
+}
+
+fn read_mutation_row(
+    row: &libsql::Row,
+    run_id: AgentRunId,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    let tool_run_id = ToolRunId::from_bytes(read_id(row, 0)?);
+    let attempt = AgentToolAttemptNumber::new(read_u32(row, 1)?)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let snapshot_id = SnapshotId::from_bytes(read_id(row, 2)?);
+    let status: String = row
+        .get(3)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let fingerprint = MutationActionFingerprint::from_bytes(read_id(row, 6)?);
+    let kind: String = row
+        .get(7)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let application_state: String = row
+        .get(8)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let reconciliation_state: String = row
+        .get(9)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let reconciled_snapshot_id = read_optional_id(row, 10)?.map(SnapshotId::from_bytes);
+    mutation_attempt(
+        tool_run_id,
+        attempt,
+        run_id,
+        snapshot_id,
+        parse_attempt_status(&status)?,
+        read_timestamp(row, 4)?,
+        read_timestamp(row, 5)?,
+        fingerprint,
+        parse_mutation_kind(&kind)?,
+        parse_mutation_disposition(
+            &application_state,
+            &reconciliation_state,
+            reconciled_snapshot_id,
+        )?,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mutation_attempt(
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+    run_id: AgentRunId,
+    snapshot_id: SnapshotId,
+    status: AgentToolAttemptStatus,
+    started_at: AgentRunTimestamp,
+    updated_at: AgentRunTimestamp,
+    fingerprint: MutationActionFingerprint,
+    kind: AgentMutationKind,
+    disposition: AgentMutationDisposition,
+) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
+    let tool_attempt = AgentToolAttempt::new(
+        tool_run_id,
+        attempt,
+        run_id,
+        snapshot_id,
+        status,
+        started_at,
+        updated_at,
+    )
+    .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    AgentMutationAttempt::new(tool_attempt, fingerprint, kind, disposition)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
+}
+
+async fn mutation_attempt_exists(
+    transaction: &Transaction,
+    tool_run_id: ToolRunId,
+    attempt: AgentToolAttemptNumber,
+) -> Result<bool, AgentRecoveryRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT EXISTS(SELECT 1 FROM mutation_attempts
+             WHERE tool_run_id = ?1 AND attempt_sequence = ?2)",
+            params![id_bytes(tool_run_id), i64::from(attempt.get())],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+        .ok_or(AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let exists: i64 = row
+        .get(0)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    Ok(exists == 1)
+}
+
+async fn has_unreconciled_mutation(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+) -> Result<bool, AgentRecoveryRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT EXISTS(
+               SELECT 1 FROM mutation_attempts
+               JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
+               JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
+               WHERE tasks.worktree_id = ?1 AND mutation_attempts.application_state = 'unknown'
+                 AND mutation_attempts.reconciliation_state = 'required'
+             )",
+            [id_bytes(worktree_id)],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+        .ok_or(AgentRecoveryRepositoryError::InvalidStoredData)?;
+    let exists: i64 = row
+        .get(0)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    Ok(exists == 1)
+}
+
 async fn latest_published_snapshot(
     transaction: &Transaction,
     worktree_id: WorktreeId,
@@ -520,6 +1103,22 @@ fn read_id(row: &libsql::Row, index: i32) -> Result<[u8; 32], AgentRecoveryRepos
     value
         .try_into()
         .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
+}
+
+fn read_optional_id(
+    row: &libsql::Row,
+    index: i32,
+) -> Result<Option<[u8; 32]>, AgentRecoveryRepositoryError> {
+    let value: Option<Vec<u8>> = row
+        .get(index)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    value
+        .map(|bytes| {
+            bytes
+                .try_into()
+                .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)
+        })
+        .transpose()
 }
 
 fn read_u32(row: &libsql::Row, index: i32) -> Result<u32, AgentRecoveryRepositoryError> {
@@ -601,6 +1200,60 @@ fn parse_attempt_status(
     }
 }
 
+const fn mutation_kind_text(kind: AgentMutationKind) -> &'static str {
+    match kind {
+        AgentMutationKind::Patch => "patch",
+        AgentMutationKind::Process => "process",
+        AgentMutationKind::UnclassifiedLegacy => "unclassified_legacy",
+    }
+}
+
+fn parse_mutation_kind(value: &str) -> Result<AgentMutationKind, AgentRecoveryRepositoryError> {
+    match value {
+        "patch" => Ok(AgentMutationKind::Patch),
+        "process" => Ok(AgentMutationKind::Process),
+        "unclassified_legacy" => Ok(AgentMutationKind::UnclassifiedLegacy),
+        _ => Err(AgentRecoveryRepositoryError::InvalidStoredData),
+    }
+}
+
+fn disposition_text(
+    disposition: AgentMutationDisposition,
+) -> Result<(&'static str, &'static str), AgentRecoveryRepositoryError> {
+    match disposition {
+        AgentMutationDisposition::Applied => Ok(("applied", "not_required")),
+        AgentMutationDisposition::NotApplied => Ok(("not_applied", "not_required")),
+        AgentMutationDisposition::Unknown(MutationReconciliation::Required) => {
+            Ok(("unknown", "required"))
+        }
+        AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled { .. }) => {
+            Err(AgentRecoveryRepositoryError::InvalidInput)
+        }
+    }
+}
+
+fn parse_mutation_disposition(
+    application_state: &str,
+    reconciliation_state: &str,
+    reconciled_snapshot_id: Option<SnapshotId>,
+) -> Result<AgentMutationDisposition, AgentRecoveryRepositoryError> {
+    match (
+        application_state,
+        reconciliation_state,
+        reconciled_snapshot_id,
+    ) {
+        ("applied", "not_required", None) => Ok(AgentMutationDisposition::Applied),
+        ("not_applied", "not_required", None) => Ok(AgentMutationDisposition::NotApplied),
+        ("unknown", "required", None) => Ok(AgentMutationDisposition::Unknown(
+            MutationReconciliation::Required,
+        )),
+        ("unknown", "reconciled", Some(snapshot_id)) => Ok(AgentMutationDisposition::Unknown(
+            MutationReconciliation::Reconciled { snapshot_id },
+        )),
+        _ => Err(AgentRecoveryRepositoryError::InvalidStoredData),
+    }
+}
+
 async fn close_write_transaction<T>(
     transaction: Transaction,
     result: Result<T, AgentRecoveryRepositoryError>,
@@ -667,6 +1320,7 @@ pub(crate) enum AgentRecoveryRepositoryError {
     InvalidStoredData,
     RunNotFound,
     ToolAttemptConflict,
+    MutationReconciliationRequired,
     PublishedSnapshotConflict,
     ResourceLimit,
 }
@@ -679,6 +1333,9 @@ impl AgentRecoveryRepositoryError {
             }
             Self::RunNotFound => AgentRecoveryStoreFailure::RunNotFound,
             Self::ToolAttemptConflict => AgentRecoveryStoreFailure::ToolAttemptConflict,
+            Self::MutationReconciliationRequired => {
+                AgentRecoveryStoreFailure::MutationReconciliationRequired
+            }
             Self::PublishedSnapshotConflict => AgentRecoveryStoreFailure::PublishedSnapshotConflict,
             Self::ResourceLimit => AgentRecoveryStoreFailure::ResourceLimit,
             Self::TaskLedger(error) => match error.classify() {
@@ -746,6 +1403,9 @@ impl fmt::Display for AgentRecoveryRepositoryError {
             Self::InvalidStoredData => "agent-recovery data was invalid",
             Self::RunNotFound => "agent-recovery run was not found",
             Self::ToolAttemptConflict => "agent-recovery tool attempt conflicted",
+            Self::MutationReconciliationRequired => {
+                "agent-recovery mutation requires reconciliation"
+            }
             Self::PublishedSnapshotConflict => "agent-recovery published snapshot conflicted",
             Self::ResourceLimit => "agent-recovery data exceeded a resource limit",
         })
@@ -766,6 +1426,7 @@ impl Error for AgentRecoveryRepositoryError {
             | Self::InvalidStoredData
             | Self::RunNotFound
             | Self::ToolAttemptConflict
+            | Self::MutationReconciliationRequired
             | Self::PublishedSnapshotConflict
             | Self::ResourceLimit => None,
         }

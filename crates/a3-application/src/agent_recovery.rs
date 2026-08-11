@@ -4,11 +4,12 @@ use crate::{
     TaskLedgerStoreVersion,
 };
 use a3_domain::{
-    AgentControllerState, AgentRun, AgentRunError, AgentRunId, AgentRunTimestamp, AgentToolAttempt,
-    AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence, ProjectIdentity, RunEvent,
-    RunEventCode, RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventSequence,
-    SnapshotId, TaskEvidenceId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
-    TaskStepCancellationReason, TaskStepId, TaskStepStatus, ToolRunId,
+    AgentControllerState, AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind,
+    AgentRun, AgentRunError, AgentRunId, AgentRunTimestamp, AgentToolAttempt,
+    AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence, MutationActionFingerprint,
+    ProjectIdentity, RunEvent, RunEventCode, RunEventId, RunEventKind, RunEventOutcome,
+    RunEventPayload, RunEventSequence, SnapshotId, TaskEvidenceId, TaskLedger, TaskLedgerError,
+    TaskLedgerTimestamp, TaskStepCancellationReason, TaskStepId, TaskStepStatus, ToolRunId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -35,6 +36,19 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         started_at: AgentRunTimestamp,
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt>;
 
+    /// Atomically starts a mutation as Unknown only when no prior Unknown blocks the worktree.
+    #[allow(clippy::too_many_arguments)]
+    fn begin_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        fingerprint: MutationActionFingerprint,
+        kind: AgentMutationKind,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
+
     /// Terminates an attempt that failed before a normalized result could be journaled.
     fn finish_agent_tool_attempt<'a>(
         &'a self,
@@ -44,6 +58,17 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         status: AgentToolAttemptStatus,
         finished_at: AgentRunTimestamp,
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt>;
+
+    /// Atomically closes a non-successful mutation lifecycle with its observed disposition.
+    fn finish_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        status: AgentToolAttemptStatus,
+        disposition: AgentMutationDisposition,
+        finished_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
 
     /// Atomically journals one normalized successful tool event and closes its in-flight attempt.
     #[allow(clippy::too_many_arguments)]
@@ -57,6 +82,18 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         attempt: AgentToolAttemptNumber,
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt>;
 
+    /// Atomically journals success and changes the matching mutation from Unknown to Applied.
+    #[allow(clippy::too_many_arguments)]
+    fn complete_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
+
     /// Marks every attempt left in flight by an application stop as interrupted.
     fn interrupt_agent_tool_attempts<'a>(
         &'a self,
@@ -64,6 +101,25 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         run_id: AgentRunId,
         interrupted_at: AgentRunTimestamp,
     ) -> AgentRecoveryStoreFuture<'a, u32>;
+
+    /// Loads the bounded content-free mutation history for one run in stable attempt order.
+    fn load_agent_mutation_attempts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> AgentRecoveryStoreFuture<'a, Vec<AgentMutationAttempt>>;
+
+    /// Atomically adopts a full published snapshot for exactly one Unknown mutation.
+    #[allow(clippy::too_many_arguments)]
+    fn reconcile_agent_mutation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
 
     /// Loads only requested content-addressed tool evidence for one run.
     fn load_agent_tool_evidence<'a>(
@@ -102,6 +158,8 @@ pub enum AgentRecoveryStoreFailure {
     RunNotFound,
     /// The requested tool attempt was absent or already terminal.
     ToolAttemptConflict,
+    /// An earlier Unknown mutation still requires authoritative reconciliation.
+    MutationReconciliationRequired,
     /// Another writer advanced the run journal.
     RunSequenceConflict,
     /// Another writer advanced the Task Ledger projection.
@@ -121,6 +179,9 @@ impl fmt::Display for AgentRecoveryStoreFailure {
             Self::InvalidStoredData => "agent recovery storage contains invalid data",
             Self::RunNotFound => "agent recovery run was not found",
             Self::ToolAttemptConflict => "agent tool-attempt lifecycle conflicts with storage",
+            Self::MutationReconciliationRequired => {
+                "an unknown mutation requires reconciliation before further mutation"
+            }
             Self::RunSequenceConflict => "agent recovery run sequence changed concurrently",
             Self::LedgerVersionConflict => "agent recovery Ledger version changed concurrently",
             Self::PublishedSnapshotConflict => {

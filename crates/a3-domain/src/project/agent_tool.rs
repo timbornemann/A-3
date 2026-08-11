@@ -1,11 +1,68 @@
 use super::{
-    AgentRunId, AgentRunTimestamp, EvidenceRef, FileRevision, SnapshotId, SourceRange,
+    AgentAction, AgentRunId, AgentRunTimestamp, EvidenceRef, FileRevision, SnapshotId, SourceRange,
     TaskEvidenceId, ToolRunId,
 };
 use std::error::Error;
 use std::fmt;
 
 const MAX_AGENT_TOOL_EVIDENCE: usize = 100;
+
+/// Content-free identity of one exact model-selected mutating action.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MutationActionFingerprint([u8; 32]);
+
+impl MutationActionFingerprint {
+    /// Derives a stable identity from a structured patch or discovered-command selection only.
+    pub fn from_action(action: &AgentAction) -> Result<Self, MutationActionFingerprintError> {
+        let mut hasher = blake3::Hasher::new_derive_key("a3.agent-mutation-action.v1");
+        match action {
+            AgentAction::ApplyPatch(patch) => {
+                hasher.update(&[0]);
+                hasher.update(&patch.digest().as_bytes());
+            }
+            AgentAction::Run(run) => {
+                hasher.update(&[1]);
+                hasher.update(run.step_id().as_bytes());
+                hasher.update(run.command_id().as_bytes());
+            }
+            AgentAction::Search(_)
+            | AgentAction::Inspect(_)
+            | AgentAction::UpdateLedger(_)
+            | AgentAction::Finish(_) => return Err(MutationActionFingerprintError),
+        }
+        Ok(Self(*hasher.finalize().as_bytes()))
+    }
+
+    /// Reconstructs a persisted content-free fingerprint.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the stable persisted representation.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Debug for MutationActionFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("MutationActionFingerprint([REDACTED])")
+    }
+}
+
+/// A non-mutating AgentAction cannot have a mutation fingerprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MutationActionFingerprintError;
+
+impl fmt::Display for MutationActionFingerprintError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("agent action is not a worktree mutation")
+    }
+}
+
+impl Error for MutationActionFingerprintError {}
 
 impl ToolRunId {
     /// Derives a unique run-local identity from a one-based selected-action ordinal.
@@ -189,6 +246,160 @@ impl fmt::Display for AgentToolAttemptError {
 }
 
 impl Error for AgentToolAttemptError {}
+
+/// Closed kind of adapter boundary represented by one mutating tool attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AgentMutationKind {
+    /// Structured hash-protected workspace patch.
+    Patch,
+    /// Direct argv process selected from the confirmed command catalog.
+    Process,
+    /// Pre-V22 in-flight attempt whose original boundary kind was not persisted.
+    UnclassifiedLegacy,
+}
+
+/// Public three-state classification of a mutating action's observable application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MutationApplicationState {
+    /// The adapter reported a complete or partial visible application.
+    Applied,
+    /// The adapter contract proves that no mutation boundary effect was applied.
+    NotApplied,
+    /// A boundary effect could have occurred but cannot be proven either way.
+    Unknown,
+}
+
+/// Durable safety state attached to an unknown mutation application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MutationReconciliation {
+    /// No authoritative post-failure repository snapshot has been adopted yet.
+    Required,
+    /// A full authoritative snapshot was adopted without claiming the original action succeeded.
+    Reconciled {
+        /// Published snapshot that became the new safe mutation baseline.
+        snapshot_id: SnapshotId,
+    },
+}
+
+/// Durable disposition retaining the public three-state outcome and reconciliation gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AgentMutationDisposition {
+    /// The action produced a known complete or partial boundary effect.
+    Applied,
+    /// The action did not cross the mutation boundary.
+    NotApplied,
+    /// The action's boundary effect remains unknowable, with an explicit safety gate.
+    Unknown(MutationReconciliation),
+}
+
+impl AgentMutationDisposition {
+    /// Returns the user-visible three-state classification.
+    #[must_use]
+    pub const fn application_state(self) -> MutationApplicationState {
+        match self {
+            Self::Applied => MutationApplicationState::Applied,
+            Self::NotApplied => MutationApplicationState::NotApplied,
+            Self::Unknown(_) => MutationApplicationState::Unknown,
+        }
+    }
+
+    /// Returns whether another mutation must remain blocked.
+    #[must_use]
+    pub const fn requires_reconciliation(self) -> bool {
+        matches!(self, Self::Unknown(MutationReconciliation::Required))
+    }
+
+    /// Returns the adopted post-recovery snapshot, if reconciliation completed.
+    #[must_use]
+    pub const fn reconciled_snapshot_id(self) -> Option<SnapshotId> {
+        match self {
+            Self::Unknown(MutationReconciliation::Reconciled { snapshot_id }) => Some(snapshot_id),
+            Self::Applied | Self::NotApplied | Self::Unknown(MutationReconciliation::Required) => {
+                None
+            }
+        }
+    }
+}
+
+/// Content-free durable projection of one mutating tool attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentMutationAttempt {
+    tool_attempt: AgentToolAttempt,
+    fingerprint: MutationActionFingerprint,
+    kind: AgentMutationKind,
+    disposition: AgentMutationDisposition,
+}
+
+impl AgentMutationAttempt {
+    /// Creates or reconstructs one mutation projection after cross-state validation.
+    pub fn new(
+        tool_attempt: AgentToolAttempt,
+        fingerprint: MutationActionFingerprint,
+        kind: AgentMutationKind,
+        disposition: AgentMutationDisposition,
+    ) -> Result<Self, AgentMutationAttemptError> {
+        if tool_attempt.status() == AgentToolAttemptStatus::InFlight
+            && disposition != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+        {
+            return Err(AgentMutationAttemptError::InFlightDisposition);
+        }
+        if tool_attempt.status() == AgentToolAttemptStatus::Succeeded
+            && disposition != AgentMutationDisposition::Applied
+        {
+            return Err(AgentMutationAttemptError::SucceededDisposition);
+        }
+        Ok(Self {
+            tool_attempt,
+            fingerprint,
+            kind,
+            disposition,
+        })
+    }
+
+    /// Returns the shared lifecycle projection.
+    #[must_use]
+    pub const fn tool_attempt(self) -> AgentToolAttempt {
+        self.tool_attempt
+    }
+
+    /// Returns the exact content-free action identity.
+    #[must_use]
+    pub const fn fingerprint(self) -> MutationActionFingerprint {
+        self.fingerprint
+    }
+
+    /// Returns the closed adapter-boundary kind.
+    #[must_use]
+    pub const fn kind(self) -> AgentMutationKind {
+        self.kind
+    }
+
+    /// Returns application and reconciliation state.
+    #[must_use]
+    pub const fn disposition(self) -> AgentMutationDisposition {
+        self.disposition
+    }
+}
+
+/// A reconstructed mutating attempt combined incompatible lifecycle and disposition states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentMutationAttemptError {
+    /// An in-flight boundary was classified before a terminal observation existed.
+    InFlightDisposition,
+    /// A successfully journaled tool result did not carry an applied mutation disposition.
+    SucceededDisposition,
+}
+
+impl fmt::Display for AgentMutationAttemptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InFlightDisposition => "in-flight mutation must remain unknown and unreconciled",
+            Self::SucceededDisposition => "successful mutation must be classified as applied",
+        })
+    }
+}
+
+impl Error for AgentMutationAttemptError {}
 
 /// Exact current source location retained by one read-only agent tool result.
 #[derive(Clone, PartialEq, Eq)]
@@ -459,6 +670,92 @@ mod tests {
             ToolRunId::for_agent_action_v1(run, 2)?
         );
         assert!(ToolRunId::for_agent_action_v1(run, 0).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn mutation_attempts_preserve_unknown_until_explicit_reconciliation()
+    -> Result<(), Box<dyn Error>> {
+        let started_at = AgentRunTimestamp::from_unix_millis(20)?;
+        let tool_attempt = AgentToolAttempt::new(
+            ToolRunId::from_bytes([8; 32]),
+            AgentToolAttemptNumber::FIRST,
+            AgentRunId::from_bytes([9; 32]),
+            SnapshotId::from_bytes([10; 32]),
+            AgentToolAttemptStatus::InFlight,
+            started_at,
+            started_at,
+        )?;
+        let fingerprint = MutationActionFingerprint::from_bytes([11; 32]);
+        let unknown = AgentMutationDisposition::Unknown(MutationReconciliation::Required);
+        let attempt = AgentMutationAttempt::new(
+            tool_attempt,
+            fingerprint,
+            AgentMutationKind::Patch,
+            unknown,
+        )?;
+
+        assert_eq!(
+            attempt.disposition().application_state(),
+            MutationApplicationState::Unknown
+        );
+        assert!(attempt.disposition().requires_reconciliation());
+        assert!(matches!(
+            AgentMutationAttempt::new(
+                tool_attempt,
+                fingerprint,
+                AgentMutationKind::Patch,
+                AgentMutationDisposition::NotApplied,
+            ),
+            Err(AgentMutationAttemptError::InFlightDisposition)
+        ));
+
+        let interrupted = AgentToolAttempt::new(
+            tool_attempt.tool_run_id(),
+            tool_attempt.attempt(),
+            tool_attempt.run_id(),
+            tool_attempt.snapshot_id(),
+            AgentToolAttemptStatus::Interrupted,
+            started_at,
+            AgentRunTimestamp::from_unix_millis(21)?,
+        )?;
+        let reconciled_snapshot = SnapshotId::from_bytes([12; 32]);
+        let reconciled = AgentMutationAttempt::new(
+            interrupted,
+            fingerprint,
+            AgentMutationKind::Patch,
+            AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled {
+                snapshot_id: reconciled_snapshot,
+            }),
+        )?;
+        assert_eq!(
+            reconciled.disposition().application_state(),
+            MutationApplicationState::Unknown
+        );
+        assert!(!reconciled.disposition().requires_reconciliation());
+        assert_eq!(
+            reconciled.disposition().reconciled_snapshot_id(),
+            Some(reconciled_snapshot)
+        );
+
+        let succeeded = AgentToolAttempt::new(
+            tool_attempt.tool_run_id(),
+            tool_attempt.attempt(),
+            tool_attempt.run_id(),
+            tool_attempt.snapshot_id(),
+            AgentToolAttemptStatus::Succeeded,
+            started_at,
+            AgentRunTimestamp::from_unix_millis(22)?,
+        )?;
+        assert!(matches!(
+            AgentMutationAttempt::new(
+                succeeded,
+                fingerprint,
+                AgentMutationKind::Process,
+                AgentMutationDisposition::NotApplied,
+            ),
+            Err(AgentMutationAttemptError::SucceededDisposition)
+        ));
         Ok(())
     }
 }

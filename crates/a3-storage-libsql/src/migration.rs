@@ -2071,6 +2071,64 @@ const KNOWLEDGE_AGENT_ACTION_V2_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_MUTATION_RECOVERY_MIGRATION: Migration = Migration {
+    version: 22,
+    name: "durable_mutation_recovery",
+    sql: "CREATE TABLE mutation_attempts (\n\
+      tool_run_id BLOB NOT NULL CHECK (length(tool_run_id) = 32),\n\
+      attempt_sequence INTEGER NOT NULL CHECK (attempt_sequence BETWEEN 1 AND 4294967295),\n\
+      action_fingerprint BLOB NOT NULL CHECK (length(action_fingerprint) = 32),\n\
+      action_kind TEXT NOT NULL CHECK (action_kind IN ('patch', 'process',\n\
+        'unclassified_legacy')),\n\
+      application_state TEXT NOT NULL CHECK (application_state IN\n\
+        ('applied', 'not_applied', 'unknown')),\n\
+      reconciliation_state TEXT NOT NULL CHECK (reconciliation_state IN\n\
+        ('not_required', 'required', 'reconciled')),\n\
+      reconciled_snapshot_id BLOB CHECK\n\
+        (reconciled_snapshot_id IS NULL OR length(reconciled_snapshot_id) = 32),\n\
+      reconciled_at_unix_millis INTEGER CHECK\n\
+        (reconciled_at_unix_millis IS NULL OR reconciled_at_unix_millis >= 0),\n\
+      CHECK ((application_state IN ('applied', 'not_applied')\n\
+          AND reconciliation_state = 'not_required' AND reconciled_snapshot_id IS NULL\n\
+          AND reconciled_at_unix_millis IS NULL) OR\n\
+        (application_state = 'unknown' AND reconciliation_state = 'required'\n\
+          AND reconciled_snapshot_id IS NULL AND reconciled_at_unix_millis IS NULL) OR\n\
+        (application_state = 'unknown' AND reconciliation_state = 'reconciled'\n\
+          AND reconciled_snapshot_id IS NOT NULL AND reconciled_at_unix_millis IS NOT NULL)),\n\
+      PRIMARY KEY (tool_run_id, attempt_sequence),\n\
+      FOREIGN KEY (tool_run_id, attempt_sequence)\n\
+        REFERENCES tool_run_attempts(tool_run_id, attempt_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT,\n\
+      FOREIGN KEY (reconciled_snapshot_id) REFERENCES snapshots(snapshot_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO mutation_attempts (\n\
+        tool_run_id, attempt_sequence, action_fingerprint, action_kind, application_state,\n\
+        reconciliation_state, reconciled_snapshot_id, reconciled_at_unix_millis\n\
+      ) SELECT tool_run_id, attempt_sequence, tool_run_id, 'unclassified_legacy', 'unknown',\n\
+        'required', NULL, NULL FROM tool_run_attempts WHERE status = 'in_flight';\n\
+      CREATE INDEX mutation_attempts_reconciliation_idx\n\
+        ON mutation_attempts(application_state, reconciliation_state, tool_run_id,\n\
+          attempt_sequence);\n\
+      CREATE TRIGGER mutation_attempts_insert_guard\n\
+      BEFORE INSERT ON mutation_attempts\n\
+      WHEN NOT EXISTS (SELECT 1 FROM tool_run_attempts\n\
+        WHERE tool_run_id = NEW.tool_run_id AND attempt_sequence = NEW.attempt_sequence\n\
+          AND status = 'in_flight')\n\
+      BEGIN SELECT RAISE(ABORT, 'mutation attempt requires an in-flight tool attempt'); END;\n\
+      CREATE TRIGGER mutation_attempts_update_guard\n\
+      BEFORE UPDATE ON mutation_attempts\n\
+      WHEN NEW.tool_run_id <> OLD.tool_run_id\n\
+        OR NEW.attempt_sequence <> OLD.attempt_sequence\n\
+        OR NEW.action_fingerprint <> OLD.action_fingerprint\n\
+        OR NEW.action_kind <> OLD.action_kind\n\
+        OR OLD.application_state <> 'unknown' OR OLD.reconciliation_state <> 'required'\n\
+      BEGIN SELECT RAISE(ABORT, 'mutation attempt transition is invalid'); END;\n\
+      CREATE TRIGGER mutation_attempts_delete_guard\n\
+      BEFORE DELETE ON mutation_attempts\n\
+      BEGIN SELECT RAISE(ABORT, 'mutation attempts are append-only'); END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2093,6 +2151,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_COMMAND_ALLOWLIST_MIGRATION,
     KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION,
     KNOWLEDGE_AGENT_ACTION_V2_MIGRATION,
+    KNOWLEDGE_MUTATION_RECOVERY_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2125,7 +2184,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(21);
+    pub const CURRENT: Self = Self::new(22);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2534,7 +2593,8 @@ mod tests {
                      'task_step_stale_evidence', 'task_ledger_replans',\n\
                      'task_ledger_replan_retirements', 'task_ledger_replan_additions',\n\
                      'agent_runs', 'run_events', 'tool_runs', 'tool_evidence',\n\
-                     'tool_run_attempts', 'approval_requests', 'approval_grants',\n\
+                     'tool_run_attempts', 'mutation_attempts', 'approval_requests',\n\
+                     'approval_grants',\n\
                      'policy_decisions', 'command_allowlist_revisions',\n\
                      'command_allowlist_entries', 'task_step_acceptance_criteria',\n\
                      'verification_specs_v1', 'verification_spec_paths',\n\
@@ -2545,7 +2605,7 @@ mod tests {
                      )",
                 )
                 .await?,
-                63
+                64
             );
             assert_eq!(
                 query_i64(
@@ -3921,6 +3981,59 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
                      AND name = 'run_events_turn_action_v2_insert_guard'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v22_upgrade_preserves_v21_data_and_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [25; 32];
+            let worktree_id = [26; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..21],
+                21,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE mutation_attempts (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 22, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 21);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                21
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('mutation_attempts')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name = 'mutation_attempts_insert_guard'",
                 )
                 .await?,
                 0

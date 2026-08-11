@@ -53,6 +53,7 @@ mod verification;
 mod workspace_directory;
 mod workspace_patch;
 
+pub use a3_domain::{MutationActionFingerprint, MutationActionFingerprintError};
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
 };
@@ -190,9 +191,8 @@ pub use mutating_agent_controller::{
     ProcessVerificationEvidenceFailure, ProcessVerificationEvidenceRequest,
 };
 pub use mutation_coordinator::{
-    MutationActionFingerprint, MutationActionFingerprintError, MutationFailureClass,
-    MutationProgressDecision, WorktreeMutationBusy, WorktreeMutationCoordinator,
-    WorktreeMutationLease,
+    MutationFailureClass, MutationProgressDecision, WorktreeMutationBusy,
+    WorktreeMutationCoordinator, WorktreeMutationLease,
 };
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,

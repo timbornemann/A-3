@@ -10,15 +10,17 @@ use a3_application::{
 };
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentControllerState,
-    AgentRun, AgentRunId, AgentRunTimestamp, AgentToolAttemptNumber, AgentToolAttemptStatus,
-    AgentToolEvidence, AgentToolEvidenceSet, ContentHash, ExpectedTaskEvidence, FileRevision,
-    GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
-    ModelProfileReference, ModelProfileVersion, RepositoryId, RepositoryPath, RunEventCode,
-    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventSequence, RunEventSubject,
-    SnapshotChangeKind, SnapshotId, StepVerification, StepVerificationId, StepVerificationOutcome,
-    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
-    TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TaskStepStatus, ToolRunId,
-    VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeId,
+    AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId, AgentRunTimestamp,
+    AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence, AgentToolEvidenceSet,
+    ContentHash, ExpectedTaskEvidence, FileRevision, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, ModelProfileId, ModelProfileReference,
+    ModelProfileVersion, MutationActionFingerprint, MutationReconciliation, RepositoryId,
+    RepositoryPath, RunEventCode, RunEventId, RunEventKind, RunEventOutcome, RunEventPayload,
+    RunEventSequence, RunEventSubject, SnapshotChangeKind, SnapshotId, StepVerification,
+    StepVerificationId, StepVerificationOutcome, SuccessVerification, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
+    TaskStepResultSummary, TaskStepStatus, ToolRunId, VerificationMethod, VerificationRequirement,
+    VerificationSpec, VerificationSpecId, WorktreeId,
 };
 
 #[derive(Debug)]
@@ -115,11 +117,13 @@ where
 
     let mutation_tool = ToolRunId::from_bytes([210; 32]);
     let mutation_attempt = store
-        .begin_agent_tool_attempt(
+        .begin_agent_mutation_attempt(
             &project,
             run_id,
             snapshot_one_id,
             mutation_tool,
+            MutationActionFingerprint::from_bytes([211; 32]),
+            AgentMutationKind::Patch,
             AgentRunTimestamp::from_unix_millis(16)?,
         )
         .await
@@ -136,34 +140,170 @@ where
     )?;
     assert_eq!(
         store
-            .complete_agent_tool_attempt(
+            .complete_agent_mutation_attempt(
                 &project,
                 RunEventSequence::new(expected_sequence.get() - 1)?,
                 &mutation_run,
                 &mutation_event,
                 mutation_tool,
-                mutation_attempt.attempt(),
+                mutation_attempt.tool_attempt().attempt(),
             )
             .await,
         Err(AgentRecoveryStoreFailure::RunSequenceConflict),
         "a stale journal CAS must roll back the tool-attempt update"
     );
     let completed_mutation = store
-        .complete_agent_tool_attempt(
+        .complete_agent_mutation_attempt(
             &project,
             expected_sequence,
             &mutation_run,
             &mutation_event,
             mutation_tool,
-            mutation_attempt.attempt(),
+            mutation_attempt.tool_attempt().attempt(),
         )
         .await
         .map_err(|error| std::io::Error::other(format!("mutation completion failed: {error:?}")))?;
     assert_eq!(
-        completed_mutation.status(),
+        completed_mutation.tool_attempt().status(),
         AgentToolAttemptStatus::Succeeded
     );
+    assert_eq!(
+        completed_mutation.disposition(),
+        AgentMutationDisposition::Applied
+    );
     agent_run = mutation_run;
+
+    let not_applied_tool = ToolRunId::from_bytes([230; 32]);
+    let not_applied = store
+        .begin_agent_mutation_attempt(
+            &project,
+            run_id,
+            snapshot_one_id,
+            not_applied_tool,
+            MutationActionFingerprint::from_bytes([231; 32]),
+            AgentMutationKind::Process,
+            AgentRunTimestamp::from_unix_millis(18)?,
+        )
+        .await?;
+    let not_applied = store
+        .finish_agent_mutation_attempt(
+            &project,
+            not_applied_tool,
+            not_applied.tool_attempt().attempt(),
+            AgentToolAttemptStatus::Failed,
+            AgentMutationDisposition::NotApplied,
+            AgentRunTimestamp::from_unix_millis(19)?,
+        )
+        .await?;
+    assert_eq!(
+        not_applied.disposition(),
+        AgentMutationDisposition::NotApplied
+    );
+
+    let unknown_tool = ToolRunId::from_bytes([232; 32]);
+    let unknown = store
+        .begin_agent_mutation_attempt(
+            &project,
+            run_id,
+            snapshot_one_id,
+            unknown_tool,
+            MutationActionFingerprint::from_bytes([233; 32]),
+            AgentMutationKind::Patch,
+            AgentRunTimestamp::from_unix_millis(20)?,
+        )
+        .await?;
+    assert_eq!(
+        store
+            .begin_agent_mutation_attempt(
+                &project,
+                run_id,
+                snapshot_one_id,
+                ToolRunId::from_bytes([234; 32]),
+                MutationActionFingerprint::from_bytes([235; 32]),
+                AgentMutationKind::Process,
+                AgentRunTimestamp::from_unix_millis(21)?,
+            )
+            .await,
+        Err(AgentRecoveryStoreFailure::MutationReconciliationRequired)
+    );
+    assert_eq!(
+        store
+            .interrupt_agent_tool_attempts(
+                &project,
+                run_id,
+                AgentRunTimestamp::from_unix_millis(21)?,
+            )
+            .await?,
+        1
+    );
+    let loaded = store.load_agent_mutation_attempts(&project, run_id).await?;
+    let loaded_unknown = loaded
+        .iter()
+        .find(|candidate| candidate.tool_attempt().tool_run_id() == unknown_tool)
+        .ok_or_else(|| std::io::Error::other("unknown mutation was not persisted"))?;
+    assert_eq!(
+        loaded_unknown.disposition(),
+        AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+    );
+    assert_eq!(
+        loaded_unknown.tool_attempt().status(),
+        AgentToolAttemptStatus::Interrupted
+    );
+
+    let expected_sequence = agent_run.last_event_sequence();
+    let mut reconciled_run = agent_run.clone();
+    let reconciliation_event = reconciled_run.record(
+        RunEventId::from_bytes([236; 32]),
+        RunEventKind::Diagnostic,
+        RunEventPayload::new(
+            RunEventCode::StateRecovered,
+            Some(RunEventOutcome::Succeeded),
+            None,
+        ),
+        snapshot_one_id,
+        Some(RunEventSubject::Tool(unknown_tool)),
+        AgentRunTimestamp::from_unix_millis(22)?,
+    )?;
+    let reconciled = store
+        .reconcile_agent_mutation(
+            &project,
+            expected_sequence,
+            &reconciled_run,
+            &reconciliation_event,
+            unknown_tool,
+            unknown.tool_attempt().attempt(),
+        )
+        .await?;
+    assert_eq!(
+        reconciled.disposition(),
+        AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled {
+            snapshot_id: snapshot_one_id,
+        })
+    );
+    agent_run = reconciled_run;
+
+    let post_reconciliation_tool = ToolRunId::from_bytes([237; 32]);
+    let post_reconciliation = store
+        .begin_agent_mutation_attempt(
+            &project,
+            run_id,
+            snapshot_one_id,
+            post_reconciliation_tool,
+            MutationActionFingerprint::from_bytes([238; 32]),
+            AgentMutationKind::Process,
+            AgentRunTimestamp::from_unix_millis(23)?,
+        )
+        .await?;
+    store
+        .finish_agent_mutation_attempt(
+            &project,
+            post_reconciliation_tool,
+            post_reconciliation.tool_attempt().attempt(),
+            AgentToolAttemptStatus::Denied,
+            AgentMutationDisposition::NotApplied,
+            AgentRunTimestamp::from_unix_millis(24)?,
+        )
+        .await?;
 
     let evidence = AgentToolEvidence::for_file(FileRevision::new(
         RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
@@ -177,7 +317,7 @@ where
             run_id,
             snapshot_one_id,
             completed_tool,
-            AgentRunTimestamp::from_unix_millis(16)?,
+            AgentRunTimestamp::from_unix_millis(25)?,
         )
         .await?;
     assert_eq!(completed_attempt.attempt(), AgentToolAttemptNumber::FIRST);
@@ -195,13 +335,13 @@ where
     .record(
         &mut agent_run,
         RunEventId::from_bytes([193; 32]),
-        AgentRunTimestamp::from_unix_millis(17)?,
+        AgentRunTimestamp::from_unix_millis(26)?,
     )?;
     store
         .append_agent_read(&project, expected_sequence, &agent_run, &recorded)
         .await?;
 
-    ledger.start_step(step_id, run_id, TaskLedgerTimestamp::from_unix_millis(18)?)?;
+    ledger.start_step(step_id, run_id, TaskLedgerTimestamp::from_unix_millis(27)?)?;
     ledger.begin_step_verification(
         step_id,
         run_id,
@@ -209,7 +349,7 @@ where
             "verified against current source".to_owned(),
         )?),
         vec![evidence_id],
-        TaskLedgerTimestamp::from_unix_millis(19)?,
+        TaskLedgerTimestamp::from_unix_millis(28)?,
     )?;
     ledger.finish_step_verification(
         step_id,
@@ -219,7 +359,7 @@ where
             run_id,
             StepVerificationOutcome::Passed,
             vec![evidence_id],
-            TaskLedgerTimestamp::from_unix_millis(20)?,
+            TaskLedgerTimestamp::from_unix_millis(29)?,
         )?,
     )?;
     let saved = SaveTaskLedger::new(&store)
@@ -237,7 +377,7 @@ where
             run_id,
             snapshot_one_id,
             interrupted_tool,
-            AgentRunTimestamp::from_unix_millis(21)?,
+            AgentRunTimestamp::from_unix_millis(30)?,
         )
         .await?;
     crate::release_contract_store(store);
@@ -247,7 +387,7 @@ where
         .execute(
             &project,
             run_id,
-            AgentRunTimestamp::from_unix_millis(22)?,
+            AgentRunTimestamp::from_unix_millis(31)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -261,7 +401,7 @@ where
             run_id,
             snapshot_one_id,
             interrupted_tool,
-            AgentRunTimestamp::from_unix_millis(23)?,
+            AgentRunTimestamp::from_unix_millis(32)?,
         )
         .await?;
     assert_eq!(retry.attempt(), AgentToolAttemptNumber::new(2)?);
@@ -272,7 +412,7 @@ where
                 interrupted_tool,
                 retry.attempt(),
                 AgentToolAttemptStatus::Succeeded,
-                AgentRunTimestamp::from_unix_millis(24)?,
+                AgentRunTimestamp::from_unix_millis(33)?,
             )
             .await,
         Err(AgentRecoveryStoreFailure::InvalidStoredData),
@@ -284,7 +424,7 @@ where
             interrupted_tool,
             retry.attempt(),
             AgentToolAttemptStatus::Failed,
-            AgentRunTimestamp::from_unix_millis(24)?,
+            AgentRunTimestamp::from_unix_millis(33)?,
         )
         .await?;
     assert_eq!(failed_retry.status(), AgentToolAttemptStatus::Failed);
@@ -295,7 +435,7 @@ where
             run_id,
             AgentRecoveryChoice::Resume,
             RunEventId::from_bytes([197; 32]),
-            AgentRunTimestamp::from_unix_millis(25)?,
+            AgentRunTimestamp::from_unix_millis(34)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -337,7 +477,7 @@ where
         .execute(
             &project,
             run_id,
-            AgentRunTimestamp::from_unix_millis(26)?,
+            AgentRunTimestamp::from_unix_millis(35)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -355,7 +495,7 @@ where
                 run_id,
                 AgentRecoveryChoice::Resume,
                 RunEventId::from_bytes([202; 32]),
-                AgentRunTimestamp::from_unix_millis(27)?,
+                AgentRunTimestamp::from_unix_millis(36)?,
                 &RecoveryIndexControl,
             )
             .await,
@@ -372,7 +512,7 @@ where
             run_id,
             AgentRecoveryChoice::Replan,
             RunEventId::from_bytes([203; 32]),
-            AgentRunTimestamp::from_unix_millis(28)?,
+            AgentRunTimestamp::from_unix_millis(37)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -418,7 +558,7 @@ where
         ),
         snapshot_two_id,
         None,
-        AgentRunTimestamp::from_unix_millis(29)?,
+        AgentRunTimestamp::from_unix_millis(38)?,
     )?;
     assert_eq!(
         reopened
@@ -457,7 +597,7 @@ where
         ),
         snapshot_three_id,
         None,
-        AgentRunTimestamp::from_unix_millis(29)?,
+        AgentRunTimestamp::from_unix_millis(38)?,
     )?;
     assert_eq!(
         reopened
@@ -492,7 +632,7 @@ where
             run_id,
             AgentRecoveryChoice::Cancel,
             RunEventId::from_bytes([208; 32]),
-            AgentRunTimestamp::from_unix_millis(30)?,
+            AgentRunTimestamp::from_unix_millis(39)?,
             &RecoveryIndexControl,
         )
         .await?;

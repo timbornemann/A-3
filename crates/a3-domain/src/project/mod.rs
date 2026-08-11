@@ -65,9 +65,11 @@ pub use agent_run::{
     RunEventSubject, RunPayloadDigest,
 };
 pub use agent_tool::{
+    AgentMutationAttempt, AgentMutationAttemptError, AgentMutationDisposition, AgentMutationKind,
     AgentToolAttempt, AgentToolAttemptError, AgentToolAttemptNumber, AgentToolAttemptNumberError,
     AgentToolAttemptStatus, AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet,
-    AgentToolEvidenceSetError, ToolRunIdDerivationError,
+    AgentToolEvidenceSetError, MutationActionFingerprint, MutationActionFingerprintError,
+    MutationApplicationState, MutationReconciliation, ToolRunIdDerivationError,
 };
 pub use approval::{
     ApprovalGrant, ApprovalGrantError, ApprovalGrantState, ApprovalRequest, ApprovalRequestError,

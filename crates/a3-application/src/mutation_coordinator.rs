@@ -1,59 +1,8 @@
-use a3_domain::{AgentAction, AgentRunId, WorktreeId};
+use a3_domain::{AgentRunId, MutationActionFingerprint, WorktreeId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard};
-
-/// Content-free identity of one exact model-selected mutating action.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MutationActionFingerprint([u8; 32]);
-
-impl MutationActionFingerprint {
-    /// Derives a stable identity from a structured patch or discovered-command selection only.
-    pub fn from_action(action: &AgentAction) -> Result<Self, MutationActionFingerprintError> {
-        let mut hasher = blake3::Hasher::new_derive_key("a3.agent-mutation-action.v1");
-        match action {
-            AgentAction::ApplyPatch(patch) => {
-                hasher.update(&[0]);
-                hasher.update(&patch.digest().as_bytes());
-            }
-            AgentAction::Run(run) => {
-                hasher.update(&[1]);
-                hasher.update(run.step_id().as_bytes());
-                hasher.update(run.command_id().as_bytes());
-            }
-            AgentAction::Search(_)
-            | AgentAction::Inspect(_)
-            | AgentAction::UpdateLedger(_)
-            | AgentAction::Finish(_) => return Err(MutationActionFingerprintError),
-        }
-        Ok(Self(*hasher.finalize().as_bytes()))
-    }
-
-    /// Returns the stable representation for durable content-free diagnostics.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for MutationActionFingerprint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("MutationActionFingerprint([REDACTED])")
-    }
-}
-
-/// A non-mutating AgentAction cannot enter the mutation coordinator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MutationActionFingerprintError;
-
-impl fmt::Display for MutationActionFingerprintError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("agent action is not a worktree mutation")
-    }
-}
-
-impl Error for MutationActionFingerprintError {}
 
 /// Stable terminal class used to compare failed attempts without retaining raw output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -262,7 +211,7 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a3_domain::{AgentRunAction, DiscoveredCommandId, TaskStepId};
+    use a3_domain::{AgentAction, AgentRunAction, DiscoveredCommandId, TaskStepId};
 
     fn action(value: u8) -> AgentAction {
         AgentAction::Run(AgentRunAction::new(

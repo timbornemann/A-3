@@ -993,6 +993,19 @@ mod tests {
             })
         }
 
+        fn begin_agent_mutation_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _run_id: AgentRunId,
+            _snapshot_id: SnapshotId,
+            _tool_run_id: ToolRunId,
+            _fingerprint: a3_domain::MutationActionFingerprint,
+            _kind: a3_domain::AgentMutationKind,
+            _started_at: AgentRunTimestamp,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentMutationAttempt> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::InvalidStoredData) })
+        }
+
         fn finish_agent_tool_attempt<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
@@ -1021,6 +1034,18 @@ mod tests {
             })
         }
 
+        fn finish_agent_mutation_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _tool_run_id: ToolRunId,
+            _attempt: a3_domain::AgentToolAttemptNumber,
+            _status: AgentToolAttemptStatus,
+            _disposition: a3_domain::AgentMutationDisposition,
+            _finished_at: AgentRunTimestamp,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentMutationAttempt> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::InvalidStoredData) })
+        }
+
         fn complete_agent_tool_attempt<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
@@ -1033,6 +1058,18 @@ mod tests {
             Box::pin(async { Err(AgentRecoveryStoreFailure::Unavailable) })
         }
 
+        fn complete_agent_mutation_attempt<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_last_sequence: RunEventSequence,
+            _run: &'a AgentRun,
+            _event: &'a RunEvent,
+            _tool_run_id: ToolRunId,
+            _attempt: a3_domain::AgentToolAttemptNumber,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentMutationAttempt> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::InvalidStoredData) })
+        }
+
         fn interrupt_agent_tool_attempts<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
@@ -1040,6 +1077,26 @@ mod tests {
             _interrupted_at: AgentRunTimestamp,
         ) -> crate::AgentRecoveryStoreFuture<'a, u32> {
             Box::pin(async { Ok(0) })
+        }
+
+        fn load_agent_mutation_attempts<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _run_id: AgentRunId,
+        ) -> crate::AgentRecoveryStoreFuture<'a, Vec<a3_domain::AgentMutationAttempt>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn reconcile_agent_mutation<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_last_sequence: RunEventSequence,
+            _run: &'a AgentRun,
+            _event: &'a RunEvent,
+            _tool_run_id: ToolRunId,
+            _attempt: a3_domain::AgentToolAttemptNumber,
+        ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentMutationAttempt> {
+            Box::pin(async { Err(AgentRecoveryStoreFailure::InvalidStoredData) })
         }
 
         fn load_agent_tool_evidence<'a>(
