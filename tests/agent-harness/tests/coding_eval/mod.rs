@@ -23,12 +23,13 @@ use a3_domain::{
     ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile,
     ModelStopSequences, ModelStructuredOutputCapability, ModelTemperature,
     ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, PatchAction,
-    PatchActionSchemaVersion, PatchFileContent, PatchOperation, PatchRationale, PatchUpdate,
-    PolicyDecisionId, ProcessEnvironmentVariable, ProcessEvent, ProcessEventKind, Progress,
-    ProjectIdentity, PublishedIndex, RepositoryPath, RunEventId, RunEventKind, RunMemoryCheckpoint,
-    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
-    TaskStepOutcome, TaskStepRationale, TaskStepStatus, ToolRunId, VerificationRequirement,
-    VerificationRunId, VerificationScope, VerificationSpec, VerificationSpecId, WorkspacePolicy,
+    PatchActionSchemaVersion, PatchAdd, PatchFileContent, PatchOperation, PatchRationale,
+    PatchUpdate, PolicyDecisionId, ProcessEnvironmentVariable, ProcessEvent, ProcessEventKind,
+    Progress, ProjectIdentity, PublishedIndex, RepositoryPath, RunEventId, RunEventKind,
+    RunMemoryCheckpoint, SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus, ToolRunId,
+    VerificationRequirement, VerificationRunId, VerificationScope, VerificationSpec,
+    VerificationSpecId, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -43,24 +44,233 @@ use std::ffi::OsString;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-const FIXTURE_PYPROJECT: &[u8] =
-    include_bytes!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pyproject.toml");
-const FIXTURE_TEST_RUNNER: &[u8] =
-    include_bytes!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pytest.py");
-const FIXTURE_TEST: &[u8] = include_bytes!(
-    "../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/tests/test_increment.py"
-);
-const BUGGY_SOURCE: &[u8] =
-    include_bytes!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/increment.py");
-const FIXED_SOURCE: &[u8] = b"def increment(value: int) -> int:\n    return value + 1\n";
 const EXPECTED_RESULTS: &str =
     include_str!("../../../../fixtures/agent-coding-eval-v1/expected-results.json");
+
+#[derive(Debug, Clone, Copy)]
+struct FixtureFile {
+    path: &'static str,
+    content: &'static [u8],
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EvalPatch {
+    Add(FixtureFile),
+    Update {
+        before: FixtureFile,
+        after: FixtureFile,
+    },
+}
+
+impl EvalPatch {
+    fn operation(self) -> Result<PatchOperation, Box<dyn Error>> {
+        match self {
+            Self::Add(file) => Ok(PatchOperation::Add(PatchAdd::new(
+                path(file.path)?,
+                PatchFileContent::try_from_bytes(file.content.to_vec())?,
+            ))),
+            Self::Update { before, after } => Ok(PatchOperation::Update(PatchUpdate::new(
+                FileRevision::new(path(before.path)?, hash(before.content)),
+                PatchFileContent::try_from_bytes(after.content.to_vec())?,
+            )?)),
+        }
+    }
+
+    const fn result(self) -> FixtureFile {
+        match self {
+            Self::Add(file) | Self::Update { after: file, .. } => file,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CodingCase {
+    id: &'static str,
+    objective: &'static str,
+    step_outcome: &'static str,
+    patch_rationale: &'static str,
+    files: &'static [FixtureFile],
+    patches: &'static [EvalPatch],
+    preserved: &'static [FixtureFile],
+}
+
+fn small_local_bugfix() -> CodingCase {
+    const PYPROJECT: &[u8] = include_bytes!(
+        "../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pyproject.toml"
+    );
+    const RUNNER: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/pytest.py");
+    const TEST: &[u8] = include_bytes!(
+        "../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/tests/test_increment.py"
+    );
+    const BEFORE: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/small-local-bugfix/increment.py");
+    const AFTER: &[u8] = b"def increment(value: int) -> int:\n    return value + 1\n";
+    CodingCase {
+        id: "small-local-bugfix",
+        objective: "fix increment regression",
+        step_outcome: "fix increment and test",
+        patch_rationale: "fix the local increment regression proven by the existing test",
+        files: &[
+            FixtureFile {
+                path: "pyproject.toml",
+                content: PYPROJECT,
+            },
+            FixtureFile {
+                path: "increment.py",
+                content: BEFORE,
+            },
+            FixtureFile {
+                path: "pytest.py",
+                content: RUNNER,
+            },
+            FixtureFile {
+                path: "tests/test_increment.py",
+                content: TEST,
+            },
+        ],
+        patches: &[EvalPatch::Update {
+            before: FixtureFile {
+                path: "increment.py",
+                content: BEFORE,
+            },
+            after: FixtureFile {
+                path: "increment.py",
+                content: AFTER,
+            },
+        }],
+        preserved: &[FixtureFile {
+            path: "pyproject.toml",
+            content: PYPROJECT,
+        }],
+    }
+}
+
+fn two_module_change() -> CodingCase {
+    const PYPROJECT: &[u8] = include_bytes!(concat!(
+        "../../../../fixtures/agent-coding-eval-v1/two-module-change",
+        "/pyproject.toml"
+    ));
+    const RUNNER: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/two-module-change/pytest.py");
+    const TEST: &[u8] = include_bytes!(
+        "../../../../fixtures/agent-coding-eval-v1/two-module-change/tests/test_invoice.py"
+    );
+    const PRICING_BEFORE: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/two-module-change/pricing.py");
+    const INVOICE_BEFORE: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/two-module-change/invoice.py");
+    const PRICING_AFTER: &[u8] = b"def discounted_total(cents: int, percent: int) -> int:\n    return cents * (100 - percent) // 100\n";
+    const INVOICE_AFTER: &[u8] = b"from pricing import discounted_total\n\n\ndef invoice_total(line_cents: list[int], discount_percent: int) -> str:\n    total = discounted_total(sum(line_cents), discount_percent)\n    return f\"${total // 100}.{total % 100:02d}\"\n";
+    CodingCase {
+        id: "two-module-change",
+        objective: "apply invoice discount",
+        step_outcome: "update pricing and invoice modules",
+        patch_rationale: "apply the discount in pricing before invoice formatting",
+        files: &[
+            FixtureFile {
+                path: "pyproject.toml",
+                content: PYPROJECT,
+            },
+            FixtureFile {
+                path: "pricing.py",
+                content: PRICING_BEFORE,
+            },
+            FixtureFile {
+                path: "invoice.py",
+                content: INVOICE_BEFORE,
+            },
+            FixtureFile {
+                path: "pytest.py",
+                content: RUNNER,
+            },
+            FixtureFile {
+                path: "tests/test_invoice.py",
+                content: TEST,
+            },
+        ],
+        patches: &[
+            EvalPatch::Update {
+                before: FixtureFile {
+                    path: "pricing.py",
+                    content: PRICING_BEFORE,
+                },
+                after: FixtureFile {
+                    path: "pricing.py",
+                    content: PRICING_AFTER,
+                },
+            },
+            EvalPatch::Update {
+                before: FixtureFile {
+                    path: "invoice.py",
+                    content: INVOICE_BEFORE,
+                },
+                after: FixtureFile {
+                    path: "invoice.py",
+                    content: INVOICE_AFTER,
+                },
+            },
+        ],
+        preserved: &[FixtureFile {
+            path: "tests/test_invoice.py",
+            content: TEST,
+        }],
+    }
+}
+
+fn test_addition() -> CodingCase {
+    const PYPROJECT: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/test-addition/pyproject.toml");
+    const RUNNER: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/test-addition/pytest.py");
+    const SOURCE: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/test-addition/slug.py");
+    const README: &[u8] =
+        include_bytes!("../../../../fixtures/agent-coding-eval-v1/test-addition/tests/README.md");
+    const ADDED_TEST: &[u8] = b"from slug import slug\n\n\ndef test_slug_normalizes_case_and_whitespace() -> None:\n    assert slug(\"  Hello   A Three  \") == \"hello-a-three\"\n";
+    CodingCase {
+        id: "test-addition",
+        objective: "add slug regression coverage",
+        step_outcome: "add a focused slug test",
+        patch_rationale: "cover the existing slug behavior without changing production code",
+        files: &[
+            FixtureFile {
+                path: "pyproject.toml",
+                content: PYPROJECT,
+            },
+            FixtureFile {
+                path: "slug.py",
+                content: SOURCE,
+            },
+            FixtureFile {
+                path: "pytest.py",
+                content: RUNNER,
+            },
+            FixtureFile {
+                path: "tests/README.md",
+                content: README,
+            },
+        ],
+        patches: &[EvalPatch::Add(FixtureFile {
+            path: "tests/test_slug.py",
+            content: ADDED_TEST,
+        })],
+        preserved: &[FixtureFile {
+            path: "slug.py",
+            content: SOURCE,
+        }],
+    }
+}
 
 #[test]
 fn coding_eval_v1_matches_reviewed_results() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
-        let result = evaluate_small_local_bugfix().await?;
-        let actual = render_results(&[result]);
+        let results = [
+            evaluate_case(small_local_bugfix()).await?,
+            evaluate_case(two_module_change()).await?,
+            evaluate_case(test_addition()).await?,
+        ];
+        let actual = render_results(&results);
         if actual.trim() != EXPECTED_RESULTS.trim() {
             return Err(std::io::Error::other(format!(
                 "coding eval result changed\nexpected:\n{}\nactual:\n{}",
@@ -73,8 +283,8 @@ fn coding_eval_v1_matches_reviewed_results() -> Result<(), Box<dyn Error>> {
     })
 }
 
-async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error>> {
-    let fixture = CodingFixture::new().await?;
+async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Error>> {
+    let fixture = CodingFixture::new(case.files).await?;
     let catalog =
         DiscoverProjectCommands.execute(fixture.project.worktree().id(), &fixture.published)?;
     let command = catalog
@@ -100,7 +310,13 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
         command.id(),
         VerificationScope::Workspace,
     );
-    let mut durable = DurableCodingTask::new(&fixture, criterion_id, step_id, spec).await?;
+    let mut durable = DurableCodingTask::new(&fixture, case, criterion_id, step_id, spec).await?;
+    let operations = case
+        .patches
+        .iter()
+        .copied()
+        .map(EvalPatch::operation)
+        .collect::<Result<Vec<_>, _>>()?;
     let patch = PatchAction::new(
         PatchActionSchemaVersion::V1,
         durable.run.id(),
@@ -108,13 +324,8 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
         fixture.published.run().snapshot_id(),
         step_id,
         spec_id,
-        PatchRationale::try_from_string(
-            "fix the local increment regression proven by the existing test".to_owned(),
-        )?,
-        vec![PatchOperation::Update(PatchUpdate::new(
-            FileRevision::new(path("increment.py")?, hash(BUGGY_SOURCE)),
-            PatchFileContent::try_from_bytes(FIXED_SOURCE.to_vec())?,
-        )?)],
+        PatchRationale::try_from_string(case.patch_rationale.to_owned())?,
+        operations,
     )?;
 
     let refresh = refresh(fixture.store.clone());
@@ -163,7 +374,7 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
         )
         .await?;
     let MutationControllerOutcome::AwaitingApproval(request_id) = first else {
-        return Err(test_error("coding bugfix patch bypassed explicit approval"));
+        return Err(test_error("coding patch bypassed explicit approval"));
     };
     let mut approval = GrantPolicyApproval::new(fixture.store.as_ref())
         .execute(
@@ -197,9 +408,7 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
         )
         .await?;
     if !matches!(patched, MutationControllerOutcome::NextAction(_)) {
-        return Err(test_error(
-            "coding bugfix patch did not request verification",
-        ));
+        return Err(test_error("coding patch did not request verification"));
     }
     let patched_index = latest_index(&fixture).await?;
     let selection = MutationCommandSelection::new(&catalog, &confirmation);
@@ -295,17 +504,22 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
             RunEventPageLimit::new(64)?,
         )
         .await?;
-    let patch_present =
-        std::fs::read(fixture.repository.path().join("increment.py"))? == FIXED_SOURCE;
-    let unrelated_manifest_preserved =
-        std::fs::read(fixture.repository.path().join("pyproject.toml"))? == FIXTURE_PYPROJECT;
+    let patch_present = case.patches.iter().copied().all(|patch| {
+        let result = patch.result();
+        std::fs::read(fixture.repository.path().join(result.path))
+            .is_ok_and(|content| content == result.content)
+    });
+    let foreign_change_preserved = case.preserved.iter().all(|file| {
+        std::fs::read(fixture.repository.path().join(file.path))
+            .is_ok_and(|content| content == file.content)
+    });
     let tool_event_count = events
         .events()
         .iter()
         .filter(|event| event.kind() == RunEventKind::ToolAction)
         .count();
     Ok(CodingEvalResult {
-        id: "small-local-bugfix",
+        id: case.id,
         final_state: if durable.run.state() == AgentControllerState::Done {
             "done"
         } else {
@@ -316,7 +530,7 @@ async fn evaluate_small_local_bugfix() -> Result<CodingEvalResult, Box<dyn Error
         patch: patch_present && tool_event_count >= 2,
         evidence: verification.is_some_and(|value| value.evidence_ids() == [evidence_id]),
         verification: verification.is_some_and(|value| value.passed()),
-        foreign_change_preserved: unrelated_manifest_preserved,
+        foreign_change_preserved,
         replan_count: durable.ledger.replans().len(),
         compaction_count: 0,
     })
@@ -331,13 +545,12 @@ struct CodingFixture {
 }
 
 impl CodingFixture {
-    async fn new() -> Result<Self, Box<dyn Error>> {
+    async fn new(files: &[FixtureFile]) -> Result<Self, Box<dyn Error>> {
         let repository = TempDirectory::new()?;
         repository.git(["init", "--initial-branch=main"])?;
-        repository.write("pyproject.toml", FIXTURE_PYPROJECT)?;
-        repository.write("increment.py", BUGGY_SOURCE)?;
-        repository.write("pytest.py", FIXTURE_TEST_RUNNER)?;
-        repository.write("tests/test_increment.py", FIXTURE_TEST)?;
+        for file in files {
+            repository.write(file.path, file.content)?;
+        }
         repository.git(["add", "."])?;
         let project = RepositoryInspector::new().inspect(repository.path())?;
         let app_data = TempDirectory::new()?;
@@ -380,6 +593,7 @@ struct DurableCodingTask {
 impl DurableCodingTask {
     async fn new(
         fixture: &CodingFixture,
+        case: CodingCase,
         criterion_id: AcceptanceCriterionId,
         step_id: TaskStepId,
         spec: VerificationSpec,
@@ -387,7 +601,7 @@ impl DurableCodingTask {
         let goal = GoalContract::initial(
             TaskId::from_bytes(*criterion_id.as_bytes()),
             GoalContractDraft::new(
-                GoalObjective::try_from_string("fix increment regression".to_owned())?,
+                GoalObjective::try_from_string(case.objective.to_owned())?,
                 vec![AcceptanceCriterion::new(
                     criterion_id,
                     AcceptanceCriterionStatement::try_from_string("locked tests pass".to_owned())?,
@@ -402,7 +616,7 @@ impl DurableCodingTask {
         let definition = TaskStepDefinition::new(
             step_id,
             None,
-            TaskStepOutcome::try_from_string("fix increment and test".to_owned())?,
+            TaskStepOutcome::try_from_string(case.step_outcome.to_owned())?,
             TaskStepRationale::try_from_string("prove the fix with tests".to_owned())?,
             Vec::new(),
             vec![ExpectedTaskEvidence::try_from_string(
