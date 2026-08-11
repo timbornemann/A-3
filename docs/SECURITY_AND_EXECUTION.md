@@ -49,12 +49,17 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Der Dialog zeigt ausschließlich begrenzte, kontrollzeichenfreie Pfadanzeigen und bietet
   „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
-- Die Main-Capability erlaubt `open_project`, `list_recent_projects` und `query_health`, aber keine
+- Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status` und
+  `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
   Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
   redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.
+- `query_project_status` akzeptiert außer der Protokollversion weder Projekt-ID noch Pfad. Der
+  Composition-Root hält die zuletzt erfolgreich geöffnete `ProjectIdentity`; die WebView erhält nur
+  die bestehende Anzeigeprojektion sowie bounded Snapshot- und IndexRun-Metadaten. Ein Reload der
+  WebView kann dadurch keine andere Worktree-Autorität auswählen.
 - Worktree-Laufzeitdaten liegen ausschließlich unter dem kanonischen App-Data-Root in
   `projects/<WorktreeId>`. Die `WorktreeId` stammt aus der privilegierten Repository-Inspektion und
   nicht aus der WebView. App-Data innerhalb des ausgewählten Worktrees, Symlinks sowie falsche

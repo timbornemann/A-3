@@ -3,5 +3,10 @@
   "identifier": "main-capability",
   "description": "Allows the main window to invoke only typed A^3 health and project commands.",
   "windows": ["main"],
-  "permissions": ["allow-list-recent-projects", "allow-open-project", "allow-query-health"]
+  "permissions": [
+    "allow-list-recent-projects",
+    "allow-open-project",
+    "allow-query-project-status",
+    "allow-query-health"
+  ]
 }

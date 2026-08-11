@@ -1,7 +1,8 @@
 use crate::CompositionRoot;
 use a3_protocol::{
     CommandErrorV1, HealthRequestV1, HealthResponseV1, ListRecentProjectsRequestV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProtocolVersion, RecentProjectsResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
+    QueryProjectStatusRequestV1, RecentProjectsResponseV1,
 };
 use tauri::State;
 
@@ -21,6 +22,15 @@ pub async fn list_recent_projects(
     root: State<'_, CompositionRoot>,
 ) -> Result<RecentProjectsResponseV1, CommandErrorV1> {
     execute_list_recent_projects(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns bounded status for the Core-owned active project without accepting an identity or path.
+pub async fn query_project_status(
+    request: QueryProjectStatusRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectStatusResponseV1, CommandErrorV1> {
+    execute_query_project_status(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -65,9 +75,23 @@ async fn execute_list_recent_projects(
     root.list_recent_projects().await
 }
 
+async fn execute_query_project_status(
+    request: QueryProjectStatusRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectStatusResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.query_project_status().await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{execute_list_recent_projects, execute_open_project, execute_query_health};
+    use super::{
+        execute_list_recent_projects, execute_open_project, execute_query_health,
+        execute_query_project_status,
+    };
     use crate::CompositionRoot;
     use a3_application::{
         KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectDirectoryPicker,
@@ -79,7 +103,7 @@ mod tests {
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
         ErrorCodeV1, HealthRequestV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
-        ProtocolVersion,
+        ProjectStatusResultV1, ProtocolVersion, QueryProjectStatusRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -198,6 +222,44 @@ mod tests {
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn project_status_command_rejects_unsupported_version_before_reading_core_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_query_project_status(
+            QueryProjectStatusRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn project_status_reports_no_project_before_a_successful_native_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_query_project_status(
+            QueryProjectStatusRequestV1::current(),
+            &root,
+        ));
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => return Err(std::io::Error::other(error.message()).into()),
+        };
+
+        assert!(matches!(
+            response.result(),
+            ProjectStatusResultV1::NoProject
+        ));
         Ok(())
     }
 }

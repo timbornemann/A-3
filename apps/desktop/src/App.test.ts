@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
+import type { ProjectStatusResponseV1 } from './lib/project-status';
 import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 
 const health: HealthResponseV1 = {
@@ -32,6 +33,26 @@ const emptyRecentProjects: RecentProjectsResponseV1 = {
   protocolVersion: 1,
 };
 
+const noProjectStatus: ProjectStatusResponseV1 = {
+  protocolVersion: 1,
+  result: { status: 'noProject' },
+};
+
+const activeProjectStatus: ProjectStatusResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    index: {
+      latestAttemptSnapshotId: '4'.repeat(64),
+      latestSnapshot: { generation: '2', snapshotId: '4'.repeat(64) },
+      publishedSnapshotId: '4'.repeat(64),
+      state: 'published',
+    },
+    project: projectSummary,
+    projectId: '3'.repeat(64),
+    status: 'active',
+  },
+};
+
 const recentProjects: RecentProjectsResponseV1 = {
   projects: [
     {
@@ -47,6 +68,7 @@ describe('A^3 desktop shell', () => {
     render(App, {
       props: {
         healthLoader: async () => health,
+        projectStatusLoader: async () => noProjectStatus,
         recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
@@ -70,7 +92,11 @@ describe('A^3 desktop shell', () => {
       .mockResolvedValueOnce(health);
 
     render(App, {
-      props: { healthLoader, recentProjectsLoader: async () => emptyRecentProjects },
+      props: {
+        healthLoader,
+        projectStatusLoader: async () => noProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
     });
 
     const alert = await screen.findByRole('alert');
@@ -91,10 +117,15 @@ describe('A^3 desktop shell', () => {
       .fn<() => Promise<RecentProjectsResponseV1>>()
       .mockResolvedValueOnce(emptyRecentProjects)
       .mockResolvedValueOnce(recentProjects);
+    const projectStatusLoader = vi
+      .fn<() => Promise<ProjectStatusResponseV1>>()
+      .mockResolvedValueOnce(noProjectStatus)
+      .mockResolvedValueOnce(activeProjectStatus);
     render(App, {
       props: {
         healthLoader: async () => health,
         projectOpener,
+        projectStatusLoader,
         recentProjectsLoader,
       },
     });
@@ -105,6 +136,9 @@ describe('A^3 desktop shell', () => {
     await waitFor(() => {
       expect(screen.getByText('Worktree sicher geöffnet')).toBeTruthy();
       expect(screen.getAllByText('C:\\worktree')).toHaveLength(2);
+      expect(screen.getAllByText('main (unborn)')).toHaveLength(2);
+      expect(screen.getByText('Veröffentlicht')).toBeTruthy();
+      expect(screen.getByText(/Generation 2/)).toBeTruthy();
     });
     expect(projectOpener).toHaveBeenCalledTimes(1);
     expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
@@ -118,6 +152,7 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectOpener,
+        projectStatusLoader: async () => noProjectStatus,
         recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
@@ -137,6 +172,7 @@ describe('A^3 desktop shell', () => {
     render(App, {
       props: {
         healthLoader: async () => health,
+        projectStatusLoader: async () => noProjectStatus,
         recentProjectsLoader,
       },
     });
@@ -171,6 +207,7 @@ describe('A^3 desktop shell', () => {
     render(App, {
       props: {
         healthLoader: async () => health,
+        projectStatusLoader: async () => noProjectStatus,
         recentProjectsLoader: async () => linkedRecentProjects,
       },
     });

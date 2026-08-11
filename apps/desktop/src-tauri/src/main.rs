@@ -100,6 +100,7 @@ mod tests {
             .invoke_handler(tauri::generate_handler![
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
+                a3_desktop::commands::query_project_status,
                 a3_desktop::commands::query_health
             ])
             .build(tauri::generate_context!())?;
@@ -244,6 +245,7 @@ mod tests {
             Some(&json!([
                 "allow-list-recent-projects",
                 "allow-open-project",
+                "allow-query-project-status",
                 "allow-query-health"
             ]))
         );

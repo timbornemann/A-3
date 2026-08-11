@@ -9,18 +9,21 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    GetHealth, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, OpenProject,
-    OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker, ProjectInspectionFailure,
+    GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError, HealthQuery, JobEventStream,
+    JobScheduler, JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
+    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
+    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure,
     ProjectReconciliationConfirmer, RecentProject,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, GitHead, Health, Platform, ProjectIdentity,
+    ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexRunStatus, Platform,
+    ProjectId, ProjectIdentity,
 };
 use a3_protocol::{
-    CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, OpenProjectResponseV1, PlatformV1,
-    ProjectSummaryV1, RecentProjectSummaryV1, RecentProjectsResponseV1,
+    CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexStateV1, OpenProjectResponseV1,
+    PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
+    RecentProjectSummaryV1, RecentProjectsResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -34,7 +37,7 @@ use repository_index_manager::RepositoryIndexManager;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
 
 const MAX_PROJECT_PATH_DISPLAY_CHARS: usize = 32_768;
@@ -45,6 +48,8 @@ pub struct CompositionRoot {
     health_query: GetHealth,
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
+    project_status: Option<GetProjectIndexStatus>,
+    active_project: Mutex<Option<ActiveProject>>,
     index_manager: Option<RepositoryIndexManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
@@ -103,6 +108,16 @@ impl CompositionRoot {
                 .activate_project(project.as_ref().clone())
                 .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageUnavailable))?;
         }
+        if let OpenProjectOutcome::Opened {
+            project,
+            project_id,
+        } = &outcome
+        {
+            *lock_recovering_poison(&self.active_project) = Some(ActiveProject {
+                project_id: *project_id,
+                project: project.as_ref().clone(),
+            });
+        }
         Ok(map_open_project_to_v1(outcome))
     }
 
@@ -114,6 +129,32 @@ impl CompositionRoot {
             .map(map_recent_projects_to_v1)
             .map_err(map_recent_projects_error_to_v1)
     }
+
+    /// Returns bounded metadata for the active Core-owned project identity.
+    pub async fn query_project_status(&self) -> Result<ProjectStatusResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectStatusResponseV1::no_project());
+        };
+        let index = match &self.project_status {
+            Some(query) => query
+                .execute(&active.project)
+                .await
+                .map_err(map_project_status_error_to_v1)?,
+            None => ProjectIndexStatus::new(None, None, None),
+        };
+        Ok(ProjectStatusResponseV1::active(
+            active.project_id.to_string(),
+            map_project_summary_to_v1(&active.project),
+            map_project_index_status_to_v1(index),
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveProject {
+    project_id: ProjectId,
+    project: ProjectIdentity,
 }
 
 #[derive(Debug)]
@@ -183,6 +224,7 @@ impl CompositionBase {
         store: Arc<dyn KnowledgeStore>,
         index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     ) -> Result<CompositionRoot, CompositionRootError> {
+        let project_status = index_store.clone().map(GetProjectIndexStatus::new);
         let index_manager = index_store
             .map(|store| {
                 let submitter = self
@@ -202,6 +244,8 @@ impl CompositionBase {
                 Arc::clone(&store),
             ),
             recent_projects: ListRecentProjects::new(store),
+            project_status,
+            active_project: Mutex::new(None),
             index_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
@@ -241,6 +285,7 @@ pub fn run() -> Result<(), DesktopRunError> {
         .invoke_handler(tauri::generate_handler![
             commands::list_recent_projects,
             commands::open_project,
+            commands::query_project_status,
             commands::query_health
         ])
         .run(tauri::generate_context!())
@@ -297,6 +342,29 @@ fn map_project_summary_to_v1(project: &ProjectIdentity) -> ProjectSummaryV1 {
         project.worktree().id().to_string(),
         project_path_display(project.worktree().root().as_path()),
         map_git_head_to_v1(project.head()),
+    )
+}
+
+fn map_project_index_status_to_v1(status: ProjectIndexStatus) -> ProjectIndexStatusV1 {
+    let latest_attempt = status.latest_attempt();
+    let state = latest_attempt.map_or(IndexStateV1::NotStarted, |attempt| match attempt.status() {
+        IndexRunStatus::Building => IndexStateV1::Building,
+        IndexRunStatus::Published => IndexStateV1::Published,
+        IndexRunStatus::Failed => IndexStateV1::Failed,
+        IndexRunStatus::Cancelled => IndexStateV1::Cancelled,
+    });
+    ProjectIndexStatusV1::new(
+        state,
+        status.latest_snapshot().map(|snapshot| {
+            ProjectSnapshotV1::new(
+                snapshot.id().to_string(),
+                snapshot.generation().get().to_string(),
+            )
+        }),
+        latest_attempt.map(|attempt| attempt.snapshot_id().to_string()),
+        status
+            .published_snapshot_id()
+            .map(|snapshot_id| snapshot_id.to_string()),
     )
 }
 
@@ -360,6 +428,24 @@ fn map_recent_projects_error_to_v1(error: ListRecentProjectsError) -> CommandErr
         ListRecentProjectsError::Storage(error) => {
             CommandErrorV1::project_open(map_storage_error_to_v1(error))
         }
+    }
+}
+
+fn map_project_status_error_to_v1(error: GetProjectIndexStatusError) -> CommandErrorV1 {
+    match error {
+        GetProjectIndexStatusError::Storage(KnowledgeIndexFailure::Storage(error)) => {
+            CommandErrorV1::project_open(map_storage_error_to_v1(error))
+        }
+        GetProjectIndexStatusError::Storage(_) => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+        }
+    }
+}
+
+fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 

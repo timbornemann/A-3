@@ -39,6 +39,7 @@ mod policy;
 mod policy_store;
 mod process_runner;
 mod project_reconciliation;
+mod project_status;
 mod recent_projects;
 mod repository_discovery;
 mod repository_index;
@@ -218,6 +219,9 @@ pub use process_runner::{
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,
     ProjectReconciliationEvidence, ProjectReconciliationProposal,
+};
+pub use project_status::{
+    GetProjectIndexStatus, GetProjectIndexStatusError, ProjectIndexStatus, ProjectSnapshotStatus,
 };
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
 pub use repository_discovery::{

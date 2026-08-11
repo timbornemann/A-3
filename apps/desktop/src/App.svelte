@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
-  import { openProject, type OpenProjectResponseV1, type ProjectSummaryV1 } from './lib/project';
+  import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
+  import {
+    queryProjectStatus,
+    type IndexStateV1,
+    type ProjectStatusResponseV1,
+  } from './lib/project-status';
   import {
     listRecentProjects,
     type RecentProjectSummaryV1,
@@ -11,6 +16,7 @@
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
     recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
   }
 
@@ -20,7 +26,12 @@
     | { kind: 'idle' }
     | { kind: 'opening' }
     | { kind: 'cancelled' }
-    | { kind: 'opened'; project: ProjectSummaryV1 }
+    | { kind: 'opened' }
+    | { kind: 'error' };
+  type ProjectStatusView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'active'; result: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
   type RecentProjectsView =
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
@@ -28,10 +39,12 @@
   let {
     healthLoader = queryHealth,
     projectOpener = openProject,
+    projectStatusLoader = queryProjectStatus,
     recentProjectsLoader = listRecentProjects,
   }: Props = $props();
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
+  let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
 
   async function loadHealth(): Promise<void> {
@@ -46,8 +59,22 @@
 
   onMount(() => {
     void loadHealth();
+    void loadProjectStatus();
     void loadRecentProjects();
   });
+
+  async function loadProjectStatus(): Promise<void> {
+    projectStatusView = { kind: 'loading' };
+    try {
+      const response = await projectStatusLoader();
+      projectStatusView =
+        response.result.status === 'active'
+          ? { kind: 'active', result: response.result }
+          : { kind: 'noProject' };
+    } catch {
+      projectStatusView = { kind: 'error' };
+    }
+  }
 
   async function loadRecentProjects(): Promise<void> {
     recentProjectsView = { kind: 'loading' };
@@ -64,7 +91,8 @@
     try {
       const response = await projectOpener();
       if (response.result.status === 'opened') {
-        projectView = { kind: 'opened', project: response.result.project };
+        projectView = { kind: 'opened' };
+        await loadProjectStatus();
         await loadRecentProjects();
       } else {
         projectView = { kind: 'cancelled' };
@@ -72,6 +100,26 @@
     } catch {
       projectView = { kind: 'error' };
     }
+  }
+
+  function branchLabel(head: GitHeadV1): string {
+    if (head.kind === 'born') {
+      return head.reference === null
+        ? 'Detached HEAD'
+        : head.reference.replace(/^refs\/heads\//, '');
+    }
+    return `${head.reference.replace(/^refs\/heads\//, '')} (unborn)`;
+  }
+
+  function indexStateLabel(state: IndexStateV1): string {
+    const labels: Record<IndexStateV1, string> = {
+      notStarted: 'Noch nicht gestartet',
+      building: 'Index wird aufgebaut',
+      published: 'Veröffentlicht',
+      failed: 'Letzter Lauf fehlgeschlagen',
+      cancelled: 'Letzter Lauf abgebrochen',
+    };
+    return labels[state];
   }
 </script>
 
@@ -154,23 +202,53 @@
     {#if projectView.kind === 'cancelled'}
       <p class="project-status" role="status" aria-live="polite">Auswahl abgebrochen.</p>
     {:else if projectView.kind === 'opened'}
-      <div class="project-result" role="status" aria-live="polite">
-        <p class="ready-label">Worktree sicher geöffnet</p>
-        <dl class="project-grid">
-          <div>
-            <dt>Root</dt>
-            <dd>{projectView.project.worktreeRootDisplay}</dd>
-          </div>
-          <div>
-            <dt>Worktree-ID</dt>
-            <dd>{projectView.project.worktreeId}</dd>
-          </div>
-        </dl>
-      </div>
+      <p class="ready-label" role="status" aria-live="polite">Worktree sicher geöffnet</p>
     {:else if projectView.kind === 'error'}
       <p class="project-error" role="alert">
         Der gewählte Ordner konnte nicht als sicherer Git-Worktree geöffnet werden.
       </p>
+    {/if}
+
+    {#if projectStatusView.kind === 'loading'}
+      <p class="project-status" role="status" aria-live="polite">Projektstatus wird geladen …</p>
+    {:else if projectStatusView.kind === 'active'}
+      <div class="project-result" aria-labelledby="active-project-heading">
+        <h3 id="active-project-heading">Aktiver Worktree</h3>
+        <dl class="project-grid">
+          <div>
+            <dt>Root</dt>
+            <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
+          </div>
+          <div>
+            <dt>Branch</dt>
+            <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
+          </div>
+          <div>
+            <dt>Worktree-ID</dt>
+            <dd>{projectStatusView.result.project.worktreeId}</dd>
+          </div>
+          <div>
+            <dt>Indexstatus</dt>
+            <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
+          </div>
+          <div>
+            <dt>Letzter Snapshot</dt>
+            {#if projectStatusView.result.index.latestSnapshot === null}
+              <dd>Noch kein Snapshot</dd>
+            {:else}
+              <dd>
+                Generation {projectStatusView.result.index.latestSnapshot.generation}<br />
+                {projectStatusView.result.index.latestSnapshot.snapshotId}
+              </dd>
+            {/if}
+          </div>
+        </dl>
+      </div>
+    {:else if projectStatusView.kind === 'error'}
+      <div class="recent-projects-error" role="alert">
+        <p>Der aktive Projektstatus konnte nicht sicher geladen werden.</p>
+        <button type="button" onclick={loadProjectStatus}>Status erneut laden</button>
+      </div>
     {/if}
 
     <div class="recent-projects" aria-labelledby="recent-projects-heading">
@@ -189,6 +267,7 @@
           {#each recentProjectsView.projects as recent (recent.project.worktreeId)}
             <li>
               <span>{recent.project.worktreeRootDisplay}</span>
+              <span>{branchLabel(recent.project.head)}</span>
               <code>{recent.project.worktreeId}</code>
             </li>
           {/each}

@@ -208,6 +208,19 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 5. Der Composition-Root mappt nur `ProjectId`, `RepositoryId`, `WorktreeId`, HEAD und den begrenzten,
    nicht-autoritativen Anzeigepfad auf V1-DTOs.
 
+### Aktiver Projektstatus
+
+1. Nach einem erfolgreichen Project Open hält der Desktop-Composition-Root die bereits validierte
+   `ProjectIdentity` und `ProjectId` im Core-Prozess; ein WebView-Reload verändert diesen Zustand
+   nicht.
+2. `query_project_status` akzeptiert ausschließlich die Protokollversion und wählt weder Pfad noch
+   Projekt-ID aus der WebView.
+3. Der Application-Use-Case liest über `KnowledgeIndexStore` nur den letzten Snapshot, den letzten
+   Indexversuch und den weiterhin atomar veröffentlichten Run.
+4. IPC V1 projiziert daraus Worktree-/HEAD-Anzeige, Snapshot-ID und verlustfrei als Dezimaltext
+   codierte Generation sowie den geschlossenen Indexstatus. Autoritative Pfade, Datenbankhandles
+   und Indexinhalte verlassen den Core nicht.
+
 ### Agentenlauf
 
 1. Ein Goal Contract wird erstellt oder bestätigt.
