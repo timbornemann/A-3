@@ -12,6 +12,7 @@ mod project_rebuild;
 mod project_removal;
 mod project_status;
 mod recent_projects;
+mod repository_tree;
 mod version;
 
 pub use deep_map::{
@@ -47,5 +48,9 @@ pub use project_status::{
 };
 pub use recent_projects::{
     ListRecentProjectsRequestV1, RecentProjectSummaryV1, RecentProjectsResponseV1,
+};
+pub use repository_tree::{
+    QueryRepositoryTreeRequestV1, RepositoryTreeEntryKindV1, RepositoryTreeEntryV1,
+    RepositoryTreePageV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
 };
 pub use version::ProtocolVersion;

@@ -1,13 +1,13 @@
-use crate::CompositionRoot;
+use crate::{CompositionRoot, map_repository_tree_query_from_v1};
 use a3_protocol::{
     CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
     HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
     ListRecentProjectsRequestV1, ModuleCardFreshnessResponseV1, OpenProjectRequestV1,
     OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1,
     QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
-    StartDeepMapRequestV1,
+    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
+    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
+    RemoveProjectResponseV1, RepositoryTreeResponseV1, StartDeepMapRequestV1,
 };
 use tauri::State;
 
@@ -63,6 +63,15 @@ pub async fn query_module_card_freshness(
     root: State<'_, CompositionRoot>,
 ) -> Result<ModuleCardFreshnessResponseV1, CommandErrorV1> {
     execute_query_module_card_freshness(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns one bounded indexed directory page without accepting a filesystem path capability.
+pub async fn query_repository_tree(
+    request: QueryRepositoryTreeRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<RepositoryTreeResponseV1, CommandErrorV1> {
+    execute_query_repository_tree(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -214,6 +223,17 @@ async fn execute_query_module_card_freshness(
     root.query_module_card_freshness().await
 }
 
+async fn execute_query_repository_tree(
+    request: QueryRepositoryTreeRequestV1,
+    root: &CompositionRoot,
+) -> Result<RepositoryTreeResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_repository_tree_query_from_v1(&request)?;
+    root.query_repository_tree(&query).await
+}
+
 fn execute_query_deep_map(
     request: QueryDeepMapRequestV1,
     root: &CompositionRoot,
@@ -273,8 +293,8 @@ mod tests {
         execute_control_deep_map, execute_list_recent_projects, execute_open_project,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
         execute_query_index_overview, execute_query_module_card_freshness,
-        execute_query_project_status, execute_rebuild_project_index, execute_remove_project,
-        execute_start_deep_map,
+        execute_query_project_status, execute_query_repository_tree, execute_rebuild_project_index,
+        execute_remove_project, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -291,7 +311,8 @@ mod tests {
         ModuleCardFreshnessResultV1, OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion,
         QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
         QueryModuleCardFreshnessRequestV1, QueryProjectStatusRequestV1,
-        RebuildProjectIndexRequestV1, RemoveProjectRequestV1, StartDeepMapRequestV1,
+        QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        RepositoryTreeResultV1, StartDeepMapRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -535,6 +556,65 @@ mod tests {
             &root,
         ));
 
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_tree_reports_no_project_and_rejects_untrusted_query_tokens()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let response = block_on(execute_query_repository_tree(
+            QueryRepositoryTreeRequestV1::root(),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            RepositoryTreeResultV1::NoProject
+        ));
+
+        let invalid_hex = block_on(execute_query_repository_tree(
+            QueryRepositoryTreeRequestV1::new(
+                ProtocolVersion::CURRENT,
+                Some("C:/untrusted".to_owned()),
+                None,
+                50,
+            ),
+            &root,
+        ));
+        assert_eq!(
+            invalid_hex.map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidRepositoryTreeQuery)
+        );
+
+        let invalid_limit = block_on(execute_query_repository_tree(
+            QueryRepositoryTreeRequestV1::new(ProtocolVersion::CURRENT, None, None, 101),
+            &root,
+        ));
+        assert_eq!(
+            invalid_limit.map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidRepositoryTreeQuery)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_tree_rejects_unsupported_version_before_query_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let result = block_on(execute_query_repository_tree(
+            QueryRepositoryTreeRequestV1::new(
+                ProtocolVersion::new(999),
+                Some("not-hex".to_owned()),
+                None,
+                0,
+            ),
+            &root,
+        ));
         assert_eq!(
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)

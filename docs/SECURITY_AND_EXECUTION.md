@@ -51,7 +51,7 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
-  `query_module_card_freshness`, `query_deep_map`, `start_deep_map`, `pause_deep_map`,
+  `query_module_card_freshness`, `query_repository_tree`, `query_deep_map`, `start_deep_map`, `pause_deep_map`,
   `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
@@ -82,6 +82,16 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   typisierte Ursachen. Weder Card-Inhalte, Claims, Evidence, Remapqueue-Zeilen, Source noch Pfade
   werden übertragen. Die UI ruft auch diese Storage-Abfrage nur bei Open, manueller Aktualisierung
   oder erfolgreichem Publish auf, nicht im 500-ms-Polling.
+- `query_repository_tree` akzeptiert ausschließlich Protokollversion, eine optionale relative
+  RepositoryPath als kleingeschriebenes Hex-Token, einen optionalen direkten Kind-Cursor und ein
+  Limit von 1 bis 100. Projekt und Worktree stammen aus dem Core. Der Adapter liest nur direkte
+  Kinder aus den `file_revisions` des jüngsten publizierten Runs in einer auf zwei Sekunden
+  begrenzten Read-Transaktion; er öffnet weder Worktree noch Source-Dateien. Tokens sind auf
+  131.072 beziehungsweise 4.096 Bytes begrenzt, traversierungsfrei und keine Dateisystembefugnis.
+  Dateien tragen ihren exakten publizierten Hash, Verzeichnisse nur eine exakte
+  Nachfahren-Dateizahl. Sichere Anzeigen sind kontrollzeichenfrei und auf 256 Zeichen begrenzt.
+  Die UI liest bei Navigation, explizitem Nachladen oder erfolgreichem Publish, niemals im
+  500-ms-Polling.
 - Die fünf Deep-Map-Commands akzeptieren niemals einen Projektpfad, eine Projektidentität, ein
   ModelProfile oder eine Job-ID aus der WebView. Nur der explizite Start trägt ein dreidimensionales,
   gegen feste Domainminima und -maxima validiertes Budget. Statuspolling liest ausschließlich das

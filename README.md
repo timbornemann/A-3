@@ -94,7 +94,11 @@ verifiziertes Modell und harte Budgets vor dem Start, kann checkpoint-sicher pau
 fortsetzen und abbrechen und bleibt ohne konfiguriertes Mapping-Modell sicher deaktiviert. Als
 abschließender U3-Schnitt zeigt eine an den aktuellen veröffentlichten Index gebundene
 Module-Card-Aktualität mit `Current`, `Stale`, `NeedsReview` und typisierten
-Invalidierungsursachen. Die
+Invalidierungsursachen. U4 hat mit einem progressiven Repository-Baum begonnen: Die Desktopansicht
+liest höchstens 100 direkte Kinder pro Seite aus genau einer atomaren Indexpublikation, navigiert
+verlustfrei über opake relative Tokens und zeigt für Dateien den exakten veröffentlichten
+Inhaltshash. Weder ein Vollgraph noch das Live-Dateisystem oder autoritative Betriebssystempfade
+überschreiten dafür die WebView-Grenze; der zugehörige Modulbaum bleibt der nächste U4-Schnitt. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -136,15 +140,17 @@ Ein lokaler Produktionsbuild ohne Installer wird so erzeugt:
 pnpm tauri build --no-bundle
 ```
 
-Die WebView ist unprivilegiert. Sie darf ausschließlich die typisierten Commands `query_health`,
-`open_project` und `list_recent_projects` aufrufen. `open_project` öffnet den nativen Ordnerdialog im
-Rust-Kern und bietet bei einem eindeutig evidenzbasiert erkannten Worktree-Umzug eine zweite native
-Auswahl zum Reconciliieren, separaten Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens
-zehn validierte Anzeigeprojektionen aus dem lokalen Katalog. Die WebView sendet weder Pfad noch
-Reconciliation-Entscheidung und erhält keine Datei-, Dialog-, Shell- oder SQL-Plugin-Berechtigung.
-Nach einem erfolgreichen Open startet der Rust-Composition-Root einen besitzenden, begrenzten
-Repository-Watcher und aktualisiert den lokalen Index im Hintergrund. Dieser Pfad erweitert die
-WebView-Capabilities nicht.
+Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
+Health-, Project-, Index-, Repository-Tree-, Module-Card-Freshness- und Deep-Map-Commands aufrufen.
+`open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
+evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
+Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
+Anzeigeprojektionen aus dem lokalen Katalog. `query_repository_tree` akzeptiert nur relative
+verlustfreie Indextokens, einen exklusiven Kind-Cursor und ein Limit von 1 bis 100; Projekt und
+Worktree stammen aus dem Core. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
+oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
+einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
+Diese Pfade erweitern die WebView-Capabilities nicht.
 
 ## Lokale Qualitätsgates
 

@@ -12,6 +12,7 @@
     "allow-query-index-activity",
     "allow-query-index-overview",
     "allow-query-module-card-freshness",
+    "allow-query-repository-tree",
     "allow-query-project-status",
     "allow-query-health",
     "allow-rebuild-project-index",

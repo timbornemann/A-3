@@ -24,6 +24,7 @@ mod module_remap_queue_repository;
 mod policy_repository;
 mod project_catalog;
 mod project_layout;
+mod repository_tree_repository;
 mod run_journal_repository;
 mod semantic_embedding_repository;
 mod task_ledger_repository;

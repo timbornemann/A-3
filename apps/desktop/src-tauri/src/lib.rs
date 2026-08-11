@@ -13,7 +13,7 @@ mod repository_index_manager;
 use a3_application::{
     DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetProjectIndexStatus,
     GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
-    GetPublishedIndexOverview, GetPublishedIndexOverviewError, HealthQuery,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery,
     IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
     JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
     KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
@@ -23,12 +23,15 @@ use a3_application::{
     ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
     ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
     ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
-    RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RecentProject, RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
+    RepositoryTreeStore,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, ExploreBudget, GitHead, Health, IndexLanguage,
     IndexRunStatus, InvalidationReason, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform,
-    Progress, ProjectId, ProjectIdentity,
+    Progress, ProjectId, ProjectIdentity, RepositoryPath,
 };
 use a3_protocol::{
     CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
@@ -40,8 +43,10 @@ use a3_protocol::{
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
     ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
     OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
-    ProjectStatusResponseV1, ProjectSummaryV1, RebuildProjectIndexResponseV1, RebuildStateV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    ProjectStatusResponseV1, ProjectSummaryV1, QueryRepositoryTreeRequestV1,
+    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
+    RecentProjectsResponseV1, RemoveProjectResponseV1, RepositoryTreeEntryKindV1,
+    RepositoryTreeEntryV1, RepositoryTreePageV1, RepositoryTreeResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -77,6 +82,7 @@ pub struct CompositionRoot {
     project_status: Option<GetProjectIndexStatus>,
     index_overview: Option<GetPublishedIndexOverview>,
     module_card_freshness: Option<GetModuleCardFreshness>,
+    repository_tree: Option<GetRepositoryTreePage>,
     project_storage: Option<GetProjectStorageUsage>,
     remove_project: Option<RemoveProjectFromList>,
     active_project: Mutex<Option<ActiveProject>>,
@@ -265,6 +271,30 @@ impl CompositionRoot {
                     map_module_card_freshness_to_v1(&freshness),
                 ),
                 None => ModuleCardFreshnessResponseV1::no_published_index(),
+            })
+    }
+
+    /// Returns one bounded progressive page from the current published repository tree.
+    pub async fn query_repository_tree(
+        &self,
+        query: &RepositoryTreeQuery,
+    ) -> Result<RepositoryTreeResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(RepositoryTreeResponseV1::no_project());
+        };
+        let Some(reader) = &self.repository_tree else {
+            return Ok(RepositoryTreeResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_repository_tree_error_to_v1)
+            .map(|page| match page {
+                Some(page) => {
+                    RepositoryTreeResponseV1::available(map_repository_tree_page_to_v1(&page))
+                }
+                None => RepositoryTreeResponseV1::no_published_index(),
             })
     }
 
@@ -509,6 +539,29 @@ impl ModuleCardFreshnessControl for DesktopBoundedReadControl {
     }
 }
 
+impl RepositoryTreeControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), RepositoryTreeControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(RepositoryTreeControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(RepositoryTreeControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(RepositoryTreeControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl DesktopProjectStorageControl {
     fn new() -> Self {
         Self {
@@ -543,6 +596,7 @@ struct CompositionBase {
 struct OptionalCompositionPorts {
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
+    repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
     project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
@@ -551,6 +605,7 @@ struct OptionalCompositionPorts {
 struct IndexingCompositionPorts {
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
+    repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
     project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
 }
@@ -607,6 +662,7 @@ impl CompositionBase {
             OptionalCompositionPorts {
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
+                repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
                 project_catalog_admin: Some(ports.project_catalog_admin),
                 deep_map_executor: None,
@@ -630,6 +686,7 @@ impl CompositionBase {
         let module_card_freshness = ports
             .module_card_freshness_store
             .map(GetModuleCardFreshness::new);
+        let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
             .index_store
             .map(|store| {
@@ -674,6 +731,7 @@ impl CompositionBase {
             project_status,
             index_overview,
             module_card_freshness,
+            repository_tree,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
             remove_project: ports.project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
@@ -706,6 +764,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
+            let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store;
             app.manage(base.finish_with_indexing(
@@ -717,6 +776,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 IndexingCompositionPorts {
                     index_store,
                     module_card_freshness_store,
+                    repository_tree_store,
                     project_storage,
                     project_catalog_admin,
                 },
@@ -733,6 +793,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_index_activity,
             commands::query_index_overview,
             commands::query_module_card_freshness,
+            commands::query_repository_tree,
             commands::query_health,
             commands::rebuild_project_index,
             commands::resume_deep_map,
@@ -962,6 +1023,102 @@ fn map_module_card_freshness_to_v1(freshness: &ModuleCardFreshness) -> ModuleCar
     )
 }
 
+pub(crate) fn map_repository_tree_query_from_v1(
+    request: &QueryRepositoryTreeRequestV1,
+) -> Result<RepositoryTreeQuery, CommandErrorV1> {
+    let directory = request
+        .directory_path_hex()
+        .map(|value| decode_hex(value, 131_072))
+        .transpose()
+        .and_then(|bytes| {
+            bytes
+                .map(RepositoryPath::try_from_bytes)
+                .transpose()
+                .map_err(|_| ())
+        })
+        .map_err(|()| invalid_repository_tree_query())?;
+    let after = request
+        .after_name_hex()
+        .map(|value| decode_hex(value, 4_096))
+        .transpose()
+        .and_then(|bytes| {
+            bytes
+                .map(RepositoryTreeChildName::try_from_bytes)
+                .transpose()
+                .map_err(|_| ())
+        })
+        .map_err(|()| invalid_repository_tree_query())?;
+    let page_size = RepositoryTreePageSize::new(request.limit())
+        .map_err(|_| invalid_repository_tree_query())?;
+    Ok(RepositoryTreeQuery::new(directory, after, page_size))
+}
+
+fn map_repository_tree_page_to_v1(page: &RepositoryTreePage) -> RepositoryTreePageV1 {
+    RepositoryTreePageV1::new(
+        page.index_run_id().to_string(),
+        page.snapshot_id().to_string(),
+        page.directory().map(|path| encode_hex(path.as_bytes())),
+        page.entries()
+            .iter()
+            .map(|entry| {
+                RepositoryTreeEntryV1::new(
+                    match entry.kind() {
+                        RepositoryTreeEntryKind::Directory => RepositoryTreeEntryKindV1::Directory,
+                        RepositoryTreeEntryKind::File => RepositoryTreeEntryKindV1::File,
+                    },
+                    encode_hex(entry.path().as_bytes()),
+                    entry.display_name().as_str().to_owned(),
+                    entry.display_name().is_truncated(),
+                    entry.descendant_file_count().to_string(),
+                    entry.content_hash().map(|hash| encode_hex(hash.as_bytes())),
+                )
+            })
+            .collect(),
+        page.next_cursor()
+            .map(|cursor| encode_hex(cursor.as_bytes())),
+    )
+}
+
+fn decode_hex(value: &str, max_bytes: usize) -> Result<Vec<u8>, ()> {
+    if value.is_empty()
+        || !value.len().is_multiple_of(2)
+        || value.len() > max_bytes.checked_mul(2).ok_or(())?
+    {
+        return Err(());
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = decode_hex_nibble(pair[0]).ok_or(())?;
+            let low = decode_hex_nibble(pair[1]).ok_or(())?;
+            Ok((high << 4) | low)
+        })
+        .collect()
+}
+
+const fn decode_hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn invalid_repository_tree_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidRepositoryTreeQuery)
+}
+
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
     DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
 }
@@ -1113,6 +1270,20 @@ fn map_module_card_freshness_error_to_v1(error: ModuleCardFreshnessFailure) -> C
         ModuleCardFreshnessFailure::Cancelled
         | ModuleCardFreshnessFailure::TimedOut
         | ModuleCardFreshnessFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_repository_tree_error_to_v1(error: RepositoryTreeFailure) -> CommandErrorV1 {
+    let code = match error {
+        RepositoryTreeFailure::Storage(error) => map_storage_error_to_v1(error),
+        RepositoryTreeFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        RepositoryTreeFailure::DirectoryUnavailable => {
+            ErrorCodeV1::RepositoryTreeDirectoryUnavailable
+        }
+        RepositoryTreeFailure::Cancelled
+        | RepositoryTreeFailure::TimedOut
+        | RepositoryTreeFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

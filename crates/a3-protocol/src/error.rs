@@ -31,6 +31,10 @@ pub enum ErrorCodeV1 {
     ProjectIdentityConflict,
     /// No Core-owned active project exists for the requested operation.
     NoActiveProject,
+    /// A repository-tree path token, cursor, or limit violated the strict query contract.
+    InvalidRepositoryTreeQuery,
+    /// A previously visible indexed directory is absent from the current publication.
+    RepositoryTreeDirectoryUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -104,6 +108,12 @@ impl CommandErrorV1 {
                 "The selected worktree conflicts with its stored project identity."
             }
             ErrorCodeV1::NoActiveProject => "Open a local Git worktree before using this action.",
+            ErrorCodeV1::InvalidRepositoryTreeQuery => {
+                "The repository tree request is outside the supported bounds."
+            }
+            ErrorCodeV1::RepositoryTreeDirectoryUnavailable => {
+                "The selected directory is no longer present in the published index."
+            }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."
             }

@@ -49,6 +49,7 @@ mod recent_projects;
 mod repository_discovery;
 mod repository_index;
 mod repository_snapshot;
+mod repository_tree;
 mod repository_watcher;
 mod retrieval_fusion;
 mod run_journal;
@@ -269,6 +270,13 @@ pub use repository_snapshot::{
     RepositorySnapshotControlError, RepositorySnapshotFailure, RepositorySnapshotPhase,
     RepositorySnapshotPolicy, SnapshotBaseline, SnapshotBaselineError, SnapshotCompatibility,
     SnapshotCompatibilityError,
+};
+pub use repository_tree::{
+    GetRepositoryTreePage, RepositoryTreeChildName, RepositoryTreeChildNameError,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeDisplayName,
+    RepositoryTreeEntry, RepositoryTreeEntryError, RepositoryTreeEntryKind, RepositoryTreeFailure,
+    RepositoryTreeFuture, RepositoryTreePage, RepositoryTreePageError, RepositoryTreePageSize,
+    RepositoryTreePageSizeError, RepositoryTreeQuery, RepositoryTreeStore,
 };
 pub use repository_watcher::{
     RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,

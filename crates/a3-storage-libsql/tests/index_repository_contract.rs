@@ -3,13 +3,15 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardFreshness, IndexPersistenceControl, IndexPersistenceControlError,
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
-    LoadPendingModuleRemaps, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardVerificationControl,
-    ModuleCardVerificationControlError, PublishVerifiedModuleCards,
+    CompileTaskLens, GetModuleCardFreshness, GetRepositoryTreePage, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
+    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError, PublishVerifiedModuleCards,
     PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
-    TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl,
+    TaskLensControlError, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
@@ -128,6 +130,23 @@ impl ModuleCardFreshnessControl for TestIndexControl {
     }
 }
 
+impl RepositoryTreeControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), RepositoryTreeControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| RepositoryTreeControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -153,6 +172,19 @@ impl ModuleCardVerificationControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleCardVerificationControlError> {
+        Ok(())
+    }
+}
+
+impl RepositoryTreeControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), RepositoryTreeControlError> {
         Ok(())
     }
 }
@@ -209,6 +241,16 @@ fn snapshot_roundtrip_retains_canonical_reproducibility_state()
         assert_eq!(
             GetModuleCardFreshness::new(store.clone())
                 .execute(&fixture.project, &TestIndexControl::default())
+                .await?,
+            None
+        );
+        assert_eq!(
+            GetRepositoryTreePage::new(store.clone())
+                .execute(
+                    &fixture.project,
+                    &RepositoryTreeQuery::new(None, None, RepositoryTreePageSize::DEFAULT),
+                    &TestIndexControl::default(),
+                )
                 .await?,
             None
         );
@@ -1706,6 +1748,206 @@ fn rebuild_removes_only_regenerable_index_state() -> Result<(), Box<dyn std::err
     })
 }
 
+#[test]
+fn repository_tree_pages_root_and_directories_losslessly_against_latest_publication()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([71; 32], [72; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let non_utf8_path = vec![0xff, b'.', b'r', b's'];
+        let files = vec![
+            (b"README.md".to_vec(), [11; 32]),
+            (b"docs/guide.md".to_vec(), [12; 32]),
+            (b"src/lib.rs".to_vec(), [13; 32]),
+            (b"src/nested/mod.rs".to_vec(), [14; 32]),
+            (non_utf8_path.clone(), [15; 32]),
+        ];
+        let first_snapshot = snapshot(
+            [73; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([74; 32], first_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &files_publication(first_snapshot.id(), &files)?,
+                &control,
+            )
+            .await?;
+        let query = GetRepositoryTreePage::new(store.clone());
+
+        let first_page = query
+            .execute(
+                &fixture.project,
+                &RepositoryTreeQuery::new(None, None, RepositoryTreePageSize::new(2)?),
+                &control,
+            )
+            .await?
+            .ok_or("repository-tree root page is missing")?;
+        assert_eq!(first_page.index_run_id(), first_run.id());
+        assert_eq!(first_page.snapshot_id(), first_snapshot.id());
+        assert_eq!(first_page.entries().len(), 2);
+        assert_eq!(
+            first_page.entries()[0].child_name().as_bytes(),
+            b"README.md"
+        );
+        assert_eq!(
+            first_page.entries()[0].kind(),
+            RepositoryTreeEntryKind::File
+        );
+        assert_eq!(
+            first_page.entries()[0].content_hash(),
+            Some(ContentHash::from_bytes([11; 32]))
+        );
+        assert_eq!(first_page.entries()[1].child_name().as_bytes(), b"docs");
+        assert_eq!(
+            first_page.entries()[1].kind(),
+            RepositoryTreeEntryKind::Directory
+        );
+        assert_eq!(first_page.entries()[1].descendant_file_count(), 1);
+        let first_cursor = first_page
+            .next_cursor()
+            .cloned()
+            .ok_or("repository-tree first page should be truncated")?;
+
+        let second_page = query
+            .execute(
+                &fixture.project,
+                &RepositoryTreeQuery::new(
+                    None,
+                    Some(first_cursor),
+                    RepositoryTreePageSize::new(2)?,
+                ),
+                &control,
+            )
+            .await?
+            .ok_or("repository-tree second root page is missing")?;
+        assert_eq!(second_page.entries().len(), 2);
+        assert_eq!(second_page.entries()[0].child_name().as_bytes(), b"src");
+        assert_eq!(second_page.entries()[0].descendant_file_count(), 2);
+        assert_eq!(
+            second_page.entries()[1].child_name().as_bytes(),
+            non_utf8_path
+        );
+        assert!(
+            !second_page.entries()[1]
+                .display_name()
+                .as_str()
+                .chars()
+                .any(char::is_control)
+        );
+        assert!(second_page.next_cursor().is_none());
+
+        let src = RepositoryPath::try_from_bytes(b"src".to_vec())?;
+        let src_page = query
+            .execute(
+                &fixture.project,
+                &RepositoryTreeQuery::new(Some(src.clone()), None, RepositoryTreePageSize::DEFAULT),
+                &control,
+            )
+            .await?
+            .ok_or("repository-tree src page is missing")?;
+        assert_eq!(src_page.entries().len(), 2);
+        assert_eq!(src_page.entries()[0].path().as_bytes(), b"src/lib.rs");
+        assert_eq!(src_page.entries()[0].kind(), RepositoryTreeEntryKind::File);
+        assert_eq!(src_page.entries()[1].path().as_bytes(), b"src/nested");
+        assert_eq!(
+            src_page.entries()[1].kind(),
+            RepositoryTreeEntryKind::Directory
+        );
+
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &RepositoryTreeQuery::new(
+                        Some(RepositoryPath::try_from_bytes(b"missing".to_vec())?),
+                        None,
+                        RepositoryTreePageSize::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await,
+            Err(RepositoryTreeFailure::DirectoryUnavailable)
+        );
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &RepositoryTreeQuery::new(None, None, RepositoryTreePageSize::DEFAULT),
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(RepositoryTreeFailure::Cancelled)
+        );
+
+        let mut next_changes = files
+            .iter()
+            .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Delete))
+            .collect::<Result<Vec<_>, _>>()?;
+        next_changes.push(change(b"next.rs", [16; 32], SnapshotChangeKind::Upsert)?);
+        let next_snapshot = snapshot(
+            [75; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            next_changes,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &next_snapshot)
+            .await?;
+        let next_run = store
+            .start_index_run(&fixture.project, run([76; 32], next_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                next_run.id(),
+                &file_only_publication(next_snapshot.id(), b"next.rs", [16; 32])?,
+                &control,
+            )
+            .await?;
+
+        let latest_page = query
+            .execute(
+                &fixture.project,
+                &RepositoryTreeQuery::new(None, None, RepositoryTreePageSize::DEFAULT),
+                &control,
+            )
+            .await?
+            .ok_or("latest repository-tree root page is missing")?;
+        assert_eq!(latest_page.index_run_id(), next_run.id());
+        assert_eq!(latest_page.snapshot_id(), next_snapshot.id());
+        assert_eq!(latest_page.entries().len(), 1);
+        assert_eq!(latest_page.entries()[0].path().as_bytes(), b"next.rs");
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &RepositoryTreeQuery::new(Some(src), None, RepositoryTreePageSize::DEFAULT,),
+                    &control,
+                )
+                .await,
+            Err(RepositoryTreeFailure::DirectoryUnavailable)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 struct ProjectFixture {
     _temporary: TempDirectory,
     layout: StorageLayout,
@@ -1826,6 +2068,23 @@ fn file_only_publication(
         Vec::new(),
         Vec::new(),
     )?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+    let modules = support::module_projection(&graph, &ranking, &[])?;
+    Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn files_publication(
+    snapshot_id: SnapshotId,
+    files: &[(Vec<u8>, [u8; 32])],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let revisions = files
+        .iter()
+        .map(|(path, hash)| {
+            RepositoryPath::try_from_bytes(path.clone())
+                .map(|path| a3_domain::FileRevision::new(path, ContentHash::from_bytes(*hash)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let graph = LinkedGraph::new(snapshot_id, revisions, Vec::new(), Vec::new(), Vec::new())?;
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
     let modules = support::module_projection(&graph, &ranking, &[])?;
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)

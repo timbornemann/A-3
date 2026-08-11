@@ -63,6 +63,14 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Rust- und TypeScript-Contracts prüfen IDs, verlustfreie Summen, höchstens fünf positive kanonische
   Ursachen und legale Status/Ursachen-Paare. Der Component-Test zeigt `Stale`, `NeedsReview` und
   ihre Ursachen gemeinsam, ohne Card-Inhalt oder autoritative Pfade zu erhalten.
+- Der U4-Repository-Tree-Contract liest Root und Unterverzeichnisse ausschließlich aus dem jüngsten
+  atomar publizierten Run. Storage-Tests prüfen direkte Kinder, strikte Byteordnung, exakte
+  Nachfahrenzähler und File-Hashes, nicht als UTF-8 darstellbare Namen, Vorwärtspaginierung,
+  Cancellation, fehlende Verzeichnisse sowie den vollständigen Wechsel nach einem Replacement-
+  Publish. Rust- und TypeScript-Grenztests lehnen unbekannte Felder, Traversal- und
+  Nichtkanonik-Tokens, indirekte oder doppelte Kinder, widersprüchliche File-Evidence und falsche
+  Cursor ab. Der reale Tauri-IPC-Test muss die Capability ohne Pfad- oder Projektparameter
+  erreichen; der Component-Test navigiert ein Unterverzeichnis und hält dessen Run-/Snapshotbindung.
 
 ### Persistenz
 

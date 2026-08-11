@@ -11,6 +11,7 @@ import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
 import type { RecentProjectsResponseV1 } from './lib/recent-projects';
+import type { RepositoryTreeResponseV1 } from './lib/repository-tree';
 
 const health: HealthResponseV1 = {
   applicationVersion: '0.1.0',
@@ -140,6 +141,60 @@ const moduleCardFreshness: ModuleCardFreshnessResponseV1 = {
   },
 };
 
+const repositoryTreeRoot: RepositoryTreeResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    page: {
+      directoryPathHex: null,
+      entries: [
+        {
+          contentHash: '7'.repeat(64),
+          descendantFileCount: '1',
+          kind: 'file',
+          name: 'README.md',
+          nameTruncated: false,
+          pathHex: '524541444d452e6d64',
+        },
+        {
+          contentHash: null,
+          descendantFileCount: '2',
+          kind: 'directory',
+          name: 'src',
+          nameTruncated: false,
+          pathHex: '737263',
+        },
+      ],
+      indexRunId: '6'.repeat(64),
+      nextAfterNameHex: null,
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const repositoryTreeSrc: RepositoryTreeResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    page: {
+      directoryPathHex: '737263',
+      entries: [
+        {
+          contentHash: '8'.repeat(64),
+          descendantFileCount: '1',
+          kind: 'file',
+          name: 'lib.rs',
+          nameTruncated: false,
+          pathHex: '7372632f6c69622e7273',
+        },
+      ],
+      indexRunId: '6'.repeat(64),
+      nextAfterNameHex: null,
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
 const idleDeepMapStatus: DeepMapStatusResponseV1 = {
   protocolVersion: 1,
   result: {
@@ -250,6 +305,32 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('NeedsReview')).toBeTruthy();
     expect(screen.getByText(/Direkte Evidenz geändert · 2/)).toBeTruthy();
     expect(screen.getByText(/Direkte Abhängigkeit geändert · 1/)).toBeTruthy();
+  });
+
+  it('navigates the bounded published repository tree one directory at a time', async () => {
+    const repositoryTreeLoader = vi.fn(async (query: { directoryPathHex: string | null }) =>
+      query.directoryPathHex === null ? repositoryTreeRoot : repositoryTreeSrc,
+    );
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+        repositoryTreeLoader,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Repository-Baum' })).toBeTruthy();
+    expect(await screen.findByText('README.md')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Verzeichnis src öffnen' }));
+
+    expect(await screen.findByText('lib.rs')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'src' }).getAttribute('aria-current')).toBe('page');
+    expect(repositoryTreeLoader).toHaveBeenCalledWith({
+      afterNameHex: null,
+      directoryPathHex: '737263',
+      limit: 50,
+    });
   });
 
   it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {

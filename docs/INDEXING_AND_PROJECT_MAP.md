@@ -304,6 +304,24 @@ die IndexRun-Historie. Snapshots, Worktree-Identität und nicht regenerierbare T
 User-Evidence-Tabellen bleiben erhalten. Fehler, Cancellation, Timeout oder ein Crash vor dem finalen
 Statuswechsel rollen die gesamte Mutation zurück; der zuvor veröffentlichte Index bleibt sichtbar.
 
+### Progressiver Repository-Baum
+
+U4 rekonstruiert den sichtbaren Repository-Baum nicht aus dem Live-Dateisystem und lädt dafür auch
+keinen vollständigen `PublishedIndex`. Der schmale Application-Port liest aus den
+`file_revisions` des jüngsten publizierten Runs je Anfrage höchstens 100 direkte Kinder. Eine
+Read-Transaktion bindet Run, Snapshot, Einträge und exklusiven Cursor atomar; `limit + 1` macht eine
+weitere Seite sichtbar, ohne sie auszuliefern. Root und Unterverzeichnisse werden aus denselben
+relativen Pfadbytes gruppiert und strikt byteweise sortiert, sodass auch nicht als UTF-8 darstellbare
+Namen verlustfrei navigierbar bleiben.
+
+Ein Dateieintrag trägt die exakte aktuelle `FileRevision` über seinen ContentHash. Ein
+Verzeichniseintrag ist ausschließlich ein aus mindestens einem aktuellen Nachfahren abgeleitetes
+Präfix und trägt dessen exakte Dateizahl, aber keinen erfundenen Hash. Application- und
+Frontendverträge lehnen indirekte Kinder, widersprüchliche Counts, falsche Cursor, nicht kanonische
+Pfade und persistierte Korruption ab. Der libSQL-Read prüft Cancellation und besitzt ein festes
+Zwei-Sekunden-Limit. Die Hexdarstellung an der IPC-Grenze ist ein opaker Indexschlüssel und gewährt
+weder einen Source-Read noch Zugriff auf einen Betriebssystempfad.
+
 ## Deep Map
 
 Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrücklichen Aktion

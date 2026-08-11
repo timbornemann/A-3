@@ -69,6 +69,30 @@ ihre Summen müssen exakt den beiden invaliden Aggregatzählern entsprechen, und
 Statuszähler müssen `totalCount` ergeben. Projektidentitäten, Pfade, Card-Inhalte, Claims, Evidence,
 Datenbankzeilen und Remapqueue-Einträge überschreiten diese Grenze nicht.
 
+## Repository Tree V1
+
+`query_repository_tree` akzeptiert genau `protocolVersion`, `directoryPathHex`, `afterNameHex` und
+`limit`. `directoryPathHex` ist `null` für das Repository-Root oder ein kleingeschriebener gerader
+Hextext mit höchstens 131.072 dekodierten Bytes. Er muss eine kanonische relative
+`RepositoryPath` ohne NUL, leere Segmente, `.` oder `..` ergeben. `afterNameHex` ist `null` oder ein
+einzelner direkter Kindname mit höchstens 4.096 Bytes ohne NUL, Slash, `.` oder `..`. `limit` liegt
+einschließlich zwischen 1 und 100. Die Tokens sind ausschließlich verlustfreie Schlüssel der
+publizierten Indexprojektion und keine autoritativen Dateisystempfade oder Zugriffsrechte.
+
+Die Antwort liefert genau `noProject`, `noPublishedIndex` oder `available`. Eine verfügbare Seite
+enthält die 64-stelligen kleingeschriebenen `indexRunId` und `snapshotId`, das angeforderte
+`directoryPathHex`, höchstens 100 strikt byteweise geordnete direkte `entries` und optional
+`nextAfterNameHex`. Ein vorhandener Cursor entspricht exakt dem letzten gelieferten Kind und zeigt
+eine weitere Seite an.
+
+Jeder Eintrag enthält `kind`, das verlustfreie volle relative `pathHex`, einen nicht leeren,
+kontrollzeichenfreien `name` mit höchstens 256 Zeichen, `nameTruncated`, den positiven
+verlustfreien u64-Dezimaltext `descendantFileCount` und `contentHash`. Ein `file` hat exakt den
+Zähler `1` und den 64-stelligen Hash seiner veröffentlichten `FileRevision`; ein `directory` besitzt
+mindestens einen Dateinachfahren und keinen synthetischen Hash. Unbekannte Felder, indirekte Kinder,
+nicht kanonische Tokens, widersprüchliche Evidenz, Reihenfolge- oder Cursorfehler werden sowohl am
+Rust- als auch am TypeScript-Rand abgelehnt.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -126,7 +150,8 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 ## Tauri-Capability
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
-Health-, Project-, Index-, Module-Card-Freshness- und Deep-Map-Commands. Die Freshness-Capability ist
+Health-, Project-, Index-, Repository-Tree-, Module-Card-Freshness- und Deep-Map-Commands. Der
+Repository-Baum besitzt ausschließlich `allow-query-repository-tree`; die Freshness-Capability ist
 `allow-query-module-card-freshness`. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,

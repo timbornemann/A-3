@@ -269,6 +269,27 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    absichtlich keinen Remapauftrag besitzen; eine neu publizierte Card verdrängt dagegen ihre
    ältere stale Historie aus der aktuellen Projektion.
 
+### Progressiver Repository-Baum
+
+1. `query_repository_tree` wählt wie die übrigen Desktop-Reads ausschließlich die Core-eigene aktive
+   `ProjectIdentity`. Die WebView kann weder Projekt, Worktree noch einen Betriebssystempfad
+   bestimmen.
+2. Der Application-Use-Case akzeptiert nur eine optionale typisierte `RepositoryPath`, einen
+   exklusiven verlustfreien direkten Kind-Cursor und eine Seitengröße von 1 bis 100. Ein Root- oder
+   Unterverzeichnis-Read liefert ausschließlich direkte Kinder in strikter Byteordnung.
+3. Der libSQL-Adapter gruppiert die unveränderlichen `file_revisions` des jüngsten publizierten Runs
+   innerhalb einer kurzen Read-Transaktion. Run-ID, Snapshot-ID, Seite und Cursor stammen dadurch
+   aus derselben atomaren Sicht; ein Replacement-Publish wird erst bei der nächsten Seite sichtbar.
+4. Verzeichnisse sind abgeleitete Präfixe mit exakter Nachfahren-Dateizahl. Dateien tragen genau den
+   publizierten `ContentHash`; widersprüchliche persistierte Formen werden am Adapterrand abgelehnt.
+5. IPC V1 codiert relative Pfad- und Cursorbytes als kleingeschriebene Hex-Tokens und trennt sie von
+   der auf 256 Zeichen begrenzten kontrollzeichenfreien Anzeige. Diese Tokens autorisieren weder
+   einen Dateisystemzugriff noch einen Source-Read.
+6. Der Read verwendet `limit + 1` für sichtbare Vorwärtspaginierung, prüft Cancellation und endet
+   spätestens nach zwei Sekunden. Die UI hält immer nur ein Verzeichnis und hängt eine Folgeseite
+   nur bei identischer Run-, Snapshot-, Verzeichnis- und Cursorbindung an; sie fragt Storage nicht im
+   500-ms-Indexpolling ab.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

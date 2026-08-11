@@ -284,6 +284,109 @@ h1 {
   background: #f7f9f7;
 }
 
+.repository-tree-panel {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgb(22 63 54 / 14%);
+  border-radius: 1rem;
+  background: #f7f9f7;
+}
+
+.repository-tree-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.repository-tree-heading h4,
+.repository-tree-heading p {
+  margin: 0;
+}
+
+.repository-tree-heading p {
+  margin-top: 0.35rem;
+  color: #496059;
+}
+
+.repository-tree-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.repository-tree-breadcrumbs button {
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  color: #14694e;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.repository-tree-breadcrumbs button[aria-current='page'] {
+  color: #29443c;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.repository-tree-entries {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repository-tree-entries li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.65rem;
+  background: #eef3ef;
+}
+
+.repository-directory,
+.repository-file {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.repository-directory {
+  padding: 0;
+  border: 0;
+  color: #29443c;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.repository-directory code,
+.repository-file code {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.repository-tree-entries li > span {
+  flex: 0 0 auto;
+  color: #657770;
+  font-size: 0.75rem;
+}
+
+.repository-tree-more {
+  justify-self: start;
+}
+
 .deep-map-panel {
   display: grid;
   gap: 1rem;

@@ -49,6 +49,12 @@
     type RecentProjectSummaryV1,
     type RecentProjectsResponseV1,
   } from './lib/recent-projects';
+  import {
+    queryRepositoryTree,
+    type RepositoryTreeEntryV1,
+    type RepositoryTreeQueryV1,
+    type RepositoryTreeResponseV1,
+  } from './lib/repository-tree';
 
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
@@ -65,6 +71,7 @@
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
     recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
+    repositoryTreeLoader?: (query: RepositoryTreeQueryV1) => Promise<RepositoryTreeResponseV1>;
   }
 
   type ViewState =
@@ -103,6 +110,19 @@
         result: Extract<ModuleCardFreshnessResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
+  type RepositoryTreeView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | {
+        kind: 'available';
+        result: Extract<RepositoryTreeResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  interface RepositoryTreeBreadcrumb {
+    name: string;
+    pathHex: string;
+  }
   type DeepMapView =
     | { kind: 'loading' }
     | { kind: 'noProject' }
@@ -139,6 +159,7 @@
     projectRemover = removeProject,
     projectStatusLoader = queryProjectStatus,
     recentProjectsLoader = listRecentProjects,
+    repositoryTreeLoader = queryRepositoryTree,
   }: Props = $props();
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
@@ -146,6 +167,9 @@
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
   let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
+  let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
+  let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
+  let repositoryTreeLoadingMore = $state(false);
   let deepMapView = $state<DeepMapView>({ kind: 'loading' });
   let deepMapActionView = $state<DeepMapActionView>({ kind: 'idle' });
   let deepMapBudget = $state<DeepMapBudgetV1>({
@@ -176,6 +200,7 @@
     void loadIndexActivity();
     void loadIndexOverview();
     void loadModuleCardFreshness();
+    void loadRepositoryTreeRoot();
     void loadDeepMap();
     const activityTimer = window.setInterval(() => {
       void loadIndexActivity();
@@ -202,9 +227,12 @@
       ) {
         void loadIndexOverview();
         void loadModuleCardFreshness();
+        void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
         moduleCardFreshnessView = { kind: 'noProject' };
+        repositoryTreeView = { kind: 'noProject' };
+        repositoryTreeBreadcrumbs = [];
       }
       indexActivityObserved = true;
     } catch {
@@ -244,6 +272,98 @@
     }
   }
 
+  async function loadRepositoryTree(
+    directoryPathHex: string | null,
+    afterNameHex: string | null = null,
+  ): Promise<void> {
+    const append = afterNameHex !== null;
+    if (append) {
+      repositoryTreeLoadingMore = true;
+    } else {
+      repositoryTreeView = { kind: 'loading' };
+    }
+    try {
+      const response = await repositoryTreeLoader({
+        afterNameHex,
+        directoryPathHex,
+        limit: 50,
+      });
+      if (response.result.status === 'available') {
+        if (append && repositoryTreeView.kind === 'available') {
+          const current = repositoryTreeView.result.page;
+          const next = response.result.page;
+          const compatible =
+            current.indexRunId === next.indexRunId &&
+            current.snapshotId === next.snapshotId &&
+            current.directoryPathHex === next.directoryPathHex &&
+            current.nextAfterNameHex === afterNameHex &&
+            !next.entries.some((entry) =>
+              current.entries.some((currentEntry) => currentEntry.pathHex === entry.pathHex),
+            );
+          if (!compatible) {
+            repositoryTreeView = { kind: 'error' };
+            return;
+          }
+          repositoryTreeView = {
+            kind: 'available',
+            result: {
+              page: { ...next, entries: [...current.entries, ...next.entries] },
+              status: 'available',
+            },
+          };
+        } else {
+          repositoryTreeView = { kind: 'available', result: response.result };
+        }
+      } else if (response.result.status === 'noPublishedIndex') {
+        repositoryTreeView = { kind: 'noPublishedIndex' };
+      } else {
+        repositoryTreeView = { kind: 'noProject' };
+        repositoryTreeBreadcrumbs = [];
+      }
+    } catch {
+      repositoryTreeView = { kind: 'error' };
+    } finally {
+      repositoryTreeLoadingMore = false;
+    }
+  }
+
+  async function loadRepositoryTreeRoot(): Promise<void> {
+    repositoryTreeBreadcrumbs = [];
+    await loadRepositoryTree(null);
+  }
+
+  async function openRepositoryDirectory(entry: RepositoryTreeEntryV1): Promise<void> {
+    if (entry.kind !== 'directory') return;
+    repositoryTreeBreadcrumbs = [
+      ...repositoryTreeBreadcrumbs,
+      { name: entry.name, pathHex: entry.pathHex },
+    ];
+    await loadRepositoryTree(entry.pathHex);
+  }
+
+  async function openRepositoryBreadcrumb(index: number): Promise<void> {
+    if (index < 0) {
+      await loadRepositoryTreeRoot();
+      return;
+    }
+    const target = repositoryTreeBreadcrumbs[index];
+    if (target === undefined) return;
+    repositoryTreeBreadcrumbs = repositoryTreeBreadcrumbs.slice(0, index + 1);
+    await loadRepositoryTree(target.pathHex);
+  }
+
+  async function loadMoreRepositoryEntries(): Promise<void> {
+    if (
+      repositoryTreeView.kind !== 'available' ||
+      repositoryTreeView.result.page.nextAfterNameHex === null
+    )
+      return;
+    await loadRepositoryTree(
+      repositoryTreeView.result.page.directoryPathHex,
+      repositoryTreeView.result.page.nextAfterNameHex,
+    );
+  }
+
   async function loadDeepMap(): Promise<void> {
     try {
       const response = await deepMapStatusLoader();
@@ -276,6 +396,8 @@
       if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
         moduleCardFreshnessView = { kind: 'noProject' };
+        repositoryTreeView = { kind: 'noProject' };
+        repositoryTreeBreadcrumbs = [];
       }
     } catch {
       projectStatusView = { kind: 'error' };
@@ -287,6 +409,7 @@
       loadProjectStatus(),
       loadIndexOverview(),
       loadModuleCardFreshness(),
+      loadRepositoryTreeRoot(),
       loadDeepMap(),
     ]);
   }
@@ -313,6 +436,7 @@
         await loadIndexActivity();
         await loadIndexOverview();
         await loadModuleCardFreshness();
+        await loadRepositoryTreeRoot();
         await loadDeepMap();
         await loadRecentProjects();
       } else {
@@ -379,6 +503,8 @@
       indexActivityView = { kind: 'noProject' };
       indexOverviewView = { kind: 'noProject' };
       moduleCardFreshnessView = { kind: 'noProject' };
+      repositoryTreeView = { kind: 'noProject' };
+      repositoryTreeBreadcrumbs = [];
       deepMapView = { kind: 'noProject' };
       deepMapActionView = { kind: 'idle' };
       deepMapBudgetProfile = null;
@@ -770,6 +896,86 @@
             <div class="recent-projects-error" role="alert">
               <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadIndexOverview}>Indexübersicht erneut laden</button>
+            </div>
+          {/if}
+        </div>
+        <div class="repository-tree-panel" aria-labelledby="repository-tree-heading">
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="repository-tree-heading">Repository-Baum</h4>
+              <p>Direkte Kinder des veröffentlichten Index, progressiv und ohne Vollbaum-Ladung.</p>
+            </div>
+            <button type="button" onclick={loadRepositoryTreeRoot}>Zum Root</button>
+          </div>
+          {#if repositoryTreeView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Repository-Baum wird gelesen …
+            </p>
+          {:else if repositoryTreeView.kind === 'noPublishedIndex'}
+            <p class="project-status">
+              Noch kein vollständiger Snapshot veröffentlicht; der Repository-Baum bleibt leer.
+            </p>
+          {:else if repositoryTreeView.kind === 'available'}
+            <p class="index-snapshot">
+              Indexlauf <code>{repositoryTreeView.result.page.indexRunId}</code>
+            </p>
+            <nav class="repository-tree-breadcrumbs" aria-label="Repository-Pfad">
+              <button type="button" onclick={() => openRepositoryBreadcrumb(-1)}>Repository</button>
+              {#each repositoryTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.pathHex)}
+                <span aria-hidden="true">/</span>
+                <button
+                  type="button"
+                  aria-current={breadcrumbIndex === repositoryTreeBreadcrumbs.length - 1
+                    ? 'page'
+                    : undefined}
+                  onclick={() => openRepositoryBreadcrumb(breadcrumbIndex)}
+                >
+                  {breadcrumb.name}
+                </button>
+              {/each}
+            </nav>
+            {#if repositoryTreeView.result.page.entries.length === 0}
+              <p class="ready-label">Keine weiteren indexierten Einträge in diesem Bereich.</p>
+            {:else}
+              <ul class="repository-tree-entries">
+                {#each repositoryTreeView.result.page.entries as entry (entry.pathHex)}
+                  <li>
+                    {#if entry.kind === 'directory'}
+                      <button
+                        class="repository-directory"
+                        type="button"
+                        aria-label={`Verzeichnis ${entry.name} öffnen`}
+                        onclick={() => openRepositoryDirectory(entry)}
+                      >
+                        <span aria-hidden="true">▸</span>
+                        <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
+                      </button>
+                      <span>{countLabel(entry.descendantFileCount)} Dateien</span>
+                    {:else}
+                      <div class="repository-file">
+                        <span aria-hidden="true">·</span>
+                        <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
+                      </div>
+                      <span>Revision {entry.contentHash?.slice(0, 12)}</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if repositoryTreeView.result.page.nextAfterNameHex !== null}
+              <button
+                class="repository-tree-more"
+                type="button"
+                disabled={repositoryTreeLoadingMore}
+                onclick={loadMoreRepositoryEntries}
+              >
+                {repositoryTreeLoadingMore ? 'Weitere Einträge werden geladen …' : 'Weitere laden'}
+              </button>
+            {/if}
+          {:else if repositoryTreeView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der Repository-Baum konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={loadRepositoryTreeRoot}>Vom Root neu laden</button>
             </div>
           {/if}
         </div>
