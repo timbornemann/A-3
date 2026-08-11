@@ -48,6 +48,12 @@ Der Scheduler emittiert typisierte Ereignisse für `Queued`, `Started`, `Progres
 
 ## Ownership und Shutdown
 
+Der Desktop-Fast-Index konkretisiert den determinierten Fortschritt auf sechs feste Phasengrenzen:
+`Discover`, `Hash`, `Parse`, `Link`, `Rank` und `Publish`. Der besitzende Koordinator projiziert nur
+Lifecycle, aktuelle Phase und `completed/6` in einen kleinen Mutex-geschützten Read-State.
+`query_index_activity` liest ausschließlich diesen Zustand; Polling rekonstruiert weder den Index,
+misst Storage noch liest es Repositorydateien. Der Scheduler bleibt alleiniger Besitzer des Jobs.
+
 Der Scheduler besitzt jeden Worker-Thread und akzeptiert nach Beginn des Shutdowns keine Arbeit mehr. `Drain` beendet die Queue kontrolliert und wartet anschließend auf alle Worker. `CancelAndWait` fordert zusätzlich für alle aktiven Jobs Cancellation an und wartet ebenfalls auf alle Worker. Der Destruktor verwendet als Sicherheitsnetz `CancelAndWait`; es gibt keinen detached Worker-Pfad.
 
 Der Shutdown-Report enthält die Anzahl gejointer Worker, geordnete finale Job-Snapshots und noch nicht konsumierte Ereignisse. Ein Panic innerhalb einer Aufgabe wird an einer Laufzeitgrenze abgefangen und als `Failed` abgeschlossen; ein Panic außerhalb dieser Grenze wird als Shutdown-Fehler gemeldet.

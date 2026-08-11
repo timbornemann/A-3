@@ -253,6 +253,29 @@ h1 {
   font-size: 0.85rem;
 }
 
+.index-progress {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgb(20 105 78 / 18%);
+  border-radius: 1rem;
+  background: #eef7f2;
+}
+
+.index-progress h4,
+.index-progress p {
+  margin: 0;
+}
+
+.index-progress p + progress,
+.index-progress progress + p {
+  margin-top: 0.7rem;
+}
+
+.index-progress progress {
+  width: 100%;
+  accent-color: #14694e;
+}
+
 .project-maintenance {
   margin-top: 1rem;
   padding: 1rem;

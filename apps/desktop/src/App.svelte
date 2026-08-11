@@ -2,6 +2,12 @@
   import { onMount } from 'svelte';
   import { projectActionRecoveryMessage, projectOpenRecoveryMessage } from './lib/command-error';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
+  import {
+    queryIndexActivity,
+    type IndexActivityResponseV1,
+    type IndexActivityStateV1,
+    type IndexPhaseV1,
+  } from './lib/index-activity';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
@@ -19,6 +25,7 @@
 
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
+    indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
@@ -39,6 +46,11 @@
     | { kind: 'noProject' }
     | { kind: 'active'; result: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
+  type IndexActivityView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'active'; result: Extract<IndexActivityResponseV1['result'], { status: 'active' }> }
+    | { kind: 'error' };
   type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
   type RemovalView =
     | { kind: 'idle' }
@@ -51,6 +63,7 @@
 
   let {
     healthLoader = queryHealth,
+    indexActivityLoader = queryIndexActivity,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
@@ -60,6 +73,7 @@
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
+  let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let rebuildView = $state<RebuildView>({ kind: 'idle' });
   let removalView = $state<RemovalView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
@@ -78,7 +92,24 @@
     void loadHealth();
     void loadProjectStatus();
     void loadRecentProjects();
+    void loadIndexActivity();
+    const activityTimer = window.setInterval(() => {
+      void loadIndexActivity();
+    }, 500);
+    return () => window.clearInterval(activityTimer);
   });
+
+  async function loadIndexActivity(): Promise<void> {
+    try {
+      const response = await indexActivityLoader();
+      indexActivityView =
+        response.result.status === 'active'
+          ? { kind: 'active', result: response.result }
+          : { kind: 'noProject' };
+    } catch {
+      indexActivityView = { kind: 'error' };
+    }
+  }
 
   async function loadProjectStatus(): Promise<void> {
     projectStatusView = { kind: 'loading' };
@@ -111,6 +142,7 @@
         projectView = { kind: 'opened' };
         removalView = { kind: 'idle' };
         await loadProjectStatus();
+        await loadIndexActivity();
         await loadRecentProjects();
       } else {
         projectView = { kind: 'cancelled' };
@@ -149,6 +181,7 @@
       removalView = { kind: 'removed' };
       projectView = { kind: 'idle' };
       projectStatusView = { kind: 'noProject' };
+      indexActivityView = { kind: 'noProject' };
       await loadRecentProjects();
     } catch (error) {
       removalView = {
@@ -194,6 +227,31 @@
       cancelled: 'Rebuild abgebrochen',
     } as const;
     return labels[state];
+  }
+
+  function indexActivityStateLabel(state: IndexActivityStateV1): string {
+    const labels: Record<IndexActivityStateV1, string> = {
+      idle: 'Noch kein Lauf in dieser Sitzung',
+      queued: 'Indexlauf wartet auf einen Worker',
+      running: 'Fast Index läuft',
+      cancelling: 'Indexlauf wird kontrolliert beendet',
+      succeeded: 'Fast Index abgeschlossen',
+      failed: 'Indexlauf fehlgeschlagen; veröffentlichter Snapshot bleibt lesbar',
+      cancelled: 'Indexlauf abgebrochen; veröffentlichter Snapshot bleibt lesbar',
+    };
+    return labels[state];
+  }
+
+  function indexPhaseLabel(phase: IndexPhaseV1): string {
+    const labels: Record<IndexPhaseV1, string> = {
+      discover: 'Dateien ermitteln',
+      hash: 'Inhalte hashen',
+      parse: 'Quellcode parsen',
+      link: 'Beziehungen verknüpfen',
+      rank: 'Symbole und Module gewichten',
+      publish: 'Snapshot atomar veröffentlichen',
+    };
+    return labels[phase];
   }
 </script>
 
@@ -304,6 +362,16 @@
             <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
           </div>
           <div>
+            <dt>Aktueller Indexlauf</dt>
+            {#if indexActivityView.kind === 'active'}
+              <dd>{indexActivityStateLabel(indexActivityView.result.activity.state)}</dd>
+            {:else if indexActivityView.kind === 'loading'}
+              <dd>Wird geladen …</dd>
+            {:else}
+              <dd>Nicht verfügbar</dd>
+            {/if}
+          </div>
+          <div>
             <dt>A^3-Speicher</dt>
             <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
           </div>
@@ -319,6 +387,31 @@
             {/if}
           </div>
         </dl>
+        {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
+          <div class="index-progress" aria-labelledby="index-progress-heading">
+            <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
+            <p role="status" aria-live="polite">
+              {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
+                Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
+                {indexPhaseLabel(indexActivityView.result.activity.phase)}
+              {:else}
+                Phase {indexActivityView.result.activity.completedPhases + 1} von
+                {indexActivityView.result.activity.totalPhases}:
+                {indexPhaseLabel(indexActivityView.result.activity.phase)}
+              {/if}
+            </p>
+            <progress
+              aria-label="Fast-Index-Fortschritt"
+              max={indexActivityView.result.activity.totalPhases}
+              value={indexActivityView.result.activity.completedPhases}
+            ></progress>
+            {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
+              <p>
+                Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs vollständig lesbar.
+              </p>
+            {/if}
+          </div>
+        {/if}
         <div class="project-maintenance" aria-labelledby="rebuild-heading">
           <h4 id="rebuild-heading">Index neu aufbauen</h4>
           <p>

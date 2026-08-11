@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
+import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
@@ -64,6 +65,19 @@ const queuedRebuildStatus: ProjectStatusResponseV1 = {
   result: { ...activeProjectResult, rebuildState: 'queued' },
 };
 
+const runningIndexActivity: IndexActivityResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    activity: {
+      completedPhases: 3,
+      phase: 'link',
+      state: 'running',
+      totalPhases: 6,
+    },
+    status: 'active',
+  },
+};
+
 const removedProject: RemoveProjectResponseV1 = {
   protocolVersion: 1,
   result: { retainedPrivateStorage: true, status: 'removed' },
@@ -99,6 +113,28 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('0.1.0')).toBeTruthy();
     expect(screen.getByText('V1')).toBeTruthy();
     expect(screen.getByText('windows')).toBeTruthy();
+  });
+
+  it('shows live Fast-Index phase progress while keeping the published snapshot readable', async () => {
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        indexActivityLoader: async () => runningIndexActivity,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByText('Phase 4 von 6: Beziehungen verknüpfen')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs vollständig lesbar.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole('progressbar', { name: 'Fast-Index-Fortschritt' })).toHaveProperty(
+      'value',
+      3,
+    );
   });
 
   it('shows a safe error and supports retry', async () => {

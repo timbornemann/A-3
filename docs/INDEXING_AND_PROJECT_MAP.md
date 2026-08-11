@@ -551,6 +551,14 @@ begrenzte Jobqueue. Backpressure wird in einen Full Rescan umgewandelt; Cancella
 laufen über den Job-Kontext. Projektwechsel und Shutdown beenden den Watcher, canceln einen aktiven
 Job kooperativ und joinen alle besitzenden Threads.
 
+Für U3 meldet derselbe Application-Control-Vertrag die sechs ADR-0006-Phasen als monotone
+`0/6` bis `6/6`-Grenzen. Snapshot-Discovery und Hashing sowie Compiler-Parse, Link und Rank werden
+am jeweiligen inneren Port auf die end-to-end Phasen abgebildet; rohe untergeordnete Totals werden
+nicht in denselben Schedulerjob gemischt. Der Desktop stellt die aktuelle Phase über eine
+leichtgewichtige, pfadlose V1-Statusabfrage dar. Vor dem atomaren Publish ersetzen laufende,
+fehlgeschlagene oder abgebrochene Builds den letzten publizierten Index nicht, sodass dessen
+Snapshot parallel weiter lesbar bleibt.
+
 ~~~mermaid
 flowchart TD
     Change["Bestätigtes Change Set"]

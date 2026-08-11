@@ -3,6 +3,7 @@
 mod error;
 mod goal_contract;
 mod health;
+mod index_activity;
 mod project;
 mod project_rebuild;
 mod project_removal;
@@ -13,6 +14,10 @@ mod version;
 pub use error::{CommandErrorV1, ErrorCodeV1};
 pub use goal_contract::{AcceptanceCriterionV1, GoalContractDraftV1, GoalContractV1};
 pub use health::{HealthRequestV1, HealthResponseV1, HealthStatusV1, PlatformV1};
+pub use index_activity::{
+    IndexActivityResponseV1, IndexActivityResultV1, IndexActivityStateV1, IndexActivityV1,
+    IndexPhaseV1, QueryIndexActivityRequestV1,
+};
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };

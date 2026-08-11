@@ -14,7 +14,7 @@ use a3_application::{
     IndexRunIdFactory, IndexRunIdFactoryFailure, LanguageAdapter, LanguageParseControl,
     LanguageParseControlError, LanguageParseFailure, LanguageParseInput, LanguageParsePolicy,
     RepositoryIndexCompilation, RepositoryIndexCompiler, RepositoryIndexCompilerFailure,
-    RepositoryIndexControl, RepositoryIndexMode, SnapshotCompatibility,
+    RepositoryIndexControl, RepositoryIndexMode, RepositoryIndexPhase, SnapshotCompatibility,
 };
 use a3_domain::{
     DiscoveredFileRole, DiscoveryResult, FileRevision, IndexLanguage, IndexPublication, IndexRunId,
@@ -136,7 +136,7 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     ) -> Result<RepositoryIndexCompilation, RepositoryIndexCompilerFailure> {
         let started = Instant::now();
         ensure_active(control, started)?;
-        report(control, 0)?;
+        report_phase(control, RepositoryIndexPhase::Parse)?;
         if snapshot.worktree_id() != project.worktree().id()
             || discovery.worktree_id() != project.worktree().id()
         {
@@ -217,9 +217,8 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
         if next_parses.len() != supported.len() || next_parses.keys().ne(supported.iter()) {
             return Err(RepositoryIndexCompilerFailure::InvalidResult);
         }
-        report(control, 2)?;
-
         let parses = next_parses.values().cloned().collect::<Vec<_>>();
+        report_phase(control, RepositoryIndexPhase::Link)?;
         let graph_control = CompilerGraphControl { inner: control };
         let graph = DeterministicGraphLinker
             .link(
@@ -229,7 +228,7 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
             )
             .map_err(map_link_failure)?;
         ensure_active(control, started)?;
-        report(control, 3)?;
+        report_phase(control, RepositoryIndexPhase::Rank)?;
         let ranking = DeterministicGraphRanker
             .rank(&graph, RankingPolicy::v1(), &graph_control)
             .map_err(map_rank_failure)?;
@@ -259,10 +258,8 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
                 &graph_control,
             )
             .map_err(map_module_failure)?;
-        report(control, 4)?;
         let publication = IndexPublication::new(graph, ranking, manifest_files, modules)
             .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
-        report(control, 5)?;
 
         self.cached_snapshot = Some(snapshot.id());
         self.parses = next_parses;
@@ -344,15 +341,12 @@ fn ensure_active(
     Ok(())
 }
 
-fn report(
+fn report_phase(
     control: &dyn RepositoryIndexControl,
-    completed: u64,
+    phase: RepositoryIndexPhase,
 ) -> Result<(), RepositoryIndexCompilerFailure> {
     control
-        .report_progress(
-            Progress::determinate(completed, 5)
-                .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?,
-        )
+        .report_phase(phase)
         .map_err(|_| RepositoryIndexCompilerFailure::ProgressUnavailable)
 }
 

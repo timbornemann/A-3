@@ -1,9 +1,9 @@
 use a3_application::{
     JobCompletion, JobEventStream, JobSchedulerSubmitError, JobSubmitter, KnowledgeIndexStore,
     RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
-    RepositoryIndexCompilerFailure, RepositoryRescanReason,
+    RepositoryIndexCompilerFailure, RepositoryIndexPhase, RepositoryRescanReason,
 };
-use a3_domain::{JobId, JobOwner, JobStatus, ProjectIdentity};
+use a3_domain::{JobId, JobOwner, JobStatus, Progress, ProjectIdentity};
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
     BuiltinIncrementalIndexCompilerCreateError, ParserPoolSize, ParserPoolSizeError,
@@ -23,6 +23,7 @@ const INDEX_JOB_OWNER: JobOwner = JobOwner::new(1);
 /// Owns active-project watching and translates bounded change batches into scheduler jobs.
 pub(crate) struct RepositoryIndexManager {
     commands: Sender<ManagerCommand>,
+    activity: Arc<Mutex<RepositoryIndexActivity>>,
     rebuild_state: Arc<Mutex<RepositoryIndexRebuildState>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -34,16 +35,26 @@ impl RepositoryIndexManager {
         store: Arc<dyn KnowledgeIndexStore>,
     ) -> Result<Self, RepositoryIndexManagerStartError> {
         let (commands, receiver) = bounded(2);
+        let activity = Arc::new(Mutex::new(RepositoryIndexActivity::idle()));
         let rebuild_state = Arc::new(Mutex::new(RepositoryIndexRebuildState::Idle));
+        let worker_activity = Arc::clone(&activity);
         let worker_rebuild_state = Arc::clone(&rebuild_state);
         let worker = thread::Builder::new()
             .name("a3-index-coordinator".to_owned())
             .spawn(move || {
-                coordinator_loop(submitter, events, store, receiver, worker_rebuild_state);
+                coordinator_loop(
+                    submitter,
+                    events,
+                    store,
+                    receiver,
+                    worker_activity,
+                    worker_rebuild_state,
+                );
             })
             .map_err(RepositoryIndexManagerStartError::WorkerSpawn)?;
         Ok(Self {
             commands,
+            activity,
             rebuild_state,
             worker: Some(worker),
         })
@@ -102,6 +113,10 @@ impl RepositoryIndexManager {
 
     pub(crate) fn rebuild_state(&self) -> RepositoryIndexRebuildState {
         *lock_recovering_poison(&self.rebuild_state)
+    }
+
+    pub(crate) fn activity(&self) -> RepositoryIndexActivity {
+        *lock_recovering_poison(&self.activity)
     }
 
     fn stop_and_join(&mut self) -> Result<(), RepositoryIndexManagerShutdownError> {
@@ -176,6 +191,7 @@ fn coordinator_loop(
     events: JobEventStream,
     store: Arc<dyn KnowledgeIndexStore>,
     commands: Receiver<ManagerCommand>,
+    activity: Arc<Mutex<RepositoryIndexActivity>>,
     rebuild_state: Arc<Mutex<RepositoryIndexRebuildState>>,
 ) {
     let refresh = Arc::new(RefreshRepositoryIndex::new(
@@ -190,7 +206,13 @@ fn coordinator_loop(
         while events.try_next().ok().flatten().is_some() {}
         match commands.try_recv() {
             Ok(command) => {
-                if handle_manager_command(command, &submitter, &mut active, &rebuild_state) {
+                if handle_manager_command(
+                    command,
+                    &submitter,
+                    &mut active,
+                    &activity,
+                    &rebuild_state,
+                ) {
                     return;
                 }
             }
@@ -200,7 +222,13 @@ fn coordinator_loop(
 
         let Some(state) = active.as_mut() else {
             if let Ok(command) = commands.recv_timeout(COORDINATOR_TICK)
-                && handle_manager_command(command, &submitter, &mut active, &rebuild_state)
+                && handle_manager_command(
+                    command,
+                    &submitter,
+                    &mut active,
+                    &activity,
+                    &rebuild_state,
+                )
             {
                 return;
             }
@@ -210,6 +238,9 @@ fn coordinator_loop(
         if let Some(job) = state.active_job
             && let Some(snapshot) = submitter.snapshot(job.id)
         {
+            if job.kind == ManagedJobKind::Refresh {
+                set_index_activity_from_job(&activity, snapshot.status(), snapshot.progress());
+            }
             if job.kind == ManagedJobKind::Rebuild && snapshot.status() == JobStatus::Running {
                 set_rebuild_state(&rebuild_state, RepositoryIndexRebuildState::Running);
             }
@@ -238,6 +269,7 @@ fn coordinator_loop(
 
         if state.deactivated {
             if state.active_job.is_none() {
+                set_index_activity(&activity, RepositoryIndexActivity::idle());
                 active = None;
             }
             thread::sleep(COORDINATOR_TICK);
@@ -307,6 +339,10 @@ fn coordinator_loop(
                 completion_for(result)
             }) {
                 Ok(()) => {
+                    set_index_activity(
+                        &activity,
+                        RepositoryIndexActivity::queued(RepositoryIndexPhase::Discover),
+                    );
                     state.active_job = Some(ManagedJob {
                         id: job_id,
                         kind: ManagedJobKind::Refresh,
@@ -325,6 +361,7 @@ fn handle_manager_command(
     command: ManagerCommand,
     submitter: &JobSubmitter,
     active: &mut Option<ActiveProject>,
+    activity: &Mutex<RepositoryIndexActivity>,
     rebuild_state: &Mutex<RepositoryIndexRebuildState>,
 ) -> bool {
     match command {
@@ -351,6 +388,7 @@ fn handle_manager_command(
                 watcher_failed: false,
                 deactivated: false,
             });
+            set_index_activity(activity, RepositoryIndexActivity::idle());
             set_rebuild_state(rebuild_state, RepositoryIndexRebuildState::Idle);
             false
         }
@@ -368,6 +406,9 @@ fn handle_manager_command(
                     state.pending_rebuild = false;
                     state.watcher_failed = true;
                     state.deactivated = true;
+                    if state.active_job.is_none() {
+                        set_index_activity(activity, RepositoryIndexActivity::idle());
+                    }
                     set_rebuild_state(rebuild_state, RepositoryIndexRebuildState::Idle);
                     match state.watcher.take() {
                         Some(watcher) => watcher
@@ -416,6 +457,7 @@ fn handle_manager_command(
                     let _shutdown = watcher.shutdown();
                 }
             }
+            set_index_activity(activity, RepositoryIndexActivity::idle());
             true
         }
     }
@@ -462,6 +504,54 @@ fn set_rebuild_state(
     *lock_recovering_poison(state) = value;
 }
 
+fn set_index_activity(state: &Mutex<RepositoryIndexActivity>, value: RepositoryIndexActivity) {
+    *lock_recovering_poison(state) = value;
+}
+
+fn set_index_activity_from_job(
+    state: &Mutex<RepositoryIndexActivity>,
+    status: JobStatus,
+    progress: Option<Progress>,
+) {
+    let previous = *lock_recovering_poison(state);
+    let (phase, completed) = match progress.and_then(index_phase_from_progress) {
+        Some(current) => current,
+        None => (previous.phase, previous.completed),
+    };
+    set_index_activity(
+        state,
+        RepositoryIndexActivity {
+            state: match status {
+                JobStatus::Queued => RepositoryIndexActivityState::Queued,
+                JobStatus::Running => RepositoryIndexActivityState::Running,
+                JobStatus::Cancelling => RepositoryIndexActivityState::Cancelling,
+                JobStatus::Succeeded => RepositoryIndexActivityState::Succeeded,
+                JobStatus::Failed => RepositoryIndexActivityState::Failed,
+                JobStatus::Cancelled => RepositoryIndexActivityState::Cancelled,
+            },
+            phase,
+            completed,
+        },
+    );
+}
+
+fn index_phase_from_progress(progress: Progress) -> Option<(Option<RepositoryIndexPhase>, u64)> {
+    let completed = progress.completed()?;
+    if progress.total() != Some(RepositoryIndexActivity::TOTAL_PHASES) {
+        return None;
+    }
+    let phase = match completed {
+        0 => RepositoryIndexPhase::Discover,
+        1 => RepositoryIndexPhase::Hash,
+        2 => RepositoryIndexPhase::Parse,
+        3 => RepositoryIndexPhase::Link,
+        4 => RepositoryIndexPhase::Rank,
+        5 | 6 => RepositoryIndexPhase::Publish,
+        _ => return None,
+    };
+    Some((Some(phase), completed))
+}
+
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -493,6 +583,56 @@ pub(crate) enum RepositoryIndexRebuildState {
     Idle,
     Queued,
     Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RepositoryIndexActivity {
+    state: RepositoryIndexActivityState,
+    phase: Option<RepositoryIndexPhase>,
+    completed: u64,
+}
+
+impl RepositoryIndexActivity {
+    pub(crate) const TOTAL_PHASES: u64 = 6;
+
+    pub(crate) const fn idle() -> Self {
+        Self {
+            state: RepositoryIndexActivityState::Idle,
+            phase: None,
+            completed: 0,
+        }
+    }
+
+    const fn queued(phase: RepositoryIndexPhase) -> Self {
+        Self {
+            state: RepositoryIndexActivityState::Queued,
+            phase: Some(phase),
+            completed: 0,
+        }
+    }
+
+    pub(crate) const fn state(self) -> RepositoryIndexActivityState {
+        self.state
+    }
+
+    pub(crate) const fn phase(self) -> Option<RepositoryIndexPhase> {
+        self.phase
+    }
+
+    pub(crate) const fn completed(self) -> u64 {
+        self.completed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepositoryIndexActivityState {
+    Idle,
+    Queued,
+    Running,
+    Cancelling,
     Succeeded,
     Failed,
     Cancelled,
@@ -574,11 +714,15 @@ impl Error for RepositoryIndexManagerShutdownError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagerCommand, ProjectActivation, RepositoryIndexDeactivationError,
-        RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState, handle_manager_command,
+        ManagerCommand, ProjectActivation, RepositoryIndexActivity, RepositoryIndexActivityState,
+        RepositoryIndexDeactivationError, RepositoryIndexRebuildRequestError,
+        RepositoryIndexRebuildState, handle_manager_command, set_index_activity_from_job,
     };
     use crate::clock::SystemJobClock;
-    use a3_application::{JobScheduler, JobSchedulerConfig, ProjectInspector, ShutdownMode};
+    use a3_application::{
+        JobScheduler, JobSchedulerConfig, ProjectInspector, RepositoryIndexPhase, ShutdownMode,
+    };
+    use a3_domain::{JobStatus, Progress};
     use a3_repo_index::{
         BuiltinIncrementalIndexCompiler, ParserPoolSize, PollingRepositoryWatcher,
         RepositoryWatcherConfig,
@@ -589,6 +733,42 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn refresh_activity_maps_only_the_fixed_six_phase_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let activity = Mutex::new(RepositoryIndexActivity::idle());
+
+        set_index_activity_from_job(
+            &activity,
+            JobStatus::Running,
+            Some(Progress::determinate(3, 6)?),
+        );
+        assert_eq!(
+            *activity
+                .lock()
+                .map_err(|_| std::io::Error::other("activity mutex was poisoned"))?,
+            RepositoryIndexActivity {
+                state: RepositoryIndexActivityState::Running,
+                phase: Some(RepositoryIndexPhase::Link),
+                completed: 3,
+            }
+        );
+
+        set_index_activity_from_job(
+            &activity,
+            JobStatus::Succeeded,
+            Some(Progress::determinate(6, 6)?),
+        );
+        assert_eq!(
+            activity
+                .lock()
+                .map_err(|_| std::io::Error::other("activity mutex was poisoned"))?
+                .state(),
+            RepositoryIndexActivityState::Succeeded
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rebuild_request_without_an_active_project_is_rejected_before_scheduling()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = JobSchedulerConfig::new(1, 1, 8)?;
@@ -596,12 +776,14 @@ mod tests {
         let submitter = scheduler.submitter()?;
         let (response, receiver) = bounded(1);
         let mut active = None;
+        let activity = Mutex::new(RepositoryIndexActivity::idle());
         let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
 
         assert!(!handle_manager_command(
             ManagerCommand::Rebuild(response),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
         assert_eq!(
@@ -627,12 +809,14 @@ mod tests {
         let submitter = scheduler.submitter()?;
         let (response, receiver) = bounded(1);
         let mut active = None;
+        let activity = Mutex::new(RepositoryIndexActivity::idle());
         let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
 
         assert!(!handle_manager_command(
             ManagerCommand::Deactivate(response),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
         assert_eq!(
@@ -664,12 +848,14 @@ mod tests {
             )?)?),
         };
         let mut active = None;
+        let activity = Mutex::new(RepositoryIndexActivity::idle());
         let rebuild_state = Mutex::new(RepositoryIndexRebuildState::Idle);
 
         assert!(!handle_manager_command(
             ManagerCommand::Activate(Box::new(activation)),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
         let (response, receiver) = bounded(1);
@@ -677,6 +863,7 @@ mod tests {
             ManagerCommand::Rebuild(response),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
 
@@ -693,6 +880,7 @@ mod tests {
             ManagerCommand::Deactivate(response),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
         assert_eq!(receiver.recv_timeout(Duration::from_secs(1))?, Ok(()));
@@ -704,6 +892,7 @@ mod tests {
             ManagerCommand::Rebuild(response),
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
         assert_eq!(
@@ -714,6 +903,7 @@ mod tests {
             ManagerCommand::Shutdown,
             &submitter,
             &mut active,
+            &activity,
             &rebuild_state,
         ));
 

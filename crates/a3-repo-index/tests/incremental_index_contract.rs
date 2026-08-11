@@ -5,7 +5,7 @@ mod support;
 use a3_application::{
     KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
     RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
-    RepositoryIndexControlError, RepositoryIndexMode, RepositoryRescanReason,
+    RepositoryIndexControlError, RepositoryIndexMode, RepositoryIndexPhase, RepositoryRescanReason,
 };
 use a3_domain::{
     ExactSearchPageSize, ExactSearchQuery, ExactSearchRole, ExactSearchTerm, IndexSchemaVersion,
@@ -27,6 +27,7 @@ use support::{TempDirectory, run_libsql_test};
 #[derive(Debug, Default)]
 struct RecordingControl {
     progress: Mutex<Vec<Progress>>,
+    phases: Mutex<Vec<RepositoryIndexPhase>>,
 }
 
 impl RepositoryIndexControl for RecordingControl {
@@ -40,6 +41,17 @@ impl RepositoryIndexControl for RecordingControl {
             .map_err(|_| RepositoryIndexControlError::Unavailable)?
             .push(progress);
         Ok(())
+    }
+
+    fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
+        self.phases
+            .lock()
+            .map_err(|_| RepositoryIndexControlError::Unavailable)?
+            .push(phase);
+        self.report_progress(
+            Progress::determinate(phase.completed_boundaries(), 6)
+                .map_err(|_| RepositoryIndexControlError::Unavailable)?,
+        )
     }
 }
 
@@ -132,6 +144,33 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
                 .all(|revision| revision.path().as_bytes() != b".env")
         );
         assert!(initial.published());
+        assert_eq!(
+            *control
+                .phases
+                .lock()
+                .map_err(|_| "phase recording lock was poisoned")?,
+            [
+                RepositoryIndexPhase::Discover,
+                RepositoryIndexPhase::Hash,
+                RepositoryIndexPhase::Parse,
+                RepositoryIndexPhase::Link,
+                RepositoryIndexPhase::Rank,
+                RepositoryIndexPhase::Publish,
+            ]
+        );
+        assert_eq!(
+            control
+                .progress
+                .lock()
+                .map_err(|_| "progress recording lock was poisoned")?
+                .iter()
+                .copied()
+                .map(|progress| (progress.completed(), progress.total()))
+                .collect::<Vec<_>>(),
+            (0..=6)
+                .map(|completed| (Some(completed), Some(6)))
+                .collect::<Vec<_>>()
+        );
 
         repository.write("src/alpha.rs", b"pub fn omega() -> u8 { 1 }\n")?;
         let changed = RepositoryPath::try_from_bytes(b"src/alpha.rs".to_vec())?;

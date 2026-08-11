@@ -20,6 +20,45 @@ pub trait RepositoryIndexControl: fmt::Debug + Send + Sync {
 
     /// Reports one monotone phase boundary for the complete refresh.
     fn report_progress(&self, progress: Progress) -> Result<(), RepositoryIndexControlError>;
+
+    /// Reports the current deterministic Fast-Index phase and its fixed six-phase progress.
+    fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
+        let progress = Progress::determinate(phase.completed_boundaries(), 6)
+            .map_err(|_| RepositoryIndexControlError::Unavailable)?;
+        self.report_progress(progress)
+    }
+}
+
+/// User-visible phase of the deterministic Fast Index defined by ADR-0006.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryIndexPhase {
+    /// Discover the bounded, ignore-filtered repository file set.
+    Discover,
+    /// Hash exact file contents into one immutable snapshot observation.
+    Hash,
+    /// Parse supported source and manifest files with pinned adapters.
+    Parse,
+    /// Resolve structural relationships into the snapshot graph.
+    Link,
+    /// Rank symbols and form deterministic module projections.
+    Rank,
+    /// Atomically replace the published read model.
+    Publish,
+}
+
+impl RepositoryIndexPhase {
+    /// Returns the number of phase boundaries completed when this phase begins.
+    #[must_use]
+    pub const fn completed_boundaries(self) -> u64 {
+        match self {
+            Self::Discover => 0,
+            Self::Hash => 1,
+            Self::Parse => 2,
+            Self::Link => 3,
+            Self::Rank => 4,
+            Self::Publish => 5,
+        }
+    }
 }
 
 impl RepositoryIndexControl for JobContext {
@@ -255,7 +294,9 @@ impl RefreshRepositoryIndex {
         compiler: &mut dyn RepositoryIndexCompiler,
         control: &dyn RepositoryIndexControl,
     ) -> Result<RepositoryIndexRefresh, RefreshRepositoryIndexError> {
-        report_phase(control, 0)?;
+        control
+            .report_phase(RepositoryIndexPhase::Discover)
+            .map_err(|_| RefreshRepositoryIndexError::ProgressUnavailable)?;
         ensure_active(control)?;
         let latest = self.store.latest_snapshot(project).await?;
         let files = self.store.current_file_state(project).await?;
@@ -277,7 +318,6 @@ impl RefreshRepositoryIndex {
         if created {
             self.store.append_snapshot(project, &snapshot).await?;
         }
-        report_phase(control, 1)?;
         ensure_active(control)?;
 
         let ranking_policy_version = compiler.ranking_policy_version();
@@ -329,15 +369,11 @@ impl RefreshRepositoryIndex {
                 return Err(error.into());
             }
         };
-        if let Err(error) = report_phase(control, 2) {
+        if control.report_phase(RepositoryIndexPhase::Publish).is_err() {
             finish_after_refresh_error(self.store.as_ref(), project, active_run, control).await?;
-            return Err(error);
+            return Err(RefreshRepositoryIndexError::ProgressUnavailable);
         }
         ensure_active_with_run(self.store.as_ref(), project, active_run, control).await?;
-        if let Err(error) = report_phase(control, 3) {
-            finish_after_refresh_error(self.store.as_ref(), project, active_run, control).await?;
-            return Err(error);
-        }
 
         if let Some(run_id) = active_run
             && let Err(error) = self
@@ -355,8 +391,6 @@ impl RefreshRepositoryIndex {
                 .await?;
             return Err(error.into());
         }
-        report_phase(control, 4)?;
-
         let published_index = self
             .store
             .latest_published_index(project, &muted)
@@ -365,6 +399,12 @@ impl RefreshRepositoryIndex {
         if published_index.run().snapshot_id() != snapshot.id() {
             return Err(RefreshRepositoryIndexError::InvalidBaseline);
         }
+        control
+            .report_progress(
+                Progress::determinate(6, 6)
+                    .map_err(|_| RefreshRepositoryIndexError::ProgressUnavailable)?,
+            )
+            .map_err(|_| RefreshRepositoryIndexError::ProgressUnavailable)?;
 
         Ok(RepositoryIndexRefresh {
             snapshot,
@@ -460,18 +500,6 @@ fn ensure_active(control: &dyn RepositoryIndexControl) -> Result<(), RefreshRepo
     Ok(())
 }
 
-fn report_phase(
-    control: &dyn RepositoryIndexControl,
-    completed: u64,
-) -> Result<(), RefreshRepositoryIndexError> {
-    control
-        .report_progress(
-            Progress::determinate(completed, 4)
-                .map_err(|_| RefreshRepositoryIndexError::ProgressUnavailable)?,
-        )
-        .map_err(|_| RefreshRepositoryIndexError::ProgressUnavailable)
-}
-
 #[derive(Debug)]
 struct MutedControl<'a> {
     inner: &'a dyn RepositoryIndexControl,
@@ -485,6 +513,19 @@ impl RepositorySnapshotControl for MutedControl<'_> {
     fn report_progress(&self, _progress: Progress) -> Result<(), RepositorySnapshotControlError> {
         Ok(())
     }
+
+    fn report_phase(
+        &self,
+        phase: crate::RepositorySnapshotPhase,
+    ) -> Result<(), RepositorySnapshotControlError> {
+        let phase = match phase {
+            crate::RepositorySnapshotPhase::Discover => return Ok(()),
+            crate::RepositorySnapshotPhase::Hash => RepositoryIndexPhase::Hash,
+        };
+        self.inner
+            .report_phase(phase)
+            .map_err(|_| RepositorySnapshotControlError::Unavailable)
+    }
 }
 
 impl RepositoryIndexControl for MutedControl<'_> {
@@ -494,6 +535,10 @@ impl RepositoryIndexControl for MutedControl<'_> {
 
     fn report_progress(&self, _progress: Progress) -> Result<(), RepositoryIndexControlError> {
         Ok(())
+    }
+
+    fn report_phase(&self, phase: RepositoryIndexPhase) -> Result<(), RepositoryIndexControlError> {
+        self.inner.report_phase(phase)
     }
 }
 

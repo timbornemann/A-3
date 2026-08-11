@@ -101,6 +101,7 @@ mod tests {
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::query_project_status,
+                a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_health,
                 a3_desktop::commands::rebuild_project_index,
                 a3_desktop::commands::remove_project

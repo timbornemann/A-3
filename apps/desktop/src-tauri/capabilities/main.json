@@ -6,6 +6,7 @@
   "permissions": [
     "allow-list-recent-projects",
     "allow-open-project",
+    "allow-query-index-activity",
     "allow-query-project-status",
     "allow-query-health",
     "allow-rebuild-project-index",

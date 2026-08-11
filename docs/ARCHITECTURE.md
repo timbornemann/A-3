@@ -242,6 +242,21 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    fehlgeschlagener oder abgebrochener Rebuild veröffentlicht keinen partiellen Indexzustand; der
    geschlossene Rebuildstatus bleibt über `query_project_status` sichtbar.
 
+### Live-Fortschritt des Fast Index
+
+1. `RepositoryIndexControl` bildet den vollständigen Refresh auf exakt sechs feste Phasen ab:
+   Discover, Hash, Parse, Link, Rank und atomisches Publish. Fortschritt hat immer das Total sechs
+   und läuft nicht rückwärts.
+2. Der `RepositoryIndexManager` liest nur den Scheduler-Snapshot seines eigenen Refresh-Jobs und
+   hält daraus Lifecycle, Phase und abgeschlossene Phasengrenzen. Worker- oder Scheduler-Handles
+   verlassen den Composition Root nicht.
+3. `query_index_activity` ist eine synchrone, pfad- und identitätslose V1-Abfrage dieses kleinen
+   in-memory Read Models. Sie öffnet weder Repository noch Datenbank und eignet sich deshalb für
+   500-ms-UI-Polling.
+4. Die UI zeigt den letzten publizierten Snapshot während Queued, Running und Cancelling weiterhin
+   als lesbar. Erst erfolgreiches Publish ändert die dauerhafte Sicht; Fehler und Cancellation
+   lassen sie unangetastet.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

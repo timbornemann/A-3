@@ -8,7 +8,7 @@ use a3_application::{
     RepositoryChangeBatch, RepositoryDiscoverer, RepositoryDiscoveryControl,
     RepositoryDiscoveryControlError, RepositoryDiscoveryFailure, RepositorySnapshotBuild,
     RepositorySnapshotBuilder, RepositorySnapshotControl, RepositorySnapshotFailure,
-    RepositorySnapshotPolicy, SnapshotBaseline, SnapshotCompatibility,
+    RepositorySnapshotPhase, RepositorySnapshotPolicy, SnapshotBaseline, SnapshotCompatibility,
 };
 use a3_domain::{
     DiscoveryPolicyVersion, GitHead, Snapshot, SnapshotDelta, SnapshotId, WorktreeGeneration,
@@ -78,6 +78,9 @@ impl Blake3RepositorySnapshotBuilder {
     ) -> Result<(RepositorySnapshotBuild, Vec<a3_domain::RepositoryPath>), RepositorySnapshotFailure>
     {
         ensure_active(control)?;
+        control
+            .report_phase(RepositorySnapshotPhase::Discover)
+            .map_err(|_| RepositorySnapshotFailure::ProgressUnavailable)?;
         report_indeterminate(control)?;
         validate_baseline(project, baseline)?;
         let repository = open_validated(project).map_err(map_repository_error)?;
@@ -94,6 +97,9 @@ impl Blake3RepositorySnapshotBuilder {
         {
             return Err(RepositorySnapshotFailure::IdentityMismatch);
         }
+        control
+            .report_phase(RepositorySnapshotPhase::Hash)
+            .map_err(|_| RepositorySnapshotFailure::ProgressUnavailable)?;
         let (files, hashed_paths) = match changes {
             Some(changes) => {
                 let result = hash_incremental_discovery(

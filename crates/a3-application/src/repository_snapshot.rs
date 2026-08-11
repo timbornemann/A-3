@@ -214,6 +214,23 @@ pub trait RepositorySnapshotControl: fmt::Debug + Send + Sync {
 
     /// Reports indeterminate discovery or determinate hashing progress.
     fn report_progress(&self, progress: Progress) -> Result<(), RepositorySnapshotControlError>;
+
+    /// Reports whether snapshot construction is discovering candidates or hashing contents.
+    fn report_phase(
+        &self,
+        _phase: RepositorySnapshotPhase,
+    ) -> Result<(), RepositorySnapshotControlError> {
+        Ok(())
+    }
+}
+
+/// Coarse snapshot phase mapped into the end-to-end Fast-Index lifecycle by its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositorySnapshotPhase {
+    /// Candidate discovery and ignore classification are running.
+    Discover,
+    /// Exact content hashing and coherent snapshot confirmation are running.
+    Hash,
 }
 
 impl RepositorySnapshotControl for JobContext {

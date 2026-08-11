@@ -243,13 +243,14 @@ pub use repository_index::{
     IndexRunIdFactory, IndexRunIdFactoryFailure, RefreshRepositoryIndex,
     RefreshRepositoryIndexError, RepositoryIndexCompilation, RepositoryIndexCompiler,
     RepositoryIndexCompilerFailure, RepositoryIndexControl, RepositoryIndexControlError,
-    RepositoryIndexMode, RepositoryIndexRefresh,
+    RepositoryIndexMode, RepositoryIndexPhase, RepositoryIndexRefresh,
 };
 pub use repository_snapshot::{
     IncrementalRepositorySnapshotBuild, IncrementalRepositorySnapshotBuilder,
     RepositorySnapshotBuild, RepositorySnapshotBuilder, RepositorySnapshotControl,
-    RepositorySnapshotControlError, RepositorySnapshotFailure, RepositorySnapshotPolicy,
-    SnapshotBaseline, SnapshotBaselineError, SnapshotCompatibility, SnapshotCompatibilityError,
+    RepositorySnapshotControlError, RepositorySnapshotFailure, RepositorySnapshotPhase,
+    RepositorySnapshotPolicy, SnapshotBaseline, SnapshotBaselineError, SnapshotCompatibility,
+    SnapshotCompatibilityError,
 };
 pub use repository_watcher::{
     RepositoryChangeBatch, RepositoryChangeBatchError, RepositoryRescanReason,

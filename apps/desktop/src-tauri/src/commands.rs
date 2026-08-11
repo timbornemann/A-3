@@ -1,7 +1,8 @@
 use crate::CompositionRoot;
 use a3_protocol::{
-    CommandErrorV1, HealthRequestV1, HealthResponseV1, ListRecentProjectsRequestV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
+    CommandErrorV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
+    ListRecentProjectsRequestV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryIndexActivityRequestV1,
     QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
     RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
 };
@@ -32,6 +33,15 @@ pub async fn query_project_status(
     root: State<'_, CompositionRoot>,
 ) -> Result<ProjectStatusResponseV1, CommandErrorV1> {
     execute_query_project_status(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns only the in-memory Fast-Index activity for responsive polling.
+pub fn query_index_activity(
+    request: QueryIndexActivityRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<IndexActivityResponseV1, CommandErrorV1> {
+    execute_query_index_activity(request, root.inner())
 }
 
 #[tauri::command]
@@ -105,6 +115,17 @@ async fn execute_query_project_status(
     root.query_project_status().await
 }
 
+fn execute_query_index_activity(
+    request: QueryIndexActivityRequestV1,
+    root: &CompositionRoot,
+) -> Result<IndexActivityResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    Ok(root.query_index_activity())
+}
+
 fn execute_rebuild_project_index(
     request: RebuildProjectIndexRequestV1,
     root: &CompositionRoot,
@@ -131,7 +152,8 @@ async fn execute_remove_project(
 mod tests {
     use super::{
         execute_list_recent_projects, execute_open_project, execute_query_health,
-        execute_query_project_status, execute_rebuild_project_index, execute_remove_project,
+        execute_query_index_activity, execute_query_project_status, execute_rebuild_project_index,
+        execute_remove_project,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -143,9 +165,9 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        ErrorCodeV1, HealthRequestV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
-        ProjectStatusResultV1, ProtocolVersion, QueryProjectStatusRequestV1,
-        RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, ListRecentProjectsRequestV1,
+        OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryIndexActivityRequestV1,
+        QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -301,6 +323,21 @@ mod tests {
         assert!(matches!(
             response.result(),
             ProjectStatusResultV1::NoProject
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn index_activity_is_pathless_and_reports_no_project_before_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let response = execute_query_index_activity(QueryIndexActivityRequestV1::current(), &root)
+            .map_err(|error| std::io::Error::other(error.message()))?;
+
+        assert!(matches!(
+            response.result(),
+            IndexActivityResultV1::NoProject
         ));
         Ok(())
     }

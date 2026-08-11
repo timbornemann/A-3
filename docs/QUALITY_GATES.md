@@ -30,6 +30,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Removal-Adaptertests müssen Linked Worktrees, private `knowledge.db`, stabile `ProjectId` und
   Repositoryinhalte erhalten. Fehler-Components dürfen nur bekannte `CommandErrorV1`-Codes auf
   feste Recovery-Schritte abbilden und niemals rohe Adapterdetails darstellen.
+- Der U3-Fast-Index-Fortschrittscontract prüft die exakte monotone Reihenfolge Discover, Hash,
+  Parse, Link, Rank und Publish mit festem Total sechs. Der pfadlose
+  `query_index_activity`-Contract darf nur das in-memory Manager-Read-Model liefern; TypeScript
+  lehnt unbekannte Felder, fremde Phasen, widersprüchliche Ordinale und falsche Completion ab. Der
+  Component-Test hält den letzten publizierten Snapshot während eines laufenden Jobs sichtbar.
 
 ### Persistenz
 

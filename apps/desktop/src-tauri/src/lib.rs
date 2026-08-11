@@ -24,7 +24,8 @@ use a3_domain::{
     ProjectId, ProjectIdentity,
 };
 use a3_protocol::{
-    CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexStateV1, OpenProjectResponseV1,
+    CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexActivityStateV1, IndexActivityV1, IndexPhaseV1, IndexStateV1, OpenProjectResponseV1,
     PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
     RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
     RecentProjectsResponseV1, RemoveProjectResponseV1,
@@ -38,8 +39,8 @@ use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
 use repository_index_manager::{
-    RepositoryIndexDeactivationError, RepositoryIndexManager, RepositoryIndexRebuildRequestError,
-    RepositoryIndexRebuildState,
+    RepositoryIndexActivity, RepositoryIndexActivityState, RepositoryIndexDeactivationError,
+    RepositoryIndexManager, RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
 };
 use std::error::Error;
 use std::fmt;
@@ -177,6 +178,19 @@ impl CompositionRoot {
                     map_rebuild_state_to_v1(manager.rebuild_state())
                 }),
         ))
+    }
+
+    /// Returns a non-blocking in-memory Fast-Index activity snapshot for the active project.
+    #[must_use]
+    pub fn query_index_activity(&self) -> IndexActivityResponseV1 {
+        if lock_recovering_poison(&self.active_project).is_none() {
+            return IndexActivityResponseV1::no_project();
+        }
+        let activity = self.index_manager.as_ref().map_or_else(
+            RepositoryIndexActivity::idle,
+            RepositoryIndexManager::activity,
+        );
+        IndexActivityResponseV1::active(map_index_activity_to_v1(activity))
     }
 
     /// Queues a bounded rebuild for the Core-owned active project.
@@ -429,6 +443,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::list_recent_projects,
             commands::open_project,
             commands::query_project_status,
+            commands::query_index_activity,
             commands::query_health,
             commands::rebuild_project_index,
             commands::remove_project
@@ -510,6 +525,30 @@ fn map_project_index_status_to_v1(status: ProjectIndexStatus) -> ProjectIndexSta
         status
             .published_snapshot_id()
             .map(|snapshot_id| snapshot_id.to_string()),
+    )
+}
+
+fn map_index_activity_to_v1(activity: RepositoryIndexActivity) -> IndexActivityV1 {
+    IndexActivityV1::new(
+        match activity.state() {
+            RepositoryIndexActivityState::Idle => IndexActivityStateV1::Idle,
+            RepositoryIndexActivityState::Queued => IndexActivityStateV1::Queued,
+            RepositoryIndexActivityState::Running => IndexActivityStateV1::Running,
+            RepositoryIndexActivityState::Cancelling => IndexActivityStateV1::Cancelling,
+            RepositoryIndexActivityState::Succeeded => IndexActivityStateV1::Succeeded,
+            RepositoryIndexActivityState::Failed => IndexActivityStateV1::Failed,
+            RepositoryIndexActivityState::Cancelled => IndexActivityStateV1::Cancelled,
+        },
+        activity.phase().map(|phase| match phase {
+            a3_application::RepositoryIndexPhase::Discover => IndexPhaseV1::Discover,
+            a3_application::RepositoryIndexPhase::Hash => IndexPhaseV1::Hash,
+            a3_application::RepositoryIndexPhase::Parse => IndexPhaseV1::Parse,
+            a3_application::RepositoryIndexPhase::Link => IndexPhaseV1::Link,
+            a3_application::RepositoryIndexPhase::Rank => IndexPhaseV1::Rank,
+            a3_application::RepositoryIndexPhase::Publish => IndexPhaseV1::Publish,
+        }),
+        activity.completed(),
+        RepositoryIndexActivity::TOTAL_PHASES,
     )
 }
 
