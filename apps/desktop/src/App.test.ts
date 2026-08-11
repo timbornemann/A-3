@@ -7,6 +7,7 @@ import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
 import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
 import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-graph';
+import type { ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1 } from './lib/module-runtime';
 import type { ModuleTreeResponseV1 } from './lib/module-tree';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
@@ -291,6 +292,106 @@ const moduleDependencyGraph: ModuleDependencyGraphResponseV1 = {
   },
 };
 
+const moduleRuntimeMap: ModuleRuntimeMapResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    map: {
+      entrypoints: {
+        projectionTruncated: false,
+        roots: [
+          {
+            kind: 'entrypoint',
+            rank: 1,
+            symbol: {
+              contentHash: '8'.repeat(64),
+              evidenceId: '1'.repeat(64),
+              name: 'main',
+              pathHex: '7372632f6c69622e7273',
+              selectionRange: {
+                end: { column: 4, row: 0 },
+                endByte: 4,
+                start: { column: 0, row: 0 },
+                startByte: 0,
+              },
+              symbolId: 'd'.repeat(64),
+              symbolKind: 'function',
+            },
+          },
+        ],
+        storedCount: '1',
+        visibleTruncated: false,
+      },
+      indexRunId: '6'.repeat(64),
+      moduleId: 'a'.repeat(64),
+      snapshotId: '4'.repeat(64),
+      tests: {
+        projectionTruncated: false,
+        roots: [],
+        storedCount: '0',
+        visibleTruncated: false,
+      },
+    },
+    status: 'available',
+  },
+};
+
+const moduleRuntimeFlow: ModuleRuntimeFlowResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    flow: {
+      hits: [
+        {
+          path: [
+            {
+              evidence: {
+                confidenceBasisPoints: 10_000,
+                contentHash: '8'.repeat(64),
+                evidenceId: 'c'.repeat(64),
+                pathHex: '7372632f6c69622e7273',
+                provider: 'treeSitter',
+                range: {
+                  end: { column: 8, row: 1 },
+                  endByte: 16,
+                  start: { column: 0, row: 1 },
+                  startByte: 8,
+                },
+                resolution: 'adapterLocalSymbol',
+                source: { kind: 'symbol', symbolId: 'd'.repeat(64) },
+                target: { kind: 'symbol', symbolId: 'e'.repeat(64) },
+              },
+              relation: 'calls',
+            },
+          ],
+          target: {
+            kind: 'symbol',
+            symbol: {
+              contentHash: '8'.repeat(64),
+              evidenceId: '2'.repeat(64),
+              name: 'run',
+              pathHex: '7372632f6c69622e7273',
+              selectionRange: {
+                end: { column: 7, row: 2 },
+                endByte: 24,
+                start: { column: 4, row: 2 },
+                startByte: 21,
+              },
+              symbolId: 'e'.repeat(64),
+              symbolKind: 'function',
+            },
+          },
+        },
+      ],
+      indexRunId: '6'.repeat(64),
+      kind: 'entrypointCalls',
+      moduleId: 'a'.repeat(64),
+      rootSymbolId: 'd'.repeat(64),
+      snapshotId: '4'.repeat(64),
+      truncated: false,
+    },
+    status: 'available',
+  },
+};
+
 const repositoryTreeRoot: RepositoryTreeResponseV1 = {
   protocolVersion: 1,
   result: {
@@ -549,6 +650,92 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
     expect(screen.getByText('c'.repeat(64))).toBeTruthy();
     expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
+  });
+
+  it('loads runtime roots only after selection and traces a publication-bound evidence path', async () => {
+    const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
+    const moduleRuntimeFlowLoader = vi.fn(async () => moduleRuntimeFlow);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleRuntimeFlowLoader,
+        moduleRuntimeMapLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Entry Points & Tests' })).toBeTruthy();
+    expect(moduleRuntimeMapLoader).not.toHaveBeenCalled();
+    expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
+    await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1));
+    expect(moduleRuntimeMapLoader).toHaveBeenCalledWith({
+      entrypointLimit: 20,
+      moduleId: 'a'.repeat(64),
+      testLimit: 20,
+    });
+    expect(await screen.findByText(/Strukturelle Beobachtung/)).toBeTruthy();
+    expect(screen.getByText('main')).toBeTruthy();
+    expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+    );
+    await waitFor(() => expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1));
+    expect(moduleRuntimeFlowLoader).toHaveBeenCalledWith({
+      expectedIndexRunId: '6'.repeat(64),
+      expectedSnapshotId: '4'.repeat(64),
+      kind: 'entrypointCalls',
+      moduleId: 'a'.repeat(64),
+      resultLimit: 20,
+      rootSymbolId: 'd'.repeat(64),
+    });
+    expect(await screen.findByText('run')).toBeTruthy();
+    expect(screen.getByText(/Schritt 1: beobachteter Aufruf/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Kanten-Evidence' }));
+    expect(await screen.findByRole('heading', { name: 'Graph-Kanten-Evidence' })).toBeTruthy();
+    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+    expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1);
+    expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides stale runtime roots and evidence after a publication switch', async () => {
+    const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
+    const moduleRuntimeFlowLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'publicationChanged' as const },
+    }));
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleRuntimeFlowLoader,
+        moduleRuntimeMapLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+    );
+
+    expect(await screen.findByText(/Root-Liste ist nicht mehr verifizierbar/)).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+    ).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Symbol-Evidence' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Roots neu laden' }));
+    await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+    ).toBeTruthy();
   });
 
   it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {

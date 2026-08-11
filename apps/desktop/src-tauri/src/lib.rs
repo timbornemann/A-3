@@ -12,33 +12,40 @@ mod repository_index_manager;
 
 use a3_application::{
     DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
-    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
-    GetRepositoryTreePage, HealthQuery, IndexPersistenceControl, IndexPersistenceControlError,
-    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
-    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, ModuleCardFreshness,
-    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
-    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
-    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
-    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
-    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
-    ModuleDependencyRelation, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
-    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
-    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
-    OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
-    ProjectIndexStatus, ProjectInspectionFailure, ProjectReconciliationConfirmer,
-    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
-    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
-    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
-    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
-    RepositoryTreeQuery, RepositoryTreeStore,
+    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
+    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
+    GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery, IndexPersistenceControl,
+    IndexPersistenceControlError, JobEventStream, JobScheduler, JobSchedulerConfig,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
+    ListRecentProjectsError, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
+    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
+    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
+    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
+    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
+    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
+    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
+    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
+    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
+    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
+    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
+    RecentProject, RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
+    RepositoryTreeStore, TraceModuleRuntimeFlow,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, ExploreBudget, FileRevision, GitHead,
-    GraphEndpoint, Health, IndexLanguage, IndexRunStatus, InvalidationReason, LinkResolution,
-    ModuleId, ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress,
-    ProjectId, ProjectIdentity, RepositoryPath, SyntaxProvider,
+    ApplicationVersion, ApplicationVersionError, ExactSearchTarget, ExploreBudget, FileRevision,
+    GitHead, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage,
+    IndexRunId, IndexRunStatus, InvalidationReason, LinkResolution, ModuleCardEvidenceId, ModuleId,
+    ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId,
+    ProjectIdentity, RepositoryPath, SnapshotId, SymbolId, SymbolKind, SyntaxProvider,
+    TraversalResultLimit,
 };
 use a3_protocol::{
     CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
@@ -53,12 +60,17 @@ use a3_protocol::{
     ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
     ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
     ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
+    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
+    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
+    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
     OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
     ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleTreeRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1,
-    RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
+    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
     RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
     RepositoryTreeResponseV1,
 };
@@ -97,6 +109,8 @@ pub struct CompositionRoot {
     index_overview: Option<GetPublishedIndexOverview>,
     module_card_freshness: Option<GetModuleCardFreshness>,
     module_dependency_graph: Option<GetModuleDependencyGraph>,
+    module_runtime_map: Option<GetModuleRuntimeMap>,
+    module_runtime_flow: Option<TraceModuleRuntimeFlow>,
     module_tree: Option<GetModuleTreePage>,
     repository_tree: Option<GetRepositoryTreePage>,
     project_storage: Option<GetProjectStorageUsage>,
@@ -374,6 +388,76 @@ impl CompositionRoot {
                         &graph,
                     ))
                 }
+            })
+    }
+
+    /// Returns bounded current entrypoint and test roots for one primary module.
+    pub async fn query_module_runtime_map(
+        &self,
+        query: &ModuleRuntimeMapQuery,
+    ) -> Result<ModuleRuntimeMapResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ModuleRuntimeMapResponseV1::no_project());
+        };
+        let Some(reader) = &self.module_runtime_map else {
+            return Ok(ModuleRuntimeMapResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_module_runtime_error_to_v1)
+            .map(|result| match result {
+                ModuleRuntimeMapLoadResult::NoPublishedIndex => {
+                    ModuleRuntimeMapResponseV1::no_published_index()
+                }
+                ModuleRuntimeMapLoadResult::ProjectionUnavailable => {
+                    ModuleRuntimeMapResponseV1::projection_unavailable()
+                }
+                ModuleRuntimeMapLoadResult::ModuleUnavailable => {
+                    ModuleRuntimeMapResponseV1::module_unavailable()
+                }
+                ModuleRuntimeMapLoadResult::Map(map) => {
+                    ModuleRuntimeMapResponseV1::available(map_module_runtime_map_to_v1(&map))
+                }
+            })
+    }
+
+    /// Traverses one fixed role-specific preset after revalidating the visible publication seed.
+    pub async fn query_module_runtime_flow(
+        &self,
+        query: &ModuleRuntimeFlowQuery,
+    ) -> Result<ModuleRuntimeFlowResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ModuleRuntimeFlowResponseV1::no_project());
+        };
+        let Some(reader) = &self.module_runtime_flow else {
+            return Ok(ModuleRuntimeFlowResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_module_runtime_error_to_v1)
+            .map(|result| match result {
+                ModuleRuntimeFlowLoadResult::NoPublishedIndex => {
+                    ModuleRuntimeFlowResponseV1::no_published_index()
+                }
+                ModuleRuntimeFlowLoadResult::ProjectionUnavailable => {
+                    ModuleRuntimeFlowResponseV1::projection_unavailable()
+                }
+                ModuleRuntimeFlowLoadResult::PublicationChanged => {
+                    ModuleRuntimeFlowResponseV1::publication_changed()
+                }
+                ModuleRuntimeFlowLoadResult::ModuleUnavailable => {
+                    ModuleRuntimeFlowResponseV1::module_unavailable()
+                }
+                ModuleRuntimeFlowLoadResult::RootUnavailable => {
+                    ModuleRuntimeFlowResponseV1::root_unavailable()
+                }
+                ModuleRuntimeFlowLoadResult::Flow(flow) => ModuleRuntimeFlowResponseV1::available(
+                    map_module_runtime_flow_to_v1(query, &flow),
+                ),
             })
     }
 
@@ -687,6 +771,29 @@ impl ModuleDependencyGraphControl for DesktopBoundedReadControl {
     }
 }
 
+impl ModuleRuntimeControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ModuleRuntimeControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ModuleRuntimeControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ModuleRuntimeControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ModuleRuntimeControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl DesktopProjectStorageControl {
     fn new() -> Self {
         Self {
@@ -722,6 +829,8 @@ struct OptionalCompositionPorts {
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
+    module_runtime_store: Option<Arc<dyn ModuleRuntimeStore>>,
+    knowledge_search_store: Option<Arc<dyn KnowledgeSearchStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
@@ -733,6 +842,8 @@ struct IndexingCompositionPorts {
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
     module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
+    module_runtime_store: Arc<dyn ModuleRuntimeStore>,
+    knowledge_search_store: Arc<dyn KnowledgeSearchStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
@@ -792,6 +903,8 @@ impl CompositionBase {
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
                 module_dependency_graph_store: Some(ports.module_dependency_graph_store),
+                module_runtime_store: Some(ports.module_runtime_store),
+                knowledge_search_store: Some(ports.knowledge_search_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
@@ -820,6 +933,14 @@ impl CompositionBase {
         let module_dependency_graph = ports
             .module_dependency_graph_store
             .map(GetModuleDependencyGraph::new);
+        let module_runtime_map = ports
+            .module_runtime_store
+            .clone()
+            .map(GetModuleRuntimeMap::new);
+        let module_runtime_flow = ports
+            .module_runtime_store
+            .zip(ports.knowledge_search_store)
+            .map(|(runtime, search)| TraceModuleRuntimeFlow::new(runtime, search));
         let module_tree = ports.module_tree_store.map(GetModuleTreePage::new);
         let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
@@ -867,6 +988,8 @@ impl CompositionBase {
             index_overview,
             module_card_freshness,
             module_dependency_graph,
+            module_runtime_map,
+            module_runtime_flow,
             module_tree,
             repository_tree,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
@@ -902,6 +1025,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
             let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
+            let module_runtime_store: Arc<dyn ModuleRuntimeStore> = store.clone();
+            let knowledge_search_store: Arc<dyn KnowledgeSearchStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
@@ -916,6 +1041,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     index_store,
                     module_card_freshness_store,
                     module_dependency_graph_store,
+                    module_runtime_store,
+                    knowledge_search_store,
                     module_tree_store,
                     repository_tree_store,
                     project_storage,
@@ -935,6 +1062,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_index_overview,
             commands::query_module_card_freshness,
             commands::query_module_dependency_graph,
+            commands::query_module_runtime_flow,
+            commands::query_module_runtime_map,
             commands::query_module_tree,
             commands::query_repository_tree,
             commands::query_health,
@@ -1387,10 +1516,234 @@ fn map_module_dependency_endpoint_to_v1(endpoint: &GraphEndpoint) -> ModuleDepen
     }
 }
 
+pub(crate) fn map_module_runtime_map_query_from_v1(
+    request: &QueryModuleRuntimeMapRequestV1,
+) -> Result<ModuleRuntimeMapQuery, CommandErrorV1> {
+    let module_id =
+        decode_module_id(request.module_id()).map_err(|()| invalid_module_runtime_map_query())?;
+    let entrypoint_limit = ModuleRuntimeRootLimit::new(request.entrypoint_limit())
+        .map_err(|_| invalid_module_runtime_map_query())?;
+    let test_limit = ModuleRuntimeRootLimit::new(request.test_limit())
+        .map_err(|_| invalid_module_runtime_map_query())?;
+    Ok(ModuleRuntimeMapQuery::new(
+        module_id,
+        entrypoint_limit,
+        test_limit,
+    ))
+}
+
+pub(crate) fn map_module_runtime_flow_query_from_v1(
+    request: &QueryModuleRuntimeFlowRequestV1,
+) -> Result<ModuleRuntimeFlowQuery, CommandErrorV1> {
+    let expected_index_run_id = decode_index_run_id(request.expected_index_run_id())
+        .map_err(|()| invalid_module_runtime_flow_query())?;
+    let expected_snapshot_id = decode_snapshot_id(request.expected_snapshot_id())
+        .map_err(|()| invalid_module_runtime_flow_query())?;
+    let module_id =
+        decode_module_id(request.module_id()).map_err(|()| invalid_module_runtime_flow_query())?;
+    let root_symbol_id = decode_symbol_id(request.root_symbol_id())
+        .map_err(|()| invalid_module_runtime_flow_query())?;
+    let kind = match request.kind() {
+        ModuleRuntimeFlowKindV1::EntrypointCalls => ModuleRuntimeFlowKind::EntrypointCalls,
+        ModuleRuntimeFlowKindV1::TestTargets => ModuleRuntimeFlowKind::TestTargets,
+    };
+    let result_limit = TraversalResultLimit::new(request.result_limit())
+        .map_err(|_| invalid_module_runtime_flow_query())?;
+    Ok(ModuleRuntimeFlowQuery::new(
+        expected_index_run_id,
+        expected_snapshot_id,
+        module_id,
+        root_symbol_id,
+        kind,
+        result_limit,
+    ))
+}
+
+fn map_module_runtime_map_to_v1(map: &ModuleRuntimeMap) -> ModuleRuntimeMapV1 {
+    ModuleRuntimeMapV1::new(
+        map.index_run_id().to_string(),
+        map.snapshot_id().to_string(),
+        map.module_id().to_string(),
+        map_module_runtime_root_set_to_v1(map.entrypoints()),
+        map_module_runtime_root_set_to_v1(map.tests()),
+    )
+}
+
+fn map_module_runtime_root_set_to_v1(set: &ModuleRuntimeRootSet) -> ModuleRuntimeRootSetV1 {
+    ModuleRuntimeRootSetV1::new(
+        set.roots()
+            .iter()
+            .map(map_module_runtime_root_to_v1)
+            .collect(),
+        set.stored_count().to_string(),
+        set.projection_truncated(),
+        set.visible_truncated(),
+    )
+}
+
+fn map_module_runtime_root_to_v1(root: &ModuleRuntimeRoot) -> ModuleRuntimeRootV1 {
+    ModuleRuntimeRootV1::new(
+        match root.kind() {
+            ModuleRuntimeRootKind::Entrypoint => ModuleRuntimeRootKindV1::Entrypoint,
+            ModuleRuntimeRootKind::Test => ModuleRuntimeRootKindV1::Test,
+        },
+        root.rank(),
+        map_module_runtime_symbol_to_v1(root.symbol()),
+    )
+}
+
+fn map_module_runtime_symbol_to_v1(symbol: &GraphSymbol) -> ModuleRuntimeSymbolV1 {
+    let range = symbol.parsed().selection_range();
+    let start = range.start_position();
+    let end = range.end_position();
+    ModuleRuntimeSymbolV1::new(
+        symbol.id().to_string(),
+        map_module_runtime_symbol_kind_to_v1(symbol.parsed().kind()),
+        symbol.parsed().name().as_str().to_owned(),
+        encode_hex(ModuleCardEvidenceId::for_symbol_v1(symbol).as_bytes()),
+        encode_hex(symbol.revision().path().as_bytes()),
+        encode_hex(symbol.revision().content_hash().as_bytes()),
+        ModuleDependencySourceRangeV1::new(
+            range.start_byte(),
+            range.end_byte(),
+            ModuleDependencySourcePositionV1::new(start.row(), start.column()),
+            ModuleDependencySourcePositionV1::new(end.row(), end.column()),
+        ),
+    )
+}
+
+const fn map_module_runtime_symbol_kind_to_v1(kind: SymbolKind) -> ModuleRuntimeSymbolKindV1 {
+    match kind {
+        SymbolKind::Module => ModuleRuntimeSymbolKindV1::Module,
+        SymbolKind::Namespace => ModuleRuntimeSymbolKindV1::Namespace,
+        SymbolKind::Function => ModuleRuntimeSymbolKindV1::Function,
+        SymbolKind::Method => ModuleRuntimeSymbolKindV1::Method,
+        SymbolKind::Struct => ModuleRuntimeSymbolKindV1::Struct,
+        SymbolKind::Enum => ModuleRuntimeSymbolKindV1::Enum,
+        SymbolKind::Trait => ModuleRuntimeSymbolKindV1::Trait,
+        SymbolKind::Interface => ModuleRuntimeSymbolKindV1::Interface,
+        SymbolKind::Class => ModuleRuntimeSymbolKindV1::Class,
+        SymbolKind::Implementation => ModuleRuntimeSymbolKindV1::Implementation,
+        SymbolKind::TypeAlias => ModuleRuntimeSymbolKindV1::TypeAlias,
+        SymbolKind::Constant => ModuleRuntimeSymbolKindV1::Constant,
+        SymbolKind::Static => ModuleRuntimeSymbolKindV1::Static,
+        SymbolKind::Variable => ModuleRuntimeSymbolKindV1::Variable,
+        SymbolKind::Field => ModuleRuntimeSymbolKindV1::Field,
+        SymbolKind::Variant => ModuleRuntimeSymbolKindV1::Variant,
+        SymbolKind::Parameter => ModuleRuntimeSymbolKindV1::Parameter,
+    }
+}
+
+fn map_module_runtime_flow_to_v1(
+    query: &ModuleRuntimeFlowQuery,
+    flow: &GraphTraversalResult,
+) -> ModuleRuntimeFlowV1 {
+    let kind = match query.kind() {
+        ModuleRuntimeFlowKind::EntrypointCalls => ModuleRuntimeFlowKindV1::EntrypointCalls,
+        ModuleRuntimeFlowKind::TestTargets => ModuleRuntimeFlowKindV1::TestTargets,
+    };
+    let relation = match query.kind() {
+        ModuleRuntimeFlowKind::EntrypointCalls => ModuleRuntimeFlowRelationV1::Calls,
+        ModuleRuntimeFlowKind::TestTargets => ModuleRuntimeFlowRelationV1::Tests,
+    };
+    ModuleRuntimeFlowV1::new(
+        flow.index_run_id().to_string(),
+        flow.snapshot_id().to_string(),
+        query.module_id().to_string(),
+        query.root_symbol_id().to_string(),
+        kind,
+        flow.hits()
+            .iter()
+            .map(|hit| {
+                let target = match hit.target() {
+                    ExactSearchTarget::File(revision) => ModuleRuntimeFlowTargetV1::File {
+                        evidence_id: encode_hex(
+                            ModuleCardEvidenceId::for_file_revision_v1(revision).as_bytes(),
+                        ),
+                        path_hex: encode_hex(revision.path().as_bytes()),
+                        content_hash: encode_hex(revision.content_hash().as_bytes()),
+                    },
+                    ExactSearchTarget::Symbol(symbol) => ModuleRuntimeFlowTargetV1::Symbol {
+                        symbol: map_module_runtime_symbol_to_v1(symbol.symbol()),
+                    },
+                };
+                ModuleRuntimeFlowHitV1::new(
+                    target,
+                    hit.path()
+                        .iter()
+                        .map(|edge| {
+                            ModuleRuntimeFlowEdgeV1::new(
+                                relation,
+                                map_graph_edge_evidence_to_v1(edge),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+        flow.truncated(),
+    )
+}
+
+fn map_graph_edge_evidence_to_v1(edge: &GraphEdge) -> ModuleDependencyEdgeEvidenceV1 {
+    let evidence = edge.evidence();
+    let range = evidence.range();
+    let start = range.start_position();
+    let end = range.end_position();
+    ModuleDependencyEdgeEvidenceV1::new(
+        encode_hex(ModuleCardEvidenceId::for_graph_edge_v1(edge).as_bytes()),
+        map_module_dependency_endpoint_to_v1(edge.source()),
+        map_module_dependency_endpoint_to_v1(edge.target()),
+        encode_hex(evidence.revision().path().as_bytes()),
+        encode_hex(evidence.revision().content_hash().as_bytes()),
+        ModuleDependencySourceRangeV1::new(
+            range.start_byte(),
+            range.end_byte(),
+            ModuleDependencySourcePositionV1::new(start.row(), start.column()),
+            ModuleDependencySourcePositionV1::new(end.row(), end.column()),
+        ),
+        match edge.provider() {
+            SyntaxProvider::TreeSitter => ModuleDependencyProviderV1::TreeSitter,
+            SyntaxProvider::Manifest => ModuleDependencyProviderV1::Manifest,
+            SyntaxProvider::LanguageHeuristic => ModuleDependencyProviderV1::LanguageHeuristic,
+        },
+        edge.confidence().basis_points(),
+        match edge.resolution() {
+            LinkResolution::AdapterLocalSymbol => ModuleDependencyResolutionV1::AdapterLocalSymbol,
+            LinkResolution::AdapterFile => ModuleDependencyResolutionV1::AdapterFile,
+            LinkResolution::ExactModuleReference => {
+                ModuleDependencyResolutionV1::ExactModuleReference
+            }
+            LinkResolution::UniqueFileLocalName => {
+                ModuleDependencyResolutionV1::UniqueFileLocalName
+            }
+            LinkResolution::UniqueQualifiedName => {
+                ModuleDependencyResolutionV1::UniqueQualifiedName
+            }
+        },
+    )
+}
+
 fn decode_module_id(value: &str) -> Result<ModuleId, ()> {
     let bytes = decode_hex(value, 32)?;
     let bytes = <[u8; 32]>::try_from(bytes).map_err(|_| ())?;
     Ok(ModuleId::from_bytes(bytes))
+}
+
+fn decode_index_run_id(value: &str) -> Result<IndexRunId, ()> {
+    decode_stable_id(value).map(IndexRunId::from_bytes)
+}
+
+fn decode_snapshot_id(value: &str) -> Result<SnapshotId, ()> {
+    decode_stable_id(value).map(SnapshotId::from_bytes)
+}
+
+fn decode_symbol_id(value: &str) -> Result<SymbolId, ()> {
+    decode_stable_id(value).map(SymbolId::from_bytes)
+}
+
+fn decode_stable_id(value: &str) -> Result<[u8; 32], ()> {
+    decode_hex(value, 32)?.try_into().map_err(|_| ())
 }
 
 pub(crate) fn map_repository_tree_query_from_v1(
@@ -1495,6 +1848,14 @@ fn invalid_module_tree_query() -> CommandErrorV1 {
 
 fn invalid_module_dependency_graph_query() -> CommandErrorV1 {
     CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleDependencyGraphQuery)
+}
+
+fn invalid_module_runtime_map_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleRuntimeMapQuery)
+}
+
+fn invalid_module_runtime_flow_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleRuntimeFlowQuery)
 }
 
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
@@ -1673,6 +2034,17 @@ fn map_module_dependency_graph_error_to_v1(error: ModuleDependencyGraphFailure) 
         ModuleDependencyGraphFailure::Cancelled
         | ModuleDependencyGraphFailure::TimedOut
         | ModuleDependencyGraphFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_module_runtime_error_to_v1(error: ModuleRuntimeFailure) -> CommandErrorV1 {
+    let code = match error {
+        ModuleRuntimeFailure::Storage(error) => map_storage_error_to_v1(error),
+        ModuleRuntimeFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        ModuleRuntimeFailure::Cancelled
+        | ModuleRuntimeFailure::TimedOut
+        | ModuleRuntimeFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

@@ -3,20 +3,24 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleTreePage,
-    GetRepositoryTreePage, IndexPersistenceControl, IndexPersistenceControlError,
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
-    LoadPendingModuleRemaps, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardVerificationControl,
-    ModuleCardVerificationControlError, ModuleDependencyGraphControl,
-    ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    CompileTaskLens, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
+    GetModuleTreePage, GetRepositoryTreePage, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
+    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError,
+    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
     ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyNodeLimit,
-    ModuleDependencyRelation, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
+    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
+    ModuleRuntimeFlowQuery, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
+    ModuleRuntimeRootLimit, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery,
     PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure, RemapQueueControl,
     RemapQueueControlError, RemapQueueLimit, RepositoryTreeControl, RepositoryTreeControlError,
     RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery,
-    TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
+    TaskLensControl, TaskLensControlError, TraceModuleRuntimeFlow,
+    VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
@@ -34,9 +38,10 @@ use a3_domain::{
     RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
     RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, Snapshot,
     SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
-    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SyntaxProvider, SyntaxRelationKind,
-    TaskLensSeed, TaskLensSeedSet, TaskLensSeedText, TaskLensTokenBudget, VerifiedClaimKind,
-    VerifiedModuleCardBatch, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SyntaxProvider,
+    SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText, TaskLensTokenBudget,
+    TraversalResultLimit, VerifiedClaimKind, VerifiedModuleCardBatch, WorktreeAnchorId,
+    WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -183,6 +188,23 @@ impl ModuleDependencyGraphControl for TestIndexControl {
     }
 }
 
+impl ModuleRuntimeControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleRuntimeControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleRuntimeControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -247,6 +269,19 @@ impl ModuleDependencyGraphControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleDependencyGraphControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleRuntimeControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleRuntimeControlError> {
         Ok(())
     }
 }
@@ -2516,6 +2551,239 @@ fn module_dependency_graph_exposes_source_and_group_truncation()
     })
 }
 
+#[test]
+fn module_runtime_roots_and_flows_are_current_role_bound() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([105; 32], [106; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let get_map = GetModuleRuntimeMap::new(store.clone());
+        let trace_flow = TraceModuleRuntimeFlow::new(store.clone(), store.clone());
+        let package_id = ModuleId::from_bytes([211; 32]);
+        let internal_id = ModuleId::from_bytes([212; 32]);
+        let package_query = ModuleRuntimeMapQuery::new(
+            package_id,
+            ModuleRuntimeRootLimit::DEFAULT,
+            ModuleRuntimeRootLimit::DEFAULT,
+        );
+        assert_eq!(
+            get_map
+                .execute(&fixture.project, &package_query, &control)
+                .await?,
+            ModuleRuntimeMapLoadResult::NoPublishedIndex
+        );
+
+        let files = nested_module_files();
+        let first_snapshot = snapshot(
+            [107; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([108; 32], first_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &nested_module_runtime_publication(first_snapshot.id())?,
+                &control,
+            )
+            .await?;
+
+        let package_map = match get_map
+            .execute(&fixture.project, &package_query, &control)
+            .await?
+        {
+            ModuleRuntimeMapLoadResult::Map(map) => map,
+            other => return Err(format!("unexpected runtime-map state: {other:?}").into()),
+        };
+        assert_eq!(package_map.index_run_id(), first_run.id());
+        assert_eq!(package_map.snapshot_id(), first_snapshot.id());
+        assert_eq!(package_map.module_id(), package_id);
+        assert_eq!(package_map.entrypoints().stored_count(), 1);
+        assert!(package_map.entrypoints().projection_truncated());
+        assert!(package_map.entrypoints().visible_truncated());
+        assert!(package_map.tests().roots().is_empty());
+        let package_root = &package_map.entrypoints().roots()[0];
+        assert_eq!(package_root.rank(), 1);
+        assert_eq!(package_root.symbol().id(), SymbolId::from_bytes([102; 32]));
+        assert_eq!(package_root.evidence_id().as_bytes().len(), 32);
+
+        let internal_map = match get_map
+            .execute(
+                &fixture.project,
+                &ModuleRuntimeMapQuery::new(
+                    internal_id,
+                    ModuleRuntimeRootLimit::DEFAULT,
+                    ModuleRuntimeRootLimit::DEFAULT,
+                ),
+                &control,
+            )
+            .await?
+        {
+            ModuleRuntimeMapLoadResult::Map(map) => map,
+            other => return Err(format!("unexpected internal runtime-map state: {other:?}").into()),
+        };
+        assert!(internal_map.entrypoints().roots().is_empty());
+        assert_eq!(internal_map.tests().stored_count(), 1);
+        assert_eq!(
+            internal_map.tests().roots()[0].symbol().id(),
+            SymbolId::from_bytes([103; 32])
+        );
+        assert_eq!(
+            get_map
+                .execute(
+                    &fixture.project,
+                    &ModuleRuntimeMapQuery::new(
+                        ModuleId::from_bytes([214; 32]),
+                        ModuleRuntimeRootLimit::DEFAULT,
+                        ModuleRuntimeRootLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await?,
+            ModuleRuntimeMapLoadResult::ModuleUnavailable
+        );
+
+        let entrypoint_flow_query = ModuleRuntimeFlowQuery::new(
+            first_run.id(),
+            first_snapshot.id(),
+            package_id,
+            SymbolId::from_bytes([102; 32]),
+            ModuleRuntimeFlowKind::EntrypointCalls,
+            TraversalResultLimit::new(20)?,
+        );
+        let entrypoint_flow = match trace_flow
+            .execute(&fixture.project, &entrypoint_flow_query, &control)
+            .await?
+        {
+            ModuleRuntimeFlowLoadResult::Flow(flow) => flow,
+            other => return Err(format!("unexpected entrypoint-flow state: {other:?}").into()),
+        };
+        assert_eq!(entrypoint_flow.index_run_id(), first_run.id());
+        assert_eq!(entrypoint_flow.snapshot_id(), first_snapshot.id());
+        assert_eq!(entrypoint_flow.hits().len(), 1);
+        assert_eq!(entrypoint_flow.hits()[0].path().len(), 1);
+        assert_eq!(
+            entrypoint_flow.hits()[0].path()[0].kind(),
+            SyntaxRelationKind::Calls
+        );
+        assert_eq!(
+            trace_flow
+                .execute(
+                    &fixture.project,
+                    &ModuleRuntimeFlowQuery::new(
+                        first_run.id(),
+                        first_snapshot.id(),
+                        package_id,
+                        SymbolId::from_bytes([102; 32]),
+                        ModuleRuntimeFlowKind::TestTargets,
+                        TraversalResultLimit::new(20)?,
+                    ),
+                    &control,
+                )
+                .await?,
+            ModuleRuntimeFlowLoadResult::RootUnavailable
+        );
+        let test_flow = match trace_flow
+            .execute(
+                &fixture.project,
+                &ModuleRuntimeFlowQuery::new(
+                    first_run.id(),
+                    first_snapshot.id(),
+                    internal_id,
+                    SymbolId::from_bytes([103; 32]),
+                    ModuleRuntimeFlowKind::TestTargets,
+                    TraversalResultLimit::new(20)?,
+                ),
+                &control,
+            )
+            .await?
+        {
+            ModuleRuntimeFlowLoadResult::Flow(flow) => flow,
+            other => return Err(format!("unexpected test-flow state: {other:?}").into()),
+        };
+        assert_eq!(test_flow.hits().len(), 1);
+        assert_eq!(test_flow.hits()[0].path().len(), 1);
+        assert_eq!(
+            test_flow.hits()[0].path()[0].kind(),
+            SyntaxRelationKind::Tests
+        );
+        assert_eq!(
+            get_map
+                .execute(&fixture.project, &package_query, &CancelledIndexControl)
+                .await,
+            Err(ModuleRuntimeFailure::Cancelled)
+        );
+
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "UPDATE symbols SET roles = 0 WHERE name = 'package_api'",
+        )
+        .await?;
+        assert_eq!(
+            get_map
+                .execute(&fixture.project, &package_query, &control)
+                .await,
+            Err(ModuleRuntimeFailure::InvalidStoredProjection)
+        );
+
+        let next_snapshot = snapshot(
+            [109; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Delete))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &next_snapshot)
+            .await?;
+        let next_run = store
+            .start_index_run(&fixture.project, run([110; 32], next_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                next_run.id(),
+                &empty_publication(next_snapshot.id())?,
+                &control,
+            )
+            .await?;
+        assert_eq!(
+            trace_flow
+                .execute(&fixture.project, &entrypoint_flow_query, &control)
+                .await?,
+            ModuleRuntimeFlowLoadResult::PublicationChanged
+        );
+        assert_eq!(
+            get_map
+                .execute(&fixture.project, &package_query, &control)
+                .await?,
+            ModuleRuntimeMapLoadResult::ModuleUnavailable
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 struct ProjectFixture {
     _temporary: TempDirectory,
     layout: StorageLayout,
@@ -2672,6 +2940,19 @@ fn nested_module_files() -> Vec<(Vec<u8>, [u8; 32])> {
 fn nested_module_publication(
     snapshot_id: SnapshotId,
 ) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    nested_module_publication_with_runtime_features(snapshot_id, false)
+}
+
+fn nested_module_runtime_publication(
+    snapshot_id: SnapshotId,
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    nested_module_publication_with_runtime_features(snapshot_id, true)
+}
+
+fn nested_module_publication_with_runtime_features(
+    snapshot_id: SnapshotId,
+    runtime_features: bool,
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
     let files = nested_module_files()
         .into_iter()
         .map(|(path, hash)| {
@@ -2699,19 +2980,26 @@ fn nested_module_publication(
         .iter()
         .zip(symbol_ids)
         .zip(names)
+        .enumerate()
         .map(
-            |((revision, id), name)| -> Result<GraphSymbol, Box<dyn std::error::Error>> {
-                Ok(GraphSymbol::new(
-                    id,
-                    revision.clone(),
-                    ParsedSymbol::new(
-                        LocalSymbolId::new(1)?,
-                        SymbolKind::Function,
-                        SymbolName::try_from_string(name.to_owned())?,
-                        range,
-                        range,
-                    )?,
-                ))
+            |(index, ((revision, id), name))| -> Result<GraphSymbol, Box<dyn std::error::Error>> {
+                let parsed = ParsedSymbol::new(
+                    LocalSymbolId::new(1)?,
+                    SymbolKind::Function,
+                    SymbolName::try_from_string(name.to_owned())?,
+                    range,
+                    range,
+                )?;
+                let parsed = if runtime_features {
+                    parsed.with_role(if index < 2 {
+                        SymbolRole::Entrypoint
+                    } else {
+                        SymbolRole::Test
+                    })
+                } else {
+                    parsed
+                };
+                Ok(GraphSymbol::new(id, revision.clone(), parsed))
             },
         )
         .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
@@ -2746,13 +3034,20 @@ fn nested_module_publication(
         snapshot_id,
         EvidenceRef::new(symbol_revisions[1].clone(), range),
     );
-    let graph = LinkedGraph::new(
-        snapshot_id,
-        files,
-        symbols,
-        vec![community_edge, file_dependency, unmapped_file_dependency],
-        Vec::new(),
-    )?;
+    let mut edges = vec![community_edge, file_dependency, unmapped_file_dependency];
+    if runtime_features {
+        edges.push(GraphEdge::new(
+            GraphEndpoint::Symbol(symbol_ids[2]),
+            GraphEndpoint::Symbol(symbol_ids[1]),
+            SyntaxRelationKind::Tests,
+            SyntaxProvider::TreeSitter,
+            Confidence::certain(),
+            LinkResolution::AdapterLocalSymbol,
+            snapshot_id,
+            EvidenceRef::new(symbol_revisions[2].clone(), range),
+        ));
+    }
+    let graph = LinkedGraph::new(snapshot_id, files, symbols, edges, Vec::new())?;
     let ranks = symbol_ids
         .iter()
         .enumerate()
@@ -2781,6 +3076,36 @@ fn nested_module_publication(
     let internal_id = ModuleId::from_bytes([212; 32]);
     let tools_id = ModuleId::from_bytes([213; 32]);
     let community_id = ModuleId::from_bytes([214; 32]);
+    let repository_entrypoints = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[0]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
+    let package_entrypoints = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[1]], true)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
+    let internal_tests = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[2]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
+    let tools_tests = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[3]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
+    let community_entrypoints = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[1]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
+    let community_tests = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[2]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
     let modules = vec![
         RepositoryModule::new(
             repository_id,
@@ -2788,7 +3113,7 @@ fn nested_module_publication(
             Some(ModuleRoot::Repository),
             vec![cargo_manifest.clone()],
             ModuleSymbolSet::new(vec![symbol_ids[0]], false)?,
-            ModuleSymbolSet::empty(),
+            repository_entrypoints,
             ModuleSymbolSet::empty(),
         )?,
         RepositoryModule::new(
@@ -2799,7 +3124,7 @@ fn nested_module_publication(
             )?)),
             vec![package_manifest.clone()],
             ModuleSymbolSet::new(vec![symbol_ids[1]], false)?,
-            ModuleSymbolSet::empty(),
+            package_entrypoints,
             ModuleSymbolSet::empty(),
         )?,
         RepositoryModule::new(
@@ -2811,7 +3136,7 @@ fn nested_module_publication(
             Vec::new(),
             ModuleSymbolSet::new(vec![symbol_ids[2]], false)?,
             ModuleSymbolSet::empty(),
-            ModuleSymbolSet::empty(),
+            internal_tests,
         )?,
         RepositoryModule::new(
             tools_id,
@@ -2822,7 +3147,7 @@ fn nested_module_publication(
             Vec::new(),
             ModuleSymbolSet::new(vec![symbol_ids[3]], false)?,
             ModuleSymbolSet::empty(),
-            ModuleSymbolSet::empty(),
+            tools_tests,
         )?,
         RepositoryModule::new(
             community_id,
@@ -2830,8 +3155,8 @@ fn nested_module_publication(
             None,
             Vec::new(),
             ModuleSymbolSet::new(vec![symbol_ids[1], symbol_ids[2]], false)?,
-            ModuleSymbolSet::empty(),
-            ModuleSymbolSet::empty(),
+            community_entrypoints,
+            community_tests,
         )?,
     ];
     let memberships = vec![
@@ -2872,12 +3197,17 @@ fn nested_module_publication(
             ModuleMembershipEvidence::graph(symbol_revisions[2].clone(), vec![community_evidence])?,
         ),
     ];
+    let repository_entrypoints = if runtime_features {
+        ModuleSymbolSet::new(vec![symbol_ids[0], symbol_ids[1]], false)?
+    } else {
+        ModuleSymbolSet::empty()
+    };
     let card = RepositoryCard::new(
         snapshot_id,
         ModulePolicyVersion::v1(),
         vec![repository_id, package_id, internal_id, tools_id],
         vec![IndexLanguage::Generic],
-        ModuleSymbolSet::empty(),
+        repository_entrypoints,
         6,
         4,
     )?;
@@ -3610,9 +3940,10 @@ where
     }
     let result = block_on(future);
     // The Windows native backend finishes worker teardown just after a store drops.
-    // Keep fixture lifetimes serial and give each owned teardown a bounded grace period.
+    // Keep fixture lifetimes serial and give every isolated process enough bounded grace to
+    // finish its owned workers before the test harness exits the process.
     #[cfg(windows)]
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(1_500));
     result
 }
 

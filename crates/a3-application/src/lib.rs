@@ -35,6 +35,7 @@ mod module_card_freshness;
 mod module_card_verification;
 mod module_dependency_graph;
 mod module_remap_queue;
+mod module_runtime;
 mod module_tree;
 mod mutating_agent_controller;
 mod mutation_coordinator;
@@ -216,6 +217,14 @@ pub use module_remap_queue::{
     LoadPendingModuleRemaps, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
     ModuleRemapQueueStore, PendingRemapQueue, PendingRemapQueueError, RemapQueueControl,
     RemapQueueControlError, RemapQueueLimit, RemapQueueLimitError,
+};
+pub use module_runtime::{
+    GetModuleRuntimeMap, ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure,
+    ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery,
+    ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture, ModuleRuntimeMap, ModuleRuntimeMapError,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootError,
+    ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootLimitError,
+    ModuleRuntimeRootSet, ModuleRuntimeRootSetError, ModuleRuntimeStore, TraceModuleRuntimeFlow,
 };
 pub use module_tree::{
     GetModuleTreePage, ModuleTreeBoundaryEvidence, ModuleTreeChildState, ModuleTreeControl,

@@ -95,6 +95,19 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Pfad- oder Endpointparameter. Der Component-Test lädt erst nach expliziter Modulauswahl, zeigt
   alle Begrenzungs- und Unmapped-Signale und navigiert eine stabile aktuelle Evidence-ID; weder
   Mount noch 500-ms-Statuspolling lösen den Graphread aus.
+- Der U4-Module-Runtime-Contract verwendet ausschließlich aktuelle V8-Entrypoint-/Testrollen und
+  die bestehende R3-Graphtraversierung. Ein realer libSQL-Publikationsvertrag prüft atomare
+  Rangpräfixe, getrennte Formationstrunkierung, Rollen- und Membershipbindung, feste `Calls`- und
+  `Tests`-Presets, Cancellation, beschädigte Rollen sowie `publicationChanged` nach einem
+  Replacement-Publish. Rust- und TypeScript-Grenztests lehnen unbekannte Felder, nicht kanonische
+  Run-/Snapshot-/Modul-/Symbolanker, Grenzen außerhalb 1–256 beziehungsweise 1–100, falsche Rollen,
+  Ränge und Trunkierungswahrheit sowie Graphpfade mit falscher Relation, Tiefe, Richtung,
+  Kontinuität, Zyklen, Duplikaten oder Zielwiderspruch ab. Der reale Tauri-IPC-Test erreicht nur die
+  zwei engen Capabilities ohne Projekt-, Pfad-, Richtungs- oder frei wählbare Relationsparameter.
+  Der Component-Test lädt Roots erst nach expliziter Modulauswahl und einen Flow erst nach
+  Rootauswahl, bindet ihn an den sichtbaren Run/Snapshot und öffnet genaue Symbol-, Ziel- und
+  Kanten-Evidence. Nach `publicationChanged` werden alte Roots und Evidence bis zum erneuten
+  atomaren Read ausgeblendet. Kein Runtime-Read läuft im 500-ms-Statuspolling.
 
 ### Persistenz
 

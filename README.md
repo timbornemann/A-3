@@ -105,7 +105,11 @@ Kantengruppen. Jede sichtbare Gruppe führt zu einer exakten aktuellen Graph-Edg
 begrenzte Quellkanten, ausgeblendete Nachbarn und Gruppen sowie nicht eindeutig zuordenbare
 Dateikanten bleiben als eigene Unvollständigkeitssignale sichtbar. Weder ein Vollgraph noch das
 Live-Dateisystem, Source-Inhalt oder
-autoritative Betriebssystempfade überschreiten dafür die WebView-Grenze. Die verbindliche
+autoritative Betriebssystempfade überschreiten dafür die WebView-Grenze. Ein weiterer expliziter
+U4-Ausschnitt zeigt die aktuellen ranggeordneten Entry Points und Tests eines Primärmoduls. Nur
+nach Rootauswahl verfolgt A^3 entweder höchstens zwei strukturell beobachtete `Calls`-Kanten oder
+eine direkte `Tests`-Kante; Run, Snapshot, Rolle und Evidence bleiben gebunden und ein
+Publikationswechsel wird nicht mit alten Roots vermischt. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -149,8 +153,7 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Card-Freshness- und
-Deep-Map-Commands aufrufen.
+Module-Runtime-, Module-Card-Freshness- und Deep-Map-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
@@ -160,7 +163,11 @@ Worktree stammen aus dem Core. `query_module_tree` akzeptiert entsprechend nur s
 einen exklusiven Cursor und dieselbe Seitengrenze; Graph-Communities verleihen keine
 Navigationsbefugnis. `query_module_dependency_graph` akzeptiert nur eine aktuelle primäre
 `ModuleId` und ein Gesamtknotenlimit von 1 bis 100; Projekt, Pfade und Graphendpunkte bleiben
-Core-eigen. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
+Core-eigen.
+`query_module_runtime_map` akzeptiert nur eine primäre Modul-ID und zwei Rootpräfixlimits;
+`query_module_runtime_flow` zusätzlich nur sichtbare Publikations-/Rootanker, ein festes
+rollenabhängiges Preset und ein Ergebnislimit. Eine generische Graphtraversierung ist nicht
+exponiert. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
 Diese Pfade erweitern die WebView-Capabilities nicht.

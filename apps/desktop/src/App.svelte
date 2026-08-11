@@ -49,6 +49,17 @@
     type ModuleTreeQueryV1,
     type ModuleTreeResponseV1,
   } from './lib/module-tree';
+  import {
+    queryModuleRuntimeFlow,
+    queryModuleRuntimeMap,
+    type ModuleRuntimeFlowQueryV1,
+    type ModuleRuntimeFlowResponseV1,
+    type ModuleRuntimeFlowTargetV1,
+    type ModuleRuntimeMapQueryV1,
+    type ModuleRuntimeMapResponseV1,
+    type ModuleRuntimeRootV1,
+    type ModuleRuntimeSymbolV1,
+  } from './lib/module-runtime';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
@@ -83,6 +94,12 @@
     moduleDependencyGraphLoader?: (
       query: ModuleDependencyGraphQueryV1,
     ) => Promise<ModuleDependencyGraphResponseV1>;
+    moduleRuntimeMapLoader?: (
+      query: ModuleRuntimeMapQueryV1,
+    ) => Promise<ModuleRuntimeMapResponseV1>;
+    moduleRuntimeFlowLoader?: (
+      query: ModuleRuntimeFlowQueryV1,
+    ) => Promise<ModuleRuntimeFlowResponseV1>;
     moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
@@ -159,6 +176,42 @@
         result: Extract<ModuleDependencyGraphResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
+  type ModuleRuntimeMapView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | { kind: 'moduleUnavailable' }
+    | { kind: 'stale' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleRuntimeMapResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type ModuleRuntimeFlowView =
+    | { kind: 'idle' }
+    | { kind: 'loading'; rootName: string }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | { kind: 'publicationChanged' }
+    | { kind: 'moduleUnavailable' }
+    | { kind: 'rootUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleRuntimeFlowResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type ModuleRuntimeEvidence =
+    | { kind: 'symbol'; symbol: ModuleRuntimeSymbolV1 }
+    | { kind: 'edge'; evidence: ModuleDependencyEdgeEvidenceV1 }
+    | {
+        kind: 'file';
+        contentHash: string;
+        evidenceId: string;
+        pathHex: string;
+      };
   interface ModuleTreeBreadcrumb {
     moduleId: string;
     name: string;
@@ -199,6 +252,8 @@
     indexOverviewLoader = queryIndexOverview,
     moduleCardFreshnessLoader = queryModuleCardFreshness,
     moduleDependencyGraphLoader = queryModuleDependencyGraph,
+    moduleRuntimeMapLoader = queryModuleRuntimeMap,
+    moduleRuntimeFlowLoader = queryModuleRuntimeFlow,
     moduleTreeLoader = queryModuleTree,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
@@ -219,6 +274,12 @@
   let moduleDependencyGraphView = $state<ModuleDependencyGraphView>({ kind: 'idle' });
   let moduleDependencySelection = $state<{ moduleId: string; name: string } | null>(null);
   let selectedDependencyEvidence = $state<ModuleDependencyEdgeEvidenceV1 | null>(null);
+  let moduleRuntimeMapView = $state<ModuleRuntimeMapView>({ kind: 'idle' });
+  let moduleRuntimeFlowView = $state<ModuleRuntimeFlowView>({ kind: 'idle' });
+  let moduleRuntimeSelection = $state<{ moduleId: string; name: string } | null>(null);
+  let moduleRuntimeEntrypointLimit = $state(20);
+  let moduleRuntimeTestLimit = $state(20);
+  let selectedModuleRuntimeEvidence = $state<ModuleRuntimeEvidence | null>(null);
   let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
   let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
   let repositoryTreeLoadingMore = $state(false);
@@ -234,6 +295,19 @@
   let removalView = $state<RemovalView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
   let indexActivityObserved = false;
+  let moduleRuntimeMapRequestSequence = 0;
+  let moduleRuntimeFlowRequestSequence = 0;
+
+  function resetModuleRuntime(kind: 'idle' | 'noProject'): void {
+    moduleRuntimeMapRequestSequence += 1;
+    moduleRuntimeFlowRequestSequence += 1;
+    moduleRuntimeMapView = { kind };
+    moduleRuntimeFlowView = { kind };
+    moduleRuntimeSelection = null;
+    moduleRuntimeEntrypointLimit = 20;
+    moduleRuntimeTestLimit = 20;
+    selectedModuleRuntimeEvidence = null;
+  }
 
   async function loadHealth(): Promise<void> {
     healthView = { kind: 'loading' };
@@ -287,6 +361,9 @@
             moduleDependencySelection.name,
           );
         }
+        if (moduleRuntimeSelection !== null) {
+          void loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
+        }
         void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
@@ -296,6 +373,7 @@
         moduleDependencyGraphView = { kind: 'noProject' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -460,6 +538,106 @@
     );
   }
 
+  async function loadModuleRuntimeMap(moduleId: string, name: string): Promise<void> {
+    const requestSequence = ++moduleRuntimeMapRequestSequence;
+    moduleRuntimeFlowRequestSequence += 1;
+    moduleRuntimeSelection = { moduleId, name };
+    moduleRuntimeMapView = { kind: 'loading' };
+    moduleRuntimeFlowView = { kind: 'idle' };
+    selectedModuleRuntimeEvidence = null;
+    try {
+      const response = await moduleRuntimeMapLoader({
+        entrypointLimit: moduleRuntimeEntrypointLimit,
+        moduleId,
+        testLimit: moduleRuntimeTestLimit,
+      });
+      if (requestSequence !== moduleRuntimeMapRequestSequence) return;
+      if (response.result.status === 'available') {
+        moduleRuntimeMapView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'moduleUnavailable') {
+        moduleRuntimeMapView = { kind: 'moduleUnavailable' };
+      } else if (response.result.status === 'projectionUnavailable') {
+        moduleRuntimeMapView = { kind: 'projectionUnavailable' };
+      } else if (response.result.status === 'noPublishedIndex') {
+        moduleRuntimeMapView = { kind: 'noPublishedIndex' };
+      } else {
+        moduleRuntimeMapView = { kind: 'noProject' };
+        moduleRuntimeSelection = null;
+      }
+    } catch {
+      if (requestSequence === moduleRuntimeMapRequestSequence) {
+        moduleRuntimeMapView = { kind: 'error' };
+      }
+    }
+  }
+
+  async function openModuleRuntime(entry: ModuleTreeEntryV1): Promise<void> {
+    moduleRuntimeEntrypointLimit = 20;
+    moduleRuntimeTestLimit = 20;
+    await loadModuleRuntimeMap(entry.moduleId, entry.name);
+  }
+
+  async function reloadModuleRuntime(): Promise<void> {
+    if (moduleRuntimeSelection === null) return;
+    await loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
+  }
+
+  async function loadMoreModuleRuntimeRoots(kind: 'entrypoint' | 'test'): Promise<void> {
+    if (moduleRuntimeMapView.kind !== 'available' || moduleRuntimeSelection === null) return;
+    if (kind === 'entrypoint') {
+      moduleRuntimeEntrypointLimit = Math.min(256, moduleRuntimeEntrypointLimit + 20);
+    } else {
+      moduleRuntimeTestLimit = Math.min(256, moduleRuntimeTestLimit + 20);
+    }
+    await loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
+  }
+
+  async function loadModuleRuntimeFlow(root: ModuleRuntimeRootV1): Promise<void> {
+    if (moduleRuntimeMapView.kind !== 'available') return;
+    const map = moduleRuntimeMapView.result.map;
+    const requestSequence = ++moduleRuntimeFlowRequestSequence;
+    selectedModuleRuntimeEvidence = { kind: 'symbol', symbol: root.symbol };
+    moduleRuntimeFlowView = { kind: 'loading', rootName: root.symbol.name };
+    try {
+      const response = await moduleRuntimeFlowLoader({
+        expectedIndexRunId: map.indexRunId,
+        expectedSnapshotId: map.snapshotId,
+        kind: root.kind === 'entrypoint' ? 'entrypointCalls' : 'testTargets',
+        moduleId: map.moduleId,
+        resultLimit: 20,
+        rootSymbolId: root.symbol.symbolId,
+      });
+      if (requestSequence !== moduleRuntimeFlowRequestSequence) return;
+      if (response.result.status === 'available') {
+        moduleRuntimeFlowView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'publicationChanged') {
+        selectedModuleRuntimeEvidence = null;
+        moduleRuntimeMapView = { kind: 'stale' };
+        moduleRuntimeFlowView = { kind: 'publicationChanged' };
+      } else if (response.result.status === 'rootUnavailable') {
+        selectedModuleRuntimeEvidence = null;
+        moduleRuntimeMapView = { kind: 'stale' };
+        moduleRuntimeFlowView = { kind: 'rootUnavailable' };
+      } else if (response.result.status === 'moduleUnavailable') {
+        selectedModuleRuntimeEvidence = null;
+        moduleRuntimeMapView = { kind: 'moduleUnavailable' };
+        moduleRuntimeFlowView = { kind: 'moduleUnavailable' };
+      } else if (response.result.status === 'projectionUnavailable') {
+        moduleRuntimeFlowView = { kind: 'projectionUnavailable' };
+      } else if (response.result.status === 'noPublishedIndex') {
+        selectedModuleRuntimeEvidence = null;
+        moduleRuntimeMapView = { kind: 'noPublishedIndex' };
+        moduleRuntimeFlowView = { kind: 'noPublishedIndex' };
+      } else {
+        resetModuleRuntime('noProject');
+      }
+    } catch {
+      if (requestSequence === moduleRuntimeFlowRequestSequence) {
+        moduleRuntimeFlowView = { kind: 'error' };
+      }
+    }
+  }
+
   async function loadRepositoryTree(
     directoryPathHex: string | null,
     afterNameHex: string | null = null,
@@ -589,6 +767,7 @@
         moduleDependencyGraphView = { kind: 'noProject' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleRuntime('noProject');
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -629,6 +808,7 @@
         moduleDependencyGraphView = { kind: 'idle' };
         moduleDependencySelection = null;
         selectedDependencyEvidence = null;
+        resetModuleRuntime('idle');
         await loadProjectStatus();
         await loadIndexActivity();
         await loadIndexOverview();
@@ -706,6 +886,7 @@
       moduleDependencyGraphView = { kind: 'noProject' };
       moduleDependencySelection = null;
       selectedDependencyEvidence = null;
+      resetModuleRuntime('noProject');
       repositoryTreeView = { kind: 'noProject' };
       repositoryTreeBreadcrumbs = [];
       deepMapView = { kind: 'noProject' };
@@ -823,6 +1004,22 @@
 
   function moduleDependencyNodeKind(node: ModuleDependencyNodeV1): string {
     return node.kind === 'manifestBoundary' ? 'Manifest-Grenze' : 'Pfad-Grenze';
+  }
+
+  function moduleRuntimeTargetLabel(target: ModuleRuntimeFlowTargetV1): string {
+    return target.kind === 'symbol' ? target.symbol.name : pathDisplayFromHex(target.pathHex);
+  }
+
+  function selectModuleRuntimeTargetEvidence(target: ModuleRuntimeFlowTargetV1): void {
+    selectedModuleRuntimeEvidence =
+      target.kind === 'symbol'
+        ? { kind: 'symbol', symbol: target.symbol }
+        : {
+            kind: 'file',
+            contentHash: target.contentHash,
+            evidenceId: target.evidenceId,
+            pathHex: target.pathHex,
+          };
   }
 
   function pathDisplayFromHex(pathHex: string): string {
@@ -1352,14 +1549,24 @@
                         Leeres strukturelles Modul ohne Revisionsrepräsentant
                       {/if}
                     </p>
-                    <button
-                      class="module-dependency-open"
-                      type="button"
-                      aria-pressed={moduleDependencySelection?.moduleId === entry.moduleId}
-                      onclick={() => openModuleDependencies(entry)}
-                    >
-                      Abhängigkeiten anzeigen
-                    </button>
+                    <div class="module-entry-actions">
+                      <button
+                        class="module-dependency-open"
+                        type="button"
+                        aria-pressed={moduleRuntimeSelection?.moduleId === entry.moduleId}
+                        onclick={() => openModuleRuntime(entry)}
+                      >
+                        Entry Points &amp; Tests
+                      </button>
+                      <button
+                        class="module-dependency-open"
+                        type="button"
+                        aria-pressed={moduleDependencySelection?.moduleId === entry.moduleId}
+                        onclick={() => openModuleDependencies(entry)}
+                      >
+                        Abhängigkeiten anzeigen
+                      </button>
+                    </div>
                   </li>
                 {/each}
               </ul>
@@ -1378,6 +1585,338 @@
             <div class="recent-projects-error" role="alert">
               <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
+            </div>
+          {/if}
+        </div>
+        <div
+          class="repository-tree-panel module-runtime-panel"
+          aria-labelledby="module-runtime-heading"
+        >
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="module-runtime-heading">Entry Points &amp; Tests</h4>
+              <p>Aktuelle strukturelle Wurzeln und bewusst geladene, begrenzte Evidence-Pfade.</p>
+            </div>
+            <button
+              type="button"
+              disabled={moduleRuntimeSelection === null || moduleRuntimeMapView.kind === 'loading'}
+              onclick={reloadModuleRuntime}
+            >
+              Aktualisieren
+            </button>
+          </div>
+          {#if moduleRuntimeMapView.kind === 'idle' || moduleRuntimeMapView.kind === 'noProject'}
+            <p class="project-status">
+              Wähle im Modulbaum „Entry Points &amp; Tests“, um die aktuellen Root-Symbole zu laden.
+            </p>
+          {:else if moduleRuntimeMapView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Entry Points und Tests für {moduleRuntimeSelection?.name ?? 'das Modul'} werden gelesen
+              …
+            </p>
+          {:else if moduleRuntimeMapView.kind === 'noPublishedIndex'}
+            <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
+          {:else if moduleRuntimeMapView.kind === 'projectionUnavailable'}
+            <p class="project-status">
+              Der historische Index enthält noch keine deterministische V8-Modulprojektion. Ein
+              Rebuild erzeugt sie mit dem aktuellen Schema.
+            </p>
+          {:else if moduleRuntimeMapView.kind === 'moduleUnavailable'}
+            <p class="project-status" role="alert">
+              Das gewählte Primärmodul ist im aktuellen Index nicht mehr vorhanden.
+            </p>
+          {:else if moduleRuntimeMapView.kind === 'stale'}
+            <div class="recent-projects-error" role="alert">
+              <p>
+                Die sichtbare Root-Liste ist nicht mehr verifizierbar. Alte Roots und Evidence
+                bleiben ausgeblendet, bis der aktuelle Index erneut gelesen wurde.
+              </p>
+              <button type="button" onclick={reloadModuleRuntime}>Roots neu laden</button>
+            </div>
+          {:else if moduleRuntimeMapView.kind === 'available'}
+            {@const runtimeMap = moduleRuntimeMapView.result.map}
+            <p class="index-snapshot">
+              Indexlauf <code>{runtimeMap.indexRunId}</code>
+            </p>
+            <div class="runtime-observation-note" role="note">
+              <strong>Strukturelle Beobachtung.</strong> Entry Points, Tests und Beziehungen stammen aus
+              deterministischen Adaptern. Sie belegen Quellstruktur, nicht eine tatsächlich ausgeführte
+              Laufzeitspur.
+            </div>
+            <div class="runtime-root-columns">
+              <section aria-labelledby="runtime-entrypoints-heading">
+                <div class="runtime-root-heading">
+                  <h5 id="runtime-entrypoints-heading">Entry Points</h5>
+                  <span>{countLabel(runtimeMap.entrypoints.storedCount)} gespeichert</span>
+                </div>
+                {#if runtimeMap.entrypoints.roots.length === 0}
+                  <p class="project-status">Keine strukturellen Entry Points beobachtet.</p>
+                {:else}
+                  <ol class="runtime-root-list">
+                    {#each runtimeMap.entrypoints.roots as root (root.symbol.symbolId)}
+                      <li>
+                        <button
+                          class="runtime-root-flow"
+                          type="button"
+                          aria-label={`Aufrufpfad für Entry Point ${root.symbol.name} anzeigen`}
+                          onclick={() => loadModuleRuntimeFlow(root)}
+                        >
+                          <strong>{root.symbol.name}</strong>
+                          <span>Rang {root.rank} · {pathDisplayFromHex(root.symbol.pathHex)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onclick={() =>
+                            (selectedModuleRuntimeEvidence = {
+                              kind: 'symbol',
+                              symbol: root.symbol,
+                            })}
+                        >
+                          Symbol-Evidence
+                        </button>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+                {#if runtimeMap.entrypoints.roots.length < Number(runtimeMap.entrypoints.storedCount)}
+                  <button
+                    class="repository-tree-more"
+                    type="button"
+                    onclick={() => loadMoreModuleRuntimeRoots('entrypoint')}
+                  >
+                    Weitere Entry Points laden
+                  </button>
+                {/if}
+                {#if runtimeMap.entrypoints.projectionTruncated}
+                  <p class="runtime-truncation-note">
+                    Die Modulbildung hat weitere, niedriger gerankte Entry Points hinter ihrer
+                    festen 256-Root-Grenze ausgelassen.
+                  </p>
+                {/if}
+              </section>
+              <section aria-labelledby="runtime-tests-heading">
+                <div class="runtime-root-heading">
+                  <h5 id="runtime-tests-heading">Tests</h5>
+                  <span>{countLabel(runtimeMap.tests.storedCount)} gespeichert</span>
+                </div>
+                {#if runtimeMap.tests.roots.length === 0}
+                  <p class="project-status">Keine strukturellen Testdefinitionen beobachtet.</p>
+                {:else}
+                  <ol class="runtime-root-list">
+                    {#each runtimeMap.tests.roots as root (root.symbol.symbolId)}
+                      <li>
+                        <button
+                          class="runtime-root-flow"
+                          type="button"
+                          aria-label={`Testziele für Test ${root.symbol.name} anzeigen`}
+                          onclick={() => loadModuleRuntimeFlow(root)}
+                        >
+                          <strong>{root.symbol.name}</strong>
+                          <span>Rang {root.rank} · {pathDisplayFromHex(root.symbol.pathHex)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onclick={() =>
+                            (selectedModuleRuntimeEvidence = {
+                              kind: 'symbol',
+                              symbol: root.symbol,
+                            })}
+                        >
+                          Symbol-Evidence
+                        </button>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+                {#if runtimeMap.tests.roots.length < Number(runtimeMap.tests.storedCount)}
+                  <button
+                    class="repository-tree-more"
+                    type="button"
+                    onclick={() => loadMoreModuleRuntimeRoots('test')}
+                  >
+                    Weitere Tests laden
+                  </button>
+                {/if}
+                {#if runtimeMap.tests.projectionTruncated}
+                  <p class="runtime-truncation-note">
+                    Die Modulbildung hat weitere, niedriger gerankte Tests hinter ihrer festen
+                    256-Root-Grenze ausgelassen.
+                  </p>
+                {/if}
+              </section>
+            </div>
+
+            <section class="runtime-flow" aria-labelledby="runtime-flow-heading">
+              <h5 id="runtime-flow-heading">Expliziter Evidence-Pfad</h5>
+              {#if moduleRuntimeFlowView.kind === 'idle'}
+                <p class="project-status">
+                  Wähle einen Root: Entry Points folgen höchstens zwei „Calls“-Kanten, Tests genau
+                  einer direkten „Tests“-Kante.
+                </p>
+              {:else if moduleRuntimeFlowView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Evidence-Pfad für {moduleRuntimeFlowView.rootName} wird gelesen …
+                </p>
+              {:else if moduleRuntimeFlowView.kind === 'publicationChanged'}
+                <div class="recent-projects-error" role="alert">
+                  <p>
+                    Seit der Root-Auswahl wurde ein anderer Index veröffentlicht. Die alte Evidence
+                    wird nicht mit dem neuen Snapshot gemischt.
+                  </p>
+                  <button type="button" onclick={reloadModuleRuntime}>Roots neu laden</button>
+                </div>
+              {:else if moduleRuntimeFlowView.kind === 'rootUnavailable'}
+                <p class="project-status" role="alert">
+                  Das Symbol ist kein aktueller Root dieser Rolle mehr. Lade die Root-Liste neu.
+                </p>
+              {:else if moduleRuntimeFlowView.kind === 'moduleUnavailable'}
+                <p class="project-status" role="alert">Das Primärmodul ist nicht mehr aktuell.</p>
+              {:else if moduleRuntimeFlowView.kind === 'projectionUnavailable'}
+                <p class="project-status">Die erforderliche Graphprojektion ist nicht verfügbar.</p>
+              {:else if moduleRuntimeFlowView.kind === 'noPublishedIndex' || moduleRuntimeFlowView.kind === 'noProject'}
+                <p class="project-status">Kein aktueller veröffentlichter Index verfügbar.</p>
+              {:else if moduleRuntimeFlowView.kind === 'available'}
+                {@const flow = moduleRuntimeFlowView.result.flow}
+                {#if flow.hits.length === 0}
+                  <p class="ready-label">Keine Ziele für das feste Relationspreset beobachtet.</p>
+                {:else}
+                  <ol class="runtime-flow-list">
+                    {#each flow.hits as hit, hitIndex (hitIndex)}
+                      <li>
+                        <div class="runtime-flow-target">
+                          <strong>{moduleRuntimeTargetLabel(hit.target)}</strong>
+                          <button
+                            type="button"
+                            onclick={() => selectModuleRuntimeTargetEvidence(hit.target)}
+                          >
+                            Ziel-Evidence
+                          </button>
+                        </div>
+                        <ol aria-label={`Evidence-Pfad zu ${moduleRuntimeTargetLabel(hit.target)}`}>
+                          {#each hit.path as step, stepIndex (step.evidence.evidenceId)}
+                            <li>
+                              <span>
+                                Schritt {stepIndex + 1}: {step.relation === 'calls'
+                                  ? 'beobachteter Aufruf'
+                                  : 'beobachtete Testbeziehung'}
+                              </span>
+                              <button
+                                type="button"
+                                onclick={() =>
+                                  (selectedModuleRuntimeEvidence = {
+                                    kind: 'edge',
+                                    evidence: step.evidence,
+                                  })}
+                              >
+                                Kanten-Evidence
+                              </button>
+                            </li>
+                          {/each}
+                        </ol>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+                {#if flow.truncated}
+                  <p class="runtime-truncation-note">
+                    Weitere Ziele liegen hinter der festen Ergebnis- oder Kanteninspektionsgrenze.
+                  </p>
+                {/if}
+              {:else if moduleRuntimeFlowView.kind === 'error'}
+                <p class="project-error" role="alert">
+                  Der Evidence-Pfad konnte nicht sicher gelesen werden.
+                </p>
+              {/if}
+            </section>
+
+            {#if selectedModuleRuntimeEvidence !== null}
+              <aside class="dependency-evidence" aria-labelledby="runtime-evidence-heading">
+                <div>
+                  <h5 id="runtime-evidence-heading">
+                    {selectedModuleRuntimeEvidence.kind === 'edge'
+                      ? 'Graph-Kanten-Evidence'
+                      : selectedModuleRuntimeEvidence.kind === 'symbol'
+                        ? 'Symbol-Evidence'
+                        : 'Datei-Evidence'}
+                  </h5>
+                  <button type="button" onclick={() => (selectedModuleRuntimeEvidence = null)}>
+                    Schließen
+                  </button>
+                </div>
+                {#if selectedModuleRuntimeEvidence.kind === 'symbol'}
+                  {@const selectedSymbol = selectedModuleRuntimeEvidence.symbol}
+                  <dl>
+                    <div>
+                      <dt>Name</dt>
+                      <dd>{selectedSymbol.name}</dd>
+                    </div>
+                    <div>
+                      <dt>Evidence-ID</dt>
+                      <dd><code>{selectedSymbol.evidenceId}</code></dd>
+                    </div>
+                    <div>
+                      <dt>Aktuelle Revision</dt>
+                      <dd>
+                        <code>{pathDisplayFromHex(selectedSymbol.pathHex)}</code> ·
+                        {selectedSymbol.contentHash.slice(0, 12)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Auswahlbereich</dt>
+                      <dd>
+                        Bytes {selectedSymbol.selectionRange.startByte}–{selectedSymbol
+                          .selectionRange.endByte}
+                        · Zeile {selectedSymbol.selectionRange.start.row + 1}
+                      </dd>
+                    </div>
+                  </dl>
+                {:else if selectedModuleRuntimeEvidence.kind === 'edge'}
+                  {@const selectedEdge = selectedModuleRuntimeEvidence.evidence}
+                  <dl>
+                    <div>
+                      <dt>Evidence-ID</dt>
+                      <dd><code>{selectedEdge.evidenceId}</code></dd>
+                    </div>
+                    <div>
+                      <dt>Aktuelle Revision</dt>
+                      <dd>
+                        <code>{pathDisplayFromHex(selectedEdge.pathHex)}</code> ·
+                        {selectedEdge.contentHash.slice(0, 12)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Bereich</dt>
+                      <dd>
+                        Bytes {selectedEdge.range.startByte}–{selectedEdge.range.endByte} · Zeile
+                        {selectedEdge.range.start.row + 1}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Confidence</dt>
+                      <dd>{coverageLabel(selectedEdge.confidenceBasisPoints)}</dd>
+                    </div>
+                  </dl>
+                {:else}
+                  <dl>
+                    <div>
+                      <dt>Evidence-ID</dt>
+                      <dd><code>{selectedModuleRuntimeEvidence.evidenceId}</code></dd>
+                    </div>
+                    <div>
+                      <dt>Aktuelle Revision</dt>
+                      <dd>
+                        <code>{pathDisplayFromHex(selectedModuleRuntimeEvidence.pathHex)}</code> ·
+                        {selectedModuleRuntimeEvidence.contentHash.slice(0, 12)}
+                      </dd>
+                    </div>
+                  </dl>
+                {/if}
+              </aside>
+            {/if}
+          {:else if moduleRuntimeMapView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Entry Points und Tests konnten nicht sicher gelesen werden.</p>
+              <button type="button" onclick={reloadModuleRuntime}>Erneut laden</button>
             </div>
           {/if}
         </div>

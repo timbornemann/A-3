@@ -1,18 +1,20 @@
 use crate::{
-    CompositionRoot, map_module_dependency_graph_query_from_v1, map_module_tree_query_from_v1,
-    map_repository_tree_query_from_v1,
+    CompositionRoot, map_module_dependency_graph_query_from_v1,
+    map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
+    map_module_tree_query_from_v1, map_repository_tree_query_from_v1,
 };
 use a3_protocol::{
     CommandErrorV1, ControlDeepMapRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1,
     HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
     ListRecentProjectsRequestV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1,
-    ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleTreeRequestV1, QueryProjectStatusRequestV1,
-    QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
-    RepositoryTreeResponseV1, StartDeepMapRequestV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
+    QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
+    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
+    RemoveProjectResponseV1, RepositoryTreeResponseV1, StartDeepMapRequestV1,
 };
 use tauri::State;
 
@@ -86,6 +88,24 @@ pub async fn query_module_dependency_graph(
     root: State<'_, CompositionRoot>,
 ) -> Result<ModuleDependencyGraphResponseV1, CommandErrorV1> {
     execute_query_module_dependency_graph(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns bounded current entrypoint and test roots for one deterministic primary module.
+pub async fn query_module_runtime_map(
+    request: QueryModuleRuntimeMapRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ModuleRuntimeMapResponseV1, CommandErrorV1> {
+    execute_query_module_runtime_map(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Traverses one fixed role-specific preset bound to a visible atomic publication.
+pub async fn query_module_runtime_flow(
+    request: QueryModuleRuntimeFlowRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ModuleRuntimeFlowResponseV1, CommandErrorV1> {
+    execute_query_module_runtime_flow(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -268,6 +288,28 @@ async fn execute_query_module_dependency_graph(
     root.query_module_dependency_graph(&query).await
 }
 
+async fn execute_query_module_runtime_map(
+    request: QueryModuleRuntimeMapRequestV1,
+    root: &CompositionRoot,
+) -> Result<ModuleRuntimeMapResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_module_runtime_map_query_from_v1(&request)?;
+    root.query_module_runtime_map(&query).await
+}
+
+async fn execute_query_module_runtime_flow(
+    request: QueryModuleRuntimeFlowRequestV1,
+    root: &CompositionRoot,
+) -> Result<ModuleRuntimeFlowResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_module_runtime_flow_query_from_v1(&request)?;
+    root.query_module_runtime_flow(&query).await
+}
+
 async fn execute_query_repository_tree(
     request: QueryRepositoryTreeRequestV1,
     root: &CompositionRoot,
@@ -338,9 +380,10 @@ mod tests {
         execute_control_deep_map, execute_list_recent_projects, execute_open_project,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
         execute_query_index_overview, execute_query_module_card_freshness,
-        execute_query_module_dependency_graph, execute_query_module_tree,
-        execute_query_project_status, execute_query_repository_tree, execute_rebuild_project_index,
-        execute_remove_project, execute_start_deep_map,
+        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
+        execute_query_module_runtime_map, execute_query_module_tree, execute_query_project_status,
+        execute_query_repository_tree, execute_rebuild_project_index, execute_remove_project,
+        execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -354,13 +397,14 @@ mod tests {
     use a3_protocol::{
         ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleTreeResultV1,
+        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
+        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
         OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryDeepMapRequestV1,
         QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
         QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-        QueryModuleTreeRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-        RebuildProjectIndexRequestV1, RemoveProjectRequestV1, RepositoryTreeResultV1,
-        StartDeepMapRequestV1,
+        QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+        QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexRequestV1,
+        RemoveProjectRequestV1, RepositoryTreeResultV1, StartDeepMapRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -719,6 +763,124 @@ mod tests {
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn module_runtime_map_reports_no_project_and_rejects_untrusted_bounds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let response = block_on(execute_query_module_runtime_map(
+            QueryModuleRuntimeMapRequestV1::new(ProtocolVersion::CURRENT, "11".repeat(32), 20, 20),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            ModuleRuntimeMapResultV1::NoProject
+        ));
+
+        for (module_id, entrypoint_limit, test_limit) in [
+            ("aa".repeat(31), 20, 20),
+            ("GG".repeat(32), 20, 20),
+            ("11".repeat(32), 0, 20),
+            ("11".repeat(32), 20, 257),
+        ] {
+            let result = block_on(execute_query_module_runtime_map(
+                QueryModuleRuntimeMapRequestV1::new(
+                    ProtocolVersion::CURRENT,
+                    module_id,
+                    entrypoint_limit,
+                    test_limit,
+                ),
+                &root,
+            ));
+            assert_eq!(
+                result.map_err(|error| error.code()),
+                Err(ErrorCodeV1::InvalidModuleRuntimeMapQuery)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn module_runtime_flow_reports_no_project_and_validates_all_seed_tokens()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let request = |run: String, snapshot: String, module: String, symbol: String, limit| {
+            QueryModuleRuntimeFlowRequestV1::new(
+                ProtocolVersion::CURRENT,
+                run,
+                snapshot,
+                module,
+                symbol,
+                ModuleRuntimeFlowKindV1::EntrypointCalls,
+                limit,
+            )
+        };
+        let valid = "11".repeat(32);
+        let response = block_on(execute_query_module_runtime_flow(
+            request(
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                100,
+            ),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            ModuleRuntimeFlowResultV1::NoProject
+        ));
+
+        for (run, snapshot, module, symbol, limit) in [
+            (
+                "aa".repeat(31),
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                20,
+            ),
+            (
+                valid.clone(),
+                "GG".repeat(32),
+                valid.clone(),
+                valid.clone(),
+                20,
+            ),
+            (
+                valid.clone(),
+                valid.clone(),
+                "aa".repeat(31),
+                valid.clone(),
+                20,
+            ),
+            (
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                "GG".repeat(32),
+                20,
+            ),
+            (
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                valid.clone(),
+                101,
+            ),
+        ] {
+            let result = block_on(execute_query_module_runtime_flow(
+                request(run, snapshot, module, symbol, limit),
+                &root,
+            ));
+            assert_eq!(
+                result.map_err(|error| error.code()),
+                Err(ErrorCodeV1::InvalidModuleRuntimeFlowQuery)
+            );
+        }
         Ok(())
     }
 

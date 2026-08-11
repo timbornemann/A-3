@@ -351,6 +351,29 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    löst keinen Graphread aus; Evidence-Navigation bleibt innerhalb der bereits gelieferten,
    bounded Projektion.
 
+### Entry Points, Tests und feste Runtime-Flows
+
+1. `query_module_runtime_map` liest Entry-Point- und Testpräfixe gemeinsam aus einer kurzen
+   Transaktion der jüngsten atomaren V8-Publikation. Als untrusted Eingaben sind nur eine aktuelle
+   primäre `ModuleId` und zwei Präfixlimits von 1 bis 256 zulässig.
+2. Jeder Root muss zugleich durch die ranggeordnete Modul-Featurezeile, die passende
+   `SymbolRole` und genau eine primäre Modul-Membership belegt sein. Communities sind keine
+   auswählbaren Runtime-Module. Stored Count, Anfragepräfix und Formationstrunkierung bleiben
+   getrennt sichtbar.
+3. `query_module_runtime_flow` ist kein generischer Graphzugriff. Der WebView stehen nur
+   `EntrypointCalls` mit ausgehenden `Calls` bis Tiefe zwei und `TestTargets` mit einer direkten
+   ausgehenden `Tests`-Kante zur Verfügung; das Ergebnislimit liegt zwischen 1 und 100.
+4. Ein Flow-Request wiederholt Run-, Snapshot-, Modul- und Rootanker der sichtbaren Map. Der
+   Application-Use-Case lässt die Traversierung erst nach erneuter aktueller Rollenvalidierung zu
+   und prüft anschließend, dass der bestehende R3-Graphadapter exakt dieselbe Publikation und
+   Query geliefert hat. Ein Publish-Rennen ergibt `publicationChanged`.
+5. Jeder Root, jedes Ziel und jede Kante behält seine aktuelle Revision, stabile Evidence-ID und
+   navigierbare Source-Range. Die UI bezeichnet die Daten ausdrücklich als strukturelle
+   Beobachtung und nicht als ausgeführte Laufzeitspur oder bewiesene Tatsachenbehauptung.
+6. Storage-Reads prüfen Cancellation und enden jeweils nach spätestens zwei Sekunden. Die UI lädt
+   Maps, größere Präfixe und Flows nur nach einer expliziten Aktion oder nach erfolgreichem Publish;
+   das 500-ms-Statuspolling führt keinen Runtime-Read aus.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

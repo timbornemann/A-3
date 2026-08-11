@@ -41,6 +41,10 @@ pub enum ErrorCodeV1 {
     ModuleTreeParentUnavailable,
     /// A module dependency center ID or node limit violated the strict graph contract.
     InvalidModuleDependencyGraphQuery,
+    /// A module ID or role-prefix limit violated the strict runtime-map contract.
+    InvalidModuleRuntimeMapQuery,
+    /// A publication, module, root, preset, or result limit violated the runtime-flow contract.
+    InvalidModuleRuntimeFlowQuery,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -128,6 +132,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::InvalidModuleDependencyGraphQuery => {
                 "The module dependency request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidModuleRuntimeMapQuery => {
+                "The module runtime-map request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidModuleRuntimeFlowQuery => {
+                "The module runtime-flow request is outside the supported bounds."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

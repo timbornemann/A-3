@@ -8,6 +8,7 @@ mod index_activity;
 mod index_overview;
 mod module_card_freshness;
 mod module_dependency_graph;
+mod module_runtime;
 mod module_tree;
 mod project;
 mod project_rebuild;
@@ -45,6 +46,14 @@ pub use module_dependency_graph::{
     ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1, ModuleDependencyProviderV1,
     ModuleDependencyRelationV1, ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1,
     ModuleDependencySourceRangeV1, QueryModuleDependencyGraphRequestV1,
+};
+pub use module_runtime::{
+    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
+    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowResultV1,
+    ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1,
+    ModuleRuntimeMapResultV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1, ModuleRuntimeRootSetV1,
+    ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1,
 };
 pub use module_tree::{
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,

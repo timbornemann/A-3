@@ -158,6 +158,42 @@ exakt entsprechen. Unbekannte Felder, Communities, Hierarchierelationen, nicht k
 Pfade, Counts oder Evidence, Selbstkanten, falsche Inzidenz, Reihenfolge oder
 Trunkierungswahrheit werden am Rust- beziehungsweise TypeScript-Rand abgelehnt.
 
+## Module Runtime Map und Flow V1
+
+`query_module_runtime_map` akzeptiert genau `protocolVersion`, eine aktuelle primäre `moduleId`
+sowie getrennte `entrypointLimit`- und `testLimit`-Werte von jeweils 1 bis 256. Projekt, Worktree,
+Pfade und Symbolrollen sind keine Requestfelder. Ungültige Werte liefern
+`invalidModuleRuntimeMapQuery`. Die Antwort unterscheidet `noProject`, `noPublishedIndex`,
+`projectionUnavailable`, `moduleUnavailable` und `available`.
+
+Eine verfügbare Map bindet `indexRunId`, `snapshotId` und `moduleId` an genau eine atomare
+V8-Publikation. `entrypoints` und `tests` enthalten jeweils einen ab Rang eins lückenlosen,
+identitätseindeutigen Präfix aus höchstens 256 `roots`, den kanonischen Dezimaltext `storedCount`
+sowie getrennte `projectionTruncated`- und `visibleTruncated`-Signale. Ein Root trägt ausschließlich
+seine feste Rolle, den einbasierten Rang und eine aktuelle strukturelle Symbolprojektion mit
+64-stelliger `symbolId` und `evidenceId`, bekanntem `symbolKind`, begrenztem Namen, kanonischem
+relativem `pathHex`, `contentHash` und valider `selectionRange`. Source-Inhalt wird nicht
+übertragen.
+
+`query_module_runtime_flow` akzeptiert genau `protocolVersion`, die sichtbaren
+`expectedIndexRunId` und `expectedSnapshotId`, `moduleId`, `rootSymbolId`, einen der festen Werte
+`entrypointCalls` oder `testTargets` und ein `resultLimit` von 1 bis 100. Eine frei wählbare
+Relation, Richtung oder Tiefe ist nicht darstellbar. `entrypointCalls` bedeutet höchstens zwei
+ausgehende `Calls`-Kanten von einem aktuell bewiesenen Entry Point; `testTargets` bedeutet genau
+eine direkte ausgehende `Tests`-Kante von einer aktuell bewiesenen Testdefinition. Ungültige Werte
+liefern `invalidModuleRuntimeFlowQuery`.
+
+Vor der Traversierung validiert der Core Publikation, Primärmodul, Rolle und Root erneut. Die
+Antwort unterscheidet deshalb zusätzlich `publicationChanged` und `rootUnavailable`, statt alte
+Roots mit neuer Evidence zu mischen. Ein verfügbarer Flow wiederholt alle Publikations- und
+Seedanker, enthält höchstens 100 eindeutige Datei- oder Symbolziele und zu jedem Ziel den
+vollständigen kürzesten Evidence-Pfad. Jeder Schritt trägt nur `calls` beziehungsweise `tests` und
+eine exakte aktuelle `GraphEdge`-Evidence mit Endpoints, Revision, Range, Provider, Confidence und
+Resolution. Der unabhängige TypeScript-Decoder prüft Relation, Tiefe, gerichtete
+Endpoint-Kontinuität, Zyklen, Zielübereinstimmung, Duplikate, Grenzen und die Übereinstimmung mit der
+sichtbaren Query erneut. Beide Commands laufen nur nach expliziter Modul-, Root-, Nachlade- oder
+Aktualisierungsaktion, nicht im Statuspolling.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -216,10 +252,11 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Card-Freshness- und Deep-Map-Commands. Repository- und Modulbaum besitzen ausschließlich
-`allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der Abhängigkeitsgraph
-besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist
-`allow-query-module-card-freshness`. Für Deep Map sind das
+Module-Runtime-, Module-Card-Freshness- und Deep-Map-Commands. Repository- und Modulbaum besitzen
+ausschließlich `allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der
+Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist
+`allow-query-module-card-freshness`. Runtime-Roots und feste Flows besitzen ausschließlich
+`allow-query-module-runtime-map` und `allow-query-module-runtime-flow`. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.

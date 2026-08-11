@@ -113,6 +113,16 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Betriebssystempfade; opake relative Pfadbytes autorisieren keinen Dateizugriff. Ausgelassene
   Nachbarn, Gruppen, Quellkanten und ungemappte Dateikanten bleiben explizit sichtbar. Der Read
   läuft nur nach Modulauswahl, Aktualisierung oder erfolgreichem Publish, nie im 500-ms-Polling.
+- `query_module_runtime_map` akzeptiert nur Protokollversion, eine aktuelle primäre `ModuleId` und
+  getrennte Rootlimits von 1 bis 256. `query_module_runtime_flow` verlangt zusätzlich die bereits
+  sichtbaren Run-/Snapshot-/Rootanker, ein festes rollenabhängiges Preset und ein Ziel-Limit von 1
+  bis 100. Richtung, Relation und Tiefe sind nicht frei wählbar: Entry Points erlauben nur
+  ausgehende `Calls` bis Tiefe zwei, Tests nur eine direkte ausgehende `Tests`-Relation. Der Core
+  validiert aktuelle Publikation, Membership und Adapterrolle unmittelbar vor Traversierung erneut;
+  ein Publikationswechsel liefert einen content-freien Status. Beide Reads sind cancellable,
+  zeitbegrenzt und geben ausschließlich kanonische relative Evidence, keine Source-, Datei-,
+  Shell-, SQL- oder Providerbefugnis aus. Sie laufen nur nach bewusster Auswahl, Nachladen,
+  Aktualisierung oder erfolgreichem Publish, nie im 500-ms-Polling.
 - Die fünf Deep-Map-Commands akzeptieren niemals einen Projektpfad, eine Projektidentität, ein
   ModelProfile oder eine Job-ID aus der WebView. Nur der explizite Start trägt ein dreidimensionales,
   gegen feste Domainminima und -maxima validiertes Budget. Statuspolling liest ausschließlich das

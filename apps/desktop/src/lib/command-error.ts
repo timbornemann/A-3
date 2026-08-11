@@ -21,6 +21,8 @@ export type ErrorCodeV1 =
   | 'invalidModuleTreeQuery'
   | 'moduleTreeParentUnavailable'
   | 'invalidModuleDependencyGraphQuery'
+  | 'invalidModuleRuntimeMapQuery'
+  | 'invalidModuleRuntimeFlowQuery'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -57,6 +59,8 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'invalidModuleTreeQuery',
   'moduleTreeParentUnavailable',
   'invalidModuleDependencyGraphQuery',
+  'invalidModuleRuntimeMapQuery',
+  'invalidModuleRuntimeFlowQuery',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

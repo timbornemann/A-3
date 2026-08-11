@@ -127,7 +127,7 @@ Abhängigkeiten: Gate M5
 
 - [x] Repository- und Modulbaum
 - [x] Abhängigkeitsgraph mit begrenzter Knotenzahl
-- [ ] Entry Points, Tests und Runtime Flows
+- [x] Entry Points, Tests und Runtime Flows
 - [ ] Module Card
 - [ ] Evidence Inspector
 - [ ] Confidence, Coverage und Freshness
@@ -190,6 +190,39 @@ Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 3
 Desktop-Libtests plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 76 Frontendtests,
 Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74
 lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle.
+
+Abnahme Entry Points, Tests und Runtime Flows vom 2026-08-11: Für ein explizit ausgewähltes
+aktuelles Primärmodul liest A^3 Entry Points und Tests gemeinsam aus genau einer kurzen
+Transaktion des jüngsten atomar publizierten V8-Stands. Featurezeile, lückenloser Rang,
+`SymbolRole`, aktuelle Symbolrevision und genau eine primäre Membership müssen übereinstimmen;
+Communities sind keine auswählbaren Roots. Gespeicherte Anzahl, angefordertes Präfix und bereits
+bei der Modulbildung entstandene Trunkierung bleiben getrennte Signale. Die UI startet mit je 20
+Roots und erweitert nur auf explizite Anforderung bis zur festen Grenze von 256.
+
+Ein Flow entsteht erst nach Rootauswahl und verwendet ausschließlich den bestehenden
+R3-Graphadapter. Entry Points erlauben höchstens zwei ausgehende `Calls`-Hops, Tests genau eine
+direkte ausgehende `Tests`-Kante; Relation, Richtung und Tiefe sind über IPC nicht frei wählbar.
+Run, Snapshot, Primärmodul, Rolle und Root werden unmittelbar vor der Traversierung erneut
+validiert und danach mit dem Graphresultat verglichen. Ein Replacement-Publish liefert
+`publicationChanged`; stale Roots und ihre Evidence werden in der UI sofort ausgeblendet, statt
+mit einem neuen Snapshot vermischt zu werden.
+
+Jeder sichtbare Root und jedes eindeutige Ziel führt zu exakter aktueller Symbol- oder
+Datei-Evidence; jeder Flow zeigt den vollständigen kürzesten Kantenpfad mit Revision, Range,
+Provider, Confidence und Resolution. Die Oberfläche bezeichnet diese Daten ausdrücklich als
+strukturelle Beobachtung, nicht als ausgeführte Laufzeitspur oder bewiesene Tatsachenbehauptung.
+Progressive Rootpräfixe, der explizite Flow-Klick, höchstens 100 Ziele und 4.096 inspizierte Kanten
+ersetzen einen unbrauchbaren Vollgraph. Kein Runtime-Read läuft im 500-ms-Statuspolling und die
+WebView erhält weder Source-, Datei-, Shell-, SQL-, Provider- noch generische Graphbefugnisse.
+
+Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features,
+Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 38
+Desktop-Libtests plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 83 Frontendtests,
+Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74
+lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der
+Windows-libSQL-Contract mit 23 isolierten Fällen bestand nach der begrenzten Teardown-
+Stabilisierung zweimal vollständig sowie im grünen Workspace-Gesamtlauf. Die lokale visuelle
+Prüfung bestätigte Desktop- und 720-px-Layout ohne Horizontaloverflow oder Browser-Consolefehler.
 
 ## U5 Agent Workspace
 

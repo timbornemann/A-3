@@ -19,9 +19,11 @@ mod tests {
         CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
         ModuleCardFreshnessResultV1, ModuleDependencyGraphResponseV1,
-        ModuleDependencyGraphResultV1, ModuleTreeResponseV1, ModuleTreeResultV1,
-        OpenProjectResponseV1, OpenProjectResultV1, PlatformV1, ProtocolVersion,
-        RecentProjectsResponseV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
+        ModuleDependencyGraphResultV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowResultV1,
+        ModuleRuntimeMapResponseV1, ModuleRuntimeMapResultV1, ModuleTreeResponseV1,
+        ModuleTreeResultV1, OpenProjectResponseV1, OpenProjectResultV1, PlatformV1,
+        ProtocolVersion, RecentProjectsResponseV1, RepositoryTreeResponseV1,
+        RepositoryTreeResultV1,
     };
     use serde_json::json;
     use std::error::Error;
@@ -112,6 +114,8 @@ mod tests {
                 a3_desktop::commands::query_index_overview,
                 a3_desktop::commands::query_module_card_freshness,
                 a3_desktop::commands::query_module_dependency_graph,
+                a3_desktop::commands::query_module_runtime_flow,
+                a3_desktop::commands::query_module_runtime_map,
                 a3_desktop::commands::query_module_tree,
                 a3_desktop::commands::query_repository_tree,
                 a3_desktop::commands::query_health,
@@ -215,6 +219,61 @@ mod tests {
         assert!(matches!(
             module_dependency_response.result(),
             ModuleDependencyGraphResultV1::NoProject
+        ));
+
+        let module_runtime_map_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_module_runtime_map".into(),
+                callback: CallbackFn(24),
+                error: CallbackFn(25),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "moduleId": "11".repeat(32),
+                        "entrypointLimit": 20,
+                        "testLimit": 20
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<ModuleRuntimeMapResponseV1>()?;
+        assert!(matches!(
+            module_runtime_map_response.result(),
+            ModuleRuntimeMapResultV1::NoProject
+        ));
+
+        let module_runtime_flow_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_module_runtime_flow".into(),
+                callback: CallbackFn(26),
+                error: CallbackFn(27),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "expectedIndexRunId": "22".repeat(32),
+                        "expectedSnapshotId": "33".repeat(32),
+                        "moduleId": "11".repeat(32),
+                        "rootSymbolId": "44".repeat(32),
+                        "kind": "entrypointCalls",
+                        "resultLimit": 20
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<ModuleRuntimeFlowResponseV1>()?;
+        assert!(matches!(
+            module_runtime_flow_response.result(),
+            ModuleRuntimeFlowResultV1::NoProject
         ));
 
         let repository_tree_response = get_ipc_response(
@@ -412,6 +471,8 @@ mod tests {
                 "allow-query-index-overview",
                 "allow-query-module-card-freshness",
                 "allow-query-module-dependency-graph",
+                "allow-query-module-runtime-flow",
+                "allow-query-module-runtime-map",
                 "allow-query-module-tree",
                 "allow-query-repository-tree",
                 "allow-query-project-status",

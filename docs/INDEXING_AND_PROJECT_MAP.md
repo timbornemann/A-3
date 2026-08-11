@@ -377,6 +377,29 @@ ist eine repräsentative aktuelle `FileRevision`, sofern das Modul strukturelle 
 Read ist cancellable, auf zwei Sekunden begrenzt und öffnet weder Live-Dateisystem noch
 Source-Inhalt.
 
+### Entry-Point-/Test-Roots und Runtime-Flows
+
+Die Runtime-Map verwendet ohne neue Schema- oder Ableitungsstufe die mit V8 atomar publizierten
+`module_entrypoints`, `module_tests`, `symbols`, `module_members` und `modules`. Eine kurze
+Read-Transaktion bindet Marker, Run, Snapshot, Primärmodul, vollständige gespeicherte Counts und
+die beiden angeforderten Rangpräfixe. Ränge müssen ab eins lückenlos sein; maximal 256 Roots pro
+Rolle sind gültig. Jede Featurezeile muss auf ein aktuelles Symbol mit passender `Entrypoint`- oder
+`Test`-Rolle und einer Membership genau der primären Modulart zeigen. Anfragebegrenzung und bereits
+bei der Modulbildung entstandene Trunkierung bleiben getrennte Signale.
+
+Ein Runtime-Flow setzt auf der bestehenden R3-`KnowledgeSearchStore`-Traversal auf. Vor dem
+Graphread validiert ein separater atomarer libSQL-Read, dass der vom Benutzer ausgewählte
+Run-/Snapshot-/Modul-/Symbolanker weiterhin die erwartete Rolle besitzt. Danach ist nur einer von
+zwei Presets erlaubt: ausgehende `Calls` mit maximal zwei Hops für Entry Points oder eine direkte
+ausgehende `Tests`-Relation für Tests. Der Graphadapter bleibt bei 100 Zielen, 4.096 inspizierten
+Kanten und zwei Sekunden begrenzt. Wechselt zwischen Validierung und Traversierung die jüngste
+Publikation, wird keine Evidence gemischt, sondern `publicationChanged` geliefert.
+
+Die Ausgabe enthält zu jedem eindeutigen Ziel den vollständigen kürzesten aktuellen Evidence-Pfad.
+Graphnähe bleibt Kandidatensignal: Die UI spricht von strukturell beobachteten Aufrufen und
+Testbeziehungen, nicht von tatsächlich ausgeführten Laufzeitspuren. Maps und Flows öffnen weder
+Live-Dateisystem noch Source-Inhalt und werden nicht durch das Statuspolling geladen.
+
 ## Deep Map
 
 Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrücklichen Aktion
