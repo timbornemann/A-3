@@ -36,6 +36,18 @@
       "foreign_change_preserved": true,
       "replan_count": 0,
       "compaction_count": 0
+    },
+    {
+      "id": "replan-user-edit",
+      "final_state": "done",
+      "goal": true,
+      "step": true,
+      "patch": true,
+      "evidence": true,
+      "verification": true,
+      "foreign_change_preserved": true,
+      "replan_count": 1,
+      "compaction_count": 0
     }
   ]
 }
