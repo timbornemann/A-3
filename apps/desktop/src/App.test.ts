@@ -192,7 +192,30 @@ describe('A^3 desktop shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
     const alert = await screen.findByRole('alert');
 
-    expect(alert.textContent).toContain('konnte nicht als sicherer Git-Worktree geöffnet werden');
+    expect(alert.textContent).toContain('erreichbarer Git-Worktree-Root');
+    expect(alert.textContent).not.toContain('secret');
+  });
+
+  it('shows concrete recovery for a selected path that became unavailable', async () => {
+    const projectOpener = vi.fn<() => Promise<OpenProjectResponseV1>>().mockRejectedValue({
+      code: 'projectSelectionUnavailable',
+      message: 'C:\\secret\\repository disappeared',
+      protocolVersion: 1,
+    });
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectOpener,
+        projectStatusLoader: async () => noProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.textContent).toContain('Prüfe Laufwerk und Zugriffsrechte');
+    expect(alert.textContent).toContain('wähle ihn erneut');
     expect(alert.textContent).not.toContain('secret');
   });
 

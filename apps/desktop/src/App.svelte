@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { projectActionRecoveryMessage, projectOpenRecoveryMessage } from './lib/command-error';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
@@ -32,19 +33,19 @@
     | { kind: 'opening' }
     | { kind: 'cancelled' }
     | { kind: 'opened' }
-    | { kind: 'error' };
+    | { kind: 'error'; message: string };
   type ProjectStatusView =
     | { kind: 'loading' }
     | { kind: 'noProject' }
     | { kind: 'active'; result: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
-  type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error' };
+  type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
   type RemovalView =
     | { kind: 'idle' }
     | { kind: 'confirming' }
     | { kind: 'submitting' }
     | { kind: 'removed' }
-    | { kind: 'error' };
+    | { kind: 'error'; message: string };
   type RecentProjectsView =
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
@@ -114,8 +115,8 @@
       } else {
         projectView = { kind: 'cancelled' };
       }
-    } catch {
-      projectView = { kind: 'error' };
+    } catch (error) {
+      projectView = { kind: 'error', message: projectOpenRecoveryMessage(error) };
     }
   }
 
@@ -125,8 +126,11 @@
       await projectRebuilder();
       rebuildView = { kind: 'idle' };
       await loadProjectStatus();
-    } catch {
-      rebuildView = { kind: 'error' };
+    } catch (error) {
+      rebuildView = {
+        kind: 'error',
+        message: projectActionRecoveryMessage(error, 'rebuild'),
+      };
     }
   }
 
@@ -146,8 +150,11 @@
       projectView = { kind: 'idle' };
       projectStatusView = { kind: 'noProject' };
       await loadRecentProjects();
-    } catch {
-      removalView = { kind: 'error' };
+    } catch (error) {
+      removalView = {
+        kind: 'error',
+        message: projectActionRecoveryMessage(error, 'remove'),
+      };
     }
   }
 
@@ -271,9 +278,7 @@
     {:else if projectView.kind === 'opened'}
       <p class="ready-label" role="status" aria-live="polite">Worktree sicher geöffnet</p>
     {:else if projectView.kind === 'error'}
-      <p class="project-error" role="alert">
-        Der gewählte Ordner konnte nicht als sicherer Git-Worktree geöffnet werden.
-      </p>
+      <p class="project-error" role="alert">{projectView.message}</p>
     {/if}
 
     {#if projectStatusView.kind === 'loading'}
@@ -338,10 +343,7 @@
             <button type="button" onclick={loadProjectStatus}>Status aktualisieren</button>
           </div>
           {#if rebuildView.kind === 'error'}
-            <p class="project-error" role="alert">
-              Der Rebuild konnte nicht sicher angefordert werden. Der bestehende Index bleibt
-              erhalten.
-            </p>
+            <p class="project-error" role="alert">{rebuildView.message}</p>
           {/if}
         </div>
         <div class="project-maintenance project-removal" aria-labelledby="removal-heading">
@@ -380,8 +382,7 @@
           {/if}
           {#if removalView.kind === 'error'}
             <p class="project-error" role="alert">
-              Der Worktree konnte nicht sicher aus der Projektliste entfernt werden. Repository und
-              private A^3-Daten wurden nicht gelöscht.
+              {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
             </p>
           {/if}
         </div>

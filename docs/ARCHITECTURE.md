@@ -175,6 +175,11 @@ HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diesen C
    persistierte Bindung und registriert die Beobachtung erst danach atomar im globalen Katalog.
 9. Die WebView erhält nur IDs, HEAD und einen nicht-autoritativen Anzeigepfad, niemals Git Common
    Directory, gespeicherte Rohpfade, Datenbankhandles oder Dateisystemzugriff.
+10. Fehlgeschlagene Commands liefern ausschließlich das strikte `CommandErrorV1`-Schema. Die UI
+    validiert Version, bekannte Codes, exakte Felder und eine begrenzte kontrollzeichenfreie Message,
+    verwirft die Message anschließend für die Anzeige und ordnet nur den stabilen Code einer
+    konkreten lokalen Recovery-Anweisung zu. Unbekannte Fehler fallen auf einen redigierten Hinweis
+    zurück.
 
 Der schmale `KnowledgeIndexStore`-Port stellt unveränderliche Snapshot-Ketten, den serialisierten
 IndexRun-Lifecycle und das atomische Publish bereit. Diese Application-Grenze verwendet ausschließlich

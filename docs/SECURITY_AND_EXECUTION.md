@@ -56,6 +56,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
   Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
   redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.
+- Die WebView zeigt keine vom Adapter oder von Tauri gelieferte Fehlermeldung direkt an. Sie
+  akzeptiert nur das exakte `CommandErrorV1`-Schema mit bekanntem V1-Code und mappt den Code auf eine
+  feste Recovery-Anweisung. Unbekannte Felder, Codes, Kontrollzeichen und überlange Meldungen führen
+  zu einem generischen Hinweis ohne den ursprünglichen Inhalt.
 - `query_project_status` akzeptiert außer der Protokollversion weder Projekt-ID noch Pfad. Der
   Composition-Root hält die zuletzt erfolgreich geöffnete `ProjectIdentity`; die WebView erhält nur
   die bestehende Anzeigeprojektion sowie bounded Snapshot- und IndexRun-Metadaten. Ein Reload der
