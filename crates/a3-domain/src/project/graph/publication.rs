@@ -1,7 +1,8 @@
 use super::{GraphEndpoint, LinkedGraph, RankProjection};
 use crate::{
-    ContentHash, FileRevision, IndexRunRecord, IndexRunStatus, ModuleKind, ModuleMembershipKind,
-    ModuleProjection, RepositoryPath, SourceRange, SymbolId, SyntaxRelationKind,
+    ContentHash, FileRevision, IndexRunRecord, IndexRunStatus, IndexedFileAnalysis, ModuleKind,
+    ModuleMembershipKind, ModuleProjection, RepositoryPath, SourceRange, SymbolId,
+    SyntaxRelationKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -14,6 +15,7 @@ pub struct IndexPublication {
     ranking: RankProjection,
     manifest_files: Vec<FileRevision>,
     modules: ModuleProjection,
+    file_analyses: Vec<IndexedFileAnalysis>,
 }
 
 impl IndexPublication {
@@ -21,8 +23,25 @@ impl IndexPublication {
     pub fn new(
         graph: LinkedGraph,
         ranking: RankProjection,
+        manifest_files: Vec<FileRevision>,
+        modules: ModuleProjection,
+    ) -> Result<Self, IndexPublicationError> {
+        let file_analyses = graph
+            .files()
+            .iter()
+            .cloned()
+            .map(IndexedFileAnalysis::generic)
+            .collect();
+        Self::new_with_file_analyses(graph, ranking, manifest_files, modules, file_analyses)
+    }
+
+    /// Binds a complete graph to exact ranking and per-file analysis projections.
+    pub fn new_with_file_analyses(
+        graph: LinkedGraph,
+        ranking: RankProjection,
         mut manifest_files: Vec<FileRevision>,
         modules: ModuleProjection,
+        mut file_analyses: Vec<IndexedFileAnalysis>,
     ) -> Result<Self, IndexPublicationError> {
         if graph.snapshot_id() != ranking.snapshot_id() {
             return Err(IndexPublicationError::SnapshotMismatch);
@@ -60,12 +79,25 @@ impl IndexPublication {
             }
         }
         validate_modules(&graph, &manifest_files, &modules)?;
+        file_analyses.sort_by(|left, right| left.revision().path().cmp(right.revision().path()));
+        if file_analyses
+            .windows(2)
+            .any(|pair| pair[0].revision().path() == pair[1].revision().path())
+            || file_analyses.len() != graph.files().len()
+            || file_analyses
+                .iter()
+                .zip(graph.files())
+                .any(|(analysis, revision)| analysis.revision() != revision)
+        {
+            return Err(IndexPublicationError::FileAnalysisCoverageMismatch);
+        }
 
         Ok(Self {
             graph,
             ranking,
             manifest_files,
             modules,
+            file_analyses,
         })
     }
 
@@ -91,6 +123,12 @@ impl IndexPublication {
     #[must_use]
     pub const fn modules(&self) -> &ModuleProjection {
         &self.modules
+    }
+
+    /// Returns exact per-file language, coverage, and diagnostic evidence in path order.
+    #[must_use]
+    pub fn file_analyses(&self) -> &[IndexedFileAnalysis] {
+        &self.file_analyses
     }
 }
 
@@ -262,6 +300,8 @@ pub enum IndexPublicationError {
     ModuleCoverageMismatch,
     /// Module membership or boundary evidence is absent or stale.
     ModuleEvidenceMissing,
+    /// File analysis did not cover the graph's exact file revisions one-to-one.
+    FileAnalysisCoverageMismatch,
     /// A reconstructed visible index did not have published run state.
     RunNotPublished,
     /// The run and graph refer to different snapshots.
@@ -282,6 +322,9 @@ impl fmt::Display for IndexPublicationError {
             Self::ModuleSnapshotMismatch => "module projection belongs to another graph snapshot",
             Self::ModuleCoverageMismatch => "module projection does not cover the graph exactly",
             Self::ModuleEvidenceMissing => "module projection evidence is stale or absent",
+            Self::FileAnalysisCoverageMismatch => {
+                "file analysis does not cover exactly the published file revisions"
+            }
             Self::RunNotPublished => "visible index run is not published",
             Self::RunSnapshotMismatch => "published run and graph snapshots differ",
             Self::RunRankingPolicyMismatch => "published run and ranking policies differ",

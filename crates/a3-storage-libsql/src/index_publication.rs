@@ -14,6 +14,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 const MAX_FILES: usize = 250_000;
+const MAX_DIAGNOSTICS: usize = 2_000_000;
 const MAX_SYMBOLS: usize = 1_000_000;
 const MAX_EDGES: usize = 2_000_000;
 const MAX_UNRESOLVED: usize = 2_000_000;
@@ -163,6 +164,8 @@ async fn delete_superseded_publication_rows(
         "exact_search_symbols",
         "exact_search_manifests",
         "exact_search_projections",
+        "index_parse_diagnostics",
+        "index_file_analyses",
         "symbols",
         "file_revisions",
     ] {
@@ -366,6 +369,8 @@ pub(crate) async fn rebuild_regenerable_index(
             "exact_search_symbols",
             "exact_search_manifests",
             "exact_search_projections",
+            "index_parse_diagnostics",
+            "index_file_analyses",
             "symbols",
             "file_revisions",
         ] {
@@ -391,6 +396,13 @@ fn publication_work_units(
     lexical_projection: &lexical_search_projection::LexicalSearchProjection,
 ) -> Result<u64, IndexPublicationRepositoryError> {
     let publication_units = [
+        publication.file_analyses().len(),
+        publication
+            .file_analyses()
+            .iter()
+            .map(|analysis| analysis.diagnostics().len())
+            .try_fold(0_usize, usize::checked_add)
+            .ok_or(IndexPublicationRepositoryError::ResourceLimit)?,
         publication.graph().symbols().len(),
         publication.graph().edges().len(),
         publication.graph().unresolved().len(),
@@ -420,6 +432,8 @@ async fn publication_row_count(
     let mut total = 0_u64;
     for (table, limit) in [
         ("file_revisions", MAX_FILES),
+        ("index_file_analyses", MAX_FILES),
+        ("index_parse_diagnostics", MAX_DIAGNOSTICS),
         ("symbols", MAX_SYMBOLS),
         ("symbol_edges", MAX_EDGES),
         ("unresolved_edges", MAX_UNRESOLVED),
@@ -478,6 +492,8 @@ async fn rebuild_row_count(
         "exact_search_symbols",
         "exact_search_manifests",
         "exact_search_projections",
+        "index_parse_diagnostics",
+        "index_file_analyses",
         "symbols",
         "file_revisions",
     ] {
@@ -642,6 +658,13 @@ fn validate_resource_limits(
 ) -> Result<(), IndexPublicationRepositoryError> {
     let graph = publication.graph();
     if graph.files().len() > MAX_FILES
+        || publication.file_analyses().len() > MAX_FILES
+        || publication
+            .file_analyses()
+            .iter()
+            .map(|analysis| analysis.diagnostics().len())
+            .try_fold(0_usize, usize::checked_add)
+            .is_none_or(|total| total > MAX_DIAGNOSTICS)
         || graph.symbols().len() > MAX_SYMBOLS
         || graph.edges().len() > MAX_EDGES
         || graph.unresolved().len() > MAX_UNRESOLVED
@@ -667,6 +690,8 @@ async fn publication_rows_exist(
 ) -> Result<bool, IndexPublicationRepositoryError> {
     for table in [
         "file_revisions",
+        "index_file_analyses",
+        "index_parse_diagnostics",
         "symbols",
         "symbol_edges",
         "unresolved_edges",

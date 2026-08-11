@@ -285,6 +285,14 @@ Knowledge-Schema V8 nimmt Modulmarker, Module, Manifestbelege, primäre und zus�
 Memberships, Graph-Evidence sowie Zentral-/Entrypoint-/Test- und Repository-Card-Projektionen in
 denselben Sichtbarkeitswechsel auf. Ein Read rekonstruiert die vollständige `ModuleProjection` und
 prüft Snapshot, Counts, Symbolabdeckung, Manifestrevisionen und Graphbeziehungen erneut.
+
+Index-Schema V5 und Knowledge-Schema V23 nehmen zusätzlich für jede exakte publizierte
+`FileRevision` die Sprache, Adapterrevision, Parse-Coverage und kanonischen sicheren Diagnostics in
+dieselbe Transaktion auf. Der Publish verlangt eine lückenlose Eins-zu-eins-Abdeckung der
+Graphdateien; Reads validieren Hash, Parserzustand, Bereiche und Coverage erneut. Historische
+Publikationen bis Index-Schema V4 bleiben als explizit generische Analyse lesbar. Dadurch ist ein
+file-lokaler Parserfehler sichtbar, ohne den letzten vollständigen Index oder andere Dateien zu
+verwerfen.
 Replacement und Rebuild entfernen die neuen regenerierbaren Tabellen in expliziter FK-sicherer
 Kind-vor-Eltern-Reihenfolge; tiefe Delete-Cascades gehören nicht zur V8-Löschsemantik.
 

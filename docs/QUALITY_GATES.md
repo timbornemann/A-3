@@ -35,6 +35,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   `query_index_activity`-Contract darf nur das in-memory Manager-Read-Model liefern; TypeScript
   lehnt unbekannte Felder, fremde Phasen, widersprüchliche Ordinale und falsche Completion ab. Der
   Component-Test hält den letzten publizierten Snapshot während eines laufenden Jobs sichtbar.
+- Der U3-Analysecontract verlangt eine lückenlose file-genaue V5-Publikation von Sprache,
+  Adapterrevision, Diagnostics und Coverage. Migration V23 muss aus V22 atomar vorrollen und bei
+  einem Schemafehler vollständig auf V22 zurückrollen. Der Storage-Roundtrip prüft partielle
+  Coverage und sichere Diagnostics exakt; eine historische V4-Publikation ohne Analysezeilen muss
+  weiterhin als explizit generisch lesbar bleiben.
 
 ### Persistenz
 

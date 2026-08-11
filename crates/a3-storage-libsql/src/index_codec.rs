@@ -1,14 +1,18 @@
 use crate::index_publication::{IndexPublicationRepositoryError, MutationProgress, read_stable_id};
 use crate::module_projection_codec;
 use a3_domain::{
-    Centrality, Confidence, ContentHash, EvidenceRef, FileRevision, GraphEdge, GraphEndpoint,
-    GraphSymbol, IndexPublication, IndexRunId, IndexRunRecord, LinkResolution, LinkedGraph,
-    LocalSymbolId, ParsedSymbol, RankProjection, RankScore, RepositoryPath, SourcePosition,
-    SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolReference,
-    SymbolRole, SymbolRoles, SymbolSignature, SymbolVisibility, SyntaxProvider, SyntaxRelationKind,
-    UnresolvedEdgeCandidate, UnresolvedGraphTarget, UnresolvedReason,
+    Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef, FileRevision, GraphEdge,
+    GraphEndpoint, GraphSymbol, IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexSchemaVersion, IndexedFileAnalysis, LanguageAdapterRevision, LanguageAdapterVersion,
+    LinkResolution, LinkedGraph, LocalSymbolId, ParseCoverage, ParseDiagnostic,
+    ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol, RankProjection, RankScore,
+    RepositoryPath, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
+    SymbolRankSignals, SymbolReference, SymbolRole, SymbolRoles, SymbolSignature, SymbolVisibility,
+    SyntaxProvider, SyntaxRelationKind, UnresolvedEdgeCandidate, UnresolvedGraphTarget,
+    UnresolvedReason,
 };
 use libsql::{Transaction, Value, params_from_iter};
+use std::collections::BTreeMap;
 
 const MAX_BATCH_PARAMETERS: usize = 30_000;
 const MAX_BATCH_ROWS: usize = 1_024;
@@ -23,6 +27,7 @@ pub(crate) async fn write_publication_rows(
     publication: &IndexPublication,
     progress: &mut MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
+    write_file_analyses(transaction, run_id, publication.file_analyses(), progress).await?;
     write_symbols(transaction, run_id, publication.graph().symbols(), progress).await?;
     write_edges(transaction, run_id, publication.graph().edges(), progress).await?;
     write_candidates(
@@ -51,6 +56,7 @@ pub(crate) async fn read_publication_rows(
     progress: &mut MutationProgress<'_>,
 ) -> Result<IndexPublication, IndexPublicationRepositoryError> {
     let files = read_files(transaction, run.id(), progress).await?;
+    let file_analyses = read_file_analyses(transaction, run, &files, progress).await?;
     let symbols = read_symbols(transaction, run.id(), progress).await?;
     let edges = read_edges(transaction, run, progress).await?;
     let unresolved = read_candidates(transaction, run, progress).await?;
@@ -66,8 +72,103 @@ pub(crate) async fn read_publication_rows(
         progress,
     )
     .await?;
-    IndexPublication::new(graph, ranking, manifest_files, modules)
+    IndexPublication::new_with_file_analyses(graph, ranking, manifest_files, modules, file_analyses)
         .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)
+}
+
+async fn write_file_analyses(
+    transaction: &Transaction,
+    run_id: IndexRunId,
+    analyses: &[IndexedFileAnalysis],
+    progress: &mut MutationProgress<'_>,
+) -> Result<(), IndexPublicationRepositoryError> {
+    const COLUMNS: usize = 8;
+    const PREFIX: &str = "INSERT INTO index_file_analyses (\n\
+             index_run_id, repository_path, content_hash, language, adapter_version,\n\
+             total_bytes, covered_bytes, incomplete_regions\n\
+             ) VALUES ";
+    write_batches(
+        transaction,
+        analyses,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |analysis, _| {
+            let coverage = analysis.coverage();
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                blob(analysis.revision().path().as_bytes()),
+                blob(analysis.revision().content_hash().as_bytes()),
+                text(analysis.language().as_str()),
+                optional_text(
+                    analysis
+                        .adapter_revision()
+                        .map(|revision| revision.version().as_str()),
+                ),
+                optional_integer(coverage.map(|value| i64::from(value.total_bytes()))),
+                optional_integer(coverage.map(|value| i64::from(value.covered_bytes()))),
+                optional_integer(coverage.map(|value| i64::from(value.incomplete_regions()))),
+            ])
+        },
+    )
+    .await?;
+
+    let mut diagnostics = Vec::new();
+    for analysis in analyses {
+        for (index, diagnostic) in analysis.diagnostics().iter().enumerate() {
+            diagnostics.push(StoredDiagnostic {
+                path: analysis.revision().path(),
+                sequence: sequence(index)?,
+                diagnostic,
+            });
+        }
+    }
+    write_diagnostics(transaction, run_id, &diagnostics, progress).await
+}
+
+#[derive(Clone, Copy)]
+struct StoredDiagnostic<'a> {
+    path: &'a RepositoryPath,
+    sequence: i64,
+    diagnostic: &'a ParseDiagnostic,
+}
+
+async fn write_diagnostics(
+    transaction: &Transaction,
+    run_id: IndexRunId,
+    diagnostics: &[StoredDiagnostic<'_>],
+    progress: &mut MutationProgress<'_>,
+) -> Result<(), IndexPublicationRepositoryError> {
+    const COLUMNS: usize = 12;
+    const PREFIX: &str = "INSERT INTO index_parse_diagnostics (\n\
+             index_run_id, repository_path, diagnostic_sequence, code, severity, start_byte,\n\
+             end_byte, start_row, start_column, end_row, end_column, message\n\
+             ) VALUES ";
+    write_batches(
+        transaction,
+        diagnostics,
+        COLUMNS,
+        PREFIX,
+        progress,
+        |stored, _| {
+            let range = range_values(stored.diagnostic.range());
+            Ok(vec![
+                blob(run_id.as_bytes()),
+                blob(stored.path.as_bytes()),
+                integer(stored.sequence),
+                text(diagnostic_code_to_stored(stored.diagnostic.code())),
+                text(diagnostic_severity_to_stored(stored.diagnostic.severity())),
+                integer(range[0]),
+                integer(range[1]),
+                integer(range[2]),
+                integer(range[3]),
+                integer(range[4]),
+                integer(range[5]),
+                text(stored.diagnostic.message().as_str()),
+            ])
+        },
+    )
+    .await
 }
 
 async fn write_symbols(
@@ -385,6 +486,174 @@ async fn read_files(
         progress.advance(1)?;
     }
     Ok(files)
+}
+
+async fn read_file_analyses(
+    transaction: &Transaction,
+    run: IndexRunRecord,
+    files: &[FileRevision],
+    progress: &mut MutationProgress<'_>,
+) -> Result<Vec<IndexedFileAnalysis>, IndexPublicationRepositoryError> {
+    let schema_version = read_index_schema_version(transaction, run).await?;
+    if schema_version < IndexSchemaVersion::v5() {
+        return Ok(files
+            .iter()
+            .cloned()
+            .map(IndexedFileAnalysis::generic)
+            .collect());
+    }
+
+    let mut diagnostics = read_diagnostics(transaction, run.id(), progress).await?;
+    let mut rows = transaction
+        .query(
+            "SELECT repository_path, content_hash, language, adapter_version, total_bytes,\n\
+             covered_bytes, incomplete_regions FROM index_file_analyses\n\
+             WHERE index_run_id = ?1 ORDER BY repository_path",
+            [run.id().as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let mut analyses = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+    {
+        let path = read_path(&row, 0)?;
+        let revision = FileRevision::new(
+            path.clone(),
+            ContentHash::from_bytes(read_stable_id(&row, 1)?),
+        );
+        let language: String = row.get(2).map_err(IndexPublicationRepositoryError::Read)?;
+        let language = IndexLanguage::try_from_stored(&language)
+            .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+        let adapter_version: Option<String> =
+            row.get(3).map_err(IndexPublicationRepositoryError::Read)?;
+        let total_bytes: Option<i64> = row.get(4).map_err(IndexPublicationRepositoryError::Read)?;
+        let covered_bytes: Option<i64> =
+            row.get(5).map_err(IndexPublicationRepositoryError::Read)?;
+        let incomplete_regions: Option<i64> =
+            row.get(6).map_err(IndexPublicationRepositoryError::Read)?;
+        let file_diagnostics = diagnostics
+            .remove(&path)
+            .map_or_else(Vec::new, std::convert::identity);
+        let analysis = match (
+            language,
+            adapter_version,
+            total_bytes,
+            covered_bytes,
+            incomplete_regions,
+        ) {
+            (IndexLanguage::Generic, None, None, None, None) if file_diagnostics.is_empty() => {
+                IndexedFileAnalysis::generic(revision)
+            }
+            (
+                parsed_language,
+                Some(adapter_version),
+                Some(total_bytes),
+                Some(covered_bytes),
+                Some(incomplete_regions),
+            ) if parsed_language != IndexLanguage::Generic => {
+                let adapter_version = LanguageAdapterVersion::try_from_string(adapter_version)
+                    .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+                let coverage = ParseCoverage::new(
+                    checked_usize(total_bytes)?,
+                    checked_usize(covered_bytes)?,
+                    checked_usize(incomplete_regions)?,
+                )
+                .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+                IndexedFileAnalysis::parsed(
+                    revision,
+                    LanguageAdapterRevision::new(parsed_language, adapter_version),
+                    coverage,
+                    file_diagnostics,
+                )
+                .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?
+            }
+            _ => return Err(IndexPublicationRepositoryError::InvalidStoredData),
+        };
+        analyses.push(analysis);
+        progress.advance(1)?;
+    }
+    if !diagnostics.is_empty() {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    Ok(analyses)
+}
+
+async fn read_index_schema_version(
+    transaction: &Transaction,
+    run: IndexRunRecord,
+) -> Result<IndexSchemaVersion, IndexPublicationRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT index_schema_version FROM snapshots WHERE snapshot_id = ?1",
+            [run.snapshot_id().as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+        .ok_or(IndexPublicationRepositoryError::InvalidStoredData)?;
+    let version = IndexSchemaVersion::new(read_u32(&row, 0)?)
+        .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?;
+    if rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    Ok(version)
+}
+
+async fn read_diagnostics(
+    transaction: &Transaction,
+    run_id: IndexRunId,
+    progress: &mut MutationProgress<'_>,
+) -> Result<BTreeMap<RepositoryPath, Vec<ParseDiagnostic>>, IndexPublicationRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT repository_path, diagnostic_sequence, code, severity, start_byte, end_byte,\n\
+             start_row, start_column, end_row, end_column, message\n\
+             FROM index_parse_diagnostics WHERE index_run_id = ?1\n\
+             ORDER BY repository_path, diagnostic_sequence",
+            [run_id.as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?;
+    let mut diagnostics = BTreeMap::<RepositoryPath, Vec<ParseDiagnostic>>::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(IndexPublicationRepositoryError::Read)?
+    {
+        let path = read_path(&row, 0)?;
+        let sequence_value: i64 = row.get(1).map_err(IndexPublicationRepositoryError::Read)?;
+        let expected = sequence(diagnostics.get(&path).map_or(0, Vec::len))?;
+        if sequence_value != expected {
+            return Err(IndexPublicationRepositoryError::InvalidStoredData);
+        }
+        let code: String = row.get(2).map_err(IndexPublicationRepositoryError::Read)?;
+        let severity: String = row.get(3).map_err(IndexPublicationRepositoryError::Read)?;
+        let range = read_range(&row, 4)?;
+        let message: String = row.get(10).map_err(IndexPublicationRepositoryError::Read)?;
+        diagnostics
+            .entry(path)
+            .or_default()
+            .push(ParseDiagnostic::new(
+                diagnostic_code_from_stored(&code)?,
+                diagnostic_severity_from_stored(&severity)?,
+                range,
+                DiagnosticMessage::try_from_string(message)
+                    .map_err(|_| IndexPublicationRepositoryError::InvalidStoredData)?,
+            ));
+        progress.advance(1)?;
+    }
+    Ok(diagnostics)
 }
 
 async fn read_symbols(
@@ -847,6 +1116,48 @@ fn symbol_kind_to_stored(kind: SymbolKind) -> &'static str {
         SymbolKind::Field => "field",
         SymbolKind::Variant => "variant",
         SymbolKind::Parameter => "parameter",
+    }
+}
+
+fn diagnostic_code_to_stored(code: ParseDiagnosticCode) -> &'static str {
+    match code {
+        ParseDiagnosticCode::SyntaxError => "syntax-error",
+        ParseDiagnosticCode::MissingSyntax => "missing-syntax",
+        ParseDiagnosticCode::InvalidEncoding => "invalid-encoding",
+        ParseDiagnosticCode::UnsupportedSyntax => "unsupported-syntax",
+        ParseDiagnosticCode::OutputTruncated => "output-truncated",
+    }
+}
+
+fn diagnostic_code_from_stored(
+    code: &str,
+) -> Result<ParseDiagnosticCode, IndexPublicationRepositoryError> {
+    match code {
+        "syntax-error" => Ok(ParseDiagnosticCode::SyntaxError),
+        "missing-syntax" => Ok(ParseDiagnosticCode::MissingSyntax),
+        "invalid-encoding" => Ok(ParseDiagnosticCode::InvalidEncoding),
+        "unsupported-syntax" => Ok(ParseDiagnosticCode::UnsupportedSyntax),
+        "output-truncated" => Ok(ParseDiagnosticCode::OutputTruncated),
+        _ => Err(IndexPublicationRepositoryError::InvalidStoredData),
+    }
+}
+
+fn diagnostic_severity_to_stored(severity: ParseDiagnosticSeverity) -> &'static str {
+    match severity {
+        ParseDiagnosticSeverity::Error => "error",
+        ParseDiagnosticSeverity::Warning => "warning",
+        ParseDiagnosticSeverity::Information => "information",
+    }
+}
+
+fn diagnostic_severity_from_stored(
+    severity: &str,
+) -> Result<ParseDiagnosticSeverity, IndexPublicationRepositoryError> {
+    match severity {
+        "error" => Ok(ParseDiagnosticSeverity::Error),
+        "warning" => Ok(ParseDiagnosticSeverity::Warning),
+        "information" => Ok(ParseDiagnosticSeverity::Information),
+        _ => Err(IndexPublicationRepositoryError::InvalidStoredData),
     }
 }
 

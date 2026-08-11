@@ -184,6 +184,12 @@ impl IndexSchemaVersion {
         Self(4)
     }
 
+    /// Returns the published per-file diagnostics and coverage projection revision.
+    #[must_use]
+    pub const fn v5() -> Self {
+        Self(5)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

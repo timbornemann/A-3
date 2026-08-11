@@ -156,6 +156,14 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   historische Disposition zu ändern; erst der atomare Recovery-Übergang `Replan` setzt
   `Unknown/replanned`. V21-Bestandsversuche, die beim Upgrade noch laufen, werden konservativ als
   unklassifiziertes `Unknown/required` übernommen.
+- Knowledge-Schema V23 nimmt die file-genaue Fast-Index-Analyse in denselben atomaren Publish auf.
+  `index_file_analyses` bindet Sprache, Adapterrevision und optionale Parse-Coverage exakt an die
+  publizierte `FileRevision`; `index_parse_diagnostics` speichert ausschließlich kanonische Codes,
+  Severity, begrenzte sichere Meldungen und Quellbereiche ohne Source-Auszug. Jede V5-Publikation
+  muss alle Dateien genau einmal abdecken. Diagnostics sind insgesamt auf 2.000.000 begrenzt,
+  werden bei Replacement und Rebuild mit entfernt und bei Reads erneut gegen Dateirevision,
+  Sequenz und Coverage validiert. Historische Index-Snapshots bis V4 bleiben lesbar und liefern
+  explizit keine strukturelle Analyse, statt Erkenntnisse zu erfinden.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich
@@ -186,7 +194,9 @@ persistierten Baseline und hasht nur neue oder vom Watcher gemeldete Pfade; ein 
 Eventverlustsignal erzwingt den Vollscan. Parser und Graph erzeugen den vollständigen
 deterministischen Publish-Input; Knowledge-Schema V8 veröffentlicht die daraus abgeleiteten Datei-,
 Symbol-, Kanten-, Kandidaten-, Rank-, Exact-, FTS-, Modul- und Repository-Card-Projektionen atomar.
-Knowledge-Schema V9 ergänzt danach ausschließlich deterministisch verifizierte Module Cards,
+Index-Schema V5 und Knowledge-Schema V23 ergänzen darin die exakte file-genaue Sprache,
+Adapterrevision, Parse-Coverage und sichere Diagnostics. Knowledge-Schema V9 ergänzt danach
+ausschließlich deterministisch verifizierte Module Cards,
 Claims und ihre vollständige Evidence-Provenienz.
 Die Reconciliation entscheidet trotz persistierter Evidenz nie
 selbstständig: Sie benötigt einen eindeutigen Kandidaten und die privilegierte native Bestätigung.

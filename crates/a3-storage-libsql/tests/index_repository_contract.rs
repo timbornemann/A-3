@@ -10,23 +10,24 @@ use a3_application::{
     TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
-    CanonicalDirectory, Centrality, Confidence, ContentHash, EvidenceRef, GitHead,
-    GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage, IndexPublication,
-    IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome, IndexSchemaVersion,
-    LanguageAdapterRevision, LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId,
-    MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
-    ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
-    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership,
-    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
-    ParsedSymbol, ProjectIdentity, ProposedModuleCardField, PublishedIndex, RankProjection,
-    RankScore, RankingPolicyVersion, RemapPriority, RepositoryCard, RepositoryId,
-    RepositoryIdentity, RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence,
-    ResolvedModuleCardEvidenceSet, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
-    SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals,
-    SyntaxProvider, SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText,
-    TaskLensTokenBudget, VerifiedClaimKind, VerifiedModuleCardBatch, WorktreeAnchorId,
-    WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
+    GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
+    IndexPublication, IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
+    IndexSchemaVersion, IndexedFileAnalysis, LanguageAdapterRevision, LanguageAdapterVersion,
+    LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion, ModuleCardClaimId,
+    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
+    ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
+    ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence,
+    ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet, ParseCoverage,
+    ParseDiagnostic, ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol, ProjectIdentity,
+    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
+    RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
+    RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, Snapshot,
+    SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
+    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SyntaxProvider, SyntaxRelationKind,
+    TaskLensSeed, TaskLensSeedSet, TaskLensSeedText, TaskLensTokenBudget, VerifiedClaimKind,
+    VerifiedModuleCardBatch, WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use futures::executor::block_on;
@@ -616,6 +617,115 @@ fn persistence_control_cancels_before_mutation_and_bounds_progress()
             store.latest_published_index_run(&fixture.project).await?,
             Some(published)
         );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn published_file_analysis_roundtrip_retains_coverage_and_safe_diagnostics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([35; 32], [36; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [37; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [38; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([39; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = analyzed_file_publication(snapshot.id(), b"src/lib.rs", [38; 32])?;
+
+        let published = store
+            .publish_index(
+                &fixture.project,
+                run.id(),
+                &publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let reloaded = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("published file-analysis fixture is missing")?;
+
+        assert_eq!(reloaded.run(), published);
+        assert_eq!(
+            reloaded.publication().file_analyses(),
+            publication.file_analyses()
+        );
+        assert_eq!(
+            reloaded.publication().file_analyses()[0]
+                .coverage()
+                .map(ParseCoverage::basis_points),
+            Some(8_000)
+        );
+        assert_eq!(
+            reloaded.publication().file_analyses()[0]
+                .diagnostics()
+                .len(),
+            1
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn published_v4_index_without_analysis_rows_remains_readable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([40; 32], [41; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [42; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [43; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([44; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = file_only_publication(snapshot.id(), b"src/lib.rs", [43; 32])?;
+        store
+            .publish_index(
+                &fixture.project,
+                run.id(),
+                &publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "DELETE FROM index_parse_diagnostics;
+             DELETE FROM index_file_analyses;
+             UPDATE snapshots SET index_schema_version = 4",
+        )
+        .await?;
+
+        let reloaded = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await?
+            .ok_or("legacy V4 fixture index is missing")?;
+
+        assert_eq!(reloaded.publication().file_analyses().len(), 1);
+        assert_eq!(
+            reloaded.publication().file_analyses()[0].language(),
+            IndexLanguage::Generic
+        );
+        assert_eq!(reloaded.publication().file_analyses()[0].coverage(), None);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1474,7 +1584,7 @@ fn snapshot_with_rust_version(
         parent_id,
         WorktreeGeneration::new(generation)?,
         unborn_head()?,
-        IndexSchemaVersion::new(1)?,
+        IndexSchemaVersion::v5(),
         vec![
             LanguageAdapterRevision::new(
                 IndexLanguage::Rust,
@@ -1532,6 +1642,48 @@ fn file_only_publication(
     let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
     let modules = support::module_projection(&graph, &ranking, &[])?;
     Ok(IndexPublication::new(graph, ranking, Vec::new(), modules)?)
+}
+
+fn analyzed_file_publication(
+    snapshot_id: SnapshotId,
+    path: &[u8],
+    hash: [u8; 32],
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let revision = a3_domain::FileRevision::new(
+        RepositoryPath::try_from_bytes(path.to_vec())?,
+        ContentHash::from_bytes(hash),
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        vec![revision.clone()],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(snapshot_id, RankingPolicyVersion::v1(), Vec::new())?;
+    let modules = support::module_projection(&graph, &ranking, &[])?;
+    let diagnostic = ParseDiagnostic::new(
+        ParseDiagnosticCode::SyntaxError,
+        ParseDiagnosticSeverity::Error,
+        SourceRange::new(8, 10, SourcePosition::new(0, 8), SourcePosition::new(0, 10))?,
+        DiagnosticMessage::try_from_string("syntax error".to_owned())?,
+    );
+    let analysis = IndexedFileAnalysis::parsed(
+        revision,
+        LanguageAdapterRevision::new(
+            IndexLanguage::Rust,
+            LanguageAdapterVersion::try_from_string("tree-sitter-rust-1".to_owned())?,
+        ),
+        ParseCoverage::new(10, 8, 1)?,
+        vec![diagnostic],
+    )?;
+    Ok(IndexPublication::new_with_file_analyses(
+        graph,
+        ranking,
+        Vec::new(),
+        modules,
+        vec![analysis],
+    )?)
 }
 
 fn symbol_publication(

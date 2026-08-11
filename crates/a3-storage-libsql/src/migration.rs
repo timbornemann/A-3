@@ -2133,6 +2133,52 @@ const KNOWLEDGE_MUTATION_RECOVERY_MIGRATION: Migration = Migration {
       BEGIN SELECT RAISE(ABORT, 'mutation attempts are append-only'); END;",
 };
 
+const KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION: Migration = Migration {
+    version: 23,
+    name: "published_index_file_analysis",
+    sql: "CREATE TABLE index_file_analyses (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      language TEXT NOT NULL CHECK (language IN\n\
+        ('generic', 'rust', 'typescript-javascript', 'python')),\n\
+      adapter_version TEXT CHECK\n\
+        (adapter_version IS NULL OR length(CAST(adapter_version AS BLOB)) BETWEEN 1 AND 128),\n\
+      total_bytes INTEGER CHECK (total_bytes IS NULL OR total_bytes BETWEEN 0 AND 4294967295),\n\
+      covered_bytes INTEGER CHECK\n\
+        (covered_bytes IS NULL OR covered_bytes BETWEEN 0 AND total_bytes),\n\
+      incomplete_regions INTEGER CHECK\n\
+        (incomplete_regions IS NULL OR incomplete_regions BETWEEN 0 AND 4294967295),\n\
+      CHECK ((language = 'generic' AND adapter_version IS NULL AND total_bytes IS NULL\n\
+          AND covered_bytes IS NULL AND incomplete_regions IS NULL) OR\n\
+        (language <> 'generic' AND adapter_version IS NOT NULL AND total_bytes IS NOT NULL\n\
+          AND covered_bytes IS NOT NULL AND incomplete_regions IS NOT NULL)),\n\
+      PRIMARY KEY (index_run_id, repository_path),\n\
+      FOREIGN KEY (index_run_id, repository_path, content_hash)\n\
+        REFERENCES file_revisions(index_run_id, repository_path, content_hash)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE index_parse_diagnostics (\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      repository_path BLOB NOT NULL CHECK (length(repository_path) BETWEEN 1 AND 131072),\n\
+      diagnostic_sequence INTEGER NOT NULL CHECK (diagnostic_sequence > 0),\n\
+      code TEXT NOT NULL CHECK (code IN ('syntax-error', 'missing-syntax',\n\
+        'invalid-encoding', 'unsupported-syntax', 'output-truncated')),\n\
+      severity TEXT NOT NULL CHECK (severity IN ('error', 'warning', 'information')),\n\
+      start_byte INTEGER NOT NULL CHECK (start_byte BETWEEN 0 AND 4294967295),\n\
+      end_byte INTEGER NOT NULL CHECK (end_byte BETWEEN start_byte AND 4294967295),\n\
+      start_row INTEGER NOT NULL CHECK (start_row BETWEEN 0 AND 4294967295),\n\
+      start_column INTEGER NOT NULL CHECK (start_column BETWEEN 0 AND 4294967295),\n\
+      end_row INTEGER NOT NULL CHECK (end_row BETWEEN 0 AND 4294967295),\n\
+      end_column INTEGER NOT NULL CHECK (end_column BETWEEN 0 AND 4294967295),\n\
+      message TEXT NOT NULL CHECK (length(CAST(message AS BLOB)) BETWEEN 1 AND 1024),\n\
+      PRIMARY KEY (index_run_id, repository_path, diagnostic_sequence),\n\
+      FOREIGN KEY (index_run_id, repository_path)\n\
+        REFERENCES index_file_analyses(index_run_id, repository_path)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2156,6 +2202,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_VERIFICATION_ENGINE_MIGRATION,
     KNOWLEDGE_AGENT_ACTION_V2_MIGRATION,
     KNOWLEDGE_MUTATION_RECOVERY_MIGRATION,
+    KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2188,7 +2235,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(22);
+    pub const CURRENT: Self = Self::new(23);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2755,40 +2802,85 @@ mod tests {
         })
     }
 
-    #[test]
-    fn knowledge_upgrades_from_every_supported_predecessor()
-    -> Result<(), Box<dyn std::error::Error>> {
-        crate::run_native_libsql_test(async {
-            for predecessor in 1..KnowledgeSchemaVersion::CURRENT.get() {
-                let database = libsql::Builder::new_local(":memory:").build().await?;
-                let connection = database.connect()?;
-                let repository_id = [predecessor as u8; 32];
-                let worktree_id = [(predecessor + 10) as u8; 32];
-                super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
-                if predecessor > 1 {
-                    migrate(
-                        &connection,
-                        &KNOWLEDGE_MIGRATIONS[..predecessor as usize],
-                        predecessor,
-                        super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
-                    )
-                    .await?;
-                }
-                assert_eq!(
-                    query_i64(&connection, "PRAGMA user_version").await?,
-                    i64::from(predecessor)
-                );
+    macro_rules! knowledge_upgrade_tests {
+        ($(($name:ident, $predecessor:literal)),+ $(,)?) => {
+            const KNOWLEDGE_UPGRADE_PREDECESSORS: &[u32] = &[$($predecessor),+];
 
-                let version =
-                    super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
-                assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-                assert_eq!(
-                    query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
-                    0
-                );
-            }
-            Ok::<(), Box<dyn std::error::Error>>(())
-        })
+            $(
+                #[test]
+                fn $name() -> Result<(), Box<dyn std::error::Error>> {
+                    crate::run_native_libsql_test(async {
+                        assert_knowledge_upgrade_from_predecessor($predecessor).await
+                    })
+                }
+            )+
+        };
+    }
+
+    knowledge_upgrade_tests!(
+        (knowledge_upgrades_from_v1, 1),
+        (knowledge_upgrades_from_v2, 2),
+        (knowledge_upgrades_from_v3, 3),
+        (knowledge_upgrades_from_v4, 4),
+        (knowledge_upgrades_from_v5, 5),
+        (knowledge_upgrades_from_v6, 6),
+        (knowledge_upgrades_from_v7, 7),
+        (knowledge_upgrades_from_v8, 8),
+        (knowledge_upgrades_from_v9, 9),
+        (knowledge_upgrades_from_v10, 10),
+        (knowledge_upgrades_from_v11, 11),
+        (knowledge_upgrades_from_v12, 12),
+        (knowledge_upgrades_from_v13, 13),
+        (knowledge_upgrades_from_v14, 14),
+        (knowledge_upgrades_from_v15, 15),
+        (knowledge_upgrades_from_v16, 16),
+        (knowledge_upgrades_from_v17, 17),
+        (knowledge_upgrades_from_v18, 18),
+        (knowledge_upgrades_from_v19, 19),
+        (knowledge_upgrades_from_v20, 20),
+        (knowledge_upgrades_from_v21, 21),
+        (knowledge_upgrades_from_v22, 22),
+    );
+
+    #[test]
+    fn knowledge_upgrade_matrix_covers_every_supported_predecessor() {
+        assert_eq!(
+            KNOWLEDGE_UPGRADE_PREDECESSORS,
+            (1..KnowledgeSchemaVersion::CURRENT.get()).collect::<Vec<_>>()
+        );
+    }
+
+    async fn assert_knowledge_upgrade_from_predecessor(
+        predecessor: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = libsql::Builder::new_local(":memory:").build().await?;
+        let connection = database.connect()?;
+        let identity_byte = u8::try_from(predecessor)?;
+        let worktree_byte = u8::try_from(predecessor.checked_add(10).ok_or("version overflow")?)?;
+        let repository_id = [identity_byte; 32];
+        let worktree_id = [worktree_byte; 32];
+        super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+        if predecessor > 1 {
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..usize::try_from(predecessor)?],
+                predecessor,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+        }
+        assert_eq!(
+            query_i64(&connection, "PRAGMA user_version").await?,
+            i64::from(predecessor)
+        );
+
+        let version = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+        assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+        assert_eq!(
+            query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+            0
+        );
+        Ok(())
     }
 
     #[test]
@@ -4038,6 +4130,59 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
                      AND name = 'mutation_attempts_insert_guard'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v23_upgrade_preserves_v22_data_and_schema()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [27; 32];
+            let worktree_id = [28; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..22],
+                22,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE index_file_analyses (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 23, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 22);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                22
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('index_file_analyses')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'index_parse_diagnostics'",
                 )
                 .await?,
                 0

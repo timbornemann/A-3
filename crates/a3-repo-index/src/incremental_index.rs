@@ -18,8 +18,8 @@ use a3_application::{
 };
 use a3_domain::{
     DiscoveredFileRole, DiscoveryResult, FileRevision, IndexLanguage, IndexPublication, IndexRunId,
-    IndexSchemaVersion, LanguageParseResult, Progress, ProjectIdentity, RankingPolicyVersion,
-    RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
+    IndexSchemaVersion, IndexedFileAnalysis, LanguageParseResult, Progress, ProjectIdentity,
+    RankingPolicyVersion, RepositoryFileState, RepositoryPath, Snapshot, SnapshotDelta,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -112,7 +112,7 @@ impl BuiltinIncrementalIndexCompiler {
 impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     fn compatibility(&self) -> Result<SnapshotCompatibility, RepositoryIndexCompilerFailure> {
         SnapshotCompatibility::new(
-            IndexSchemaVersion::v4(),
+            IndexSchemaVersion::v5(),
             self.adapters()
                 .into_iter()
                 .map(|adapter| adapter.revision().clone())
@@ -258,8 +258,23 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
                 &graph_control,
             )
             .map_err(map_module_failure)?;
-        let publication = IndexPublication::new(graph, ranking, manifest_files, modules)
-            .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
+        let file_analyses = files_by_path
+            .iter()
+            .map(|(path, revision)| {
+                next_parses.get(path).map_or_else(
+                    || IndexedFileAnalysis::generic(revision.clone()),
+                    IndexedFileAnalysis::from_parse,
+                )
+            })
+            .collect();
+        let publication = IndexPublication::new_with_file_analyses(
+            graph,
+            ranking,
+            manifest_files,
+            modules,
+            file_analyses,
+        )
+        .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
 
         self.cached_snapshot = Some(snapshot.id());
         self.parses = next_parses;

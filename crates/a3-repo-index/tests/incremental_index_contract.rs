@@ -121,7 +121,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
         assert_eq!(initial.compilation().mode(), RepositoryIndexMode::Full);
         assert_eq!(
             initial.snapshot().index_schema_version(),
-            IndexSchemaVersion::v4()
+            IndexSchemaVersion::v5()
         );
         assert_eq!(initial.compilation().parsed_paths().len(), 4);
         assert_eq!(

@@ -15,6 +15,7 @@ mod goal_contract;
 mod graph;
 mod graph_retrieval;
 mod id;
+mod index_analysis;
 mod index_run;
 mod invalidation;
 mod language;
@@ -153,6 +154,7 @@ pub use id::{
     RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
     ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
+pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{
     IndexRunRecord, IndexRunSequence, IndexRunSequenceError, IndexRunStart, IndexRunStatus,
     IndexRunStatusError, IndexRunTerminalOutcome, RankingPolicyVersion, RankingPolicyVersionError,
