@@ -346,18 +346,46 @@ sowie der vollständige Linux-Lauf bestanden ohne Retry.
 
 Abhängigkeiten: E8
 
-- [ ] kleiner lokaler Bugfix
-- [ ] Änderung über zwei Module
-- [ ] Test ergänzen
-- [ ] absichtlich scheiternder Plan und Replan
-- [ ] zwischenzeitliche Useränderung
-- [ ] Context Compaction während Aufgabe
+- [x] kleiner lokaler Bugfix
+- [x] Änderung über zwei Module
+- [x] Test ergänzen
+- [x] absichtlich scheiternder Plan und Replan
+- [x] zwischenzeitliche Useränderung
+- [x] Context Compaction während Aufgabe
 
 Akzeptanz:
 
 - jede Änderung besitzt Goal, Step, Patch, Evidence und Verification;
 - keine Aufgabe endet Done mit rotem Muss-Test;
 - Evalresultate sind reproduzierbar gespeichert.
+
+Verifiziert am 2026-08-11: `a3.agent-coding-eval.v1` führt fünf kleine, selbstenthaltene und
+offline ausführbare Python-Repositories über den realen libSQL-, Fast-Index-, Command-Discovery-,
+Policy-/Approval-, Workspace-Patch-, argv-Process-, Context-, Evidence- und Acceptance-Pfad. Das
+reviewbare Golden Result fixiert für jeden Fall finalen Runzustand, durable Goal-/Step-Anker,
+Patch-, Evidence- und Verification-Nachweis, Erhalt fremder Änderungen sowie Replan- und
+Compaction-Anzahl. Zwei vollständige Durchläufe in unabhängigen Repositories und Datenbanken
+müssen bytegleich dieselbe geordnete Projektion erzeugen; nach `Done` werden Goal, vollständiges
+Ledger samt Store-Version und materialisierter Run erneut aus libSQL geladen und verglichen.
+
+Der Replan-Fall wendet zunächst einen plausiblen, aber falschen Patch an. Zwei echte rote
+Must-Test-Verifikationen erzwingen den begrenzten `Replan`; der historische Step samt fehlgeschlagener
+Verification bleibt erhalten. Ein Completion-Versuch wird als `IncompleteLedger` abgelehnt. Eine
+zwischenzeitlich angelegte Nutzerdatei erscheint vor dem Replan in einem neuen vollständigen
+Published Snapshot, wird vom Ledger-/Run-Replan übernommen und bleibt nach dem korrekten
+Ersatz-Step bytegleich erhalten. Der Compaction-Fall verifiziert Step 1, regeneriert zweimal
+denselben `RunMemoryCheckpoint` ausschließlich aus autoritativen Quellen, reinjiziert ihn mit Goal,
+abgeschlossenem und offenem Step in den nächsten deterministischen Context und journalisiert den
+Compile, bevor Step 2 über Patch und Test bis `Done` läuft.
+
+Rustfmt, Workspace-Clippy über alle Targets/Features mit `-D warnings`, Rustdoc, der fokussierte
+zweifach reproduzierte E9-Contract, die direkt ausgeführten lokalen Frontend-/Tool-Gates mit 20
+Frontend- und vier Tooltests, Build, 47 Markdown-Dateien mit 74 lokalen Links, Lizenzbericht und
+der vollständige Linux-`quality`-Job über `act` sind grün. Der Windows-Workspace-Sammellauf
+erreichte erneut ausschließlich wegen des dokumentierten nativen libSQL-Teardowns `0xc0000005` in
+`knowledge_upgrades_from_every_supported_predecessor` nach drei Worker-Versuchen keinen grünen
+Gesamtstatus; derselbe Contract bestand unmittelbar danach isoliert mit Abschlussmarker. Der
+vollständige Linux-Lauf bestand ohne Retry.
 
 ## Gate M7
 

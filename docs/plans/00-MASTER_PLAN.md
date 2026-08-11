@@ -109,8 +109,8 @@ Ein Nutzer kann:
 - [x] argv ProcessRunner
 - [x] evidenzgebundene Command Discovery und projektbezogene Allowlist
 - [x] Test- und Buildverifikation
-- [ ] Replan und Failure Recovery
-- [ ] ein Mutations-Lock pro Worktree
+- [x] Replan und Failure Recovery
+- [x] ein Mutations-Lock pro Worktree
 - [x] Done-Gate gegen Acceptance Criteria
 
 ### M8 Desktop Product
@@ -127,9 +127,9 @@ Ein Nutzer kann:
 
 ### M9 Evaluation
 
-- [ ] Fixture-Repositories
+- [x] Fixture-Repositories
 - [ ] Retrieval-Evalset
-- [ ] Agentenaufgaben
+- [x] Agentenaufgaben
 - [ ] Performanceharness
 - [ ] RTX-5070-Ti-Modellprofilmessungen
 - [ ] Regressiondashboard lokal oder als CI-Artefakt

@@ -174,6 +174,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   unmittelbares Reindexieren sichtbarer Patchänderungen, ausschließlich neuen Snapshotkontext,
   Diff-Completion erst nach typisierter Evidence und `Replan` nach der zweiten identischen
   fehlgeschlagenen Run-Aktion.
+- Die Gate-E9-Coding-Evaluation führt fünf vollständig lokale Python-Fixtures über denselben realen
+  Mutation-, Index-, Context-, Evidence-, Acceptance- und libSQL-Pfad. Das versionierte Golden
+  `fixtures/agent-coding-eval-v1/expected-results.json` fixiert kleinen Bugfix, atomare
+  Zwei-Modul-Änderung, reine Testergänzung, roten Plan mit Replan und zwischenzeitlicher
+  Nutzeränderung sowie eine zweistufige Fortsetzung nach Context Compaction. Zwei unabhängige
+  vollständige Durchläufe müssen dieselbe geordnete Ergebnisprojektion liefern. Jeder erfolgreiche
+  Fall lädt Goal, Ledger samt Store-Version und Run erneut aus dem Store und weist Goal, Step,
+  Patch, Evidence und Verification nach. Ein roter Must-Test wird bereits vom typisierten
+  Acceptance-Request als `IncompleteLedger` abgelehnt und kann keinen `Done`-Zustand erzeugen.
 
 ### Compaction
 
