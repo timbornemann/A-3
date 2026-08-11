@@ -11,8 +11,8 @@ use a3_storage_libsql::{
     KnowledgeDatabase, KnowledgeOpenError, KnowledgeSchemaVersion, LibsqlKnowledgeStore,
     ProjectStorageLayoutError, StorageLayout,
 };
-use futures::executor::block_on;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -25,7 +25,7 @@ static KNOWLEDGE_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn empty_knowledge_database_migrates_binds_and_reopens() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([1; 32], [11; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
 
@@ -59,7 +59,7 @@ fn empty_knowledge_database_migrates_binds_and_reopens() -> Result<(), Box<dyn s
 fn linked_worktrees_receive_distinct_identity_bound_databases()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let temporary = TempDirectory::new()?;
         let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
         let common = create_directory(temporary.path().join("common-git"))?;
@@ -107,7 +107,7 @@ fn linked_worktrees_receive_distinct_identity_bound_databases()
 fn knowledge_rejects_a_newer_schema_without_modifying_it() -> Result<(), Box<dyn std::error::Error>>
 {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([3; 32], [31; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         set_user_version(
@@ -135,7 +135,7 @@ fn knowledge_rejects_a_newer_schema_without_modifying_it() -> Result<(), Box<dyn
 #[test]
 fn knowledge_rejects_tampered_migration_history() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([4; 32], [41; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         drop(KnowledgeDatabase::open(&project_layout, &fixture.project).await?);
@@ -157,7 +157,7 @@ fn knowledge_rejects_tampered_migration_history() -> Result<(), Box<dyn std::err
 #[test]
 fn knowledge_rejects_a_persisted_identity_conflict() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([5; 32], [51; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         drop(KnowledgeDatabase::open(&project_layout, &fixture.project).await?);
@@ -178,7 +178,7 @@ fn knowledge_rejects_a_persisted_identity_conflict() -> Result<(), Box<dyn std::
 #[test]
 fn knowledge_rejects_non_database_content_as_corrupt() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([6; 32], [61; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         fs::write(project_layout.knowledge_path(), b"this is not a database")?;
@@ -194,7 +194,7 @@ fn knowledge_rejects_non_database_content_as_corrupt() -> Result<(), Box<dyn std
 #[test]
 fn invalid_knowledge_target_prevents_catalog_recency() -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([7; 32], [71; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         fs::create_dir(project_layout.knowledge_path())?;
@@ -241,7 +241,7 @@ fn knowledge_rejects_a_symlink_outside_private_storage() -> Result<(), Box<dyn s
     use std::os::unix::fs::symlink;
 
     let _test_lock = lock_knowledge_test()?;
-    block_on(async {
+    run_knowledge_test(async {
         let fixture = ProjectFixture::new([9; 32], [91; 32])?;
         let project_layout = fixture.layout.prepare_project(fixture.project.worktree())?;
         let outside = fixture._temporary.path().join("outside.db");
@@ -320,6 +320,114 @@ fn lock_knowledge_test() -> Result<MutexGuard<'static, ()>, Box<dyn std::error::
     KNOWLEDGE_TEST_LOCK.lock().map_err(|_| {
         Box::<dyn std::error::Error>::from(io::Error::other("knowledge test lock was poisoned"))
     })
+}
+
+fn run_knowledge_test<F>(future: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    #[cfg(windows)]
+    let current_thread = std::thread::current();
+    #[cfg(windows)]
+    let test_name = current_thread
+        .name()
+        .ok_or_else(|| io::Error::other("knowledge contract test has no harness thread name"))?;
+    #[cfg(windows)]
+    if std::env::var_os("A3_KNOWLEDGE_CONTRACT_ISOLATED_TEST").as_deref()
+        != Some(std::ffi::OsStr::new(test_name))
+    {
+        const MAX_NATIVE_ATTEMPTS: u8 = 3;
+        const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
+        let success_marker = knowledge_contract_success_marker(test_name);
+        for attempt in 1..=MAX_NATIVE_ATTEMPTS {
+            remove_knowledge_contract_success_marker(&success_marker)?;
+            let mut child = std::process::Command::new(std::env::current_exe()?)
+                .arg(test_name)
+                .arg("--exact")
+                .arg("--test-threads=1")
+                .env("A3_KNOWLEDGE_CONTRACT_ISOLATED_TEST", test_name)
+                .env("A3_LIBSQL_RETAIN_TEMP_DIRECTORY", "1")
+                .env("A3_KNOWLEDGE_CONTRACT_SUCCESS_MARKER", &success_marker)
+                .spawn()?;
+            let child_id = child.id();
+            let status = child.wait()?;
+            cleanup_knowledge_contract_workspaces(child_id)?;
+            let completed = success_marker.is_file();
+            remove_knowledge_contract_success_marker(&success_marker)?;
+            if completed {
+                return Ok(());
+            }
+            if status.code() == Some(STATUS_ACCESS_VIOLATION) && attempt < MAX_NATIVE_ATTEMPTS {
+                continue;
+            }
+            return Err(io::Error::other(format!(
+                "isolated knowledge contract test {test_name} failed on attempt {attempt} with {status} before completion evidence"
+            ))
+            .into());
+        }
+        return Err(io::Error::other(format!(
+            "isolated knowledge contract test {test_name} exhausted its native retry bound"
+        ))
+        .into());
+    }
+
+    let result = futures::executor::block_on(future);
+    #[cfg(windows)]
+    match result {
+        Ok(()) => {
+            let marker = std::env::var_os("A3_KNOWLEDGE_CONTRACT_SUCCESS_MARKER")
+                .ok_or_else(|| io::Error::other("knowledge contract success marker is missing"))?;
+            fs::write(marker, b"complete")?;
+            std::process::exit(0);
+        }
+        Err(error) => {
+            eprintln!("knowledge contract failed: {error}");
+            std::process::exit(1);
+        }
+    }
+    #[cfg(not(windows))]
+    result
+}
+
+#[cfg(windows)]
+fn knowledge_contract_success_marker(test_name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "a3-storage-knowledge-parent-{}-{test_name}.complete",
+        std::process::id()
+    ))
+}
+
+#[cfg(windows)]
+fn remove_knowledge_contract_success_marker(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_knowledge_contract_workspaces(child_id: u32) -> io::Result<()> {
+    let temporary_root = std::env::temp_dir();
+    let expected_prefix = format!("a3-storage-test-{child_id}-");
+    for entry in fs::read_dir(&temporary_root)? {
+        let entry = entry?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&expected_prefix)
+        {
+            continue;
+        }
+        let target = entry.path();
+        if target.parent() != Some(temporary_root.as_path()) {
+            return Err(io::Error::other(
+                "knowledge contract workspace escaped the temporary root",
+            ));
+        }
+        fs::remove_dir_all(target)?;
+    }
+    Ok(())
 }
 
 async fn mutate_knowledge(path: &Path, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
