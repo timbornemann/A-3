@@ -2,6 +2,7 @@
 
 mod agent_action_codec;
 mod agent_actions;
+mod agent_activity;
 mod agent_controller;
 mod agent_goal;
 mod agent_prompt;
@@ -77,6 +78,10 @@ pub use agent_actions::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
     AgentLedgerActionOutcomeKind, ApplyAgentLedgerUpdate, ApplyAgentLedgerUpdateError,
     PersistAgentLedgerMutation, PersistAgentLedgerMutationError, RequestAgentFinish,
+};
+pub use agent_activity::{
+    AgentActivity, AgentActivityLoadResult, AgentActivityRun, GetAgentActivity,
+    GetAgentActivityFailure,
 };
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,

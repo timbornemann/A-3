@@ -131,7 +131,15 @@ einen Agentenlauf zu starten. Für den ausgewählten Contract lädt derselbe Wor
 dauerhafte Task Ledger mit Revision, Store-Version und allen aktiven Planschritten. Ein tatsächlich
 laufender, auf Freigabe wartender, zu verifizierender oder blockierter Schritt bleibt gemeinsam mit
 dem Ziel in einem workspaceweiten Sticky Anchor sichtbar; fehlendes Ledger und eine abweichende
-Goal-Revision erscheinen als eigene sichere Zustände. Die verbindliche
+Goal-Revision erscheinen als eigene sichere Zustände. Aus dem aktiven oder letzten im Ledger
+retained Step-Versuch leitet der Core außerdem den zugehörigen Agent Run ab. Der Workspace zeigt
+dessen endlichen Controllerzustand, Snapshot-/Context-Anker, harte Run-Grenzen und durable Nutzung
+für Turns, Prompt-/Outputtokens, Aktionen, Zeit und Reparaturen. Eine höchstens 64 Ereignisse
+umfassende aktuelle Timeline kennzeichnet Modellantwort und Aktionsauswahl ausdrücklich als noch
+nicht ausgeführt; erst ein eigenes `ToolAction`-Ereignis erscheint als echte Ausführungsaktion.
+Aktuelle Ledger-Blocker sowie inhaltsfreie Fehler-, Denial-, Timeout- und Cancellation-Codes
+bleiben sichtbar, ohne rohe Modell-, Tool-, Fehler- oder Sourceausgaben in die WebView zu geben.
+Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -176,7 +184,7 @@ pnpm tauri build --no-bundle
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence-, Deep-Map-,
-Project-Map-Search-, Task-Lens- und Agent-Goal-Commands aufrufen.
+Project-Map-Search-, Task-Lens-, Agent-Goal- und Agent-Activity-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
@@ -203,6 +211,12 @@ bereits im aufgelösten Desktop-Abhängigkeitsgraph vorhandenen, nun direkt dekl
 `getrandom`-Adapter. Die Standardbibliothek stellt für die gepinnte Toolchain keine gleichwertige
 plattformübergreifende Betriebssystem-Zufallsquelle bereit; die direkte Deklaration fügt deshalb
 kein neues aufgelöstes Paket hinzu.
+`query_agent_activity` akzeptiert neben der Protokollversion ausschließlich dieselbe opake
+`TaskId`. Der Application-Use-Case wählt den Run selbst aus den retained Ledger-Versuchen, liest
+höchstens die letzten 64 zusammenhängenden Journalereignisse und prüft Task-, Goal-, Ledger- und
+Run-Anker nach dem Read erneut. Die WebView kann weder eine Run-/Snapshot-ID wählen noch Journal-,
+Storage- oder Toolfähigkeiten erlangen; eine gleichzeitige Änderung wird als eigener
+`activityChanged`-Zustand zurückgegeben.
 Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.

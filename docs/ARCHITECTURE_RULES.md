@@ -101,6 +101,10 @@ Stand: 2026-08-03
 5. Große Datenmengen werden paginiert oder gestreamt.
 6. Jeder Eventtyp besitzt eine dokumentierte Reihenfolge- und Wiederverbindungssemantik.
 7. Secrets gelangen nie in die WebView.
+8. Die Agent-Activity-Projektion MUSS ihren Run aus einem durable Ledger-Versuch ableiten. Die
+   WebView DARF keine Run- oder Snapshot-ID wählen. Es werden höchstens die letzten 64
+   zusammenhängenden, inhaltsfreien Journalereignisse ausgeliefert; Modellantwort beziehungsweise
+   Aktionsauswahl und tatsächliches `ToolAction` MÜSSEN unterschiedliche sichtbare Typen bleiben.
 
 ## 11. Tests
 

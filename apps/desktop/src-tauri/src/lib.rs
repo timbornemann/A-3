@@ -12,9 +12,10 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    AgentGoalCriterionDraft, AgentGoalDraft, AgentGoalMetadataSource, CompileWorkspaceTaskLens,
-    CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult, CreateAgentGoal,
-    CreateAgentGoalFailure, DeepMapExecutor, GetAgentGoal, GetHealth, GetModuleCardDetail,
+    AgentActivity, AgentActivityLoadResult, AgentGoalCriterionDraft, AgentGoalDraft,
+    AgentGoalMetadataSource, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
+    CompileWorkspaceTaskLensResult, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutor,
+    GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth, GetModuleCardDetail,
     GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
     GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
     GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
@@ -48,37 +49,43 @@ use a3_application::{
     RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
     RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
     RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, SearchProjectMap,
-    SearchProjectMapFailure, TaskLensClaimStore, TaskLensCompilation, TaskLensControl,
-    TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult, TaskLensWorkspaceControl,
-    TaskLensWorkspaceFailure, TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
+    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
+    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLensClaimStore,
+    TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
+    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
 };
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
-    ApplicationVersion, ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget,
-    ExploreBudget, FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GoalConstraint,
-    GoalContract, GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge,
-    GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage, IndexRunId,
-    IndexRunStatus, InvalidationReason, LexicalSearchExplanation, LinkResolution,
-    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleClaimPolarity, ModuleClaimPredicate,
-    ModuleId, ModuleKind, ModuleRoot, NonGoal, ParseDiagnosticCode, ParseDiagnosticSeverity,
-    Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
-    ResultSourceExplanation, RetrievalCandidateReason, SnapshotId, SourceChannel,
+    AgentControllerState, AgentTurnActionClass, AgentTurnRepairUsage, ApplicationVersion,
+    ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget, ExploreBudget,
+    FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GoalConstraint, GoalContract,
+    GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol,
+    GraphTraversalResult, Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
+    LexicalSearchExplanation, LinkResolution, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
+    ModuleClaimPolarity, ModuleClaimPredicate, ModuleId, ModuleKind, ModuleRoot, NonGoal,
+    ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
+    RepositoryPath, ResolvedModuleCardEvidence, ResultSourceExplanation, RetrievalCandidateReason,
+    RunEvent, RunEventCode, RunEventKind, RunEventOutcome, SnapshotId, SourceChannel,
     SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
     TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus, TraversalResultLimit,
     UserDecision, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use a3_protocol::{
-    AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
-    AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1,
-    DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1,
-    DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1,
-    IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1,
-    IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1,
-    IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
-    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
-    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
+    AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
+    AgentActivityCodeV1, AgentActivityEventKindV1, AgentActivityEventV1, AgentActivityOutcomeV1,
+    AgentActivityResponseV1, AgentActivityRunV1, AgentActivityTurnV1, AgentActivityUsageV1,
+    AgentActivityV1, AgentControllerStateV1, AgentGoalContractV1, AgentGoalCriterionInputV1,
+    AgentGoalCriterionRequirementV1, AgentGoalCriterionV1, AgentGoalDraftInputV1,
+    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentSelectedActionV1, CommandErrorV1,
+    CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
+    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,
+    DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
+    IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
+    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
+    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1,
+    ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
     ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
     ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
     ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
@@ -156,6 +163,7 @@ pub struct CompositionRoot {
     task_lens_tasks: Option<ListTaskLensTasks>,
     task_lens_task: Option<GetTaskLensTask>,
     task_lens_compile: Option<CompileWorkspaceTaskLens>,
+    agent_activity: Option<GetAgentActivity>,
     agent_goal_query: Option<GetAgentGoal>,
     agent_goal_create: Option<CreateAgentGoal>,
     agent_goal_revise: Option<ReviseAgentGoal>,
@@ -766,6 +774,44 @@ impl CompositionRoot {
         }
     }
 
+    /// Loads bounded current execution activity without accepting a run identity from the WebView.
+    pub async fn query_agent_activity(
+        &self,
+        task_id: TaskId,
+    ) -> Result<AgentActivityResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentActivityResponseV1::no_project());
+        };
+        let reader = self
+            .agent_activity
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::TaskLensUnavailable))?;
+        match reader
+            .execute(&active.project, task_id, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_agent_activity_error_to_v1)?
+        {
+            AgentActivityLoadResult::TaskNotFound => Ok(AgentActivityResponseV1::task_not_found()),
+            AgentActivityLoadResult::LedgerUnavailable => {
+                Ok(AgentActivityResponseV1::ledger_unavailable())
+            }
+            AgentActivityLoadResult::GoalRevisionMismatch {
+                current_revision,
+                ledger_revision,
+            } => Ok(AgentActivityResponseV1::goal_revision_mismatch(
+                current_revision,
+                ledger_revision,
+            )),
+            AgentActivityLoadResult::ActivityChanged => {
+                Ok(AgentActivityResponseV1::activity_changed())
+            }
+            AgentActivityLoadResult::Available(activity) => map_agent_activity_to_v1(&activity)
+                .map(AgentActivityResponseV1::available)
+                .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)),
+        }
+    }
+
     /// Recompiles the selected current durable task/step through the existing R10 pipeline.
     pub async fn compile_task_lens(
         &self,
@@ -1270,6 +1316,7 @@ struct OptionalCompositionPorts {
     task_lens_index_store: Option<Arc<dyn TaskLensIndexStore>>,
     task_lens_claim_store: Option<Arc<dyn TaskLensClaimStore>>,
     task_lens_workspace_store: Option<Arc<dyn TaskLensWorkspaceStore>>,
+    run_journal_store: Option<Arc<dyn RunJournalStore>>,
     goal_contract_store: Option<Arc<dyn GoalContractStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
@@ -1289,6 +1336,7 @@ struct IndexingCompositionPorts {
     task_lens_index_store: Arc<dyn TaskLensIndexStore>,
     task_lens_claim_store: Arc<dyn TaskLensClaimStore>,
     task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore>,
+    run_journal_store: Arc<dyn RunJournalStore>,
     goal_contract_store: Arc<dyn GoalContractStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
@@ -1356,6 +1404,7 @@ impl CompositionBase {
                 task_lens_index_store: Some(ports.task_lens_index_store),
                 task_lens_claim_store: Some(ports.task_lens_claim_store),
                 task_lens_workspace_store: Some(ports.task_lens_workspace_store),
+                run_journal_store: Some(ports.run_journal_store),
                 goal_contract_store: Some(ports.goal_contract_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
@@ -1425,6 +1474,11 @@ impl CompositionBase {
             }
             _ => None,
         };
+        let agent_activity = ports
+            .task_lens_workspace_store
+            .clone()
+            .zip(ports.run_journal_store)
+            .map(|(workspace, journal)| GetAgentActivity::new(workspace, journal));
         let agent_goal_metadata: Arc<dyn AgentGoalMetadataSource> =
             Arc::new(SystemAgentGoalMetadata);
         let agent_goal_query = ports.goal_contract_store.clone().map(GetAgentGoal::new);
@@ -1490,6 +1544,7 @@ impl CompositionBase {
             task_lens_tasks,
             task_lens_task,
             task_lens_compile,
+            agent_activity,
             agent_goal_query,
             agent_goal_create,
             agent_goal_revise,
@@ -1535,6 +1590,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let task_lens_index_store: Arc<dyn TaskLensIndexStore> = store.clone();
             let task_lens_claim_store: Arc<dyn TaskLensClaimStore> = store.clone();
             let task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore> = store.clone();
+            let run_journal_store: Arc<dyn RunJournalStore> = store.clone();
             let goal_contract_store: Arc<dyn GoalContractStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
@@ -1557,6 +1613,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     task_lens_index_store,
                     task_lens_claim_store,
                     task_lens_workspace_store,
+                    run_journal_store,
                     goal_contract_store,
                     module_tree_store,
                     repository_tree_store,
@@ -1584,6 +1641,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
             commands::query_module_tree,
+            commands::query_agent_activity,
             commands::query_agent_goal,
             commands::query_project_map_search,
             commands::query_task_lens_task,
@@ -2883,6 +2941,14 @@ pub(crate) fn map_agent_goal_task_id_from_v1(
         .map_err(|()| invalid_agent_goal())
 }
 
+pub(crate) fn map_agent_activity_task_id_from_v1(
+    request: &a3_protocol::QueryAgentActivityRequestV1,
+) -> Result<TaskId, CommandErrorV1> {
+    decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidTaskLensSelection))
+}
+
 pub(crate) fn map_create_agent_goal_from_v1(
     request: &a3_protocol::CreateAgentGoalRequestV1,
 ) -> Result<AgentGoalDraft, CommandErrorV1> {
@@ -3037,6 +3103,177 @@ fn map_agent_goal_to_v1(goal: &GoalContract) -> AgentGoalContractV1 {
         goal.draft().success_verification().as_str().to_owned(),
         goal.created_at().unix_millis().to_string(),
     )
+}
+
+fn map_agent_activity_to_v1(activity: &AgentActivity) -> Option<AgentActivityV1> {
+    let stored = activity.anchor().task_ledger();
+    let ledger = stored.ledger();
+    let blockers = ledger
+        .steps()
+        .filter(|step| step.is_active_plan_step())
+        .filter_map(|step| {
+            let status = match step.status() {
+                TaskStepStatus::Blocked => AgentActivityBlockerStatusV1::Blocked,
+                TaskStepStatus::AwaitingApproval => AgentActivityBlockerStatusV1::AwaitingApproval,
+                _ => return None,
+            };
+            step.blocking_reason().map(|reason| {
+                AgentActivityBlockerV1::new(
+                    step.definition().id().to_string(),
+                    status,
+                    reason.as_str().to_owned(),
+                )
+            })
+        })
+        .collect();
+    let run = match activity.run() {
+        Some(activity_run) => Some(map_agent_activity_run_to_v1(
+            activity_run,
+            ledger.revision().get(),
+        )?),
+        None => None,
+    };
+    Some(AgentActivityV1::new(
+        ledger.revision().get(),
+        stored.version().get().to_string(),
+        blockers,
+        run,
+    ))
+}
+
+fn map_agent_activity_run_to_v1(
+    activity: &a3_application::AgentActivityRun,
+    current_ledger_revision: u32,
+) -> Option<AgentActivityRunV1> {
+    let run = activity.run();
+    let budget = run.budget();
+    let usage = run.usage();
+    let elapsed_at_last_event = run
+        .updated_at()
+        .unix_millis()
+        .checked_sub(run.created_at().unix_millis())?;
+    Some(AgentActivityRunV1::new(
+        run.id().to_string(),
+        activity.step_id().to_string(),
+        activity.attempt_number(),
+        run.task_ledger_revision().get(),
+        run.task_ledger_revision().get() == current_ledger_revision,
+        map_agent_controller_state_to_v1(run.state()),
+        run.state().is_terminal(),
+        run.current_snapshot_id().to_string(),
+        run.created_at().unix_millis().to_string(),
+        run.updated_at().unix_millis().to_string(),
+        AgentActivityBudgetV1::new(
+            budget.turn_limit().get(),
+            budget.prompt_token_limit().get().to_string(),
+            budget.output_token_limit().get().to_string(),
+            budget.action_limit().get(),
+            budget.duration_limit().millis().to_string(),
+            budget.repair_limit().get(),
+        ),
+        AgentActivityUsageV1::new(
+            usage.turn_count(),
+            usage.prompt_tokens().to_string(),
+            usage.output_tokens().to_string(),
+            usage.action_count(),
+            elapsed_at_last_event.to_string(),
+            usage.repair_count(),
+        ),
+        activity.earlier_events_omitted(),
+        activity
+            .events()
+            .iter()
+            .map(map_agent_event_to_v1)
+            .collect(),
+    ))
+}
+
+fn map_agent_event_to_v1(event: &RunEvent) -> AgentActivityEventV1 {
+    AgentActivityEventV1::new(
+        event.sequence().get().to_string(),
+        event.occurred_at().unix_millis().to_string(),
+        event.snapshot_id().to_string(),
+        match event.kind() {
+            RunEventKind::RunStarted => AgentActivityEventKindV1::RunStarted,
+            RunEventKind::StateTransition { from, to } => {
+                AgentActivityEventKindV1::StateTransition {
+                    from: map_agent_controller_state_to_v1(from),
+                    to: map_agent_controller_state_to_v1(to),
+                }
+            }
+            RunEventKind::ContextCompiled => AgentActivityEventKindV1::ContextCompiled,
+            RunEventKind::ModelInteraction => AgentActivityEventKindV1::ModelInteraction {
+                turn: event.turn_charge().map(|charge| {
+                    AgentActivityTurnV1::new(
+                        charge.action().map(map_agent_selected_action_to_v1),
+                        charge.prompt_tokens().get(),
+                        charge.output_tokens().get(),
+                        matches!(charge.repair(), AgentTurnRepairUsage::One),
+                    )
+                }),
+            },
+            RunEventKind::ToolAction => AgentActivityEventKindV1::ToolAction,
+            RunEventKind::LedgerUpdated { from, to } => AgentActivityEventKindV1::LedgerUpdated {
+                from_revision: from.get(),
+                to_revision: to.get(),
+            },
+            RunEventKind::VerificationRecorded => AgentActivityEventKindV1::VerificationRecorded,
+            RunEventKind::ApprovalRecorded => AgentActivityEventKindV1::ApprovalRecorded,
+            RunEventKind::Diagnostic => AgentActivityEventKindV1::Diagnostic,
+        },
+        map_agent_event_code_to_v1(event.payload().code()),
+        event.payload().outcome().map(map_agent_event_outcome_to_v1),
+    )
+}
+
+const fn map_agent_controller_state_to_v1(state: AgentControllerState) -> AgentControllerStateV1 {
+    match state {
+        AgentControllerState::Intake => AgentControllerStateV1::Intake,
+        AgentControllerState::Localize => AgentControllerStateV1::Localize,
+        AgentControllerState::Plan => AgentControllerStateV1::Plan,
+        AgentControllerState::Execute => AgentControllerStateV1::Execute,
+        AgentControllerState::Verify => AgentControllerStateV1::Verify,
+        AgentControllerState::Replan => AgentControllerStateV1::Replan,
+        AgentControllerState::AwaitApproval => AgentControllerStateV1::AwaitApproval,
+        AgentControllerState::Done => AgentControllerStateV1::Done,
+        AgentControllerState::Failed => AgentControllerStateV1::Failed,
+        AgentControllerState::Cancelled => AgentControllerStateV1::Cancelled,
+    }
+}
+
+const fn map_agent_selected_action_to_v1(action: AgentTurnActionClass) -> AgentSelectedActionV1 {
+    match action {
+        AgentTurnActionClass::Search => AgentSelectedActionV1::Search,
+        AgentTurnActionClass::Inspect => AgentSelectedActionV1::Inspect,
+        AgentTurnActionClass::UpdateLedger => AgentSelectedActionV1::UpdateLedger,
+        AgentTurnActionClass::Finish => AgentSelectedActionV1::Finish,
+        AgentTurnActionClass::ApplyPatch => AgentSelectedActionV1::ApplyPatch,
+        AgentTurnActionClass::Run => AgentSelectedActionV1::Run,
+    }
+}
+
+const fn map_agent_event_code_to_v1(code: RunEventCode) -> AgentActivityCodeV1 {
+    match code {
+        RunEventCode::None => AgentActivityCodeV1::None,
+        RunEventCode::UserRequest => AgentActivityCodeV1::UserRequest,
+        RunEventCode::ControllerDecision => AgentActivityCodeV1::ControllerDecision,
+        RunEventCode::PolicyDecision => AgentActivityCodeV1::PolicyDecision,
+        RunEventCode::Timeout => AgentActivityCodeV1::Timeout,
+        RunEventCode::Cancellation => AgentActivityCodeV1::Cancellation,
+        RunEventCode::InvalidModelOutput => AgentActivityCodeV1::InvalidModelOutput,
+        RunEventCode::ToolFailure => AgentActivityCodeV1::ToolFailure,
+        RunEventCode::VerificationFailure => AgentActivityCodeV1::VerificationFailure,
+        RunEventCode::StateRecovered => AgentActivityCodeV1::StateRecovered,
+    }
+}
+
+const fn map_agent_event_outcome_to_v1(outcome: RunEventOutcome) -> AgentActivityOutcomeV1 {
+    match outcome {
+        RunEventOutcome::Succeeded => AgentActivityOutcomeV1::Succeeded,
+        RunEventOutcome::Failed => AgentActivityOutcomeV1::Failed,
+        RunEventOutcome::Cancelled => AgentActivityOutcomeV1::Cancelled,
+        RunEventOutcome::Denied => AgentActivityOutcomeV1::Denied,
+    }
 }
 
 fn map_module_runtime_map_to_v1(map: &ModuleRuntimeMap) -> ModuleRuntimeMapV1 {
@@ -3594,6 +3831,30 @@ fn map_task_lens_workspace_error_to_v1(error: TaskLensWorkspaceFailure) -> Comma
         TaskLensWorkspaceFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
     };
     CommandErrorV1::project_open(code)
+}
+
+fn map_agent_activity_error_to_v1(error: GetAgentActivityFailure) -> CommandErrorV1 {
+    match error {
+        GetAgentActivityFailure::Workspace(error) => map_task_lens_workspace_error_to_v1(error),
+        GetAgentActivityFailure::Journal(error) => {
+            let code = match error {
+                RunJournalStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+                RunJournalStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+                RunJournalStoreFailure::UnsupportedSchema => {
+                    ErrorCodeV1::LocalStorageUpgradeRequired
+                }
+                RunJournalStoreFailure::InvalidStoredData
+                | RunJournalStoreFailure::RunAlreadyExists
+                | RunJournalStoreFailure::RunNotFound
+                | RunJournalStoreFailure::SequenceConflict => ErrorCodeV1::LocalStorageInvalidData,
+            };
+            CommandErrorV1::project_open(code)
+        }
+        GetAgentActivityFailure::InvalidRunAnchor
+        | GetAgentActivityFailure::InvalidConfiguration => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+        }
+    }
 }
 
 fn invalid_agent_goal() -> CommandErrorV1 {

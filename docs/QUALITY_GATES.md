@@ -166,6 +166,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   blockierten Schritt als aktuell und hält ihn gemeinsam mit dem Goal im Sticky Anchor. Fehlendes
   Ledger und Goal-Revisionsabweichung bleiben explizit; Speichern startet weder Ledger noch Run
   noch Modellarbeit.
+- Der U5-Agent-Activity-Contract leitet den aktiven oder letzten Run ausschließlich aus retained
+  Task-Ledger-Versuchen ab und revalidiert Goal, Ledger sowie materialisierten Run nach dem
+  begrenzten Read. Application-Tests prüfen die Run-Auswahl und das exakt zusammenhängende Fenster
+  der letzten 64 Ereignisse. IPC und TypeScript akzeptieren nur Protokollversion plus `TaskId`,
+  geschlossene Zustände, positive Decimal-/Budgetgrenzen, monotone Zeit und Sequenzen sowie
+  höchstens 256 aktuelle Blocker; unbekannte verschachtelte Felder und erfundene Run-/Pfadparameter
+  werden abgelehnt. Component-Tests zeigen Goal und aktuellen Step weiter gemeinsam, alle sechs
+  Run-Budgetdimensionen, Context-/Snapshotanker, Freigabeblocker, problematische inhaltsfreie
+  Eventcodes und terminale Zustände. Eine `ModelInteraction` mit Aktionsauswahl bleibt sichtbar
+  „noch keine Ausführung“; nur `ToolAction` wird als echte Ausführungsaktion bezeichnet. Rohes
+  Modell-, Tool-, Fehler- oder Sourcematerial überschreitet IPC nicht.
 
 ### Persistenz
 

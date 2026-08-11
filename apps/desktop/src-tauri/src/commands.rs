@@ -1,29 +1,31 @@
 use crate::{
-    CompositionRoot, map_agent_goal_task_id_from_v1, map_create_agent_goal_from_v1,
-    map_module_card_detail_query_from_v1, map_module_card_evidence_query_from_v1,
-    map_module_dependency_graph_query_from_v1, map_module_runtime_flow_query_from_v1,
-    map_module_runtime_map_query_from_v1, map_module_tree_query_from_v1,
-    map_project_map_search_query_from_v1, map_repository_tree_query_from_v1,
-    map_revise_agent_goal_from_v1, map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
+    CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_goal_task_id_from_v1,
+    map_create_agent_goal_from_v1, map_module_card_detail_query_from_v1,
+    map_module_card_evidence_query_from_v1, map_module_dependency_graph_query_from_v1,
+    map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
+    map_module_tree_query_from_v1, map_project_map_search_query_from_v1,
+    map_repository_tree_query_from_v1, map_revise_agent_goal_from_v1,
+    map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
 };
 use a3_protocol::{
-    AgentGoalMutationResponseV1, AgentGoalResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
-    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapControlResponseV1,
-    DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
-    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryAgentGoalRequestV1, QueryDeepMapRequestV1,
-    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
-    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
-    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
-    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    AgentActivityResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1, CommandErrorV1,
+    CompileTaskLensRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
+    DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
+    IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
+    ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
+    ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
+    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentGoalRequestV1,
+    QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
+    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
+    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
+    RemoveProjectResponseV1, RepositoryTreeResponseV1, ReviseAgentGoalRequestV1,
+    StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
+    TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -178,6 +180,15 @@ pub async fn query_agent_goal(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentGoalResponseV1, CommandErrorV1> {
     execute_query_agent_goal(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads bounded current run activity derived from the selected task's durable ledger.
+pub async fn query_agent_activity(
+    request: QueryAgentActivityRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentActivityResponseV1, CommandErrorV1> {
+    execute_query_agent_activity(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -476,6 +487,17 @@ async fn execute_query_agent_goal(
     root.query_agent_goal(task_id).await
 }
 
+async fn execute_query_agent_activity(
+    request: QueryAgentActivityRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentActivityResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_agent_activity_task_id_from_v1(&request)?;
+    root.query_agent_activity(task_id).await
+}
+
 async fn execute_create_agent_goal(
     request: CreateAgentGoalRequestV1,
     root: &CompositionRoot,
@@ -567,13 +589,13 @@ async fn execute_remove_project(
 mod tests {
     use super::{
         execute_compile_task_lens, execute_control_deep_map, execute_create_agent_goal,
-        execute_list_recent_projects, execute_open_project, execute_query_agent_goal,
-        execute_query_deep_map, execute_query_health, execute_query_index_activity,
-        execute_query_index_overview, execute_query_module_card_detail,
-        execute_query_module_card_evidence, execute_query_module_card_freshness,
-        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
-        execute_query_module_runtime_map, execute_query_module_tree,
-        execute_query_project_map_search, execute_query_project_status,
+        execute_list_recent_projects, execute_open_project, execute_query_agent_activity,
+        execute_query_agent_goal, execute_query_deep_map, execute_query_health,
+        execute_query_index_activity, execute_query_index_overview,
+        execute_query_module_card_detail, execute_query_module_card_evidence,
+        execute_query_module_card_freshness, execute_query_module_dependency_graph,
+        execute_query_module_runtime_flow, execute_query_module_runtime_map,
+        execute_query_module_tree, execute_query_project_map_search, execute_query_project_status,
         execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
         execute_rebuild_project_index, execute_remove_project, execute_revise_agent_goal,
         execute_start_deep_map,
@@ -588,22 +610,22 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        AgentGoalResultV1, CompileTaskLensRequestV1, ControlDeepMapRequestV1,
-        CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
-        HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
-        ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
-        ModuleRuntimeMapResultV1, ModuleTreeResultV1, OpenProjectRequestV1,
-        ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion, QueryAgentGoalRequestV1,
-        QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
-        QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-        QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-        QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-        QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-        QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-        RemoveProjectRequestV1, RepositoryTreeResultV1, ReviseAgentGoalRequestV1,
-        StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
-        TaskLensTasksResultV1,
+        AgentActivityResultV1, AgentGoalResultV1, CompileTaskLensRequestV1,
+        ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
+        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
+        ListRecentProjectsRequestV1, ModuleCardDetailResultV1, ModuleCardEvidenceResultV1,
+        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
+        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
+        OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryAgentActivityRequestV1, QueryAgentGoalRequestV1, QueryDeepMapRequestV1,
+        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+        QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+        QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+        QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
+        QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        RepositoryTreeResultV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
+        TaskLensCompileResultV1, TaskLensTaskResultV1, TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -1431,6 +1453,42 @@ mod tests {
         }))?;
         assert_eq!(
             block_on(execute_create_agent_goal(unsupported, &root)).map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_activity_command_accepts_only_a_valid_task_identity_after_version_check()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let query: QueryAgentActivityRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "11".repeat(32)
+        }))?;
+        let response = block_on(execute_query_agent_activity(query, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            AgentActivityResultV1::NoProject
+        ));
+
+        let invalid: QueryAgentActivityRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "not-an-id"
+        }))?;
+        assert_eq!(
+            block_on(execute_query_agent_activity(invalid, &root)).map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidTaskLensSelection)
+        );
+
+        let unsupported: QueryAgentActivityRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 999,
+            "taskId": "not-an-id"
+        }))?;
+        assert_eq!(
+            block_on(execute_query_agent_activity(unsupported, &root))
+                .map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
         Ok(())

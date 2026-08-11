@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import AgentGoalWorkspace from './AgentGoalWorkspace.svelte';
+import type { AgentActivityResponseV1 } from './agent-activity';
 import type {
   AgentGoalContractV1,
   AgentGoalDraftInputV1,
@@ -200,5 +201,196 @@ describe('AgentGoalWorkspace', () => {
     expect(screen.getAllByText('In Arbeit')).toHaveLength(2);
     expect(screen.getByText('Gesamtgate ausführen')).toBeTruthy();
     expect(ledgerLoader).toHaveBeenCalledWith({ taskId });
+  });
+
+  it('shows bounded budget, blockers, and separates model selection from execution', async () => {
+    const stepId = '3'.repeat(64);
+    const snapshotId = '4'.repeat(64);
+    const activityLoader = vi.fn<(selectedTaskId: string) => Promise<AgentActivityResponseV1>>(
+      async () => ({
+        protocolVersion: 1,
+        result: {
+          activity: {
+            blockers: [{ reason: 'Explizite Freigabe fehlt.', status: 'awaitingApproval', stepId }],
+            currentLedgerRevision: 3,
+            ledgerStoreVersion: '7',
+            run: {
+              attemptNumber: 1,
+              budget: {
+                actionLimit: 8,
+                durationLimitMillis: '60000',
+                outputTokenLimit: '2000',
+                promptTokenLimit: '8000',
+                repairLimit: 2,
+                turnLimit: 8,
+              },
+              createdAtUnixMillis: '1786000000000',
+              currentSnapshotId: snapshotId,
+              earlierEventsOmitted: false,
+              ledgerRevision: 3,
+              ledgerRevisionMatchesCurrent: true,
+              runId: '5'.repeat(64),
+              state: 'awaitApproval',
+              stepId,
+              terminal: false,
+              timeline: [
+                {
+                  code: 'none',
+                  event: { kind: 'runStarted' },
+                  occurredAtUnixMillis: '1786000000000',
+                  outcome: null,
+                  sequence: '1',
+                  snapshotId,
+                },
+                {
+                  code: 'none',
+                  event: {
+                    kind: 'modelInteraction',
+                    turn: {
+                      outputTokens: 40,
+                      promptTokens: 120,
+                      repairUsed: false,
+                      selectedAction: 'run',
+                    },
+                  },
+                  occurredAtUnixMillis: '1786000000010',
+                  outcome: 'succeeded',
+                  sequence: '2',
+                  snapshotId,
+                },
+                {
+                  code: 'policyDecision',
+                  event: { kind: 'toolAction' },
+                  occurredAtUnixMillis: '1786000000020',
+                  outcome: 'denied',
+                  sequence: '3',
+                  snapshotId,
+                },
+              ],
+              updatedAtUnixMillis: '1786000000020',
+              usage: {
+                actionCount: 1,
+                elapsedAtLastEventMillis: '20',
+                outputTokens: '40',
+                promptTokens: '120',
+                repairCount: 0,
+                turnCount: 1,
+              },
+            },
+          },
+          status: 'available',
+        },
+      }),
+    );
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      activityLoader,
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [{ intendedOutcome: 'Freigabe abwarten', status: 'awaitingApproval', stepId }],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+      tasksLoader: async () => tasks(1),
+    });
+
+    expect(await screen.findByText('Explizite Freigabe fehlt.')).toBeTruthy();
+    expect(screen.getByText('Aktionsauswahl Prozess · noch keine Ausführung')).toBeTruthy();
+    expect(screen.getByText('Ausführungsaktion · Tool tatsächlich aufgerufen')).toBeTruthy();
+    expect(screen.getAllByText('1 / 8')).toHaveLength(2);
+    expect(screen.getByText('Run aktiv oder fortsetzbar')).toBeTruthy();
+    expect(activityLoader).toHaveBeenCalledWith(taskId);
+  });
+
+  it('keeps a terminal run state visible', async () => {
+    const snapshotId = '4'.repeat(64);
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      activityLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          activity: {
+            blockers: [],
+            currentLedgerRevision: 3,
+            ledgerStoreVersion: '7',
+            run: {
+              attemptNumber: 1,
+              budget: {
+                actionLimit: 8,
+                durationLimitMillis: '60000',
+                outputTokenLimit: '2000',
+                promptTokenLimit: '8000',
+                repairLimit: 2,
+                turnLimit: 8,
+              },
+              createdAtUnixMillis: '1786000000000',
+              currentSnapshotId: snapshotId,
+              earlierEventsOmitted: false,
+              ledgerRevision: 3,
+              ledgerRevisionMatchesCurrent: true,
+              runId: '5'.repeat(64),
+              state: 'cancelled',
+              stepId: '3'.repeat(64),
+              terminal: true,
+              timeline: [
+                {
+                  code: 'none',
+                  event: { kind: 'runStarted' },
+                  occurredAtUnixMillis: '1786000000000',
+                  outcome: null,
+                  sequence: '1',
+                  snapshotId,
+                },
+                {
+                  code: 'cancellation',
+                  event: { from: 'intake', kind: 'stateTransition', to: 'cancelled' },
+                  occurredAtUnixMillis: '1786000000010',
+                  outcome: 'cancelled',
+                  sequence: '2',
+                  snapshotId,
+                },
+              ],
+              updatedAtUnixMillis: '1786000000010',
+              usage: {
+                actionCount: 0,
+                elapsedAtLastEventMillis: '10',
+                outputTokens: '0',
+                promptTokens: '0',
+                repairCount: 0,
+                turnCount: 0,
+              },
+            },
+          },
+          status: 'available',
+        },
+      }),
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [
+            {
+              intendedOutcome: 'Run beenden',
+              status: 'cancelled',
+              stepId: '3'.repeat(64),
+            },
+          ],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+      tasksLoader: async () => tasks(1),
+    });
+
+    expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
+    expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
   });
 });

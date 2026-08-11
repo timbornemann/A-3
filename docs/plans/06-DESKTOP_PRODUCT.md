@@ -346,10 +346,10 @@ Abhängigkeiten: Gate M7
 - [x] Goal Contract
 - [x] Acceptance Criteria
 - [x] Task Ledger und aktueller Step
-- [ ] kompakte Conversation- und Action Timeline
-- [ ] Context- und Budgetanzeige
+- [x] kompakte Conversation- und Action Timeline
+- [x] Context- und Budgetanzeige
 - [ ] Pause, Cancel, Resume und Replan
-- [ ] Fehler und Blocker
+- [x] Fehler und Blocker
 
 Akzeptanz:
 
@@ -377,6 +377,20 @@ optimistische Store-Version sowie alle aktiven Planschritte. Nur `InProgress`,
 und Schritt bleiben in einem gemeinsamen Sticky Anchor erhalten. Component-Tests belegen dieselbe
 Task-ID-Bindung und die gleichzeitige Sichtbarkeit. Fehlendes Ledger, Revisionsabweichung,
 Projektwechsel und Readfehler bleiben explizit; die read-only UI erzeugt keinen erfundenen Plan.
+
+Abnahme des Activity-Schnitts am 2026-08-11: Aus dem aktiven oder deterministisch letzten retained
+Step-Versuch wählt der Application-Use-Case den Agent Run selbst; die WebView sendet ausschließlich
+die bereits ausgewählte `TaskId`. Goal-, Ledger- und Run-Anker werden nach dem Journalread erneut
+geprüft, gleichzeitige Änderungen ergeben `activityChanged`, und höchstens die jüngsten 64
+zusammenhängenden inhaltsfreien Events überschreiten IPC. Der Workspace zeigt endlichen
+Controllerzustand, terminalen Zustand, Snapshot und letztes sichtbares Context-Pack sowie harte
+Grenze und durable Nutzung aller sechs Run-Budgetdimensionen. Aktuelle Ledger-Blocker und
+fehlgeschlagene, verweigerte oder abgebrochene Events sind sichtbar. Modellantwort und
+Aktionsauswahl heißen ausdrücklich „keine/noch keine Ausführung“; nur ein separates `ToolAction`
+wird als echte Ausführungsaktion dargestellt. Application-, Protokoll-, Command-, TypeScript- und
+Component-Tests decken Ableitung, 64er-Grenze, geschlossene Formen, monotone Sequenzen, Blocker,
+Budget, Aktionsunterscheidung und sichtbaren terminalen Zustand ab. Der Schnitt besitzt keinerlei
+Mutation oder Run-Steuerung; Pause, Cancel, Resume und Replan bleiben der nächste U5-Schnitt.
 
 ## U6 Diff und Verification
 

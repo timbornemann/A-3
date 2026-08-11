@@ -1,5 +1,13 @@
 <script lang="ts">
   import {
+    queryAgentActivity,
+    type AgentActivityEventV1,
+    type AgentActivityResponseV1,
+    type AgentActivityRunV1,
+    type AgentControllerStateV1,
+    type AgentSelectedActionV1,
+  } from './agent-activity';
+  import {
     createAgentGoal,
     queryAgentGoal,
     reviseAgentGoal,
@@ -21,6 +29,7 @@
 
   interface Props {
     activeProject: boolean;
+    activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
     goalCreator?: (draft: AgentGoalDraftInputV1) => Promise<AgentGoalMutationResponseV1>;
     goalLoader?: (taskId: string) => Promise<AgentGoalResponseV1>;
     goalReviser?: (
@@ -51,9 +60,15 @@
     | { kind: 'loading' }
     | { kind: 'error' }
     | { kind: 'result'; result: TaskLensTaskResponseV1['result'] };
+  type ActivityView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'result'; result: AgentActivityResponseV1['result'] };
 
   let {
     activeProject,
+    activityLoader = queryAgentActivity,
     goalCreator = createAgentGoal,
     goalLoader = queryAgentGoal,
     goalReviser = reviseAgentGoal,
@@ -64,6 +79,7 @@
   let taskView = $state<TaskView>({ kind: 'idle' });
   let goalView = $state<GoalView>({ kind: 'idle' });
   let ledgerView = $state<LedgerView>({ kind: 'idle' });
+  let activityView = $state<ActivityView>({ kind: 'idle' });
   let selectedTaskId = $state('');
   let editorMode = $state<EditorMode>('closed');
   let draft = $state<AgentGoalDraftInputV1>(emptyDraft());
@@ -75,6 +91,7 @@
   let taskRequest = 0;
   let goalRequest = 0;
   let ledgerRequest = 0;
+  let activityRequest = 0;
   let currentLedgerStep = $derived(
     ledgerView.kind === 'result' && ledgerView.result.status === 'available'
       ? selectCurrentStep(ledgerView.result.steps)
@@ -141,7 +158,7 @@
         goalView = { kind: 'notFound' };
       } else {
         goalView = { kind: 'available', goal: response.result.goal };
-        await loadLedger(taskId);
+        await Promise.all([loadLedger(taskId), loadActivity(taskId)]);
       }
     } catch {
       if (request === goalRequest) goalView = { kind: 'error' };
@@ -157,6 +174,18 @@
       ledgerView = { kind: 'result', result: response.result };
     } catch {
       if (request === ledgerRequest) ledgerView = { kind: 'error' };
+    }
+  }
+
+  async function loadActivity(taskId: string): Promise<void> {
+    const request = ++activityRequest;
+    activityView = { kind: 'loading' };
+    try {
+      const response = await activityLoader(taskId);
+      if (request !== activityRequest || taskId !== selectedTaskId) return;
+      activityView = { kind: 'result', result: response.result };
+    } catch {
+      if (request === activityRequest) activityView = { kind: 'error' };
     }
   }
 
@@ -234,6 +263,8 @@
     goalView = { kind: 'idle' };
     ledgerRequest += 1;
     ledgerView = { kind: 'idle' };
+    activityRequest += 1;
+    activityView = { kind: 'idle' };
   }
 
   function resetWorkspace(): void {
@@ -293,6 +324,87 @@
       verifying: 'Wird verifiziert',
     };
     return labels[status];
+  }
+
+  function controllerStateLabel(state: AgentControllerStateV1): string {
+    const labels: Record<AgentControllerStateV1, string> = {
+      awaitApproval: 'Wartet auf Freigabe',
+      cancelled: 'Abgebrochen',
+      done: 'Erfolgreich abgeschlossen',
+      execute: 'Ausführung',
+      failed: 'Fehlgeschlagen',
+      intake: 'Aufnahme',
+      localize: 'Kontextsuche',
+      plan: 'Planung',
+      replan: 'Neuplanung',
+      verify: 'Verifikation',
+    };
+    return labels[state];
+  }
+
+  function activityEventLabel(item: AgentActivityEventV1): string {
+    const event = item.event;
+    switch (event.kind) {
+      case 'runStarted':
+        return 'Run gestartet';
+      case 'stateTransition':
+        return `${controllerStateLabel(event.from)} → ${controllerStateLabel(event.to)}`;
+      case 'contextCompiled':
+        return 'Context Pack kompiliert';
+      case 'modelInteraction':
+        return event.turn?.selectedAction === null || event.turn === null
+          ? 'Modellantwort · keine Ausführung'
+          : `Aktionsauswahl ${selectedActionLabel(event.turn.selectedAction)} · noch keine Ausführung`;
+      case 'toolAction':
+        return 'Ausführungsaktion · Tool tatsächlich aufgerufen';
+      case 'ledgerUpdated':
+        return `Replan · Ledger R${event.fromRevision} → R${event.toRevision}`;
+      case 'verificationRecorded':
+        return 'Verifikation aufgezeichnet';
+      case 'approvalRecorded':
+        return 'Freigabeereignis aufgezeichnet';
+      case 'diagnostic':
+        return 'Diagnose aufgezeichnet';
+    }
+  }
+
+  function selectedActionLabel(action: AgentSelectedActionV1): string {
+    const labels: Record<AgentSelectedActionV1, string> = {
+      applyPatch: 'Patch',
+      finish: 'Abschlussprüfung',
+      inspect: 'Inspektion',
+      run: 'Prozess',
+      search: 'Suche',
+      updateLedger: 'Ledger-Update',
+    };
+    return labels[action];
+  }
+
+  function eventCodeLabel(code: AgentActivityEventV1['code']): string | null {
+    if (code === 'none') return null;
+    const labels: Record<Exclude<AgentActivityEventV1['code'], 'none'>, string> = {
+      cancellation: 'Abbruch beobachtet',
+      controllerDecision: 'Controller-Entscheidung',
+      invalidModelOutput: 'Ungültige Modellausgabe',
+      policyDecision: 'Policy-Entscheidung',
+      stateRecovered: 'Zustand wiederhergestellt',
+      timeout: 'Zeitlimit erreicht',
+      toolFailure: 'Tool fehlgeschlagen',
+      userRequest: 'Nutzeranforderung',
+      verificationFailure: 'Verifikation fehlgeschlagen',
+    };
+    return labels[code];
+  }
+
+  function isProblemEvent(item: AgentActivityEventV1): boolean {
+    return item.outcome === 'failed' || item.outcome === 'denied' || item.outcome === 'cancelled';
+  }
+
+  function latestContextSequence(run: AgentActivityRunV1): string | null {
+    return (
+      [...run.timeline].reverse().find((item) => item.event.kind === 'contextCompiled')?.sequence ??
+      null
+    );
   }
 </script>
 
@@ -399,6 +511,158 @@
             </li>
           {/each}
         </ol>
+      {/if}
+    </section>
+    <section class="agent-activity" aria-labelledby="agent-activity-heading">
+      <header>
+        <p>Durable Run</p>
+        <h3 id="agent-activity-heading">Aktivität, Kontext und Budget</h3>
+      </header>
+      {#if activityView.kind === 'loading'}
+        <p role="status" aria-live="polite">Run-Aktivität wird geladen …</p>
+      {:else if activityView.kind === 'error'}
+        <div class="error-state" role="alert">
+          <p>Die Run-Aktivität konnte nicht sicher gelesen werden.</p>
+          <button type="button" onclick={() => loadActivity(selectedTaskId)}>Erneut laden</button>
+        </div>
+      {:else if activityView.kind === 'result' && activityView.result.status === 'activityChanged'}
+        <div class="error-state" role="status">
+          <p>Ledger oder Run haben sich während des Lesens geändert.</p>
+          <button type="button" onclick={() => loadActivity(selectedTaskId)}>
+            Aktuellen Stand laden
+          </button>
+        </div>
+      {:else if activityView.kind === 'result' && (activityView.result.status === 'noProject' || activityView.result.status === 'taskNotFound')}
+        <p class="error-state" role="alert">
+          Aufgabe oder aktiver Worktree sind für diese Aktivität nicht mehr verfügbar.
+        </p>
+      {:else if activityView.kind === 'result' && activityView.result.status === 'ledgerUnavailable'}
+        <p class="empty-state">Ohne Task Ledger existiert noch kein kontrollierter Agent Run.</p>
+      {:else if activityView.kind === 'result' && activityView.result.status === 'goalRevisionMismatch'}
+        <p class="error-state" role="alert">
+          Goal R{activityView.result.currentRevision} und Ledger-Goal R{activityView.result
+            .ledgerRevision}
+          stimmen nicht überein. Vor weiterer Ausführung ist ein Replan erforderlich.
+        </p>
+      {:else if activityView.kind === 'result' && activityView.result.status === 'available'}
+        {@const activity = activityView.result.activity}
+        {#if activity.blockers.length > 0}
+          <section class="blockers" aria-labelledby="agent-blockers-heading">
+            <h4 id="agent-blockers-heading">Offene Blocker</h4>
+            <ul>
+              {#each activity.blockers as blocker (blocker.stepId)}
+                <li>
+                  <strong
+                    >{blocker.status === 'awaitingApproval'
+                      ? 'Freigabe nötig'
+                      : 'Blockiert'}</strong
+                  >
+                  <span>{blocker.reason}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+        {#if activity.run === null}
+          <p class="empty-state">Für die Ledger-Schritte wurde noch kein Run-Versuch gestartet.</p>
+        {:else}
+          {@const run = activity.run}
+          <div class="run-summary">
+            <div>
+              <span>Controllerzustand</span>
+              <strong>{controllerStateLabel(run.state)}</strong>
+            </div>
+            <span class:terminal={run.terminal} class="run-lifecycle">
+              {run.terminal ? 'Terminaler Zustand' : 'Run aktiv oder fortsetzbar'}
+            </span>
+            <code>Versuch {run.attemptNumber} · Run {run.runId.slice(0, 12)}</code>
+          </div>
+          {#if !run.ledgerRevisionMatchesCurrent}
+            <p class="bounded-note">
+              Dieser letzte Run gehört zu Ledger R{run.ledgerRevision}; aktuell ist R{activity.currentLedgerRevision}.
+            </p>
+          {/if}
+          <div class="context-budget-grid">
+            <section aria-labelledby="context-status-heading">
+              <h4 id="context-status-heading">Context</h4>
+              <dl>
+                <div>
+                  <dt>Snapshot</dt>
+                  <dd><code>{run.currentSnapshotId.slice(0, 16)}</code></dd>
+                </div>
+                <div>
+                  <dt>Letztes Context Pack</dt>
+                  <dd>
+                    {#if latestContextSequence(run) === null}
+                      Nicht im sichtbaren Journalfenster
+                    {:else}
+                      Ereignis #{latestContextSequence(run)}
+                    {/if}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Stand</dt>
+                  <dd>{run.updatedAtUnixMillis} ms</dd>
+                </div>
+              </dl>
+            </section>
+            <section aria-labelledby="run-budget-heading">
+              <h4 id="run-budget-heading">Run-Budget</h4>
+              <dl class="budget-list">
+                <div>
+                  <dt>Turns</dt>
+                  <dd>{run.usage.turnCount} / {run.budget.turnLimit}</dd>
+                </div>
+                <div>
+                  <dt>Prompt-Tokens</dt>
+                  <dd>{run.usage.promptTokens} / {run.budget.promptTokenLimit}</dd>
+                </div>
+                <div>
+                  <dt>Output-Tokens</dt>
+                  <dd>{run.usage.outputTokens} / {run.budget.outputTokenLimit}</dd>
+                </div>
+                <div>
+                  <dt>Aktionen</dt>
+                  <dd>{run.usage.actionCount} / {run.budget.actionLimit}</dd>
+                </div>
+                <div>
+                  <dt>Reparaturen</dt>
+                  <dd>{run.usage.repairCount} / {run.budget.repairLimit}</dd>
+                </div>
+                <div>
+                  <dt>Zeit am letzten Ereignis</dt>
+                  <dd>
+                    {run.usage.elapsedAtLastEventMillis} / {run.budget.durationLimitMillis} ms
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+          <section class="activity-timeline" aria-labelledby="activity-timeline-heading">
+            <div class="timeline-heading">
+              <h4 id="activity-timeline-heading">Conversation- und Action-Timeline</h4>
+              {#if run.earlierEventsOmitted}<span>Ältere Ereignisse ausgeblendet</span>{/if}
+            </div>
+            <ol>
+              {#each run.timeline as item (item.sequence)}
+                <li class:problem={isProblemEvent(item)}>
+                  <span class="event-sequence">#{item.sequence}</span>
+                  <div>
+                    <strong>{activityEventLabel(item)}</strong>
+                    <p>
+                      {item.occurredAtUnixMillis} ms
+                      {#if eventCodeLabel(item.code) !== null}
+                        · {eventCodeLabel(item.code)}
+                      {/if}
+                      {#if item.outcome !== null}
+                        · {item.outcome}{/if}
+                    </p>
+                  </div>
+                </li>
+              {/each}
+            </ol>
+          </section>
+        {/if}
       {/if}
     </section>
   {/if}
@@ -740,7 +1004,8 @@
     padding: 1rem;
   }
 
-  .task-ledger {
+  .task-ledger,
+  .agent-activity {
     border: 1px solid var(--line, #d8d9df);
     border-radius: 0.9rem;
     display: grid;
@@ -749,6 +1014,7 @@
   }
 
   .task-ledger header p,
+  .agent-activity > header p,
   .persistent-anchors > div > span {
     color: var(--muted, #646b79);
     font-size: 0.78rem;
@@ -759,6 +1025,7 @@
   }
 
   .task-ledger header h3,
+  .agent-activity > header h3,
   .persistent-anchors h4 {
     margin: 0;
   }
@@ -796,6 +1063,151 @@
 
   .ledger-steps p {
     margin: 0;
+  }
+
+  .blockers {
+    background: #fff6e6;
+    border-left: 0.25rem solid #9a6417;
+    padding: 0.8rem;
+  }
+
+  .blockers h4,
+  .blockers ul {
+    margin-bottom: 0;
+  }
+
+  .blockers ul {
+    display: grid;
+    gap: 0.5rem;
+    list-style: none;
+    padding: 0;
+  }
+
+  .blockers li {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .run-summary {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+  }
+
+  .run-summary > div {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .run-summary > div > span,
+  .timeline-heading span {
+    color: var(--muted, #646b79);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .run-lifecycle {
+    background: #e8f2ff;
+    border-radius: 99px;
+    color: #153c70;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.3rem 0.65rem;
+  }
+
+  .run-lifecycle.terminal {
+    background: #eceef2;
+    color: #3f4652;
+  }
+
+  .context-budget-grid {
+    display: grid;
+    gap: 0.8rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .context-budget-grid > section {
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--line, #d8d9df);
+    border-radius: 0.65rem;
+    padding: 0.8rem;
+  }
+
+  .context-budget-grid h4 {
+    margin-bottom: 0.65rem;
+  }
+
+  .context-budget-grid dl {
+    display: grid;
+    gap: 0.45rem;
+    margin: 0;
+  }
+
+  .context-budget-grid dl > div {
+    display: flex;
+    gap: 0.8rem;
+    justify-content: space-between;
+  }
+
+  .context-budget-grid dt {
+    color: var(--muted, #646b79);
+  }
+
+  .context-budget-grid dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
+
+  .activity-timeline {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .timeline-heading {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    justify-content: space-between;
+  }
+
+  .timeline-heading h4 {
+    margin: 0;
+  }
+
+  .activity-timeline ol {
+    display: grid;
+    gap: 0.45rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .activity-timeline li {
+    align-items: start;
+    border-left: 0.2rem solid #8ca3c1;
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 0.55rem 0.7rem;
+  }
+
+  .activity-timeline li.problem {
+    background: #fff0f0;
+    border-left-color: #a32d2d;
+  }
+
+  .activity-timeline li p {
+    color: var(--muted, #646b79);
+    font-size: 0.82rem;
+    margin: 0.2rem 0 0;
+  }
+
+  .event-sequence {
+    color: var(--muted, #646b79);
+    font-variant-numeric: tabular-nums;
   }
 
   .criteria-editor {
@@ -838,6 +1250,7 @@
   @media (max-width: 860px) {
     .goal-columns,
     .boundary-grid,
+    .context-budget-grid,
     .criterion-editor {
       grid-template-columns: 1fr;
     }
