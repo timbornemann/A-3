@@ -51,7 +51,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
-  `query_module_card_freshness`, `query_repository_tree`, `query_module_tree`, `query_deep_map`,
+  `query_module_card_freshness`, `query_repository_tree`, `query_module_tree`,
+  `query_module_dependency_graph`, `query_deep_map`,
   `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
@@ -102,6 +103,16 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Evidence- und Rootpfade werden ausschließlich als kanonische Hexdaten übertragen; die WebView
   rendert nur die getrennte kontrollzeichenfreie Anzeige. Navigation, Nachladen, Open und
   erfolgreicher Publish dürfen lesen, das 500-ms-Polling nicht.
+- `query_module_dependency_graph` akzeptiert ausschließlich Protokollversion, eine aktuelle
+  primäre Zentrum-`ModuleId` und ein Gesamtknotenlimit von 1 bis 100. Projekt, Worktree, Pfade und
+  Endpoints stammen nicht aus der WebView. Der auf zwei Sekunden begrenzte Read verwendet nur den
+  jüngsten atomar publizierten V8-Stand, inspiziert höchstens 4.096 zentrumsinzidente kanonische
+  Graphkanten und liefert höchstens 100 primäre Knoten sowie 256 relationsspezifische Gruppen.
+  Graph-Communities und Hierarchierelationen sind keine sichtbaren Abhängigkeiten. Jede Gruppe
+  trägt eine exakte aktuelle Edge-Evidence, aber weder Source-Inhalt noch autoritative
+  Betriebssystempfade; opake relative Pfadbytes autorisieren keinen Dateizugriff. Ausgelassene
+  Nachbarn, Gruppen, Quellkanten und ungemappte Dateikanten bleiben explizit sichtbar. Der Read
+  läuft nur nach Modulauswahl, Aktualisierung oder erfolgreichem Publish, nie im 500-ms-Polling.
 - Die fünf Deep-Map-Commands akzeptieren niemals einen Projektpfad, eine Projektidentität, ein
   ModelProfile oder eine Job-ID aus der WebView. Nur der explizite Start trägt ein dreidimensionales,
   gegen feste Domainminima und -maxima validiertes Budget. Statuspolling liest ausschließlich das

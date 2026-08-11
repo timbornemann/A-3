@@ -3,17 +3,20 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardFreshness, GetModuleTreePage, GetRepositoryTreePage,
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
-    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
-    ModuleCardFreshnessStatus, ModuleCardVerificationControl, ModuleCardVerificationControlError,
-    ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError, ModuleTreeFailure,
-    ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl,
-    TaskLensControlError, VerifiedModuleCardPublisherFailure,
+    CompileTaskLens, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleTreePage,
+    GetRepositoryTreePage, IndexPersistenceControl, IndexPersistenceControlError,
+    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    LoadPendingModuleRemaps, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
+    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardVerificationControl,
+    ModuleCardVerificationControlError, ModuleDependencyGraphControl,
+    ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyNodeLimit,
+    ModuleDependencyRelation, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery,
+    PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure, RemapQueueControl,
+    RemapQueueControlError, RemapQueueLimit, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery,
+    TaskLensControl, TaskLensControlError, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
@@ -163,6 +166,23 @@ impl ModuleTreeControl for TestIndexControl {
     }
 }
 
+impl ModuleDependencyGraphControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleDependencyGraphControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleDependencyGraphControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CancelledIndexControl;
 
@@ -214,6 +234,19 @@ impl ModuleTreeControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleTreeControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleDependencyGraphControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleDependencyGraphControlError> {
         Ok(())
     }
 }
@@ -2217,6 +2250,272 @@ fn module_tree_pages_only_direct_primary_boundaries_from_the_latest_projection()
     })
 }
 
+#[test]
+fn module_dependency_graph_is_bounded_evidence_bound_and_latest_only()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([87; 32], [88; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let query = GetModuleDependencyGraph::new(store.clone());
+        let center = ModuleId::from_bytes([211; 32]);
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::DEFAULT,),
+                    &control,
+                )
+                .await?,
+            ModuleDependencyGraphLoadResult::NoPublishedIndex
+        );
+
+        let files = nested_module_files();
+        let first_snapshot = snapshot(
+            [89; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([90; 32], first_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &nested_module_publication(first_snapshot.id())?,
+                &control,
+            )
+            .await?;
+
+        let limited = match query
+            .execute(
+                &fixture.project,
+                &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::new(2)?),
+                &control,
+            )
+            .await?
+        {
+            ModuleDependencyGraphLoadResult::Graph(graph) => graph,
+            other => return Err(format!("unexpected dependency state: {other:?}").into()),
+        };
+        assert_eq!(limited.index_run_id(), first_run.id());
+        assert_eq!(limited.snapshot_id(), first_snapshot.id());
+        assert_eq!(limited.center_module_id(), center);
+        assert_eq!(limited.nodes().len(), 2);
+        assert_eq!(limited.observed_neighbor_count(), 2);
+        assert!(limited.nodes_truncated());
+        assert_eq!(limited.edges().len(), 1);
+        assert_eq!(
+            limited.edges()[0].relation(),
+            ModuleDependencyRelation::Calls
+        );
+        assert_eq!(limited.edges()[0].observed_evidence_count(), 1);
+        assert_eq!(
+            limited.edges()[0].representative_edge().snapshot_id(),
+            first_snapshot.id()
+        );
+        assert_eq!(limited.edges()[0].evidence_id().as_bytes().len(), 32);
+        assert_eq!(limited.inspected_edge_count(), 3);
+        assert!(!limited.source_edges_truncated());
+        assert_eq!(limited.unmapped_edge_count(), 1);
+
+        let complete = match query
+            .execute(
+                &fixture.project,
+                &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::new(3)?),
+                &control,
+            )
+            .await?
+        {
+            ModuleDependencyGraphLoadResult::Graph(graph) => graph,
+            other => return Err(format!("unexpected dependency state: {other:?}").into()),
+        };
+        assert_eq!(complete.nodes().len(), 3);
+        assert!(!complete.nodes_truncated());
+        assert_eq!(complete.edges().len(), 2);
+        assert_eq!(complete.observed_edge_group_count(), 2);
+        assert!(!complete.edges_truncated());
+        assert_eq!(complete.nodes()[0].module_id(), center);
+        assert_eq!(
+            complete.nodes()[1].module_id(),
+            ModuleId::from_bytes([212; 32])
+        );
+        assert_eq!(
+            complete.nodes()[2].module_id(),
+            ModuleId::from_bytes([213; 32])
+        );
+        assert_eq!(
+            complete.nodes()[0]
+                .representative_revision()
+                .ok_or("center evidence is missing")?
+                .path()
+                .as_bytes(),
+            b"packages/a/src/lib.ts"
+        );
+        assert_eq!(
+            complete.nodes()[0]
+                .representative_evidence_id()
+                .ok_or("center evidence id is missing")?
+                .as_bytes()
+                .len(),
+            32
+        );
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleDependencyGraphQuery::new(
+                        ModuleId::from_bytes([214; 32]),
+                        ModuleDependencyNodeLimit::DEFAULT,
+                    ),
+                    &control,
+                )
+                .await?,
+            ModuleDependencyGraphLoadResult::CenterUnavailable
+        );
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::DEFAULT,),
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(ModuleDependencyGraphFailure::Cancelled)
+        );
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "UPDATE module_members SET symbol_id = zeroblob(32) WHERE rowid = (
+               SELECT rowid FROM module_members
+               WHERE membership_kind IN ('manifest', 'path') ORDER BY symbol_id LIMIT 1
+             )",
+        )
+        .await?;
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::DEFAULT,),
+                    &control,
+                )
+                .await,
+            Err(ModuleDependencyGraphFailure::InvalidStoredProjection)
+        );
+
+        let next_snapshot = snapshot(
+            [91; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Delete))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &next_snapshot)
+            .await?;
+        let next_run = store
+            .start_index_run(&fixture.project, run([92; 32], next_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                next_run.id(),
+                &empty_publication(next_snapshot.id())?,
+                &control,
+            )
+            .await?;
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ModuleDependencyGraphQuery::new(center, ModuleDependencyNodeLimit::DEFAULT,),
+                    &control,
+                )
+                .await?,
+            ModuleDependencyGraphLoadResult::CenterUnavailable
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn module_dependency_graph_exposes_source_and_group_truncation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([93; 32], [94; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let files = bounded_dependency_files();
+        let current_snapshot = snapshot(
+            [95; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &current_snapshot)
+            .await?;
+        let run = store
+            .start_index_run(&fixture.project, run([96; 32], current_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                run.id(),
+                &bounded_dependency_publication(current_snapshot.id())?,
+                &control,
+            )
+            .await?;
+
+        let graph = match GetModuleDependencyGraph::new(store)
+            .execute(
+                &fixture.project,
+                &ModuleDependencyGraphQuery::new(
+                    ModuleId::from_bytes([120; 32]),
+                    ModuleDependencyNodeLimit::new(15)?,
+                ),
+                &control,
+            )
+            .await?
+        {
+            ModuleDependencyGraphLoadResult::Graph(graph) => graph,
+            other => return Err(format!("unexpected dependency state: {other:?}").into()),
+        };
+        assert_eq!(graph.inspected_edge_count(), 4_096);
+        assert!(graph.source_edges_truncated());
+        assert_eq!(graph.observed_neighbor_count(), 14);
+        assert_eq!(graph.nodes().len(), 15);
+        assert!(!graph.nodes_truncated());
+        assert!(graph.observed_edge_group_count() > 256);
+        assert_eq!(graph.edges().len(), 256);
+        assert!(graph.edges_truncated());
+        assert_eq!(graph.unmapped_edge_count(), 0);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
 struct ProjectFixture {
     _temporary: TempDirectory,
     layout: StorageLayout,
@@ -2427,11 +2726,31 @@ fn nested_module_publication(
         snapshot_id,
         community_evidence.clone(),
     );
+    let file_dependency = GraphEdge::new(
+        GraphEndpoint::File(symbol_revisions[1].path().clone()),
+        GraphEndpoint::File(symbol_revisions[3].path().clone()),
+        SyntaxRelationKind::Builds,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterFile,
+        snapshot_id,
+        EvidenceRef::new(symbol_revisions[1].clone(), range),
+    );
+    let unmapped_file_dependency = GraphEdge::new(
+        GraphEndpoint::File(symbol_revisions[1].path().clone()),
+        GraphEndpoint::File(cargo_manifest.path().clone()),
+        SyntaxRelationKind::Documents,
+        SyntaxProvider::TreeSitter,
+        Confidence::certain(),
+        LinkResolution::AdapterFile,
+        snapshot_id,
+        EvidenceRef::new(symbol_revisions[1].clone(), range),
+    );
     let graph = LinkedGraph::new(
         snapshot_id,
         files,
         symbols,
-        vec![community_edge],
+        vec![community_edge, file_dependency, unmapped_file_dependency],
         Vec::new(),
     )?;
     let ranks = symbol_ids
@@ -2573,6 +2892,185 @@ fn nested_module_publication(
         graph,
         ranking,
         vec![cargo_manifest, package_manifest],
+        projection,
+    )?)
+}
+
+fn bounded_dependency_files() -> Vec<(Vec<u8>, [u8; 32])> {
+    (0_u8..15)
+        .map(|index| {
+            (
+                format!("modules/{index:02}/lib.rs").into_bytes(),
+                [160 + index; 32],
+            )
+        })
+        .collect()
+}
+
+fn bounded_dependency_publication(
+    snapshot_id: SnapshotId,
+) -> Result<IndexPublication, Box<dyn std::error::Error>> {
+    let files = bounded_dependency_files()
+        .into_iter()
+        .map(|(path, hash)| {
+            RepositoryPath::try_from_bytes(path)
+                .map(|path| FileRevision::new(path, ContentHash::from_bytes(hash)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let symbol_ids = (0_u8..15)
+        .map(|index| SymbolId::from_bytes([140 + index; 32]))
+        .collect::<Vec<_>>();
+    let symbol_range =
+        SourceRange::new(0, 1, SourcePosition::new(0, 0), SourcePosition::new(0, 1))?;
+    let symbols = files
+        .iter()
+        .zip(&symbol_ids)
+        .enumerate()
+        .map(|(index, (revision, id))| {
+            Ok(GraphSymbol::new(
+                *id,
+                revision.clone(),
+                ParsedSymbol::new(
+                    LocalSymbolId::new(1)?,
+                    SymbolKind::Function,
+                    SymbolName::try_from_string(format!("symbol_{index:02}"))?,
+                    symbol_range,
+                    symbol_range,
+                )?,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let relations = [
+        SyntaxRelationKind::Imports,
+        SyntaxRelationKind::Exports,
+        SyntaxRelationKind::Calls,
+        SyntaxRelationKind::Implements,
+        SyntaxRelationKind::Extends,
+        SyntaxRelationKind::Reads,
+        SyntaxRelationKind::Writes,
+        SyntaxRelationKind::Configures,
+        SyntaxRelationKind::Tests,
+        SyntaxRelationKind::Builds,
+        SyntaxRelationKind::Documents,
+    ];
+    let group_count = 14 * 2 * relations.len();
+    let edges = (0_usize..4_097)
+        .map(|ordinal| {
+            let group = ordinal % group_count;
+            let occurrence = ordinal / group_count;
+            let neighbor = 1 + group / (2 * relations.len());
+            let reverse = (group / relations.len()) % 2 == 1;
+            let relation = relations[group % relations.len()];
+            let (source_index, target_index) = if reverse {
+                (neighbor, 0)
+            } else {
+                (0, neighbor)
+            };
+            let start_byte = occurrence
+                .checked_mul(2)
+                .ok_or("dependency range overflow")?;
+            let end_byte = start_byte
+                .checked_add(1)
+                .ok_or("dependency range overflow")?;
+            let start_column = u32::try_from(start_byte)?;
+            let end_column = u32::try_from(end_byte)?;
+            let range = SourceRange::new(
+                start_byte,
+                end_byte,
+                SourcePosition::new(0, start_column),
+                SourcePosition::new(0, end_column),
+            )?;
+            Ok(GraphEdge::new(
+                GraphEndpoint::Symbol(symbol_ids[source_index]),
+                GraphEndpoint::Symbol(symbol_ids[target_index]),
+                relation,
+                SyntaxProvider::TreeSitter,
+                Confidence::certain(),
+                LinkResolution::AdapterLocalSymbol,
+                snapshot_id,
+                EvidenceRef::new(files[source_index].clone(), range),
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let graph = LinkedGraph::new(snapshot_id, files.clone(), symbols, edges, Vec::new())?;
+    let ranking = RankProjection::new(
+        snapshot_id,
+        RankingPolicyVersion::v1(),
+        symbol_ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                Ok(SymbolRank::new(
+                    *id,
+                    RankScore::try_from_sum(u64::try_from(15 - index)? * 1_000)?,
+                    SymbolRankSignals {
+                        in_degree: 0,
+                        out_degree: 0,
+                        centrality: Centrality::from_basis_points(0)?,
+                        degree_contribution: 0,
+                        centrality_contribution: 0,
+                        entrypoint_contribution: 0,
+                        public_export_contribution: 0,
+                        manifest_contribution: 0,
+                        test_contribution: 0,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
+    )?;
+    let module_ids = (0_u8..15)
+        .map(|index| ModuleId::from_bytes([120 + index; 32]))
+        .collect::<Vec<_>>();
+    let modules = files
+        .iter()
+        .zip(&symbol_ids)
+        .zip(&module_ids)
+        .enumerate()
+        .map(|(index, ((_, symbol_id), module_id))| {
+            Ok(RepositoryModule::new(
+                *module_id,
+                ModuleKind::PathBoundary,
+                Some(ModuleRoot::Directory(RepositoryPath::try_from_bytes(
+                    format!("modules/{index:02}").into_bytes(),
+                )?)),
+                Vec::new(),
+                ModuleSymbolSet::new(vec![*symbol_id], false)?,
+                ModuleSymbolSet::empty(),
+                ModuleSymbolSet::empty(),
+            )?)
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let memberships = files
+        .iter()
+        .zip(&symbol_ids)
+        .zip(&module_ids)
+        .map(|((revision, symbol_id), module_id)| {
+            ModuleMembership::new(
+                *module_id,
+                *symbol_id,
+                ModuleMembershipEvidence::path(revision.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let projection = ModuleProjection::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        modules,
+        memberships,
+        RepositoryCard::new(
+            snapshot_id,
+            ModulePolicyVersion::v1(),
+            module_ids,
+            vec![IndexLanguage::Generic],
+            ModuleSymbolSet::empty(),
+            15,
+            15,
+        )?,
+    )?;
+    Ok(IndexPublication::new(
+        graph,
+        ranking,
+        Vec::new(),
         projection,
     )?)
 }

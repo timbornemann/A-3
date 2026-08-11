@@ -7,6 +7,7 @@ mod health;
 mod index_activity;
 mod index_overview;
 mod module_card_freshness;
+mod module_dependency_graph;
 mod module_tree;
 mod project;
 mod project_rebuild;
@@ -37,6 +38,13 @@ pub use module_card_freshness::{
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
     ModuleCardFreshnessResponseV1, ModuleCardFreshnessResultV1, ModuleCardFreshnessStatusV1,
     ModuleCardFreshnessV1, QueryModuleCardFreshnessRequestV1,
+};
+pub use module_dependency_graph::{
+    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
+    ModuleDependencyGraphResponseV1, ModuleDependencyGraphResultV1, ModuleDependencyGraphV1,
+    ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1, ModuleDependencyProviderV1,
+    ModuleDependencyRelationV1, ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1,
+    ModuleDependencySourceRangeV1, QueryModuleDependencyGraphRequestV1,
 };
 pub use module_tree::{
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,

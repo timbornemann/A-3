@@ -99,7 +99,12 @@ Desktopansicht liest höchstens 100 direkte Kinder pro Seite aus genau einer ato
 Indexpublikation, navigiert verlustfrei über opake relative Tokens beziehungsweise stabile
 Modul-IDs und zeigt aktuelle Revisions-Evidence. Der Modulbaum enthält ausschließlich
 deterministische primäre Manifest- und Pfadgrenzen; Graph-Communities bleiben als exakter
-Zusatzsignal-Zähler sichtbar. Weder ein Vollgraph noch das Live-Dateisystem, Source-Inhalt oder
+Zusatzsignal-Zähler sichtbar. Von jedem ausgewählten primären Modul aus zeigt ein zusätzlicher
+Abhängigkeitsgraph höchstens 100 aktuelle direkte Nachbarn und 256 relationsspezifische
+Kantengruppen. Jede sichtbare Gruppe führt zu einer exakten aktuellen Graph-Edge-Evidence;
+begrenzte Quellkanten, ausgeblendete Nachbarn und Gruppen sowie nicht eindeutig zuordenbare
+Dateikanten bleiben als eigene Unvollständigkeitssignale sichtbar. Weder ein Vollgraph noch das
+Live-Dateisystem, Source-Inhalt oder
 autoritative Betriebssystempfade überschreiten dafür die WebView-Grenze. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
@@ -143,7 +148,8 @@ pnpm tauri build --no-bundle
 ```
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
-Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Card-Freshness- und
+Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
+Module-Card-Freshness- und
 Deep-Map-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
@@ -152,7 +158,9 @@ Anzeigeprojektionen aus dem lokalen Katalog. `query_repository_tree` akzeptiert 
 verlustfreie Indextokens, einen exklusiven Kind-Cursor und ein Limit von 1 bis 100; Projekt und
 Worktree stammen aus dem Core. `query_module_tree` akzeptiert entsprechend nur stabile Modul-IDs,
 einen exklusiven Cursor und dieselbe Seitengrenze; Graph-Communities verleihen keine
-Navigationsbefugnis. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
+Navigationsbefugnis. `query_module_dependency_graph` akzeptiert nur eine aktuelle primäre
+`ModuleId` und ein Gesamtknotenlimit von 1 bis 100; Projekt, Pfade und Graphendpunkte bleiben
+Core-eigen. Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.
 Diese Pfade erweitern die WebView-Capabilities nicht.

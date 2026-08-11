@@ -319,6 +319,38 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    nur bei identischer Run-, Snapshot-, Eltern- und Cursorbindung angehängt; das 500-ms-Polling löst
    keinen Storage-Read aus.
 
+### Begrenzter Modul-Abhängigkeitsgraph
+
+1. `query_module_dependency_graph` wählt ausschließlich die Core-eigene aktive
+   `ProjectIdentity`. Die WebView darf genau eine aktuelle primäre `ModuleId` als Zentrum und ein
+   Gesamtknotenlimit von 1 bis 100 angeben; Projekt, Pfade und Graphendpunkte sind keine
+   Requestfelder.
+2. Der Application-Vertrag bildet nur primäre `ManifestBoundary`- und `PathBoundary`-Module ab.
+   `Contains` und `Defines` sind Hierarchieevidence und keine Abhängigkeitskanten;
+   `GraphCommunity` ist weder Zentrum noch sichtbarer Knoten. Der Read liefert ausschließlich das
+   direkte relationsspezifische Nachbarschaftsnetz des gewählten Zentrums, keinen Vollgraphen.
+3. Der libSQL-Adapter bindet den jüngsten publizierten Run, seinen V8-Projektionsmarker, alle
+   Memberships, Knoten und Graphkanten in einer kurzen Read-Transaktion. Er inspiziert höchstens
+   die ersten 4.096 nach `edge_sequence` geordneten kanonischen zentrumsinzidenten Kanten und
+   macht einen abgeschnittenen Quellpräfix explizit sichtbar.
+4. Symbolendpunkte werden über ihre genau eine primäre Membership einem Modul zugeordnet. Ein
+   Dateiendpunkt wird nur dann zugeordnet, wenn alle seine aktuellen strukturellen Symbole dasselbe
+   eindeutige primäre Modul belegen. Fehlende Dateizuordnungen werden gezählt; mehrdeutige oder
+   widersprüchliche Memberships gelten als persistierte Korruption.
+5. Nachbarn werden zuerst nach der im inspizierten Präfix beobachteten Evidencezahl absteigend und
+   dann nach stabiler `ModuleId` gewählt. Die sichtbare Menge enthält einschließlich Zentrum
+   höchstens 100 Knoten; ihre relationsspezifischen Kanten werden kanonisch auf 256 Gruppen
+   begrenzt. Beobachtete Gesamtzahlen und getrennte Trunkierungsflags verhindern einen falschen
+   Vollständigkeitseindruck.
+6. Jede sichtbare Gruppe trägt eine exakte repräsentative aktuelle `GraphEdge` mit stabiler
+   `ModuleCardEvidenceId`, Revision, Source-Range, Provider, Confidence und Link-Resolution.
+   Aggregierte Counts heißen ausdrücklich `observed`, weil Vector- oder Graphnähe keine
+   Tatsachenbehauptung und ein abgeschnittener Quellpräfix kein Gesamtcount ist.
+7. Der Read prüft Cancellation, endet spätestens nach zwei Sekunden und läuft ausschließlich nach
+   expliziter Modulauswahl, Aktualisierung oder erfolgreichem Publish. Das 500-ms-Statuspolling
+   löst keinen Graphread aus; Evidence-Navigation bleibt innerhalb der bereits gelieferten,
+   bounded Projektion.
+
 ### Worktree aus der Projektliste entfernen
 
 1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch

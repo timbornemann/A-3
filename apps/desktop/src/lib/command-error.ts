@@ -20,6 +20,7 @@ export type ErrorCodeV1 =
   | 'repositoryTreeDirectoryUnavailable'
   | 'invalidModuleTreeQuery'
   | 'moduleTreeParentUnavailable'
+  | 'invalidModuleDependencyGraphQuery'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -55,6 +56,7 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'repositoryTreeDirectoryUnavailable',
   'invalidModuleTreeQuery',
   'moduleTreeParentUnavailable',
+  'invalidModuleDependencyGraphQuery',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

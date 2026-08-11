@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-module-dependency-graph"
+description = "Enables the query_module_dependency_graph command without any pre-configured scope."
+commands.allow = ["query_module_dependency_graph"]
+
+[[permission]]
+identifier = "deny-query-module-dependency-graph"
+description = "Denies the query_module_dependency_graph command without any pre-configured scope."
+commands.deny = ["query_module_dependency_graph"]

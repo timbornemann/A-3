@@ -56,7 +56,7 @@ pub struct ModuleTreeDisplayName {
 }
 
 impl ModuleTreeDisplayName {
-    fn from_root(root: &ModuleRoot) -> Self {
+    pub(crate) fn from_root(root: &ModuleRoot) -> Self {
         let bytes = match root {
             ModuleRoot::Repository => return Self::repository(),
             ModuleRoot::Directory(path) => path

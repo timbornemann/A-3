@@ -18,7 +18,8 @@ mod tests {
     use a3_protocol::{
         CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
         HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
-        ModuleCardFreshnessResultV1, ModuleTreeResponseV1, ModuleTreeResultV1,
+        ModuleCardFreshnessResultV1, ModuleDependencyGraphResponseV1,
+        ModuleDependencyGraphResultV1, ModuleTreeResponseV1, ModuleTreeResultV1,
         OpenProjectResponseV1, OpenProjectResultV1, PlatformV1, ProtocolVersion,
         RecentProjectsResponseV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
     };
@@ -110,6 +111,7 @@ mod tests {
                 a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_index_overview,
                 a3_desktop::commands::query_module_card_freshness,
+                a3_desktop::commands::query_module_dependency_graph,
                 a3_desktop::commands::query_module_tree,
                 a3_desktop::commands::query_repository_tree,
                 a3_desktop::commands::query_health,
@@ -188,6 +190,31 @@ mod tests {
         assert!(matches!(
             module_tree_response.result(),
             ModuleTreeResultV1::NoProject
+        ));
+
+        let module_dependency_response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "query_module_dependency_graph".into(),
+                callback: CallbackFn(22),
+                error: CallbackFn(23),
+                url: local_app_url.clone(),
+                body: InvokeBody::Json(json!({
+                    "request": {
+                        "protocolVersion": 1,
+                        "centerModuleId": "11".repeat(32),
+                        "nodeLimit": 50
+                    }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .deserialize::<ModuleDependencyGraphResponseV1>()?;
+        assert!(matches!(
+            module_dependency_response.result(),
+            ModuleDependencyGraphResultV1::NoProject
         ));
 
         let repository_tree_response = get_ipc_response(
@@ -384,6 +411,7 @@ mod tests {
                 "allow-query-index-activity",
                 "allow-query-index-overview",
                 "allow-query-module-card-freshness",
+                "allow-query-module-dependency-graph",
                 "allow-query-module-tree",
                 "allow-query-repository-tree",
                 "allow-query-project-status",

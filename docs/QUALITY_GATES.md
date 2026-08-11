@@ -83,6 +83,18 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   enge Capability ohne Projekt- oder Pfadparameter; der Component-Test navigiert zu einem direkten
   primären Kind, hält Run-, Snapshot-, Eltern- und Cursorbindung und stellt Graph-Communities nur
   als Zähler dar. Kein Modulbaum-Read läuft im Statuspolling.
+- Der U4-Module-Dependency-Graph-Contract liest nur die aktuelle atomare V8-Modulprojektion und
+  ein auf 4.096 Kanten begrenztes kanonisches zentrumsinzidentes Präfix. Storage-Tests prüfen
+  eindeutige Symbol- und Datei-Endpoint-Zuordnung, ungemappte Dateien, Ausschluss von
+  Graph-Communities und Hierarchierelationen, evidenzgewichtetes stabiles Nachbarranking,
+  Knoten-/Gruppen-/Quelltrunkierung, Cancellation, ungültige Zentren sowie vollständigen Wechsel
+  nach Replacement-Publish. Rust- und TypeScript-Grenztests lehnen unbekannte Felder,
+  nicht kanonische IDs/Pfade/Counts, mehrdeutige Memberships, Selbst- und Nichtzentrumskanten,
+  falsche Reihenfolge, Bounds, Trunkierungswahrheit und widersprüchliche repräsentative
+  `GraphEdge`-Evidence ab. Der reale Tauri-IPC-Test erreicht nur die enge Capability ohne Projekt-,
+  Pfad- oder Endpointparameter. Der Component-Test lädt erst nach expliziter Modulauswahl, zeigt
+  alle Begrenzungs- und Unmapped-Signale und navigiert eine stabile aktuelle Evidence-ID; weder
+  Mount noch 500-ms-Statuspolling lösen den Graphread aus.
 
 ### Persistenz
 

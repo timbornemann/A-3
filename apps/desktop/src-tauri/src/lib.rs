@@ -11,15 +11,19 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetModuleTreePage, GetProjectIndexStatus,
-    GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
-    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage, HealthQuery,
-    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
-    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
-    ListRecentProjectsError, ModuleCardFreshness, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardFreshnessStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    DeepMapExecutor, GetHealth, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    GetRepositoryTreePage, HealthQuery, IndexPersistenceControl, IndexPersistenceControlError,
+    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
+    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
+    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, ModuleCardFreshness,
+    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
+    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
+    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
+    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
+    ModuleDependencyRelation, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
     ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
     ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
     OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
@@ -31,9 +35,10 @@ use a3_application::{
     RepositoryTreeQuery, RepositoryTreeStore,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, ExploreBudget, FileRevision, GitHead, Health,
-    IndexLanguage, IndexRunStatus, InvalidationReason, ModuleId, ModuleRoot, ParseDiagnosticCode,
-    ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath,
+    ApplicationVersion, ApplicationVersionError, ExploreBudget, FileRevision, GitHead,
+    GraphEndpoint, Health, IndexLanguage, IndexRunStatus, InvalidationReason, LinkResolution,
+    ModuleId, ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress,
+    ProjectId, ProjectIdentity, RepositoryPath, SyntaxProvider,
 };
 use a3_protocol::{
     CommandErrorV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
@@ -44,12 +49,16 @@ use a3_protocol::{
     IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
     ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
+    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
+    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
+    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
     OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1,
-    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleTreeRequestV1,
-    QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleTreeRequestV1, QueryRepositoryTreeRequestV1, RebuildProjectIndexResponseV1,
+    RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
     RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
     RepositoryTreeResponseV1,
 };
@@ -87,6 +96,7 @@ pub struct CompositionRoot {
     project_status: Option<GetProjectIndexStatus>,
     index_overview: Option<GetPublishedIndexOverview>,
     module_card_freshness: Option<GetModuleCardFreshness>,
+    module_dependency_graph: Option<GetModuleDependencyGraph>,
     module_tree: Option<GetModuleTreePage>,
     repository_tree: Option<GetRepositoryTreePage>,
     project_storage: Option<GetProjectStorageUsage>,
@@ -329,6 +339,40 @@ impl CompositionRoot {
                 }
                 ModuleTreeLoadResult::Page(page) => {
                     ModuleTreeResponseV1::available(map_module_tree_page_to_v1(&page))
+                }
+            })
+    }
+
+    /// Returns an evidence-bound bounded neighborhood around one current primary module.
+    pub async fn query_module_dependency_graph(
+        &self,
+        query: &ModuleDependencyGraphQuery,
+    ) -> Result<ModuleDependencyGraphResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ModuleDependencyGraphResponseV1::no_project());
+        };
+        let Some(reader) = &self.module_dependency_graph else {
+            return Ok(ModuleDependencyGraphResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_module_dependency_graph_error_to_v1)
+            .map(|result| match result {
+                ModuleDependencyGraphLoadResult::NoPublishedIndex => {
+                    ModuleDependencyGraphResponseV1::no_published_index()
+                }
+                ModuleDependencyGraphLoadResult::ProjectionUnavailable => {
+                    ModuleDependencyGraphResponseV1::projection_unavailable()
+                }
+                ModuleDependencyGraphLoadResult::CenterUnavailable => {
+                    ModuleDependencyGraphResponseV1::center_unavailable()
+                }
+                ModuleDependencyGraphLoadResult::Graph(graph) => {
+                    ModuleDependencyGraphResponseV1::available(map_module_dependency_graph_to_v1(
+                        &graph,
+                    ))
                 }
             })
     }
@@ -620,6 +664,29 @@ impl ModuleTreeControl for DesktopBoundedReadControl {
     }
 }
 
+impl ModuleDependencyGraphControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ModuleDependencyGraphControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ModuleDependencyGraphControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ModuleDependencyGraphControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ModuleDependencyGraphControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl DesktopProjectStorageControl {
     fn new() -> Self {
         Self {
@@ -654,6 +721,7 @@ struct CompositionBase {
 struct OptionalCompositionPorts {
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
+    module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
@@ -664,6 +732,7 @@ struct OptionalCompositionPorts {
 struct IndexingCompositionPorts {
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
+    module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
@@ -722,6 +791,7 @@ impl CompositionBase {
             OptionalCompositionPorts {
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
+                module_dependency_graph_store: Some(ports.module_dependency_graph_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
@@ -747,6 +817,9 @@ impl CompositionBase {
         let module_card_freshness = ports
             .module_card_freshness_store
             .map(GetModuleCardFreshness::new);
+        let module_dependency_graph = ports
+            .module_dependency_graph_store
+            .map(GetModuleDependencyGraph::new);
         let module_tree = ports.module_tree_store.map(GetModuleTreePage::new);
         let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
@@ -793,6 +866,7 @@ impl CompositionBase {
             project_status,
             index_overview,
             module_card_freshness,
+            module_dependency_graph,
             module_tree,
             repository_tree,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
@@ -827,6 +901,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
+            let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
@@ -840,6 +915,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 IndexingCompositionPorts {
                     index_store,
                     module_card_freshness_store,
+                    module_dependency_graph_store,
                     module_tree_store,
                     repository_tree_store,
                     project_storage,
@@ -858,6 +934,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_index_activity,
             commands::query_index_overview,
             commands::query_module_card_freshness,
+            commands::query_module_dependency_graph,
             commands::query_module_tree,
             commands::query_repository_tree,
             commands::query_health,
@@ -1175,6 +1252,141 @@ fn map_module_tree_revision_to_v1(revision: &FileRevision) -> ModuleTreeRevision
     )
 }
 
+pub(crate) fn map_module_dependency_graph_query_from_v1(
+    request: &QueryModuleDependencyGraphRequestV1,
+) -> Result<ModuleDependencyGraphQuery, CommandErrorV1> {
+    let center_module_id = decode_module_id(request.center_module_id())
+        .map_err(|()| invalid_module_dependency_graph_query())?;
+    let node_limit = ModuleDependencyNodeLimit::new(request.node_limit())
+        .map_err(|_| invalid_module_dependency_graph_query())?;
+    Ok(ModuleDependencyGraphQuery::new(
+        center_module_id,
+        node_limit,
+    ))
+}
+
+fn map_module_dependency_graph_to_v1(graph: &ModuleDependencyGraph) -> ModuleDependencyGraphV1 {
+    ModuleDependencyGraphV1::new(
+        graph.index_run_id().to_string(),
+        graph.snapshot_id().to_string(),
+        graph.center_module_id().to_string(),
+        graph
+            .nodes()
+            .iter()
+            .map(map_module_dependency_node_to_v1)
+            .collect(),
+        graph.observed_neighbor_count().to_string(),
+        graph.nodes_truncated(),
+        graph
+            .edges()
+            .iter()
+            .map(map_module_dependency_edge_to_v1)
+            .collect(),
+        graph.observed_edge_group_count().to_string(),
+        graph.edges_truncated(),
+        graph.inspected_edge_count().to_string(),
+        graph.source_edges_truncated(),
+        graph.unmapped_edge_count().to_string(),
+    )
+}
+
+fn map_module_dependency_node_to_v1(node: &ModuleDependencyNode) -> ModuleDependencyNodeV1 {
+    let evidence = node.representative_revision().and_then(|revision| {
+        node.representative_evidence_id().map(|evidence_id| {
+            ModuleDependencyNodeEvidenceV1::new(
+                encode_hex(evidence_id.as_bytes()),
+                encode_hex(revision.path().as_bytes()),
+                encode_hex(revision.content_hash().as_bytes()),
+            )
+        })
+    });
+    ModuleDependencyNodeV1::new(
+        node.module_id().to_string(),
+        match node.kind() {
+            ModuleTreeEntryKind::ManifestBoundary => ModuleTreeEntryKindV1::ManifestBoundary,
+            ModuleTreeEntryKind::PathBoundary => ModuleTreeEntryKindV1::PathBoundary,
+        },
+        match node.root() {
+            ModuleRoot::Repository => None,
+            ModuleRoot::Directory(path) => Some(encode_hex(path.as_bytes())),
+        },
+        node.display_name().as_str().to_owned(),
+        node.display_name().is_truncated(),
+        evidence,
+    )
+}
+
+fn map_module_dependency_edge_to_v1(edge: &ModuleDependencyEdge) -> ModuleDependencyEdgeV1 {
+    let representative = edge.representative_edge();
+    let evidence = representative.evidence();
+    let range = evidence.range();
+    let start = range.start_position();
+    let end = range.end_position();
+    ModuleDependencyEdgeV1::new(
+        edge.source_module_id().to_string(),
+        edge.target_module_id().to_string(),
+        match edge.relation() {
+            ModuleDependencyRelation::Imports => ModuleDependencyRelationV1::Imports,
+            ModuleDependencyRelation::Exports => ModuleDependencyRelationV1::Exports,
+            ModuleDependencyRelation::Calls => ModuleDependencyRelationV1::Calls,
+            ModuleDependencyRelation::Implements => ModuleDependencyRelationV1::Implements,
+            ModuleDependencyRelation::Extends => ModuleDependencyRelationV1::Extends,
+            ModuleDependencyRelation::Reads => ModuleDependencyRelationV1::Reads,
+            ModuleDependencyRelation::Writes => ModuleDependencyRelationV1::Writes,
+            ModuleDependencyRelation::Configures => ModuleDependencyRelationV1::Configures,
+            ModuleDependencyRelation::Tests => ModuleDependencyRelationV1::Tests,
+            ModuleDependencyRelation::Builds => ModuleDependencyRelationV1::Builds,
+            ModuleDependencyRelation::Documents => ModuleDependencyRelationV1::Documents,
+        },
+        edge.observed_evidence_count().to_string(),
+        ModuleDependencyEdgeEvidenceV1::new(
+            encode_hex(edge.evidence_id().as_bytes()),
+            map_module_dependency_endpoint_to_v1(representative.source()),
+            map_module_dependency_endpoint_to_v1(representative.target()),
+            encode_hex(evidence.revision().path().as_bytes()),
+            encode_hex(evidence.revision().content_hash().as_bytes()),
+            ModuleDependencySourceRangeV1::new(
+                range.start_byte(),
+                range.end_byte(),
+                ModuleDependencySourcePositionV1::new(start.row(), start.column()),
+                ModuleDependencySourcePositionV1::new(end.row(), end.column()),
+            ),
+            match representative.provider() {
+                SyntaxProvider::TreeSitter => ModuleDependencyProviderV1::TreeSitter,
+                SyntaxProvider::Manifest => ModuleDependencyProviderV1::Manifest,
+                SyntaxProvider::LanguageHeuristic => ModuleDependencyProviderV1::LanguageHeuristic,
+            },
+            representative.confidence().basis_points(),
+            match representative.resolution() {
+                LinkResolution::AdapterLocalSymbol => {
+                    ModuleDependencyResolutionV1::AdapterLocalSymbol
+                }
+                LinkResolution::AdapterFile => ModuleDependencyResolutionV1::AdapterFile,
+                LinkResolution::ExactModuleReference => {
+                    ModuleDependencyResolutionV1::ExactModuleReference
+                }
+                LinkResolution::UniqueFileLocalName => {
+                    ModuleDependencyResolutionV1::UniqueFileLocalName
+                }
+                LinkResolution::UniqueQualifiedName => {
+                    ModuleDependencyResolutionV1::UniqueQualifiedName
+                }
+            },
+        ),
+    )
+}
+
+fn map_module_dependency_endpoint_to_v1(endpoint: &GraphEndpoint) -> ModuleDependencyEndpointV1 {
+    match endpoint {
+        GraphEndpoint::File(path) => ModuleDependencyEndpointV1::File {
+            path_hex: encode_hex(path.as_bytes()),
+        },
+        GraphEndpoint::Symbol(id) => ModuleDependencyEndpointV1::Symbol {
+            symbol_id: id.to_string(),
+        },
+    }
+}
+
 fn decode_module_id(value: &str) -> Result<ModuleId, ()> {
     let bytes = decode_hex(value, 32)?;
     let bytes = <[u8; 32]>::try_from(bytes).map_err(|_| ())?;
@@ -1279,6 +1491,10 @@ fn invalid_repository_tree_query() -> CommandErrorV1 {
 
 fn invalid_module_tree_query() -> CommandErrorV1 {
     CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleTreeQuery)
+}
+
+fn invalid_module_dependency_graph_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleDependencyGraphQuery)
 }
 
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
@@ -1444,6 +1660,19 @@ fn map_module_tree_error_to_v1(error: ModuleTreeFailure) -> CommandErrorV1 {
         ModuleTreeFailure::Cancelled
         | ModuleTreeFailure::TimedOut
         | ModuleTreeFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_module_dependency_graph_error_to_v1(error: ModuleDependencyGraphFailure) -> CommandErrorV1 {
+    let code = match error {
+        ModuleDependencyGraphFailure::Storage(error) => map_storage_error_to_v1(error),
+        ModuleDependencyGraphFailure::InvalidStoredProjection => {
+            ErrorCodeV1::LocalStorageInvalidData
+        }
+        ModuleDependencyGraphFailure::Cancelled
+        | ModuleDependencyGraphFailure::TimedOut
+        | ModuleDependencyGraphFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

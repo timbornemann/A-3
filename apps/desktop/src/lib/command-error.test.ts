@@ -56,6 +56,7 @@ describe('command error recovery', () => {
     'repositoryTreeDirectoryUnavailable',
     'invalidModuleTreeQuery',
     'moduleTreeParentUnavailable',
+    'invalidModuleDependencyGraphQuery',
   ])('recognizes the narrow indexed-navigation error code %s', (code) => {
     expect(parseCommandErrorV1(commandError(code))?.code).toBe(code);
   });

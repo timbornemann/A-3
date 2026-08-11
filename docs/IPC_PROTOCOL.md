@@ -126,6 +126,38 @@ Graph-Community-Knoten, widersprüchliche Counts, Evidence- oder Trunkierungsfor
 IDs und Pfade sowie Reihenfolge-, Eltern- oder Cursorfehler werden am Rust- beziehungsweise
 TypeScript-Rand abgelehnt.
 
+## Module Dependency Graph V1
+
+`query_module_dependency_graph` akzeptiert genau `protocolVersion`, `centerModuleId` und
+`nodeLimit`. Die ID ist ein 64-stelliger kleingeschriebener Hexwert; das Limit umfasst das Zentrum
+und liegt einschließlich zwischen 1 und 100. Projekt, Worktree, Pfade und Graphendpunkte sind keine
+Requestfelder. Eine ungültige Query liefert `invalidModuleDependencyGraphQuery`.
+
+Die Antwort liefert genau `noProject`, `noPublishedIndex`, `projectionUnavailable`,
+`centerUnavailable` oder `available`. `centerUnavailable` bezeichnet eine fehlende, historische
+oder zusätzliche Graph-Community-ID. Ein verfügbarer Graph enthält aktuelle 64-stellige
+`indexRunId`, `snapshotId` und `centerModuleId`, ein bis 100 strikt nach `moduleId` geordnete
+primäre `nodes` und höchstens 256 nach Quelle, Ziel und Relation geordnete `edges`. Das Zentrum ist
+genau einmal enthalten; jede Kante ist am Zentrum inzident und referenziert zwei sichtbare Knoten.
+
+Ein Knoten enthält `moduleId`, `kind`, optionales `rootPathHex`, sichere Anzeige `name` samt
+`nameTruncated` und optionale `representativeEvidence`. Diese Evidence besteht aus stabiler
+64-stelliger `evidenceId`, kanonischem relativem `pathHex` und 64-stelligem `contentHash`.
+
+Eine Kante enthält `sourceModuleId`, `targetModuleId`, eine nicht hierarchische bekannte
+`relation`, den positiven u64-Dezimaltext `observedEvidenceCount` und vollständige
+`representativeEvidence`. Letztere trägt eine stabile `evidenceId`, streng typisierte File- oder
+Symbolendpunkte, aktuelle Pfad-/Hashrevision, eine valide halboffene `range` mit Byteoffsets und
+nullbasierten Positionen, bekannten `provider`, `confidenceBasisPoints` von 0 bis 10.000 sowie eine
+bekannte `resolution`. Source-Inhalt wird nicht übertragen.
+
+Die u64-Dezimaltexte `observedNeighborCount`, `observedEdgeGroupCount`, `inspectedEdgeCount` und
+`unmappedEdgeCount` bleiben verlustfrei. `nodesTruncated`, `edgesTruncated` und
+`sourceEdgesTruncated` müssen den sichtbaren Counts beziehungsweise dem festen 4.096-Edge-Präfix
+exakt entsprechen. Unbekannte Felder, Communities, Hierarchierelationen, nicht kanonische IDs,
+Pfade, Counts oder Evidence, Selbstkanten, falsche Inzidenz, Reihenfolge oder
+Trunkierungswahrheit werden am Rust- beziehungsweise TypeScript-Rand abgelehnt.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -183,10 +215,11 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 ## Tauri-Capability
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
-Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Card-Freshness- und
-Deep-Map-Commands. Repository- und Modulbaum besitzen ausschließlich
-`allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; die Freshness-Capability
-ist `allow-query-module-card-freshness`. Für Deep Map sind das
+Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
+Module-Card-Freshness- und Deep-Map-Commands. Repository- und Modulbaum besitzen ausschließlich
+`allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der Abhängigkeitsgraph
+besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist
+`allow-query-module-card-freshness`. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.

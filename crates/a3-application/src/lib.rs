@@ -33,6 +33,7 @@ mod model_provider;
 mod module_card_claim_codec;
 mod module_card_freshness;
 mod module_card_verification;
+mod module_dependency_graph;
 mod module_remap_queue;
 mod module_tree;
 mod mutating_agent_controller;
@@ -202,6 +203,14 @@ pub use module_card_verification::{
     PublishVerifiedModuleCardsFailure, PublishedIndexEvidenceResolver, PublishedModuleCardReceipt,
     VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFailure,
     VerifiedModuleCardPublisherFuture, VerifyModuleCards, VerifyModuleCardsFailure,
+};
+pub use module_dependency_graph::{
+    GetModuleDependencyGraph, ModuleDependencyEdge, ModuleDependencyEdgeError,
+    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
+    ModuleDependencyGraphError, ModuleDependencyGraphFailure, ModuleDependencyGraphFuture,
+    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
+    ModuleDependencyNode, ModuleDependencyNodeError, ModuleDependencyNodeLimit,
+    ModuleDependencyNodeLimitError, ModuleDependencyRelation,
 };
 pub use module_remap_queue::{
     LoadPendingModuleRemaps, ModuleRemapQueueFailure, ModuleRemapQueueFuture,

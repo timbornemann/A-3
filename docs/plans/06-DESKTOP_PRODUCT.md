@@ -126,7 +126,7 @@ verifiziert und abgeschlossen.
 Abhängigkeiten: Gate M5
 
 - [x] Repository- und Modulbaum
-- [ ] Abhängigkeitsgraph mit begrenzter Knotenzahl
+- [x] Abhängigkeitsgraph mit begrenzter Knotenzahl
 - [ ] Entry Points, Tests und Runtime Flows
 - [ ] Module Card
 - [ ] Evidence Inspector
@@ -160,6 +160,34 @@ Source-, Projekt- noch Pfadautorität; kein Baumread läuft im 500-ms-Statuspoll
 Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features,
 Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 34
 Desktop-Libtests plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 69 Frontendtests,
+Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74
+lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle.
+
+Abnahme Abhängigkeitsgraph vom 2026-08-11: Von einem explizit ausgewählten aktuellen primären
+Manifest- oder Pfadmodul liest A^3 ausschließlich die direkte relationsspezifische Nachbarschaft
+des jüngsten atomar publizierten V8-Stands. Graph-Communities, `Contains` und `Defines` werden nicht
+als Abhängigkeitsknoten oder -kanten ausgegeben. Symbolendpunkte benötigen genau eine primäre
+Membership; Dateiendpunkte werden nur bei einer über alle strukturellen Symbole eindeutigen
+Primärmodulzuordnung verwendet. Fehlende Dateizuordnungen bleiben als eigener Zähler sichtbar,
+widersprüchliche Projektionen werden abgelehnt.
+
+Das Gesamtknotenlimit liegt bei 1 bis 100 einschließlich Zentrum. Nachbarn werden nach der im
+kanonischen Präfix beobachteten Evidencezahl und stabiler `ModuleId` gewählt; maximal 256
+relationsspezifische Gruppen werden angezeigt. Der Adapter inspiziert höchstens 4.096 nach
+`edge_sequence` geordnete zentrumsinzidente Kanten. Knoten-, Gruppen- und Quelltrunkierung,
+beobachtete Nachbar-/Gruppenzahlen sowie ungemappte Kanten sind getrennt sichtbar. Ein real
+publiziertes 4.097-Kanten-Contract-Fixture belegt die Quell- und Gruppengrenzen.
+
+Jede sichtbare Gruppe trägt eine vollständige aktuelle repräsentative `GraphEdge` mit stabiler
+Evidence-ID, Revision, Range, Provider, Confidence und Link-Resolution; die UI kann diese Evidence
+ohne Source- oder Dateisystemzugriff lokal aufklappen. Der streng versionierte Rust-/TypeScript-
+IPC-Vertrag akzeptiert nur Zentrum-ID und Knotenlimit aus der WebView. Der Read ist cancellable,
+auf zwei Sekunden begrenzt und läuft nur nach Auswahl, Aktualisierung oder erfolgreichem Publish,
+nie im 500-ms-Statuspolling.
+
+Der Abschlussnachweis umfasst Rustfmt, sämtliche Workspace-Tests mit allen Features,
+Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 36
+Desktop-Libtests plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 76 Frontendtests,
 Formatter, ESLint, Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74
 lokalen Links, Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle.
 

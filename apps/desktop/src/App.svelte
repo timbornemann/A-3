@@ -36,6 +36,14 @@
     type ModuleCardFreshnessResponseV1,
   } from './lib/module-card-freshness';
   import {
+    queryModuleDependencyGraph,
+    type ModuleDependencyEdgeEvidenceV1,
+    type ModuleDependencyGraphQueryV1,
+    type ModuleDependencyGraphResponseV1,
+    type ModuleDependencyNodeV1,
+    type ModuleDependencyRelationV1,
+  } from './lib/module-dependency-graph';
+  import {
     queryModuleTree,
     type ModuleTreeEntryV1,
     type ModuleTreeQueryV1,
@@ -72,6 +80,9 @@
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
     indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
     moduleCardFreshnessLoader?: () => Promise<ModuleCardFreshnessResponseV1>;
+    moduleDependencyGraphLoader?: (
+      query: ModuleDependencyGraphQueryV1,
+    ) => Promise<ModuleDependencyGraphResponseV1>;
     moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
@@ -136,6 +147,18 @@
         result: Extract<ModuleTreeResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
+  type ModuleDependencyGraphView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | { kind: 'centerUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleDependencyGraphResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
   interface ModuleTreeBreadcrumb {
     moduleId: string;
     name: string;
@@ -175,6 +198,7 @@
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
     moduleCardFreshnessLoader = queryModuleCardFreshness,
+    moduleDependencyGraphLoader = queryModuleDependencyGraph,
     moduleTreeLoader = queryModuleTree,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
@@ -192,6 +216,9 @@
   let moduleTreeView = $state<ModuleTreeView>({ kind: 'loading' });
   let moduleTreeBreadcrumbs = $state<ModuleTreeBreadcrumb[]>([]);
   let moduleTreeLoadingMore = $state(false);
+  let moduleDependencyGraphView = $state<ModuleDependencyGraphView>({ kind: 'idle' });
+  let moduleDependencySelection = $state<{ moduleId: string; name: string } | null>(null);
+  let selectedDependencyEvidence = $state<ModuleDependencyEdgeEvidenceV1 | null>(null);
   let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
   let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
   let repositoryTreeLoadingMore = $state(false);
@@ -254,12 +281,21 @@
         void loadIndexOverview();
         void loadModuleCardFreshness();
         void loadModuleTreeRoot();
+        if (moduleDependencySelection !== null) {
+          void loadModuleDependencyGraph(
+            moduleDependencySelection.moduleId,
+            moduleDependencySelection.name,
+          );
+        }
         void loadRepositoryTreeRoot();
       } else if (response.result.status === 'noProject') {
         indexOverviewView = { kind: 'noProject' };
         moduleCardFreshnessView = { kind: 'noProject' };
         moduleTreeView = { kind: 'noProject' };
         moduleTreeBreadcrumbs = [];
+        moduleDependencyGraphView = { kind: 'noProject' };
+        moduleDependencySelection = null;
+        selectedDependencyEvidence = null;
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -384,6 +420,44 @@
     const page = moduleTreeView.result.page;
     if (page.nextAfterModuleId === null) return;
     await loadModuleTree(page.parentModuleId, page.nextAfterModuleId);
+  }
+
+  async function loadModuleDependencyGraph(moduleId: string, name: string): Promise<void> {
+    moduleDependencySelection = { moduleId, name };
+    moduleDependencyGraphView = { kind: 'loading' };
+    selectedDependencyEvidence = null;
+    try {
+      const response = await moduleDependencyGraphLoader({
+        centerModuleId: moduleId,
+        nodeLimit: 50,
+      });
+      if (response.result.status === 'available') {
+        moduleDependencyGraphView = { kind: 'available', result: response.result };
+      } else if (response.result.status === 'centerUnavailable') {
+        moduleDependencyGraphView = { kind: 'centerUnavailable' };
+      } else if (response.result.status === 'projectionUnavailable') {
+        moduleDependencyGraphView = { kind: 'projectionUnavailable' };
+      } else if (response.result.status === 'noPublishedIndex') {
+        moduleDependencyGraphView = { kind: 'noPublishedIndex' };
+      } else {
+        moduleDependencyGraphView = { kind: 'noProject' };
+        moduleDependencySelection = null;
+      }
+    } catch {
+      moduleDependencyGraphView = { kind: 'error' };
+    }
+  }
+
+  async function openModuleDependencies(entry: ModuleTreeEntryV1): Promise<void> {
+    await loadModuleDependencyGraph(entry.moduleId, entry.name);
+  }
+
+  async function reloadModuleDependencies(): Promise<void> {
+    if (moduleDependencySelection === null) return;
+    await loadModuleDependencyGraph(
+      moduleDependencySelection.moduleId,
+      moduleDependencySelection.name,
+    );
   }
 
   async function loadRepositoryTree(
@@ -512,6 +586,9 @@
         moduleCardFreshnessView = { kind: 'noProject' };
         moduleTreeView = { kind: 'noProject' };
         moduleTreeBreadcrumbs = [];
+        moduleDependencyGraphView = { kind: 'noProject' };
+        moduleDependencySelection = null;
+        selectedDependencyEvidence = null;
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
       }
@@ -549,6 +626,9 @@
         projectView = { kind: 'opened' };
         removalView = { kind: 'idle' };
         indexActivityObserved = false;
+        moduleDependencyGraphView = { kind: 'idle' };
+        moduleDependencySelection = null;
+        selectedDependencyEvidence = null;
         await loadProjectStatus();
         await loadIndexActivity();
         await loadIndexOverview();
@@ -623,6 +703,9 @@
       moduleCardFreshnessView = { kind: 'noProject' };
       moduleTreeView = { kind: 'noProject' };
       moduleTreeBreadcrumbs = [];
+      moduleDependencyGraphView = { kind: 'noProject' };
+      moduleDependencySelection = null;
+      selectedDependencyEvidence = null;
       repositoryTreeView = { kind: 'noProject' };
       repositoryTreeBreadcrumbs = [];
       deepMapView = { kind: 'noProject' };
@@ -711,6 +794,52 @@
 
   function moduleFeatureLabel(feature: ModuleTreeEntryV1['centralSymbols']): string {
     return `${countLabel(feature.count)}${feature.truncated ? '+' : ''}`;
+  }
+
+  function moduleDependencyRelationLabel(relation: ModuleDependencyRelationV1): string {
+    const labels: Record<ModuleDependencyRelationV1, string> = {
+      builds: 'baut',
+      calls: 'ruft auf',
+      configures: 'konfiguriert',
+      documents: 'dokumentiert',
+      exports: 'exportiert nach',
+      extends: 'erweitert',
+      implements: 'implementiert',
+      imports: 'importiert',
+      reads: 'liest',
+      tests: 'testet',
+      writes: 'schreibt',
+    };
+    return labels[relation];
+  }
+
+  function moduleDependencyNodeName(moduleId: string): string {
+    if (moduleDependencyGraphView.kind !== 'available') return moduleId.slice(0, 12);
+    return (
+      moduleDependencyGraphView.result.graph.nodes.find((node) => node.moduleId === moduleId)
+        ?.name ?? moduleId.slice(0, 12)
+    );
+  }
+
+  function moduleDependencyNodeKind(node: ModuleDependencyNodeV1): string {
+    return node.kind === 'manifestBoundary' ? 'Manifest-Grenze' : 'Pfad-Grenze';
+  }
+
+  function pathDisplayFromHex(pathHex: string): string {
+    const bytes = new Uint8Array(pathHex.length / 2);
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Number.parseInt(pathHex.slice(index * 2, index * 2 + 2), 16);
+    }
+    return Array.from(new TextDecoder().decode(bytes))
+      .slice(0, 256)
+      .map((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint !== undefined &&
+          (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+          ? '�'
+          : character;
+      })
+      .join('');
   }
 
   function moduleCardFreshnessReasonLabel(reason: ModuleCardFreshnessReasonV1): string {
@@ -1223,6 +1352,14 @@
                         Leeres strukturelles Modul ohne Revisionsrepräsentant
                       {/if}
                     </p>
+                    <button
+                      class="module-dependency-open"
+                      type="button"
+                      aria-pressed={moduleDependencySelection?.moduleId === entry.moduleId}
+                      onclick={() => openModuleDependencies(entry)}
+                    >
+                      Abhängigkeiten anzeigen
+                    </button>
                   </li>
                 {/each}
               </ul>
@@ -1241,6 +1378,181 @@
             <div class="recent-projects-error" role="alert">
               <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
               <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
+            </div>
+          {/if}
+        </div>
+        <div
+          class="repository-tree-panel module-dependency-panel"
+          aria-labelledby="module-dependency-heading"
+        >
+          <div class="repository-tree-heading">
+            <div>
+              <h4 id="module-dependency-heading">Modulabhängigkeiten</h4>
+              <p>
+                Direkte, belegte Beziehungen eines Primärmoduls; große Nachbarschaften bleiben
+                sichtbar begrenzt.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={moduleDependencySelection === null ||
+                moduleDependencyGraphView.kind === 'loading'}
+              onclick={reloadModuleDependencies}
+            >
+              Aktualisieren
+            </button>
+          </div>
+          {#if moduleDependencyGraphView.kind === 'idle'}
+            <p class="project-status">
+              Wähle im Modulbaum „Abhängigkeiten anzeigen“, um einen direkten Ausschnitt zu laden.
+            </p>
+          {:else if moduleDependencyGraphView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Abhängigkeiten für {moduleDependencySelection?.name ?? 'das Modul'} werden gelesen …
+            </p>
+          {:else if moduleDependencyGraphView.kind === 'noPublishedIndex'}
+            <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
+          {:else if moduleDependencyGraphView.kind === 'projectionUnavailable'}
+            <p class="project-status">
+              Der historische Index enthält noch keine deterministische Modulprojektion. Ein Rebuild
+              erzeugt sie mit dem aktuellen Schema.
+            </p>
+          {:else if moduleDependencyGraphView.kind === 'centerUnavailable'}
+            <p class="project-status" role="alert">
+              Das gewählte Primärmodul ist im aktuellen veröffentlichten Index nicht mehr vorhanden.
+            </p>
+          {:else if moduleDependencyGraphView.kind === 'available'}
+            {@const graph = moduleDependencyGraphView.result.graph}
+            {@const centerNode = graph.nodes.find((node) => node.moduleId === graph.centerModuleId)}
+            <p class="index-snapshot">
+              Indexlauf <code>{graph.indexRunId}</code>
+            </p>
+            <dl class="module-tree-summary dependency-summary">
+              <div>
+                <dt>Beobachtete Nachbarn</dt>
+                <dd>{countLabel(graph.observedNeighborCount)}{graph.nodesTruncated ? '+' : ''}</dd>
+              </div>
+              <div>
+                <dt>Relationsgruppen</dt>
+                <dd>{countLabel(graph.observedEdgeGroupCount)}{graph.edgesTruncated ? '+' : ''}</dd>
+              </div>
+              <div>
+                <dt>Inspizierte Kanten</dt>
+                <dd>
+                  {countLabel(graph.inspectedEdgeCount)}{graph.sourceEdgesTruncated ? '+' : ''}
+                </dd>
+              </div>
+              <div>
+                <dt>Nicht zugeordnet</dt>
+                <dd>{countLabel(graph.unmappedEdgeCount)}</dd>
+              </div>
+            </dl>
+            {#if graph.sourceEdgesTruncated || graph.nodesTruncated || graph.edgesTruncated || graph.unmappedEdgeCount !== '0'}
+              <div class="dependency-boundary-note" role="note">
+                <strong>Begrenzter Ausschnitt.</strong>
+                {#if graph.sourceEdgesTruncated}
+                  Weitere Graphkanten liegen hinter der 4.096-Kanten-Grenze.
+                {/if}
+                {#if graph.nodesTruncated}
+                  Weitere beobachtete Module sind nicht gerendert.
+                {/if}
+                {#if graph.edgesTruncated}
+                  Weitere Relationsgruppen der sichtbaren Module sind ausgeblendet.
+                {/if}
+                {#if graph.unmappedEdgeCount !== '0'}
+                  {countLabel(graph.unmappedEdgeCount)} inspizierte Kanten besitzen keinen eindeutig zuordenbaren
+                  Modulendpunkt.
+                {/if}
+              </div>
+            {/if}
+            <div class="module-dependency-graph" aria-label="Begrenzter Modulabhängigkeitsgraph">
+              {#if centerNode !== undefined}
+                <div class="dependency-center-node">
+                  <span>Zentrum</span>
+                  <strong>{centerNode.name}{centerNode.nameTruncated ? '…' : ''}</strong>
+                  <small>{moduleDependencyNodeKind(centerNode)}</small>
+                </div>
+              {/if}
+              {#if graph.edges.length === 0}
+                <p class="ready-label">
+                  Keine zugeordneten direkten Modulabhängigkeiten beobachtet.
+                </p>
+              {:else}
+                <ol class="dependency-edge-list">
+                  {#each graph.edges as edge (edge.sourceModuleId + edge.targetModuleId + edge.relation)}
+                    <li>
+                      <div class="dependency-relation">
+                        <strong>{moduleDependencyNodeName(edge.sourceModuleId)}</strong>
+                        <span>{moduleDependencyRelationLabel(edge.relation)}</span>
+                        <strong>{moduleDependencyNodeName(edge.targetModuleId)}</strong>
+                      </div>
+                      <span>{countLabel(edge.observedEvidenceCount)} beobachtete Belege</span>
+                      <button
+                        type="button"
+                        aria-label={`Evidence für ${moduleDependencyNodeName(edge.sourceModuleId)} ${moduleDependencyRelationLabel(edge.relation)} ${moduleDependencyNodeName(edge.targetModuleId)} anzeigen`}
+                        aria-pressed={selectedDependencyEvidence?.evidenceId ===
+                          edge.representativeEvidence.evidenceId}
+                        onclick={() => (selectedDependencyEvidence = edge.representativeEvidence)}
+                      >
+                        Evidence anzeigen
+                      </button>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+              <ul class="dependency-node-list" aria-label="Gerenderte Module">
+                {#each graph.nodes as node (node.moduleId)}
+                  <li class:dependency-node-center={node.moduleId === graph.centerModuleId}>
+                    <strong>{node.name}{node.nameTruncated ? '…' : ''}</strong>
+                    <span>{moduleDependencyNodeKind(node)}</span>
+                    {#if node.representativeEvidence !== null}
+                      <code>{node.representativeEvidence.evidenceId.slice(0, 12)}</code>
+                    {:else}
+                      <span>Kein struktureller Repräsentant</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+            {#if selectedDependencyEvidence !== null}
+              <aside class="dependency-evidence" aria-labelledby="dependency-evidence-heading">
+                <div>
+                  <h5 id="dependency-evidence-heading">Repräsentative Graph-Evidence</h5>
+                  <button type="button" onclick={() => (selectedDependencyEvidence = null)}>
+                    Schließen
+                  </button>
+                </div>
+                <dl>
+                  <div>
+                    <dt>Evidence-ID</dt>
+                    <dd><code>{selectedDependencyEvidence.evidenceId}</code></dd>
+                  </div>
+                  <div>
+                    <dt>Aktuelle Revision</dt>
+                    <dd>
+                      <code>{pathDisplayFromHex(selectedDependencyEvidence.pathHex)}</code>
+                      · {selectedDependencyEvidence.contentHash.slice(0, 12)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Bereich</dt>
+                    <dd>
+                      Bytes {selectedDependencyEvidence.range.startByte}–{selectedDependencyEvidence
+                        .range.endByte}
+                      · Zeile {selectedDependencyEvidence.range.start.row + 1}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{coverageLabel(selectedDependencyEvidence.confidenceBasisPoints)}</dd>
+                  </div>
+                </dl>
+              </aside>
+            {/if}
+          {:else if moduleDependencyGraphView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der Modulabhängigkeitsgraph konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={reloadModuleDependencies}>Erneut laden</button>
             </div>
           {/if}
         </div>

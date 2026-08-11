@@ -11,6 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "query_index_activity",
             "query_index_overview",
             "query_module_card_freshness",
+            "query_module_dependency_graph",
             "query_module_tree",
             "query_repository_tree",
             "query_project_status",

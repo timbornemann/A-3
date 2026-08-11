@@ -6,6 +6,7 @@ import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
 import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
+import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-graph';
 import type { ModuleTreeResponseV1 } from './lib/module-tree';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
@@ -216,6 +217,75 @@ const moduleTreeRepository: ModuleTreeResponseV1 = {
       parentModuleId: 'a'.repeat(64),
       primaryModuleCount: '2',
       snapshotId: '4'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const moduleDependencyGraph: ModuleDependencyGraphResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    graph: {
+      centerModuleId: 'a'.repeat(64),
+      edges: [
+        {
+          observedEvidenceCount: '2',
+          relation: 'builds',
+          representativeEvidence: {
+            confidenceBasisPoints: 10_000,
+            contentHash: '8'.repeat(64),
+            evidenceId: 'c'.repeat(64),
+            pathHex: '7372632f6c69622e7273',
+            provider: 'treeSitter',
+            range: {
+              end: { column: 8, row: 1 },
+              endByte: 16,
+              start: { column: 0, row: 1 },
+              startByte: 8,
+            },
+            resolution: 'adapterFile',
+            source: { kind: 'symbol', symbolId: 'd'.repeat(64) },
+            target: { kind: 'file', pathHex: '746f6f6c732f6d61696e2e7273' },
+          },
+          sourceModuleId: 'a'.repeat(64),
+          targetModuleId: 'b'.repeat(64),
+        },
+      ],
+      edgesTruncated: false,
+      indexRunId: '6'.repeat(64),
+      inspectedEdgeCount: '3',
+      nodes: [
+        {
+          kind: 'manifestBoundary',
+          moduleId: 'a'.repeat(64),
+          name: 'Repository',
+          nameTruncated: false,
+          representativeEvidence: {
+            contentHash: '8'.repeat(64),
+            evidenceId: 'e'.repeat(64),
+            pathHex: '7372632f6c69622e7273',
+          },
+          rootPathHex: null,
+        },
+        {
+          kind: 'pathBoundary',
+          moduleId: 'b'.repeat(64),
+          name: 'tools',
+          nameTruncated: false,
+          representativeEvidence: {
+            contentHash: '9'.repeat(64),
+            evidenceId: 'f'.repeat(64),
+            pathHex: '746f6f6c732f6d61696e2e7273',
+          },
+          rootPathHex: '746f6f6c73',
+        },
+      ],
+      nodesTruncated: false,
+      observedEdgeGroupCount: '1',
+      observedNeighborCount: '1',
+      snapshotId: '4'.repeat(64),
+      sourceEdgesTruncated: false,
+      unmappedEdgeCount: '1',
     },
     status: 'available',
   },
@@ -442,6 +512,43 @@ describe('A^3 desktop shell', () => {
       limit: 50,
       parentModuleId: 'a'.repeat(64),
     });
+  });
+
+  it('loads a bounded module dependency graph only after selection and exposes exact evidence', async () => {
+    const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleDependencyGraphLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Modulabhängigkeiten' })).toBeTruthy();
+    expect(moduleDependencyGraphLoader).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
+
+    await waitFor(() => expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1));
+    expect(moduleDependencyGraphLoader).toHaveBeenCalledWith({
+      centerModuleId: 'a'.repeat(64),
+      nodeLimit: 50,
+    });
+    expect(await screen.findByText('beobachtete Belege', { exact: false })).toBeTruthy();
+    expect(screen.getByText(/1 inspizierte Kanten besitzen keinen eindeutig/)).toBeTruthy();
+
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Evidence für Repository baut tools anzeigen',
+      }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Repräsentative Graph-Evidence' }),
+    ).toBeTruthy();
+    expect(screen.getByText('src/lib.rs')).toBeTruthy();
+    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+    expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
   });
 
   it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {

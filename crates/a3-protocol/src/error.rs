@@ -39,6 +39,8 @@ pub enum ErrorCodeV1 {
     InvalidModuleTreeQuery,
     /// A previously visible primary module is absent from the current projection.
     ModuleTreeParentUnavailable,
+    /// A module dependency center ID or node limit violated the strict graph contract.
+    InvalidModuleDependencyGraphQuery,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -123,6 +125,9 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::ModuleTreeParentUnavailable => {
                 "The selected module is no longer present in the published index."
+            }
+            ErrorCodeV1::InvalidModuleDependencyGraphQuery => {
+                "The module dependency request is outside the supported bounds."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

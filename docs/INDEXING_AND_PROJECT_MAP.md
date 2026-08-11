@@ -348,6 +348,35 @@ Eine vorhandene strukturelle Membership liefert eine repräsentative aktuelle `F
 Manifestgrenze liefert zusätzlich ihre erste kanonische aktuelle Manifestrevision. Der Read ist
 cancellable, auf zwei Sekunden begrenzt und öffnet weder Live-Dateisystem noch Source-Inhalt.
 
+### Begrenzter Modul-Abhängigkeitsgraph
+
+Der Abhängigkeitsgraph liest dieselbe jüngste atomare V8-Modulprojektion wie der Modulbaum, ohne
+einen vollständigen `PublishedIndex` oder Graphen zu rekonstruieren. Ein Zentrum muss ein aktuelles
+primäres Manifest- oder Pfadmodul sein. Zusätzliche Graph-Communities sowie die hierarchischen
+Relationen `Contains` und `Defines` werden nicht als sichtbare Abhängigkeiten interpretiert.
+
+Die Read-Transaktion nimmt höchstens die ersten 4.096 nach `edge_sequence` geordneten kanonischen
+Graphkanten, die nach eindeutiger Endpoint-Zuordnung am Zentrum inzident sind. Ein Symbol besitzt
+genau eine primäre Membership. Ein Dateiendpunkt gehört nur dann zu einem Modul, wenn sämtliche
+aktuellen strukturellen Symbole der Datei dasselbe eindeutige Primärmodul belegen. Eine Datei ohne
+solchen Beleg bleibt ungemappt und wird gezählt; doppelte, fehlende oder widersprüchliche
+Symbol-Memberships machen die Projektion ungültig.
+
+Die Zahl beobachteter Edge-Evidences bestimmt das stabile Nachbarranking; `ModuleId` löst
+Gleichstände. Das Requestlimit umfasst das Zentrum und liegt zwischen 1 und 100. Nur Kanten zwischen
+dem Zentrum und den ausgewählten Nachbarn werden nach Quelle, Ziel und Relation gruppiert und
+kanonisch auf 256 sichtbare Gruppen begrenzt. `observedNeighborCount`,
+`observedEdgeGroupCount`, `inspectedEdgeCount`, `unmappedEdgeCount` sowie getrennte Node-, Edge-
+und Source-Trunkierungsflags beschreiben die Begrenzung. Insbesondere sind beobachtete Counts bei
+einem abgeschnittenen Quellpräfix niemals als globale Gesamtzahlen zu verstehen.
+
+Jede Gruppe behält eine vollständige repräsentative aktuelle `GraphEdge`: Endpoints,
+`FileRevision`, halboffene Byte-/Positionsrange, Syntaxprovider, Confidence und Link-Resolution
+bleiben erhalten und ergeben eine stabile `ModuleCardEvidenceId` für den Inspector. Knotenevidence
+ist eine repräsentative aktuelle `FileRevision`, sofern das Modul strukturelle Symbole besitzt. Der
+Read ist cancellable, auf zwei Sekunden begrenzt und öffnet weder Live-Dateisystem noch
+Source-Inhalt.
+
 ## Deep Map
 
 Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrücklichen Aktion
