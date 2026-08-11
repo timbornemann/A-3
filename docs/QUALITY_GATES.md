@@ -69,6 +69,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   mit content-freiem Journal-Event und Runprojektion einschließlich vollständigem Rollback bei
   Runsequenzkonflikt. Migrationstests decken leeres Schema, jeden Vorgänger bis V20 und
   vollständigen V20→V21-Rollback ab.
+- V22-Recovery-Contracts prüfen atomaren Mutationsbeginn, `Applied`, `NotApplied` und `Unknown`,
+  Reopen, worktreeweite Sperre, vollständige Snapshot-Reconciliation und das weiterhin notwendige
+  Recovery-`Replan` einschließlich CAS-Rollback. Migrationstests decken leeres Schema, jeden
+  Vorgänger bis V21, die konservative Übernahme laufender V21-Versuche und vollständigen
+  V21→V22-Rollback ab.
 - Rebuild trennt regenerierbare und dauerhafte Daten korrekt
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
@@ -226,6 +231,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Mutationsgrenztests lehnen rohe Modell-argv und Shellfelder ab, serialisieren alle Patch- und
   Prozessaktionen desselben Worktrees, persistieren Policy und Approval vor Ausführung und geben
   nach einer sichtbaren Patchänderung niemals Kontext auf Basis des alten Snapshots aus.
+- E8-Failure-Recovery-Verträge prüfen Patchkonflikt, partiellen Patch, fehlgeschlagene
+  Command-Verifikation, Timeout, Providerabbruch, Store-Unverfügbarkeit und -Korruption,
+  Cancellation vor und nach Prozessstart sowie den Crash zwischen sichtbarem Patch und
+  Journalabschluss. Jede Wirkung besitzt eine exakte Disposition; ein `Unknown` übernimmt per
+  Vollscan fremde Änderungen und sperrt bis Reconciliation plus Replan jede weitere Mutation.
 - Secret-Redaction-Test
 - Prozessabbruch und Outputlimit getestet
 

@@ -146,6 +146,16 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   typisierten Toolresultat gemeinsam mit content-freiem `tool_action`-Event und Runprojektion in
   einer `IMMEDIATE`-Transaktion ab. Dadurch ist kein erfolgreich markierter Versuch ohne sein
   Journalereignis sichtbar.
+- Knowledge-Schema V22 ergänzt `mutation_attempts` als content-freie Projektion jedes mutierenden
+  Toolversuchs. Action-Fingerprint, Aktionsart und die Disposition `Applied`, `NotApplied` oder
+  `Unknown` werden gemeinsam mit dem Versuchslifecycle gespeichert. Der atomare Beginn setzt
+  `Unknown/required`; ein erfolgreicher Abschluss schreibt zusätzlich den normalisierten
+  Resultatdigest in `tool_runs`, das ToolEvent und die Runprojektion und setzt erst dann
+  `Applied`. Ein worktreeweites `Unknown/required` oder `Unknown/reconciled` sperrt weitere
+  Mutationsbeginne. Reconciliation bindet einen vollständigen Published Snapshot, ohne die
+  historische Disposition zu ändern; erst der atomare Recovery-Übergang `Replan` setzt
+  `Unknown/replanned`. V21-Bestandsversuche, die beim Upgrade noch laufen, werden konservativ als
+  unklassifiziertes `Unknown/required` übernommen.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich
@@ -331,6 +341,8 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
 - run_events
 - context_packs
 - tool_runs
+- tool_run_attempts
+- mutation_attempts
 - verification_runs
 - approval_requests
 - approval_grants

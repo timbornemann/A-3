@@ -299,6 +299,17 @@ ein vollständiges oder partielles `PatchChangeSet` zurück, sodass die bereits 
 weiterem Reasoning invalidiert werden können. Fremde Änderungen werden nie automatisch
 zurückgesetzt.
 
+E8 speichert vor jeder Patch- oder Prozessgrenze atomar einen Mutationsversuch mit der
+fail-closed Disposition `Unknown`. Konflikt, Ablehnung, Cancellation vor Prozessstart und
+Spawnfehler werden nur dann `NotApplied`, wenn der jeweilige Adaptervertrag eine sichtbare Wirkung
+ausschließt. Vollständige oder partielle Patchresultate und terminal beobachtete Prozess-Exits
+werden `Applied`; Timeout, Cancellation nach Prozessstart, Reap-/Outputverlust oder ein Ausfall des
+Resultat-/Journal-Commits bleiben `Unknown`. Ein unbekannter Versuch darf weder erneut ausgeführt
+noch automatisch zurückgesetzt werden. Reconciliation hält denselben Worktree-Lease, publiziert
+einen vollständigen aktuellen Index einschließlich fremder Änderungen und erlaubt erst nach einem
+atomaren Recovery-`Replan` wieder eine Mutation. Provider-, Context-, Policy- oder Storefehler vor
+dem dauerhaften Beginn öffnen keine Adaptergrenze und sind `NotApplied`.
+
 E4 führt ausschließlich bereits policy-autorisierte `ProcessSpecSchemaVersion::V1` direkt als
 argv aus. Der Workspace-Adapter kanonisiert den Worktree und das Arbeitsverzeichnis nach
 Symlinkauflösung. Absolute Executables müssen reguläre ausführbare Dateien sein; relative Namen

@@ -356,13 +356,24 @@ Appabbruch offen, markiert der nächste Recovery-Load ihn als Interrupted. Ein e
 behält die logische ToolRunId, erhält aber eine monotone Versuchsnummer und kann deshalb weder den
 alten Versuch überschreiben noch ein Ergebnis doppelt journalisieren.
 
+E8 trennt den Versuchslifecycle von der dauerhaften Wirkung einer Mutation. Patch- und
+Prozessaktionen beginnen fail-closed als `Unknown`; vollständige oder partielle Patchwirkungen und
+terminal beobachtete Prozess-Exits werden `Applied`, nachweislich nicht geöffnete Grenzen werden
+`NotApplied`, und Timeout, Cancellation nach Prozessstart oder verlorene Ergebnisbeobachtung
+bleiben `Unknown`. Ein unbekannter Versuch wird weder wiederholt noch zurückgesetzt. Stattdessen
+publiziert die Reconciliation unter dem einzigen Worktree-Lease einen vollständigen aktuellen
+Repositorysnapshot einschließlich fremder Änderungen. Die historische Disposition bleibt
+`Unknown`; bis zu einem anschließenden dauerhaften `Replan` bleibt jede weitere Mutation gesperrt.
+
 Recovery rekonstruiert den materialisierten Run und das vollständige Task Ledger, lädt den jüngsten
 atomar veröffentlichten Index und löst jede Evidence-ID abgeschlossener Verifikationen zurück auf
 ihre content-adressierte FileRevision. Resume ist nur ohne stale Evidence zulässig und übernimmt
-vor weiterer Agentenarbeit den aktuellen Published Snapshot. Replan und Cancel invalidieren stale
-Evidence transitiv, öffnen betroffene Completed-Steps neu und beenden einen aktiven Step; Cancel
-terminiert zusätzlich den Run. Die gewählte Wirkung wird zusammen mit Ledger und Recovery-Event
-unter Published-Snapshot-, Ledger-Version- und Run-Sequenz-CAS atomar gespeichert.
+vor weiterer Agentenarbeit den aktuellen Published Snapshot. Bei einem reconcilierten `Unknown`
+ist Resume zusätzlich gesperrt. Replan und Cancel invalidieren stale Evidence transitiv, öffnen
+betroffene Completed-Steps neu und beenden einen aktiven Step; Replan quittiert zugleich atomar
+den reconcilierten Mutationszustand, Cancel terminiert zusätzlich den Run. Die gewählte Wirkung
+wird zusammen mit Ledger, Mutationsgate und Recovery-Event unter Published-Snapshot-,
+Ledger-Version- und Run-Sequenz-CAS atomar gespeichert.
 
 ## Compaction
 

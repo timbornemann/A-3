@@ -300,19 +300,44 @@ E7-Verträge sowie der vollständige Linux-Lauf bestanden ohne Retry.
 
 Abhängigkeiten: E7
 
-- [ ] Patch Conflict
-- [ ] Test Failure
-- [ ] Tool Timeout
-- [ ] Provider Disconnect
-- [ ] DB Busy oder Corruption
-- [ ] User Cancel
-- [ ] App Crash zwischen Patch und Journal
+- [x] Patch Conflict
+- [x] Test Failure
+- [x] Tool Timeout
+- [x] Provider Disconnect
+- [x] DB Busy oder Corruption
+- [x] User Cancel
+- [x] App Crash zwischen Patch und Journal
 
 Akzeptanz:
 
 - keine Recovery verwirft fremde Änderungen;
 - Zustand zeigt klar Applied, NotApplied oder Unknown;
 - Unknown erfordert Reconciliation vor weiterer Mutation.
+
+Verifiziert am 2026-08-11: Knowledge-Schema V22 speichert vor jeder Mutation atomar einen
+content-freien `Unknown/required`-Versuch mit Action-Fingerprint und Aktionsart. Vollständige oder
+partielle Patchwirkungen und terminal beobachtete Prozesse werden `Applied`; Konflikt, Ablehnung,
+Spawnfehler und Cancellation vor Prozessstart werden `NotApplied`; Timeout, Cancellation nach
+Prozessstart, verlorene Prozessbeobachtung und ein ausgefallener Resultat-/Journalabschluss bleiben
+`Unknown`. Erfolgreiche Mutationen schreiben Toolresultatdigest, ToolEvent, Runprojektion,
+Lifecycle und Disposition gemeinsam. Ein `Unknown` sperrt den gesamten Worktree atomar. Die
+Reconciliation wiederholt und verwirft nichts, sondern publiziert unter demselben Mutations-Lease
+einen vollständigen aktuellen Repositorysnapshot; erst ein anschließender atomarer Recovery-
+`Replan` öffnet weitere Mutationen, `Resume` bleibt gesperrt.
+
+Domain-, Application-, gemeinsame Storage-, V22-Migrations-, Workspace- und reale
+Agent-Harness-Verträge belegen Patchkonflikt und partiellen Patch ohne Verlust fremder Änderungen,
+fehlgeschlagene Command-Verifikation als `Applied`, Timeout und Cancellation nach Start als
+`Unknown`, Cancellation vor Start als `NotApplied`, Providerdisconnect ohne Adaptermutation,
+Store-Unverfügbarkeit/-Korruption vor Adapteröffnung sowie einen echten Patch mit simuliertem
+Crash vor Journalabschluss, zusätzlicher fremder Datei, Vollscan-Reconciliation und erzwungenem
+Replan. Rustfmt, Workspace-Clippy über alle Targets/Features mit `-D warnings`, Rustdoc, die
+gezielten Windows-Verträge und der vollständige Linux-`quality`-Job über `act` sind grün; dieser
+Job umfasst sämtliche Workspace-Tests, Frontendformat/Lint/Typecheck, 20 Frontend- und vier
+Tooltests, Build, 46 Markdown-Dateien mit 74 lokalen Links und den Lizenzbericht. Der Windows-
+Sammellauf erreichte erneut ausschließlich den bereits dokumentierten nativen libSQL-Teardownfehler
+`0xc0000005` im `knowledge_contract`; die isolierten fachlichen E8-, Storage- und Migrationstests
+sowie der vollständige Linux-Lauf bestanden ohne Retry.
 
 ## E9 End-to-End Coding Tasks
 
