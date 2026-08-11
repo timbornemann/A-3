@@ -279,6 +279,11 @@ pub enum MutationReconciliation {
         /// Published snapshot that became the new safe mutation baseline.
         snapshot_id: SnapshotId,
     },
+    /// The reconciled baseline was acknowledged by a durable recovery Replan.
+    Replanned {
+        /// Published snapshot retained as the safe post-recovery baseline.
+        snapshot_id: SnapshotId,
+    },
 }
 
 /// Durable disposition retaining the public three-state outcome and reconciliation gate.
@@ -309,11 +314,34 @@ impl AgentMutationDisposition {
         matches!(self, Self::Unknown(MutationReconciliation::Required))
     }
 
+    /// Returns whether a full baseline exists but recovery still must force Replan.
+    #[must_use]
+    pub const fn requires_replan(self) -> bool {
+        matches!(
+            self,
+            Self::Unknown(MutationReconciliation::Reconciled { .. })
+        )
+    }
+
+    /// Returns whether the Unknown safety workflow is fully acknowledged.
+    #[must_use]
+    pub const fn permits_future_mutation(self) -> bool {
+        !matches!(
+            self,
+            Self::Unknown(
+                MutationReconciliation::Required | MutationReconciliation::Reconciled { .. }
+            )
+        )
+    }
+
     /// Returns the adopted post-recovery snapshot, if reconciliation completed.
     #[must_use]
     pub const fn reconciled_snapshot_id(self) -> Option<SnapshotId> {
         match self {
-            Self::Unknown(MutationReconciliation::Reconciled { snapshot_id }) => Some(snapshot_id),
+            Self::Unknown(
+                MutationReconciliation::Reconciled { snapshot_id }
+                | MutationReconciliation::Replanned { snapshot_id },
+            ) => Some(snapshot_id),
             Self::Applied | Self::NotApplied | Self::Unknown(MutationReconciliation::Required) => {
                 None
             }
@@ -733,10 +761,21 @@ mod tests {
             MutationApplicationState::Unknown
         );
         assert!(!reconciled.disposition().requires_reconciliation());
+        assert!(reconciled.disposition().requires_replan());
+        assert!(!reconciled.disposition().permits_future_mutation());
         assert_eq!(
             reconciled.disposition().reconciled_snapshot_id(),
             Some(reconciled_snapshot)
         );
+        let replanned = AgentMutationAttempt::new(
+            interrupted,
+            fingerprint,
+            AgentMutationKind::Patch,
+            AgentMutationDisposition::Unknown(MutationReconciliation::Replanned {
+                snapshot_id: reconciled_snapshot,
+            }),
+        )?;
+        assert!(replanned.disposition().permits_future_mutation());
 
         let succeeded = AgentToolAttempt::new(
             tool_attempt.tool_run_id(),

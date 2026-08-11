@@ -1,10 +1,10 @@
 use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory, index};
 use a3_application::{
-    AgentReadResult, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryOutcomeKind,
-    AgentRecoveryStore, AgentRecoveryStoreFailure, ContextToolResultDigest,
-    ContextToolResultPreview, ContextToolResultStatus, CreateAgentRun, CreateGoalContract,
-    CreateTaskLedger, IndexPersistenceControl, IndexPersistenceControlError,
+    AgentMutationResultRecord, AgentReadResult, AgentRecoveryChoice, AgentRecoveryError,
+    AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
+    ContextToolResultDigest, ContextToolResultPreview, ContextToolResultStatus, CreateAgentRun,
+    CreateGoalContract, CreateTaskLedger, IndexPersistenceControl, IndexPersistenceControlError,
     InspectAgentRunRecovery, KnowledgeIndexStore, RecoverAgentRun, RunJournalStore, SaveTaskLedger,
     TaskLedgerStore, TaskLedgerStoreVersion,
 };
@@ -138,6 +138,8 @@ where
         Some(RunEventSubject::Tool(mutation_tool)),
         AgentRunTimestamp::from_unix_millis(17)?,
     )?;
+    let mutation_result =
+        AgentMutationResultRecord::new(ContextToolResultDigest::from_bytes([212; 32]), false, 0);
     assert_eq!(
         store
             .complete_agent_mutation_attempt(
@@ -147,6 +149,7 @@ where
                 &mutation_event,
                 mutation_tool,
                 mutation_attempt.tool_attempt().attempt(),
+                mutation_result,
             )
             .await,
         Err(AgentRecoveryStoreFailure::RunSequenceConflict),
@@ -160,6 +163,7 @@ where
             &mutation_event,
             mutation_tool,
             mutation_attempt.tool_attempt().attempt(),
+            mutation_result,
         )
         .await
         .map_err(|error| std::io::Error::other(format!("mutation completion failed: {error:?}")))?;
@@ -283,27 +287,21 @@ where
     agent_run = reconciled_run;
 
     let post_reconciliation_tool = ToolRunId::from_bytes([237; 32]);
-    let post_reconciliation = store
-        .begin_agent_mutation_attempt(
-            &project,
-            run_id,
-            snapshot_one_id,
-            post_reconciliation_tool,
-            MutationActionFingerprint::from_bytes([238; 32]),
-            AgentMutationKind::Process,
-            AgentRunTimestamp::from_unix_millis(23)?,
-        )
-        .await?;
-    store
-        .finish_agent_mutation_attempt(
-            &project,
-            post_reconciliation_tool,
-            post_reconciliation.tool_attempt().attempt(),
-            AgentToolAttemptStatus::Denied,
-            AgentMutationDisposition::NotApplied,
-            AgentRunTimestamp::from_unix_millis(24)?,
-        )
-        .await?;
+    assert_eq!(
+        store
+            .begin_agent_mutation_attempt(
+                &project,
+                run_id,
+                snapshot_one_id,
+                post_reconciliation_tool,
+                MutationActionFingerprint::from_bytes([238; 32]),
+                AgentMutationKind::Process,
+                AgentRunTimestamp::from_unix_millis(23)?,
+            )
+            .await,
+        Err(AgentRecoveryStoreFailure::MutationReconciliationRequired),
+        "reconciliation alone must not bypass the mandatory recovery Replan"
+    );
 
     let evidence = AgentToolEvidence::for_file(FileRevision::new(
         RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
@@ -393,7 +391,9 @@ where
         .await?;
     assert_eq!(inspection.interrupted_tool_attempts(), 1);
     assert!(!inspection.snapshot_changed());
-    assert!(inspection.can_resume());
+    assert!(!inspection.can_resume());
+    assert!(!inspection.mutation_reconciliation_required());
+    assert!(inspection.mutation_replan_required());
     assert!(inspection.stale_evidence_ids().is_empty());
     let retry = reopened
         .begin_agent_tool_attempt(
@@ -429,26 +429,53 @@ where
         .await?;
     assert_eq!(failed_retry.status(), AgentToolAttemptStatus::Failed);
 
-    let resumed = RecoverAgentRun::new(&reopened, &reopened, &reopened, &reopened)
+    let mutation_replanned = RecoverAgentRun::new(&reopened, &reopened, &reopened, &reopened)
         .execute(
             &project,
             run_id,
-            AgentRecoveryChoice::Resume,
+            AgentRecoveryChoice::Replan,
             RunEventId::from_bytes([197; 32]),
             AgentRunTimestamp::from_unix_millis(34)?,
             &RecoveryIndexControl,
         )
         .await?;
-    assert_eq!(resumed.kind(), AgentRecoveryOutcomeKind::Resumed);
-    assert_eq!(resumed.run().current_snapshot_id(), snapshot_one_id);
     assert_eq!(
-        resumed
+        mutation_replanned.kind(),
+        AgentRecoveryOutcomeKind::ReplanRequired
+    );
+    assert_eq!(
+        mutation_replanned.run().current_snapshot_id(),
+        snapshot_one_id
+    );
+    assert_eq!(
+        mutation_replanned
             .ledger()
             .ledger()
             .step(step_id)
             .map(|step| step.status()),
         Some(TaskStepStatus::Completed)
     );
+    let post_reconciliation = reopened
+        .begin_agent_mutation_attempt(
+            &project,
+            run_id,
+            snapshot_one_id,
+            post_reconciliation_tool,
+            MutationActionFingerprint::from_bytes([238; 32]),
+            AgentMutationKind::Process,
+            AgentRunTimestamp::from_unix_millis(35)?,
+        )
+        .await?;
+    reopened
+        .finish_agent_mutation_attempt(
+            &project,
+            post_reconciliation_tool,
+            post_reconciliation.tool_attempt().attempt(),
+            AgentToolAttemptStatus::Denied,
+            AgentMutationDisposition::NotApplied,
+            AgentRunTimestamp::from_unix_millis(36)?,
+        )
+        .await?;
 
     let snapshot_two_id = SnapshotId::from_bytes([198; 32]);
     let snapshot_two = snapshot(
@@ -477,7 +504,7 @@ where
         .execute(
             &project,
             run_id,
-            AgentRunTimestamp::from_unix_millis(35)?,
+            AgentRunTimestamp::from_unix_millis(37)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -495,7 +522,7 @@ where
                 run_id,
                 AgentRecoveryChoice::Resume,
                 RunEventId::from_bytes([202; 32]),
-                AgentRunTimestamp::from_unix_millis(36)?,
+                AgentRunTimestamp::from_unix_millis(38)?,
                 &RecoveryIndexControl,
             )
             .await,
@@ -512,7 +539,7 @@ where
             run_id,
             AgentRecoveryChoice::Replan,
             RunEventId::from_bytes([203; 32]),
-            AgentRunTimestamp::from_unix_millis(37)?,
+            AgentRunTimestamp::from_unix_millis(39)?,
             &RecoveryIndexControl,
         )
         .await?;
@@ -558,12 +585,13 @@ where
         ),
         snapshot_two_id,
         None,
-        AgentRunTimestamp::from_unix_millis(38)?,
+        AgentRunTimestamp::from_unix_millis(40)?,
     )?;
     assert_eq!(
         reopened
             .commit_agent_recovery(
                 &project,
+                AgentRecoveryChoice::Resume,
                 snapshot_two_id,
                 replanned.ledger().version(),
                 replanned.run().last_event_sequence(),
@@ -597,12 +625,13 @@ where
         ),
         snapshot_three_id,
         None,
-        AgentRunTimestamp::from_unix_millis(38)?,
+        AgentRunTimestamp::from_unix_millis(40)?,
     )?;
     assert_eq!(
         reopened
             .commit_agent_recovery(
                 &project,
+                AgentRecoveryChoice::Resume,
                 snapshot_three_id,
                 replanned.ledger().version(),
                 RunEventSequence::FIRST,
@@ -632,7 +661,7 @@ where
             run_id,
             AgentRecoveryChoice::Cancel,
             RunEventId::from_bytes([208; 32]),
-            AgentRunTimestamp::from_unix_millis(39)?,
+            AgentRunTimestamp::from_unix_millis(41)?,
             &RecoveryIndexControl,
         )
         .await?;

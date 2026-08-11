@@ -1,5 +1,8 @@
 use crate::{catalog::is_corruption, run_journal_repository, task_ledger_repository};
-use a3_application::{AgentRecoveryStoreFailure, TaskLedgerStoreFailure, TaskLedgerStoreVersion};
+use a3_application::{
+    AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStoreFailure,
+    TaskLedgerStoreFailure, TaskLedgerStoreVersion,
+};
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
     AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
@@ -214,7 +217,9 @@ pub(crate) async fn finish_mutation_attempt(
             | AgentToolAttemptStatus::Denied
     ) || matches!(
         disposition,
-        AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled { .. })
+        AgentMutationDisposition::Unknown(
+            MutationReconciliation::Reconciled { .. } | MutationReconciliation::Replanned { .. }
+        )
     ) {
         return Err(AgentRecoveryRepositoryError::InvalidInput);
     }
@@ -366,6 +371,7 @@ pub(crate) async fn complete_mutation_attempt(
     event: &RunEvent,
     tool_run_id: ToolRunId,
     attempt: AgentToolAttemptNumber,
+    result: AgentMutationResultRecord,
 ) -> Result<AgentMutationAttempt, AgentRecoveryRepositoryError> {
     if event.kind() != RunEventKind::ToolAction
         || event.subject() != Some(RunEventSubject::Tool(tool_run_id))
@@ -400,6 +406,26 @@ pub(crate) async fn complete_mutation_attempt(
         )
         .await
         .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+        transaction
+            .execute(
+                "INSERT INTO tool_runs (
+                 tool_run_id, run_id, event_sequence, status, result_digest, result_truncated,
+                 snapshot_before_id, snapshot_after_id, observed_output_bytes
+                 ) VALUES (?1, ?2, ?3, 'succeeded', ?4, ?5, ?6, ?6, ?7)",
+                params![
+                    id_bytes(tool_run_id),
+                    id_bytes(run.id()),
+                    i64::try_from(event.sequence().get())
+                        .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?,
+                    result.digest().as_bytes().to_vec(),
+                    i64::from(result.truncated()),
+                    id_bytes(event.snapshot_id()),
+                    i64::try_from(result.observed_output_bytes())
+                        .map_err(|_| AgentRecoveryRepositoryError::ResourceLimit)?
+                ],
+            )
+            .await
+            .map_err(classify_attempt_constraint)?;
         let changed = transaction
             .execute(
                 "UPDATE tool_run_attempts SET status = 'succeeded', updated_at_unix_millis = ?1
@@ -671,6 +697,7 @@ pub(crate) async fn load_tool_evidence(
 pub(crate) async fn commit_recovery(
     connection: &Connection,
     worktree_id: WorktreeId,
+    choice: AgentRecoveryChoice,
     expected_published_snapshot: SnapshotId,
     expected_ledger_version: TaskLedgerStoreVersion,
     expected_last_sequence: RunEventSequence,
@@ -689,6 +716,20 @@ pub(crate) async fn commit_recovery(
         if current != expected_published_snapshot || run.current_snapshot_id() != current {
             return Err(AgentRecoveryRepositoryError::PublishedSnapshotConflict);
         }
+        let mutation_gate = mutation_recovery_gate(&transaction, worktree_id, run.id()).await?;
+        match choice {
+            AgentRecoveryChoice::Resume if mutation_gate != MutationRecoveryGate::Clear => {
+                return Err(AgentRecoveryRepositoryError::MutationReconciliationRequired);
+            }
+            AgentRecoveryChoice::Replan
+                if mutation_gate == MutationRecoveryGate::ReconciliationRequired =>
+            {
+                return Err(AgentRecoveryRepositoryError::MutationReconciliationRequired);
+            }
+            AgentRecoveryChoice::Resume
+            | AgentRecoveryChoice::Replan
+            | AgentRecoveryChoice::Cancel => {}
+        }
         let next_version = task_ledger_repository::replace_in_transaction(
             &transaction,
             worktree_id,
@@ -706,6 +747,20 @@ pub(crate) async fn commit_recovery(
         )
         .await
         .map_err(AgentRecoveryRepositoryError::RunJournal)?;
+        if choice == AgentRecoveryChoice::Replan {
+            transaction
+                .execute(
+                    "UPDATE mutation_attempts SET reconciliation_state = 'replanned'
+                     WHERE application_state = 'unknown' AND reconciliation_state = 'reconciled'
+                       AND EXISTS (SELECT 1 FROM tool_run_attempts
+                         WHERE tool_run_attempts.tool_run_id = mutation_attempts.tool_run_id
+                           AND tool_run_attempts.attempt_sequence = mutation_attempts.attempt_sequence
+                           AND tool_run_attempts.run_id = ?1)",
+                    [id_bytes(run.id())],
+                )
+                .await
+                .map_err(AgentRecoveryRepositoryError::Write)?;
+        }
         Ok(next_version)
     }
     .await;
@@ -1017,7 +1072,7 @@ async fn has_unreconciled_mutation(
                JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
                JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
                WHERE tasks.worktree_id = ?1 AND mutation_attempts.application_state = 'unknown'
-                 AND mutation_attempts.reconciliation_state = 'required'
+                 AND mutation_attempts.reconciliation_state IN ('required', 'reconciled')
              )",
             [id_bytes(worktree_id)],
         )
@@ -1032,6 +1087,50 @@ async fn has_unreconciled_mutation(
         .get(0)
         .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
     Ok(exists == 1)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MutationRecoveryGate {
+    Clear,
+    ReconciliationRequired,
+    ReplanRequired,
+}
+
+async fn mutation_recovery_gate(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    run_id: AgentRunId,
+) -> Result<MutationRecoveryGate, AgentRecoveryRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT mutation_attempts.reconciliation_state
+             FROM mutation_attempts
+             JOIN tool_run_attempts USING (tool_run_id, attempt_sequence)
+             JOIN agent_runs USING (run_id) JOIN tasks USING (task_id)
+             WHERE tasks.worktree_id = ?1 AND tool_run_attempts.run_id = ?2
+               AND mutation_attempts.application_state = 'unknown'
+               AND mutation_attempts.reconciliation_state IN ('required', 'reconciled')
+             ORDER BY CASE mutation_attempts.reconciliation_state
+               WHEN 'required' THEN 0 ELSE 1 END LIMIT 1",
+            params![id_bytes(worktree_id), id_bytes(run_id)],
+        )
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AgentRecoveryRepositoryError::Read)?
+    else {
+        return Ok(MutationRecoveryGate::Clear);
+    };
+    let state: String = row
+        .get(0)
+        .map_err(|_| AgentRecoveryRepositoryError::InvalidStoredData)?;
+    match state.as_str() {
+        "required" => Ok(MutationRecoveryGate::ReconciliationRequired),
+        "reconciled" => Ok(MutationRecoveryGate::ReplanRequired),
+        _ => Err(AgentRecoveryRepositoryError::InvalidStoredData),
+    }
 }
 
 async fn latest_published_snapshot(
@@ -1229,6 +1328,9 @@ fn disposition_text(
         AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled { .. }) => {
             Err(AgentRecoveryRepositoryError::InvalidInput)
         }
+        AgentMutationDisposition::Unknown(MutationReconciliation::Replanned { .. }) => {
+            Err(AgentRecoveryRepositoryError::InvalidInput)
+        }
     }
 }
 
@@ -1249,6 +1351,9 @@ fn parse_mutation_disposition(
         )),
         ("unknown", "reconciled", Some(snapshot_id)) => Ok(AgentMutationDisposition::Unknown(
             MutationReconciliation::Reconciled { snapshot_id },
+        )),
+        ("unknown", "replanned", Some(snapshot_id)) => Ok(AgentMutationDisposition::Unknown(
+            MutationReconciliation::Replanned { snapshot_id },
         )),
         _ => Err(AgentRecoveryRepositoryError::InvalidStoredData),
     }

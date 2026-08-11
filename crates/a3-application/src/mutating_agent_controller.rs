@@ -1,31 +1,33 @@
 use crate::{
     AdvanceAgentController, AgentActionStore, AgentActionStoreFailure, AgentContextCompileInput,
     AgentContextCompiler, AgentControllerControl, AgentControllerError, AgentControllerSignal,
-    AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent, ContextCompileControl,
-    ContextCompileFailure, ContextToolResult, EvaluateActionPolicy, EvaluateActionPolicyError,
-    EvaluateStepVerification, EvaluateStepVerificationError, MutationActionFingerprint,
-    MutationActionFingerprintError, MutationFailureClass, MutationProgressDecision,
-    PatchApplyFailure, PatchAuthorizationError, PatchPreviewFailure, PersistPolicyEvaluation,
-    PolicyEvaluationContext, PolicyStore, PolicyStoreFailure, PrepareDiscoveredCommand,
-    ProcessAuthorizationError, ProcessEventSink, ProcessRunControl, ProcessRunFailure,
-    ProcessRunner, RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
-    RepositoryChangeBatchError, RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore,
-    RunJournalStoreFailure, StoredProjectCommandAllowlist, TaskLedgerStoreVersion,
-    VerificationEvidenceStore, VerificationEvidenceStoreFailure, WorkspacePatchControl,
-    WorkspacePatchTool, WorktreeMutationBusy, WorktreeMutationCoordinator,
+    AgentMutationResultRecord, AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent,
+    ContextCompileControl, ContextCompileFailure, ContextToolResult, ContextToolResultDigest,
+    EvaluateActionPolicy, EvaluateActionPolicyError, EvaluateStepVerification,
+    EvaluateStepVerificationError, MutationActionFingerprint, MutationActionFingerprintError,
+    MutationFailureClass, MutationProgressDecision, PatchApplyFailure, PatchAuthorizationError,
+    PatchPreviewFailure, PersistPolicyEvaluation, PolicyEvaluationContext, PolicyStore,
+    PolicyStoreFailure, PrepareDiscoveredCommand, ProcessAuthorizationError, ProcessEventSink,
+    ProcessRunControl, ProcessRunFailure, ProcessRunner, RefreshRepositoryIndex,
+    RefreshRepositoryIndexError, RepositoryChangeBatch, RepositoryChangeBatchError,
+    RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore, RunJournalStoreFailure,
+    StoredProjectCommandAllowlist, TaskLedgerStoreVersion, VerificationEvidenceStore,
+    VerificationEvidenceStoreFailure, WorkspacePatchControl, WorkspacePatchTool,
+    WorktreeMutationBusy, WorktreeMutationCoordinator,
 };
 use a3_domain::{
-    AgentAction, AgentControllerState, AgentRun, AgentRunAction, AgentRunTimestamp, ApprovalGrant,
-    ApprovalRequestId, CommandEvidence, CommandEvidenceContext, DiscoveredCommandId,
-    EvidenceDependency, GoalContract, ModelProfile, PatchAction, PatchChangeSet, PolicyDecision,
-    PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming, ProcessRunResult,
-    ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RunEventCode,
-    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
-    RunEventRedactionSource, RunEventSubject, SnapshotId, StepVerificationId, TaskEvidenceId,
-    TaskLedger, TaskLedgerTimestamp, TaskLensSeed, TaskStepBlockingReason, TaskStepFailureReason,
-    TaskStepId, TaskStepResultSummary, TaskStepStatus, ToolRunId, VerificationDependencies,
-    VerificationEvidence, VerificationMethod, VerificationRunId, VerificationSpec,
-    VerificationTarget, WorkspacePolicy,
+    AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind, AgentRun,
+    AgentRunAction, AgentRunTimestamp, AgentToolAttemptStatus, ApprovalGrant, ApprovalRequestId,
+    CommandEvidence, CommandEvidenceContext, DiscoveredCommandId, EvidenceDependency, GoalContract,
+    ModelProfile, MutationApplicationState, MutationReconciliation, PatchAction, PatchChangeSet,
+    PolicyDecision, PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming,
+    ProcessOutputRedaction, ProcessRunResult, ProcessTermination, ProjectCommandCatalog,
+    ProjectIdentity, PublishedIndex, RunEventCode, RunEventId, RunEventKind, RunEventOutcome,
+    RunEventPayload, RunEventRedaction, RunEventRedactionSource, RunEventSubject, SnapshotId,
+    StepVerificationId, TaskEvidenceId, TaskLedger, TaskLedgerTimestamp, TaskLensSeed,
+    TaskStepBlockingReason, TaskStepFailureReason, TaskStepId, TaskStepResultSummary,
+    TaskStepStatus, ToolRunId, VerificationDependencies, VerificationEvidence, VerificationMethod,
+    VerificationRunId, VerificationSpec, VerificationTarget, WorkspacePolicy,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -300,6 +302,15 @@ pub enum MutationControllerOutcome {
         /// Snapshot safe for subsequent localization.
         snapshot_id: SnapshotId,
     },
+    /// A process could have changed the worktree and must be reconciled before another mutation.
+    ReconciliationRequired {
+        /// Logical tool action whose exact attempt remains Unknown.
+        tool_run_id: ToolRunId,
+        /// One-based attempt carrying the durable Unknown disposition.
+        attempt: a3_domain::AgentToolAttemptNumber,
+        /// Last snapshot known before authoritative reconciliation.
+        snapshot_id: SnapshotId,
+    },
     /// The progress detector or an unreconciled index failure stopped the run.
     Stopped {
         /// Content-free terminal failure class.
@@ -337,6 +348,16 @@ impl fmt::Debug for MutationControllerOutcome {
                 .field("failure", failure)
                 .field("snapshot_id", snapshot_id)
                 .finish(),
+            Self::ReconciliationRequired {
+                tool_run_id,
+                attempt,
+                snapshot_id,
+            } => formatter
+                .debug_struct("ReconciliationRequired")
+                .field("tool_run_id", tool_run_id)
+                .field("attempt", attempt)
+                .field("snapshot_id", snapshot_id)
+                .finish(),
             Self::Stopped {
                 failure,
                 snapshot_id,
@@ -371,6 +392,13 @@ impl PreparedMutation {
         match self {
             Self::Patch(action) => action.policy_action(),
             Self::Run { result_spec, .. } => result_spec.policy_action(),
+        }
+    }
+
+    const fn kind(&self) -> AgentMutationKind {
+        match self {
+            Self::Patch(_) => AgentMutationKind::Patch,
+            Self::Run { .. } => AgentMutationKind::Process,
         }
     }
 }
@@ -455,6 +483,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         let fingerprint = MutationActionFingerprint::from_action(&action)?;
         let prepared = prepare_action(project, run, ledger, published, action, command)?;
         let step_id = prepared.step_id();
+        let mutation_kind = prepared.kind();
         let lease = self
             .coordinator
             .try_acquire(run.id(), project.worktree().id(), fingerprint)?;
@@ -531,14 +560,17 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
 
         let attempt = self
             .recovery
-            .begin_agent_tool_attempt(
+            .begin_agent_mutation_attempt(
                 project,
                 run.id(),
                 run.current_snapshot_id(),
                 ids.tool_run_id,
+                fingerprint,
+                mutation_kind,
                 observed_at,
             )
-            .await?;
+            .await
+            .map_err(MutationControllerFailure::MutationStartStore)?;
 
         match prepared {
             PreparedMutation::Patch(patch) => {
@@ -558,7 +590,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     context_seed,
                     index_compiler,
                     control,
-                    attempt.attempt(),
+                    attempt.tool_attempt().attempt(),
                     applied,
                     &lease,
                 )
@@ -579,14 +611,14 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     run,
                     ledger,
                     ledger_version,
-                    published,
                     action,
                     dependencies,
                     ids,
                     observed_at,
                     context_seed,
+                    index_compiler,
                     control,
-                    attempt.attempt(),
+                    attempt.tool_attempt().attempt(),
                     result,
                     &lease,
                 )
@@ -810,13 +842,42 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             + RepositoryIndexControl
             + WorkspacePatchControl,
     {
-        let (changes, failure) = match applied {
-            Ok(changes) => (Some(changes), None),
-            Err(PatchApplyFailure::Changed(changes)) => {
-                (Some(*changes), Some(MutationFailureClass::Conflict))
+        let (changes, failure, terminal) = match applied {
+            Ok(changes) => (Some(changes), None, None),
+            Err(PatchApplyFailure::Changed(changes)) => (
+                Some(*changes),
+                Some(MutationFailureClass::Conflict),
+                Some((
+                    AgentToolAttemptStatus::Failed,
+                    AgentMutationDisposition::Applied,
+                )),
+            ),
+            Err(error) => {
+                let failure = map_patch_failure(&error);
+                (
+                    None,
+                    Some(failure),
+                    Some((
+                        map_patch_attempt_status(&error),
+                        AgentMutationDisposition::NotApplied,
+                    )),
+                )
             }
-            Err(error) => (None, Some(map_patch_failure(&error))),
         };
+
+        if let Some((status, disposition)) = terminal {
+            self.recovery
+                .finish_agent_mutation_attempt(
+                    project,
+                    ids.tool_run_id,
+                    attempt,
+                    status,
+                    disposition,
+                    observed_at,
+                )
+                .await
+                .map_err(MutationControllerFailure::MutationResultStore)?;
+        }
 
         let current_index = if let Some(changes) = changes.as_ref() {
             let batch = RepositoryChangeBatch::incremental(changes.changed_paths())?;
@@ -829,15 +890,19 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     Some(refresh.published_index().clone())
                 }
                 Ok(_) | Err(_) => {
-                    self.recovery
-                        .finish_agent_tool_attempt(
-                            project,
-                            ids.tool_run_id,
-                            attempt,
-                            a3_domain::AgentToolAttemptStatus::Failed,
-                            observed_at,
-                        )
-                        .await?;
+                    if terminal.is_none() {
+                        self.recovery
+                            .finish_agent_mutation_attempt(
+                                project,
+                                ids.tool_run_id,
+                                attempt,
+                                AgentToolAttemptStatus::Failed,
+                                AgentMutationDisposition::Applied,
+                                observed_at,
+                            )
+                            .await
+                            .map_err(MutationControllerFailure::MutationResultStore)?;
+                    }
                     self.stop_without_fresh_index(
                         project,
                         run,
@@ -861,15 +926,6 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             .as_ref()
             .map_or(run.current_snapshot_id(), |index| index.run().snapshot_id());
         if failure.is_some() {
-            self.recovery
-                .finish_agent_tool_attempt(
-                    project,
-                    ids.tool_run_id,
-                    attempt,
-                    a3_domain::AgentToolAttemptStatus::Failed,
-                    observed_at,
-                )
-                .await?;
             self.record_tool_event(
                 project,
                 run,
@@ -882,7 +938,10 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             )
             .await?;
         } else {
-            self.record_successful_tool_event(
+            let result = changes
+                .as_ref()
+                .ok_or(MutationControllerFailure::InvalidToolResult)?;
+            self.record_successful_mutation_event(
                 project,
                 run,
                 ids.tool_event_id,
@@ -890,6 +949,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 attempt,
                 snapshot_id,
                 None,
+                patch_result_record(result, snapshot_id),
                 observed_at,
             )
             .await?;
@@ -966,33 +1026,40 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         run: &mut AgentRun,
         ledger: &mut TaskLedger,
         ledger_version: &mut TaskLedgerStoreVersion,
-        published: &PublishedIndex,
         action: AgentRunAction,
         dependencies: VerificationDependencies,
         ids: MutationExecutionIds,
         observed_at: AgentRunTimestamp,
         context_seed: &MutationContextSeed,
+        index_compiler: &mut dyn RepositoryIndexCompiler,
         control: &C,
         attempt: a3_domain::AgentToolAttemptNumber,
         result: Result<ProcessRunResult, ProcessRunFailure>,
         lease: &crate::WorktreeMutationLease<'_>,
     ) -> Result<MutationControllerOutcome, MutationControllerFailure>
     where
-        C: AgentControllerControl + ContextCompileControl + ProcessRunControl,
+        C: AgentControllerControl
+            + ContextCompileControl
+            + ProcessRunControl
+            + RepositoryIndexControl,
     {
         let result = match result {
             Ok(result) => result,
             Err(failure) => {
                 let class = map_process_failure(failure);
+                let status = map_process_attempt_status(failure);
+                let disposition = map_process_failure_disposition(failure);
                 self.recovery
-                    .finish_agent_tool_attempt(
+                    .finish_agent_mutation_attempt(
                         project,
                         ids.tool_run_id,
                         attempt,
-                        a3_domain::AgentToolAttemptStatus::Failed,
+                        status,
+                        disposition,
                         observed_at,
                     )
-                    .await?;
+                    .await
+                    .map_err(MutationControllerFailure::MutationResultStore)?;
                 self.record_tool_event(
                     project,
                     run,
@@ -1004,6 +1071,13 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     observed_at,
                 )
                 .await?;
+                if disposition.requires_reconciliation() {
+                    return Ok(MutationControllerOutcome::ReconciliationRequired {
+                        tool_run_id: ids.tool_run_id,
+                        attempt,
+                        snapshot_id: run.current_snapshot_id(),
+                    });
+                }
                 return self
                     .resolve_unverified_failure(
                         project,
@@ -1026,20 +1100,26 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             .observed_bytes()
             .saturating_add(result.stderr().observed_bytes());
         let truncated = result.stdout().truncated() || result.stderr().truncated();
-        if let Some(failure) = match result.termination() {
-            ProcessTermination::TimedOut => Some(MutationFailureClass::TimedOut),
-            ProcessTermination::Cancelled => Some(MutationFailureClass::Cancelled),
-            ProcessTermination::Exited(_) => None,
-        } {
+        if matches!(
+            result.termination(),
+            ProcessTermination::TimedOut | ProcessTermination::Cancelled
+        ) {
             self.recovery
-                .finish_agent_tool_attempt(
+                .finish_agent_mutation_attempt(
                     project,
                     ids.tool_run_id,
                     attempt,
-                    a3_domain::AgentToolAttemptStatus::Failed,
+                    match result.termination() {
+                        ProcessTermination::Cancelled => AgentToolAttemptStatus::Cancelled,
+                        ProcessTermination::TimedOut | ProcessTermination::Exited(_) => {
+                            AgentToolAttemptStatus::Failed
+                        }
+                    },
+                    AgentMutationDisposition::Unknown(MutationReconciliation::Required),
                     observed_at,
                 )
-                .await?;
+                .await
+                .map_err(MutationControllerFailure::MutationResultStore)?;
             self.record_tool_event(
                 project,
                 run,
@@ -1055,34 +1135,63 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 observed_at,
             )
             .await?;
-            return self
-                .resolve_unverified_failure(
+            return Ok(MutationControllerOutcome::ReconciliationRequired {
+                tool_run_id: ids.tool_run_id,
+                attempt,
+                snapshot_id: run.current_snapshot_id(),
+            });
+        }
+        let batch = RepositoryChangeBatch::full_rescan(
+            Vec::new(),
+            crate::RepositoryRescanReason::Explicit,
+        )?;
+        let current_index = match self
+            .refresh
+            .execute(project, &batch, index_compiler, control)
+            .await
+        {
+            Ok(refresh) => refresh.published_index().clone(),
+            Err(_) => {
+                self.recovery
+                    .finish_agent_mutation_attempt(
+                        project,
+                        ids.tool_run_id,
+                        attempt,
+                        AgentToolAttemptStatus::Failed,
+                        AgentMutationDisposition::Applied,
+                        observed_at,
+                    )
+                    .await
+                    .map_err(MutationControllerFailure::MutationResultStore)?;
+                self.stop_without_fresh_index(
                     project,
                     run,
-                    ledger,
-                    ledger_version,
-                    action.step_id(),
-                    ids,
+                    ids.tool_event_id,
                     observed_at,
-                    context_seed,
                     control,
-                    lease,
-                    failure,
                 )
-                .await;
-        }
-        self.record_successful_tool_event(
+                .await?;
+                let _ = lease.record_failure(MutationFailureClass::IndexRefreshFailed);
+                return Ok(MutationControllerOutcome::Stopped {
+                    failure: MutationFailureClass::IndexRefreshFailed,
+                    snapshot_id: run.current_snapshot_id(),
+                });
+            }
+        };
+        let snapshot_id = current_index.run().snapshot_id();
+        self.record_successful_mutation_event(
             project,
             run,
             ids.tool_event_id,
             ids.tool_run_id,
             attempt,
-            run.current_snapshot_id(),
+            snapshot_id,
             Some(RunEventRedaction::new(
                 RunEventRedactionSource::ToolOutput,
                 observed_bytes,
                 truncated,
             )),
+            process_result_record(&result),
             observed_at,
         )
         .await?;
@@ -1094,7 +1203,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 run_id: run.id(),
                 tool_run_id: ids.tool_run_id,
                 command_id: action.command_id(),
-                snapshot_id: run.current_snapshot_id(),
+                snapshot_id,
                 verification_run_id: ids.verification_run_id,
                 dependencies: &dependencies,
                 result: &result,
@@ -1135,7 +1244,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             context_seed,
             control,
             lease,
-            published,
+            &current_index,
             evidence,
         )
         .await
@@ -1588,7 +1697,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn record_successful_tool_event(
+    async fn record_successful_mutation_event(
         self,
         project: &ProjectIdentity,
         run: &mut AgentRun,
@@ -1597,6 +1706,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         attempt: a3_domain::AgentToolAttemptNumber,
         snapshot_id: SnapshotId,
         redaction: Option<RunEventRedaction>,
+        result: AgentMutationResultRecord,
         observed_at: AgentRunTimestamp,
     ) -> Result<(), MutationControllerFailure> {
         let expected_sequence = run.last_event_sequence();
@@ -1614,15 +1724,17 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             observed_at,
         )?;
         self.recovery
-            .complete_agent_tool_attempt(
+            .complete_agent_mutation_attempt(
                 project,
                 expected_sequence,
                 &next_run,
                 &event,
                 tool_run_id,
                 attempt,
+                result,
             )
-            .await?;
+            .await
+            .map_err(MutationControllerFailure::MutationResultStore)?;
         *run = next_run;
         Ok(())
     }
@@ -1856,6 +1968,78 @@ fn ledger_timestamp(
         .map_err(|_| MutationControllerFailure::InvalidTimestamp)
 }
 
+fn patch_result_record(
+    changes: &PatchChangeSet,
+    snapshot_id: SnapshotId,
+) -> AgentMutationResultRecord {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"a3.mutation.patch-result.v1\0");
+    digest.update(&changes.action_digest().as_bytes());
+    digest.update(changes.policy_decision_id().as_bytes());
+    digest.update(changes.base_snapshot_id().as_bytes());
+    digest.update(snapshot_id.as_bytes());
+    digest.update(&[u8::from(changes.complete())]);
+    let change_count = u64::try_from(changes.changes().len()).map_or(u64::MAX, |value| value);
+    digest.update(&change_count.to_le_bytes());
+    AgentMutationResultRecord::new(
+        ContextToolResultDigest::from_bytes(*digest.finalize().as_bytes()),
+        false,
+        0,
+    )
+}
+
+fn process_result_record(result: &ProcessRunResult) -> AgentMutationResultRecord {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"a3.mutation.process-result.v1\0");
+    digest.update(result.specification_id().as_bytes());
+    digest.update(result.policy_decision_id().as_bytes());
+    match result.termination() {
+        ProcessTermination::Exited(exit) => {
+            digest.update(b"exited\0");
+            match exit.code() {
+                Some(code) => {
+                    digest.update(b"code\0");
+                    digest.update(&code.to_le_bytes());
+                }
+                None => {
+                    digest.update(b"no-code\0");
+                }
+            }
+        }
+        ProcessTermination::TimedOut => {
+            digest.update(b"timed-out\0");
+        }
+        ProcessTermination::Cancelled => {
+            digest.update(b"cancelled\0");
+        }
+    }
+    digest.update(&result.duration().as_millis().to_le_bytes());
+    hash_process_stream(&mut digest, result.stdout());
+    hash_process_stream(&mut digest, result.stderr());
+    let observed_output_bytes = result
+        .stdout()
+        .observed_bytes()
+        .saturating_add(result.stderr().observed_bytes());
+    AgentMutationResultRecord::new(
+        ContextToolResultDigest::from_bytes(*digest.finalize().as_bytes()),
+        result.stdout().truncated() || result.stderr().truncated(),
+        observed_output_bytes,
+    )
+}
+
+fn hash_process_stream(digest: &mut blake3::Hasher, stream: &a3_domain::ProcessOutputCapture) {
+    digest.update(&stream.digest().as_bytes());
+    digest.update(&stream.observed_bytes().to_le_bytes());
+    digest.update(&stream.retained_limit().to_le_bytes());
+    digest.update(&[u8::from(stream.truncated())]);
+    digest.update(&[match stream.content().redaction() {
+        None => 0,
+        Some(ProcessOutputRedaction::InvalidUtf8) => 1,
+        Some(ProcessOutputRedaction::SecretCandidate) => 2,
+        Some(ProcessOutputRedaction::UnsafeControl) => 3,
+    }]);
+}
+
 fn map_patch_failure(failure: &PatchApplyFailure) -> MutationFailureClass {
     match failure {
         PatchApplyFailure::Denied => MutationFailureClass::Denied,
@@ -1870,6 +2054,20 @@ fn map_patch_failure(failure: &PatchApplyFailure) -> MutationFailureClass {
     }
 }
 
+fn map_patch_attempt_status(failure: &PatchApplyFailure) -> AgentToolAttemptStatus {
+    match failure {
+        PatchApplyFailure::Denied => AgentToolAttemptStatus::Denied,
+        PatchApplyFailure::Cancelled => AgentToolAttemptStatus::Cancelled,
+        PatchApplyFailure::StaleSnapshot
+        | PatchApplyFailure::Conflict
+        | PatchApplyFailure::Busy
+        | PatchApplyFailure::ProgressUnavailable
+        | PatchApplyFailure::Unavailable
+        | PatchApplyFailure::InvalidResult
+        | PatchApplyFailure::Changed(_) => AgentToolAttemptStatus::Failed,
+    }
+}
+
 fn map_process_failure(failure: ProcessRunFailure) -> MutationFailureClass {
     match failure {
         ProcessRunFailure::Denied => MutationFailureClass::Denied,
@@ -1879,6 +2077,32 @@ fn map_process_failure(failure: ProcessRunFailure) -> MutationFailureClass {
         | ProcessRunFailure::TerminationUnavailable
         | ProcessRunFailure::EventUnavailable
         | ProcessRunFailure::InvalidResult => MutationFailureClass::ToolUnavailable,
+    }
+}
+
+const fn map_process_attempt_status(failure: ProcessRunFailure) -> AgentToolAttemptStatus {
+    match failure {
+        ProcessRunFailure::Denied => AgentToolAttemptStatus::Denied,
+        ProcessRunFailure::Cancelled => AgentToolAttemptStatus::Cancelled,
+        ProcessRunFailure::SpawnUnavailable
+        | ProcessRunFailure::OutputUnavailable
+        | ProcessRunFailure::TerminationUnavailable
+        | ProcessRunFailure::EventUnavailable
+        | ProcessRunFailure::InvalidResult => AgentToolAttemptStatus::Failed,
+    }
+}
+
+const fn map_process_failure_disposition(failure: ProcessRunFailure) -> AgentMutationDisposition {
+    match failure {
+        ProcessRunFailure::Denied
+        | ProcessRunFailure::Cancelled
+        | ProcessRunFailure::SpawnUnavailable => AgentMutationDisposition::NotApplied,
+        ProcessRunFailure::OutputUnavailable
+        | ProcessRunFailure::TerminationUnavailable
+        | ProcessRunFailure::EventUnavailable
+        | ProcessRunFailure::InvalidResult => {
+            AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+        }
     }
 }
 
@@ -1927,8 +2151,10 @@ pub enum MutationControllerFailure {
     Journal(RunJournalStoreFailure),
     /// Atomic Task Ledger plus run persistence failed.
     ActionStore(AgentActionStoreFailure),
-    /// Tool attempt lifecycle persistence failed.
-    Recovery(AgentRecoveryStoreFailure),
+    /// Persistence failed before the mutation adapter could be invoked.
+    MutationStartStore(AgentRecoveryStoreFailure),
+    /// Persistence failed after a mutation boundary could have produced an effect.
+    MutationResultStore(AgentRecoveryStoreFailure),
     /// Index refresh input was invalid.
     ChangeBatch(RepositoryChangeBatchError),
     /// Repository index refresh failed before current context could continue.
@@ -1971,7 +2197,8 @@ impl fmt::Display for MutationControllerFailure {
             Self::PolicyStore(_) => "mutation policy persistence failed",
             Self::Journal(_) => "mutation journal persistence failed",
             Self::ActionStore(_) => "mutation Ledger persistence failed",
-            Self::Recovery(_) => "mutation tool lifecycle persistence failed",
+            Self::MutationStartStore(_) => "mutation start persistence failed",
+            Self::MutationResultStore(_) => "mutation result persistence failed",
             Self::ChangeBatch(_) => "mutation changed-path batch is invalid",
             Self::Index(_) => "mutation index refresh failed",
             Self::EvidenceStore(_) => "mutation verification evidence persistence failed",
@@ -1981,6 +2208,47 @@ impl fmt::Display for MutationControllerFailure {
             Self::Context(_) => "post-mutation context compilation failed",
             Self::Run(_) => "mutation run event failed",
         })
+    }
+}
+
+impl MutationControllerFailure {
+    /// Returns the conservative application state at the point orchestration stopped.
+    #[must_use]
+    pub const fn mutation_application_state(&self) -> MutationApplicationState {
+        match self {
+            Self::MutationStartStore(AgentRecoveryStoreFailure::MutationReconciliationRequired)
+            | Self::MutationResultStore(_)
+            | Self::InvalidContextState
+            | Self::StaleCompiledContext
+            | Self::InvalidToolResult
+            | Self::ChangeBatch(_)
+            | Self::Index(_)
+            | Self::EvidenceStore(_)
+            | Self::Verification(_)
+            | Self::Ledger(_)
+            | Self::Controller(_)
+            | Self::Context(_)
+            | Self::Run(_) => MutationApplicationState::Unknown,
+            Self::NotMutatingAction
+            | Self::AnchorMismatch
+            | Self::CommandSelectionRequired
+            | Self::InvalidCommandSelection
+            | Self::InvalidContextSeed
+            | Self::InvalidStaticText
+            | Self::InvalidTimestamp
+            | Self::InvalidPolicyResult
+            | Self::Busy(_)
+            | Self::Fingerprint(_)
+            | Self::PatchPreview(_)
+            | Self::PatchAuthorization(_)
+            | Self::ProcessAuthorization(_)
+            | Self::Command(_)
+            | Self::Policy(_)
+            | Self::PolicyStore(_)
+            | Self::Journal(_)
+            | Self::ActionStore(_)
+            | Self::MutationStartStore(_) => MutationApplicationState::NotApplied,
+        }
     }
 }
 
@@ -1997,7 +2265,7 @@ impl Error for MutationControllerFailure {
             Self::PolicyStore(error) => Some(error),
             Self::Journal(error) => Some(error),
             Self::ActionStore(error) => Some(error),
-            Self::Recovery(error) => Some(error),
+            Self::MutationStartStore(error) | Self::MutationResultStore(error) => Some(error),
             Self::ChangeBatch(error) => Some(error),
             Self::Index(error) => Some(error),
             Self::EvidenceStore(error) => Some(error),
@@ -2041,7 +2309,6 @@ failure_from!(EvaluateActionPolicyError, Policy);
 failure_from!(PolicyStoreFailure, PolicyStore);
 failure_from!(RunJournalStoreFailure, Journal);
 failure_from!(AgentActionStoreFailure, ActionStore);
-failure_from!(AgentRecoveryStoreFailure, Recovery);
 failure_from!(RepositoryChangeBatchError, ChangeBatch);
 failure_from!(RefreshRepositoryIndexError, Index);
 failure_from!(VerificationEvidenceStoreFailure, EvidenceStore);

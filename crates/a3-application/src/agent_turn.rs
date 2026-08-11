@@ -746,6 +746,14 @@ impl fmt::Display for ExecuteAgentTurnFailure {
     }
 }
 
+impl ExecuteAgentTurnFailure {
+    /// Model, context, provider, and read failures occur before any mutating action is returned.
+    #[must_use]
+    pub const fn mutation_application_state(&self) -> a3_domain::MutationApplicationState {
+        a3_domain::MutationApplicationState::NotApplied
+    }
+}
+
 impl Error for ExecuteAgentTurnFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
@@ -934,6 +942,16 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    #[test]
+    fn provider_disconnect_is_explicitly_not_applied() {
+        let failure = ExecuteAgentTurnFailure::Model(ModelProviderFailure::Unavailable);
+
+        assert_eq!(
+            failure.mutation_application_state(),
+            a3_domain::MutationApplicationState::NotApplied
+        );
+    }
+
     impl AgentReadTools for CountingReadTools {
         fn execute<'a>(
             &'a self,
@@ -1066,6 +1084,7 @@ mod tests {
             _event: &'a RunEvent,
             _tool_run_id: ToolRunId,
             _attempt: a3_domain::AgentToolAttemptNumber,
+            _result: crate::AgentMutationResultRecord,
         ) -> crate::AgentRecoveryStoreFuture<'a, a3_domain::AgentMutationAttempt> {
             Box::pin(async { Err(AgentRecoveryStoreFailure::InvalidStoredData) })
         }
@@ -1111,6 +1130,7 @@ mod tests {
         fn commit_agent_recovery<'a>(
             &'a self,
             _project: &'a ProjectIdentity,
+            _choice: crate::AgentRecoveryChoice,
             _expected_published_snapshot: SnapshotId,
             _expected_ledger_version: crate::TaskLedgerStoreVersion,
             _expected_last_sequence: RunEventSequence,

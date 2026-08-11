@@ -2083,7 +2083,7 @@ const KNOWLEDGE_MUTATION_RECOVERY_MIGRATION: Migration = Migration {
       application_state TEXT NOT NULL CHECK (application_state IN\n\
         ('applied', 'not_applied', 'unknown')),\n\
       reconciliation_state TEXT NOT NULL CHECK (reconciliation_state IN\n\
-        ('not_required', 'required', 'reconciled')),\n\
+        ('not_required', 'required', 'reconciled', 'replanned')),\n\
       reconciled_snapshot_id BLOB CHECK\n\
         (reconciled_snapshot_id IS NULL OR length(reconciled_snapshot_id) = 32),\n\
       reconciled_at_unix_millis INTEGER CHECK\n\
@@ -2093,7 +2093,7 @@ const KNOWLEDGE_MUTATION_RECOVERY_MIGRATION: Migration = Migration {
           AND reconciled_at_unix_millis IS NULL) OR\n\
         (application_state = 'unknown' AND reconciliation_state = 'required'\n\
           AND reconciled_snapshot_id IS NULL AND reconciled_at_unix_millis IS NULL) OR\n\
-        (application_state = 'unknown' AND reconciliation_state = 'reconciled'\n\
+        (application_state = 'unknown' AND reconciliation_state IN ('reconciled', 'replanned')\n\
           AND reconciled_snapshot_id IS NOT NULL AND reconciled_at_unix_millis IS NOT NULL)),\n\
       PRIMARY KEY (tool_run_id, attempt_sequence),\n\
       FOREIGN KEY (tool_run_id, attempt_sequence)\n\
@@ -2122,7 +2122,11 @@ const KNOWLEDGE_MUTATION_RECOVERY_MIGRATION: Migration = Migration {
         OR NEW.attempt_sequence <> OLD.attempt_sequence\n\
         OR NEW.action_fingerprint <> OLD.action_fingerprint\n\
         OR NEW.action_kind <> OLD.action_kind\n\
-        OR OLD.application_state <> 'unknown' OR OLD.reconciliation_state <> 'required'\n\
+        OR NOT ((OLD.application_state = 'unknown' AND OLD.reconciliation_state = 'required')\n\
+          OR (OLD.application_state = 'unknown' AND OLD.reconciliation_state = 'reconciled'\n\
+            AND NEW.application_state = 'unknown' AND NEW.reconciliation_state = 'replanned'\n\
+            AND NEW.reconciled_snapshot_id = OLD.reconciled_snapshot_id\n\
+            AND NEW.reconciled_at_unix_millis = OLD.reconciled_at_unix_millis))\n\
       BEGIN SELECT RAISE(ABORT, 'mutation attempt transition is invalid'); END;\n\
       CREATE TRIGGER mutation_attempts_delete_guard\n\
       BEFORE DELETE ON mutation_attempts\n\

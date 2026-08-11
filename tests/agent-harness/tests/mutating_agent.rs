@@ -3,36 +3,43 @@
 mod support;
 
 use a3_application::{
-    AdvanceAgentController, AgentControllerControl, AgentControllerSignal, AppendRunEvent,
-    CompileTaskLens, ConfirmProjectCommandAllowlist,
+    AdvanceAgentController, AgentControllerControl, AgentControllerSignal,
+    AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
+    AgentRecoveryStoreFuture, AppendRunEvent, CompileTaskLens, ConfirmProjectCommandAllowlist,
     ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
     CreateAgentRun, CreateGoalContract, CreateTaskLedger, DiscoverProjectCommands,
     ExecuteMutatingAgentAction, GrantPolicyApproval, IndexPersistenceControl,
-    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeStore, MutationActionFingerprint,
-    MutationCommandSelection, MutationContextSeed, MutationControllerFailure,
-    MutationControllerOutcome, MutationExecutionIds, PolicyStore, ProcessEventSink,
-    ProcessEventSinkError, ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
-    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
-    RepositoryIndexControlError, RepositoryRescanReason, RunEventPageLimit, RunJournalStore,
-    TaskLedgerStoreVersion, TaskLensControlError, WorkspacePatchControl,
-    WorkspacePatchProgressError, WorktreeMutationCoordinator,
+    IndexPersistenceControlError, InspectAgentRunRecovery, KnowledgeIndexStore, KnowledgeStore,
+    MutationActionFingerprint, MutationCommandSelection, MutationContextSeed,
+    MutationControllerFailure, MutationControllerOutcome, MutationExecutionIds, PatchApplyFailure,
+    PatchApplyFuture, PatchPreviewFuture, PolicyStore, ProcessEventSink, ProcessEventSinkError,
+    ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
+    ReconcileUnknownMutation, RecoverAgentRun, RefreshRepositoryIndex, RepositoryChangeBatch,
+    RepositoryIndexControl, RepositoryIndexControlError, RepositoryRescanReason, RunEventPageLimit,
+    RunJournalStore, TaskLedgerStoreVersion, TaskLensControlError, WorkspacePatchControl,
+    WorkspacePatchProgressError, WorkspacePatchTool, WorktreeMutationCoordinator,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentAction,
-    AgentControllerState, AgentRun, AgentRunAction, AgentRunId, AgentRunTimestamp, ApprovalId,
-    ApprovalRequestId, ApprovalStatus, ContentHash, DiffInvariantMode, DiffInvariantVerification,
-    DiscoveredCommandKind, ExpectedTaskEvidence, FileRevision, GoalContract, GoalContractDraft,
-    GoalContractTimestamp, GoalObjective, ModelCapabilities, ModelContextLimit, ModelId,
-    ModelOutputLimit, ModelParallelismLimit, ModelProfile, ModelProfileSettings,
-    ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
-    ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
-    ModelToolCallMode, ModelTopP, PatchAction, PatchActionSchemaVersion, PatchFileContent,
-    PatchOperation, PatchRationale, PatchUpdate, PolicyDecisionId, PolicyResourceId, ProcessEvent,
-    Progress, ProjectIdentity, PublishedIndex, RepositoryPath, RunEventId, RunEventKind,
-    SuccessVerification, TaskId, TaskLedger, TaskLedgerTimestamp, TaskStepDefinition, TaskStepId,
-    TaskStepOutcome, TaskStepRationale, TaskStepStatus, ToolRunId, VerificationRequirement,
-    VerificationRunId, VerificationScope, VerificationSpec, VerificationSpecId, WorkspacePolicy,
+    AgentControllerState, AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind,
+    AgentRun, AgentRunAction, AgentRunId, AgentRunTimestamp, AgentToolAttempt,
+    AgentToolAttemptNumber, AgentToolAttemptStatus, ApprovalId, ApprovalRequestId, ApprovalStatus,
+    ContentHash, DiffInvariantMode, DiffInvariantVerification, DiscoveredCommandKind,
+    ExpectedTaskEvidence, FileRevision, GoalContract, GoalContractDraft, GoalContractTimestamp,
+    GoalObjective, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
+    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
+    ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
+    ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
+    MutationReconciliation, PatchAction, PatchActionSchemaVersion, PatchFileContent,
+    PatchOperation, PatchRationale, PatchUpdate, PolicyDecisionId, PolicyResourceId,
+    ProcessDuration, ProcessEvent, ProcessExit, ProcessOutputCapture, ProcessOutputContent,
+    ProcessOutputDigest, ProcessRunResult, ProcessStream, ProcessTermination, Progress,
+    ProjectIdentity, PublishedIndex, RepositoryPath, RunEvent, RunEventId, RunEventKind,
+    RunEventSequence, SnapshotId, SuccessVerification, TaskEvidenceId, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
+    TaskStepStatus, ToolRunId, VerificationRequirement, VerificationRunId, VerificationScope,
+    VerificationSpec, VerificationSpecId, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -357,6 +364,638 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
             return Err(test_error(
                 "typed diff verification did not complete the current step",
             ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = Fixture::new().await?;
+        let criterion_id = AcceptanceCriterionId::from_bytes(id(170));
+        let step_id = TaskStepId::from_bytes(id(171));
+        let spec_id = VerificationSpecId::from_bytes(id(172));
+        let spec = VerificationSpec::user_confirm(
+            spec_id,
+            requirement("a conflicting patch never replaces current content")?,
+            PolicyResourceId::from_bytes(id(173)),
+        );
+        let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+        let action = PatchAction::new(
+            PatchActionSchemaVersion::V1,
+            durable.run.id(),
+            fixture.project.worktree().id(),
+            fixture.published.run().snapshot_id(),
+            step_id,
+            spec_id,
+            PatchRationale::try_from_string(
+                "exercise the E8 post-authorization conflict path".to_owned(),
+            )?,
+            vec![PatchOperation::Update(PatchUpdate::new(
+                FileRevision::new(path("src/lib.rs")?, hash(ORIGINAL_SOURCE)),
+                PatchFileContent::try_from_bytes(UPDATED_SOURCE.to_vec())?,
+            )?)],
+        )?;
+        let refresh = refresh(fixture.store.clone());
+        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ));
+        let coordinator = WorktreeMutationCoordinator::new();
+        let real_patch = WorkspacePatchAdapter::new();
+        let patch_tool = ConflictingPatchTool {
+            preview: &real_patch,
+            applies: AtomicUsize::new(0),
+        };
+        let process_runner = FailingProcessRunner::default();
+        let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let controller = ExecuteMutatingAgentAction::new(
+            &coordinator,
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &patch_tool,
+            &process_runner,
+            &evidence_factory,
+            &context,
+            &refresh,
+        );
+        let seed = durable.context_seed();
+        let mut index_compiler = compiler()?;
+        let first = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action.clone())),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                None,
+                mutation_ids(180),
+                timestamp(20)?,
+                timestamp(100)?,
+                &seed,
+                &mut index_compiler,
+                &NoopProcessEvents,
+                &ActiveControl,
+            )
+            .await?;
+        let MutationControllerOutcome::AwaitingApproval(request_id) = first else {
+            return Err(test_error(
+                "conflict fixture patch did not request approval",
+            ));
+        };
+        let mut approval = GrantPolicyApproval::new(fixture.store.as_ref())
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                request_id,
+                ApprovalId::from_bytes(id(210)),
+                RunEventId::from_bytes(id(211)),
+                fixture.published.run().snapshot_id(),
+                timestamp(21)?,
+            )
+            .await?;
+        let outcome = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action)),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                Some(&mut approval),
+                mutation_ids(220),
+                timestamp(22)?,
+                timestamp(100)?,
+                &seed,
+                &mut index_compiler,
+                &NoopProcessEvents,
+                &ActiveControl,
+            )
+            .await?;
+        let attempt = fixture
+            .store
+            .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+            .await?
+            .into_iter()
+            .find(|attempt| attempt.tool_attempt().tool_run_id() == ToolRunId::from_bytes(id(224)))
+            .ok_or_else(|| test_error("conflicting patch attempt was not durable"))?;
+        if !matches!(outcome, MutationControllerOutcome::NextAction(_))
+            || patch_tool.applies.load(Ordering::SeqCst) != 1
+            || attempt.disposition() != AgentMutationDisposition::NotApplied
+            || attempt.tool_attempt().status() != AgentToolAttemptStatus::Failed
+            || std::fs::read(fixture.repository.path().join("src/lib.rs"))? != ORIGINAL_SOURCE
+        {
+            return Err(test_error(
+                "patch conflict changed content or received an ambiguous disposition",
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = Fixture::new().await?;
+        let criterion_id = AcceptanceCriterionId::from_bytes(id(190));
+        let step_id = TaskStepId::from_bytes(id(191));
+        let spec_id = VerificationSpecId::from_bytes(id(192));
+        let spec = VerificationSpec::user_confirm(
+            spec_id,
+            requirement("the reconciled worktree remains visible")?,
+            PolicyResourceId::from_bytes(id(193)),
+        );
+        let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+        let action = PatchAction::new(
+            PatchActionSchemaVersion::V1,
+            durable.run.id(),
+            fixture.project.worktree().id(),
+            fixture.published.run().snapshot_id(),
+            step_id,
+            spec_id,
+            PatchRationale::try_from_string(
+                "exercise the E8 patch-to-journal crash window".to_owned(),
+            )?,
+            vec![PatchOperation::Update(PatchUpdate::new(
+                FileRevision::new(path("src/lib.rs")?, hash(ORIGINAL_SOURCE)),
+                PatchFileContent::try_from_bytes(UPDATED_SOURCE.to_vec())?,
+            )?)],
+        )?;
+        let refresh = refresh(fixture.store.clone());
+        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ));
+        let coordinator = WorktreeMutationCoordinator::new();
+        let patch_tool = WorkspacePatchAdapter::new();
+        let process_runner = FailingProcessRunner::default();
+        let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let failing_recovery = FaultingMutationStore {
+            inner: fixture.store.as_ref(),
+            fault: MutationStoreFault::Complete(AgentRecoveryStoreFailure::Unavailable),
+        };
+        let controller = ExecuteMutatingAgentAction::new(
+            &coordinator,
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &failing_recovery,
+            fixture.store.as_ref(),
+            &patch_tool,
+            &process_runner,
+            &evidence_factory,
+            &context,
+            &refresh,
+        );
+        let seed = durable.context_seed();
+        let mut index_compiler = compiler()?;
+        let events = NoopProcessEvents;
+        let ids = mutation_ids(200);
+        let first = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action.clone())),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                None,
+                ids,
+                timestamp(20)?,
+                timestamp(100)?,
+                &seed,
+                &mut index_compiler,
+                &events,
+                &ActiveControl,
+            )
+            .await?;
+        let MutationControllerOutcome::AwaitingApproval(request_id) = first else {
+            return Err(test_error("crash fixture patch did not request approval"));
+        };
+        let mut approval = GrantPolicyApproval::new(fixture.store.as_ref())
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                request_id,
+                ApprovalId::from_bytes(id(220)),
+                RunEventId::from_bytes(id(221)),
+                fixture.published.run().snapshot_id(),
+                timestamp(21)?,
+            )
+            .await?;
+        let failed = match controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action)),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                Some(&mut approval),
+                mutation_ids(230),
+                timestamp(22)?,
+                timestamp(100)?,
+                &seed,
+                &mut index_compiler,
+                &events,
+                &ActiveControl,
+            )
+            .await
+        {
+            Err(failure) => failure,
+            Ok(_) => {
+                return Err(test_error(
+                    "injected mutation result commit unexpectedly succeeded",
+                ));
+            }
+        };
+        if !matches!(
+            failed,
+            MutationControllerFailure::MutationResultStore(AgentRecoveryStoreFailure::Unavailable)
+        ) || failed.mutation_application_state() != a3_domain::MutationApplicationState::Unknown
+        {
+            return Err(std::io::Error::other(format!(
+                "patch-to-journal failure was not Unknown: {failed:?} classified {:?}",
+                failed.mutation_application_state()
+            ))
+            .into());
+        }
+        fixture
+            .repository
+            .write("src/foreign.rs", b"pub fn foreign() {}\n")?;
+        if std::fs::read(fixture.repository.path().join("src/lib.rs"))? != UPDATED_SOURCE {
+            return Err(test_error("injected crash lost the applied patch"));
+        }
+        let tool_run_id = ToolRunId::from_bytes(id(234));
+        let unknown = fixture
+            .store
+            .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+            .await?
+            .into_iter()
+            .find(|attempt| attempt.tool_attempt().tool_run_id() == tool_run_id)
+            .ok_or_else(|| test_error("crash did not retain the mutation attempt"))?;
+        if unknown.disposition()
+            != AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+        {
+            return Err(test_error(
+                "crash attempt did not remain unreconciled Unknown",
+            ));
+        }
+
+        let reconciliation =
+            ReconcileUnknownMutation::new(&coordinator, fixture.store.as_ref(), &refresh)
+                .execute(
+                    &fixture.project,
+                    &mut durable.run,
+                    tool_run_id,
+                    unknown.tool_attempt().attempt(),
+                    RunEventId::from_bytes(id(250)),
+                    timestamp(23)?,
+                    &mut index_compiler,
+                    &ActiveControl,
+                )
+                .await?;
+        let foreign_path = path("src/foreign.rs")?;
+        if reconciliation.attempt().disposition()
+            != AgentMutationDisposition::Unknown(MutationReconciliation::Reconciled {
+                snapshot_id: reconciliation.published_index().run().snapshot_id(),
+            })
+            || !reconciliation
+                .published_index()
+                .publication()
+                .graph()
+                .files()
+                .iter()
+                .any(|revision| revision.path() == &foreign_path)
+        {
+            return Err(test_error(
+                "full reconciliation did not retain patch and foreign change",
+            ));
+        }
+        let inspection = InspectAgentRunRecovery::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        )
+        .execute(
+            &fixture.project,
+            durable.run.id(),
+            timestamp(24)?,
+            &ActiveControl,
+        )
+        .await?;
+        if inspection.can_resume()
+            || inspection.mutation_reconciliation_required()
+            || !inspection.mutation_replan_required()
+        {
+            return Err(test_error("reconciled Unknown did not require Replan"));
+        }
+        let replanned = RecoverAgentRun::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        )
+        .execute(
+            &fixture.project,
+            durable.run.id(),
+            AgentRecoveryChoice::Replan,
+            RunEventId::from_bytes(id(251)),
+            timestamp(25)?,
+            &ActiveControl,
+        )
+        .await?;
+        let next = fixture
+            .store
+            .begin_agent_mutation_attempt(
+                &fixture.project,
+                replanned.run().id(),
+                replanned.run().current_snapshot_id(),
+                ToolRunId::from_bytes(id(252)),
+                MutationActionFingerprint::from_bytes(id(253)),
+                AgentMutationKind::Process,
+                timestamp(26)?,
+            )
+            .await?;
+        fixture
+            .store
+            .finish_agent_mutation_attempt(
+                &fixture.project,
+                next.tool_attempt().tool_run_id(),
+                next.tool_attempt().attempt(),
+                AgentToolAttemptStatus::Denied,
+                AgentMutationDisposition::NotApplied,
+                timestamp(27)?,
+            )
+            .await?;
+        if std::fs::read(fixture.repository.path().join("src/lib.rs"))? != UPDATED_SOURCE
+            || std::fs::read(fixture.repository.path().join("src/foreign.rs"))?
+                != b"pub fn foreign() {}\n"
+        {
+            return Err(test_error("recovery discarded a foreign worktree change"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Result<(), Box<dyn Error>>
+{
+    run_libsql_test(async {
+        for (case, failure) in [
+            AgentRecoveryStoreFailure::Unavailable,
+            AgentRecoveryStoreFailure::Corrupt,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new().await?;
+            let catalog = DiscoverProjectCommands
+                .execute(fixture.project.worktree().id(), &fixture.published)?;
+            let command = catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or_else(|| test_error("fixture test command was not discovered"))?;
+            let confirmation = ConfirmProjectCommandAllowlist::new(fixture.store.as_ref())
+                .execute(
+                    &fixture.project,
+                    &catalog,
+                    vec![command.id()],
+                    timestamp(10)?,
+                    None,
+                )
+                .await?;
+            let case_id = u8::try_from(case)?;
+            let criterion_id = AcceptanceCriterionId::from_bytes(id(60 + case_id));
+            let step_id = TaskStepId::from_bytes(id(70 + case_id));
+            let spec = VerificationSpec::command(
+                VerificationSpecId::from_bytes(id(80 + case_id)),
+                requirement("storage must be durable before process start")?,
+                command.id(),
+                VerificationScope::Workspace,
+            );
+            let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+            let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
+            let selection = MutationCommandSelection::new(&catalog, &confirmation);
+            let refresh = refresh(fixture.store.clone());
+            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ));
+            let coordinator = WorktreeMutationCoordinator::new();
+            let patch_tool = WorkspacePatchAdapter::new();
+            let process_runner = FailingProcessRunner::default();
+            let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+            let faulting_recovery = FaultingMutationStore {
+                inner: fixture.store.as_ref(),
+                fault: MutationStoreFault::Begin(failure),
+            };
+            let controller = ExecuteMutatingAgentAction::new(
+                &coordinator,
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                &faulting_recovery,
+                fixture.store.as_ref(),
+                &patch_tool,
+                &process_runner,
+                &evidence_factory,
+                &context,
+                &refresh,
+            );
+            let seed = durable.context_seed();
+            let mut index_compiler = compiler()?;
+            let base = 30 + case_id.saturating_mul(20);
+            let error = match controller
+                .execute(
+                    &fixture.project,
+                    &mut durable.run,
+                    &mut durable.ledger,
+                    &mut durable.ledger_version,
+                    &fixture.published,
+                    action,
+                    Some(selection),
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    mutation_ids(base),
+                    timestamp(20 + u64::from(case_id))?,
+                    timestamp(100)?,
+                    &seed,
+                    &mut index_compiler,
+                    &NoopProcessEvents,
+                    &ActiveControl,
+                )
+                .await
+            {
+                Err(error) => error,
+                Ok(_) => {
+                    return Err(test_error(
+                        "faulting recovery store unexpectedly opened process boundary",
+                    ));
+                }
+            };
+            if !matches!(
+                &error,
+                MutationControllerFailure::MutationStartStore(actual) if *actual == failure
+            ) || error.mutation_application_state()
+                != a3_domain::MutationApplicationState::NotApplied
+                || process_runner.calls.load(Ordering::SeqCst) != 0
+                || !fixture
+                    .store
+                    .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+                    .await?
+                    .is_empty()
+            {
+                return Err(test_error(
+                    "recovery storage failure crossed or ambiguously classified mutation",
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
+-> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        for (case, mode) in [
+            ScriptedProcessMode::ExitedFailure,
+            ScriptedProcessMode::TimedOut,
+            ScriptedProcessMode::CancelledAfterStart,
+            ScriptedProcessMode::CancelledBeforeStart,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new().await?;
+            let catalog = DiscoverProjectCommands
+                .execute(fixture.project.worktree().id(), &fixture.published)?;
+            let command = catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == DiscoveredCommandKind::Test)
+                .ok_or_else(|| test_error("fixture test command was not discovered"))?;
+            let confirmation = ConfirmProjectCommandAllowlist::new(fixture.store.as_ref())
+                .execute(
+                    &fixture.project,
+                    &catalog,
+                    vec![command.id()],
+                    timestamp(10)?,
+                    None,
+                )
+                .await?;
+            let case_id = u8::try_from(case)?;
+            let criterion_id = AcceptanceCriterionId::from_bytes(id(90 + case_id));
+            let step_id = TaskStepId::from_bytes(id(100 + case_id));
+            let spec = VerificationSpec::command(
+                VerificationSpecId::from_bytes(id(110 + case_id)),
+                requirement("the scripted recovery command exits successfully")?,
+                command.id(),
+                VerificationScope::Workspace,
+            );
+            let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+            let action = AgentAction::Run(AgentRunAction::new(step_id, command.id()));
+            let selection = MutationCommandSelection::new(&catalog, &confirmation);
+            let refresh = refresh(fixture.store.clone());
+            let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+            ));
+            let coordinator = WorktreeMutationCoordinator::new();
+            let patch_tool = WorkspacePatchAdapter::new();
+            let process_runner = ScriptedProcessRunner::new(mode);
+            let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+            let controller = ExecuteMutatingAgentAction::new(
+                &coordinator,
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                fixture.store.as_ref(),
+                &patch_tool,
+                &process_runner,
+                &evidence_factory,
+                &context,
+                &refresh,
+            );
+            let seed = durable.context_seed();
+            let mut index_compiler = compiler()?;
+            let events = NoopProcessEvents;
+            let base = 120 + case_id.saturating_mul(20);
+            let execution_ids = mutation_ids(base);
+            let outcome = controller
+                .execute(
+                    &fixture.project,
+                    &mut durable.run,
+                    &mut durable.ledger,
+                    &mut durable.ledger_version,
+                    &fixture.published,
+                    action,
+                    Some(selection),
+                    &WorkspacePolicy::unrestricted(),
+                    None,
+                    execution_ids,
+                    timestamp(20 + u64::from(case_id))?,
+                    timestamp(100)?,
+                    &seed,
+                    &mut index_compiler,
+                    &events,
+                    &ActiveControl,
+                )
+                .await
+                .map_err(|error| {
+                    std::io::Error::other(format!(
+                        "scripted process case {mode:?} failed: {error:?}"
+                    ))
+                })?;
+            let has_reconciliation_outcome = matches!(
+                outcome,
+                MutationControllerOutcome::ReconciliationRequired { .. }
+            );
+            if has_reconciliation_outcome != mode.requires_reconciliation()
+                || process_runner.calls.load(Ordering::SeqCst) != 1
+            {
+                return Err(test_error(
+                    "process terminal state produced the wrong controller outcome",
+                ));
+            }
+            let attempt = fixture
+                .store
+                .load_agent_mutation_attempts(&fixture.project, durable.run.id())
+                .await?
+                .into_iter()
+                .find(|attempt| {
+                    attempt.tool_attempt().tool_run_id()
+                        == ToolRunId::from_bytes(id(base.wrapping_add(4)))
+                })
+                .ok_or_else(|| test_error("process mutation attempt was not durable"))?;
+            if attempt.disposition() != mode.expected_disposition()
+                || attempt.tool_attempt().status() != mode.expected_status()
+            {
+                return Err(test_error(
+                    "process terminal state produced the wrong durable disposition",
+                ));
+            }
         }
         Ok(())
     })
@@ -773,6 +1412,331 @@ fn timestamp(value: u64) -> Result<AgentRunTimestamp, Box<dyn Error>> {
 
 fn test_error(message: &'static str) -> Box<dyn Error> {
     std::io::Error::other(message).into()
+}
+
+#[derive(Debug)]
+struct FaultingMutationStore<'a> {
+    inner: &'a dyn AgentRecoveryStore,
+    fault: MutationStoreFault,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MutationStoreFault {
+    Begin(AgentRecoveryStoreFailure),
+    Complete(AgentRecoveryStoreFailure),
+}
+
+impl AgentRecoveryStore for FaultingMutationStore<'_> {
+    fn begin_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        self.inner
+            .begin_agent_tool_attempt(project, run_id, snapshot_id, tool_run_id, started_at)
+    }
+
+    fn begin_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        snapshot_id: SnapshotId,
+        tool_run_id: ToolRunId,
+        fingerprint: MutationActionFingerprint,
+        kind: AgentMutationKind,
+        started_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        if let MutationStoreFault::Begin(failure) = self.fault {
+            return Box::pin(async move { Err(failure) });
+        }
+        self.inner.begin_agent_mutation_attempt(
+            project,
+            run_id,
+            snapshot_id,
+            tool_run_id,
+            fingerprint,
+            kind,
+            started_at,
+        )
+    }
+
+    fn finish_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        status: AgentToolAttemptStatus,
+        finished_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        self.inner
+            .finish_agent_tool_attempt(project, tool_run_id, attempt, status, finished_at)
+    }
+
+    fn finish_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        status: AgentToolAttemptStatus,
+        disposition: AgentMutationDisposition,
+        finished_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        self.inner.finish_agent_mutation_attempt(
+            project,
+            tool_run_id,
+            attempt,
+            status,
+            disposition,
+            finished_at,
+        )
+    }
+
+    fn complete_agent_tool_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
+        self.inner.complete_agent_tool_attempt(
+            project,
+            expected_last_sequence,
+            run,
+            event,
+            tool_run_id,
+            attempt,
+        )
+    }
+
+    fn complete_agent_mutation_attempt<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+        result: AgentMutationResultRecord,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        if let MutationStoreFault::Complete(failure) = self.fault {
+            return Box::pin(async move { Err(failure) });
+        }
+        self.inner.complete_agent_mutation_attempt(
+            project,
+            expected_last_sequence,
+            run,
+            event,
+            tool_run_id,
+            attempt,
+            result,
+        )
+    }
+
+    fn interrupt_agent_tool_attempts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        interrupted_at: AgentRunTimestamp,
+    ) -> AgentRecoveryStoreFuture<'a, u32> {
+        self.inner
+            .interrupt_agent_tool_attempts(project, run_id, interrupted_at)
+    }
+
+    fn load_agent_mutation_attempts<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+    ) -> AgentRecoveryStoreFuture<'a, Vec<AgentMutationAttempt>> {
+        self.inner.load_agent_mutation_attempts(project, run_id)
+    }
+
+    fn reconcile_agent_mutation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_last_sequence: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        tool_run_id: ToolRunId,
+        attempt: AgentToolAttemptNumber,
+    ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
+        self.inner.reconcile_agent_mutation(
+            project,
+            expected_last_sequence,
+            run,
+            event,
+            tool_run_id,
+            attempt,
+        )
+    }
+
+    fn load_agent_tool_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        evidence_ids: &'a [TaskEvidenceId],
+    ) -> AgentRecoveryStoreFuture<'a, Vec<a3_domain::AgentToolEvidence>> {
+        self.inner
+            .load_agent_tool_evidence(project, run_id, evidence_ids)
+    }
+
+    fn commit_agent_recovery<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        choice: AgentRecoveryChoice,
+        expected_published_snapshot: SnapshotId,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        expected_last_sequence: RunEventSequence,
+        ledger: &'a TaskLedger,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+    ) -> AgentRecoveryStoreFuture<'a, TaskLedgerStoreVersion> {
+        self.inner.commit_agent_recovery(
+            project,
+            choice,
+            expected_published_snapshot,
+            expected_ledger_version,
+            expected_last_sequence,
+            ledger,
+            run,
+            event,
+        )
+    }
+}
+
+#[derive(Debug)]
+struct ConflictingPatchTool<'a> {
+    preview: &'a dyn WorkspacePatchTool,
+    applies: AtomicUsize,
+}
+
+impl WorkspacePatchTool for ConflictingPatchTool<'_> {
+    fn preview<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        published: &'a PublishedIndex,
+        action: &'a PatchAction,
+        control: &'a dyn WorkspacePatchControl,
+    ) -> PatchPreviewFuture<'a> {
+        self.preview.preview(project, published, action, control)
+    }
+
+    fn apply<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _published: &'a PublishedIndex,
+        _authorized: a3_application::AuthorizedPatchAction,
+        _control: &'a dyn WorkspacePatchControl,
+    ) -> PatchApplyFuture<'a> {
+        self.applies.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Err(PatchApplyFailure::Conflict) })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ScriptedProcessMode {
+    ExitedFailure,
+    TimedOut,
+    CancelledAfterStart,
+    CancelledBeforeStart,
+}
+
+impl ScriptedProcessMode {
+    const fn requires_reconciliation(self) -> bool {
+        matches!(self, Self::TimedOut | Self::CancelledAfterStart)
+    }
+
+    const fn expected_disposition(self) -> AgentMutationDisposition {
+        match self {
+            Self::ExitedFailure => AgentMutationDisposition::Applied,
+            Self::TimedOut | Self::CancelledAfterStart => {
+                AgentMutationDisposition::Unknown(MutationReconciliation::Required)
+            }
+            Self::CancelledBeforeStart => AgentMutationDisposition::NotApplied,
+        }
+    }
+
+    const fn expected_status(self) -> AgentToolAttemptStatus {
+        match self {
+            Self::ExitedFailure => AgentToolAttemptStatus::Succeeded,
+            Self::TimedOut => AgentToolAttemptStatus::Failed,
+            Self::CancelledAfterStart | Self::CancelledBeforeStart => {
+                AgentToolAttemptStatus::Cancelled
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ScriptedProcessRunner {
+    mode: ScriptedProcessMode,
+    calls: AtomicUsize,
+}
+
+impl ScriptedProcessRunner {
+    const fn new(mode: ScriptedProcessMode) -> Self {
+        Self {
+            mode,
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ProcessRunner for ScriptedProcessRunner {
+    fn run<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        authorized: a3_application::AuthorizedProcessSpec,
+        _control: &'a dyn ProcessRunControl,
+        _events: &'a dyn ProcessEventSink,
+    ) -> ProcessRunFuture<'a> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let mode = self.mode;
+        Box::pin(async move {
+            if matches!(mode, ScriptedProcessMode::CancelledBeforeStart) {
+                return Err(ProcessRunFailure::Cancelled);
+            }
+            let (specification, policy_decision_id) = authorized.into_parts();
+            let termination = match mode {
+                ScriptedProcessMode::ExitedFailure => {
+                    let exit = ProcessExit::new(Some(1), false)
+                        .map_err(|_| ProcessRunFailure::InvalidResult)?;
+                    ProcessTermination::Exited(exit)
+                }
+                ScriptedProcessMode::TimedOut => ProcessTermination::TimedOut,
+                ScriptedProcessMode::CancelledAfterStart => ProcessTermination::Cancelled,
+                ScriptedProcessMode::CancelledBeforeStart => {
+                    return Err(ProcessRunFailure::InvalidResult);
+                }
+            };
+            let capture = |stream| {
+                let content = ProcessOutputContent::text(String::new())
+                    .map_err(|_| ProcessRunFailure::InvalidResult)?;
+                ProcessOutputCapture::new(
+                    stream,
+                    content,
+                    0,
+                    1_024,
+                    false,
+                    ProcessOutputDigest::from_bytes([0; 32]),
+                )
+                .map_err(|_| ProcessRunFailure::InvalidResult)
+            };
+            ProcessRunResult::new(
+                specification.specification_id(),
+                policy_decision_id,
+                termination,
+                ProcessDuration::from_millis(1),
+                capture(ProcessStream::Stdout)?,
+                capture(ProcessStream::Stderr)?,
+            )
+            .map_err(|_| ProcessRunFailure::InvalidResult)
+        })
+    }
 }
 
 #[derive(Debug, Default)]

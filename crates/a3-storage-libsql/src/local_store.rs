@@ -13,24 +13,25 @@ use crate::{
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
-    AgentRecoveryStore, AgentRecoveryStoreFailure, AgentRecoveryStoreFuture, CommandAllowlistStore,
-    CommandAllowlistStoreFailure, CommandAllowlistStoreFuture, CommandAllowlistStoreVersion,
-    EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
-    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
-    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleRemapQueueFailure,
-    ModuleRemapQueueFuture, ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure,
-    PolicyStoreFuture, ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject,
-    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage,
-    RunEventPageLimit, RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture,
-    SemanticCacheRebuildControl, SemanticEmbeddingStore, SemanticEmbeddingStoreFailure,
-    SemanticEmbeddingStoreFuture, StoredProjectCommandAllowlist, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
-    TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
-    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
-    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
+    AgentRecoveryStoreFuture, CommandAllowlistStore, CommandAllowlistStoreFailure,
+    CommandAllowlistStoreFuture, CommandAllowlistStoreVersion, EmbeddingOperationControl,
+    EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
+    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
+    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
+    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
+    ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
+    ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture,
+    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
+    RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage, RunEventPageLimit,
+    RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
+    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    StoredProjectCommandAllowlist, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
+    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
+    TaskLensIndexStoreFuture, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
+    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
@@ -761,6 +762,7 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
         event: &'a RunEvent,
         tool_run_id: ToolRunId,
         attempt: AgentToolAttemptNumber,
+        result: AgentMutationResultRecord,
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
@@ -772,6 +774,7 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
                 event,
                 tool_run_id,
                 attempt,
+                result,
             )
             .await
             .map_err(|error| error.classify())
@@ -861,6 +864,7 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     fn commit_agent_recovery<'a>(
         &'a self,
         project: &'a ProjectIdentity,
+        choice: AgentRecoveryChoice,
         expected_published_snapshot: SnapshotId,
         expected_ledger_version: TaskLedgerStoreVersion,
         expected_last_sequence: RunEventSequence,
@@ -873,6 +877,7 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
             agent_recovery_repository::commit_recovery(
                 database.connection(),
                 project.worktree().id(),
+                choice,
                 expected_published_snapshot,
                 expected_ledger_version,
                 expected_last_sequence,

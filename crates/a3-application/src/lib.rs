@@ -33,6 +33,7 @@ mod module_card_verification;
 mod module_remap_queue;
 mod mutating_agent_controller;
 mod mutation_coordinator;
+mod mutation_reconciliation;
 mod open_project;
 mod policy;
 mod policy_store;
@@ -76,8 +77,8 @@ pub use agent_prompt::{
 };
 pub use agent_read_result::{AgentReadResult, AgentReadResultError, RecordedAgentRead};
 pub use agent_recovery::{
-    AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection, AgentRecoveryOutcome,
-    AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
+    AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection,
+    AgentRecoveryOutcome, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, InspectAgentRunRecovery, RecoverAgentRun,
 };
 pub use agent_source_reader::{
@@ -193,6 +194,9 @@ pub use mutating_agent_controller::{
 pub use mutation_coordinator::{
     MutationFailureClass, MutationProgressDecision, WorktreeMutationBusy,
     WorktreeMutationCoordinator, WorktreeMutationLease,
+};
+pub use mutation_reconciliation::{
+    MutationReconciliationError, MutationReconciliationOutcome, ReconcileUnknownMutation,
 };
 pub use open_project::{
     OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker,

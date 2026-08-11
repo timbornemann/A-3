@@ -1,7 +1,7 @@
 use crate::{
-    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexStore, RunJournalStore,
-    RunJournalStoreFailure, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
-    TaskLedgerStoreVersion,
+    ContextToolResultDigest, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexStore,
+    RunJournalStore, RunJournalStoreFailure, StoredTaskLedger, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreVersion,
 };
 use a3_domain::{
     AgentControllerState, AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind,
@@ -23,6 +23,48 @@ const INVALIDATION_BATCH_SIZE: usize = 64;
 /// Owned future returned by the object-safe durable recovery capability.
 pub type AgentRecoveryStoreFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, AgentRecoveryStoreFailure>> + Send + 'a>>;
+
+/// Content-free normalized mutation result retained with its definitive tool event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentMutationResultRecord {
+    digest: ContextToolResultDigest,
+    truncated: bool,
+    observed_output_bytes: u64,
+}
+
+impl AgentMutationResultRecord {
+    /// Creates the bounded result metadata produced by the owning mutation adapter.
+    #[must_use]
+    pub const fn new(
+        digest: ContextToolResultDigest,
+        truncated: bool,
+        observed_output_bytes: u64,
+    ) -> Self {
+        Self {
+            digest,
+            truncated,
+            observed_output_bytes,
+        }
+    }
+
+    /// Returns the digest of the complete normalized result.
+    #[must_use]
+    pub const fn digest(self) -> ContextToolResultDigest {
+        self.digest
+    }
+
+    /// Returns whether the retained result crossed a bounded output limit.
+    #[must_use]
+    pub const fn truncated(self) -> bool {
+        self.truncated
+    }
+
+    /// Returns the normalized bytes observed before redaction or truncation.
+    #[must_use]
+    pub const fn observed_output_bytes(self) -> u64 {
+        self.observed_output_bytes
+    }
+}
 
 /// Storage operations that must be atomic at the crash/restart boundary.
 pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
@@ -92,6 +134,7 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
         event: &'a RunEvent,
         tool_run_id: ToolRunId,
         attempt: AgentToolAttemptNumber,
+        result: AgentMutationResultRecord,
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt>;
 
     /// Marks every attempt left in flight by an application stop as interrupted.
@@ -134,6 +177,7 @@ pub trait AgentRecoveryStore: fmt::Debug + Send + Sync {
     fn commit_agent_recovery<'a>(
         &'a self,
         project: &'a ProjectIdentity,
+        choice: AgentRecoveryChoice,
         expected_published_snapshot: SnapshotId,
         expected_ledger_version: TaskLedgerStoreVersion,
         expected_last_sequence: RunEventSequence,
@@ -214,6 +258,7 @@ pub struct AgentRecoveryInspection {
     published_snapshot_id: SnapshotId,
     interrupted_tool_attempts: u32,
     stale_evidence_ids: Vec<TaskEvidenceId>,
+    mutation_attempts: Vec<AgentMutationAttempt>,
 }
 
 impl AgentRecoveryInspection {
@@ -259,10 +304,36 @@ impl AgentRecoveryInspection {
         &self.stale_evidence_ids
     }
 
+    /// Returns every content-free mutation disposition in stable attempt order.
+    #[must_use]
+    pub fn mutation_attempts(&self) -> &[AgentMutationAttempt] {
+        &self.mutation_attempts
+    }
+
+    /// Returns whether at least one Unknown still needs an authoritative full-scan baseline.
+    #[must_use]
+    pub fn mutation_reconciliation_required(&self) -> bool {
+        self.mutation_attempts
+            .iter()
+            .any(|attempt| attempt.disposition().requires_reconciliation())
+    }
+
+    /// Returns whether an Unknown baseline exists but has not yet passed recovery Replan.
+    #[must_use]
+    pub fn mutation_replan_required(&self) -> bool {
+        self.mutation_attempts
+            .iter()
+            .any(|attempt| attempt.disposition().requires_replan())
+    }
+
     /// Resume is safe only while every completed verification remains evidence-current.
     #[must_use]
     pub fn can_resume(&self) -> bool {
         self.stale_evidence_ids.is_empty()
+            && self
+                .mutation_attempts
+                .iter()
+                .all(|attempt| attempt.disposition().permits_future_mutation())
     }
 }
 
@@ -325,6 +396,7 @@ struct RecoveryMaterial {
     stored_ledger: StoredTaskLedger,
     published_snapshot_id: SnapshotId,
     stale_evidence_ids: Vec<TaskEvidenceId>,
+    mutation_attempts: Vec<AgentMutationAttempt>,
     interrupted_tool_attempts: u32,
 }
 
@@ -380,6 +452,7 @@ impl<'a> InspectAgentRunRecovery<'a> {
             published_snapshot_id: material.published_snapshot_id,
             interrupted_tool_attempts: material.interrupted_tool_attempts,
             stale_evidence_ids: material.stale_evidence_ids,
+            mutation_attempts: material.mutation_attempts,
         })
     }
 }
@@ -432,7 +505,20 @@ impl<'a> RecoverAgentRun<'a> {
             control,
         )
         .await?;
-        if choice == AgentRecoveryChoice::Resume && !material.stale_evidence_ids.is_empty() {
+        let reconciliation_required = material
+            .mutation_attempts
+            .iter()
+            .any(|attempt| attempt.disposition().requires_reconciliation());
+        let mutation_replan_required = material
+            .mutation_attempts
+            .iter()
+            .any(|attempt| attempt.disposition().requires_replan());
+        if choice != AgentRecoveryChoice::Cancel && reconciliation_required {
+            return Err(AgentRecoveryError::MutationReconciliationRequired);
+        }
+        if choice == AgentRecoveryChoice::Resume
+            && (!material.stale_evidence_ids.is_empty() || mutation_replan_required)
+        {
             return Err(AgentRecoveryError::ResumeRequiresReplan);
         }
 
@@ -504,6 +590,7 @@ impl<'a> RecoverAgentRun<'a> {
             .recovery
             .commit_agent_recovery(
                 project,
+                choice,
                 material.published_snapshot_id,
                 expected_ledger_version,
                 expected_sequence,
@@ -552,6 +639,9 @@ async fn load_recovery_material(
     {
         return Err(AgentRecoveryError::AnchorMismatch);
     }
+    let mutation_attempts = recovery
+        .load_agent_mutation_attempts(project, run_id)
+        .await?;
     let published = index
         .latest_published_index(project, control)
         .await?
@@ -583,6 +673,7 @@ async fn load_recovery_material(
         stored_ledger,
         published_snapshot_id: published.run().snapshot_id(),
         stale_evidence_ids,
+        mutation_attempts,
         interrupted_tool_attempts,
     })
 }
@@ -674,6 +765,8 @@ pub enum AgentRecoveryError {
     PublishedIndexUnavailable,
     /// Resume was selected despite stale completed-verification evidence.
     ResumeRequiresReplan,
+    /// A non-cancel recovery choice was requested before Unknown reconciliation.
+    MutationReconciliationRequired,
     /// A timestamp could not cross both Run and Ledger persistence boundaries.
     InvalidTimestamp,
     /// An internal bounded recovery reason could not be represented.
@@ -705,7 +798,10 @@ impl fmt::Display for AgentRecoveryError {
                 "agent recovery requires an atomically published index"
             }
             Self::ResumeRequiresReplan => {
-                "agent recovery Resume requires fresh completed-verification evidence"
+                "agent recovery Resume requires fresh evidence and no pending mutation Replan"
+            }
+            Self::MutationReconciliationRequired => {
+                "agent recovery requires Unknown mutation reconciliation before continuing"
             }
             Self::InvalidTimestamp => "agent recovery timestamp is invalid",
             Self::InvalidRecoveryReason => "agent recovery reason is invalid",
@@ -735,6 +831,7 @@ impl Error for AgentRecoveryError {
             | Self::AnchorMismatch
             | Self::PublishedIndexUnavailable
             | Self::ResumeRequiresReplan
+            | Self::MutationReconciliationRequired
             | Self::InvalidTimestamp
             | Self::InvalidRecoveryReason
             | Self::ResourceLimit => None,
