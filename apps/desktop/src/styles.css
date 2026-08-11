@@ -253,6 +253,50 @@ h1 {
   font-size: 0.85rem;
 }
 
+.project-maintenance {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgb(22 63 54 / 14%);
+  border-radius: 1rem;
+  background: #f7f9f7;
+}
+
+.project-maintenance h4 {
+  margin: 0 0 0.5rem;
+  color: #314b44;
+}
+
+.project-maintenance p {
+  margin-bottom: 0.75rem;
+  color: #496059;
+  line-height: 1.5;
+}
+
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.project-actions button {
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #526a62;
+  border-radius: 0.75rem;
+  color: #29443c;
+  background: #fff;
+  cursor: pointer;
+}
+
+.project-actions button:focus-visible {
+  outline: 3px solid rgb(21 92 71 / 20%);
+  outline-offset: 2px;
+}
+
+.project-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .recent-projects {
   margin-top: 1.75rem;
   padding-top: 1.5rem;

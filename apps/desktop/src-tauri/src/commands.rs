@@ -2,7 +2,8 @@ use crate::CompositionRoot;
 use a3_protocol::{
     CommandErrorV1, HealthRequestV1, HealthResponseV1, ListRecentProjectsRequestV1,
     OpenProjectRequestV1, OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion,
-    QueryProjectStatusRequestV1, RecentProjectsResponseV1,
+    QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1,
 };
 use tauri::State;
 
@@ -31,6 +32,15 @@ pub async fn query_project_status(
     root: State<'_, CompositionRoot>,
 ) -> Result<ProjectStatusResponseV1, CommandErrorV1> {
     execute_query_project_status(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Queues a bounded rebuild for the Core-owned active project without accepting an identity.
+pub fn rebuild_project_index(
+    request: RebuildProjectIndexRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
+    execute_rebuild_project_index(request, root.inner())
 }
 
 #[tauri::command]
@@ -86,11 +96,22 @@ async fn execute_query_project_status(
     root.query_project_status().await
 }
 
+fn execute_rebuild_project_index(
+    request: RebuildProjectIndexRequestV1,
+    root: &CompositionRoot,
+) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.rebuild_project_index()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         execute_list_recent_projects, execute_open_project, execute_query_health,
-        execute_query_project_status,
+        execute_query_project_status, execute_rebuild_project_index,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -104,6 +125,7 @@ mod tests {
     use a3_protocol::{
         ErrorCodeV1, HealthRequestV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
         ProjectStatusResultV1, ProtocolVersion, QueryProjectStatusRequestV1,
+        RebuildProjectIndexRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -260,6 +282,23 @@ mod tests {
             response.result(),
             ProjectStatusResultV1::NoProject
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_command_rejects_unsupported_version_before_coordinator_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = execute_rebuild_project_index(
+            RebuildProjectIndexRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        );
+
+        assert_eq!(
+            result.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
         Ok(())
     }
 }

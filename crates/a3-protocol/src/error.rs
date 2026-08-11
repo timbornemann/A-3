@@ -29,6 +29,12 @@ pub enum ErrorCodeV1 {
     LocalStorageInvalidData,
     /// Stored and newly observed project identities conflict.
     ProjectIdentityConflict,
+    /// No Core-owned active project exists for the requested operation.
+    NoActiveProject,
+    /// The active project already has a queued or running rebuild.
+    IndexRebuildAlreadyPending,
+    /// The owned index coordinator could not accept a rebuild request.
+    IndexRebuildUnavailable,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -81,11 +87,24 @@ impl CommandErrorV1 {
             ErrorCodeV1::ProjectIdentityConflict => {
                 "The selected worktree conflicts with its stored project identity."
             }
+            ErrorCodeV1::NoActiveProject => "Open a local Git worktree before using this action.",
+            ErrorCodeV1::IndexRebuildAlreadyPending => {
+                "An index rebuild is already queued or running for the active worktree."
+            }
+            ErrorCodeV1::IndexRebuildUnavailable => {
+                "The local index coordinator could not accept the rebuild request."
+            }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."
             }
         };
         Self::new(code, message)
+    }
+
+    /// Creates a safe active-project rebuild failure.
+    #[must_use]
+    pub fn project_rebuild(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
     }
 
     fn new(code: ErrorCodeV1, message: &str) -> Self {

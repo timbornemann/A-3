@@ -2,10 +2,12 @@
   import { onMount } from 'svelte';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
+  import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import {
     queryProjectStatus,
     type IndexStateV1,
     type ProjectStatusResponseV1,
+    type RebuildStateV1,
   } from './lib/project-status';
   import {
     listRecentProjects,
@@ -16,6 +18,7 @@
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
     recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
   }
@@ -33,18 +36,21 @@
     | { kind: 'noProject' }
     | { kind: 'active'; result: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
+  type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error' };
   type RecentProjectsView =
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
   let {
     healthLoader = queryHealth,
     projectOpener = openProject,
+    projectRebuilder = rebuildProjectIndex,
     projectStatusLoader = queryProjectStatus,
     recentProjectsLoader = listRecentProjects,
   }: Props = $props();
   let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
+  let rebuildView = $state<RebuildView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
 
   async function loadHealth(): Promise<void> {
@@ -102,6 +108,17 @@
     }
   }
 
+  async function requestIndexRebuild(): Promise<void> {
+    rebuildView = { kind: 'submitting' };
+    try {
+      await projectRebuilder();
+      rebuildView = { kind: 'idle' };
+      await loadProjectStatus();
+    } catch {
+      rebuildView = { kind: 'error' };
+    }
+  }
+
   function branchLabel(head: GitHeadV1): string {
     if (head.kind === 'born') {
       return head.reference === null
@@ -119,6 +136,24 @@
       failed: 'Letzter Lauf fehlgeschlagen',
       cancelled: 'Letzter Lauf abgebrochen',
     };
+    return labels[state];
+  }
+
+  function storageSizeLabel(bytes: string | null): string {
+    return bytes === null
+      ? 'Nicht verfügbar'
+      : `${new Intl.NumberFormat('de-DE').format(BigInt(bytes))} Bytes`;
+  }
+
+  function rebuildStateLabel(state: RebuildStateV1): string {
+    const labels = {
+      idle: 'Bereit',
+      queued: 'Rebuild wartet',
+      running: 'Regenerierbare Daten werden entfernt',
+      succeeded: 'Rebuild abgeschlossen; Neuindexierung angefordert',
+      failed: 'Rebuild fehlgeschlagen',
+      cancelled: 'Rebuild abgebrochen',
+    } as const;
     return labels[state];
   }
 </script>
@@ -232,6 +267,10 @@
             <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
           </div>
           <div>
+            <dt>A^3-Speicher</dt>
+            <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
+          </div>
+          <div>
             <dt>Letzter Snapshot</dt>
             {#if projectStatusView.result.index.latestSnapshot === null}
               <dd>Noch kein Snapshot</dd>
@@ -243,6 +282,36 @@
             {/if}
           </div>
         </dl>
+        <div class="project-maintenance" aria-labelledby="rebuild-heading">
+          <h4 id="rebuild-heading">Index neu aufbauen</h4>
+          <p>
+            Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode, Snapshots,
+            Aufgaben, Entscheidungen und User-Evidence bleiben erhalten.
+          </p>
+          <p class="project-status" role="status" aria-live="polite">
+            {rebuildStateLabel(projectStatusView.result.rebuildState)}
+          </p>
+          <div class="project-actions">
+            <button
+              type="button"
+              disabled={rebuildView.kind === 'submitting' ||
+                projectStatusView.result.rebuildState === 'queued' ||
+                projectStatusView.result.rebuildState === 'running'}
+              onclick={requestIndexRebuild}
+            >
+              {rebuildView.kind === 'submitting'
+                ? 'Rebuild wird angefordert …'
+                : 'Regenerierbaren Index neu aufbauen'}
+            </button>
+            <button type="button" onclick={loadProjectStatus}>Status aktualisieren</button>
+          </div>
+          {#if rebuildView.kind === 'error'}
+            <p class="project-error" role="alert">
+              Der Rebuild konnte nicht sicher angefordert werden. Der bestehende Index bleibt
+              erhalten.
+            </p>
+          {/if}
+        </div>
       </div>
     {:else if projectStatusView.kind === 'error'}
       <div class="recent-projects-error" role="alert">

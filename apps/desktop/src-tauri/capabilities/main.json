@@ -7,6 +7,7 @@
     "allow-list-recent-projects",
     "allow-open-project",
     "allow-query-project-status",
-    "allow-query-health"
+    "allow-query-health",
+    "allow-rebuild-project-index"
   ]
 }

@@ -40,6 +40,7 @@ mod policy_store;
 mod process_runner;
 mod project_reconciliation;
 mod project_status;
+mod project_storage;
 mod recent_projects;
 mod repository_discovery;
 mod repository_index;
@@ -222,6 +223,11 @@ pub use project_reconciliation::{
 };
 pub use project_status::{
     GetProjectIndexStatus, GetProjectIndexStatusError, ProjectIndexStatus, ProjectSnapshotStatus,
+};
+pub use project_storage::{
+    GetProjectStorageUsage, GetProjectStorageUsageError, ProjectStorageControl,
+    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore,
+    ProjectStorageUsage,
 };
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
 pub use repository_discovery::{

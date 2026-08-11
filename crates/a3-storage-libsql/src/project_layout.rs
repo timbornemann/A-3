@@ -1,13 +1,18 @@
 use crate::StorageLayout;
+use a3_application::{ProjectStorageControl, ProjectStorageFailure, ProjectStorageUsage};
 use a3_domain::{WorktreeId, WorktreeIdentity};
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 const PROJECTS_DIRECTORY_NAME: &str = "projects";
 const KNOWLEDGE_FILE_NAME: &str = "knowledge.db";
+const STORAGE_INSPECTION_ENTRY_LIMIT: u32 = 100_000;
+const STORAGE_INSPECTION_PROGRESS_INTERVAL: u32 = 256;
+const STORAGE_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Canonical application-owned storage paths for exactly one worktree identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +169,70 @@ impl ProjectStorageLayout {
     #[must_use]
     pub fn knowledge_path(&self) -> &Path {
         &self.knowledge
+    }
+
+    pub(crate) fn measure_usage(
+        &self,
+        control: &dyn ProjectStorageControl,
+    ) -> Result<ProjectStorageUsage, ProjectStorageFailure> {
+        let deadline = Instant::now()
+            .checked_add(STORAGE_INSPECTION_TIMEOUT)
+            .ok_or(ProjectStorageFailure::TimedOut)?;
+        let mut pending = vec![self.root.clone()];
+        let mut entries = 0_u32;
+        let mut bytes = 0_u64;
+
+        while let Some(directory) = pending.pop() {
+            let children =
+                fs::read_dir(&directory).map_err(|_| ProjectStorageFailure::Unavailable)?;
+            for child in children {
+                if control.is_cancelled() {
+                    return Err(ProjectStorageFailure::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    return Err(ProjectStorageFailure::TimedOut);
+                }
+                entries = entries
+                    .checked_add(1)
+                    .ok_or(ProjectStorageFailure::TooManyEntries)?;
+                if entries > STORAGE_INSPECTION_ENTRY_LIMIT {
+                    return Err(ProjectStorageFailure::TooManyEntries);
+                }
+
+                let path = child
+                    .map_err(|_| ProjectStorageFailure::Unavailable)?
+                    .path();
+                let metadata =
+                    fs::symlink_metadata(&path).map_err(|_| ProjectStorageFailure::Unavailable)?;
+                if metadata.file_type().is_symlink() {
+                    return Err(ProjectStorageFailure::InvalidLayout);
+                }
+                let canonical =
+                    fs::canonicalize(&path).map_err(|_| ProjectStorageFailure::Unavailable)?;
+                if !canonical.starts_with(&self.root) {
+                    return Err(ProjectStorageFailure::InvalidLayout);
+                }
+                if metadata.is_dir() {
+                    pending.push(canonical);
+                } else if metadata.is_file() {
+                    bytes = bytes
+                        .checked_add(metadata.len())
+                        .ok_or(ProjectStorageFailure::SizeOverflow)?;
+                } else {
+                    return Err(ProjectStorageFailure::InvalidLayout);
+                }
+
+                if entries.is_multiple_of(STORAGE_INSPECTION_PROGRESS_INTERVAL) {
+                    control
+                        .report_entries(entries)
+                        .map_err(|_| ProjectStorageFailure::ProgressUnavailable)?;
+                }
+            }
+        }
+        control
+            .report_entries(entries)
+            .map_err(|_| ProjectStorageFailure::ProgressUnavailable)?;
+        Ok(ProjectStorageUsage::from_bytes(bytes))
     }
 
     pub(crate) fn validate_knowledge_target(&self) -> Result<(), ProjectStorageLayoutError> {
@@ -462,6 +531,143 @@ impl Error for ProjectStorageLayoutError {
             | Self::ReconciliationIdentityUnchanged
             | Self::ReconciliationSourceMissing(_)
             | Self::ReconciliationTargetExists(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProjectStorageLayout;
+    use a3_application::{
+        ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure,
+    };
+    use a3_domain::WorktreeId;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Mutex, MutexGuard};
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[derive(Debug)]
+    struct RecordingControl {
+        cancelled: AtomicBool,
+        reports: Mutex<Vec<u32>>,
+    }
+
+    impl RecordingControl {
+        fn active() -> Self {
+            Self {
+                cancelled: AtomicBool::new(false),
+                reports: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn cancelled() -> Self {
+            Self {
+                cancelled: AtomicBool::new(true),
+                reports: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reports(&self) -> MutexGuard<'_, Vec<u32>> {
+            match self.reports.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            }
+        }
+    }
+
+    impl ProjectStorageControl for RecordingControl {
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::Acquire)
+        }
+
+        fn report_entries(&self, entries: u32) -> Result<(), ProjectStorageControlError> {
+            self.reports().push(entries);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn storage_usage_counts_only_validated_private_regular_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = TestDirectory::new()?;
+        let artifacts = directory.path().join("artifacts");
+        fs::create_dir(&artifacts)?;
+        fs::write(directory.path().join("knowledge.db"), b"1234")?;
+        fs::write(artifacts.join("card.bin"), b"567")?;
+        let layout = layout(&directory);
+        let control = RecordingControl::active();
+
+        let usage = layout.measure_usage(&control)?;
+
+        assert_eq!(usage.bytes(), 7);
+        assert_eq!(control.reports().last(), Some(&3));
+        Ok(())
+    }
+
+    #[test]
+    fn storage_usage_honors_cancellation_before_reading_an_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = TestDirectory::new()?;
+        fs::write(directory.path().join("knowledge.db"), b"content")?;
+
+        assert_eq!(
+            layout(&directory).measure_usage(&RecordingControl::cancelled()),
+            Err(ProjectStorageFailure::Cancelled)
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_usage_rejects_symbolic_links() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new()?;
+        let outside = directory
+            .path()
+            .parent()
+            .ok_or_else(|| std::io::Error::other("test directory unexpectedly has no parent"))?;
+        symlink(outside, directory.path().join("escape"))?;
+
+        assert_eq!(
+            layout(&directory).measure_usage(&RecordingControl::active()),
+            Err(ProjectStorageFailure::InvalidLayout)
+        );
+        Ok(())
+    }
+
+    fn layout(directory: &TestDirectory) -> ProjectStorageLayout {
+        ProjectStorageLayout {
+            root: directory.path().to_path_buf(),
+            knowledge: directory.path().join("knowledge.db"),
+            worktree_id: WorktreeId::from_bytes([7; 32]),
+        }
+    }
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Result<Self, std::io::Error> {
+            let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "a3-project-storage-usage-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path)?;
+            Ok(Self(path.canonicalize()?))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _cleanup = fs::remove_dir_all(&self.0);
         }
     }
 }

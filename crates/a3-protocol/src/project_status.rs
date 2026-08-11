@@ -52,13 +52,17 @@ impl ProjectStatusResponseV1 {
         project_id: String,
         project: ProjectSummaryV1,
         index: ProjectIndexStatusV1,
+        storage_bytes: Option<String>,
+        rebuild_state: RebuildStateV1,
     ) -> Self {
         Self {
             protocol_version: ProtocolVersion::CURRENT,
             result: ProjectStatusResultV1::Active {
                 project_id,
                 project: Box::new(project),
-                index,
+                index: Box::new(index),
+                storage_bytes,
+                rebuild_state,
             },
         }
     }
@@ -90,7 +94,13 @@ pub enum ProjectStatusResultV1 {
         /// Existing WebView-safe repository and worktree projection.
         project: Box<ProjectSummaryV1>,
         /// Durable snapshot and index-run projection.
-        index: ProjectIndexStatusV1,
+        index: Box<ProjectIndexStatusV1>,
+        /// Exact private A^3 storage usage as lossless decimal text.
+        #[serde(rename = "storageBytes")]
+        storage_bytes: Option<String>,
+        /// Lifecycle of the latest user-requested regenerable-index rebuild.
+        #[serde(rename = "rebuildState")]
+        rebuild_state: RebuildStateV1,
     },
 }
 
@@ -162,6 +172,24 @@ pub enum IndexStateV1 {
     Cancelled,
 }
 
+/// Core-owned lifecycle of a user-requested regenerable-index rebuild.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RebuildStateV1 {
+    /// No rebuild has been requested for the active project.
+    Idle,
+    /// The coordinator accepted the request and is quiescing prior index work.
+    Queued,
+    /// The bounded rebuild job is deleting only regenerable projections.
+    Running,
+    /// Regenerable projections were removed and an authoritative refresh was requested.
+    Succeeded,
+    /// The rebuild failed without deleting authoritative task or snapshot history.
+    Failed,
+    /// The owning scheduler cancelled the rebuild before commit.
+    Cancelled,
+}
+
 /// Bounded identity and generation of the latest durable snapshot.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -195,7 +223,10 @@ impl ProjectSnapshotV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexStateV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1};
+    use super::{
+        IndexStateV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1,
+        RebuildStateV1,
+    };
     use crate::{GitHeadV1, ProjectSummaryV1};
     use serde_json::json;
 
@@ -217,6 +248,8 @@ mod tests {
                 Some("44".repeat(32)),
                 Some("44".repeat(32)),
             ),
+            Some("4096".to_owned()),
+            RebuildStateV1::Idle,
         );
 
         assert_eq!(
@@ -240,7 +273,9 @@ mod tests {
                         },
                         "latestAttemptSnapshotId": "44".repeat(32),
                         "publishedSnapshotId": "44".repeat(32)
-                    }
+                    },
+                    "storageBytes": "4096",
+                    "rebuildState": "idle"
                 }
             })
         );

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
+import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
 import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 
@@ -38,19 +39,28 @@ const noProjectStatus: ProjectStatusResponseV1 = {
   result: { status: 'noProject' },
 };
 
+const activeProjectResult: Extract<ProjectStatusResponseV1['result'], { status: 'active' }> = {
+  index: {
+    latestAttemptSnapshotId: '4'.repeat(64),
+    latestSnapshot: { generation: '2', snapshotId: '4'.repeat(64) },
+    publishedSnapshotId: '4'.repeat(64),
+    state: 'published',
+  },
+  project: projectSummary,
+  projectId: '3'.repeat(64),
+  rebuildState: 'idle',
+  status: 'active',
+  storageBytes: '4096',
+};
+
 const activeProjectStatus: ProjectStatusResponseV1 = {
   protocolVersion: 1,
-  result: {
-    index: {
-      latestAttemptSnapshotId: '4'.repeat(64),
-      latestSnapshot: { generation: '2', snapshotId: '4'.repeat(64) },
-      publishedSnapshotId: '4'.repeat(64),
-      state: 'published',
-    },
-    project: projectSummary,
-    projectId: '3'.repeat(64),
-    status: 'active',
-  },
+  result: activeProjectResult,
+};
+
+const queuedRebuildStatus: ProjectStatusResponseV1 = {
+  ...activeProjectStatus,
+  result: { ...activeProjectResult, rebuildState: 'queued' },
 };
 
 const recentProjects: RecentProjectsResponseV1 = {
@@ -120,11 +130,17 @@ describe('A^3 desktop shell', () => {
     const projectStatusLoader = vi
       .fn<() => Promise<ProjectStatusResponseV1>>()
       .mockResolvedValueOnce(noProjectStatus)
-      .mockResolvedValueOnce(activeProjectStatus);
+      .mockResolvedValueOnce(activeProjectStatus)
+      .mockResolvedValueOnce(queuedRebuildStatus);
+    const projectRebuilder = vi.fn<() => Promise<RebuildProjectIndexResponseV1>>(async () => ({
+      protocolVersion: 1,
+      state: 'queued',
+    }));
     render(App, {
       props: {
         healthLoader: async () => health,
         projectOpener,
+        projectRebuilder,
         projectStatusLoader,
         recentProjectsLoader,
       },
@@ -139,9 +155,19 @@ describe('A^3 desktop shell', () => {
       expect(screen.getAllByText('main (unborn)')).toHaveLength(2);
       expect(screen.getByText('Veröffentlicht')).toBeTruthy();
       expect(screen.getByText(/Generation 2/)).toBeTruthy();
+      expect(screen.getByText('4.096 Bytes')).toBeTruthy();
     });
     expect(projectOpener).toHaveBeenCalledTimes(1);
     expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText(/Quellcode, Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben/),
+    ).toBeTruthy();
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Regenerierbaren Index neu aufbauen' }),
+    );
+    await waitFor(() => expect(screen.getByText('Rebuild wartet')).toBeTruthy());
+    expect(projectRebuilder).toHaveBeenCalledTimes(1);
   });
 
   it('does not expose project-open adapter details in the UI error', async () => {

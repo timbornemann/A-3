@@ -9,12 +9,13 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError, HealthQuery, JobEventStream,
-    JobScheduler, JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
-    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
-    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure,
-    ProjectReconciliationConfirmer, RecentProject,
+    GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    GetProjectStorageUsageError, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
+    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
+    KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError,
+    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectDirectoryPicker, ProjectIndexStatus,
+    ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
+    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, RecentProject,
 };
 use a3_domain::{
     ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexRunStatus, Platform,
@@ -23,7 +24,8 @@ use a3_domain::{
 use a3_protocol::{
     CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexStateV1, OpenProjectResponseV1,
     PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1,
+    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
+    RecentProjectsResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -33,10 +35,13 @@ use clock::SystemJobClock;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
-use repository_index_manager::RepositoryIndexManager;
+use repository_index_manager::{
+    RepositoryIndexManager, RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
+};
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
 
@@ -49,6 +54,7 @@ pub struct CompositionRoot {
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
+    project_storage: Option<GetProjectStorageUsage>,
     active_project: Mutex<Option<ActiveProject>>,
     index_manager: Option<RepositoryIndexManager>,
     _job_scheduler: JobScheduler,
@@ -143,11 +149,40 @@ impl CompositionRoot {
                 .map_err(map_project_status_error_to_v1)?,
             None => ProjectIndexStatus::new(None, None, None),
         };
+        let storage_bytes = match &self.project_storage {
+            Some(query) => Some(
+                query
+                    .execute(&active.project, &DesktopProjectStorageControl::new())
+                    .await
+                    .map_err(map_project_storage_error_to_v1)?
+                    .bytes()
+                    .to_string(),
+            ),
+            None => None,
+        };
         Ok(ProjectStatusResponseV1::active(
             active.project_id.to_string(),
             map_project_summary_to_v1(&active.project),
             map_project_index_status_to_v1(index),
+            storage_bytes,
+            self.index_manager
+                .as_ref()
+                .map_or(RebuildStateV1::Idle, |manager| {
+                    map_rebuild_state_to_v1(manager.rebuild_state())
+                }),
         ))
+    }
+
+    /// Queues a bounded rebuild for the Core-owned active project.
+    pub fn rebuild_project_index(&self) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
+        let manager = self
+            .index_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::project_rebuild(ErrorCodeV1::IndexRebuildUnavailable))?;
+        manager
+            .request_rebuild()
+            .map_err(map_rebuild_request_error_to_v1)?;
+        Ok(RebuildProjectIndexResponseV1::queued())
     }
 }
 
@@ -155,6 +190,34 @@ impl CompositionRoot {
 struct ActiveProject {
     project_id: ProjectId,
     project: ProjectIdentity,
+}
+
+#[derive(Debug)]
+struct DesktopProjectStorageControl {
+    entries: AtomicU32,
+}
+
+impl DesktopProjectStorageControl {
+    fn new() -> Self {
+        Self {
+            entries: AtomicU32::new(0),
+        }
+    }
+}
+
+impl ProjectStorageControl for DesktopProjectStorageControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_entries(&self, entries: u32) -> Result<(), ProjectStorageControlError> {
+        let previous = self.entries.load(Ordering::Acquire);
+        if entries < previous {
+            return Err(ProjectStorageControlError);
+        }
+        self.entries.store(entries, Ordering::Release);
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -199,6 +262,7 @@ impl CompositionBase {
             project_reconciliation_confirmer,
             store,
             None,
+            None,
         )
     }
 
@@ -208,12 +272,14 @@ impl CompositionBase {
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
         index_store: Arc<dyn KnowledgeIndexStore>,
+        project_storage: Arc<dyn ProjectStorageStore>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         self.finish_internal(
             project_directory_picker,
             project_reconciliation_confirmer,
             store,
             Some(index_store),
+            Some(project_storage),
         )
     }
 
@@ -223,6 +289,7 @@ impl CompositionBase {
         project_reconciliation_confirmer: Arc<dyn ProjectReconciliationConfirmer>,
         store: Arc<dyn KnowledgeStore>,
         index_store: Option<Arc<dyn KnowledgeIndexStore>>,
+        project_storage: Option<Arc<dyn ProjectStorageStore>>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         let project_status = index_store.clone().map(GetProjectIndexStatus::new);
         let index_manager = index_store
@@ -245,6 +312,7 @@ impl CompositionBase {
             ),
             recent_projects: ListRecentProjects::new(store),
             project_status,
+            project_storage: project_storage.map(GetProjectStorageUsage::new),
             active_project: Mutex::new(None),
             index_manager,
             _job_scheduler: self.job_scheduler,
@@ -270,6 +338,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 tauri::async_runtime::block_on(LibsqlKnowledgeStore::open(&layout))
                     .map_err(CompositionRootError::Catalog)?,
             );
+            let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store;
             app.manage(base.finish_with_indexing(
@@ -279,6 +348,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 )),
                 catalog_store,
                 index_store,
+                project_storage,
             )?);
             Ok(())
         })
@@ -286,7 +356,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::list_recent_projects,
             commands::open_project,
             commands::query_project_status,
-            commands::query_health
+            commands::query_health,
+            commands::rebuild_project_index
         ])
         .run(tauri::generate_context!())
         .map_err(DesktopRunError::Tauri)
@@ -368,6 +439,17 @@ fn map_project_index_status_to_v1(status: ProjectIndexStatus) -> ProjectIndexSta
     )
 }
 
+const fn map_rebuild_state_to_v1(state: RepositoryIndexRebuildState) -> RebuildStateV1 {
+    match state {
+        RepositoryIndexRebuildState::Idle => RebuildStateV1::Idle,
+        RepositoryIndexRebuildState::Queued => RebuildStateV1::Queued,
+        RepositoryIndexRebuildState::Running => RebuildStateV1::Running,
+        RepositoryIndexRebuildState::Succeeded => RebuildStateV1::Succeeded,
+        RepositoryIndexRebuildState::Failed => RebuildStateV1::Failed,
+        RepositoryIndexRebuildState::Cancelled => RebuildStateV1::Cancelled,
+    }
+}
+
 fn map_git_head_to_v1(head: &GitHead) -> GitHeadV1 {
     match head {
         GitHead::Born {
@@ -440,6 +522,34 @@ fn map_project_status_error_to_v1(error: GetProjectIndexStatusError) -> CommandE
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
     }
+}
+
+fn map_project_storage_error_to_v1(error: GetProjectStorageUsageError) -> CommandErrorV1 {
+    let GetProjectStorageUsageError::Storage(error) = error;
+    let code = match error {
+        ProjectStorageFailure::InvalidLayout
+        | ProjectStorageFailure::TooManyEntries
+        | ProjectStorageFailure::SizeOverflow => ErrorCodeV1::LocalStorageInvalidData,
+        ProjectStorageFailure::Unavailable
+        | ProjectStorageFailure::Cancelled
+        | ProjectStorageFailure::TimedOut
+        | ProjectStorageFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_rebuild_request_error_to_v1(error: RepositoryIndexRebuildRequestError) -> CommandErrorV1 {
+    let code = match error {
+        RepositoryIndexRebuildRequestError::NoActiveProject => ErrorCodeV1::NoActiveProject,
+        RepositoryIndexRebuildRequestError::AlreadyPending => {
+            ErrorCodeV1::IndexRebuildAlreadyPending
+        }
+        RepositoryIndexRebuildRequestError::QueueFull
+        | RepositoryIndexRebuildRequestError::CoordinatorStopped => {
+            ErrorCodeV1::IndexRebuildUnavailable
+        }
+    };
+    CommandErrorV1::project_rebuild(code)
 }
 
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

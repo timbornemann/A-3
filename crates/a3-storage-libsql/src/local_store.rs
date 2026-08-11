@@ -22,16 +22,17 @@ use a3_application::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardPublicationTimeout,
     ModuleCardVerificationControl, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
     ModuleRemapQueueStore, PolicyStore, PolicyStoreFailure, PolicyStoreFuture,
-    ProjectOpenPreparation, ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
-    RecordedAgentRead, RemapQueueControl, RemapQueueLimit, RunEventPage, RunEventPageLimit,
-    RunJournalStore, RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
-    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
-    StoredProjectCommandAllowlist, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
-    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
-    TaskLensIndexStoreFuture, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
-    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
-    VerifiedModuleCardPublisherFuture,
+    ProjectOpenPreparation, ProjectReconciliationProposal, ProjectStorageControl,
+    ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage,
+    RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
+    RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
+    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredProjectCommandAllowlist,
+    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
+    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
@@ -252,6 +253,23 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .read_recent_projects(limit)
                 .await
                 .map_err(ProjectCatalogError::classify)
+        })
+    }
+}
+
+impl ProjectStorageStore for LibsqlKnowledgeStore {
+    fn measure_project_storage<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        control: &'a dyn ProjectStorageControl,
+    ) -> ProjectStorageFuture<'a, ProjectStorageUsage> {
+        Box::pin(async move {
+            let layout = self
+                .layout
+                .existing_project(project.worktree().id())
+                .map_err(classify_project_storage_layout_error)?
+                .ok_or(ProjectStorageFailure::InvalidLayout)?;
+            layout.measure_usage(control)
         })
     }
 }
@@ -2022,6 +2040,25 @@ fn classify_project_layout_error(error: ProjectStorageLayoutError) -> KnowledgeS
         | ProjectStorageLayoutError::Inspect { .. }
         | ProjectStorageLayoutError::Canonicalize { .. }
         | ProjectStorageLayoutError::Move { .. } => KnowledgeStoreFailure::Unavailable,
+    }
+}
+
+fn classify_project_storage_layout_error(
+    error: ProjectStorageLayoutError,
+) -> ProjectStorageFailure {
+    match error {
+        ProjectStorageLayoutError::Inspect { .. }
+        | ProjectStorageLayoutError::Canonicalize { .. } => ProjectStorageFailure::Unavailable,
+        ProjectStorageLayoutError::StorageInsideWorktree { .. }
+        | ProjectStorageLayoutError::Create { .. }
+        | ProjectStorageLayoutError::SymbolicLink { .. }
+        | ProjectStorageLayoutError::NotDirectory { .. }
+        | ProjectStorageLayoutError::NotRegularFile { .. }
+        | ProjectStorageLayoutError::OutsideParent { .. }
+        | ProjectStorageLayoutError::ReconciliationIdentityUnchanged
+        | ProjectStorageLayoutError::ReconciliationSourceMissing(_)
+        | ProjectStorageLayoutError::ReconciliationTargetExists(_)
+        | ProjectStorageLayoutError::Move { .. } => ProjectStorageFailure::InvalidLayout,
     }
 }
 

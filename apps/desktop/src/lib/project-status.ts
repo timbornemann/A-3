@@ -5,12 +5,15 @@ import { parseProjectSummaryV1, type ProjectSummaryV1 } from './project';
 const STABLE_ID_PATTERN = /^[0-9a-f]{64}$/;
 const GENERATION_PATTERN = /^[1-9][0-9]{0,18}$/;
 const MAX_GENERATION = 9_223_372_036_854_775_807n;
+const BYTE_COUNT_PATTERN = /^(?:0|[1-9][0-9]{0,19})$/;
+const MAX_BYTE_COUNT = 18_446_744_073_709_551_615n;
 
 export interface QueryProjectStatusRequestV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
 }
 
 export type IndexStateV1 = 'notStarted' | 'building' | 'published' | 'failed' | 'cancelled';
+export type RebuildStateV1 = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface ProjectSnapshotV1 {
   generation: string;
@@ -30,7 +33,9 @@ export type ProjectStatusResultV1 =
       index: ProjectIndexStatusV1;
       project: ProjectSummaryV1;
       projectId: string;
+      rebuildState: RebuildStateV1;
       status: 'active';
+      storageBytes: string | null;
     };
 
 export interface ProjectStatusResponseV1 {
@@ -73,14 +78,25 @@ function parseResult(value: unknown): ProjectStatusResultV1 {
   }
   if (
     value.status === 'active' &&
-    hasExactKeys(value, ['index', 'project', 'projectId', 'status']) &&
-    isStableId(value.projectId)
+    hasExactKeys(value, [
+      'index',
+      'project',
+      'projectId',
+      'rebuildState',
+      'status',
+      'storageBytes',
+    ]) &&
+    isStableId(value.projectId) &&
+    isStorageBytes(value.storageBytes) &&
+    isRebuildState(value.rebuildState)
   ) {
     return {
       index: parseIndexStatus(value.index),
       project: parseProjectSummaryV1(value.project),
       projectId: value.projectId,
+      rebuildState: value.rebuildState,
       status: 'active',
+      storageBytes: value.storageBytes,
     };
   }
   throw new Error('Project status response contains an invalid result.');
@@ -144,12 +160,30 @@ function isIndexState(value: unknown): value is IndexStateV1 {
   );
 }
 
+function isRebuildState(value: unknown): value is RebuildStateV1 {
+  return (
+    value === 'idle' ||
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'succeeded' ||
+    value === 'failed' ||
+    value === 'cancelled'
+  );
+}
+
 function isStableId(value: unknown): value is string {
   return typeof value === 'string' && STABLE_ID_PATTERN.test(value);
 }
 
 function isOptionalStableId(value: unknown): value is string | null {
   return value === null || isStableId(value);
+}
+
+function isStorageBytes(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === 'string' && BYTE_COUNT_PATTERN.test(value) && BigInt(value) <= MAX_BYTE_COUNT)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -101,7 +101,8 @@ mod tests {
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::query_project_status,
-                a3_desktop::commands::query_health
+                a3_desktop::commands::query_health,
+                a3_desktop::commands::rebuild_project_index
             ])
             .build(tauri::generate_context!())?;
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build()?;
@@ -246,7 +247,8 @@ mod tests {
                 "allow-list-recent-projects",
                 "allow-open-project",
                 "allow-query-project-status",
-                "allow-query-health"
+                "allow-query-health",
+                "allow-rebuild-project-index"
             ]))
         );
         Ok(())

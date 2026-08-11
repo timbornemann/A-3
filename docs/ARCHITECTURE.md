@@ -217,9 +217,25 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    Projekt-ID aus der WebView.
 3. Der Application-Use-Case liest über `KnowledgeIndexStore` nur den letzten Snapshot, den letzten
    Indexversuch und den weiterhin atomar veröffentlichten Run.
-4. IPC V1 projiziert daraus Worktree-/HEAD-Anzeige, Snapshot-ID und verlustfrei als Dezimaltext
-   codierte Generation sowie den geschlossenen Indexstatus. Autoritative Pfade, Datenbankhandles
-   und Indexinhalte verlassen den Core nicht.
+4. Ein separater `ProjectStorageStore` misst begrenzt nur das private
+   `projects/<WorktreeId>`-Verzeichnis. IPC V1 codiert Bytezahl und Snapshotgeneration verlustfrei als
+   Dezimaltext.
+5. IPC V1 projiziert Worktree-/HEAD-Anzeige, Snapshot-ID, Generation, Storagegröße und den
+   geschlossenen Indexstatus. Autoritative Pfade, Datenbankhandles und Indexinhalte verlassen den
+   Core nicht.
+
+### Index-Rebuild aus Projects
+
+1. Die WebView sendet über `rebuild_project_index` ausschließlich die Protokollversion; Projekt und
+   Worktree stammen aus dem Core-eigenen aktiven Zustand.
+2. Der `RepositoryIndexManager` setzt den Rebuild in seine bounded Commandqueue, fordert für einen
+   laufenden Refresh Cancellation an und wartet auf dessen terminalen Schedulerzustand.
+3. Der Scheduler besitzt den Rebuild-Job und reicht Cancellation sowie determinierten Progress an
+   `KnowledgeIndexStore::rebuild_regenerable_index` weiter. Der Storageadapter löscht ausschließlich
+   regenerierbare Indexprojektionen in einer Transaktion.
+4. Nach erfolgreichem Commit fordert der Manager einen expliziten vollständigen Rescan an. Ein
+   fehlgeschlagener oder abgebrochener Rebuild veröffentlicht keinen partiellen Indexzustand; der
+   geschlossene Rebuildstatus bleibt über `query_project_status` sichtbar.
 
 ### Agentenlauf
 

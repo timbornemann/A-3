@@ -19,7 +19,9 @@ const active = {
     },
     project,
     projectId: '3'.repeat(64),
+    rebuildState: 'idle',
     status: 'active',
+    storageBytes: '4096',
   },
 };
 
@@ -42,6 +44,12 @@ describe('project status protocol', () => {
   it('rejects unknown fields and inconsistent or lossy index metadata', () => {
     expect(() =>
       parseProjectStatusResponseV1({ ...active, authoritativePath: '/private' }),
+    ).toThrow();
+    expect(() =>
+      parseProjectStatusResponseV1({
+        ...active,
+        result: { ...active.result, storageBytes: '18446744073709551616' },
+      }),
     ).toThrow();
     expect(() =>
       parseProjectStatusResponseV1({

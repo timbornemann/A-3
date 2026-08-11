@@ -668,6 +668,10 @@ Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Do
 ## Retention und Wiederaufbau
 
 - Index und Embeddings dürfen sicher gelöscht und aufgebaut werden.
+- Der Desktop-Rebuild entfernt über `KnowledgeIndexStore::rebuild_regenerable_index` nur die
+  regenerierbaren deterministischen Indexprojektionen und ihre IndexRun-Zeilen. Snapshotkette,
+  verifizierte Herkunft, Tasks, Decisions, User-Evidence und Repositoryinhalte bleiben erhalten;
+  anschließend wird ein vollständiger lokaler Refresh angefordert.
 - Task, Decisions und User-Evidence benötigen Backup vor Cleanup.
 - Vollständige Toollogs können nach Policy gekürzt werden; Digest, Status, relevante Evidence und Verifikation bleiben.
 - Strukturierte RunEvents selbst werden nicht gekürzt: Die Retention-Policy
