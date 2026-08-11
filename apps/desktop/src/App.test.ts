@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
+import type { IndexOverviewResponseV1 } from './lib/index-overview';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
@@ -78,6 +79,44 @@ const runningIndexActivity: IndexActivityResponseV1 = {
   },
 };
 
+const publishedIndexOverview: IndexOverviewResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    overview: {
+      counts: {
+        diagnosticCount: '1',
+        diagnosticFileCount: '1',
+        fileCount: '2',
+        parsedFileCount: '1',
+        symbolCount: '3',
+      },
+      coverageBasisPoints: 8000,
+      diagnosticFiles: [
+        {
+          coverageBasisPoints: 8000,
+          diagnosticCount: '1',
+          diagnostics: [
+            {
+              code: 'syntaxError',
+              endByte: 10,
+              message: 'syntax error',
+              severity: 'error',
+              startByte: 8,
+            },
+          ],
+          diagnosticsTruncated: false,
+          language: 'rust',
+          pathDisplay: 'src/lib.rs',
+          pathDisplayTruncated: false,
+        },
+      ],
+      diagnosticFilesTruncated: false,
+      snapshotId: '4'.repeat(64),
+    },
+    status: 'published',
+  },
+};
+
 const removedProject: RemoveProjectResponseV1 = {
   protocolVersion: 1,
   result: { retainedPrivateStorage: true, status: 'removed' },
@@ -120,6 +159,7 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         indexActivityLoader: async () => runningIndexActivity,
+        indexOverviewLoader: async () => publishedIndexOverview,
         projectStatusLoader: async () => activeProjectStatus,
         recentProjectsLoader: async () => emptyRecentProjects,
       },
@@ -135,6 +175,10 @@ describe('A^3 desktop shell', () => {
       'value',
       3,
     );
+    expect(screen.getByRole('heading', { name: 'Veröffentlichter Fast Index' })).toBeTruthy();
+    expect(screen.getAllByText(/80,00\s%/)).toHaveLength(2);
+    expect(screen.getByText('src/lib.rs')).toBeTruthy();
+    expect(screen.getByText(/Syntaxfehler · syntax error/)).toBeTruthy();
   });
 
   it('shows a safe error and supports retry', async () => {

@@ -40,6 +40,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   einem Schemafehler vollständig auf V22 zurückrollen. Der Storage-Roundtrip prüft partielle
   Coverage und sichere Diagnostics exakt; eine historische V4-Publikation ohne Analysezeilen muss
   weiterhin als explizit generisch lesbar bleiben.
+- Der pfadlose `query_index_overview`-Contract rekonstruiert ausschließlich den letzten
+  `PublishedIndex` und begrenzt die IPC-Antwort auf 64 Diagnostic-Dateien mit je acht Meldungen.
+  Rust- und TypeScript-Contracts prüfen exakte Felder, verlustfreie Zähler, 0–10.000 Coverage,
+  kontrollzeichenfreie Pfad-/Meldungsanzeigen, Trunkierungswahrheit und widerspruchsfreie
+  Aggregatzahlen. Der Component-Test zeigt Dateien, Symbole, Diagnostics, Coverage und einen
+  file-lokalen Fehler gleichzeitig mit dem weiterhin lesbaren publizierten Snapshot.
 
 ### Persistenz
 

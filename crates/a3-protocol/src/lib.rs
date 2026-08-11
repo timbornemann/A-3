@@ -4,6 +4,7 @@ mod error;
 mod goal_contract;
 mod health;
 mod index_activity;
+mod index_overview;
 mod project;
 mod project_rebuild;
 mod project_removal;
@@ -17,6 +18,11 @@ pub use health::{HealthRequestV1, HealthResponseV1, HealthStatusV1, PlatformV1};
 pub use index_activity::{
     IndexActivityResponseV1, IndexActivityResultV1, IndexActivityStateV1, IndexActivityV1,
     IndexPhaseV1, QueryIndexActivityRequestV1,
+};
+pub use index_overview::{
+    IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1,
+    IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewResultV1,
+    IndexOverviewV1, QueryIndexOverviewRequestV1,
 };
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,

@@ -276,6 +276,106 @@ h1 {
   accent-color: #14694e;
 }
 
+.index-overview {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgb(22 63 54 / 14%);
+  border-radius: 1rem;
+  background: #f7f9f7;
+}
+
+.index-overview h4,
+.index-overview h5 {
+  margin: 0;
+  color: #314b44;
+}
+
+.index-snapshot,
+.index-coverage-note {
+  margin: 0.75rem 0 0;
+  color: #496059;
+}
+
+.index-snapshot code,
+.diagnostic-file-heading code {
+  overflow-wrap: anywhere;
+}
+
+.index-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0.8rem 0 0;
+}
+
+.index-metrics div {
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #eef3ef;
+}
+
+.index-metrics dt {
+  color: #657770;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.index-metrics dd {
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.file-diagnostics {
+  margin-top: 1rem;
+}
+
+.file-diagnostics > ul,
+.file-diagnostics li ul {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-diagnostics > ul > li {
+  padding: 0.85rem;
+  border-left: 0.25rem solid #b55b3f;
+  border-radius: 0.75rem;
+  background: #fff8f5;
+}
+
+.diagnostic-file-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.diagnostic-file-heading span {
+  color: #657770;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.file-diagnostics p,
+.file-diagnostics li ul li {
+  margin: 0.55rem 0 0;
+  color: #5b4a44;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.file-diagnostics li ul li span {
+  display: block;
+  color: #766861;
+  font-size: 0.75rem;
+}
+
 .project-maintenance {
   margin-top: 1rem;
   padding: 1rem;
@@ -425,6 +525,14 @@ footer {
 
   .health-grid {
     grid-template-columns: 1fr;
+  }
+
+  .index-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostic-file-heading {
+    display: grid;
   }
 }
 

@@ -256,6 +256,11 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 4. Die UI zeigt den letzten publizierten Snapshot während Queued, Running und Cancelling weiterhin
    als lesbar. Erst erfolgreiches Publish ändert die dauerhafte Sicht; Fehler und Cancellation
    lassen sie unangetastet.
+5. `query_index_overview` ist davon getrennt und wird nicht gepollt. Die asynchrone, ebenfalls pfad-
+   und identitätslose Abfrage liest ausschließlich den letzten atomar publizierten Index über den
+   Application-Port. IPC V1 liefert verlustfreie Zähler, aggregierte Coverage und höchstens 64
+   fehlerhafte Dateien mit je acht sicheren Diagnostics; Repository-Pfade werden nur als
+   kontrollzeichenfreie, auf 512 Zeichen begrenzte Anzeige ausgegeben.
 
 ### Worktree aus der Projektliste entfernen
 

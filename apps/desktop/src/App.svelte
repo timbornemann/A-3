@@ -8,6 +8,13 @@
     type IndexActivityStateV1,
     type IndexPhaseV1,
   } from './lib/index-activity';
+  import {
+    queryIndexOverview,
+    type IndexDiagnosticCodeV1,
+    type IndexDiagnosticSeverityV1,
+    type IndexLanguageV1,
+    type IndexOverviewResponseV1,
+  } from './lib/index-overview';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
@@ -26,6 +33,7 @@
   interface Props {
     healthLoader?: () => Promise<HealthResponseV1>;
     indexActivityLoader?: () => Promise<IndexActivityResponseV1>;
+    indexOverviewLoader?: () => Promise<IndexOverviewResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
@@ -51,6 +59,15 @@
     | { kind: 'noProject' }
     | { kind: 'active'; result: Extract<IndexActivityResponseV1['result'], { status: 'active' }> }
     | { kind: 'error' };
+  type IndexOverviewView =
+    | { kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | {
+        kind: 'published';
+        result: Extract<IndexOverviewResponseV1['result'], { status: 'published' }>;
+      }
+    | { kind: 'error' };
   type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
   type RemovalView =
     | { kind: 'idle' }
@@ -64,6 +81,7 @@
   let {
     healthLoader = queryHealth,
     indexActivityLoader = queryIndexActivity,
+    indexOverviewLoader = queryIndexOverview,
     projectOpener = openProject,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
@@ -74,9 +92,11 @@
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
+  let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
   let rebuildView = $state<RebuildView>({ kind: 'idle' });
   let removalView = $state<RemovalView>({ kind: 'idle' });
   let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
+  let indexActivityObserved = false;
 
   async function loadHealth(): Promise<void> {
     healthView = { kind: 'loading' };
@@ -93,6 +113,7 @@
     void loadProjectStatus();
     void loadRecentProjects();
     void loadIndexActivity();
+    void loadIndexOverview();
     const activityTimer = window.setInterval(() => {
       void loadIndexActivity();
     }, 500);
@@ -101,13 +122,43 @@
 
   async function loadIndexActivity(): Promise<void> {
     try {
+      const previousSucceeded =
+        indexActivityView.kind === 'active' &&
+        indexActivityView.result.activity.state === 'succeeded';
       const response = await indexActivityLoader();
       indexActivityView =
         response.result.status === 'active'
           ? { kind: 'active', result: response.result }
           : { kind: 'noProject' };
+      if (
+        indexActivityObserved &&
+        response.result.status === 'active' &&
+        response.result.activity.state === 'succeeded' &&
+        !previousSucceeded
+      ) {
+        void loadIndexOverview();
+      } else if (response.result.status === 'noProject') {
+        indexOverviewView = { kind: 'noProject' };
+      }
+      indexActivityObserved = true;
     } catch {
       indexActivityView = { kind: 'error' };
+    }
+  }
+
+  async function loadIndexOverview(): Promise<void> {
+    indexOverviewView = { kind: 'loading' };
+    try {
+      const response = await indexOverviewLoader();
+      if (response.result.status === 'published') {
+        indexOverviewView = { kind: 'published', result: response.result };
+      } else if (response.result.status === 'noPublishedIndex') {
+        indexOverviewView = { kind: 'noPublishedIndex' };
+      } else {
+        indexOverviewView = { kind: 'noProject' };
+      }
+    } catch {
+      indexOverviewView = { kind: 'error' };
     }
   }
 
@@ -119,9 +170,16 @@
         response.result.status === 'active'
           ? { kind: 'active', result: response.result }
           : { kind: 'noProject' };
+      if (response.result.status === 'noProject') {
+        indexOverviewView = { kind: 'noProject' };
+      }
     } catch {
       projectStatusView = { kind: 'error' };
     }
+  }
+
+  async function refreshProjectDetails(): Promise<void> {
+    await Promise.all([loadProjectStatus(), loadIndexOverview()]);
   }
 
   async function loadRecentProjects(): Promise<void> {
@@ -141,8 +199,10 @@
       if (response.result.status === 'opened') {
         projectView = { kind: 'opened' };
         removalView = { kind: 'idle' };
+        indexActivityObserved = false;
         await loadProjectStatus();
         await loadIndexActivity();
+        await loadIndexOverview();
         await loadRecentProjects();
       } else {
         projectView = { kind: 'cancelled' };
@@ -182,6 +242,8 @@
       projectView = { kind: 'idle' };
       projectStatusView = { kind: 'noProject' };
       indexActivityView = { kind: 'noProject' };
+      indexOverviewView = { kind: 'noProject' };
+      indexActivityObserved = false;
       await loadRecentProjects();
     } catch (error) {
       removalView = {
@@ -252,6 +314,50 @@
       publish: 'Snapshot atomar veröffentlichen',
     };
     return labels[phase];
+  }
+
+  function countLabel(value: string): string {
+    return new Intl.NumberFormat('de-DE').format(BigInt(value));
+  }
+
+  function coverageLabel(value: number | null): string {
+    return value === null
+      ? 'Keine strukturellen Parserdaten'
+      : new Intl.NumberFormat('de-DE', {
+          maximumFractionDigits: 2,
+          minimumFractionDigits: 2,
+          style: 'percent',
+        }).format(value / 10_000);
+  }
+
+  function indexLanguageLabel(language: IndexLanguageV1): string {
+    const labels: Record<IndexLanguageV1, string> = {
+      generic: 'Generisch',
+      python: 'Python',
+      rust: 'Rust',
+      typeScriptJavaScript: 'TypeScript/JavaScript',
+    };
+    return labels[language];
+  }
+
+  function diagnosticCodeLabel(code: IndexDiagnosticCodeV1): string {
+    const labels: Record<IndexDiagnosticCodeV1, string> = {
+      invalidEncoding: 'Ungültige Zeichenkodierung',
+      missingSyntax: 'Fehlende Syntax',
+      outputTruncated: 'Begrenzte Parserausgabe',
+      syntaxError: 'Syntaxfehler',
+      unsupportedSyntax: 'Nicht unterstützte Syntax',
+    };
+    return labels[code];
+  }
+
+  function diagnosticSeverityLabel(severity: IndexDiagnosticSeverityV1): string {
+    const labels: Record<IndexDiagnosticSeverityV1, string> = {
+      error: 'Fehler',
+      information: 'Hinweis',
+      warning: 'Warnung',
+    };
+    return labels[severity];
   }
 </script>
 
@@ -412,6 +518,92 @@
             {/if}
           </div>
         {/if}
+        <div class="index-overview" aria-labelledby="index-overview-heading">
+          <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
+          {#if indexOverviewView.kind === 'loading'}
+            <p class="project-status" role="status" aria-live="polite">
+              Veröffentlichter Index wird gelesen …
+            </p>
+          {:else if indexOverviewView.kind === 'noPublishedIndex'}
+            <p class="project-status">
+              Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau bleibt davon
+              getrennt.
+            </p>
+          {:else if indexOverviewView.kind === 'published'}
+            <p class="index-snapshot">
+              Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
+            </p>
+            <dl class="index-metrics">
+              <div>
+                <dt>Dateien</dt>
+                <dd>{countLabel(indexOverviewView.result.overview.counts.fileCount)}</dd>
+              </div>
+              <div>
+                <dt>Symbole</dt>
+                <dd>{countLabel(indexOverviewView.result.overview.counts.symbolCount)}</dd>
+              </div>
+              <div>
+                <dt>Diagnostics</dt>
+                <dd>{countLabel(indexOverviewView.result.overview.counts.diagnosticCount)}</dd>
+              </div>
+              <div>
+                <dt>Parse Coverage</dt>
+                <dd>{coverageLabel(indexOverviewView.result.overview.coverageBasisPoints)}</dd>
+              </div>
+            </dl>
+            <p class="index-coverage-note">
+              {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
+              {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien strukturell geparst.
+            </p>
+            {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
+              <p class="ready-label">Keine Parser-Diagnostics im veröffentlichten Snapshot.</p>
+            {:else}
+              <div class="file-diagnostics" aria-labelledby="file-diagnostics-heading">
+                <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
+                <ul>
+                  {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
+                    <li>
+                      <div class="diagnostic-file-heading">
+                        <code>{file.pathDisplay}{file.pathDisplayTruncated ? '…' : ''}</code>
+                        <span>{indexLanguageLabel(file.language)}</span>
+                      </div>
+                      <p>
+                        {countLabel(file.diagnosticCount)} Diagnostics · Coverage
+                        {coverageLabel(file.coverageBasisPoints)}
+                      </p>
+                      <ul>
+                        {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
+                          <li>
+                            <strong>{diagnosticSeverityLabel(diagnostic.severity)}:</strong>
+                            {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
+                            <span>Bytes {diagnostic.startByte}–{diagnostic.endByte}</span>
+                          </li>
+                        {/each}
+                      </ul>
+                      {#if file.diagnosticsTruncated}
+                        <p>
+                          Weitere Diagnostics dieser Datei sind in dieser begrenzten Ansicht
+                          verborgen.
+                        </p>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+                {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
+                  <p>
+                    Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien begrenzten Ansicht
+                    verborgen.
+                  </p>
+                {/if}
+              </div>
+            {/if}
+          {:else if indexOverviewView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
+              <button type="button" onclick={loadIndexOverview}>Indexübersicht erneut laden</button>
+            </div>
+          {/if}
+        </div>
         <div class="project-maintenance" aria-labelledby="rebuild-heading">
           <h4 id="rebuild-heading">Index neu aufbauen</h4>
           <p>
@@ -433,7 +625,7 @@
                 ? 'Rebuild wird angefordert …'
                 : 'Regenerierbaren Index neu aufbauen'}
             </button>
-            <button type="button" onclick={loadProjectStatus}>Status aktualisieren</button>
+            <button type="button" onclick={refreshProjectDetails}>Status aktualisieren</button>
           </div>
           {#if rebuildView.kind === 'error'}
             <p class="project-error" role="alert">{rebuildView.message}</p>

@@ -102,6 +102,7 @@ mod tests {
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::query_project_status,
                 a3_desktop::commands::query_index_activity,
+                a3_desktop::commands::query_index_overview,
                 a3_desktop::commands::query_health,
                 a3_desktop::commands::rebuild_project_index,
                 a3_desktop::commands::remove_project
@@ -248,6 +249,8 @@ mod tests {
             Some(&json!([
                 "allow-list-recent-projects",
                 "allow-open-project",
+                "allow-query-index-activity",
+                "allow-query-index-overview",
                 "allow-query-project-status",
                 "allow-query-health",
                 "allow-rebuild-project-index",

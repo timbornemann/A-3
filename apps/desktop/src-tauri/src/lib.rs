@@ -10,22 +10,25 @@ mod repository_index_manager;
 
 use a3_application::{
     GetHealth, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
-    GetProjectStorageUsageError, HealthQuery, JobEventStream, JobScheduler, JobSchedulerConfig,
-    JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore,
-    KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError,
-    OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
-    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, JobEventStream,
+    JobScheduler, JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError,
+    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    ListRecentProjects, ListRecentProjectsError, OpenProject, OpenProjectError, OpenProjectOutcome,
+    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
     ProjectInspectionFailure, ProjectReconciliationConfirmer, ProjectStorageControl,
-    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, RecentProject,
-    RemoveProjectFromList, RemoveProjectFromListError,
+    ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview,
+    RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
 };
 use a3_domain::{
-    ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexRunStatus, Platform,
-    ProjectId, ProjectIdentity,
+    ApplicationVersion, ApplicationVersionError, GitHead, Health, IndexLanguage, IndexRunStatus,
+    ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
 };
 use a3_protocol::{
     CommandErrorV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexActivityStateV1, IndexActivityV1, IndexPhaseV1, IndexStateV1, OpenProjectResponseV1,
+    IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
+    IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
+    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, OpenProjectResponseV1,
     PlatformV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
     RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
     RecentProjectsResponseV1, RemoveProjectResponseV1,
@@ -45,7 +48,7 @@ use repository_index_manager::{
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
 
@@ -58,6 +61,7 @@ pub struct CompositionRoot {
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
+    index_overview: Option<GetPublishedIndexOverview>,
     project_storage: Option<GetProjectStorageUsage>,
     remove_project: Option<RemoveProjectFromList>,
     active_project: Mutex<Option<ActiveProject>>,
@@ -193,6 +197,27 @@ impl CompositionRoot {
         IndexActivityResponseV1::active(map_index_activity_to_v1(activity))
     }
 
+    /// Returns a bounded read-only projection of the last atomically published index.
+    pub async fn query_index_overview(&self) -> Result<IndexOverviewResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(IndexOverviewResponseV1::no_project());
+        };
+        let Some(query) = &self.index_overview else {
+            return Ok(IndexOverviewResponseV1::no_published_index());
+        };
+        query
+            .execute(&active.project, &DesktopIndexOverviewControl::new())
+            .await
+            .map_err(map_index_overview_error_to_v1)
+            .map(|overview| match overview {
+                Some(overview) => {
+                    IndexOverviewResponseV1::published(map_index_overview_to_v1(&overview))
+                }
+                None => IndexOverviewResponseV1::no_published_index(),
+            })
+    }
+
     /// Queues a bounded rebuild for the Core-owned active project.
     pub fn rebuild_project_index(&self) -> Result<RebuildProjectIndexResponseV1, CommandErrorV1> {
         let _operation = self.acquire_project_operation(CommandErrorV1::project_rebuild)?;
@@ -274,6 +299,44 @@ struct ActiveProject {
 #[derive(Debug)]
 struct DesktopProjectStorageControl {
     entries: AtomicU32,
+}
+
+#[derive(Debug)]
+struct DesktopIndexOverviewControl {
+    completed: AtomicU64,
+    total: AtomicU64,
+}
+
+impl DesktopIndexOverviewControl {
+    fn new() -> Self {
+        Self {
+            completed: AtomicU64::new(0),
+            total: AtomicU64::new(0),
+        }
+    }
+}
+
+impl IndexPersistenceControl for DesktopIndexOverviewControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), IndexPersistenceControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(IndexPersistenceControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(IndexPersistenceControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(IndexPersistenceControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
 }
 
 impl DesktopProjectStorageControl {
@@ -375,6 +438,7 @@ impl CompositionBase {
         project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     ) -> Result<CompositionRoot, CompositionRootError> {
         let project_status = index_store.clone().map(GetProjectIndexStatus::new);
+        let index_overview = index_store.clone().map(GetPublishedIndexOverview::new);
         let index_manager = index_store
             .map(|store| {
                 let submitter = self
@@ -395,6 +459,7 @@ impl CompositionBase {
             ),
             recent_projects: ListRecentProjects::new(store),
             project_status,
+            index_overview,
             project_storage: project_storage.map(GetProjectStorageUsage::new),
             remove_project: project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
@@ -444,6 +509,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::open_project,
             commands::query_project_status,
             commands::query_index_activity,
+            commands::query_index_overview,
             commands::query_health,
             commands::rebuild_project_index,
             commands::remove_project
@@ -552,6 +618,80 @@ fn map_index_activity_to_v1(activity: RepositoryIndexActivity) -> IndexActivityV
     )
 }
 
+fn map_index_overview_to_v1(overview: &PublishedIndexOverview) -> IndexOverviewV1 {
+    IndexOverviewV1::new(
+        overview.snapshot_id().to_string(),
+        IndexOverviewCountsV1::new(
+            overview.file_count().to_string(),
+            overview.symbol_count().to_string(),
+            overview.diagnostic_count().to_string(),
+            overview.parsed_file_count().to_string(),
+            overview.diagnostic_file_count().to_string(),
+        ),
+        overview.coverage_basis_points(),
+        overview
+            .diagnostic_files()
+            .iter()
+            .map(|file| {
+                IndexFileDiagnosticsV1::new(
+                    file.path_display().as_str().to_owned(),
+                    file.path_display().is_truncated(),
+                    match file.language() {
+                        IndexLanguage::Generic => IndexLanguageV1::Generic,
+                        IndexLanguage::Rust => IndexLanguageV1::Rust,
+                        IndexLanguage::TypeScriptJavaScript => {
+                            IndexLanguageV1::TypeScriptJavaScript
+                        }
+                        IndexLanguage::Python => IndexLanguageV1::Python,
+                    },
+                    file.coverage_basis_points(),
+                    file.diagnostic_count().to_string(),
+                    file.diagnostics()
+                        .iter()
+                        .map(|diagnostic| {
+                            IndexDiagnosticV1::new(
+                                match diagnostic.code() {
+                                    ParseDiagnosticCode::SyntaxError => {
+                                        IndexDiagnosticCodeV1::SyntaxError
+                                    }
+                                    ParseDiagnosticCode::MissingSyntax => {
+                                        IndexDiagnosticCodeV1::MissingSyntax
+                                    }
+                                    ParseDiagnosticCode::InvalidEncoding => {
+                                        IndexDiagnosticCodeV1::InvalidEncoding
+                                    }
+                                    ParseDiagnosticCode::UnsupportedSyntax => {
+                                        IndexDiagnosticCodeV1::UnsupportedSyntax
+                                    }
+                                    ParseDiagnosticCode::OutputTruncated => {
+                                        IndexDiagnosticCodeV1::OutputTruncated
+                                    }
+                                },
+                                match diagnostic.severity() {
+                                    ParseDiagnosticSeverity::Error => {
+                                        IndexDiagnosticSeverityV1::Error
+                                    }
+                                    ParseDiagnosticSeverity::Warning => {
+                                        IndexDiagnosticSeverityV1::Warning
+                                    }
+                                    ParseDiagnosticSeverity::Information => {
+                                        IndexDiagnosticSeverityV1::Information
+                                    }
+                                },
+                                diagnostic.message().to_owned(),
+                                diagnostic.start_byte(),
+                                diagnostic.end_byte(),
+                            )
+                        })
+                        .collect(),
+                    file.diagnostics_truncated(),
+                )
+            })
+            .collect(),
+        overview.diagnostic_files_truncated(),
+    )
+}
+
 const fn map_rebuild_state_to_v1(state: RepositoryIndexRebuildState) -> RebuildStateV1 {
     match state {
         RepositoryIndexRebuildState::Idle => RebuildStateV1::Idle,
@@ -632,6 +772,20 @@ fn map_project_status_error_to_v1(error: GetProjectIndexStatusError) -> CommandE
             CommandErrorV1::project_open(map_storage_error_to_v1(error))
         }
         GetProjectIndexStatusError::Storage(_) => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+        }
+    }
+}
+
+fn map_index_overview_error_to_v1(error: GetPublishedIndexOverviewError) -> CommandErrorV1 {
+    match error {
+        GetPublishedIndexOverviewError::Storage(KnowledgeIndexFailure::Storage(error)) => {
+            CommandErrorV1::project_open(map_storage_error_to_v1(error))
+        }
+        GetPublishedIndexOverviewError::Storage(_) => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageUnavailable)
+        }
+        GetPublishedIndexOverviewError::ProjectionTooLarge => {
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
     }

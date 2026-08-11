@@ -567,6 +567,14 @@ leichtgewichtige, pfadlose V1-Statusabfrage dar. Vor dem atomaren Publish ersetz
 fehlgeschlagene oder abgebrochene Builds den letzten publizierten Index nicht, sodass dessen
 Snapshot parallel weiter lesbar bleibt.
 
+Die getrennte U3-Indexübersicht rekonstruiert nur auf ausdrückliche UI-Aktualisierung den letzten
+`PublishedIndex`. Ein Application-Read-Model berechnet file- und symbolgenaue Zähler sowie
+bytegewichtete Parse-Coverage, behält den publizierten Snapshotanker und begrenzt die Fehleransicht
+auf 64 kanonische Dateien mit je acht sicheren Diagnostics. Pfade sind ausschließlich sanitierte,
+maximal 512 Zeichen lange Anzeigeprojektionen; Source-Inhalt, Hashes und autoritative
+Dateisystempfade überschreiten die IPC-Grenze nicht. Ein Dateifehler erscheint damit lokal, ohne
+andere Indexdaten in einen globalen Blank State zu verwandeln.
+
 ~~~mermaid
 flowchart TD
     Change["Bestätigtes Change Set"]

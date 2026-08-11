@@ -1,10 +1,11 @@
 use crate::CompositionRoot;
 use a3_protocol::{
     CommandErrorV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    ListRecentProjectsRequestV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryIndexActivityRequestV1,
-    QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    IndexOverviewResponseV1, ListRecentProjectsRequestV1, OpenProjectRequestV1,
+    OpenProjectResponseV1, ProjectStatusResponseV1, ProtocolVersion, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1,
+    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
+    RemoveProjectResponseV1,
 };
 use tauri::State;
 
@@ -42,6 +43,15 @@ pub fn query_index_activity(
     root: State<'_, CompositionRoot>,
 ) -> Result<IndexActivityResponseV1, CommandErrorV1> {
     execute_query_index_activity(request, root.inner())
+}
+
+#[tauri::command]
+/// Returns a bounded projection of the active project's latest complete published index.
+pub async fn query_index_overview(
+    request: QueryIndexOverviewRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<IndexOverviewResponseV1, CommandErrorV1> {
+    execute_query_index_overview(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -126,6 +136,17 @@ fn execute_query_index_activity(
     Ok(root.query_index_activity())
 }
 
+async fn execute_query_index_overview(
+    request: QueryIndexOverviewRequestV1,
+    root: &CompositionRoot,
+) -> Result<IndexOverviewResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+
+    root.query_index_overview().await
+}
+
 fn execute_rebuild_project_index(
     request: RebuildProjectIndexRequestV1,
     root: &CompositionRoot,
@@ -152,8 +173,8 @@ async fn execute_remove_project(
 mod tests {
     use super::{
         execute_list_recent_projects, execute_open_project, execute_query_health,
-        execute_query_index_activity, execute_query_project_status, execute_rebuild_project_index,
-        execute_remove_project,
+        execute_query_index_activity, execute_query_index_overview, execute_query_project_status,
+        execute_rebuild_project_index, execute_remove_project,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -165,9 +186,10 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, ListRecentProjectsRequestV1,
-        OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion, QueryIndexActivityRequestV1,
-        QueryProjectStatusRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
+        ListRecentProjectsRequestV1, OpenProjectRequestV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryProjectStatusRequestV1,
+        RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -339,6 +361,47 @@ mod tests {
             response.result(),
             IndexActivityResultV1::NoProject
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn index_overview_is_pathless_and_reports_no_project_before_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let response = block_on(execute_query_index_overview(
+            QueryIndexOverviewRequestV1::current(),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+
+        assert!(matches!(
+            response.result(),
+            IndexOverviewResultV1::NoProject
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn index_overview_rejects_unsupported_version_before_reading_core_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+
+        let result = block_on(execute_query_index_overview(
+            QueryIndexOverviewRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
+        let error = match result {
+            Ok(_) => {
+                return Err(std::io::Error::other(
+                    "unsupported version unexpectedly queried the active project",
+                )
+                .into());
+            }
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), ErrorCodeV1::UnsupportedProtocolVersion);
         Ok(())
     }
 

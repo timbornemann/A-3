@@ -20,6 +20,7 @@ mod explorer_model_provider;
 mod goal_contract;
 mod graph_traversal;
 mod health_query;
+mod index_overview;
 mod jobs;
 mod knowledge_index_store;
 mod knowledge_search_store;
@@ -135,6 +136,10 @@ pub use goal_contract::{
 };
 pub use graph_traversal::TraverseKnowledgeGraph;
 pub use health_query::{GetHealth, HealthQuery};
+pub use index_overview::{
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, PublishedDiagnostic,
+    PublishedFileDiagnostics, PublishedIndexOverview, RepositoryPathDisplay,
+};
 pub use jobs::{
     CancellationToken, JobCancelResult, JobCancellationError, JobClock, JobCompletion, JobContext,
     JobEvent, JobEventKind, JobEventSequence, JobEventStream, JobEventStreamClosed, JobScheduler,

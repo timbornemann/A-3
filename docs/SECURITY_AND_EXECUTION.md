@@ -50,7 +50,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
-  `query_index_activity`, `rebuild_project_index`, `remove_project` und `query_health`, aber keine
+  `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
+  `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
@@ -68,6 +69,12 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Indexinhalt noch Repository. Die Antwort enthält ausschließlich den Core-eigenen geschlossenen
   Jobstatus, eine der sechs festen Phasen und begrenzten Fortschritt. Dadurch kann die WebView
   responsiv pollen, ohne ihre Autorität oder ihren Datenzugriff zu erweitern.
+- `query_index_overview` akzeptiert nur die Protokollversion und wählt den Worktree aus dem
+  Core-eigenen aktiven Zustand. Die Antwort enthält weder einen autoritativen Pfad noch Source-Text,
+  Hashes oder DB-Zeilen. Zähler sind verlustfreie Dezimaltexte; Coverage ist auf 0 bis 10.000
+  Basispunkte, Dateien auf 64, Diagnostics pro Datei auf acht, Meldungen auf 1.024 Bytes und
+  nicht-autoritative Pfadanzeigen auf 512 kontrollzeichenfreie Zeichen begrenzt. Die UI ruft diese
+  tiefere Storage-Abfrage nur bei Open, manueller Aktualisierung oder erfolgreichem Publish auf.
 - Die zusätzlich gelieferte Storagegröße wird ausschließlich unter dem aus der validierten
   `WorktreeId` abgeleiteten privaten App-Data-Verzeichnis gemessen. Die Traversierung folgt keinen
   Symlinks, lehnt Spezialdateien und Ausbrüche ab und ist auf 100.000 Einträge, zwei Sekunden,
