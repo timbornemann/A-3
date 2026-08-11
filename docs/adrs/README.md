@@ -43,6 +43,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0016](0016-evidence-based-worktree-reconciliation.md) | Evidenzbasierte Worktree-Umzugs-Reconciliation |
 | [0017](0017-bounded-repository-discovery.md) | Begrenzte deterministische Repository-Discovery |
 | [0018](0018-model-provider-port-ownership.md) | ModelProvider-Port an der Application-Grenze |
+| [0019](0019-durable-mutation-reconciliation.md) | Dauerhafte Mutationsdisposition und Reconciliation |
 
 ## Neue ADRs
 
