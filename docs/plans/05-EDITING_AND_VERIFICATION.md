@@ -389,9 +389,23 @@ vollständige Linux-Lauf bestand ohne Retry.
 
 ## Gate M7
 
-- [ ] Security-Negativsuite grün
-- [ ] Prozessbaumtests auf drei OS
-- [ ] Mutations-Lock und Snapshotkonflikte grün
-- [ ] alle E2E-Tasks mit vollständigem Audit
-- [ ] kein Netzwerk oder Paketinstall ohne Approval
-- [ ] keine destruktive Gitaktion im automatischen Pfad
+- [x] Security-Negativsuite grün
+- [x] Prozessbaumtests auf drei OS
+- [x] Mutations-Lock und Snapshotkonflikte grün
+- [x] alle E2E-Tasks mit vollständigem Audit
+- [x] kein Netzwerk oder Paketinstall ohne Approval
+- [x] keine destruktive Gitaktion im automatischen Pfad
+
+Verifiziert am 2026-08-11: Die E2-, E3-, E5-, E7-, E8- und E9-Verträge decken Traversal,
+Symlink-/Junction-Escape, Secret- und Binary-Grenzen, Snapshot- und Useränderungskonflikte,
+worktreeweite Mutationsserialisierung, vollständige Mutation-Dispositionen sowie fünf
+reproduzierbare Coding-E2E-Aufgaben mit dauerhaftem Goal-, Step-, Patch-, Evidence-,
+Verification- und Run-Journal-Nachweis ab. Installationskommandos sind im geschlossenen
+Command-Katalog nicht darstellbar; Netzwerk, Shellmodus, Destruktion und schreibende Gitaktionen
+bleiben approval-pflichtig beziehungsweise außerhalb des automatischen Controllerpfads.
+
+Der öffentliche GitHub-Actions-Lauf `31340939100` auf Commit `e2e35f8a` führte den vollständigen
+nativen Workspace-Teststand einschließlich der ProcessRunner-Contracts erfolgreich unter Windows
+x86_64, Linux x86_64, macOS ARM64 und macOS x86_64 aus. Damit ist auch der in E4 zunächst offen
+gebliebene reale Drei-OS-Prozessbaumbeleg erbracht. Die späteren E7- bis E9-Abnahmen bestanden
+zusätzlich den vollständigen lokalen Linux-`quality`-Job und ihre fokussierten Windows-Verträge.
