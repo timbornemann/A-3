@@ -24,6 +24,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - TypeScript Typecheck
 - Unit- und Component-Tests der Änderung
 - Accessibility-Prüfung für neue Interaktionen
+- U2-Projects-Contracts prüfen strikt versionierte pfadlose Commands für Status, Rebuild und
+  Entfernen, den über Reload erhaltenen Core-Zustand, Branch-/Worktree-/Snapshot-/Storageanzeige,
+  bounded Recent Projects, explizite Rebuild-Retention und zweistufige Removal-Bestätigung. Die
+  Removal-Adaptertests müssen Linked Worktrees, private `knowledge.db`, stabile `ProjectId` und
+  Repositoryinhalte erhalten. Fehler-Components dürfen nur bekannte `CommandErrorV1`-Codes auf
+  feste Recovery-Schritte abbilden und niemals rohe Adapterdetails darstellen.
 
 ### Persistenz
 

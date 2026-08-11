@@ -82,8 +82,13 @@ Approval werden vor der Toolgrenze persistiert. Jeder sichtbare Patch wird noch 
 Lease in einen neuen vollständigen Published Index überführt, bevor ein weiterer Context Pack
 entstehen darf. Erfolgreiche Toolversuche und Auditereignisse werden atomar abgeschlossen,
 typisierte Verifikation allein darf Schritte abschließen, und ein wiederholter identischer Fehler
-erzwingt deterministisch Replan beziehungsweise Stop. Als Nächstes folgt E8 mit der
-zustandsgenauen Failure Recovery. Die
+erzwingt deterministisch Replan beziehungsweise Stop. M7/E8 ergänzt zustandsgenaue Recovery für
+Patchkonflikte, partielle Wirkung, Prozessfehler und unbekannte Mutationsergebnisse; M7/E9 belegt
+den vollständigen Codingpfad mit reproduzierbaren lokalen E2E-Aufgaben, Replan, Useränderung und
+Context Compaction. Die Desktop-Projects-Fläche öffnet validierte Worktrees, zeigt Recent Projects,
+Branch, Index, Snapshot und private Storagegröße, baut ausschließlich regenerierbare Indexdaten neu
+auf und entfernt Projekte aus der Liste, ohne Repository oder privates Wissen zu löschen. Als
+nächster Desktop-Schnitt folgt U3 Index Experience. Die
 verbindliche Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.

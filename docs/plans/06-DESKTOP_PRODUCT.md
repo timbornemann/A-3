@@ -31,18 +31,40 @@ Akzeptanz:
 
 Abhängigkeiten: Project Open
 
-- [ ] Repository öffnen
-- [ ] zuletzt verwendete Projekte
-- [ ] Worktree und Branch sichtbar
-- [ ] Indexstatus und letzter Snapshot
-- [ ] Storagegröße und Rebuild
-- [ ] Projekt sicher entfernen, ohne Repository zu löschen
+- [x] Repository öffnen
+- [x] zuletzt verwendete Projekte
+- [x] Worktree und Branch sichtbar
+- [x] Indexstatus und letzter Snapshot
+- [x] Storagegröße und Rebuild
+- [x] Projekt sicher entfernen, ohne Repository zu löschen
 
 Akzeptanz:
 
 - „Projekt entfernen“ löscht nie Quellcode;
 - Rebuild erklärt, welche Daten regenerierbar sind;
 - ungültiger Pfad erhält konkrete Recovery.
+
+Verifiziert am 2026-08-11: Der native Ordnerdialog öffnet ausschließlich einen validierten
+Git-Worktree-Root; der Core hält die aktive Identität über WebView-Reloads und projiziert Branch,
+Worktree, bounded Index-/Snapshotstatus sowie die verlustfreie private Storagegröße. Recent Projects
+sind auf zehn validierte Einträge begrenzt. Der besitzende Indexmanager serialisiert Refresh und
+einen cancellable Rebuild, der nur regenerierbare Projektionen entfernt und anschließend einen
+vollständigen Rescan anfordert.
+
+`remove_project` nimmt keine Identität und keinen Pfad aus der WebView an. Der zweistufig bestätigte
+Use Case beendet Watcher und laufende Indexarbeit, entfernt atomar nur den exakten Recent-Eintrag
+sowie offene Reconciliation-Absichten und behält Repository, Linked Worktrees, stabile `ProjectId`
+und `projects/<WorktreeId>/knowledge.db`. Adapter-Contracts belegen Erhalt und Wiederöffnung. Die UI
+validiert `CommandErrorV1` streng und ordnet nur stabile Codes konkreten Recovery-Schritten zu;
+rohe Pfade und Adapterdetails bleiben unsichtbar.
+
+Rustfmt, Workspace-Tests mit allen Features, Workspace-Clippy über alle Targets/Features mit
+`-D warnings`, Rustdoc, 38 Frontendtests, Formatter, ESLint, Svelte-Typecheck, Produktionsbuild,
+Tooltests, 47 Markdown-Dateien mit 74 lokalen Links und der Dependency-/Lizenzbericht sind grün.
+Der vollständige Linux-`quality`-Job bestand lokal über
+`act -j quality --pull=false -P ubuntu-22.04=a3-act-medium-rust:latest`. Der Windows-libSQL-Harness
+isoliert nun auch Project-Catalog- und Knowledge-Contracts pro Test, wiederholt ausschließlich
+`0xc0000005` höchstens zweimal und verlangt den Abschlussmarker nach der letzten Assertion.
 
 ## U3 Index Experience
 
@@ -186,4 +208,3 @@ Akzeptanz:
 - [ ] Performancebudget gemessen
 - [ ] Fehler-, Offline- und Recoveryzustände vorhanden
 - [ ] UX-Smoke auf Windows, Linux und macOS
-
