@@ -6,6 +6,7 @@ import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
 import type { ModuleCardDetailResponseV1 } from './lib/module-card-detail';
+import type { ModuleCardEvidenceResponseV1 } from './lib/module-card-evidence';
 import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
 import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-graph';
 import type { ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1 } from './lib/module-runtime';
@@ -179,6 +180,35 @@ const staleModuleCard: ModuleCardDetailResponseV1 = {
       mapperProfileVersion: 1,
       moduleId: 'a'.repeat(64),
       schemaVersion: 1,
+      sourceIndexRunId: '5'.repeat(64),
+      sourceSnapshotId: '3'.repeat(64),
+    },
+    status: 'available',
+  },
+};
+
+const staleModuleCardEvidence: ModuleCardEvidenceResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    detail: {
+      cardId: 'e'.repeat(64),
+      cardLifecycle: {
+        invalidatedByIndexRunId: '6'.repeat(64),
+        reason: 'evidenceChanged',
+        status: 'stale',
+      },
+      currentIndexRunId: '6'.repeat(64),
+      currentSnapshotId: '4'.repeat(64),
+      evidenceId: 'f'.repeat(64),
+      freshness: 'stale',
+      moduleId: 'a'.repeat(64),
+      payload: {
+        kind: 'file',
+        revision: {
+          contentHash: '8'.repeat(64),
+          pathHex: '7372632f6c69622e7273',
+        },
+      },
       sourceIndexRunId: '5'.repeat(64),
       sourceSnapshotId: '3'.repeat(64),
     },
@@ -703,10 +733,12 @@ describe('A^3 desktop shell', () => {
       .fn<() => Promise<ModuleCardDetailResponseV1>>()
       .mockResolvedValueOnce(staleModuleCard)
       .mockReturnValueOnce(pendingReload);
+    const moduleCardEvidenceLoader = vi.fn(async () => staleModuleCardEvidence);
     render(App, {
       props: {
         healthLoader: async () => health,
         moduleCardDetailLoader,
+        moduleCardEvidenceLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
         recentProjectsLoader: async () => emptyRecentProjects,
@@ -724,6 +756,26 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('exports main')).toBeTruthy();
     expect(screen.getByText(/Ein als „Fact“ klassifizierter/)).toBeTruthy();
     expect(screen.getByText('1 Claim-Evidence-ID(s)')).toBeTruthy();
+    expect(moduleCardEvidenceLoader).not.toHaveBeenCalled();
+
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: /Evidence f+ für „exports main“ untersuchen/,
+      }),
+    );
+    await waitFor(() => expect(moduleCardEvidenceLoader).toHaveBeenCalledTimes(1));
+    expect(moduleCardEvidenceLoader).toHaveBeenCalledWith({
+      cardId: 'e'.repeat(64),
+      currentIndexRunId: '6'.repeat(64),
+      currentSnapshotId: '4'.repeat(64),
+      evidenceId: 'f'.repeat(64),
+      moduleId: 'a'.repeat(64),
+      sourceIndexRunId: '5'.repeat(64),
+      sourceSnapshotId: '3'.repeat(64),
+    });
+    expect(await screen.findByText('Evidence Stale — nur historische Provenienz')).toBeTruthy();
+    expect(screen.getByText('Card-Zustand:', { exact: false })).toBeTruthy();
+    expect(screen.getByText('src/lib.rs')).toBeTruthy();
 
     const cardPanel = screen.getByRole('heading', { name: 'Module Card' }).parentElement
       ?.parentElement;
@@ -734,10 +786,40 @@ describe('A^3 desktop shell', () => {
     await fireEvent.click(refreshButton);
     await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(2));
     expect(screen.queryByText('exports main')).toBeNull();
+    expect(screen.queryByText('Evidence Stale — nur historische Provenienz')).toBeNull();
     expect(screen.getByText(/wird atomar gelesen/)).toBeTruthy();
 
     resolveReload?.(staleModuleCard);
     expect(await screen.findByText('exports main')).toBeTruthy();
+  });
+
+  it('rejects an Evidence hook after publication or Card selection changed', async () => {
+    const moduleCardEvidenceLoader = vi.fn(async (): Promise<ModuleCardEvidenceResponseV1> => ({
+      protocolVersion: 1,
+      result: { status: 'selectionChanged' },
+    }));
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleCardDetailLoader: async () => staleModuleCard,
+        moduleCardEvidenceLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
+    await fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Evidence f+ für „exports main“ untersuchen/,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/Publikation oder neueste Card haben sich geändert/),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Module Card neu laden' })).toBeTruthy();
   });
 
   it('loads runtime roots only after selection and traces a publication-bound evidence path', async () => {

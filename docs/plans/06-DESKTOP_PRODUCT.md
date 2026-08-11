@@ -129,7 +129,7 @@ Abhängigkeiten: Gate M5
 - [x] Abhängigkeitsgraph mit begrenzter Knotenzahl
 - [x] Entry Points, Tests und Runtime Flows
 - [x] Module Card
-- [ ] Evidence Inspector
+- [x] Evidence Inspector
 - [ ] Confidence, Coverage und Freshness
 - [ ] Suche und Task-Lens-Umschaltung
 
@@ -252,6 +252,33 @@ Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der W
 Contract mit 23 isolierten Fällen bestand zweimal vollständig sowie im grünen Workspace-
 Gesamtlauf. Der Browser-QA-Lauf bestätigte explizite Auswahl, dominante Stale-Darstellung,
 Desktop- und 720-px-Layout ohne Horizontaloverflow sowie eine warnungs- und fehlerfreie Konsole.
+
+Abnahme Evidence Inspector vom 2026-08-11: Jede evidenzgebundene Aussage der sichtbaren
+deterministisch neuesten Module Card führt über ihre stabile Claim-Evidence-ID zu genau einer
+typisierten File-, Symbol- oder Graphkanten-Provenienz. Der atomare libSQL-Read validiert aktuelle
+Publikation, aktuelles Primärmodul, R11-Cardauswahl, historische Quellanker, Evidence-
+Mitgliedschaft und die aus der gespeicherten Payload erneut abgeleitete ID gemeinsam. Ein
+Replacement-Publish oder eine Card-Ersetzung liefert `selectionChanged`; erfundene oder fremde IDs
+werden nicht als Such- oder Existenzkanal verwendet.
+
+Aktuelle Evidence muss exakt im jüngsten Published Index auflösen. Nur eine stale Card darf ihre
+beim R9-Publish dauerhaft gespeicherte historische Payload als dominant markierte stale Provenienz
+zeigen; `NeedsReview` bleibt vom Evidence-Zustand getrennt und verlangt weiterhin aktuelle
+Evidence. Graphpayloads bewahren Relation, Endpunkte, Revision, Range, Provider, Confidence und
+Resolution. Die UI lädt erst nach einem Evidence-Klick, verwirft Inspectorzustand bei Card-Reload
+oder Auswahlwechsel sofort und zeigt keinen Source-Inhalt. WebView-Anker sind opake Hooks, keine
+Datei-, Graph-, SQL-, Shell- oder Providerbefugnisse.
+
+Der Abschlussnachweis umfasst Rustfmt, den seriell grünen Workspace-Test mit allen Features,
+Workspace-Clippy über alle Targets und Features mit Warnings denied, Rustdoc, 42 Desktop-Libtests
+plus zwei Desktop-Binary- und drei Desktop-Integrationstests, 93 Frontendtests, Formatter, ESLint,
+Svelte-Typecheck, Produktionsbuild, vier Tooltests, 47 Markdown-Dateien mit 74 lokalen Links,
+Dependency-/Lizenzbericht und den nativen Tauri-Release-Build ohne Bundle. Der Windows-libSQL-
+Contract mit 23 isolierten Fällen bestand zweimal vollständig; die neuen Verträge decken Current-
+File/Symbol/Graph, historische stale Graph-Evidence, Current-Evidence auf `NeedsReview`,
+Cancellation, fremde IDs und Selectionwechsel ab. Der Browser-QA-Lauf bestätigte den vollständigen
+Klickpfad, dominante Stale-Darstellung, 1280- und 720-px-Layout ohne Horizontaloverflow sowie eine
+warnungs- und fehlerfreie Konsole.
 
 ## U5 Agent Workspace
 

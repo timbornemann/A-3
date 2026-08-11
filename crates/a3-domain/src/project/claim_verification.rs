@@ -42,9 +42,15 @@ impl ModuleCardEvidenceId {
     /// Derives version-one evidence identity for one content-bound structural symbol.
     #[must_use]
     pub fn for_symbol_v1(symbol: &GraphSymbol) -> Self {
+        Self::for_symbol_id_v1(symbol.id())
+    }
+
+    /// Derives version-one evidence identity from the complete structural symbol identity.
+    #[must_use]
+    pub fn for_symbol_id_v1(symbol_id: SymbolId) -> Self {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"a3:module-card-evidence:symbol:v1\0");
-        hasher.update(symbol.id().as_bytes());
+        hasher.update(symbol_id.as_bytes());
         Self::from_bytes(*hasher.finalize().as_bytes())
     }
 

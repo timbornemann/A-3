@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-module-card-evidence"
+description = "Enables the query_module_card_evidence command without any pre-configured scope."
+commands.allow = ["query_module_card_evidence"]
+
+[[permission]]
+identifier = "deny-query-module-card-evidence"
+description = "Denies the query_module_card_evidence command without any pre-configured scope."
+commands.deny = ["query_module_card_evidence"]

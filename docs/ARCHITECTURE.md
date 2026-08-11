@@ -297,6 +297,29 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    Modulauswahl, Aktualisierung oder erfolgreichem Publish. Während eines Reloads entfernt die UI
    die vorherige Card aus der sichtbaren Fläche; das 500-ms-Statuspolling liest keine Card-Inhalte.
 
+### Card-gebundener Evidence Inspector
+
+1. `query_module_card_evidence` wählt das Projekt weiterhin ausschließlich aus der Core-eigenen
+   aktiven `ProjectIdentity`. Als untrusted Eingabe akzeptiert der Command nur die sieben zuvor von
+   der Module-Card-Ansicht ausgegebenen Run-, Snapshot-, Card-, Modul- und Evidence-Anker.
+2. Der libSQL-Adapter liest die jüngste Publikation, das aktuelle Primärmodul, die nach R11
+   deterministisch jüngste Card und deren Evidence-Mitgliedschaft in einer kurzen
+   Deferred-Transaktion. Jeder abweichende aktuelle Run, Snapshot oder Cardanker liefert
+   `selectionChanged`, statt eine alte UI-Auswahl gegen einen neuen Stand aufzulösen.
+3. Die geschlossene Payload-Union enthält ausschließlich eine exakte `FileRevision`, eine
+   `SymbolId` mit ihrer Revision oder eine vollständige `GraphEdge` mit Relation, Endpunkten,
+   Range, Provider, Confidence und Resolution. Source-Inhalt, Live-Dateisystem, SQL-Zeilen und
+   Providerpayloads bleiben hinter dem Adapterrand.
+4. Card-Lifecycle und Evidence-Freshness sind unabhängige Typen. Aktuelle Evidence muss exakt im
+   aktuellen Published Index auflösen. Nur eine stale Card darf ihre vollständig persistierte
+   historische Provenienz als dominant markierte `Stale`-Evidence zeigen; eine `NeedsReview`-Card
+   darf keine stale Evidence als aktuellen Beleg ausgeben.
+5. Ein Evidence-ID-Hook ist keine Capability für beliebige Reads. Der Resolver verlangt die
+   Mitgliedschaft in exakt der ausgewählten neuesten Card und leitet die kanonische ID erneut aus
+   der gespeicherten Payload ab. Der Read ist cancellable, auf zwei Sekunden begrenzt und läuft nur
+   nach einem expliziten Evidence-Klick. Card-Auswahl, Reload oder Publikationswechsel verwerfen den
+   sichtbaren Inspectorzustand sofort.
+
 ### Progressiver Repository-Baum
 
 1. `query_repository_tree` wählt wie die übrigen Desktop-Reads ausschließlich die Core-eigene aktive

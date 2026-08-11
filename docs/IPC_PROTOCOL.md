@@ -103,6 +103,30 @@ nur nach expliziter Modulauswahl, Aktualisierung oder erfolgreichem Publish, nic
 500-ms-Statuspolling. Die gelieferten Evidence-IDs sind stabile Hooks für den nachfolgenden
 Evidence-Inspector-Schnitt und verleihen für sich weder Source- noch Dateizugriff.
 
+## Module Card Evidence Inspector V1
+
+`query_module_card_evidence` akzeptiert genau `protocolVersion` sowie die sieben aus einer bereits
+sichtbaren Module Card stammenden `currentIndexRunId`, `currentSnapshotId`, `sourceIndexRunId`,
+`sourceSnapshotId`, `cardId`, `moduleId` und `evidenceId`. Alle IDs sind 64-stellige
+kleingeschriebene Hexwerte. Gleicher Quell- und aktueller Run erfordern denselben Snapshot. Diese
+opaken Anker sind keine allgemeine Datei-, Graph- oder Evidence-Capability.
+
+Die Antwort unterscheidet `noProject`, `noPublishedIndex`, `projectionUnavailable`,
+`moduleUnavailable`, `cardUnavailable`, `selectionChanged`, `evidenceUnavailable` und `available`.
+`selectionChanged` bedeutet, dass aktuelle Publikation oder deterministisch neueste Card nicht
+mehr zur sichtbaren Auswahl passen; der Command löst sie nicht still gegen den neuen Stand auf.
+`evidenceUnavailable` gibt weder an, ob eine ID anderswo existiert, noch liefert es fremde
+Card-Inhalte.
+
+Eine verfügbare Antwort wiederholt alle sieben validierten Anker, den Card-`lifecycle` und die
+unabhängige Evidence-`freshness` `current` oder `stale`. `stale` ist nur zusammen mit einer stale
+Card zulässig. Die geschlossene Payload ist genau eine content-adressierte `file`-Revision, ein
+`symbol` mit stabiler Symbol-ID und Revision oder eine `graphEdge` mit Relation, typisierten
+Endpunkten, Revision, halboffener Range, Provider, Confidence und Link-Resolution. Der unabhängige
+TypeScript-Decoder prüft exakte Felder, Ankerübereinstimmung, kanonische IDs und Pfade,
+Graph-Evidence-ID sowie die Lifecycle-/Freshness-Kombination erneut. Source-Text, Live-Pfade,
+Datenbankzeilen, Claim-Prädikate und Providerpayloads überschreiten die IPC-Grenze nicht.
+
 ## Repository Tree V1
 
 `query_repository_tree` akzeptiert genau `protocolVersion`, `directoryPathHex`, `afterNameHex` und

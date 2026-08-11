@@ -594,6 +594,22 @@ Snapshotgrenzen und einen zweiten Publish desselben Runs ab, prüft Cancellation
 30-Sekunden-Deadline und sendet höchstens 64 monotone Progressereignisse. Dauerhafte Claims und
 Evidence überleben einen Rebuild des regenerierbaren Fast Index; ihre Invalidierung folgt in R11.
 
+### Evidence Inspector
+
+U4 löst eine sichtbare Claim-Evidence-ID ausschließlich zusammen mit den vollständigen Ankern der
+angezeigten deterministisch neuesten Card auf. Ein atomarer Reader bestätigt zuerst die weiterhin
+jüngste Indexpublikation, das aktuelle Primärmodul, die R11-Auswahl derselben Card und die
+Evidence-Mitgliedschaft. Card- oder Publikationswechsel liefern `selectionChanged`; fremde oder
+erfundene IDs liefern keine Such- oder Existenzinformation.
+
+Die Ausgabe ist eine einzelne bounded File Revision, Symbolrevision oder vollständige Graphkante.
+Für aktuelle Evidence müssen Identität, Pfad, Hash, Snapshot, Endpunkte, Relation, Range, Provider,
+Confidence und Resolution exakt im jüngsten Published Index vorhanden sein. Die beim R9-Publish
+gespeicherte historische Payload bleibt nur für eine stale Card als ausdrücklich stale Provenienz
+lesbar. Card-Lifecycle und Evidence-Freshness bleiben getrennt; `NeedsReview` darf deshalb nur
+weiterhin aktuelle Evidence zeigen. Der Inspector liest weder Source noch Live-Dateisystem, läuft
+erst nach explizitem Klick und ist auf zwei Sekunden begrenzt und cancellable.
+
 ## Task Lens
 
 Seeds:

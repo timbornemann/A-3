@@ -339,13 +339,15 @@ function parseEdge(value: unknown): ModuleDependencyEdgeV1 {
   return {
     observedEvidenceCount: value.observedEvidenceCount,
     relation: value.relation,
-    representativeEvidence: parseEdgeEvidence(value.representativeEvidence),
+    representativeEvidence: parseModuleDependencyEdgeEvidenceV1(value.representativeEvidence),
     sourceModuleId: value.sourceModuleId,
     targetModuleId: value.targetModuleId,
   };
 }
 
-function parseEdgeEvidence(value: unknown): ModuleDependencyEdgeEvidenceV1 {
+export function parseModuleDependencyEdgeEvidenceV1(
+  value: unknown,
+): ModuleDependencyEdgeEvidenceV1 {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -503,7 +505,7 @@ function isConfidenceBasisPoints(value: unknown): value is number {
   return Number.isInteger(value) && typeof value === 'number' && value >= 0 && value <= 10_000;
 }
 
-function isRepositoryPathHex(value: unknown): value is string {
+export function isRepositoryPathHex(value: unknown): value is string {
   if (
     typeof value !== 'string' ||
     value.length > MAX_PATH_BYTES * 2 ||

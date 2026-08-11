@@ -38,6 +38,12 @@
     type ModuleCardFieldKindV1,
   } from './lib/module-card-detail';
   import {
+    queryModuleCardEvidence,
+    type ModuleCardEvidenceQueryV1,
+    type ModuleCardEvidenceRelationV1,
+    type ModuleCardEvidenceResponseV1,
+  } from './lib/module-card-evidence';
+  import {
     queryModuleCardFreshness,
     type ModuleCardFreshnessReasonV1,
     type ModuleCardFreshnessResponseV1,
@@ -101,6 +107,9 @@
     moduleCardDetailLoader?: (
       query: ModuleCardDetailQueryV1,
     ) => Promise<ModuleCardDetailResponseV1>;
+    moduleCardEvidenceLoader?: (
+      query: ModuleCardEvidenceQueryV1,
+    ) => Promise<ModuleCardEvidenceResponseV1>;
     moduleDependencyGraphLoader?: (
       query: ModuleDependencyGraphQueryV1,
     ) => Promise<ModuleDependencyGraphResponseV1>;
@@ -166,6 +175,21 @@
     | {
         kind: 'available';
         result: Extract<ModuleCardDetailResponseV1['result'], { status: 'available' }>;
+      }
+    | { kind: 'error' };
+  type ModuleCardEvidenceView =
+    | { kind: 'idle' }
+    | { evidenceId: string; kind: 'loading' }
+    | { kind: 'noProject' }
+    | { kind: 'noPublishedIndex' }
+    | { kind: 'projectionUnavailable' }
+    | { kind: 'moduleUnavailable' }
+    | { kind: 'cardUnavailable' }
+    | { kind: 'selectionChanged' }
+    | { kind: 'evidenceUnavailable' }
+    | {
+        kind: 'available';
+        result: Extract<ModuleCardEvidenceResponseV1['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
   type RepositoryTreeView =
@@ -275,6 +299,7 @@
     indexOverviewLoader = queryIndexOverview,
     moduleCardFreshnessLoader = queryModuleCardFreshness,
     moduleCardDetailLoader = queryModuleCardDetail,
+    moduleCardEvidenceLoader = queryModuleCardEvidence,
     moduleDependencyGraphLoader = queryModuleDependencyGraph,
     moduleRuntimeMapLoader = queryModuleRuntimeMap,
     moduleRuntimeFlowLoader = queryModuleRuntimeFlow,
@@ -294,6 +319,8 @@
   let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
   let moduleCardDetailView = $state<ModuleCardDetailView>({ kind: 'idle' });
   let moduleCardSelection = $state<{ moduleId: string; name: string } | null>(null);
+  let moduleCardEvidenceView = $state<ModuleCardEvidenceView>({ kind: 'idle' });
+  let selectedModuleCardEvidenceId = $state<string | null>(null);
   let moduleTreeView = $state<ModuleTreeView>({ kind: 'loading' });
   let moduleTreeBreadcrumbs = $state<ModuleTreeBreadcrumb[]>([]);
   let moduleTreeLoadingMore = $state(false);
@@ -324,9 +351,17 @@
   let moduleRuntimeMapRequestSequence = 0;
   let moduleRuntimeFlowRequestSequence = 0;
   let moduleCardDetailRequestSequence = 0;
+  let moduleCardEvidenceRequestSequence = 0;
+
+  function resetModuleCardEvidence(): void {
+    moduleCardEvidenceRequestSequence += 1;
+    moduleCardEvidenceView = { kind: 'idle' };
+    selectedModuleCardEvidenceId = null;
+  }
 
   function resetModuleCardDetail(kind: 'idle' | 'noProject'): void {
     moduleCardDetailRequestSequence += 1;
+    resetModuleCardEvidence();
     moduleCardDetailView = { kind };
     moduleCardSelection = null;
   }
@@ -507,6 +542,7 @@
 
   async function loadModuleCardDetail(moduleId: string, name: string): Promise<void> {
     const requestSequence = ++moduleCardDetailRequestSequence;
+    resetModuleCardEvidence();
     moduleCardSelection = { moduleId, name };
     moduleCardDetailView = { kind: 'loading' };
     try {
@@ -539,6 +575,35 @@
   async function reloadModuleCardDetail(): Promise<void> {
     if (moduleCardSelection === null) return;
     await loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
+  }
+
+  async function inspectModuleCardEvidence(evidenceId: string): Promise<void> {
+    if (moduleCardDetailView.kind !== 'available') return;
+    const card = moduleCardDetailView.result.detail;
+    const requestSequence = ++moduleCardEvidenceRequestSequence;
+    selectedModuleCardEvidenceId = evidenceId;
+    moduleCardEvidenceView = { evidenceId, kind: 'loading' };
+    try {
+      const response = await moduleCardEvidenceLoader({
+        cardId: card.cardId,
+        currentIndexRunId: card.currentIndexRunId,
+        currentSnapshotId: card.currentSnapshotId,
+        evidenceId,
+        moduleId: card.moduleId,
+        sourceIndexRunId: card.sourceIndexRunId,
+        sourceSnapshotId: card.sourceSnapshotId,
+      });
+      if (requestSequence !== moduleCardEvidenceRequestSequence) return;
+      if (response.result.status === 'available') {
+        moduleCardEvidenceView = { kind: 'available', result: response.result };
+      } else {
+        moduleCardEvidenceView = { kind: response.result.status };
+      }
+    } catch {
+      if (requestSequence === moduleCardEvidenceRequestSequence) {
+        moduleCardEvidenceView = { kind: 'error' };
+      }
+    }
   }
 
   async function loadModuleTreeRoot(): Promise<void> {
@@ -1152,6 +1217,25 @@
       observation: 'Observation',
     };
     return labels[kind];
+  }
+
+  function moduleCardEvidenceRelationLabel(relation: ModuleCardEvidenceRelationV1): string {
+    const labels: Record<ModuleCardEvidenceRelationV1, string> = {
+      builds: 'baut',
+      calls: 'ruft auf',
+      configures: 'konfiguriert',
+      contains: 'enthält',
+      defines: 'definiert',
+      documents: 'dokumentiert',
+      exports: 'exportiert',
+      extends: 'erweitert',
+      implements: 'implementiert',
+      imports: 'importiert',
+      reads: 'liest',
+      tests: 'testet',
+      writes: 'schreibt',
+    };
+    return labels[relation];
   }
 
   function coverageLabel(value: number | null): string {
@@ -1821,7 +1905,17 @@
                           {:else}
                             <ul>
                               {#each item.claim.evidenceIds as evidenceId (evidenceId)}
-                                <li><code>{evidenceId}</code></li>
+                                <li>
+                                  <button
+                                    type="button"
+                                    aria-label={`Evidence ${evidenceId} für „${item.value}“ untersuchen`}
+                                    aria-pressed={selectedModuleCardEvidenceId === evidenceId}
+                                    onclick={() => inspectModuleCardEvidence(evidenceId)}
+                                  >
+                                    <code>{evidenceId}</code>
+                                    <span>Untersuchen</span>
+                                  </button>
+                                </li>
                               {/each}
                             </ul>
                           {/if}
@@ -1832,6 +1926,195 @@
                 </section>
               {/each}
             </div>
+            <aside
+              class="dependency-evidence module-card-evidence-inspector"
+              aria-labelledby="module-card-evidence-heading"
+            >
+              <div>
+                <div>
+                  <h5 id="module-card-evidence-heading">Evidence Inspector</h5>
+                  <p>Card-gebundene, typisierte Provenienz ohne Quelltextzugriff.</p>
+                </div>
+                {#if moduleCardEvidenceView.kind !== 'idle'}
+                  <button type="button" onclick={resetModuleCardEvidence}>Schließen</button>
+                {/if}
+              </div>
+              {#if moduleCardEvidenceView.kind === 'idle'}
+                <p class="project-status">
+                  Öffne eine Claim-Evidence-ID, um ihre exakte Revision oder Graph-Beziehung zu
+                  prüfen.
+                </p>
+              {:else if moduleCardEvidenceView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Evidence {moduleCardEvidenceView.evidenceId.slice(0, 12)} wird gegen die sichtbare Card
+                  geprüft …
+                </p>
+              {:else if moduleCardEvidenceView.kind === 'selectionChanged'}
+                <div class="recent-projects-error" role="alert">
+                  <p>
+                    Publikation oder neueste Card haben sich geändert. Die alte Auswahl wird nicht
+                    gegen einen anderen Stand aufgelöst.
+                  </p>
+                  <button type="button" onclick={reloadModuleCardDetail}
+                    >Module Card neu laden</button
+                  >
+                </div>
+              {:else if moduleCardEvidenceView.kind === 'evidenceUnavailable'}
+                <p class="project-status" role="status">
+                  Diese ID gehört nicht zur aktuell ausgewählten neuesten Card und wird deshalb
+                  nicht geöffnet.
+                </p>
+              {:else if moduleCardEvidenceView.kind === 'cardUnavailable'}
+                <p class="project-status" role="status">
+                  Die ausgewählte Card ist nicht mehr die neueste dauerhaft verifizierte Karte.
+                </p>
+              {:else if moduleCardEvidenceView.kind === 'moduleUnavailable'}
+                <p class="project-status" role="status">
+                  Das ausgewählte primäre Modul ist in der aktuellen Publikation nicht mehr
+                  verfügbar.
+                </p>
+              {:else if moduleCardEvidenceView.kind === 'projectionUnavailable'}
+                <p class="project-status">Für diese Publikation existiert keine Modulprojektion.</p>
+              {:else if moduleCardEvidenceView.kind === 'noPublishedIndex'}
+                <p class="project-status">Noch kein veröffentlichter Index.</p>
+              {:else if moduleCardEvidenceView.kind === 'noProject'}
+                <p class="project-status">Kein Projekt ist aktiv.</p>
+              {:else if moduleCardEvidenceView.kind === 'available'}
+                {@const evidence = moduleCardEvidenceView.result.detail}
+                <div
+                  class:module-card-evidence-current={evidence.freshness === 'current'}
+                  class:module-card-evidence-stale={evidence.freshness === 'stale'}
+                  class="module-card-evidence-freshness"
+                  role={evidence.freshness === 'stale' ? 'alert' : 'note'}
+                >
+                  <strong>
+                    {evidence.freshness === 'current'
+                      ? 'Evidence Current'
+                      : 'Evidence Stale — nur historische Provenienz'}
+                  </strong>
+                  <span>
+                    {evidence.freshness === 'current'
+                      ? 'Die exakte Evidence löst im aktuellen veröffentlichten Index auf.'
+                      : 'Die exakte Evidence ist im aktuellen veröffentlichten Index nicht mehr vorhanden.'}
+                  </span>
+                </div>
+                <p class="module-card-evidence-card-state" role="note">
+                  <strong>Card-Zustand:</strong>
+                  {evidence.cardLifecycle.status === 'current'
+                    ? ' Current'
+                    : evidence.cardLifecycle.status === 'stale'
+                      ? ' Stale — keine aktuelle Faktenquelle'
+                      : ' NeedsReview — keine aktuelle Faktenquelle'}
+                  {#if evidence.cardLifecycle.status !== 'current'}
+                    · {moduleCardFreshnessReasonLabel(evidence.cardLifecycle.reason)}
+                  {/if}
+                </p>
+                <dl>
+                  <div>
+                    <dt>Evidence-ID</dt>
+                    <dd><code>{evidence.evidenceId}</code></dd>
+                  </div>
+                  <div>
+                    <dt>Aktueller Indexlauf</dt>
+                    <dd><code>{evidence.currentIndexRunId}</code></dd>
+                  </div>
+                  <div>
+                    <dt>Evidence-Quelle</dt>
+                    <dd><code>{evidence.sourceIndexRunId}</code></dd>
+                  </div>
+                </dl>
+                {#if evidence.payload.kind === 'file'}
+                  <section class="module-card-evidence-payload" aria-label="Datei-Evidence">
+                    <h6>Dateirevision</h6>
+                    <dl>
+                      <div>
+                        <dt>Pfad</dt>
+                        <dd>
+                          <code>{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Content Hash</dt>
+                        <dd><code>{evidence.payload.revision.contentHash}</code></dd>
+                      </div>
+                    </dl>
+                  </section>
+                {:else if evidence.payload.kind === 'symbol'}
+                  <section class="module-card-evidence-payload" aria-label="Symbol-Evidence">
+                    <h6>Strukturelles Symbol</h6>
+                    <dl>
+                      <div>
+                        <dt>Symbol-ID</dt>
+                        <dd><code>{evidence.payload.symbolId}</code></dd>
+                      </div>
+                      <div>
+                        <dt>Revision</dt>
+                        <dd>
+                          <code>{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code>
+                          · {evidence.payload.revision.contentHash}
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                {:else}
+                  {@const edge = evidence.payload.edge}
+                  <section class="module-card-evidence-payload" aria-label="Graph-Evidence">
+                    <h6>Deterministische Graph-Beziehung</h6>
+                    <dl>
+                      <div>
+                        <dt>Relation</dt>
+                        <dd>{moduleCardEvidenceRelationLabel(evidence.payload.relation)}</dd>
+                      </div>
+                      <div>
+                        <dt>Quelle</dt>
+                        <dd>
+                          {#if edge.source.kind === 'file'}
+                            Datei <code>{pathDisplayFromHex(edge.source.pathHex)}</code>
+                          {:else}
+                            Symbol <code>{edge.source.symbolId}</code>
+                          {/if}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Ziel</dt>
+                        <dd>
+                          {#if edge.target.kind === 'file'}
+                            Datei <code>{pathDisplayFromHex(edge.target.pathHex)}</code>
+                          {:else}
+                            Symbol <code>{edge.target.symbolId}</code>
+                          {/if}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Quellrevision</dt>
+                        <dd>
+                          <code>{pathDisplayFromHex(edge.pathHex)}</code> · {edge.contentHash}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Bereich</dt>
+                        <dd>
+                          Bytes {edge.range.startByte}–{edge.range.endByte} · Zeile {edge.range
+                            .start.row + 1}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Beobachtung</dt>
+                        <dd>
+                          {edge.provider} · {edge.resolution} · {coverageLabel(
+                            edge.confidenceBasisPoints,
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                {/if}
+              {:else if moduleCardEvidenceView.kind === 'error'}
+                <div class="recent-projects-error" role="alert">
+                  <p>Die Evidence konnte nicht sicher gelesen werden.</p>
+                </div>
+              {/if}
+            </aside>
           {:else if moduleCardDetailView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
               <p>Die Module Card konnte nicht sicher gelesen werden.</p>

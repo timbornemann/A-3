@@ -121,6 +121,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Der Component-Test lädt erst nach expliziter Modulauswahl, entfernt alte Card-Daten während eines
   Reloads und zeigt Claim-Typ, Confidence sowie `Current`, `Stale` oder `NeedsReview` unabhängig.
   Kein Card-Detail-Read läuft im 500-ms-Statuspolling.
+- Der U4-Evidence-Inspector-Contract löst ausschließlich eine Evidence-ID auf, die zur exakt
+  verankerten deterministisch neuesten sichtbaren Module Card gehört. Reale libSQL-Fixtures prüfen
+  aktuelle File-, Symbol- und Graph-Payloads, stale historische Graph-Provenienz,
+  `NeedsReview` mit weiterhin aktueller Evidence, Cancellation, erfundene IDs und
+  `selectionChanged` nach Replacement-Publish. Rust- und TypeScript-Grenztests lehnen unbekannte
+  Felder, nicht kanonische oder widersprüchliche Run-/Snapshot-/Card-/Modul-/Evidence-Anker,
+  abweichende Graph-Evidence-IDs sowie stale Evidence auf einer Current- oder NeedsReview-Card ab.
+  Der reale Tauri-IPC-Test erreicht nur die enge Capability ohne Projekt-, Source-, Datei-, SQL-
+  oder generische Graphparameter. Der Component-Test startet den Read erst nach Evidence-Klick,
+  zeigt Card-Lifecycle und Evidence-Freshness unabhängig und entfernt alte Evidence bei
+  Card-Reload oder Auswahlwechsel sofort. Kein Inspector-Read läuft im 500-ms-Statuspolling.
 
 ### Persistenz
 

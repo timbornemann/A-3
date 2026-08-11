@@ -214,6 +214,14 @@ Prosa oder einem möglicherweise neueren Index zu rekonstruieren. Publication is
 abbrechbar und fortschrittsmeldend; ein erfolgreicher Commit ist der einzige Übergang zur
 dauerhaften Published-Repräsentation.
 
+Der spätere `ModuleCardEvidenceQuery` bindet genau einen dieser opaken Hooks an aktuellen Run und
+Snapshot, historischen Card-Quell-Run und -Snapshot sowie Card und primäres Modul. Das validierte
+Read-Model kann ausschließlich `File`, `Symbol` oder `GraphEdge` tragen und leitet seine
+`ModuleCardEvidenceId` erneut aus dieser Payload ab. Der Card-Lifecycle bleibt dabei unabhängig von
+`ModuleCardEvidenceFreshness`: Eine historisch persistierte Graphkante kann für eine stale Card als
+stale Provenienz sichtbar bleiben, ist aber kein aktueller Graphbeweis. `Current` verlangt dagegen
+eine exakte Auflösung derselben Payload im gegenwärtigen Published Index.
+
 ### Exact Retrieval
 
 Eine `ExactSearchQuery` wählt entweder einen normalisierten Repository-Pfad, einen begrenzten

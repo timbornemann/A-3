@@ -18,6 +18,7 @@ mod lexical_search_repository;
 mod local_store;
 mod migration;
 mod module_card_detail_repository;
+mod module_card_evidence_repository;
 mod module_card_freshness_repository;
 mod module_card_repository;
 mod module_dependency_graph_repository;

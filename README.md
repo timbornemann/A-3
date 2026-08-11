@@ -114,7 +114,12 @@ für ein ausgewähltes Primärmodul die deterministisch jüngste verifizierte Ca
 aktuelle Publikation. Felder zeigen `Fact`, `Observation` oder `Hypothesis` stets getrennt von
 Confidence und `Current`, `Stale` oder `NeedsReview`; ein historischer stale Fact erscheint daher
 nie als aktuelles Faktum. Quell- und aktuelle Publikationsanker sowie stabile Evidence-IDs bleiben
-erhalten, ohne der WebView Source-, Datei- oder SQL-Zugriff zu geben. Die verbindliche
+erhalten, ohne der WebView Source-, Datei- oder SQL-Zugriff zu geben. Der Card-gebundene Evidence
+Inspector löst einen solchen sichtbaren Hook erst nach einem expliziten Klick gegen die weiterhin
+aktuelle Publikation, die deterministisch neueste Card und ihre Evidence-Mitgliedschaft auf. Er
+zeigt ausschließlich begrenzte Datei-, Symbol- oder Graph-Provenienz und kennzeichnet Card-
+Lifecycle und Evidence-Freshness unabhängig; historische Evidence bleibt dominant als `Stale`
+markiert. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -158,7 +163,8 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail- und Deep-Map-Commands aufrufen.
+Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence- und
+Deep-Map-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
@@ -174,6 +180,9 @@ Core-eigen.
 rollenabhängiges Preset und ein Ergebnislimit. Eine generische Graphtraversierung ist nicht
 exponiert. `query_module_card_detail` akzeptiert nur die stabile ID eines ausgewählten aktuellen
 Primärmoduls; Card-, Claim-, Evidence- und Publikationsanker stammen vollständig aus dem Core.
+`query_module_card_evidence` akzeptiert nur die exakt zuvor sichtbaren Run-, Snapshot-, Modul-,
+Card- und Evidence-Anker. Der Core prüft sie gemeinsam erneut und liefert weder bei einem
+Publikations-/Card-Wechsel noch bei einer fremden Evidence-ID Daten aus.
 Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.

@@ -60,6 +60,13 @@ des Runs als stale und schließt die gesamte `Stale`- oder `NeedsReview`-Card au
 Weiterhin aktive Claims einer unveränderten `Published`-Card dürfen über Run-Grenzen verwendet
 werden, aber nur nachdem Modul und jede Evidence im aktuellen Index erneut aufgelöst wurden.
 
+Der interaktive Evidence Inspector verändert diese Autoritätsregel nicht. Er zeigt eine dauerhaft
+gespeicherte historische File-, Symbol- oder Graph-Provenienz nur bei einer stale Card und mit
+einem getrennten dominanten `Stale`-Hinweis. Eine solche Ansicht darf weder in Task Lens noch in
+Context Pack als aktueller Beleg einfließen. Bei `NeedsReview` muss die ausgewählte Evidence selbst
+weiterhin aktuell auflösbar sein; der offene Revalidierungsbedarf stammt von der direkten
+Abhängigkeit und bleibt unabhängig sichtbar.
+
 ## Goal Contract
 
 Pflichtfelder:

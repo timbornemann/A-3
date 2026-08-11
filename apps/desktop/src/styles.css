@@ -703,11 +703,99 @@ h1 {
 .module-card-evidence-identities ul {
   display: grid;
   gap: 0.25rem;
-  padding-left: 1.1rem;
+  padding: 0;
+  list-style: none;
 }
 
 .module-card-evidence-identities code {
   overflow-wrap: anywhere;
+}
+
+.module-card-evidence-identities button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgb(20 105 78 / 24%);
+  border-radius: 0.5rem;
+  color: #29443c;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.module-card-evidence-identities button span {
+  color: #14694e;
+  font-weight: 800;
+}
+
+.module-card-evidence-identities button[aria-pressed='true'] {
+  border-color: #14694e;
+  background: #e8f5ee;
+}
+
+.module-card-evidence-inspector {
+  border-color: rgb(20 105 78 / 32%);
+  background: #f8fbf9;
+}
+
+.module-card-evidence-inspector > div > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.module-card-evidence-inspector > div > div p,
+.module-card-evidence-inspector > p,
+.module-card-evidence-card-state,
+.module-card-evidence-payload h6 {
+  margin: 0;
+}
+
+.module-card-evidence-inspector > div > div p {
+  color: #657770;
+  font-size: 0.75rem;
+}
+
+.module-card-evidence-freshness {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 0.85rem;
+  border-left: 0.3rem solid #14694e;
+  border-radius: 0.55rem;
+  color: #29443c;
+  background: #e8f5ee;
+}
+
+.module-card-evidence-freshness span {
+  font-size: 0.8rem;
+}
+
+.module-card-evidence-freshness.module-card-evidence-stale {
+  border-left-color: #a44035;
+  color: #6d2721;
+  background: #fff0ed;
+}
+
+.module-card-evidence-card-state {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgb(65 79 75 / 18%);
+  border-radius: 0.55rem;
+  color: #41534d;
+  background: #fff;
+}
+
+.module-card-evidence-payload {
+  display: grid;
+  gap: 0.6rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgb(22 63 54 / 12%);
+}
+
+.module-card-evidence-payload h6 {
+  font-size: 0.82rem;
 }
 
 .module-runtime-panel {
@@ -980,7 +1068,8 @@ h1 {
   }
 
   .dependency-edge-list > li,
-  .dependency-evidence dl > div {
+  .dependency-evidence dl > div,
+  .module-card-evidence-identities button {
     grid-template-columns: 1fr;
   }
 

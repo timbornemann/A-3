@@ -3,12 +3,15 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardDetail, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleRuntimeMap, GetModuleTreePage, GetRepositoryTreePage, IndexPersistenceControl,
-    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
-    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
-    ModuleCardDetailQuery, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
+    CompileTaskLens, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
+    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetRepositoryTreePage,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
+    ModuleCardClaimState, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardEvidenceControl, ModuleCardEvidenceControlError, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
+    ModuleCardEvidenceQuery, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
     ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardLifecycle,
     ModuleCardVerificationControl, ModuleCardVerificationControlError,
     ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
@@ -159,6 +162,23 @@ impl ModuleCardDetailControl for TestIndexControl {
     }
 }
 
+impl ModuleCardEvidenceControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardEvidenceControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ModuleCardEvidenceControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 impl RepositoryTreeControl for TestIndexControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -262,6 +282,19 @@ impl ModuleCardDetailControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleCardDetailControlError> {
+        Ok(())
+    }
+}
+
+impl ModuleCardEvidenceControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardEvidenceControlError> {
         Ok(())
     }
 }
@@ -1069,6 +1102,127 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                 .flat_map(|field| field.values())
                 .any(|value| value.claim().kind() == VerifiedClaimKind::Fact)
         );
+        let evidence_id = ModuleCardEvidenceId::for_graph_edge_v1(
+            published
+                .publication()
+                .graph()
+                .edges()
+                .first()
+                .ok_or("current graph Evidence is missing")?,
+        );
+        let symbol_evidence_id = ModuleCardEvidenceId::for_symbol_v1(
+            published
+                .publication()
+                .graph()
+                .symbols()
+                .first()
+                .ok_or("current symbol Evidence is missing")?,
+        );
+        assert!(
+            current_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.evidence_ids())
+                .any(|id| *id == evidence_id)
+        );
+        assert!(
+            current_detail
+                .fields()
+                .iter()
+                .flat_map(|field| field.evidence_ids())
+                .any(|id| *id == symbol_evidence_id)
+        );
+        let current_evidence_query = ModuleCardEvidenceQuery::new(
+            current_detail.current_index_run_id(),
+            current_detail.current_snapshot_id(),
+            current_detail.source_index_run_id(),
+            current_detail.source_snapshot_id(),
+            current_detail.id(),
+            current_detail.module_id(),
+            evidence_id,
+        );
+        let evidence_reader = GetModuleCardEvidence::new(Arc::new(
+            LibsqlKnowledgeStore::open(&fixture.layout).await?,
+        ));
+        assert_eq!(
+            evidence_reader
+                .execute(
+                    &fixture.project,
+                    &current_evidence_query,
+                    &CancelledIndexControl,
+                )
+                .await,
+            Err(ModuleCardEvidenceFailure::Cancelled)
+        );
+        let unavailable_evidence_query = ModuleCardEvidenceQuery::new(
+            current_detail.current_index_run_id(),
+            current_detail.current_snapshot_id(),
+            current_detail.source_index_run_id(),
+            current_detail.source_snapshot_id(),
+            current_detail.id(),
+            current_detail.module_id(),
+            ModuleCardEvidenceId::from_bytes([250; 32]),
+        );
+        assert_eq!(
+            evidence_reader
+                .execute(
+                    &fixture.project,
+                    &unavailable_evidence_query,
+                    &TestIndexControl::default(),
+                )
+                .await?,
+            ModuleCardEvidenceLoadResult::EvidenceUnavailable
+        );
+        let current_evidence = match evidence_reader
+            .execute(
+                &fixture.project,
+                &current_evidence_query,
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardEvidenceLoadResult::Detail(detail) => detail,
+            other => return Err(format!("expected current Card Evidence, got {other:?}").into()),
+        };
+        assert_eq!(
+            current_evidence.freshness(),
+            ModuleCardEvidenceFreshness::Current
+        );
+        assert_eq!(
+            current_evidence.card_lifecycle(),
+            ModuleCardLifecycle::Current
+        );
+        assert!(matches!(
+            current_evidence.payload(),
+            ModuleCardEvidencePayload::GraphEdge { edge }
+                if ModuleCardEvidenceId::for_graph_edge_v1(edge) == evidence_id
+        ));
+        let symbol_evidence_query = ModuleCardEvidenceQuery::new(
+            current_detail.current_index_run_id(),
+            current_detail.current_snapshot_id(),
+            current_detail.source_index_run_id(),
+            current_detail.source_snapshot_id(),
+            current_detail.id(),
+            current_detail.module_id(),
+            symbol_evidence_id,
+        );
+        let symbol_evidence = match evidence_reader
+            .execute(
+                &fixture.project,
+                &symbol_evidence_query,
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardEvidenceLoadResult::Detail(detail) => detail,
+            other => return Err(format!("expected current symbol Evidence, got {other:?}").into()),
+        };
+        assert!(matches!(
+            symbol_evidence.payload(),
+            ModuleCardEvidencePayload::Symbol { symbol_id, revision }
+                if ModuleCardEvidenceId::for_symbol_id_v1(*symbol_id) == symbol_evidence_id
+                    && revision.path().as_bytes() == b"src/lib.rs"
+        ));
         assert_eq!(read_count(&knowledge_path, "module_card_fields").await?, 2);
         assert_eq!(
             read_count(&knowledge_path, "module_card_field_values").await?,
@@ -1076,9 +1230,9 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         );
         assert_eq!(
             read_count(&knowledge_path, "module_card_field_evidence").await?,
-            2
+            3
         );
-        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 2);
         assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
         assert_eq!(read_count(&knowledge_path, "claim_evidence").await?, 1);
         assert_eq!(read_count(&knowledge_path, "claim_relations").await?, 1);
@@ -1220,6 +1374,53 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                         && value.claim().state() == ModuleCardClaimState::Stale
                 })
         );
+        assert_eq!(
+            evidence_reader
+                .execute(
+                    &fixture.project,
+                    &current_evidence_query,
+                    &TestIndexControl::default(),
+                )
+                .await?,
+            ModuleCardEvidenceLoadResult::SelectionChanged
+        );
+        let stale_evidence_query = ModuleCardEvidenceQuery::new(
+            stale_detail.current_index_run_id(),
+            stale_detail.current_snapshot_id(),
+            stale_detail.source_index_run_id(),
+            stale_detail.source_snapshot_id(),
+            stale_detail.id(),
+            stale_detail.module_id(),
+            evidence_id,
+        );
+        let stale_evidence = match evidence_reader
+            .execute(
+                &fixture.project,
+                &stale_evidence_query,
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardEvidenceLoadResult::Detail(detail) => detail,
+            other => return Err(format!("expected stale Card Evidence, got {other:?}").into()),
+        };
+        assert_eq!(
+            stale_evidence.freshness(),
+            ModuleCardEvidenceFreshness::Stale
+        );
+        assert_eq!(
+            stale_evidence.card_lifecycle(),
+            ModuleCardLifecycle::Stale {
+                invalidated_by_index_run_id: changed_run.id(),
+                reason: InvalidationReason::EvidenceChanged,
+            }
+        );
+        assert!(matches!(
+            stale_evidence.payload(),
+            ModuleCardEvidencePayload::GraphEdge { edge }
+                if ModuleCardEvidenceId::for_graph_edge_v1(edge) == evidence_id
+                    && edge.snapshot_id() == initial_snapshot.id()
+        ));
         let remaps = LoadPendingModuleRemaps::new(&store)
             .execute(
                 &fixture.project,
@@ -1272,7 +1473,7 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(read_count(&knowledge_path, "card_fts").await?, 0);
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
         assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
-        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 2);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1598,6 +1799,47 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
                 .flat_map(|field| field.values())
                 .any(|value| value.claim().kind() == VerifiedClaimKind::Fact)
         );
+        let dependent_evidence_id = dependent_detail
+            .fields()
+            .iter()
+            .flat_map(|field| field.evidence_ids())
+            .copied()
+            .next()
+            .ok_or("dependent Card Evidence is missing")?;
+        let dependent_evidence = match GetModuleCardEvidence::new(store.clone())
+            .execute(
+                &fixture.project,
+                &ModuleCardEvidenceQuery::new(
+                    dependent_detail.current_index_run_id(),
+                    dependent_detail.current_snapshot_id(),
+                    dependent_detail.source_index_run_id(),
+                    dependent_detail.source_snapshot_id(),
+                    dependent_detail.id(),
+                    dependent_detail.module_id(),
+                    dependent_evidence_id,
+                ),
+                &TestIndexControl::default(),
+            )
+            .await?
+        {
+            ModuleCardEvidenceLoadResult::Detail(detail) => detail,
+            other => {
+                return Err(format!("expected dependent Card Evidence, got {other:?}").into());
+            }
+        };
+        assert_eq!(
+            dependent_evidence.freshness(),
+            ModuleCardEvidenceFreshness::Current
+        );
+        assert!(matches!(
+            dependent_evidence.payload(),
+            ModuleCardEvidencePayload::File { revision }
+                if ModuleCardEvidenceId::for_file_revision_v1(revision) == dependent_evidence_id
+        ));
+        assert!(matches!(
+            dependent_evidence.card_lifecycle(),
+            ModuleCardLifecycle::NeedsReview { .. }
+        ));
 
         let lens = CompileTaskLens::new(store.as_ref(), store.as_ref(), store.as_ref())
             .execute(
@@ -3970,6 +4212,14 @@ fn verified_card_batch(
         .ok_or("published fixture edge is missing")?
         .clone();
     let evidence_id = ModuleCardEvidenceId::for_graph_edge_v1(&edge);
+    let symbol = published
+        .publication()
+        .graph()
+        .symbols()
+        .first()
+        .ok_or("published fixture symbol is missing")?
+        .clone();
+    let symbol_evidence_id = ModuleCardEvidenceId::for_symbol_v1(&symbol);
     let module = published
         .publication()
         .modules()
@@ -3990,7 +4240,7 @@ fn verified_card_batch(
             ProposedModuleCardField::new(
                 ModuleCardField::Purpose,
                 vec!["keeps policy centralized".to_owned()],
-                vec![evidence_id],
+                vec![evidence_id, symbol_evidence_id],
             )?,
             ProposedModuleCardField::new(
                 ModuleCardField::PublicSurface,
@@ -4040,10 +4290,16 @@ fn verified_card_batch(
         ModuleCardVerificationCandidate::new(proposal, vec![relation_claim, intent_claim])?;
     let evidence = ResolvedModuleCardEvidenceSet::new(
         published.run().snapshot_id(),
-        vec![ResolvedModuleCardEvidence::GraphEdge {
-            id: evidence_id,
-            edge,
-        }],
+        vec![
+            ResolvedModuleCardEvidence::GraphEdge {
+                id: evidence_id,
+                edge,
+            },
+            ResolvedModuleCardEvidence::Symbol {
+                id: symbol_evidence_id,
+                symbol,
+            },
+        ],
     )?;
     Ok(ModuleCardVerifier::verify(
         published,

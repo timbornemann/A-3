@@ -391,6 +391,12 @@ Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
   gespeichert; Schema-Checks verhindern, dass Architekturabsicht als Fact persistiert wird.
 - Verifizierte Cards, Claims und Evidence sind dauerhaft. Ein Rebuild entfernt ihre regenerierbare
   `card_fts`-Projektion, aber nicht ihre Herkunft; R11 übernimmt deren spätere Invalidierung.
+- Der Evidence Inspector benötigt keine weitere Migration. Eine kurze Deferred-Transaktion bindet
+  die jüngste Publikation und R11-Cardauswahl an `module_card_field_evidence` und rekonstruiert
+  genau eine bereits in V9 atomar gespeicherte File-, Symbol- oder Graph-Payload. Aktuelle
+  Evidence wird zusätzlich gegen die `file_revisions`, `symbols` oder `symbol_edges` desselben
+  jüngsten Runs aufgelöst; historische Payloads dürfen ausschließlich für eine stale Card als
+  stale Provenienz ausgegeben werden.
 - Embedding ist über SemanticCardId, ModelProfileId und BodyHash eindeutig.
 - Eine Semantic Card besitzt pro Snapshot genau eine Body-Revision; derselbe Body darf über
   Snapshots hinweg denselben regenerierbaren Cacheeintrag wiederverwenden.

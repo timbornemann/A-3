@@ -24,6 +24,7 @@ export type ErrorCodeV1 =
   | 'invalidModuleRuntimeMapQuery'
   | 'invalidModuleRuntimeFlowQuery'
   | 'invalidModuleCardDetailQuery'
+  | 'invalidModuleCardEvidenceQuery'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -63,6 +64,7 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'invalidModuleRuntimeMapQuery',
   'invalidModuleRuntimeFlowQuery',
   'invalidModuleCardDetailQuery',
+  'invalidModuleCardEvidenceQuery',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

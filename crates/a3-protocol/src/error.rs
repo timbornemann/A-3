@@ -47,6 +47,8 @@ pub enum ErrorCodeV1 {
     InvalidModuleRuntimeFlowQuery,
     /// A module ID violated the strict Module Card detail contract.
     InvalidModuleCardDetailQuery,
+    /// A Card, publication, module, or Evidence anchor violated the Inspector contract.
+    InvalidModuleCardEvidenceQuery,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -143,6 +145,9 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::InvalidModuleCardDetailQuery => {
                 "The Module Card detail request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidModuleCardEvidenceQuery => {
+                "The Module Card Evidence request is outside the supported bounds."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

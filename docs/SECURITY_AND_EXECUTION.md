@@ -51,7 +51,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
-  `query_module_card_freshness`, `query_module_card_detail`, `query_repository_tree`,
+  `query_module_card_freshness`, `query_module_card_detail`, `query_module_card_evidence`,
+  `query_repository_tree`,
   `query_module_tree`, `query_module_dependency_graph`, `query_deep_map`,
   `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
@@ -93,6 +94,15 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Card überstimmen. Der Command gewährt weder Source-, Datei-, Shell-, SQL-, Claim-Prädikat- noch
   Providerzugriff und läuft nur nach bewusster Auswahl, Aktualisierung oder erfolgreichem Publish,
   nie im 500-ms-Polling.
+- `query_module_card_evidence` akzeptiert ausschließlich die sieben zuvor vom Core ausgegebenen
+  aktuellen und historischen Run-/Snapshot-, Card-, Modul- und Evidence-Anker. Eine kurze, auf
+  zwei Sekunden begrenzte Read-Transaktion validiert die weiterhin jüngste Publikation, das
+  aktuelle Primärmodul, die nach R11 neueste Card, die exakte Evidence-Mitgliedschaft und die aus
+  der gespeicherten Payload erneut abgeleitete Evidence-ID gemeinsam. Bei einem Publish- oder
+  Card-Wechsel wird nur `selectionChanged` ausgegeben. Die Antwort enthält höchstens eine
+  content-adressierte File-, Symbol- oder Graphkanten-Provenienz ohne Source-Inhalt; opake
+  Pfadbytes, Symbol- und Evidence-IDs autorisieren keinen weiteren Read. Der Command läuft nur nach
+  einem expliziten Evidence-Klick und nicht im Statuspolling.
 - `query_repository_tree` akzeptiert ausschließlich Protokollversion, eine optionale relative
   RepositoryPath als kleingeschriebenes Hex-Token, einen optionalen direkten Kind-Cursor und ein
   Limit von 1 bis 100. Projekt und Worktree stammen aus dem Core. Der Adapter liest nur direkte

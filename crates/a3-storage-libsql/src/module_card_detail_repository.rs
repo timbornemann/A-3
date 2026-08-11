@@ -121,13 +121,13 @@ pub(crate) async fn load(
     }
 }
 
-struct Publication {
-    index_run_id: IndexRunId,
-    snapshot_id: SnapshotId,
-    expected_module_count: Option<u64>,
+pub(crate) struct Publication {
+    pub(crate) index_run_id: IndexRunId,
+    pub(crate) snapshot_id: SnapshotId,
+    pub(crate) expected_module_count: Option<u64>,
 }
 
-async fn latest_publication(
+pub(crate) async fn latest_publication(
     transaction: &Transaction,
     worktree_id: WorktreeId,
 ) -> Result<Option<Publication>, ModuleCardDetailRepositoryError> {
@@ -156,12 +156,12 @@ async fn latest_publication(
     }))
 }
 
-enum SelectedModule {
+pub(crate) enum SelectedModule {
     Primary,
     Unavailable,
 }
 
-async fn validate_selected_module(
+pub(crate) async fn validate_selected_module(
     transaction: &Transaction,
     index_run_id: IndexRunId,
     expected_module_count: u64,
@@ -194,17 +194,17 @@ async fn validate_selected_module(
 }
 
 #[derive(Clone, Copy)]
-struct StoredCard {
-    source_index_run_id: IndexRunId,
-    source_snapshot_id: SnapshotId,
-    id: ModuleCardId,
+pub(crate) struct StoredCard {
+    pub(crate) source_index_run_id: IndexRunId,
+    pub(crate) source_snapshot_id: SnapshotId,
+    pub(crate) id: ModuleCardId,
     schema_version: ModuleCardSchemaVersion,
     mapper_profile_version: MapperProfileVersion,
     confidence: Confidence,
-    lifecycle: ModuleCardLifecycle,
+    pub(crate) lifecycle: ModuleCardLifecycle,
 }
 
-async fn latest_card(
+pub(crate) async fn latest_card(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     current_index_run_id: IndexRunId,
@@ -267,7 +267,7 @@ async fn latest_card(
     }))
 }
 
-async fn validate_invalidation_run(
+pub(crate) async fn validate_invalidation_run(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     current_index_run_id: IndexRunId,

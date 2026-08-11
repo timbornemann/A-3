@@ -7,6 +7,7 @@ mod health;
 mod index_activity;
 mod index_overview;
 mod module_card_detail;
+mod module_card_evidence;
 mod module_card_freshness;
 mod module_dependency_graph;
 mod module_runtime;
@@ -41,6 +42,11 @@ pub use module_card_detail::{
     ModuleCardDetailResponseV1, ModuleCardDetailResultV1, ModuleCardDetailV1,
     ModuleCardFieldKindV1, ModuleCardLifecycleV1, ModuleCardValueV1,
     QueryModuleCardDetailRequestV1,
+};
+pub use module_card_evidence::{
+    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
+    ModuleCardEvidenceResponseV1, ModuleCardEvidenceResultV1, ModuleCardEvidenceRevisionV1,
+    ModuleCardEvidenceV1, QueryModuleCardEvidenceRequestV1,
 };
 pub use module_card_freshness::{
     ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,

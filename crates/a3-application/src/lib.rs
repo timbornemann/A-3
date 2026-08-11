@@ -32,6 +32,7 @@ mod model_capability;
 mod model_provider;
 mod module_card_claim_codec;
 mod module_card_detail;
+mod module_card_evidence;
 mod module_card_freshness;
 mod module_card_verification;
 mod module_dependency_graph;
@@ -196,6 +197,12 @@ pub use module_card_detail::{
     ModuleCardDetailFailure, ModuleCardDetailField, ModuleCardDetailFieldError,
     ModuleCardDetailFuture, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
     ModuleCardDetailStore, ModuleCardLifecycle, ModuleCardValuePresentation,
+};
+pub use module_card_evidence::{
+    GetModuleCardEvidence, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
+    ModuleCardEvidenceDetail, ModuleCardEvidenceDetailError, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFreshness, ModuleCardEvidenceFuture, ModuleCardEvidenceLoadResult,
+    ModuleCardEvidencePayload, ModuleCardEvidenceQuery, ModuleCardEvidenceStore,
 };
 pub use module_card_freshness::{
     GetModuleCardFreshness, ModuleCardFreshness, ModuleCardFreshnessControl,

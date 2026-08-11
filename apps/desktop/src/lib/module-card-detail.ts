@@ -182,7 +182,7 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
   ) {
     throw new Error('Module Card detail response contains an invalid Card envelope.');
   }
-  const lifecycle = parseLifecycle(value.lifecycle);
+  const lifecycle = parseModuleCardLifecycleV1(value.lifecycle);
   const fields = value.fields.map((field) => parseField(field, lifecycle.status));
   if (!isCanonicalFieldOrder(fields)) {
     throw new Error('Module Card detail fields are duplicated or unordered.');
@@ -216,7 +216,7 @@ function parseDetail(value: unknown): ModuleCardDetailV1 {
   };
 }
 
-function parseLifecycle(value: unknown): ModuleCardLifecycleV1 {
+export function parseModuleCardLifecycleV1(value: unknown): ModuleCardLifecycleV1 {
   if (!isRecord(value) || typeof value.status !== 'string') {
     throw new Error('Module Card detail response contains an invalid lifecycle.');
   }
