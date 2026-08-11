@@ -4,10 +4,10 @@ use a3_application::{
     CreateGoalContract, GoalContractStore, GoalContractStoreFailure, ReviseGoalContract,
 };
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, GoalConstraint,
-    GoalContract, GoalContractDraft, GoalContractRevision, GoalContractTimestamp, GoalObjective,
-    GoalRevisionReason, NonGoal, RepositoryId, SuccessVerification, TaskId, UserDecision,
-    WorktreeId,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
+    AcceptanceCriterionStatement, GoalConstraint, GoalContract, GoalContractDraft,
+    GoalContractRevision, GoalContractTimestamp, GoalObjective, GoalRevisionReason, NonGoal,
+    RepositoryId, SuccessVerification, TaskId, UserDecision, WorktreeId,
 };
 
 pub(crate) async fn verify<F>(factory: &F, workspace: &ContractWorkspace) -> ContractResult<()>
@@ -127,7 +127,11 @@ fn initial_draft() -> ContractResult<GoalContractDraft> {
         GoalObjective::try_from_string("implement the durable goal contract".to_owned())?,
         vec![
             criterion(214, "the goal survives reopen")?,
-            criterion(215, "old revisions remain auditable")?,
+            criterion_with_requirement(
+                215,
+                "old revisions remain auditable",
+                AcceptanceCriterionRequirement::Should,
+            )?,
         ],
         vec![GoalConstraint::try_from_string(
             "remain local-only".to_owned(),
@@ -147,7 +151,11 @@ fn alternate_draft(objective: &str) -> ContractResult<GoalContractDraft> {
         GoalObjective::try_from_string(objective.to_owned())?,
         vec![
             criterion(214, "the goal survives reopen")?,
-            criterion(216, "conflicting writers are rejected")?,
+            criterion_with_requirement(
+                216,
+                "conflicting writers are rejected",
+                AcceptanceCriterionRequirement::Should,
+            )?,
         ],
         vec![GoalConstraint::try_from_string(
             "remain local-only".to_owned(),
@@ -163,8 +171,17 @@ fn alternate_draft(objective: &str) -> ContractResult<GoalContractDraft> {
 }
 
 fn criterion(id: u8, statement: &str) -> ContractResult<AcceptanceCriterion> {
-    Ok(AcceptanceCriterion::new(
+    criterion_with_requirement(id, statement, AcceptanceCriterionRequirement::Must)
+}
+
+fn criterion_with_requirement(
+    id: u8,
+    statement: &str,
+    requirement: AcceptanceCriterionRequirement,
+) -> ContractResult<AcceptanceCriterion> {
+    Ok(AcceptanceCriterion::with_requirement(
         AcceptanceCriterionId::from_bytes([id; 32]),
         AcceptanceCriterionStatement::try_from_string(statement.to_owned())?,
+        requirement,
     ))
 }

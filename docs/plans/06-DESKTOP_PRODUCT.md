@@ -343,8 +343,8 @@ ist abgeschlossen.
 
 Abhängigkeiten: Gate M7
 
-- [ ] Goal Contract
-- [ ] Acceptance Criteria
+- [x] Goal Contract
+- [x] Acceptance Criteria
 - [ ] Task Ledger und aktueller Step
 - [ ] kompakte Conversation- und Action Timeline
 - [ ] Context- und Budgetanzeige
@@ -356,6 +356,19 @@ Akzeptanz:
 - Ziel und aktueller Step bleiben stets sichtbar;
 - Textantwort und echte Ausführungsaktion sind unterscheidbar;
 - Cancel ist erreichbar und zeigt Abschlusszustand.
+
+Abnahme des ersten U5-Schnitts am 2026-08-11: Der Agent Workspace liest den aktuellen
+revisionierten Goal Contract aus dem aktiven Core-Worktree, legt eine vollständige Aufgabe mit
+ausschließlich Core-generierten Task-/Kriterien-IDs atomar an und hängt materielle Nachfolger gegen
+die sichtbar gebundene Vorgängerrevision an. Must und Should, Constraints, Non-Goals,
+Nutzerentscheidungen, Abschlussprüfung und Revisionsgrund bleiben über den realen gemeinsamen
+libSQL-Reopen-Vertrag erhalten. Strikte Rust-/TypeScript-IPC-, Redaction-, Error-Recovery- und
+Component-Tests decken Grenzen, stale Editoren, erfundene IDs, UTF-8-Bytebudgets und die inaktive
+Projektgrenze ab. Die reale Browser-Abnahme bestand im Desktop- und 390-Pixel-Layout; vollständige
+Workspace-Tests, Clippy mit `-D warnings`, Rustdoc, `ci:frontend`, Link-/Dependency-Prüfung und der
+Tauri-Release-Build ohne Bundle waren grün. Die direkte `getrandom`-Deklaration verwendet die
+bereits transitiv aufgelöste Version als injizierte OS-Identitätsquelle; sie fügt kein neues Paket
+zum Lockfile-Graph hinzu. Ledger, Run und Modellarbeit werden durch diesen Schnitt nicht gestartet.
 
 ## U6 Diff und Verification
 

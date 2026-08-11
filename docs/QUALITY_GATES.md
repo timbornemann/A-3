@@ -151,6 +151,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   beweist, dass Task-/Lens-Reads erst nach Umschaltung beziehungsweise Auswahl starten, Semantic
   sichtbar „kein Beweis“ bleibt und eine evidencefreie Architekturabsicht als unbewiesene,
   visuell getrennte Hypothese erscheint. Weder Suche noch Task Lens laufen im 500-ms-Statuspolling.
+- Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
+  Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
+  gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene
+  Kriterien-IDs und stale Editoren ab; der gemeinsame reale libSQL-Vertrag erhält Must und Should,
+  alte Revisionen, Worktree-Isolation und den aktuellen Contract über Reopen. IPC- und
+  TypeScript-Tests erzwingen exakte V1-Felder, UTF-8-Bytegrenzen, Kardinalität, Eindeutigkeit,
+  Revisionsverkettung und Versionsprüfung vor Content. Debug- und Recovery-Tests dürfen keinen
+  nutzerverfassten Goal- oder Adaptertext ausgeben. Component-Tests beweisen, dass ohne aktives
+  Projekt kein Read startet, Neuanlage nur `null`-Kriterien-IDs sendet, Revisionen stabile IDs
+  behalten und der neu geladene aktuelle Goal Contract samt Must-/Should-Kennzeichnung sichtbar
+  bleibt. Speichern startet weder Ledger noch Run noch Modellarbeit.
 
 ### Persistenz
 

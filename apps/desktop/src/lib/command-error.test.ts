@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentGoalRecoveryMessage,
   deepMapRecoveryMessage,
   parseCommandErrorV1,
   projectActionRecoveryMessage,
@@ -67,5 +68,17 @@ describe('command error recovery', () => {
       'kein validierter pausierter',
     );
     expect(deepMapRecoveryMessage(commandError('unknownCode', secret))).not.toContain(secret);
+  });
+
+  it('maps revision conflicts without rendering Goal Contract or adapter content', () => {
+    const secret = 'PRIVATE GOAL http://provider.internal';
+
+    expect(agentGoalRecoveryMessage(commandError('agentGoalRevisionConflict', secret))).toContain(
+      'aktuelle Revision',
+    );
+    expect(
+      agentGoalRecoveryMessage(commandError('agentGoalRevisionConflict', secret)),
+    ).not.toContain(secret);
+    expect(agentGoalRecoveryMessage(new Error(secret))).not.toContain(secret);
   });
 });

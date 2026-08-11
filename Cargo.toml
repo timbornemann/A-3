@@ -38,6 +38,7 @@ blake3 = "=1.8.5"
 command-group = { version = "=5.0.1", default-features = false }
 crossbeam-channel = "=0.5.16"
 futures = "=0.3.32"
+getrandom = "=0.3.4"
 gix = { version = "=0.86.0", default-features = false, features = ["sha1", "sha256"] }
 libsql = { version = "=0.9.29", default-features = false, features = ["core"] }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "stream"] }

@@ -1,25 +1,28 @@
 use crate::{
-    CompositionRoot, map_module_card_detail_query_from_v1, map_module_card_evidence_query_from_v1,
+    CompositionRoot, map_agent_goal_task_id_from_v1, map_create_agent_goal_from_v1,
+    map_module_card_detail_query_from_v1, map_module_card_evidence_query_from_v1,
     map_module_dependency_graph_query_from_v1, map_module_runtime_flow_query_from_v1,
     map_module_runtime_map_query_from_v1, map_module_tree_query_from_v1,
     map_project_map_search_query_from_v1, map_repository_tree_query_from_v1,
-    map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
+    map_revise_agent_goal_from_v1, map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
 };
 use a3_protocol::{
-    CommandErrorV1, CompileTaskLensRequestV1, ControlDeepMapRequestV1, DeepMapControlResponseV1,
+    AgentGoalMutationResponseV1, AgentGoalResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
+    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapControlResponseV1,
     DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
     IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
     ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
     ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
     OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
-    RemoveProjectResponseV1, RepositoryTreeResponseV1, StartDeepMapRequestV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryAgentGoalRequestV1, QueryDeepMapRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
+    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
     TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
 };
 use tauri::State;
@@ -166,6 +169,33 @@ pub async fn compile_task_lens(
     root: State<'_, CompositionRoot>,
 ) -> Result<TaskLensCompileResponseV1, CommandErrorV1> {
     execute_compile_task_lens(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads the complete current Goal Contract for one opaque durable task identity.
+pub async fn query_agent_goal(
+    request: QueryAgentGoalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentGoalResponseV1, CommandErrorV1> {
+    execute_query_agent_goal(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Creates one task atomically with a Core-identified initial Goal Contract revision.
+pub async fn create_agent_goal(
+    request: CreateAgentGoalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+    execute_create_agent_goal(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Compare-and-appends a material Goal Contract successor without silent mutation.
+pub async fn revise_agent_goal(
+    request: ReviseAgentGoalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+    execute_revise_agent_goal(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -435,6 +465,40 @@ async fn execute_compile_task_lens(
     root.compile_task_lens(task_id, step_id).await
 }
 
+async fn execute_query_agent_goal(
+    request: QueryAgentGoalRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentGoalResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_agent_goal_task_id_from_v1(&request)?;
+    root.query_agent_goal(task_id).await
+}
+
+async fn execute_create_agent_goal(
+    request: CreateAgentGoalRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let draft = map_create_agent_goal_from_v1(&request)?;
+    root.create_agent_goal(draft).await
+}
+
+async fn execute_revise_agent_goal(
+    request: ReviseAgentGoalRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let (task_id, expected_revision, draft, reason) = map_revise_agent_goal_from_v1(&request)?;
+    root.revise_agent_goal(task_id, expected_revision, draft, reason)
+        .await
+}
+
 async fn execute_query_repository_tree(
     request: QueryRepositoryTreeRequestV1,
     root: &CompositionRoot,
@@ -502,15 +566,17 @@ async fn execute_remove_project(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_compile_task_lens, execute_control_deep_map, execute_list_recent_projects,
-        execute_open_project, execute_query_deep_map, execute_query_health,
-        execute_query_index_activity, execute_query_index_overview,
-        execute_query_module_card_detail, execute_query_module_card_evidence,
-        execute_query_module_card_freshness, execute_query_module_dependency_graph,
-        execute_query_module_runtime_flow, execute_query_module_runtime_map,
-        execute_query_module_tree, execute_query_project_map_search, execute_query_project_status,
+        execute_compile_task_lens, execute_control_deep_map, execute_create_agent_goal,
+        execute_list_recent_projects, execute_open_project, execute_query_agent_goal,
+        execute_query_deep_map, execute_query_health, execute_query_index_activity,
+        execute_query_index_overview, execute_query_module_card_detail,
+        execute_query_module_card_evidence, execute_query_module_card_freshness,
+        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
+        execute_query_module_runtime_map, execute_query_module_tree,
+        execute_query_project_map_search, execute_query_project_status,
         execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
-        execute_rebuild_project_index, execute_remove_project, execute_start_deep_map,
+        execute_rebuild_project_index, execute_remove_project, execute_revise_agent_goal,
+        execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -522,20 +588,22 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        CompileTaskLensRequestV1, ControlDeepMapRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
-        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
-        ListRecentProjectsRequestV1, ModuleCardDetailResultV1, ModuleCardEvidenceResultV1,
-        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
-        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
-        OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
+        AgentGoalResultV1, CompileTaskLensRequestV1, ControlDeepMapRequestV1,
+        CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1,
+        HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
+        ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
+        ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
+        ModuleRuntimeMapResultV1, ModuleTreeResultV1, OpenProjectRequestV1,
+        ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion, QueryAgentGoalRequestV1,
         QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
         QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
         QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
         QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
         QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
         QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-        RemoveProjectRequestV1, RepositoryTreeResultV1, StartDeepMapRequestV1,
-        TaskLensCompileResultV1, TaskLensTaskResultV1, TaskLensTasksResultV1,
+        RemoveProjectRequestV1, RepositoryTreeResultV1, ReviseAgentGoalRequestV1,
+        StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
+        TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -1289,6 +1357,80 @@ mod tests {
         ));
         assert_eq!(
             unsupported.map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_goal_commands_are_pathless_strict_and_validate_version_before_content()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let task_id = "11".repeat(32);
+        let query: QueryAgentGoalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": task_id
+        }))?;
+        let response = block_on(execute_query_agent_goal(query, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(response.result(), AgentGoalResultV1::NoProject));
+
+        let create: CreateAgentGoalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "draft": {
+                "objective": "build the Agent workspace",
+                "acceptanceCriteria": [{
+                    "criterionId": null,
+                    "statement": "the goal remains visible",
+                    "requirement": "must"
+                }],
+                "constraints": ["remain local-only"],
+                "nonGoals": ["do not start a run"],
+                "userDecisions": ["retain revisions"],
+                "successVerification": "reopen and compare the goal"
+            }
+        }))?;
+        assert_eq!(
+            block_on(execute_create_agent_goal(create, &root)).map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
+        );
+
+        let revise: ReviseAgentGoalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "11".repeat(32),
+            "expectedRevision": 1,
+            "revisionReason": "the user clarified the outcome",
+            "draft": {
+                "objective": "build the complete Agent workspace",
+                "acceptanceCriteria": [{
+                    "criterionId": "22".repeat(32),
+                    "statement": "the goal remains visible",
+                    "requirement": "must"
+                }],
+                "constraints": ["remain local-only"],
+                "nonGoals": ["do not start a run"],
+                "userDecisions": ["retain revisions"],
+                "successVerification": "reopen and compare the goal"
+            }
+        }))?;
+        assert_eq!(
+            block_on(execute_revise_agent_goal(revise, &root)).map_err(|error| error.code()),
+            Err(ErrorCodeV1::NoActiveProject)
+        );
+
+        let unsupported: CreateAgentGoalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 999,
+            "draft": {
+                "objective": "",
+                "acceptanceCriteria": [],
+                "constraints": [],
+                "nonGoals": [],
+                "userDecisions": [],
+                "successVerification": ""
+            }
+        }))?;
+        assert_eq!(
+            block_on(execute_create_agent_goal(unsupported, &root)).map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
         Ok(())

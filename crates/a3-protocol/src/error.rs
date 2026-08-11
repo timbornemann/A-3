@@ -55,6 +55,14 @@ pub enum ErrorCodeV1 {
     InvalidTaskLensSelection,
     /// Durable anchors or deterministic Task Lens retrieval could not be read safely.
     TaskLensUnavailable,
+    /// Goal Contract content, identities, or revision metadata violated the strict Agent contract.
+    InvalidAgentGoal,
+    /// The selected durable task is absent from the active worktree.
+    AgentGoalTaskNotFound,
+    /// Another writer advanced the Goal Contract after the editor loaded it.
+    AgentGoalRevisionConflict,
+    /// Goal Contract metadata or local persistence could not complete the requested operation.
+    AgentGoalUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -163,6 +171,18 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::TaskLensUnavailable => {
                 "The current Task Lens could not be compiled from local evidence."
+            }
+            ErrorCodeV1::InvalidAgentGoal => {
+                "The Goal Contract content is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentGoalTaskNotFound => {
+                "The selected Goal Contract is no longer available in this worktree."
+            }
+            ErrorCodeV1::AgentGoalRevisionConflict => {
+                "The Goal Contract changed after this editor was opened. Reload it before revising."
+            }
+            ErrorCodeV1::AgentGoalUnavailable => {
+                "The Goal Contract could not be read or stored safely."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

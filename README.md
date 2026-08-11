@@ -119,7 +119,15 @@ Inspector löst einen solchen sichtbaren Hook erst nach einem expliziten Klick g
 aktuelle Publikation, die deterministisch neueste Card und ihre Evidence-Mitgliedschaft auf. Er
 zeigt ausschließlich begrenzte Datei-, Symbol- oder Graph-Provenienz und kennzeichnet Card-
 Lifecycle und Evidence-Freshness unabhängig; historische Evidence bleibt dominant als `Stale`
-markiert. Die verbindliche
+markiert. U4 schließt mit einer bewussten, publikationsgebundenen Project-Map-Suche und einer
+dauerhaften Task-Lens-Auswahl ab; Semantic-Treffer und evidencefreie Architekturabsichten bleiben
+dabei ausdrücklich unbelegte Kandidaten beziehungsweise Hypothesen. Der erste U5-Schnitt ergänzt
+den Agent Workspace um einen stets sichtbaren aktuellen Goal Contract. Nutzer können dort eine
+vollständige Aufgabe mit Must-/Should-Akzeptanzkriterien, Constraints, Non-Goals,
+Nutzerentscheidungen und Abschlussprüfung anlegen oder gegen die sichtbar geladene Revision einen
+materiellen unveränderlichen Nachfolger anhängen. Task-, Kriterien- und Zeitanker erzeugt nur der
+Rust-Core; die WebView erhält weder Datenbankzugriff noch die Befugnis, durch das Speichern bereits
+einen Agentenlauf zu starten. Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und
 Qualitätsgates nicht widersprechen.
@@ -163,8 +171,8 @@ pnpm tauri build --no-bundle
 
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence- und
-Deep-Map-Commands aufrufen.
+Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence-, Deep-Map-,
+Project-Map-Search-, Task-Lens- und Agent-Goal-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
@@ -183,6 +191,14 @@ Primärmoduls; Card-, Claim-, Evidence- und Publikationsanker stammen vollständ
 `query_module_card_evidence` akzeptiert nur die exakt zuvor sichtbaren Run-, Snapshot-, Modul-,
 Card- und Evidence-Anker. Der Core prüft sie gemeinsam erneut und liefert weder bei einem
 Publikations-/Card-Wechsel noch bei einer fremden Evidence-ID Daten aus.
+`query_agent_goal`, `create_agent_goal` und `revise_agent_goal` akzeptieren ausschließlich die
+Protokollversion, opake stabile IDs sowie vollständig begrenzte Goal-Felder. Eine Neuanlage darf
+keine Kriterien-ID behaupten; eine Revision bindet `TaskId`, erwartete Vorgängerrevision,
+Begründung und alle beibehaltenen Kriterien-IDs. Identitäten und Zeit erzeugt der Core mit dem
+bereits im aufgelösten Desktop-Abhängigkeitsgraph vorhandenen, nun direkt deklarierten
+`getrandom`-Adapter. Die Standardbibliothek stellt für die gepinnte Toolchain keine gleichwertige
+plattformübergreifende Betriebssystem-Zufallsquelle bereit; die direkte Deklaration fügt deshalb
+kein neues aufgelöstes Paket hinzu.
 Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.

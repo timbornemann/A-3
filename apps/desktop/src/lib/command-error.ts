@@ -25,6 +25,13 @@ export type ErrorCodeV1 =
   | 'invalidModuleRuntimeFlowQuery'
   | 'invalidModuleCardDetailQuery'
   | 'invalidModuleCardEvidenceQuery'
+  | 'invalidProjectMapSearchQuery'
+  | 'invalidTaskLensSelection'
+  | 'taskLensUnavailable'
+  | 'invalidAgentGoal'
+  | 'agentGoalTaskNotFound'
+  | 'agentGoalRevisionConflict'
+  | 'agentGoalUnavailable'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -65,6 +72,13 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'invalidModuleRuntimeFlowQuery',
   'invalidModuleCardDetailQuery',
   'invalidModuleCardEvidenceQuery',
+  'invalidProjectMapSearchQuery',
+  'invalidTaskLensSelection',
+  'taskLensUnavailable',
+  'invalidAgentGoal',
+  'agentGoalTaskNotFound',
+  'agentGoalRevisionConflict',
+  'agentGoalUnavailable',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',
@@ -196,6 +210,34 @@ export function deepMapRecoveryMessage(error: unknown): string {
   return (
     (code === undefined ? undefined : messages[code]) ??
     'Die Deep-Map-Aktion konnte nicht sicher ausgeführt werden. Aktualisiere den Status und versuche es erneut.'
+  );
+}
+
+export function agentGoalRecoveryMessage(error: unknown): string {
+  const code = parseCommandErrorV1(error)?.code;
+  const messages: Partial<Record<ErrorCodeV1, string>> = {
+    unsupportedProtocolVersion:
+      'UI und Core verwenden unterschiedliche Protokollversionen. Starte A^3 neu.',
+    noActiveProject: 'Öffne zuerst einen lokalen Git-Worktree.',
+    invalidAgentGoal:
+      'Prüfe Pflichtfelder, UTF-8-Limits, doppelte Einträge und die Must-/Should-Kriterien.',
+    agentGoalTaskNotFound:
+      'Die Aufgabe existiert in diesem Worktree nicht mehr. Aktualisiere die Aufgabenliste.',
+    agentGoalRevisionConflict:
+      'Der Goal Contract wurde zwischenzeitlich geändert. Lade die aktuelle Revision neu und übernimm deine Änderung bewusst erneut.',
+    agentGoalUnavailable:
+      'Core-Metadaten oder der lokale Goal-Speicher sind nicht verfügbar. Versuche es erneut.',
+    localStorageUnavailable:
+      'Der lokale A^3-Speicher ist nicht verfügbar. Prüfe Speicherplatz und Zugriffsrechte.',
+    localStorageCorrupt:
+      'Der lokale A^3-Speicher ist beschädigt und wurde nicht verändert. Sichere die App-Daten.',
+    localStorageUpgradeRequired: 'Die Goal-Daten benötigen dieselbe oder eine neuere A^3-Version.',
+    localStorageInvalidData:
+      'Die lokalen Goal-Daten verletzen den gespeicherten Vertrag und wurden nicht verändert.',
+  };
+  return (
+    (code === undefined ? undefined : messages[code]) ??
+    'Der Goal Contract konnte nicht sicher verarbeitet werden. Aktualisiere ihn und versuche es erneut.'
   );
 }
 

@@ -1,5 +1,6 @@
 //! Desktop composition root and explicit boundary mappings for A^3.
 
+mod agent_goal_metadata;
 mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
@@ -11,58 +12,65 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
-    DeepMapExecutor, GetHealth, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
-    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus,
-    GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
-    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
-    GetTaskLensTask, HealthQuery, IndexPersistenceControl, IndexPersistenceControlError,
-    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
-    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
-    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
-    ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState, ModuleCardCoverageBand,
-    ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
-    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
-    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
-    ModuleCardEvidenceDetail, ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness,
-    ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload, ModuleCardEvidenceQuery,
-    ModuleCardEvidenceStore, ModuleCardFreshness, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
-    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
-    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
-    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
-    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
-    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
-    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
-    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
-    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
-    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
-    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
-    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
-    ProjectInspectionFailure, ProjectMapSearchQuery, ProjectReconciliationConfirmer,
-    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
-    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
-    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
-    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
-    RepositoryTreeQuery, RepositoryTreeStore, SearchProjectMap, SearchProjectMapFailure,
-    TaskLensClaimStore, TaskLensCompilation, TaskLensControl, TaskLensControlError,
-    TaskLensIndexStore, TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
-    TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
+    AgentGoalCriterionDraft, AgentGoalDraft, AgentGoalMetadataSource, CompileWorkspaceTaskLens,
+    CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult, CreateAgentGoal,
+    CreateAgentGoalFailure, DeepMapExecutor, GetAgentGoal, GetHealth, GetModuleCardDetail,
+    GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
+    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    GetRepositoryTreePage, GetTaskLensTask, GoalContractStore, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
+    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
+    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, ListTaskLensTasks,
+    ModuleCardClaimState, ModuleCardCoverageBand, ModuleCardDetail, ModuleCardDetailControl,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
+    ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardEvidenceControl,
+    ModuleCardEvidenceControlError, ModuleCardEvidenceDetail, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
+    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshness,
+    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
+    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
+    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
+    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
+    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
+    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
+    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
+    ModuleRuntimeFlowQuery, ModuleRuntimeMap, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
+    ModuleRuntimeRoot, ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootSet,
+    ModuleRuntimeStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
+    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
+    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
+    OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
+    ProjectIndexStatus, ProjectInspectionFailure, ProjectMapSearchQuery,
+    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
+    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
+    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
+    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, SearchProjectMap,
+    SearchProjectMapFailure, TaskLensClaimStore, TaskLensCompilation, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult, TaskLensWorkspaceControl,
+    TaskLensWorkspaceFailure, TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
 };
 use a3_domain::{
+    AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
     ApplicationVersion, ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget,
-    ExploreBudget, FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GraphEdge,
+    ExploreBudget, FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GoalConstraint,
+    GoalContract, GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge,
     GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage, IndexRunId,
     IndexRunStatus, InvalidationReason, LexicalSearchExplanation, LinkResolution,
     ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleClaimPolarity, ModuleClaimPredicate,
-    ModuleId, ModuleKind, ModuleRoot, ParseDiagnosticCode, ParseDiagnosticSeverity, Platform,
-    Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
-    ResultSourceExplanation, RetrievalCandidateReason, SnapshotId, SourceChannel, SymbolId,
-    SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId, TaskLensEntryReason, TaskLensTarget,
-    TaskStepId, TaskStepStatus, TraversalResultLimit, VerifiedClaimKind, VerifiedClaimStatus,
+    ModuleId, ModuleKind, ModuleRoot, NonGoal, ParseDiagnosticCode, ParseDiagnosticSeverity,
+    Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ResultSourceExplanation, RetrievalCandidateReason, SnapshotId, SourceChannel,
+    SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
+    TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus, TraversalResultLimit,
+    UserDecision, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use a3_protocol::{
+    AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
+    AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
     CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1,
     DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1,
     DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1,
@@ -108,6 +116,7 @@ use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
 };
 use a3_workspace::RepositoryInspector;
+use agent_goal_metadata::SystemAgentGoalMetadata;
 use clock::SystemJobClock;
 use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
@@ -147,6 +156,9 @@ pub struct CompositionRoot {
     task_lens_tasks: Option<ListTaskLensTasks>,
     task_lens_task: Option<GetTaskLensTask>,
     task_lens_compile: Option<CompileWorkspaceTaskLens>,
+    agent_goal_query: Option<GetAgentGoal>,
+    agent_goal_create: Option<CreateAgentGoal>,
+    agent_goal_revise: Option<ReviseAgentGoal>,
     module_tree: Option<GetModuleTreePage>,
     repository_tree: Option<GetRepositoryTreePage>,
     project_storage: Option<GetProjectStorageUsage>,
@@ -625,6 +637,77 @@ impl CompositionRoot {
                 .collect(),
             page.truncated(),
         ))
+    }
+
+    /// Loads one complete current Goal Contract for the Agent workspace.
+    pub async fn query_agent_goal(
+        &self,
+        task_id: TaskId,
+    ) -> Result<AgentGoalResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentGoalResponseV1::no_project());
+        };
+        let query = self
+            .agent_goal_query
+            .as_ref()
+            .ok_or_else(agent_goal_unavailable)?;
+        let goal = query
+            .execute(&active.project, task_id)
+            .await
+            .map_err(map_agent_goal_store_error_to_v1)?;
+        Ok(
+            goal.map_or_else(AgentGoalResponseV1::task_not_found, |goal| {
+                AgentGoalResponseV1::available(map_agent_goal_to_v1(&goal))
+            }),
+        )
+    }
+
+    /// Creates one task together with its initial immutable Goal Contract revision.
+    pub async fn create_agent_goal(
+        &self,
+        draft: AgentGoalDraft,
+    ) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Err(CommandErrorV1::project_open(ErrorCodeV1::NoActiveProject));
+        };
+        let create = self
+            .agent_goal_create
+            .as_ref()
+            .ok_or_else(agent_goal_unavailable)?;
+        let goal = create
+            .execute(&active.project, draft)
+            .await
+            .map_err(map_create_agent_goal_error_to_v1)?;
+        Ok(AgentGoalMutationResponseV1::new(map_agent_goal_to_v1(
+            &goal,
+        )))
+    }
+
+    /// Compare-and-appends one material successor Goal Contract revision.
+    pub async fn revise_agent_goal(
+        &self,
+        task_id: TaskId,
+        expected_revision: GoalContractRevision,
+        draft: AgentGoalDraft,
+        reason: GoalRevisionReason,
+    ) -> Result<AgentGoalMutationResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Err(CommandErrorV1::project_open(ErrorCodeV1::NoActiveProject));
+        };
+        let revise = self
+            .agent_goal_revise
+            .as_ref()
+            .ok_or_else(agent_goal_unavailable)?;
+        let goal = revise
+            .execute(&active.project, task_id, expected_revision, draft, reason)
+            .await
+            .map_err(map_revise_agent_goal_error_to_v1)?;
+        Ok(AgentGoalMutationResponseV1::new(map_agent_goal_to_v1(
+            &goal,
+        )))
     }
 
     /// Loads current active-plan steps for one opaque durable task identity.
@@ -1187,6 +1270,7 @@ struct OptionalCompositionPorts {
     task_lens_index_store: Option<Arc<dyn TaskLensIndexStore>>,
     task_lens_claim_store: Option<Arc<dyn TaskLensClaimStore>>,
     task_lens_workspace_store: Option<Arc<dyn TaskLensWorkspaceStore>>,
+    goal_contract_store: Option<Arc<dyn GoalContractStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
@@ -1205,6 +1289,7 @@ struct IndexingCompositionPorts {
     task_lens_index_store: Arc<dyn TaskLensIndexStore>,
     task_lens_claim_store: Arc<dyn TaskLensClaimStore>,
     task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore>,
+    goal_contract_store: Arc<dyn GoalContractStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
@@ -1271,6 +1356,7 @@ impl CompositionBase {
                 task_lens_index_store: Some(ports.task_lens_index_store),
                 task_lens_claim_store: Some(ports.task_lens_claim_store),
                 task_lens_workspace_store: Some(ports.task_lens_workspace_store),
+                goal_contract_store: Some(ports.goal_contract_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
@@ -1339,6 +1425,16 @@ impl CompositionBase {
             }
             _ => None,
         };
+        let agent_goal_metadata: Arc<dyn AgentGoalMetadataSource> =
+            Arc::new(SystemAgentGoalMetadata);
+        let agent_goal_query = ports.goal_contract_store.clone().map(GetAgentGoal::new);
+        let agent_goal_create = ports
+            .goal_contract_store
+            .clone()
+            .map(|store| CreateAgentGoal::new(store, Arc::clone(&agent_goal_metadata)));
+        let agent_goal_revise = ports
+            .goal_contract_store
+            .map(|store| ReviseAgentGoal::new(store, agent_goal_metadata));
         let module_tree = ports.module_tree_store.map(GetModuleTreePage::new);
         let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
@@ -1394,6 +1490,9 @@ impl CompositionBase {
             task_lens_tasks,
             task_lens_task,
             task_lens_compile,
+            agent_goal_query,
+            agent_goal_create,
+            agent_goal_revise,
             module_tree,
             repository_tree,
             project_storage: ports.project_storage.map(GetProjectStorageUsage::new),
@@ -1436,6 +1535,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let task_lens_index_store: Arc<dyn TaskLensIndexStore> = store.clone();
             let task_lens_claim_store: Arc<dyn TaskLensClaimStore> = store.clone();
             let task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore> = store.clone();
+            let goal_contract_store: Arc<dyn GoalContractStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
@@ -1457,6 +1557,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     task_lens_index_store,
                     task_lens_claim_store,
                     task_lens_workspace_store,
+                    goal_contract_store,
                     module_tree_store,
                     repository_tree_store,
                     project_storage,
@@ -1468,6 +1569,7 @@ pub fn run() -> Result<(), DesktopRunError> {
         .invoke_handler(tauri::generate_handler![
             commands::cancel_deep_map,
             commands::compile_task_lens,
+            commands::create_agent_goal,
             commands::list_recent_projects,
             commands::open_project,
             commands::pause_deep_map,
@@ -1482,6 +1584,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
             commands::query_module_tree,
+            commands::query_agent_goal,
             commands::query_project_map_search,
             commands::query_task_lens_task,
             commands::query_task_lens_tasks,
@@ -1489,6 +1592,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_health,
             commands::rebuild_project_index,
             commands::resume_deep_map,
+            commands::revise_agent_goal,
             commands::remove_project,
             commands::start_deep_map
         ])
@@ -2771,6 +2875,170 @@ pub(crate) fn map_task_lens_selection_from_v1(
     Ok((task_id, step_id))
 }
 
+pub(crate) fn map_agent_goal_task_id_from_v1(
+    request: &a3_protocol::QueryAgentGoalRequestV1,
+) -> Result<TaskId, CommandErrorV1> {
+    decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| invalid_agent_goal())
+}
+
+pub(crate) fn map_create_agent_goal_from_v1(
+    request: &a3_protocol::CreateAgentGoalRequestV1,
+) -> Result<AgentGoalDraft, CommandErrorV1> {
+    map_agent_goal_draft_from_v1(request.draft())
+}
+
+pub(crate) fn map_revise_agent_goal_from_v1(
+    request: &a3_protocol::ReviseAgentGoalRequestV1,
+) -> Result<
+    (
+        TaskId,
+        GoalContractRevision,
+        AgentGoalDraft,
+        GoalRevisionReason,
+    ),
+    CommandErrorV1,
+> {
+    let task_id = decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| invalid_agent_goal())?;
+    let revision =
+        GoalContractRevision::new(request.expected_revision()).map_err(|_| invalid_agent_goal())?;
+    let reason = bounded_goal_text(request.revision_reason(), 4 * 1_024)
+        .and_then(|value| GoalRevisionReason::try_from_string(value).map_err(|_| ()))
+        .map_err(|_| invalid_agent_goal())?;
+    let draft = map_agent_goal_draft_from_v1(request.draft())?;
+    Ok((task_id, revision, draft, reason))
+}
+
+fn map_agent_goal_draft_from_v1(
+    draft: &AgentGoalDraftInputV1,
+) -> Result<AgentGoalDraft, CommandErrorV1> {
+    if draft.acceptance_criteria().is_empty()
+        || draft.acceptance_criteria().len() > 64
+        || draft.constraints().len() > 64
+        || draft.non_goals().len() > 64
+        || draft.user_decisions().len() > 64
+    {
+        return Err(invalid_agent_goal());
+    }
+    let objective = bounded_goal_text(draft.objective(), 16 * 1_024)
+        .and_then(|value| GoalObjective::try_from_string(value).map_err(|_| ()))
+        .map_err(|_| invalid_agent_goal())?;
+    let acceptance_criteria = draft
+        .acceptance_criteria()
+        .iter()
+        .map(map_agent_goal_criterion_from_v1)
+        .collect::<Result<Vec<_>, _>>()?;
+    let constraints =
+        map_agent_goal_text_collection(draft.constraints(), GoalConstraint::try_from_string)?;
+    let non_goals = map_agent_goal_text_collection(draft.non_goals(), NonGoal::try_from_string)?;
+    let user_decisions =
+        map_agent_goal_text_collection(draft.user_decisions(), UserDecision::try_from_string)?;
+    let success_verification = bounded_goal_text(draft.success_verification(), 8 * 1_024)
+        .and_then(|value| SuccessVerification::try_from_string(value).map_err(|_| ()))
+        .map_err(|_| invalid_agent_goal())?;
+    Ok(AgentGoalDraft::new(
+        objective,
+        acceptance_criteria,
+        constraints,
+        non_goals,
+        user_decisions,
+        success_verification,
+    ))
+}
+
+fn map_agent_goal_criterion_from_v1(
+    criterion: &AgentGoalCriterionInputV1,
+) -> Result<AgentGoalCriterionDraft, CommandErrorV1> {
+    let criterion_id = criterion
+        .criterion_id()
+        .map(decode_stable_id)
+        .transpose()
+        .map_err(|()| invalid_agent_goal())?
+        .map(AcceptanceCriterionId::from_bytes);
+    let statement = bounded_goal_text(criterion.statement(), 4 * 1_024)
+        .and_then(|value| AcceptanceCriterionStatement::try_from_string(value).map_err(|_| ()))
+        .map_err(|_| invalid_agent_goal())?;
+    let requirement = match criterion.requirement() {
+        AgentGoalCriterionRequirementV1::Must => AcceptanceCriterionRequirement::Must,
+        AgentGoalCriterionRequirementV1::Should => AcceptanceCriterionRequirement::Should,
+    };
+    Ok(AgentGoalCriterionDraft::new(
+        criterion_id,
+        statement,
+        requirement,
+    ))
+}
+
+fn map_agent_goal_text_collection<T>(
+    values: &[String],
+    map: fn(String) -> Result<T, a3_domain::GoalContractTextError>,
+) -> Result<Vec<T>, CommandErrorV1> {
+    values
+        .iter()
+        .map(|value| {
+            bounded_goal_text(value, 4 * 1_024)
+                .and_then(|value| map(value).map_err(|_| ()))
+                .map_err(|_| invalid_agent_goal())
+        })
+        .collect()
+}
+
+fn bounded_goal_text(value: &str, maximum_bytes: usize) -> Result<String, ()> {
+    if value.len() > maximum_bytes {
+        return Err(());
+    }
+    Ok(value.to_owned())
+}
+
+fn map_agent_goal_to_v1(goal: &GoalContract) -> AgentGoalContractV1 {
+    AgentGoalContractV1::new(
+        goal.task_id().to_string(),
+        goal.revision().get(),
+        goal.previous_revision().map(GoalContractRevision::get),
+        goal.revision_reason()
+            .map(|reason| reason.as_str().to_owned()),
+        goal.draft().objective().as_str().to_owned(),
+        goal.draft()
+            .acceptance_criteria()
+            .iter()
+            .map(|criterion| {
+                AgentGoalCriterionV1::new(
+                    criterion.id().to_string(),
+                    criterion.statement().as_str().to_owned(),
+                    match criterion.requirement() {
+                        AcceptanceCriterionRequirement::Must => {
+                            AgentGoalCriterionRequirementV1::Must
+                        }
+                        AcceptanceCriterionRequirement::Should => {
+                            AgentGoalCriterionRequirementV1::Should
+                        }
+                    },
+                )
+            })
+            .collect(),
+        goal.draft()
+            .constraints()
+            .iter()
+            .map(|value| value.as_str().to_owned())
+            .collect(),
+        goal.draft()
+            .non_goals()
+            .iter()
+            .map(|value| value.as_str().to_owned())
+            .collect(),
+        goal.draft()
+            .user_decisions()
+            .iter()
+            .map(|value| value.as_str().to_owned())
+            .collect(),
+        goal.draft().success_verification().as_str().to_owned(),
+        goal.created_at().unix_millis().to_string(),
+    )
+}
+
 fn map_module_runtime_map_to_v1(map: &ModuleRuntimeMap) -> ModuleRuntimeMapV1 {
     ModuleRuntimeMapV1::new(
         map.index_run_id().to_string(),
@@ -3328,6 +3596,67 @@ fn map_task_lens_workspace_error_to_v1(error: TaskLensWorkspaceFailure) -> Comma
     CommandErrorV1::project_open(code)
 }
 
+fn invalid_agent_goal() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidAgentGoal)
+}
+
+fn agent_goal_unavailable() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::AgentGoalUnavailable)
+}
+
+fn map_agent_goal_store_error_to_v1(
+    error: a3_application::GoalContractStoreFailure,
+) -> CommandErrorV1 {
+    use a3_application::GoalContractStoreFailure;
+    let code = match error {
+        GoalContractStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+        GoalContractStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+        GoalContractStoreFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+        GoalContractStoreFailure::InvalidStoredData => ErrorCodeV1::LocalStorageInvalidData,
+        GoalContractStoreFailure::TaskNotFound => ErrorCodeV1::AgentGoalTaskNotFound,
+        GoalContractStoreFailure::RevisionConflict => ErrorCodeV1::AgentGoalRevisionConflict,
+        GoalContractStoreFailure::TaskAlreadyExists => ErrorCodeV1::AgentGoalUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_create_agent_goal_error_to_v1(error: CreateAgentGoalFailure) -> CommandErrorV1 {
+    use a3_application::CreateGoalContractFailure;
+    match error {
+        CreateAgentGoalFailure::ExistingCriterionIdentity | CreateAgentGoalFailure::Draft(_) => {
+            invalid_agent_goal()
+        }
+        CreateAgentGoalFailure::Metadata(_) => agent_goal_unavailable(),
+        CreateAgentGoalFailure::Create(CreateGoalContractFailure::InvalidInitialRevision) => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+        }
+        CreateAgentGoalFailure::Create(CreateGoalContractFailure::Store(error)) => {
+            map_agent_goal_store_error_to_v1(error)
+        }
+    }
+}
+
+fn map_revise_agent_goal_error_to_v1(error: ReviseAgentGoalFailure) -> CommandErrorV1 {
+    match error {
+        ReviseAgentGoalFailure::TaskNotFound => {
+            CommandErrorV1::project_open(ErrorCodeV1::AgentGoalTaskNotFound)
+        }
+        ReviseAgentGoalFailure::RevisionConflict => {
+            CommandErrorV1::project_open(ErrorCodeV1::AgentGoalRevisionConflict)
+        }
+        ReviseAgentGoalFailure::Metadata(_) => agent_goal_unavailable(),
+        ReviseAgentGoalFailure::Draft(_)
+        | ReviseAgentGoalFailure::InvalidRevision(
+            a3_domain::GoalContractRevisionFailure::NoMaterialChange,
+        ) => invalid_agent_goal(),
+        ReviseAgentGoalFailure::InvalidRevision(
+            a3_domain::GoalContractRevisionFailure::RevisionExhausted
+            | a3_domain::GoalContractRevisionFailure::TimestampRegressed,
+        ) => agent_goal_unavailable(),
+        ReviseAgentGoalFailure::Store(error) => map_agent_goal_store_error_to_v1(error),
+    }
+}
+
 fn map_task_lens_compile_error_to_v1(error: CompileWorkspaceTaskLensFailure) -> CommandErrorV1 {
     use a3_application::{
         CompileTaskLensFailure, KnowledgeSearchFailure, TaskLensClaimStoreFailure,
@@ -3551,7 +3880,18 @@ impl Error for DesktopRunError {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_PROJECT_PATH_DISPLAY_CHARS, project_path_display};
+    use super::{
+        MAX_PROJECT_PATH_DISPLAY_CHARS, map_agent_goal_to_v1, map_create_agent_goal_from_v1,
+        project_path_display,
+    };
+    use a3_domain::{
+        AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
+        AcceptanceCriterionStatement, GoalContract, GoalContractDraft, GoalContractTimestamp,
+        GoalObjective, SuccessVerification, TaskId,
+    };
+    use a3_protocol::CreateAgentGoalRequestV1;
+    use serde_json::json;
+    use std::error::Error;
     use std::path::Path;
 
     #[test]
@@ -3563,5 +3903,61 @@ mod tests {
         assert_eq!(display.chars().count(), MAX_PROJECT_PATH_DISPLAY_CHARS);
         assert!(!display.chars().any(char::is_control));
         assert!(display.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn agent_goal_boundary_preserves_must_and_should_without_exposing_storage_rows()
+    -> Result<(), Box<dyn Error>> {
+        let request = serde_json::from_value::<CreateAgentGoalRequestV1>(json!({
+            "protocolVersion": 1,
+            "draft": {
+                "objective": "build the Agent workspace",
+                "acceptanceCriteria": [
+                    {"criterionId": null, "statement": "must pass", "requirement": "must"},
+                    {"criterionId": null, "statement": "should remain visible", "requirement": "should"}
+                ],
+                "constraints": [],
+                "nonGoals": [],
+                "userDecisions": [],
+                "successVerification": "reopen the durable contract"
+            }
+        }))?;
+        let mapped = map_create_agent_goal_from_v1(&request)
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert_eq!(
+            mapped
+                .acceptance_criteria()
+                .iter()
+                .map(a3_application::AgentGoalCriterionDraft::requirement)
+                .collect::<Vec<_>>(),
+            vec![
+                AcceptanceCriterionRequirement::Must,
+                AcceptanceCriterionRequirement::Should
+            ]
+        );
+
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([1; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("build the Agent workspace".to_owned())?,
+                vec![AcceptanceCriterion::with_requirement(
+                    AcceptanceCriterionId::from_bytes([2; 32]),
+                    AcceptanceCriterionStatement::try_from_string(
+                        "should remain visible".to_owned(),
+                    )?,
+                    AcceptanceCriterionRequirement::Should,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("reopen the durable contract".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        assert_eq!(
+            serde_json::to_value(map_agent_goal_to_v1(&goal))?["acceptanceCriteria"][0]["requirement"],
+            "should"
+        );
+        Ok(())
     }
 }

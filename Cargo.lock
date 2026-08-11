@@ -50,6 +50,7 @@ dependencies = [
  "a3-workspace",
  "crossbeam-channel",
  "futures",
+ "getrandom 0.3.4",
  "serde_json",
  "tauri",
  "tauri-build",

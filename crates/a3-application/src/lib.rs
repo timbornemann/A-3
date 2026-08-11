@@ -3,6 +3,7 @@
 mod agent_action_codec;
 mod agent_actions;
 mod agent_controller;
+mod agent_goal;
 mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
@@ -84,6 +85,11 @@ pub use agent_controller::{
     AdvanceAgentController, AgentControllerAdvance, AgentControllerAdvanceKind,
     AgentControllerControl, AgentControllerError, AgentControllerPreflightFailure,
     AgentControllerSignal, VerifyAgentAcceptance,
+};
+pub use agent_goal::{
+    AgentGoalCriterionDraft, AgentGoalDraft, AgentGoalDraftFailure, AgentGoalGeneratedIdentity,
+    AgentGoalMetadataFailure, AgentGoalMetadataSource, CreateAgentGoal, CreateAgentGoalFailure,
+    GetAgentGoal, ReviseAgentGoal, ReviseAgentGoalFailure,
 };
 pub use agent_prompt::{
     AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,

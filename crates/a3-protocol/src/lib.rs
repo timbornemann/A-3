@@ -1,5 +1,6 @@
 //! Versioned, infrastructure-independent IPC boundary types for A^3.
 
+mod agent_goal;
 mod deep_map;
 mod error;
 mod goal_contract;
@@ -22,6 +23,11 @@ mod repository_tree;
 mod task_lens;
 mod version;
 
+pub use agent_goal::{
+    AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
+    AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
+    AgentGoalResultV1, CreateAgentGoalRequestV1, QueryAgentGoalRequestV1, ReviseAgentGoalRequestV1,
+};
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
     DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,

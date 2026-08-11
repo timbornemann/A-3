@@ -1,5 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import AgentGoalWorkspace from './lib/AgentGoalWorkspace.svelte';
+  import {
+    createAgentGoal,
+    queryAgentGoal,
+    reviseAgentGoal,
+    type AgentGoalDraftInputV1,
+    type AgentGoalMutationResponseV1,
+    type AgentGoalResponseV1,
+  } from './lib/agent-goal';
   import {
     deepMapRecoveryMessage,
     projectActionRecoveryMessage,
@@ -120,6 +129,15 @@
   } from './lib/task-lens';
 
   interface Props {
+    agentGoalCreator?: (draft: AgentGoalDraftInputV1) => Promise<AgentGoalMutationResponseV1>;
+    agentGoalLoader?: (taskId: string) => Promise<AgentGoalResponseV1>;
+    agentGoalReviser?: (
+      taskId: string,
+      expectedRevision: number,
+      reason: string,
+      draft: AgentGoalDraftInputV1,
+    ) => Promise<AgentGoalMutationResponseV1>;
+    agentGoalTasksLoader?: () => Promise<TaskLensTasksResponseV1>;
     healthLoader?: () => Promise<HealthResponseV1>;
     deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV1>;
     deepMapStarter?: (budget: DeepMapBudgetV1) => Promise<DeepMapControlResponseV1>;
@@ -366,6 +384,10 @@
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
   let {
+    agentGoalCreator = createAgentGoal,
+    agentGoalLoader = queryAgentGoal,
+    agentGoalReviser = reviseAgentGoal,
+    agentGoalTasksLoader = queryTaskLensTasks,
     healthLoader = queryHealth,
     deepMapStatusLoader = queryDeepMap,
     deepMapStarter = startDeepMap,
@@ -3942,6 +3964,14 @@
       {/if}
     </div>
   </section>
+
+  <AgentGoalWorkspace
+    activeProject={projectStatusView.kind === 'active'}
+    goalCreator={agentGoalCreator}
+    goalLoader={agentGoalLoader}
+    goalReviser={agentGoalReviser}
+    tasksLoader={agentGoalTasksLoader}
+  />
 
   <footer>
     <span>Offline by default</span>
