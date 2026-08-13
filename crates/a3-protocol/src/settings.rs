@@ -17,16 +17,25 @@ impl QuerySettingsRequestV1 {
     }
 }
 
-/// Optimistic endpoint replacement; omission explicitly returns to model-free mode.
+/// Closed provider implementation available to the desktop Settings boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelProviderKindV1 {
+    /// Local Ollama-compatible API using its native provider contracts.
+    Ollama,
+}
+
+/// Optimistic active-provider replacement; omission explicitly returns to model-free mode.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ConfigureModelEndpointRequestV1 {
+pub struct ConfigureModelProviderRequestV1 {
     protocol_version: ProtocolVersion,
     expected_settings_revision: String,
+    provider_kind: ModelProviderKindV1,
     endpoint_origin: Option<String>,
 }
 
-impl ConfigureModelEndpointRequestV1 {
+impl ConfigureModelProviderRequestV1 {
     /// Returns the request schema version.
     #[must_use]
     pub const fn protocol_version(&self) -> ProtocolVersion {
@@ -39,6 +48,12 @@ impl ConfigureModelEndpointRequestV1 {
         &self.expected_settings_revision
     }
 
+    /// Returns the closed concrete provider adapter selected by the user.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV1 {
+        self.provider_kind
+    }
+
     /// Returns the user-entered origin or `None` to clear provider configuration.
     #[must_use]
     pub fn endpoint_origin(&self) -> Option<&str> {
@@ -46,17 +61,40 @@ impl ConfigureModelEndpointRequestV1 {
     }
 }
 
-impl fmt::Debug for ConfigureModelEndpointRequestV1 {
+impl fmt::Debug for ConfigureModelProviderRequestV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ConfigureModelEndpointRequestV1")
+            .debug_struct("ConfigureModelProviderRequestV1")
             .field("protocol_version", &self.protocol_version)
             .field(
                 "expected_settings_revision",
                 &self.expected_settings_revision,
             )
+            .field("provider_kind", &self.provider_kind)
             .field("has_endpoint", &self.endpoint_origin.is_some())
             .finish()
+    }
+}
+
+/// Explicit model-catalog read bound only to the current Core-owned Settings revision.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DiscoverProviderModelsRequestV1 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+}
+
+impl DiscoverProviderModelsRequestV1 {
+    /// Returns the request schema version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    /// Returns the exact Settings revision whose Core-owned provider must be queried.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
     }
 }
 
@@ -454,6 +492,36 @@ pub struct SettingsResponseV1 {
     settings: SettingsV1,
 }
 
+/// Bounded result of one explicit local provider model-catalog read.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProviderModelsResponseV1 {
+    protocol_version: ProtocolVersion,
+    settings_revision: String,
+    provider_kind: ModelProviderKindV1,
+    model_ids: Vec<String>,
+    truncated: bool,
+}
+
+impl ProviderModelsResponseV1 {
+    /// Creates a current-protocol catalog already validated by Core and adapter boundaries.
+    #[must_use]
+    pub const fn new(
+        settings_revision: String,
+        provider_kind: ModelProviderKindV1,
+        model_ids: Vec<String>,
+        truncated: bool,
+    ) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            settings_revision,
+            provider_kind,
+            model_ids,
+            truncated,
+        }
+    }
+}
+
 impl SettingsResponseV1 {
     /// Creates one current-protocol settings response.
     #[must_use]
@@ -486,7 +554,7 @@ impl CancelModelProbeResponseV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProbeModelRoleRequestV1, QuerySettingsRequestV1};
+    use super::{DiscoverProviderModelsRequestV1, ProbeModelRoleRequestV1, QuerySettingsRequestV1};
     use crate::ProtocolVersion;
 
     #[test]
@@ -524,5 +592,24 @@ mod tests {
             .is_err()
         );
         Ok(())
+    }
+
+    #[test]
+    fn model_discovery_request_carries_no_endpoint_or_provider_authority() {
+        for forbidden in [
+            "endpointOrigin",
+            "providerId",
+            "providerKind",
+            "modelId",
+            "capability",
+            "checkedAtUnixMillis",
+        ] {
+            let mut value = serde_json::json!({
+                "protocolVersion": 1,
+                "expectedSettingsRevision": "2"
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(serde_json::from_value::<DiscoverProviderModelsRequestV1>(value).is_err());
+        }
     }
 }

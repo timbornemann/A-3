@@ -35,6 +35,7 @@ mod knowledge_store;
 mod language_adapter;
 mod lexical_search;
 mod model_capability;
+mod model_catalog;
 mod model_provider;
 mod module_card_claim_codec;
 mod module_card_detail;
@@ -211,6 +212,9 @@ pub use model_capability::{
     ModelCapabilityObservation, ModelCapabilityProbe, ModelCapabilityProbeFuture,
     ModelCapabilityProbeRequest, ProbeModelProfile, ProbeModelProfileFailure,
     ReportedModelContextLimit, ReportedModelContextLimitError,
+};
+pub use model_catalog::{
+    DiscoverProviderModels, ModelCatalogFuture, ModelCatalogProvider, ProviderModelCatalog,
 };
 pub use model_provider::{
     ModelCancellationFuture, ModelFinishReason, ModelMessage, ModelMessageError, ModelMessageRole,

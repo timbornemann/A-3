@@ -715,6 +715,14 @@ Snapshotstand und einen credential-freien Origin, den der Ollama-Adapter kanonis
 Probe-Evidence atomar. Ein Remote-Origin bleibt speicherbar und sichtbar, aber in U8
 `RemoteBlocked` und ohne pauschale Netzwerkfreigabe.
 
+ADR-0026 projiziert diesen aktiven Endpunkt als typisierte Providerverbindung. V1 unterstützt
+weiterhin genau eine aktive Verbindung und ausschließlich den konkret implementierten Typ
+`Ollama`; weitere Providerarten erweitern die geschlossene Protokollauswahl erst zusammen mit
+einem Adapter. `DiscoverProviderModels` erhält weder Endpoint noch Modellnamen aus der WebView.
+Der Composition Root lädt den revisionsgebundenen Endpoint und der Ollama-Adapter fragt erst nach
+explizitem Nutzeraufruf das begrenzte `/api/tags`-Ergebnis ab. Der flüchtige, sortierte Katalog ist
+nur Auswahlhilfe, wird nicht persistiert und ist niemals Capability-Evidence.
+
 Coding, Mapping und Embedding besitzen getrennte Kandidaten und werden nur durch eine explizite,
 abbrechbare und zeitbegrenzte Providerprobe aktualisiert. Der Core lädt den Endpoint aus seinem
 eigenen Snapshot, setzt Core-Zeit und verwirft ein spätes Ergebnis bei CAS-Konflikt. Nur real

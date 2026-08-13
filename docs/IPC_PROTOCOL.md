@@ -406,6 +406,20 @@ Directory, Remote-URLs, Datenbankzeilen und Adapterfehler werden nicht übertrag
 Die UI lädt diese Projektion beim Start und nach einem erfolgreichen Open erneut. Auswahl, erneutes
 Öffnen oder Entfernen eines Katalogeintrags sind nicht Teil dieses V1-Teilschnitts.
 
+## Settings und Provider Model Catalog V1
+
+`query_settings` akzeptiert nur `protocolVersion`. `configure_model_provider` akzeptiert
+zusätzlich ausschließlich die erwartete dezimale Settingsrevision, die geschlossene
+`providerKind`-Auswahl (`ollama`) und einen optionalen credential-freien Endpoint-Origin. Ein
+fehlender Endpoint entfernt die aktive Verbindung und invalidiert Rollenprofile atomar.
+
+`discover_provider_models` akzeptiert neben `protocolVersion` nur `expectedSettingsRevision`.
+Endpoint, Provider-ID, Modellname, Capabilitystatus und Timeout stammen nicht aus der WebView. Die
+Antwort bindet die unveränderte Settingsrevision, `providerKind`, `truncated` und höchstens 256
+eindeutige, streng sortierte Modell-IDs. Sie ist flüchtige Auswahlhilfe und kein `ModelProfile`.
+`probe_model_role` bleibt die einzige Modellaktivierungsgrenze; Discovery und Probe lassen sich
+über den gemeinsamen engen `cancel_model_probe`-Command kooperativ abbrechen.
+
 ## Command Error V1
 
 Ein syntaktisch gültiger Requestfehler erhält einen sicheren, serialisierbaren Fehler:
@@ -423,7 +437,7 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 ## Tauri-Capability
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
-Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
+Health-, Project-, Settings-, Provider-Model-Catalog-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-, Project-Map-, Task-Lens-, Agent-Goal-, Agent-Activity-,
 Agent-Recovery-, Agent-Approval- und Deep-Map-Commands. Repository- und
 Modulbaum besitzen

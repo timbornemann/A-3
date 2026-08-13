@@ -50,6 +50,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0023](0023-local-settings-and-model-activation.md)          | Lokale Settings und evidenzgebundene Modellaktivierung     |
 | [0024](0024-semantic-design-tokens-and-accessible-themes.md) | Semantische Designtokens und zugängliche Themes            |
 | [0025](0025-bounded-desktop-rendering-and-lifecycle.md)      | Begrenztes Desktop-Rendering und UI-Lebenszyklus           |
+| [0026](0026-explicit-local-provider-model-discovery.md)      | Explizite Providerverwaltung und lokale Modellerkennung    |
 
 ## Neue ADRs
 

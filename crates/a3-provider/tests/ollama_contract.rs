@@ -1,11 +1,12 @@
 //! Offline HTTP contract for the Ollama-compatible streaming adapter.
 
 use a3_application::{
-    EmbeddingCapabilityProbeRequest, EmbeddingOperationControl, EmbeddingProvider,
-    EmbeddingRequestTimeout, ModelCancellationFuture, ModelCapabilityProbeRequest,
-    ModelFinishReason, ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider,
-    ModelProviderFailure, ModelProviderRequest, ModelRequestTimeout, ProbeEmbeddingModelProfile,
-    ProbeModelProfile, ProbeModelProfileFailure, ProviderEvent, StructuredOutputSchema,
+    DiscoverProviderModels, EmbeddingCapabilityProbeRequest, EmbeddingOperationControl,
+    EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,
+    ModelCapabilityProbeRequest, ModelFinishReason, ModelMessage, ModelMessageRole,
+    ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderRequest,
+    ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
+    ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
@@ -77,6 +78,66 @@ impl EmbeddingOperationControl for TestControl {
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ollama_adapter_discovers_a_bounded_canonical_model_catalog() -> Result<(), TestError> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        write_json_response(
+            &mut stream,
+            "200 OK",
+            br#"{"models":[
+                {"name":"qwen2.5-coder:7b","model":"qwen2.5-coder:7b","size":1},
+                {"name":"nomic-embed-text:latest","model":"nomic-embed-text:latest","size":2},
+                {"name":"qwen2.5-coder:7b","model":"qwen2.5-coder:7b","size":1}
+            ]}"#,
+        )
+        .await?;
+        Ok::<StubHttpRequest, TestError>(request)
+    });
+
+    let provider = provider(endpoint)?;
+    let catalog = DiscoverProviderModels::new(&provider)
+        .execute(
+            ModelRequestTimeout::from_millis(2_000)?,
+            &TestControl::default(),
+        )
+        .await?;
+    let request = server.await??;
+
+    assert_eq!(request.path, "/api/tags");
+    assert!(request.body.is_empty());
+    assert_eq!(catalog.provider_id().as_str(), "ollama");
+    assert_eq!(
+        catalog
+            .model_ids()
+            .iter()
+            .map(ModelId::as_str)
+            .collect::<Vec<_>>(),
+        vec!["nomic-embed-text:latest", "qwen2.5-coder:7b"]
+    );
+    assert!(!catalog.truncated());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pre_cancelled_model_discovery_never_crosses_the_network_boundary() -> Result<(), TestError>
+{
+    let control = TestControl::default();
+    control.cancel();
+    let provider = provider(OllamaEndpoint::parse("http://127.0.0.1:9")?)?;
+
+    assert_eq!(
+        DiscoverProviderModels::new(&provider)
+            .execute(ModelRequestTimeout::from_millis(2_000)?, &control)
+            .await,
+        Err(ModelProviderFailure::Cancelled)
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -681,7 +742,7 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<StubHttpRequest, Te
             })
         })
         .transpose()?
-        .ok_or_else(|| std::io::Error::other("stub request omitted content-length"))?;
+        .unwrap_or(0);
     if content_length > MAX_STUB_REQUEST_BYTES {
         return Err(std::io::Error::other("stub request body exceeded limit").into());
     }

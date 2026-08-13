@@ -8,6 +8,7 @@ const MODEL_ID_PATTERN = /^[A-Za-z0-9._+/@:-]{1,512}$/;
 const MAX_PERSISTED_INTEGER = 9_223_372_036_854_775_807n;
 
 export type ModelEndpointScopeV1 = 'localLoopback' | 'remote';
+export type ModelProviderKindV1 = 'ollama';
 export type ProviderHealthStatusV1 =
   'notChecked' | 'healthy' | 'capabilityLimited' | 'unreachable' | 'cancelled' | 'remoteBlocked';
 export type ModelProfileActivationV1 = 'executable' | 'capabilityLimited';
@@ -89,6 +90,14 @@ export interface CancelModelProbeResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
 }
 
+export interface ProviderModelsResponseV1 {
+  modelIds: string[];
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  providerKind: ModelProviderKindV1;
+  settingsRevision: string;
+  truncated: boolean;
+}
+
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
   tauriInvoke<unknown>(command, arguments_);
 
@@ -101,20 +110,36 @@ export async function querySettings(
   return parseSettingsResponseV1(payload);
 }
 
-export async function configureModelEndpoint(
+export async function configureModelProvider(
   expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV1,
   endpointOrigin: string | null,
   invokeCommand: InvokeCommand = invokeThroughTauri,
 ): Promise<SettingsResponseV1> {
   assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
-  const payload = await invokeCommand('configure_model_endpoint', {
+  const payload = await invokeCommand('configure_model_provider', {
     request: {
       endpointOrigin,
       expectedSettingsRevision,
+      providerKind,
       protocolVersion: CURRENT_PROTOCOL_VERSION,
     },
   });
   return parseSettingsResponseV1(payload);
+}
+
+export async function discoverProviderModels(
+  expectedSettingsRevision: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<ProviderModelsResponseV1> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('discover_provider_models', {
+    request: {
+      expectedSettingsRevision,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+    },
+  });
+  return parseProviderModelsResponseV1(payload);
 }
 
 export async function probeModelRole(
@@ -180,6 +205,42 @@ export function parseSettingsResponseV1(payload: unknown): SettingsResponseV1 {
   return {
     protocolVersion: payload.protocolVersion,
     settings: parseSettings(payload.settings),
+  };
+}
+
+export function parseProviderModelsResponseV1(payload: unknown): ProviderModelsResponseV1 {
+  if (
+    !isRecord(payload) ||
+    !hasExactKeys(payload, [
+      'modelIds',
+      'protocolVersion',
+      'providerKind',
+      'settingsRevision',
+      'truncated',
+    ]) ||
+    payload.protocolVersion !== CURRENT_PROTOCOL_VERSION ||
+    payload.providerKind !== 'ollama' ||
+    !Array.isArray(payload.modelIds) ||
+    payload.modelIds.length > 256 ||
+    typeof payload.settingsRevision !== 'string' ||
+    typeof payload.truncated !== 'boolean'
+  ) {
+    throw new Error('Provider model catalog does not match the V1 schema.');
+  }
+  assertCanonicalDecimal(payload.settingsRevision, 'Settings revision');
+  if (!payload.modelIds.every(isModelId)) {
+    throw new Error('Provider model catalog contains invalid or non-canonical model IDs.');
+  }
+  const modelIds = payload.modelIds;
+  if (modelIds.some((modelId, index) => index > 0 && modelIds[index - 1]! >= modelId)) {
+    throw new Error('Provider model catalog contains invalid or non-canonical model IDs.');
+  }
+  return {
+    modelIds,
+    protocolVersion: payload.protocolVersion,
+    providerKind: payload.providerKind,
+    settingsRevision: payload.settingsRevision,
+    truncated: payload.truncated,
   };
 }
 

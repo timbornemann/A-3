@@ -19,17 +19,18 @@ use a3_protocol::{
     AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
     AgentInspectionResponseV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
     CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
-    CompileTaskLensRequestV1, ConfigureModelEndpointRequestV1,
+    CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-    DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
-    IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
-    ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
-    ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
-    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectMapSearchResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
-    ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1,
-    QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    DeepMapControlResponseV1, DeepMapStatusResponseV1, DiscoverProviderModelsRequestV1,
+    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
+    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
+    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
+    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProbeModelRoleRequestV1, ProjectMapSearchResponseV1, ProjectSettingsResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
+    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
     QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
     QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
     QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
@@ -368,12 +369,21 @@ pub async fn query_settings(
 }
 
 #[tauri::command]
-/// Validates and stores one credential-free model origin or clears it.
-pub async fn configure_model_endpoint(
-    request: ConfigureModelEndpointRequestV1,
+/// Validates and stores one closed active provider configuration or clears it.
+pub async fn configure_model_provider(
+    request: ConfigureModelProviderRequestV1,
     root: State<'_, CompositionRoot>,
 ) -> Result<SettingsResponseV1, CommandErrorV1> {
-    execute_configure_model_endpoint(request, root.inner()).await
+    execute_configure_model_provider(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Explicitly lists bounded local models from the current Core-owned provider.
+pub async fn discover_provider_models(
+    request: DiscoverProviderModelsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProviderModelsResponseV1, CommandErrorV1> {
+    execute_discover_provider_models(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -386,7 +396,7 @@ pub async fn probe_model_role(
 }
 
 #[tauri::command]
-/// Requests cooperative cancellation of the one active Core-owned model probe.
+/// Requests cooperative cancellation of the one active Core-owned model operation.
 pub fn cancel_model_probe(
     request: CancelModelProbeRequestV1,
     root: State<'_, CompositionRoot>,
@@ -433,16 +443,27 @@ async fn execute_query_settings(
     root.query_settings().await
 }
 
-async fn execute_configure_model_endpoint(
-    request: ConfigureModelEndpointRequestV1,
+async fn execute_configure_model_provider(
+    request: ConfigureModelProviderRequestV1,
     root: &CompositionRoot,
 ) -> Result<SettingsResponseV1, CommandErrorV1> {
     if request.protocol_version() != ProtocolVersion::CURRENT {
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
     let expected = settings_version_from_v1(request.expected_settings_revision())?;
-    root.configure_model_endpoint(expected, request.endpoint_origin())
+    root.configure_model_provider(expected, request.provider_kind(), request.endpoint_origin())
         .await
+}
+
+async fn execute_discover_provider_models(
+    request: DiscoverProviderModelsRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProviderModelsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.discover_provider_models(expected).await
 }
 
 async fn execute_probe_model_role(

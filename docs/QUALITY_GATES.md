@@ -243,6 +243,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Erfolg verifiziert sein; Embedding zusätzlich nur nach einem endlichen, nicht leeren Vektor mit
   beobachteter gültiger Dimension. Fehler, Abbruch, stale Revision und Remote bleiben nicht
   ausführbar.
+- Der ADR-0026-Discovery-Contract prüft `GET /api/tags` vollständig offline: keine WebView-URL,
+  erneute Local-only-Policy, ein Gesamttimeout, wakebare Cancellation, begrenztes JSON sowie
+  validierte, deduplizierte und kanonisch sortierte Modell-IDs. Die flüchtige Auswahl darf kein
+  Profil oder Capability-Evidence erzeugen. TypeScript lehnt stale Revisionen, unbekannte
+  Providerarten, unsortierte beziehungsweise doppelte IDs und zusätzliche Felder ab.
 - Der U8-Projektsettings-Contract liest Ignorequellen ausschließlich über die validierte
   Repositorykonfiguration und rekonstruiert den Command-Katalog aus dem jüngsten Published Index.
   Query und Confirmation prüfen Katalog-ID, Revision, Store-CAS, bekannte Command-IDs und
@@ -253,6 +258,8 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   annehmen. Component-Tests zeigen den weiter nutzbaren modellfreien Indexbrowser, eine nicht nur
   farbliche Remote-Warnung, explizite Probe-/Abbruchaktionen, validierte Limits, fail-closed
   Privacy, read-only Indexignore und die evidence-gebundene Commandauswahl.
+  Settings-Component-Tests prüfen zusätzlich die schmale Bereichsnavigation, Provider-CRUD über
+  Modale, explizite Modellerkennung und die rollenbezogene Dropdown-Auswahl ohne freie Modell-ID.
 - Der U9-Designsystemvertrag extrahiert globale und sämtliche scoped Svelte-Styles. Außerhalb der
   zentralen Tokenquelle sind Hex-, RGB- und benannte Rohfarben verboten. Light und Dark müssen
   dieselben semantischen Rollen für Text, Flächen, Status, Fokus, Info, Erfolg, Warnung, Gefahr,

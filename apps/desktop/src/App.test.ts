@@ -794,7 +794,7 @@ describe('A^3 desktop shell', () => {
 
       const explicitLoadButtons = screen.getAllByRole('button', { name: 'Jetzt laden' });
       await fireEvent.click(explicitLoadButtons[1]!);
-      expect(await screen.findByRole('navigation', { name: 'Settings-Bereich' })).toBeTruthy();
+      expect(await screen.findByRole('navigation', { name: 'Einstellungsbereiche' })).toBeTruthy();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -835,6 +835,8 @@ describe('A^3 desktop shell', () => {
 
     const settings = container.querySelector<HTMLElement>('#settings');
     expect(settings).not.toBeNull();
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Info' }));
     await waitFor(() => expect(settings?.textContent).toContain('0.1.0'));
     expect(settings?.textContent).toContain('V1');
     expect(settings?.textContent).toContain('windows');
@@ -1567,18 +1569,17 @@ describe('A^3 desktop shell', () => {
     });
 
     await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
-    const aboutSummary = await screen.findByText('Über A^3');
-    const about = aboutSummary.closest('details');
-    expect(about).not.toBeNull();
-    expect(
-      await within(about!).findByText('App-Informationen sind derzeit nicht verfügbar.'),
-    ).toBeTruthy();
-    expect(about?.textContent).not.toContain('sensitive internal detail');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Info' }));
+    const heading = await screen.findByRole('heading', { name: 'Info' });
+    const page = heading.closest('section');
+    expect(page).not.toBeNull();
+    expect(await within(page!).findByText('Informationen nicht verfügbar')).toBeTruthy();
+    expect(page?.textContent).not.toContain('sensitive internal detail');
 
-    await fireEvent.click(within(about!).getByRole('button', { name: 'Erneut laden' }));
+    await fireEvent.click(within(page!).getByRole('button', { name: 'Erneut laden' }));
 
     await waitFor(() => {
-      expect(about?.textContent).toContain('0.1.0');
+      expect(page?.textContent).toContain('0.1.0');
     });
     expect(healthLoader).toHaveBeenCalledTimes(2);
   });

@@ -4,10 +4,11 @@ use a3_application::{
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
     EmbeddingProviderFuture, EmbeddingRequestTimeout, ModelCapabilityObservation,
     ModelCapabilityProbe, ModelCapabilityProbeFuture, ModelCapabilityProbeRequest,
-    ModelFinishReason, ModelMessageRole, ModelOperationControl, ModelOutputChunk, ModelProvider,
-    ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
-    ModelProviderUsage, ModelRequestTimeout, ProviderEvent, ProviderEventStream, RawEmbeddingBatch,
-    ReportedModelContextLimit,
+    ModelCatalogFuture, ModelCatalogProvider, ModelFinishReason, ModelMessageRole,
+    ModelOperationControl, ModelOutputChunk, ModelProvider, ModelProviderCompletion,
+    ModelProviderFailure, ModelProviderFuture, ModelProviderRequest, ModelProviderUsage,
+    ModelRequestTimeout, ProviderEvent, ProviderEventStream, ProviderModelCatalog,
+    RawEmbeddingBatch, ReportedModelContextLimit,
 };
 use a3_domain::{
     EmbeddingDimension, EmbeddingProviderId, ModelCapabilities, ModelId, ModelProviderId,
@@ -31,6 +32,7 @@ const MAX_OLLAMA_BUFFER_BYTES: usize = 256 * 1024;
 const MAX_OLLAMA_LINE_BYTES: usize = 128 * 1024;
 const MAX_OLLAMA_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OLLAMA_SHOW_BYTES: usize = 512 * 1024;
+const MAX_OLLAMA_TAGS_BYTES: usize = 512 * 1024;
 const MAX_OLLAMA_PROBE_BYTES: usize = 128 * 1024;
 const MAX_OLLAMA_EMBED_BYTES: usize = 8 * 1024 * 1024;
 const MAX_OLLAMA_EMBED_PROBE_BYTES: usize = 256 * 1024;
@@ -227,6 +229,31 @@ impl ModelProvider for OllamaModelProvider {
     }
 }
 
+impl ModelCatalogProvider for OllamaModelProvider {
+    fn provider_id(&self) -> &ModelProviderId {
+        &self.provider_id
+    }
+
+    fn discover_models<'a>(
+        &'a self,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> ModelCatalogFuture<'a> {
+        Box::pin(async move {
+            self.authorize_probe_request(control)?;
+            let deadline = Instant::now()
+                .checked_add(timeout.duration())
+                .ok_or(ModelProviderFailure::TimedOut)?;
+            let response =
+                send_before_deadline(self.client.get(self.endpoint.tags_url()), deadline, control)
+                    .await?;
+            validate_json_response_head(&response)?;
+            let body = read_bounded_response(response, MAX_OLLAMA_TAGS_BYTES, control).await?;
+            parse_model_catalog(&body, self.provider_id.clone())
+        })
+    }
+}
+
 impl ModelCapabilityProbe for OllamaModelProvider {
     fn provider_id(&self) -> &ModelProviderId {
         &self.provider_id
@@ -408,6 +435,37 @@ async fn read_bounded_response(
 struct OllamaShowRequest<'a> {
     model: &'a str,
     verbose: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaTagModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaTagModel {
+    name: String,
+}
+
+fn parse_model_catalog(
+    body: &[u8],
+    provider_id: ModelProviderId,
+) -> Result<ProviderModelCatalog, ModelProviderFailure> {
+    let response = serde_json::from_slice::<OllamaTagsResponse>(body)
+        .map_err(|_| ModelProviderFailure::InvalidResponse)?;
+    let model_ids = response
+        .models
+        .into_iter()
+        .map(|model| {
+            ModelId::try_from_string(model.name).map_err(|_| ModelProviderFailure::InvalidResponse)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ProviderModelCatalog::from_observation(
+        provider_id,
+        model_ids,
+        false,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -965,13 +1023,14 @@ impl Error for OllamaProviderCreateError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason, parse_ollama_line,
-        parse_show_observation, take_complete_line, valid_structured_probe_response,
+        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason, parse_model_catalog,
+        parse_ollama_line, parse_show_observation, take_complete_line,
+        valid_structured_probe_response,
     };
     use a3_application::{
         ModelCancellationFuture, ModelFinishReason, ModelOperationControl, ProviderEvent,
     };
-    use a3_domain::ModelId;
+    use a3_domain::{ModelId, ModelProviderId};
     use futures::stream::{self, StreamExt};
 
     #[derive(Debug)]
@@ -985,6 +1044,29 @@ mod tests {
         fn cancelled(&self) -> ModelCancellationFuture<'_> {
             Box::pin(futures::future::pending())
         }
+    }
+
+    #[test]
+    fn model_catalog_rejects_unsafe_names_and_canonicalizes_duplicates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider_id = ModelProviderId::try_from_string("ollama".to_owned())?;
+        let catalog = parse_model_catalog(
+            br#"{"models":[{"name":"zeta:latest"},{"name":"alpha:7b"},{"name":"alpha:7b"}]}"#,
+            provider_id.clone(),
+        )?;
+        assert_eq!(catalog.provider_id(), &provider_id);
+        assert_eq!(
+            catalog
+                .model_ids()
+                .iter()
+                .map(ModelId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["alpha:7b", "zeta:latest"]
+        );
+        assert!(
+            parse_model_catalog(br#"{"models":[{"name":"unsafe model"}]}"#, provider_id,).is_err()
+        );
+        Ok(())
     }
 
     #[test]

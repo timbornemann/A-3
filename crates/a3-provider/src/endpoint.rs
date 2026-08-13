@@ -75,6 +75,12 @@ impl OllamaEndpoint {
         url
     }
 
+    pub(crate) fn tags_url(&self) -> reqwest::Url {
+        let mut url = self.url.clone();
+        url.set_path("/api/tags");
+        url
+    }
+
     pub(crate) fn embed_url(&self) -> reqwest::Url {
         let mut url = self.url.clone();
         url.set_path("/api/embed");

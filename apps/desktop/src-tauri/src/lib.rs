@@ -275,16 +275,29 @@ impl CompositionRoot {
             .await
     }
 
-    /// Validates and stores a credential-free endpoint without performing a request.
-    pub async fn configure_model_endpoint(
+    /// Validates and stores one closed active provider without performing a request.
+    pub async fn configure_model_provider(
         &self,
         expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV1,
         endpoint: Option<&str>,
     ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
         self.model_settings
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
-            .configure_endpoint(expected, endpoint)
+            .configure_provider(expected, provider_kind, endpoint)
+            .await
+    }
+
+    /// Explicitly discovers a bounded model list from the current local provider.
+    pub async fn discover_provider_models(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+    ) -> Result<a3_protocol::ProviderModelsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .discover_models(expected)
             .await
     }
 
@@ -301,7 +314,7 @@ impl CompositionRoot {
             .await
     }
 
-    /// Requests cooperative cancellation of the single explicit model probe.
+    /// Requests cooperative cancellation of the single explicit model operation.
     pub fn cancel_model_probe(&self) -> a3_protocol::CancelModelProbeResponseV1 {
         self.model_settings.as_ref().map_or_else(
             || a3_protocol::CancelModelProbeResponseV1::new(false),
@@ -2519,11 +2532,12 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::cancel_model_probe,
             commands::cancel_deep_map,
             commands::compile_task_lens,
-            commands::configure_model_endpoint,
+            commands::configure_model_provider,
             commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
             commands::control_agent_task_run,
             commands::create_agent_goal,
+            commands::discover_provider_models,
             commands::list_recent_projects,
             commands::open_project,
             commands::pause_deep_map,

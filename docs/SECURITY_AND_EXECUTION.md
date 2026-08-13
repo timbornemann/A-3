@@ -558,6 +558,13 @@ zusätzlich vor jedem Request eine Freigabe durch die injizierte Endpoint-Policy
 erlaubt ausschließlich Loopback. Redirects und Umgebungsproxies sind deaktiviert, damit weder ein
 Server noch lokale Proxykonfiguration den geprüften Zielscope still verändern kann.
 
+Die lokale Modellerkennung aus ADR-0026 ist kein Netzwerk-Scan. Sie läuft nur nach einem
+ausdrücklichen Klick gegen den bereits revisionsgebunden gespeicherten Ollama-Endpoint. Der
+Discovery-IPC-Request enthält weder URL, Provider-ID, Modellname noch Timeout. Der Adapter
+autorisiert `GET /api/tags` erneut, begrenzt die JSON-Antwort auf 512 KiB und projiziert höchstens
+256 eindeutige Modell-IDs. Das Ergebnis bleibt flüchtig und setzt weder Health noch Capability.
+Discovery und Capability-Probe teilen einen besessenen, kooperativ abbrechbaren Operations-Slot.
+
 Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
 Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,
 Textfragmente und Gesamtausgabe sind fest begrenzt. HTTP-Fehlerbodies und Providerfehler werden

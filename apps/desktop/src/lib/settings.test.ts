@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { CURRENT_PROTOCOL_VERSION } from './health';
 import {
   cancelModelProbe,
-  configureModelEndpoint,
+  configureModelProvider,
+  discoverProviderModels,
+  parseProviderModelsResponseV1,
   parseSettingsResponseV1,
   probeModelRole,
   querySettings,
@@ -144,7 +146,7 @@ describe('settings IPC client', () => {
     ).toThrow('does not match');
   });
 
-  it('uses CAS for endpoint changes and strictly parses cancellation acknowledgement', async () => {
+  it('uses CAS for provider changes and strictly parses cancellation acknowledgement', async () => {
     const configureInvoke = vi.fn(async () => ({
       ...emptyResponse,
       settings: {
@@ -157,11 +159,12 @@ describe('settings IPC client', () => {
         revision: '1',
       },
     }));
-    await configureModelEndpoint('0', 'http://127.0.0.1:11434', configureInvoke);
-    expect(configureInvoke).toHaveBeenCalledWith('configure_model_endpoint', {
+    await configureModelProvider('0', 'ollama', 'http://127.0.0.1:11434', configureInvoke);
+    expect(configureInvoke).toHaveBeenCalledWith('configure_model_provider', {
       request: {
         endpointOrigin: 'http://127.0.0.1:11434',
         expectedSettingsRevision: '0',
+        providerKind: 'ollama',
         protocolVersion: CURRENT_PROTOCOL_VERSION,
       },
     });
@@ -174,5 +177,33 @@ describe('settings IPC client', () => {
       cancellationRequested: true,
       protocolVersion: CURRENT_PROTOCOL_VERSION,
     });
+  });
+
+  it('discovers only a canonical model-id list bound to the visible settings revision', async () => {
+    const response = {
+      modelIds: ['nomic-embed-text:latest', 'qwen2.5-coder:7b'],
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      providerKind: 'ollama' as const,
+      settingsRevision: '4',
+      truncated: false,
+    };
+    const invokeCommand = vi.fn(async () => response);
+
+    await expect(discoverProviderModels('4', invokeCommand)).resolves.toEqual(response);
+    expect(invokeCommand).toHaveBeenCalledWith('discover_provider_models', {
+      request: {
+        expectedSettingsRevision: '4',
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+      },
+    });
+    expect(() =>
+      parseProviderModelsResponseV1({ ...response, endpointOrigin: 'http://127.0.0.1:11434' }),
+    ).toThrow('does not match');
+    expect(() =>
+      parseProviderModelsResponseV1({
+        ...response,
+        modelIds: ['qwen2.5-coder:7b', 'nomic-embed-text:latest'],
+      }),
+    ).toThrow('non-canonical');
   });
 });

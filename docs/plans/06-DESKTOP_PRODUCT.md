@@ -626,6 +626,14 @@ strikte Requests, Probe/Cancel, Rollenprofile, Privacy sowie die stale-sichere P
 Bestätigung. Damit sind alle drei U8-Akzeptanzkriterien objektiv nachgewiesen und U8 ist
 abgeschlossen.
 
+Erweiterung vom 2026-08-14: ADR-0026 ersetzt die technische Endpointkarte durch eine kompakte,
+seitennavigierte Settings-Arbeitsfläche mit getrennten Bereichen für Allgemein, Provider,
+Modelle, Projekt, Datenschutz und Info. Ollama wird als typisierte aktive Providerverbindung über
+Modale angelegt, bearbeitet und entfernt. Eine ausschließlich explizite, abbrechbare Abfrage liest
+den begrenzten lokalen Modellkatalog und stellt Coding-, Mapping- und Embeddingmodelle als
+Dropdown bereit. Der Katalog bleibt flüchtig und die bestehende Capability-Probe bleibt die
+einzige Aktivierungsgrenze; Appstart und Settings-Read erzeugen weiterhin keinen Netzwerkzugriff.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

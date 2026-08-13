@@ -99,7 +99,7 @@ pub enum ErrorCodeV1 {
     InvalidSettingsRequest,
     /// The configured endpoint is invalid, unsafe, or remote-blocked for probing.
     ModelEndpointInvalid,
-    /// Another explicit model capability probe is still active.
+    /// Another explicit model discovery or capability operation is still active.
     ModelProbeAlreadyActive,
     /// Model settings or explicit probe could not be completed safely.
     ModelSettingsUnavailable,
@@ -259,7 +259,7 @@ impl CommandErrorV1 {
                 "The model endpoint is invalid, unsafe, or not authorized for this probe."
             }
             ErrorCodeV1::ModelProbeAlreadyActive => {
-                "Another explicit model capability probe is already running."
+                "Another explicit model discovery or capability operation is already running."
             }
             ErrorCodeV1::ModelSettingsUnavailable => {
                 "Local model settings could not be read, stored, or probed safely."

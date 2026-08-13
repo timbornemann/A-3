@@ -430,6 +430,13 @@ Fehler werden ausschließlich als `Unavailable`, `Rejected`, `InvalidResponse`, 
 `Cancelled` oder `EndpointDenied` über die Adaptergrenze gegeben. Provider-Fehlertexte,
 HTTP-Payloads und Endpoints sind kein Teil dieser Typen.
 
+`ProviderModelCatalog` ist eine flüchtige, providerneutrale Projektion von höchstens 256
+eindeutigen, kanonisch sortierten `ModelId`s. Der Application-Port `ModelCatalogProvider` erhält
+nur die erwartete `ModelProviderId`, Gesamttimeout und Cancellation; Endpoint, Transport und
+Providerpayload bleiben im Adapter. Ein Katalogeintrag beweist ausschließlich, dass der
+konfigurierte Provider den Namen zum Abfragezeitpunkt gemeldet hat. Er kann weder ein
+`ModelProfile` erzeugen noch eine Capability aktivieren.
+
 `ModelProfile` V1 bindet Provider- und opaque Modell-ID an effektives Kontext- und Outputlimit,
 konservative Tokenzählung, Parallelitätslimit, fixed-point Temperatur und Top-p, kanonische
 Stopbedingungen, Schema-Grounding, expliziten Toolmodus und das Ergebnis einer echten

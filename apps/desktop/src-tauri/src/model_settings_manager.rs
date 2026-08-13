@@ -1,10 +1,10 @@
 use a3_application::{
     ConfigureDesktopModelEndpoint, ConfigureDesktopModelEndpointError, DesktopSettingsStore,
-    DesktopSettingsStoreFailure, DesktopSettingsStoreVersion, EmbeddingCapabilityProbeRequest,
-    GetDesktopSettings, LlmModelRole, LlmProfileActivation, ModelCancellationFuture,
-    ModelEndpointScope, ModelOperationControl, ModelProviderFailure, ModelRequestTimeout,
-    ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure, ProviderHealthStatus,
-    RecordDesktopModelProbe, RecordDesktopModelProbeError, SettingsTimestamp,
+    DesktopSettingsStoreFailure, DesktopSettingsStoreVersion, DiscoverProviderModels,
+    EmbeddingCapabilityProbeRequest, GetDesktopSettings, LlmModelRole, LlmProfileActivation,
+    ModelCancellationFuture, ModelEndpointScope, ModelOperationControl, ModelProviderFailure,
+    ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
+    ProviderHealthStatus, RecordDesktopModelProbe, RecordDesktopModelProbeError, SettingsTimestamp,
     StoredDesktopSettings,
 };
 use a3_domain::{
@@ -16,8 +16,9 @@ use a3_domain::{
 use a3_protocol::{
     CancelModelProbeResponseV1, CommandErrorV1, DataPrivacySettingsV1, EmbeddingRoleProfileV1,
     ErrorCodeV1, LlmRoleProfileV1, ModelEndpointScopeV1, ModelEndpointV1, ModelProfileActivationV1,
-    ModelRoleV1, ModelToolCallModeV1, ProbeModelRoleRequestV1, ProviderHealthStatusV1,
-    ProviderHealthV1, SettingsResponseV1, SettingsV1, StructuredOutputCapabilityV1,
+    ModelProviderKindV1, ModelRoleV1, ModelToolCallModeV1, ProbeModelRoleRequestV1,
+    ProviderHealthStatusV1, ProviderHealthV1, ProviderModelsResponseV1, SettingsResponseV1,
+    SettingsV1, StructuredOutputCapabilityV1,
 };
 use a3_provider::{
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider,
@@ -31,8 +32,9 @@ use std::task::Poll;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MODEL_PROBE_TIMEOUT_MILLIS: u64 = 30_000;
+const MODEL_DISCOVERY_TIMEOUT_MILLIS: u64 = 15_000;
 
-/// Owns the single explicit local model probe and durable Settings use cases.
+/// Owns the single explicit local model operation and durable Settings use cases.
 pub struct ModelSettingsManager {
     store: Arc<dyn DesktopSettingsStore>,
     endpoint_configuration: ConfigureDesktopModelEndpoint,
@@ -62,12 +64,16 @@ impl ModelSettingsManager {
         Ok(map_settings(&stored, self.probe_is_active()))
     }
 
-    /// Replaces or clears the credential-free origin without performing a request.
-    pub async fn configure_endpoint(
+    /// Replaces or clears the credential-free active provider without performing a request.
+    pub async fn configure_provider(
         &self,
         expected: DesktopSettingsStoreVersion,
+        provider_kind: ModelProviderKindV1,
         endpoint: Option<&str>,
     ) -> Result<SettingsResponseV1, CommandErrorV1> {
+        if provider_kind != ModelProviderKindV1::Ollama {
+            return Err(invalid_request());
+        }
         if self.probe_is_active() {
             return Err(CommandErrorV1::settings(
                 ErrorCodeV1::ModelProbeAlreadyActive,
@@ -79,6 +85,19 @@ impl ModelSettingsManager {
             .await
             .map_err(map_configure_error)?;
         Ok(map_settings(&stored, false))
+    }
+
+    /// Reads one bounded local model catalog after an explicit user action.
+    pub async fn discover_models(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<ProviderModelsResponseV1, CommandErrorV1> {
+        let cancellation = self.acquire_probe()?;
+        let result = self
+            .discover_models_owned(expected, cancellation.as_ref())
+            .await;
+        self.release_probe(&cancellation);
+        result
     }
 
     /// Runs one bounded explicit local provider probe and persists its redacted result.
@@ -103,6 +122,49 @@ impl ModelSettingsManager {
             .as_ref()
             .is_some_and(|probe| probe.request());
         CancelModelProbeResponseV1::new(requested)
+    }
+
+    async fn discover_models_owned(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        control: &dyn ModelOperationControl,
+    ) -> Result<ProviderModelsResponseV1, CommandErrorV1> {
+        let current = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        if current.version() != expected {
+            return Err(invalid_request());
+        }
+        let endpoint = current
+            .settings()
+            .endpoint()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        if endpoint.scope() != ModelEndpointScope::LocalLoopback
+            || endpoint.provider_id().as_str() != "ollama"
+        {
+            return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+        }
+        let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        let provider = OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
+        let timeout = ModelRequestTimeout::from_millis(MODEL_DISCOVERY_TIMEOUT_MILLIS)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
+        let catalog = DiscoverProviderModels::new(&provider)
+            .execute(timeout, control)
+            .await
+            .map_err(map_model_operation_error)?;
+        Ok(ProviderModelsResponseV1::new(
+            current.version().get().to_string(),
+            ModelProviderKindV1::Ollama,
+            catalog
+                .model_ids()
+                .iter()
+                .map(|model| model.as_str().to_owned())
+                .collect(),
+            catalog.truncated(),
+        ))
     }
 
     async fn probe_owned(
@@ -485,6 +547,21 @@ fn map_record_error(error: RecordDesktopModelProbeError) -> CommandErrorV1 {
     }
 }
 
+fn map_model_operation_error(error: ModelProviderFailure) -> CommandErrorV1 {
+    match error {
+        ModelProviderFailure::EndpointDenied => {
+            CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid)
+        }
+        ModelProviderFailure::Unavailable
+        | ModelProviderFailure::Rejected
+        | ModelProviderFailure::InvalidResponse
+        | ModelProviderFailure::TimedOut
+        | ModelProviderFailure::Cancelled => {
+            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+        }
+    }
+}
+
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -499,7 +576,7 @@ mod tests {
         DesktopSettings, DesktopSettingsStore, DesktopSettingsStoreFailure,
         DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, StoredDesktopSettings,
     };
-    use a3_protocol::ErrorCodeV1;
+    use a3_protocol::{ErrorCodeV1, ModelProviderKindV1};
     use std::sync::{Arc, Mutex, MutexGuard};
 
     #[derive(Debug)]
@@ -579,8 +656,9 @@ mod tests {
             let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
             let manager = ModelSettingsManager::new(store);
             let configured = manager
-                .configure_endpoint(
+                .configure_provider(
                     DesktopSettingsStoreVersion::initial(),
+                    ModelProviderKindV1::Ollama,
                     Some("https://models.example.test"),
                 )
                 .await
@@ -611,6 +689,14 @@ mod tests {
                     .map_err(|error| error.code()),
                 Err(ErrorCodeV1::ModelEndpointInvalid)
             );
+            assert_eq!(
+                manager
+                    .discover_models(DesktopSettingsStoreVersion::new(1)?)
+                    .await
+                    .map_err(|error| error.code()),
+                Err(ErrorCodeV1::ModelEndpointInvalid)
+            );
+            assert!(!manager.probe_is_active());
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }
