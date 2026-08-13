@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AgentGoalWorkspace from './lib/AgentGoalWorkspace.svelte';
+  import SettingsPanel from './lib/SettingsPanel.svelte';
   import {
     createAgentGoal,
     queryAgentGoal,
@@ -3972,6 +3973,8 @@
     goalReviser={agentGoalReviser}
     tasksLoader={agentGoalTasksLoader}
   />
+
+  <SettingsPanel />
 
   <footer>
     <span>Offline by default</span>

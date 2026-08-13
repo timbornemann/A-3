@@ -78,7 +78,8 @@ h1 {
 }
 
 .health-card,
-.project-card {
+.project-card,
+.settings-card {
   align-self: start;
   padding: clamp(1.4rem, 4vw, 2.25rem);
   border: 1px solid rgb(22 63 54 / 14%);
@@ -90,6 +91,224 @@ h1 {
 
 .project-card {
   align-self: start;
+}
+
+.settings-card {
+  display: grid;
+  gap: 1.5rem;
+  align-self: start;
+}
+
+.settings-card h3 {
+  margin: 0 0 0.35rem;
+  color: #173f36;
+}
+
+.settings-card button,
+.settings-card input {
+  border: 1px solid rgb(30 76 65 / 25%);
+  border-radius: 0.65rem;
+  font: inherit;
+}
+
+.settings-card button {
+  padding: 0.58rem 0.85rem;
+  color: #173f36;
+  background: #f7faf7;
+  cursor: pointer;
+}
+
+.settings-card button:hover:not(:disabled) {
+  border-color: #286f5e;
+  background: #edf7f2;
+}
+
+.settings-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.settings-section,
+.privacy-settings {
+  padding: 1.1rem;
+  border: 1px solid rgb(30 76 65 / 13%);
+  border-radius: 1rem;
+  background: rgb(247 250 247 / 75%);
+}
+
+.settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-section-heading p,
+.model-profile-card p,
+.privacy-settings p {
+  margin-bottom: 0;
+  color: #50645f;
+  line-height: 1.5;
+}
+
+.settings-badge {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  color: #245849;
+  background: #e1f1e9;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.endpoint-form {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+.endpoint-form label,
+.model-profile-card label {
+  display: grid;
+  gap: 0.35rem;
+  color: #3f554f;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.endpoint-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.55rem;
+}
+
+.endpoint-controls input,
+.model-profile-card input {
+  min-width: 0;
+  padding: 0.62rem 0.7rem;
+  color: #17211f;
+  background: white;
+}
+
+.model-free-notice,
+.local-endpoint-note,
+.settings-status {
+  margin: 0.9rem 0 0;
+  color: #315e52;
+}
+
+.remote-warning {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #c27531;
+  border-radius: 0.8rem;
+  color: #6a3415;
+  background: #fff1de;
+}
+
+.remote-warning p {
+  margin: 0.35rem 0 0;
+  line-height: 1.5;
+}
+
+.model-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.model-profile-card {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  gap: 0.85rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid rgb(30 76 65 / 15%);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 72%);
+}
+
+.model-profile-card h3 {
+  font-size: 1rem;
+}
+
+.profile-role {
+  color: #5c756e !important;
+  font-size: 0.69rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.capability-limited {
+  color: #8b471a !important;
+  font-weight: 650;
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.cancel-probe {
+  color: #853a2d !important;
+  border-color: #bb6b5a !important;
+}
+
+.derived-setting {
+  font-size: 0.78rem;
+}
+
+.settings-error,
+.settings-error-message {
+  padding: 0.85rem 1rem;
+  border: 1px solid rgb(164 53 43 / 35%);
+  border-radius: 0.8rem;
+  color: #822f27;
+  background: #fff1ef;
+}
+
+.settings-error p,
+.settings-error-message {
+  margin-bottom: 0;
+}
+
+.settings-error button {
+  margin-top: 0.7rem;
+}
+
+.privacy-settings {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.8fr) minmax(15rem, 1fr);
+  gap: 1rem 1.5rem;
+}
+
+.privacy-settings ul {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.privacy-settings li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgb(30 76 65 / 10%);
+  color: #425951;
+  font-size: 0.82rem;
+}
+
+.privacy-settings strong {
+  color: #24604f;
+}
+
+.privacy-settings > p {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
 }
 
 .section-heading {
@@ -1804,6 +2023,12 @@ footer {
   text-transform: uppercase;
 }
 
+@media (max-width: 840px) {
+  .model-profile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 620px) {
   .app-shell {
     gap: 2rem;
@@ -1819,6 +2044,20 @@ footer {
 
   .diagnostic-file-heading {
     display: grid;
+  }
+
+  .settings-section-heading,
+  .endpoint-controls,
+  .privacy-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-section-heading {
+    display: grid;
+  }
+
+  .privacy-settings > p {
+    grid-column: auto;
   }
 }
 

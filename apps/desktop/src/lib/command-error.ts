@@ -47,7 +47,11 @@ export type ErrorCodeV1 =
   | 'invalidDeepMapBudget'
   | 'deepMapAlreadyPending'
   | 'deepMapNotRunning'
-  | 'deepMapNotPaused';
+  | 'deepMapNotPaused'
+  | 'invalidSettingsRequest'
+  | 'modelEndpointInvalid'
+  | 'modelProbeAlreadyActive'
+  | 'modelSettingsUnavailable';
 
 export interface CommandErrorV1 {
   code: ErrorCodeV1;
@@ -101,6 +105,10 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'deepMapAlreadyPending',
   'deepMapNotRunning',
   'deepMapNotPaused',
+  'invalidSettingsRequest',
+  'modelEndpointInvalid',
+  'modelProbeAlreadyActive',
+  'modelSettingsUnavailable',
 ]);
 
 export function parseCommandErrorV1(value: unknown): CommandErrorV1 | null {
