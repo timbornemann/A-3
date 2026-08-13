@@ -45,6 +45,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0018](0018-model-provider-port-ownership.md)          | ModelProvider-Port an der Application-Grenze               |
 | [0019](0019-durable-mutation-reconciliation.md)        | Dauerhafte Mutationsdisposition und Reconciliation         |
 | [0020](0020-agent-runtime-ownership-and-pause.md)      | Agent-Laufzeitbesitz und kooperative Pause                 |
+| [0021](0021-bounded-agent-inspection.md)               | Begrenzte taskgebundene Diff- und Verification-Inspektion  |
 
 ## Neue ADRs
 
