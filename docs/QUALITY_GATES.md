@@ -710,8 +710,10 @@ Jeder Matrixjob startet nach dem nativen Releasebuild das unveränderte A^3-Bina
 plattformzugehörigen System-WebView. Der M8-Smoke verlangt ein sichtbares, prozessgebundenes
 Fenster mit mindestens 720 × 520 Punkten sowie einen mindestens 4 KiB großen Screenshot. Windows
 und Linux prüfen zusätzlich Stichprobenfarbvarianz beziehungsweise Bildstandardabweichung gegen
-eine leere Fläche. Linux läuft dafür in einem isolierten Xvfb-Display; macOS löst das konkrete
-Fenster über CoreGraphics auf. Screenshot und dimensionsgebundener JSON-Bericht werden getrennt
+eine leere Fläche. Linux läuft dafür in einem isolierten Xvfb-Display; nur der Smoke-Prozess
+deaktiviert WebKitGTK Accelerated Compositing, damit die WebView-Fläche im prozessgebundenen
+Fensterbild enthalten ist. macOS löst das konkrete Fenster über CoreGraphics auf. Screenshot und
+dimensionsgebundener JSON-Bericht werden getrennt
 für Linux x86_64, Windows x86_64, macOS ARM64 und macOS x86_64 aufbewahrt. Ein nativer Build ohne
 diesen WebView-Nachweis erfüllt das Desktop-Plattformgate nicht.
 

@@ -693,5 +693,8 @@ Fehler-, Offline-, Stale- und Recoveryzustände bestehen unverändert. Der exakt
 weiterhin keine generische Dialog-, Datei-, Shell-, SQL-, Prozess-, Provider- oder
 Netzwerkfähigkeit. Der neue native Plattformharness ist lokal auf Windows gegen das unveränderte
 Releasebinary mit einem echten 976 × 719 großen WebView2-Fenster, 132 Stichprobenfarben und einem
-185.399-Byte-PNG bestanden. M8 bleibt offen, bis derselbe committed Matrixjob zusätzlich auf Linux
-x86_64 sowie macOS ARM64 und x86_64 grün ist und die prozessgebundenen Artefakte vorliegen.
+185.399-Byte-PNG bestanden. Der vollständige lokale `act`-Matrixjob auf Linux x86_64 bestand
+sämtliche Workspace-Tests, den Releasebuild und den echten WebKitGTK-Smoke mit einem visuell
+geprüften 960 × 680 großen Fenster, Bildstandardabweichung 0,119231 und einem 75.913-Byte-PNG. M8
+bleibt offen, bis derselbe committed Matrixjob zusätzlich auf echten macOS-ARM64- und
+macOS-x86_64-Runnern grün ist und deren prozessgebundene Artefakte vorliegen.

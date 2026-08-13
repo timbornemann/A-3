@@ -17,6 +17,10 @@ const binaryPath = path.join(
 );
 const timeoutSeconds = 30;
 const retainedOutputLimit = 16 * 1024;
+const desktopEnvironment =
+  process.platform === 'linux'
+    ? { ...process.env, WEBKIT_DISABLE_COMPOSITING_MODE: '1' }
+    : process.env;
 
 function retainOutput(current, chunk) {
   return `${current}${chunk.toString('utf8')}`.slice(-retainedOutputLimit);
@@ -141,7 +145,9 @@ async function stopDesktop(child) {
 await mkdir(artifactDirectory, { recursive: true });
 const child = spawn(binaryPath, [], {
   cwd: workspaceRoot,
-  env: process.env,
+  // Xvfb cannot capture WebKitGTK's separate accelerated compositing surface.
+  // Software compositing keeps this smoke bound to the rendered native window.
+  env: desktopEnvironment,
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: false,
 });

@@ -40,8 +40,9 @@ Ubuntu 22.04 ist bewusst die ältere von Tauri empfohlene Linux-Baseline mit Web
 startet jeweils das unveränderte Releasebinary, wartet auf ein sichtbares natives A^3-Fenster von
 mindestens 720 × 520 Bildpunkten und erstellt einen an die konkrete Prozess-/Fenster-ID gebundenen
 Screenshot. Windows verwendet `PrintWindow(PW_RENDERFULLCONTENT)` und prüft Stichprobenfarbvarianz,
-Linux verwendet WebKitGTK in einem Xvfb-Display und prüft die Bildstandardabweichung, macOS bindet
-das WKWebView-Fenster über CoreGraphics. Zu kleine oder visuell leere Bilder lassen den Job
+Linux verwendet WebKitGTK mit ausschließlich für die Xvfb-Aufnahme deaktiviertem Accelerated
+Compositing und prüft die Bildstandardabweichung; macOS bindet das WKWebView-Fenster über
+CoreGraphics. Zu kleine oder visuell leere Bilder lassen den Job
 fehlschlagen. PNG und JSON-Messbericht werden pro Matrixziel 14 Tage als
 `desktop-ux-smoke-*`-Artefakt aufbewahrt. Signierte Installer bleiben ein späteres
 Release-Arbeitspaket.
@@ -64,6 +65,8 @@ pnpm --filter @a3/desktop tauri build --no-bundle
 
 Die Foundation-Baseline ist durch den vollständig grünen öffentlichen [GitHub-Actions-Lauf 30895965464](https://github.com/timbornemann/A-3/actions/runs/30895965464) einschließlich aller vier Plattformjobs und des Dependency-/Lizenzartefakts verifiziert. Ein lokal erfolgreicher Windows-Build bleibt kein Ersatz für den Linux- oder macOS-Nachweis.
 
-Für den lokalen `act`-Quality-Job wird das GitHub-exklusive Artefakt-Upload übersprungen, weil dort
-kein `ACTIONS_RUNTIME_TOKEN` existiert. Erzeugung und Prüfung des Berichts bleiben Bestandteil des
-lokalen Jobs; auf GitHub ist der Upload weiterhin verpflichtend.
+Für lokale `act`-Jobs werden GitHub-exklusive Artefakt-Uploads übersprungen, weil dort kein
+kompatibler GitHub-Artefaktdienst existiert. Erzeugung und Prüfung der Berichte bleiben Bestandteil
+des lokalen Jobs; auf GitHub ist der Upload weiterhin verpflichtend. Ein lokaler Linux-Matrixlauf
+kann mit `act workflow_dispatch -j platform --matrix "name:Linux x86_64"` ausgeführt werden. Er ist
+kein Ersatz für die realen macOS-Runner.

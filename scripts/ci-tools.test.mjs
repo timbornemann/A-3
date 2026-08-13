@@ -79,6 +79,9 @@ test('native UX smoke stays in every platform job without a shell-enabled Node r
   }
   assert.match(workflow, /node scripts\/run-desktop-ux-smoke\.mjs/u);
   assert.match(workflow, /desktop-ux-smoke-\$\{\{ matrix\.artifact \}\}/u);
+  assert.match(workflow, /!cancelled\(\) && env\.ACT != 'true'/u);
   assert.doesNotMatch(runner, /shell\s*:\s*true/u);
+  assert.match(runner, /WEBKIT_DISABLE_COMPOSITING_MODE: '1'/u);
+  assert.match(runner, /env: desktopEnvironment/u);
   assert.match(runner, /screenshot\.size < 4096/u);
 });
