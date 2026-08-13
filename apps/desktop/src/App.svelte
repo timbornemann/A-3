@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import AgentGoalWorkspace from './lib/AgentGoalWorkspace.svelte';
   import SettingsPanel from './lib/SettingsPanel.svelte';
+  import ThemeControls from './lib/ThemeControls.svelte';
   import {
     createAgentGoal,
     queryAgentGoal,
@@ -1752,14 +1753,23 @@
   <title>A^3</title>
 </svelte:head>
 
-<main class="app-shell">
+<main id="main-content" class="app-shell" tabindex="-1">
+  <a class="skip-link" href="#workspace-content">Zum Arbeitsbereich springen</a>
   <header class="product-header">
-    <p class="eyebrow">Local-first coding agent</p>
-    <h1>A^3</h1>
-    <p class="subtitle">Autonomous Agent Assistant</p>
+    <div>
+      <p class="eyebrow">Local-first coding agent</p>
+      <h1>A^3</h1>
+      <p class="subtitle">Autonomous Agent Assistant</p>
+    </div>
+    <ThemeControls />
   </header>
 
-  <section class="health-card" aria-labelledby="health-heading">
+  <section
+    id="workspace-content"
+    class="health-card"
+    aria-labelledby="health-heading"
+    tabindex="-1"
+  >
     <div class="section-heading">
       <div>
         <p class="section-kicker">Systemstatus</p>
