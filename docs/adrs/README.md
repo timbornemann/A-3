@@ -23,27 +23,28 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 
 ## Index
 
-| ADR | Entscheidung |
-| --- | --- |
-| [0001](0001-product-identity-and-scope.md) | Produktidentität und V1-Scope |
-| [0002](0002-tauri-rust-svelte-desktop.md) | Tauri, Rust und Svelte |
-| [0003](0003-modular-monolith-and-dependencies.md) | Modularer Monolith und Abhängigkeitsrichtung |
-| [0004](0004-libsql-local-persistence.md) | Lokale libSQL-Persistenz hinter Port |
-| [0005](0005-worktree-scoped-storage.md) | Worktree-bezogener Speicher außerhalb des Repositories |
-| [0006](0006-deterministic-index-before-llm.md) | Deterministischer Index vor LLM-Kartierung |
-| [0007](0007-evidence-graph-and-hybrid-retrieval.md) | Evidence Graph und hybride Suche |
-| [0008](0008-epistemic-memory-and-invalidation.md) | Epistemisches Memory und Invalidierung |
-| [0009](0009-context-compiler.md) | Context Compiler und Tokenbudgets |
-| [0010](0010-single-controller-state-machine.md) | Einzelner Controller mit Zustandsmaschine |
-| [0011](0011-local-model-provider-abstraction.md) | Lokale Modellprovider-Abstraktion (Superseded by ADR-0018) |
-| [0012](0012-safe-tools-and-approval-policy.md) | Sichere Werkzeuge und Freigaben |
-| [0013](0013-goal-contract-ledger-and-event-journal.md) | Goal Contract, Task Ledger und Event Journal |
-| [0014](0014-cross-platform-release-and-quality.md) | Plattformübergreifende Release- und Qualitätsstrategie |
-| [0015](0015-language-adapter-scope.md) | Initialer Sprachumfang und LanguageAdapter |
-| [0016](0016-evidence-based-worktree-reconciliation.md) | Evidenzbasierte Worktree-Umzugs-Reconciliation |
-| [0017](0017-bounded-repository-discovery.md) | Begrenzte deterministische Repository-Discovery |
-| [0018](0018-model-provider-port-ownership.md) | ModelProvider-Port an der Application-Grenze |
-| [0019](0019-durable-mutation-reconciliation.md) | Dauerhafte Mutationsdisposition und Reconciliation |
+| ADR                                                    | Entscheidung                                               |
+| ------------------------------------------------------ | ---------------------------------------------------------- |
+| [0001](0001-product-identity-and-scope.md)             | Produktidentität und V1-Scope                              |
+| [0002](0002-tauri-rust-svelte-desktop.md)              | Tauri, Rust und Svelte                                     |
+| [0003](0003-modular-monolith-and-dependencies.md)      | Modularer Monolith und Abhängigkeitsrichtung               |
+| [0004](0004-libsql-local-persistence.md)               | Lokale libSQL-Persistenz hinter Port                       |
+| [0005](0005-worktree-scoped-storage.md)                | Worktree-bezogener Speicher außerhalb des Repositories     |
+| [0006](0006-deterministic-index-before-llm.md)         | Deterministischer Index vor LLM-Kartierung                 |
+| [0007](0007-evidence-graph-and-hybrid-retrieval.md)    | Evidence Graph und hybride Suche                           |
+| [0008](0008-epistemic-memory-and-invalidation.md)      | Epistemisches Memory und Invalidierung                     |
+| [0009](0009-context-compiler.md)                       | Context Compiler und Tokenbudgets                          |
+| [0010](0010-single-controller-state-machine.md)        | Einzelner Controller mit Zustandsmaschine                  |
+| [0011](0011-local-model-provider-abstraction.md)       | Lokale Modellprovider-Abstraktion (Superseded by ADR-0018) |
+| [0012](0012-safe-tools-and-approval-policy.md)         | Sichere Werkzeuge und Freigaben                            |
+| [0013](0013-goal-contract-ledger-and-event-journal.md) | Goal Contract, Task Ledger und Event Journal               |
+| [0014](0014-cross-platform-release-and-quality.md)     | Plattformübergreifende Release- und Qualitätsstrategie     |
+| [0015](0015-language-adapter-scope.md)                 | Initialer Sprachumfang und LanguageAdapter                 |
+| [0016](0016-evidence-based-worktree-reconciliation.md) | Evidenzbasierte Worktree-Umzugs-Reconciliation             |
+| [0017](0017-bounded-repository-discovery.md)           | Begrenzte deterministische Repository-Discovery            |
+| [0018](0018-model-provider-port-ownership.md)          | ModelProvider-Port an der Application-Grenze               |
+| [0019](0019-durable-mutation-reconciliation.md)        | Dauerhafte Mutationsdisposition und Reconciliation         |
+| [0020](0020-agent-runtime-ownership-and-pause.md)      | Agent-Laufzeitbesitz und kooperative Pause                 |
 
 ## Neue ADRs
 
