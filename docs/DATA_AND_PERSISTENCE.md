@@ -139,6 +139,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   identischem Artifact idempotent. Append und Acceptance-Read sind abbrechbar, besitzen ein
   Zeitlimit und prüfen bei mengenabhängigen Zeilen feste Checkpoints. Acceptance liest Evidence
   und den weiterhin aktuellen Published Index begrenzt und in konsistenten Transaktionen.
+- U6 fügt kein persistentes Schema hinzu. Exakte E3-Patchpräfixe und bereits secret-geprüfter
+  retained E4-Logtext leben ausschließlich in einem begrenzten, task-/rungebundenen Speicher des
+  Desktopprozesses und werden bei Projekt- oder Runwechsel sowie Shutdown verworfen. Die separate
+  read-only Verification-Inspektion lädt nur die vom aktuellen Ledger referenzierten bestehenden
+  V20-Artefakte zusammen mit dem jüngsten Published Index; sie darf stale Artefakte lesen, ändert
+  sie aber nicht und leitet Semantik, Freshness und Must-/Should-Beweise im Application-Kern neu ab.
 - Knowledge-Schema V21 ergänzt `run_events.turn_action_kind_v2` als geschlossene, nullable
   Projektion der sechs `AgentAction`-V2-Varianten. Ein Trigger verhindert gleichzeitig gesetzte
   V1-/V2-Spalten und Actionwerte auf anderen Eventtypen; historische V1-Zeilen bleiben unverändert

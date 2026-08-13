@@ -55,7 +55,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `query_repository_tree`, `query_module_tree`, `query_module_dependency_graph`,
   `query_module_runtime_map`, `query_module_runtime_flow`, `query_project_map_search`,
   `query_task_lens_tasks`, `query_task_lens_task`, `compile_task_lens`, `query_agent_goal`,
-  `create_agent_goal`, `revise_agent_goal`, `query_agent_activity`,
+  `create_agent_goal`, `revise_agent_goal`, `query_agent_activity`, `query_agent_inspection`,
+  `query_agent_inspection_log`,
   `query_agent_task_recovery`, `control_agent_task_run`, `query_deep_map`,
   `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
@@ -155,6 +156,16 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `paused` bestätigt. Resume wiederholt keine bestätigten Schritte, Cancel verwirft den Checkpoint.
   Keine dieser IPC-Capabilities gewährt direkten Provider-, Netzwerk-, Datei-, Shell- oder
   Storagezugriff.
+- Die Agent-Inspection-Commands akzeptieren nur die ausgewählte `TaskId` und für eine bewusste
+  Logseite zusätzlich die zuvor vom Core emittierte Inspection-Revision/-ID, den Stream sowie einen
+  Bytecursor und ein Limit bis 16 KiB. Freie Pfade, Runs, Steps, Snapshots, Commands, Processes,
+  Policies oder Evidence-IDs sind nicht darstellbar. Der Core bindet volatile E3-/E4-Inhalte vor
+  jeder Ausgabe erneut an aktuellen Worktree, Task, Run, Step, Verification-Spec und Published
+  Snapshot. Projekt- oder Runwechsel und Shutdown verwerfen den Speicher. Redaction hat Vorrang;
+  `sourceTruncated`-Overflow ist nicht nachladbar und wird niemals durch stilles Wiederholen eines
+  Prozesses rekonstruiert. Dauerhafte Verification enthält nur E6-Metadaten und frisch abgeleitete
+  Semantik/Freshness. Die Commands sind read-only und gewähren keinen allgemeinen Source-, Datei-,
+  Prozess-, Approval-, Shell-, SQL-, Provider- oder Mutationszugriff.
 - Die Agent-Recovery-Commands akzeptieren ausschließlich die bereits ausgewählte opake `TaskId`
   und bei einer Mutation die zuvor sichtbaren Ledgerrevision/-Storeversion sowie genau Pause,
   Resume, Replan oder Cancel. Der Core leitet Run, Step, Worktree und Snapshots selbst ab und erzeugt

@@ -1,5 +1,6 @@
 use crate::{
     CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_goal_task_id_from_v1,
+    map_agent_inspection_log_query_from_v1, map_agent_inspection_task_id_from_v1,
     map_agent_task_control_from_v1, map_agent_task_recovery_task_id_from_v1,
     map_create_agent_goal_from_v1, map_module_card_detail_query_from_v1,
     map_module_card_evidence_query_from_v1, map_module_dependency_graph_query_from_v1,
@@ -10,17 +11,18 @@ use crate::{
 };
 use a3_protocol::{
     AgentActivityResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1, CommandErrorV1,
-    CompileTaskLensRequestV1, ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1,
-    CreateAgentGoalRequestV1, DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1,
-    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProjectMapSearchResponseV1, ProjectStatusResponseV1, ProtocolVersion,
-    QueryAgentActivityRequestV1, QueryAgentGoalRequestV1, QueryAgentTaskRecoveryRequestV1,
-    QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
-    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentTaskControlResponseV1,
+    AgentTaskRecoveryResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
+    ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
+    DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
+    IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
+    ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
+    ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
+    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentGoalRequestV1,
+    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
     QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
     QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
     QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
@@ -192,6 +194,24 @@ pub async fn query_agent_activity(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentActivityResponseV1, CommandErrorV1> {
     execute_query_agent_activity(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads exact task-bound patch/process data and freshly evaluated durable verification.
+pub async fn query_agent_inspection(
+    request: QueryAgentInspectionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentInspectionResponseV1, CommandErrorV1> {
+    execute_query_agent_inspection(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads one explicitly selected retained safe process-log page.
+pub async fn query_agent_inspection_log(
+    request: QueryAgentInspectionLogRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentInspectionLogResponseV1, CommandErrorV1> {
+    execute_query_agent_inspection_log(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -519,6 +539,30 @@ async fn execute_query_agent_activity(
     root.query_agent_activity(task_id).await
 }
 
+async fn execute_query_agent_inspection(
+    request: QueryAgentInspectionRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentInspectionResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_agent_inspection_task_id_from_v1(&request)?;
+    root.query_agent_inspection(task_id).await
+}
+
+async fn execute_query_agent_inspection_log(
+    request: QueryAgentInspectionLogRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentInspectionLogResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let (task_id, revision, inspection_id, stream, offset, limit) =
+        map_agent_inspection_log_query_from_v1(&request)?;
+    root.query_agent_inspection_log(task_id, revision, inspection_id, stream, offset, limit)
+        .await
+}
+
 async fn execute_query_agent_task_recovery(
     request: QueryAgentTaskRecoveryRequestV1,
     root: &CompositionRoot,
@@ -635,7 +679,8 @@ mod tests {
     use super::{
         execute_compile_task_lens, execute_control_agent_task_run, execute_control_deep_map,
         execute_create_agent_goal, execute_list_recent_projects, execute_open_project,
-        execute_query_agent_activity, execute_query_agent_goal, execute_query_agent_task_recovery,
+        execute_query_agent_activity, execute_query_agent_goal, execute_query_agent_inspection,
+        execute_query_agent_inspection_log, execute_query_agent_task_recovery,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
         execute_query_index_overview, execute_query_module_card_detail,
         execute_query_module_card_evidence, execute_query_module_card_freshness,
@@ -656,7 +701,8 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        AgentActivityResultV1, AgentGoalResultV1, AgentTaskControlResultV1,
+        AgentActivityResultV1, AgentGoalResultV1, AgentInspectionLogResultV1,
+        AgentInspectionResultV1, AgentInspectionStreamV1, AgentTaskControlResultV1,
         AgentTaskRecoveryResultV1, CompileTaskLensRequestV1, ControlAgentTaskRunRequestV1,
         ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
         ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
@@ -664,16 +710,16 @@ mod tests {
         ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
         ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
         OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
-        QueryAgentActivityRequestV1, QueryAgentGoalRequestV1, QueryAgentTaskRecoveryRequestV1,
-        QueryDeepMapRequestV1, QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1,
-        QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-        QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-        QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-        QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-        QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-        RemoveProjectRequestV1, RepositoryTreeResultV1, ReviseAgentGoalRequestV1,
-        StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
-        TaskLensTasksResultV1,
+        QueryAgentActivityRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
+        QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
+        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+        QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+        QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+        QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
+        QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
+        RepositoryTreeResultV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
+        TaskLensCompileResultV1, TaskLensTaskResultV1, TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -1539,6 +1585,64 @@ mod tests {
                 .map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_inspection_commands_reject_free_or_oversized_selections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let overview =
+            QueryAgentInspectionRequestV1::new(ProtocolVersion::CURRENT, "11".repeat(32));
+        let response = block_on(execute_query_agent_inspection(overview, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            AgentInspectionResultV1::NoProject
+        ));
+
+        let log = QueryAgentInspectionLogRequestV1::new(
+            ProtocolVersion::CURRENT,
+            "11".repeat(32),
+            "1".to_owned(),
+            "22".repeat(32),
+            AgentInspectionStreamV1::Stdout,
+            0,
+            8_192,
+        );
+        let response = block_on(execute_query_agent_inspection_log(log, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            AgentInspectionLogResultV1::NoProject
+        ));
+
+        for invalid in [
+            QueryAgentInspectionLogRequestV1::new(
+                ProtocolVersion::CURRENT,
+                "11".repeat(32),
+                "01".to_owned(),
+                "22".repeat(32),
+                AgentInspectionStreamV1::Stdout,
+                0,
+                8_192,
+            ),
+            QueryAgentInspectionLogRequestV1::new(
+                ProtocolVersion::CURRENT,
+                "11".repeat(32),
+                "1".to_owned(),
+                "22".repeat(32),
+                AgentInspectionStreamV1::Stderr,
+                0,
+                16 * 1_024 + 1,
+            ),
+        ] {
+            assert_eq!(
+                block_on(execute_query_agent_inspection_log(invalid, &root))
+                    .map_err(|error| error.code()),
+                Err(ErrorCodeV1::InvalidAgentInspectionQuery)
+            );
+        }
         Ok(())
     }
 

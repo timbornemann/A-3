@@ -3,6 +3,7 @@
 mod agent_activity;
 mod agent_control;
 mod agent_goal;
+mod agent_inspection;
 mod deep_map;
 mod error;
 mod goal_contract;
@@ -44,6 +45,7 @@ pub use agent_goal::{
     AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
     AgentGoalResultV1, CreateAgentGoalRequestV1, QueryAgentGoalRequestV1, ReviseAgentGoalRequestV1,
 };
+pub use agent_inspection::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
     DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,

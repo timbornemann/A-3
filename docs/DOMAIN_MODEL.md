@@ -668,6 +668,23 @@ erneut und bindet zusätzlich einen ankergleichen regenerierten `RunMemoryCheckp
 verbliebene aktive taskbezogene Hypothesis blockiert `Done` konservativ. Soll-only-Ziele können
 ohne Evidence abschließen, solange keine solche Hypothesis offen ist.
 
+### AgentInspection
+
+`AgentInspectionBuffer` ist eine flüchtige, begrenzte Desktopprojektion und keine fachliche
+Wahrheitsquelle. `AgentInspectionContext` bindet jeden Datensatz an Task, Run, Step,
+Verification-Spec und Snapshot; eine positive monotone `AgentInspectionRevision` macht veraltete
+Detailselektionen erkennbar. `AgentPatchInspection` übernimmt ausschließlich die exakten bounded
+E3-Präfixe und leitet deterministische gemeinsame `AgentDiffRow`s für Unified und Side-by-side ab.
+`AgentProcessInspection` bewahrt ausschließlich bereits klassifizierte retained E4-Ausgabe und
+liefert höchstens 16-KiB-Seiten; `pageTruncated` und `sourceTruncated` sind verschiedene Zustände.
+
+`GetTaskVerificationInspection` liest dagegen dauerhafte Ledger-Referenzen und den jüngsten
+Published Index zweimal ankergleich. Es bewertet jedes Artifact erneut und projiziert pro Kriterium
+`Proven`, `Pending`, `Failed`, `Stale` oder `Missing`. Nur `Proven` enthält beweisende Step- und
+Evidence-IDs; Staleness dominiert historische Completion. Volatile Patch- oder Logdaten werden im
+Composition Root nur ausgeliefert, wenn Worktree, Task, Run, Step, Spec und Snapshot weiterhin zur
+aktuellen dauerhaften Projektion passen.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.

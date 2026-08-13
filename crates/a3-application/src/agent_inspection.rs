@@ -81,6 +81,12 @@ impl AgentInspectionContext {
 pub struct AgentInspectionId([u8; 32]);
 
 impl AgentInspectionId {
+    /// Reconstructs an untrusted opaque identifier before record-level revalidation.
+    #[must_use]
+    pub const fn from_bytes(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+
     /// Returns the stable binary representation used by the strict IPC mapper.
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 32] {
@@ -99,12 +105,32 @@ impl fmt::Debug for AgentInspectionId {
 pub struct AgentInspectionRevision(u64);
 
 impl AgentInspectionRevision {
+    /// Reconstructs a positive process-local revision emitted by an overview.
+    pub const fn new(value: u64) -> Result<Self, AgentInspectionRevisionError> {
+        if value == 0 {
+            return Err(AgentInspectionRevisionError);
+        }
+        Ok(Self(value))
+    }
+
     /// Returns the positive process-local revision.
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
 }
+
+/// A WebView-supplied inspection revision was not positive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentInspectionRevisionError;
+
+impl fmt::Display for AgentInspectionRevisionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Agent inspection revision must be positive")
+    }
+}
+
+impl Error for AgentInspectionRevisionError {}
 
 /// Provenance asserted only when a trusted action or observer proves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1641,6 +1667,16 @@ mod tests {
         PolicyDecisionId, PolicyResourceId, ProcessExit, ProcessOutputCapture,
         ProcessOutputContent, RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeIdentity,
     };
+
+    #[test]
+    fn ipc_selection_reconstructs_only_positive_revisions() {
+        assert!(AgentInspectionRevision::new(0).is_err());
+        assert_eq!(
+            AgentInspectionRevision::new(7).map(|value| value.get()),
+            Ok(7)
+        );
+        assert_eq!(AgentInspectionId::from_bytes([9; 32]).as_bytes(), [9; 32]);
+    }
 
     #[test]
     fn patch_preview_builds_separate_hunks_and_exact_line_endings() -> Result<(), Box<dyn Error>> {

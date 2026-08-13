@@ -673,6 +673,19 @@ benötigen einen strukturierten Adapter und können deshalb nicht aus Exitcode a
 werden. Der content-freie Fortschrittsdetektor erlaubt einen ersten identischen Fehlerretry mit
 frischem Kontext, wechselt beim zweiten nach `Replan` und stoppt jede weitere identische Serie.
 
+U6 ergänzt am Desktop-Rand eine read-only Inspektionsprojektion, ohne die E6-Wahrheitsgrenze zu
+verschieben. `ExecuteMutatingAgentAction` übergibt bereits validierte E3-Previews und terminale,
+secret-geprüfte E4-Resultate an den schmalen `AgentInspectionSink`. Der Composition Root besitzt
+genau einen begrenzten `AgentInspectionBuffer`, aktiviert und leert ihn gemeinsam mit dem
+Projektlebenszyklus und revalidiert seine Task-/Run-/Step-/Spec-/Snapshotanker gegen die aktuelle
+dauerhafte Projektion. Exakte Sourcepräfixe und retained Logtexte werden nicht persistiert.
+
+Der getrennte `GetTaskVerificationInspection`-Use-Case liest Goal/Ledger-Anker sowie exakt
+referenzierte Evidence mit dem jüngsten Published Index doppelt konsistent. Er leitet
+Artifact-Semantik, Freshness, Stepzustand und Must-/Should-Beweise im Application-Kern ab. Die
+versionierte IPC-Grenze mappt nur primitive DTOs; Unified und Side-by-side verwenden dieselben
+Core-Zeilen, und Logdetails benötigen eine Core-emittierte Revision und Record-ID.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

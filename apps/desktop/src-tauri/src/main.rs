@@ -109,6 +109,8 @@ mod tests {
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::pause_deep_map,
                 a3_desktop::commands::query_deep_map,
+                a3_desktop::commands::query_agent_inspection,
+                a3_desktop::commands::query_agent_inspection_log,
                 a3_desktop::commands::query_project_status,
                 a3_desktop::commands::query_index_activity,
                 a3_desktop::commands::query_index_overview,

@@ -55,6 +55,10 @@ pub enum ErrorCodeV1 {
     InvalidTaskLensSelection,
     /// Durable anchors or deterministic Task Lens retrieval could not be read safely.
     TaskLensUnavailable,
+    /// A task, volatile record, revision, stream, cursor, or page limit violated U6 bounds.
+    InvalidAgentInspectionQuery,
+    /// Exact diff, log, or durable verification state could not be read safely.
+    AgentInspectionUnavailable,
     /// Goal Contract content, identities, or revision metadata violated the strict Agent contract.
     InvalidAgentGoal,
     /// The selected durable task is absent from the active worktree.
@@ -175,6 +179,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::TaskLensUnavailable => {
                 "The current Task Lens could not be compiled from local evidence."
+            }
+            ErrorCodeV1::InvalidAgentInspectionQuery => {
+                "The Agent inspection request is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentInspectionUnavailable => {
+                "The Agent diff and verification inspection could not be read safely."
             }
             ErrorCodeV1::InvalidAgentGoal => {
                 "The Goal Contract content is outside the supported bounds."

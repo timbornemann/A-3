@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-agent-inspection-log"
+description = "Enables the query_agent_inspection_log command without any pre-configured scope."
+commands.allow = ["query_agent_inspection_log"]
+
+[[permission]]
+identifier = "deny-query-agent-inspection-log"
+description = "Denies the query_agent_inspection_log command without any pre-configured scope."
+commands.deny = ["query_agent_inspection_log"]
