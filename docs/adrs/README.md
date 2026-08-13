@@ -48,6 +48,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0021](0021-bounded-agent-inspection.md)               | Begrenzte taskgebundene Diff- und Verification-Inspektion  |
 | [0022](0022-task-bound-approval-center.md)              | Taskgebundenes Approval Center mit expliziter Fortsetzung  |
 | [0023](0023-local-settings-and-model-activation.md)      | Lokale Settings und evidenzgebundene Modellaktivierung     |
+| [0024](0024-semantic-design-tokens-and-accessible-themes.md) | Semantische Designtokens und zugängliche Themes        |
 
 ## Neue ADRs
 
