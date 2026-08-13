@@ -527,18 +527,46 @@ abgeschlossen.
 
 Abhängigkeiten: ModelProfile
 
-- [ ] lokaler Endpoint
-- [ ] Provider Health und Capability Probe
-- [ ] Modellprofile für Coding, Mapping und Embedding
-- [ ] Kontext- und Ressourcenlimits
-- [ ] Indexignore und sichere Command Allowlist
-- [ ] Daten- und Privacy-Einstellungen
+- [x] lokaler Endpoint
+- [x] Provider Health und Capability Probe
+- [x] Modellprofile für Coding, Mapping und Embedding
+- [x] Kontext- und Ressourcenlimits
+- [x] Indexignore und sichere Command Allowlist
+- [x] Daten- und Privacy-Einstellungen
 
 Akzeptanz:
 
 - App ist ohne konfiguriertes Modell als Indexbrowser nutzbar;
 - nicht lokaler Endpoint warnt deutlich;
 - invalides Profil kann nicht für ausführbare Runs aktiviert werden.
+
+Abnahme U8 vom 2026-08-13: ADR-0023 ist vollständig als getrennte globale und projektbezogene
+Settings-Grenze umgesetzt. Der Katalog persistiert append-only V1-Snapshots mit CAS und
+modellfreiem Nullzustand. Endpointkonfiguration ist credential-frei, kanonisch und unterscheidet
+lokales Loopback von sichtbar blockiertem Remote. Reads starten keine Provider-, Netzwerk- oder
+GPU-Arbeit; ein Endpointwechsel invalidiert alle vorherigen Kandidaten und Probe-Evidence.
+Explizite, abbrechbare und begrenzte Probes können Coding und Mapping nur nach real verifiziertem
+Structured Output sowie Embedding nur nach einem endlichen Vektor mit beobachteter gültiger
+Dimension aktivieren. Nicht verifizierte, fehlgeschlagene, abgebrochene, stale oder remote
+Profile bleiben nicht ausführbar.
+
+Die Oberfläche zeigt Rollenstatus, Health, Kontext-/Output-/Parallelitäts-/Batchlimits und die
+fail-closed Privacygrenzen. Projektbezogenes Indexignore bleibt read-only und verwendet nur die
+bereits autorisierten Git-, Safety- und `.a3/project.toml`-Quellen. Die sichere Command-Allowlist
+wird aus dem jüngsten Published Index rekonstruiert und kann nur mit sichtbarer Katalogrevision,
+Store-CAS und bekannten IDs bestätigt werden; die WebView liefert weder Pfade noch argv. Ohne
+einen separat vollständig komponierten Agent- oder Deep-Map-Executor bleibt die Laufzeit
+unavailable und behauptet keine nur durch Settings vorgetäuschte Ausführbarkeit.
+
+Rustfmt, der vollständige Rust-Workspace-Test über alle Targets und Features, Workspace-Clippy
+mit Warnings denied sowie Rustdoc mit Warnings denied sind grün. Der Windows-libSQL-Harness
+belegt den zuvor betroffenen Index-Contract mit Abschlussmarker und höchstens zwei ausschließlich
+für `STATUS_ACCESS_VIOLATION` erlaubten frischen Wiederholungen. Prettier, ESLint,
+Svelte-Typecheck, 177 Frontendtests und Produktionsbuild bestehen. Desktop-Component- und
+Boundarytests belegen den modellfreien Indexbrowser, die nicht nur farbliche Remote-Warnung,
+strikte Requests, Probe/Cancel, Rollenprofile, Privacy sowie die stale-sichere Projektsettings-
+Bestätigung. Damit sind alle drei U8-Akzeptanzkriterien objektiv nachgewiesen und U8 ist
+abgeschlossen.
 
 ## U9 Design System und Accessibility
 

@@ -233,6 +233,26 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Wahl deaktiviert. GrantStored darf nicht selbst Continue auslösen, und Active muss Continue und
   Revoke getrennt anbieten. Der Capability-Test erlaubt nur die beiden engen Approval-Commands und
   weiterhin keine generische privilegierte Capability.
+- Der U8-Settings-Contract prüft den expliziten modellfreien Nullzustand, append-only
+  V1-Snapshots, monotone Revisionen, CAS-Konflikte, Reopen und die atomare Invalidierung aller
+  Profile und Probe-Evidence nach einem Endpointwechsel. Ein Read-, Mount- oder Starttest muss
+  belegen, dass dabei weder Provider, Netzwerk noch GPU-Arbeit beginnt.
+- Provider-Contracts prüfen offline die Kanonisierung credential-freier lokaler Origins, die
+  sichtbare und nicht ausführbare Remote-Klassifikation, feste Timeouts, Cancellation, begrenzte
+  Antworten und Core-eigene Zeit. Coding und Mapping dürfen nur nach realem Structured-Output-
+  Erfolg verifiziert sein; Embedding zusätzlich nur nach einem endlichen, nicht leeren Vektor mit
+  beobachteter gültiger Dimension. Fehler, Abbruch, stale Revision und Remote bleiben nicht
+  ausführbar.
+- Der U8-Projektsettings-Contract liest Ignorequellen ausschließlich über die validierte
+  Repositorykonfiguration und rekonstruiert den Command-Katalog aus dem jüngsten Published Index.
+  Query und Confirmation prüfen Katalog-ID, Revision, Store-CAS, bekannte Command-IDs und
+  Projektlebenszyklus; stale Evidence verändert keine Allowlist und führt keinen Command aus.
+- Rust-IPC, TypeScript-Decoder und Capabilitytests erlauben nur die engen U8-Commands. Probe-
+  Requests dürfen weder Endpoint, Provider-, Profil- oder Capability-ID noch Healthstatus oder
+  Zeit tragen; Projektsettings dürfen keine Pfade, Worktree-IDs, argv oder freien Commands
+  annehmen. Component-Tests zeigen den weiter nutzbaren modellfreien Indexbrowser, eine nicht nur
+  farbliche Remote-Warnung, explizite Probe-/Abbruchaktionen, validierte Limits, fail-closed
+  Privacy, read-only Indexignore und die evidence-gebundene Commandauswahl.
 
 ### Persistenz
 

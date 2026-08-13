@@ -699,6 +699,33 @@ einen ungenutzten Grant zurück. Deny committed Step `Blocked`, Run `Failed` und
 `ApprovalDenied`-Event atomar, ohne eine Toolgrenze zu erreichen. Ein getrenntes breites oder
 wiederverwendbares Scope-Allow existiert gemäß ADR-0022 nicht.
 
+U8 führt globale Desktopsettings gemäß ADR-0023 als vollständige, monoton revisionierte
+V1-Snapshots im lokalen Katalog ein. Der leere Store wird als expliziter modellfreier Zustand
+projiziert; Settings-Reads, Appstart und Projekt-Mount starten weder Providererkennung noch
+Netzwerk- oder GPU-Arbeit. Ein Endpoint-Write akzeptiert ausschließlich einen erwarteten
+Snapshotstand und einen credential-freien Origin, den der Ollama-Adapter kanonisiert und als
+`LocalLoopback` oder `Remote` klassifiziert. Jeder Endpointwechsel invalidiert Profile und
+Probe-Evidence atomar. Ein Remote-Origin bleibt speicherbar und sichtbar, aber in U8
+`RemoteBlocked` und ohne pauschale Netzwerkfreigabe.
+
+Coding, Mapping und Embedding besitzen getrennte Kandidaten und werden nur durch eine explizite,
+abbrechbare und zeitbegrenzte Providerprobe aktualisiert. Der Core lädt den Endpoint aus seinem
+eigenen Snapshot, setzt Core-Zeit und verwirft ein spätes Ergebnis bei CAS-Konflikt. Nur real
+beobachtetes Structured Output beziehungsweise ein endlicher, nicht leerer Embeddingvektor mit
+gültiger Dimension kann ein Profil verifizieren; Name, WebView-Feld oder Healthstatus sind keine
+Capability-Evidence. Die Settings-Projektion enthält validierte Kontext-, Output-,
+Parallelitäts- und Batchlimits sowie fail-closed Privacyzustände. Ohne einen im Composition Root
+zusätzlich vollständig komponierten Agent- oder Deep-Map-Executor bleiben ausführbare Runs trotz
+gültiger Settings bewusst unavailable; die Settings-Grenze simuliert keinen Executor.
+
+Projektsettings bleiben von globalen Preferences getrennt. Die read-only Ignore-Projektion lädt
+nur die bereits validierten Git-, Safety- und `.a3/project.toml`-Quellen des aktiven Core-Projekts.
+Der Command-Katalog wird aus dem jüngsten atomar publizierten Index neu aufgebaut. Eine
+Bestätigung enthält ausschließlich sichtbare Command-IDs, Katalogrevision und Store-CAS; der Core
+rekonstruiert den Katalog vor dem Commit und lehnt stale Evidence, unbekannte Commands oder einen
+Projektwechsel ohne Änderung ab. Die WebView kann weder Pfade noch argv, Worktree-IDs,
+Capabilitystatus, Profil-IDs, Zeit oder Endpoint in einen Probe-Request einschleusen.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;
