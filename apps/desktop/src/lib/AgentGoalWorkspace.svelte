@@ -150,6 +150,7 @@
   let controllingRun = $state(false);
   let actionMessage = $state<string | null>(null);
   let actionError = $state<string | null>(null);
+  let workspaceView = $state<'plan' | 'activity' | 'review' | 'contract'>('plan');
   let observedProject = false;
   let taskRequest = 0;
   let goalRequest = 0;
@@ -717,360 +718,391 @@
           >{/if}
       </div>
     </div>
-    <section class="task-ledger" aria-labelledby="task-ledger-heading">
-      <header>
-        <p>Durable Plan</p>
-        <h3 id="task-ledger-heading">Task Ledger</h3>
-      </header>
-      {#if ledgerView.kind === 'loading'}
-        <p role="status" aria-live="polite">Task Ledger wird geladen …</p>
-      {:else if ledgerView.kind === 'error'}
-        <div class="error-state" role="alert">
-          <p>Das Task Ledger konnte nicht sicher gelesen werden.</p>
-          <button type="button" onclick={() => loadLedger(selectedTaskId)}>Erneut laden</button>
-        </div>
-      {:else if ledgerView.kind === 'result' && (ledgerView.result.status === 'noProject' || ledgerView.result.status === 'taskNotFound')}
-        <p class="error-state" role="alert">
-          Aufgabe oder aktiver Worktree haben sich geändert. Lade die dauerhaften Aufgaben neu.
-        </p>
-      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
-        <p class="empty-state">
-          Für diesen Goal Contract wurde noch kein dauerhafter Plan erzeugt.
-        </p>
-      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
-        <p class="error-state" role="alert">
-          Das Ledger gehört zu Goal-Revision {ledgerView.result.ledgerGoalRevision}; aktuell ist
-          Revision {ledgerView.result.currentGoalRevision}. Vor Ausführung ist ein Replan
-          erforderlich.
-        </p>
-      {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'available'}
-        <p class="ledger-metadata">
-          Ledger R{ledgerView.result.ledgerRevision} · Store {ledgerView.result.ledgerStoreVersion}
-        </p>
-        <ol class="ledger-steps">
-          {#each ledgerView.result.steps as step (step.stepId)}
-            <li class:current={step.stepId === currentLedgerStep?.stepId}>
-              <span>{stepStatusLabel(step.status)}</span>
-              <p>{step.intendedOutcome}</p>
-            </li>
-          {/each}
-        </ol>
-      {/if}
-    </section>
-    {#if AgentInspectionPanel !== null && AgentApprovalCenter !== null}
-      <AgentInspectionPanel
-        taskId={selectedTaskId}
-        loader={inspectionLoader}
-        logLoader={inspectionLogLoader}
-      />
-      <AgentApprovalCenter
-        taskId={selectedTaskId}
-        loader={approvalLoader}
-        controller={approvalController}
-        onChanged={refreshAfterApproval}
-      />
-    {:else}
-      <section class="detail-loader" aria-labelledby="agent-detail-loader-heading">
-        <h3 id="agent-detail-loader-heading">Diff, Verification und Freigabe</h3>
-        {#if detailChunkState === 'error'}
-          <p role="alert">Die lokalen Inspektionsmodule konnten nicht geladen werden.</p>
-          <button type="button" onclick={loadDetailChunks}>Erneut laden</button>
-        {:else}
-          <p role="status">Inspektionsmodule werden bei Aufgabenauswahl geladen …</p>
+    <nav class="surface-tabs" aria-label="Agent-Arbeitsansicht">
+      <button
+        type="button"
+        aria-pressed={workspaceView === 'plan'}
+        onclick={() => (workspaceView = 'plan')}>Plan</button
+      >
+      <button
+        type="button"
+        aria-pressed={workspaceView === 'activity'}
+        onclick={() => (workspaceView = 'activity')}>Aktivität</button
+      >
+      <button
+        type="button"
+        aria-pressed={workspaceView === 'review'}
+        onclick={() => (workspaceView = 'review')}>Review</button
+      >
+      <button
+        type="button"
+        aria-pressed={workspaceView === 'contract'}
+        onclick={() => (workspaceView = 'contract')}>Details</button
+      >
+    </nav>
+    {#if workspaceView === 'plan'}
+      <section class="task-ledger" aria-labelledby="task-ledger-heading">
+        <header>
+          <p>Durable Plan</p>
+          <h3 id="task-ledger-heading">Task Ledger</h3>
+        </header>
+        {#if ledgerView.kind === 'loading'}
+          <p role="status" aria-live="polite">Task Ledger wird geladen …</p>
+        {:else if ledgerView.kind === 'error'}
+          <div class="error-state" role="alert">
+            <p>Das Task Ledger konnte nicht sicher gelesen werden.</p>
+            <button type="button" onclick={() => loadLedger(selectedTaskId)}>Erneut laden</button>
+          </div>
+        {:else if ledgerView.kind === 'result' && (ledgerView.result.status === 'noProject' || ledgerView.result.status === 'taskNotFound')}
+          <p class="error-state" role="alert">
+            Aufgabe oder aktiver Worktree haben sich geändert. Lade die dauerhaften Aufgaben neu.
+          </p>
+        {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
+          <p class="empty-state">
+            Für diesen Goal Contract wurde noch kein dauerhafter Plan erzeugt.
+          </p>
+        {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
+          <p class="error-state" role="alert">
+            Das Ledger gehört zu Goal-Revision {ledgerView.result.ledgerGoalRevision}; aktuell ist
+            Revision {ledgerView.result.currentGoalRevision}. Vor Ausführung ist ein Replan
+            erforderlich.
+          </p>
+        {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'available'}
+          <p class="ledger-metadata">
+            Ledger R{ledgerView.result.ledgerRevision} · Store {ledgerView.result
+              .ledgerStoreVersion}
+          </p>
+          <ol class="ledger-steps">
+            {#each ledgerView.result.steps as step (step.stepId)}
+              <li class:current={step.stepId === currentLedgerStep?.stepId}>
+                <span>{stepStatusLabel(step.status)}</span>
+                <p>{step.intendedOutcome}</p>
+              </li>
+            {/each}
+          </ol>
         {/if}
       </section>
     {/if}
-    <section class="agent-activity" aria-labelledby="agent-activity-heading">
-      <header>
-        <p>Durable Run</p>
-        <h3 id="agent-activity-heading">Aktivität, Kontext und Budget</h3>
-      </header>
-      {#if activityView.kind === 'loading'}
-        <p role="status" aria-live="polite">Run-Aktivität wird geladen …</p>
-      {:else if activityView.kind === 'error'}
-        <div class="error-state" role="alert">
-          <p>Die Run-Aktivität konnte nicht sicher gelesen werden.</p>
-          <button type="button" onclick={() => loadActivity(selectedTaskId)}>Erneut laden</button>
-        </div>
-      {:else if activityView.kind === 'result' && activityView.result.status === 'activityChanged'}
-        <div class="error-state" role="status">
-          <p>Ledger oder Run haben sich während des Lesens geändert.</p>
-          <button type="button" onclick={() => loadActivity(selectedTaskId)}>
-            Aktuellen Stand laden
-          </button>
-        </div>
-      {:else if activityView.kind === 'result' && (activityView.result.status === 'noProject' || activityView.result.status === 'taskNotFound')}
-        <p class="error-state" role="alert">
-          Aufgabe oder aktiver Worktree sind für diese Aktivität nicht mehr verfügbar.
-        </p>
-      {:else if activityView.kind === 'result' && activityView.result.status === 'ledgerUnavailable'}
-        <p class="empty-state">Ohne Task Ledger existiert noch kein kontrollierter Agent Run.</p>
-      {:else if activityView.kind === 'result' && activityView.result.status === 'goalRevisionMismatch'}
-        <p class="error-state" role="alert">
-          Goal R{activityView.result.currentRevision} und Ledger-Goal R{activityView.result
-            .ledgerRevision}
-          stimmen nicht überein. Vor weiterer Ausführung ist ein Replan erforderlich.
-        </p>
-      {:else if activityView.kind === 'result' && activityView.result.status === 'available'}
-        {@const activity = activityView.result.activity}
-        {#if activity.blockers.length > 0}
-          <section class="blockers" aria-labelledby="agent-blockers-heading">
-            <h4 id="agent-blockers-heading">Offene Blocker</h4>
-            <ul>
-              {#each activity.blockers as blocker (blocker.stepId)}
-                <li>
-                  <strong
-                    >{blocker.status === 'awaitingApproval'
-                      ? 'Freigabe nötig'
-                      : 'Blockiert'}</strong
-                  >
-                  <span>{blocker.reason}</span>
-                </li>
-              {/each}
-            </ul>
-          </section>
-        {/if}
-        {#if activity.run === null}
-          <p class="empty-state">Für die Ledger-Schritte wurde noch kein Run-Versuch gestartet.</p>
-        {:else}
-          {@const run = activity.run}
-          <div class="run-summary">
-            <div>
-              <span>Controllerzustand</span>
-              <strong>{controllerStateLabel(run.state)}</strong>
-            </div>
-            <span class:terminal={run.terminal} class="run-lifecycle">
-              {run.terminal ? 'Terminaler Zustand' : 'Run aktiv oder fortsetzbar'}
-            </span>
-            <code>Versuch {run.attemptNumber} · Run {run.runId.slice(0, 12)}</code>
+    {#if workspaceView === 'review'}
+      {#if AgentInspectionPanel !== null && AgentApprovalCenter !== null}
+        <AgentInspectionPanel
+          taskId={selectedTaskId}
+          loader={inspectionLoader}
+          logLoader={inspectionLogLoader}
+        />
+        <AgentApprovalCenter
+          taskId={selectedTaskId}
+          loader={approvalLoader}
+          controller={approvalController}
+          onChanged={refreshAfterApproval}
+        />
+      {:else}
+        <section class="detail-loader" aria-labelledby="agent-detail-loader-heading">
+          <h3 id="agent-detail-loader-heading">Diff, Verification und Freigabe</h3>
+          {#if detailChunkState === 'error'}
+            <p role="alert">Die lokalen Inspektionsmodule konnten nicht geladen werden.</p>
+            <button type="button" onclick={loadDetailChunks}>Erneut laden</button>
+          {:else}
+            <p role="status">Inspektionsmodule werden bei Aufgabenauswahl geladen …</p>
+          {/if}
+        </section>
+      {/if}
+    {/if}
+    {#if workspaceView === 'activity'}
+      <section class="agent-activity" aria-labelledby="agent-activity-heading">
+        <header>
+          <p>Durable Run</p>
+          <h3 id="agent-activity-heading">Aktivität, Kontext und Budget</h3>
+        </header>
+        {#if activityView.kind === 'loading'}
+          <p role="status" aria-live="polite">Run-Aktivität wird geladen …</p>
+        {:else if activityView.kind === 'error'}
+          <div class="error-state" role="alert">
+            <p>Die Run-Aktivität konnte nicht sicher gelesen werden.</p>
+            <button type="button" onclick={() => loadActivity(selectedTaskId)}>Erneut laden</button>
           </div>
-          <section class="run-controls" aria-labelledby="run-controls-heading">
-            <div>
-              <p>Explizite Recovery</p>
-              <h4 id="run-controls-heading">Run steuern</h4>
+        {:else if activityView.kind === 'result' && activityView.result.status === 'activityChanged'}
+          <div class="error-state" role="status">
+            <p>Ledger oder Run haben sich während des Lesens geändert.</p>
+            <button type="button" onclick={() => loadActivity(selectedTaskId)}>
+              Aktuellen Stand laden
+            </button>
+          </div>
+        {:else if activityView.kind === 'result' && (activityView.result.status === 'noProject' || activityView.result.status === 'taskNotFound')}
+          <p class="error-state" role="alert">
+            Aufgabe oder aktiver Worktree sind für diese Aktivität nicht mehr verfügbar.
+          </p>
+        {:else if activityView.kind === 'result' && activityView.result.status === 'ledgerUnavailable'}
+          <p class="empty-state">Ohne Task Ledger existiert noch kein kontrollierter Agent Run.</p>
+        {:else if activityView.kind === 'result' && activityView.result.status === 'goalRevisionMismatch'}
+          <p class="error-state" role="alert">
+            Goal R{activityView.result.currentRevision} und Ledger-Goal R{activityView.result
+              .ledgerRevision}
+            stimmen nicht überein. Vor weiterer Ausführung ist ein Replan erforderlich.
+          </p>
+        {:else if activityView.kind === 'result' && activityView.result.status === 'available'}
+          {@const activity = activityView.result.activity}
+          {#if activity.blockers.length > 0}
+            <section class="blockers" aria-labelledby="agent-blockers-heading">
+              <h4 id="agent-blockers-heading">Offene Blocker</h4>
+              <ul>
+                {#each activity.blockers as blocker (blocker.stepId)}
+                  <li>
+                    <strong
+                      >{blocker.status === 'awaitingApproval'
+                        ? 'Freigabe nötig'
+                        : 'Blockiert'}</strong
+                    >
+                    <span>{blocker.reason}</span>
+                  </li>
+                {/each}
+              </ul>
+            </section>
+          {/if}
+          {#if activity.run === null}
+            <p class="empty-state">
+              Für die Ledger-Schritte wurde noch kein Run-Versuch gestartet.
+            </p>
+          {:else}
+            {@const run = activity.run}
+            <div class="run-summary">
+              <div>
+                <span>Controllerzustand</span>
+                <strong>{controllerStateLabel(run.state)}</strong>
+              </div>
+              <span class:terminal={run.terminal} class="run-lifecycle">
+                {run.terminal ? 'Terminaler Zustand' : 'Run aktiv oder fortsetzbar'}
+              </span>
+              <code>Versuch {run.attemptNumber} · Run {run.runId.slice(0, 12)}</code>
             </div>
-            {#if recoveryView.kind === 'loading'}
-              <p role="status" aria-live="polite">Sichere Steueroptionen werden geprüft …</p>
-            {:else if recoveryView.kind === 'error'}
-              <div class="error-state" role="alert">
-                <p>Die Recovery-Anker konnten nicht sicher geprüft werden.</p>
-                <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
-                  Erneut prüfen
-                </button>
+            <section class="run-controls" aria-labelledby="run-controls-heading">
+              <div>
+                <p>Explizite Recovery</p>
+                <h4 id="run-controls-heading">Run steuern</h4>
               </div>
-            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'activityChanged'}
-              <div class="error-state" role="status">
-                <p>Der Run hat sich während der Recovery-Prüfung geändert.</p>
-                <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
-                  Aktuellen Stand prüfen
-                </button>
-              </div>
-            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runtimeOwned'}
-              {@const runtime = recoveryView.result.runtime}
-              <dl class="recovery-facts">
-                <div>
-                  <dt>Produktlaufzeit</dt>
-                  <dd>{agentRuntimeStateLabel(runtime.runtimeState)}</dd>
+              {#if recoveryView.kind === 'loading'}
+                <p role="status" aria-live="polite">Sichere Steueroptionen werden geprüft …</p>
+              {:else if recoveryView.kind === 'error'}
+                <div class="error-state" role="alert">
+                  <p>Die Recovery-Anker konnten nicht sicher geprüft werden.</p>
+                  <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
+                    Erneut prüfen
+                  </button>
                 </div>
-                <div>
-                  <dt>Controller</dt>
-                  <dd>{controllerStateLabel(runtime.controllerState)}</dd>
+              {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'activityChanged'}
+                <div class="error-state" role="status">
+                  <p>Der Run hat sich während der Recovery-Prüfung geändert.</p>
+                  <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
+                    Aktuellen Stand prüfen
+                  </button>
                 </div>
-                <div>
-                  <dt>Ledgeranker</dt>
-                  <dd>R{runtime.ledgerRevision} · V{runtime.ledgerStoreVersion}</dd>
-                </div>
-              </dl>
-              <p class="bounded-note">
-                Dieser Prozess besitzt den Worker. Recovery unterbricht deshalb keinen laufenden
-                Toolversuch; Pause und Cancel stoppen zuerst kooperativ die Produktlaufzeit.
-              </p>
-              <div class="control-actions" aria-label="Agent Run Laufzeit-Aktionen">
-                <button
-                  type="button"
-                  disabled={controllingRun || !runtime.canPause}
-                  onclick={() => applyRunControl('pause')}
-                >
-                  Pause
-                </button>
-                <button
-                  class="danger-action"
-                  type="button"
-                  disabled={controllingRun || runtime.runtimeState === 'cancelling'}
-                  onclick={() => applyRunControl('cancel')}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={controllingRun}
-                  onclick={() => loadRecovery(selectedTaskId)}
-                >
-                  Status aktualisieren
-                </button>
-              </div>
-            {:else if recoveryView.kind === 'result' && (recoveryView.result.status === 'available' || recoveryView.result.status === 'paused')}
-              {@const recovery = recoveryView.result.recovery}
-              {#if recoveryView.result.status === 'paused'}
-                <p class="bounded-note" role="status">
-                  Produktlaufzeit pausiert · der Worker ist beendet und der Recovery-Checkpoint
-                  wurde geprüft.
+              {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runtimeOwned'}
+                {@const runtime = recoveryView.result.runtime}
+                <dl class="recovery-facts">
+                  <div>
+                    <dt>Produktlaufzeit</dt>
+                    <dd>{agentRuntimeStateLabel(runtime.runtimeState)}</dd>
+                  </div>
+                  <div>
+                    <dt>Controller</dt>
+                    <dd>{controllerStateLabel(runtime.controllerState)}</dd>
+                  </div>
+                  <div>
+                    <dt>Ledgeranker</dt>
+                    <dd>R{runtime.ledgerRevision} · V{runtime.ledgerStoreVersion}</dd>
+                  </div>
+                </dl>
+                <p class="bounded-note">
+                  Dieser Prozess besitzt den Worker. Recovery unterbricht deshalb keinen laufenden
+                  Toolversuch; Pause und Cancel stoppen zuerst kooperativ die Produktlaufzeit.
                 </p>
-              {/if}
-              <dl class="recovery-facts">
-                <div>
-                  <dt>Snapshot</dt>
-                  <dd>{recovery.snapshotChanged ? 'Geändert' : 'Unverändert'}</dd>
+                <div class="control-actions" aria-label="Agent Run Laufzeit-Aktionen">
+                  <button
+                    type="button"
+                    disabled={controllingRun || !runtime.canPause}
+                    onclick={() => applyRunControl('pause')}
+                  >
+                    Pause
+                  </button>
+                  <button
+                    class="danger-action"
+                    type="button"
+                    disabled={controllingRun || runtime.runtimeState === 'cancelling'}
+                    onclick={() => applyRunControl('cancel')}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={controllingRun}
+                    onclick={() => loadRecovery(selectedTaskId)}
+                  >
+                    Status aktualisieren
+                  </button>
                 </div>
-                <div>
-                  <dt>Stale Evidence</dt>
-                  <dd>{recovery.staleEvidenceCount}</dd>
+              {:else if recoveryView.kind === 'result' && (recoveryView.result.status === 'available' || recoveryView.result.status === 'paused')}
+                {@const recovery = recoveryView.result.recovery}
+                {#if recoveryView.result.status === 'paused'}
+                  <p class="bounded-note" role="status">
+                    Produktlaufzeit pausiert · der Worker ist beendet und der Recovery-Checkpoint
+                    wurde geprüft.
+                  </p>
+                {/if}
+                <dl class="recovery-facts">
+                  <div>
+                    <dt>Snapshot</dt>
+                    <dd>{recovery.snapshotChanged ? 'Geändert' : 'Unverändert'}</dd>
+                  </div>
+                  <div>
+                    <dt>Stale Evidence</dt>
+                    <dd>{recovery.staleEvidenceCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Unterbrochene Toolversuche</dt>
+                    <dd>{recovery.interruptedToolAttempts}</dd>
+                  </div>
+                </dl>
+                {#if recovery.mutationReconciliationRequired}
+                  <p class="error-state" role="alert">
+                    Eine Mutation hat eine unbekannte Wirkung. Resume und Replan bleiben bis zu
+                    einem autoritativen Full-Scan gesperrt; Cancel bleibt erreichbar.
+                  </p>
+                {:else if recovery.mutationReplanRequired}
+                  <p class="bounded-note">
+                    Die unbekannte Mutationswirkung wurde reconciliert. Vor weiterer Mutation ist
+                    Replan erforderlich.
+                  </p>
+                {:else if recovery.staleEvidenceCount > 0}
+                  <p class="bounded-note">
+                    Abgeschlossene Evidence ist veraltet. Resume ist gesperrt; Replan öffnet
+                    betroffene Schritte kontrolliert neu.
+                  </p>
+                {/if}
+                <div class="control-actions" aria-label="Agent Run Recovery-Aktionen">
+                  <button
+                    type="button"
+                    disabled={controllingRun || !recovery.canResume}
+                    onclick={() => applyRunControl('resume')}
+                  >
+                    Resume
+                  </button>
+                  <button
+                    type="button"
+                    disabled={controllingRun || recovery.mutationReconciliationRequired}
+                    onclick={() => applyRunControl('replan')}
+                  >
+                    Replan
+                  </button>
+                  <button
+                    class="danger-action"
+                    type="button"
+                    disabled={controllingRun}
+                    onclick={() => applyRunControl('cancel')}
+                  >
+                    Cancel
+                  </button>
                 </div>
-                <div>
-                  <dt>Unterbrochene Toolversuche</dt>
-                  <dd>{recovery.interruptedToolAttempts}</dd>
-                </div>
-              </dl>
-              {#if recovery.mutationReconciliationRequired}
+              {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runNotControllable'}
+                <p class="bounded-note">
+                  Dieser Run ist {controllerStateLabel(recoveryView.result.state)} und nicht mehr steuerbar.
+                </p>
+              {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runUnavailable'}
+                <p class="empty-state">Noch kein aktiver Run-Versuch vorhanden.</p>
+              {:else if recoveryView.kind === 'result'}
                 <p class="error-state" role="alert">
-                  Eine Mutation hat eine unbekannte Wirkung. Resume und Replan bleiben bis zu einem
-                  autoritativen Full-Scan gesperrt; Cancel bleibt erreichbar.
-                </p>
-              {:else if recovery.mutationReplanRequired}
-                <p class="bounded-note">
-                  Die unbekannte Mutationswirkung wurde reconciliert. Vor weiterer Mutation ist
-                  Replan erforderlich.
-                </p>
-              {:else if recovery.staleEvidenceCount > 0}
-                <p class="bounded-note">
-                  Abgeschlossene Evidence ist veraltet. Resume ist gesperrt; Replan öffnet
-                  betroffene Schritte kontrolliert neu.
+                  Goal, Ledger oder aktiver Worktree stimmen für die Run-Steuerung nicht überein.
                 </p>
               {/if}
-              <div class="control-actions" aria-label="Agent Run Recovery-Aktionen">
-                <button
-                  type="button"
-                  disabled={controllingRun || !recovery.canResume}
-                  onclick={() => applyRunControl('resume')}
-                >
-                  Resume
-                </button>
-                <button
-                  type="button"
-                  disabled={controllingRun || recovery.mutationReconciliationRequired}
-                  onclick={() => applyRunControl('replan')}
-                >
-                  Replan
-                </button>
-                <button
-                  class="danger-action"
-                  type="button"
-                  disabled={controllingRun}
-                  onclick={() => applyRunControl('cancel')}
-                >
-                  Cancel
-                </button>
-              </div>
-            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runNotControllable'}
+            </section>
+            {#if !run.ledgerRevisionMatchesCurrent}
               <p class="bounded-note">
-                Dieser Run ist {controllerStateLabel(recoveryView.result.state)} und nicht mehr steuerbar.
-              </p>
-            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runUnavailable'}
-              <p class="empty-state">Noch kein aktiver Run-Versuch vorhanden.</p>
-            {:else if recoveryView.kind === 'result'}
-              <p class="error-state" role="alert">
-                Goal, Ledger oder aktiver Worktree stimmen für die Run-Steuerung nicht überein.
+                Dieser letzte Run gehört zu Ledger R{run.ledgerRevision}; aktuell ist R{activity.currentLedgerRevision}.
               </p>
             {/if}
-          </section>
-          {#if !run.ledgerRevisionMatchesCurrent}
-            <p class="bounded-note">
-              Dieser letzte Run gehört zu Ledger R{run.ledgerRevision}; aktuell ist R{activity.currentLedgerRevision}.
-            </p>
-          {/if}
-          <div class="context-budget-grid">
-            <section aria-labelledby="context-status-heading">
-              <h4 id="context-status-heading">Context</h4>
-              <dl>
-                <div>
-                  <dt>Snapshot</dt>
-                  <dd><code>{run.currentSnapshotId.slice(0, 16)}</code></dd>
-                </div>
-                <div>
-                  <dt>Letztes Context Pack</dt>
-                  <dd>
-                    {#if latestContextSequence(run) === null}
-                      Nicht im sichtbaren Journalfenster
-                    {:else}
-                      Ereignis #{latestContextSequence(run)}
-                    {/if}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Stand</dt>
-                  <dd>{run.updatedAtUnixMillis} ms</dd>
-                </div>
-              </dl>
-            </section>
-            <section aria-labelledby="run-budget-heading">
-              <h4 id="run-budget-heading">Run-Budget</h4>
-              <dl class="budget-list">
-                <div>
-                  <dt>Turns</dt>
-                  <dd>{run.usage.turnCount} / {run.budget.turnLimit}</dd>
-                </div>
-                <div>
-                  <dt>Prompt-Tokens</dt>
-                  <dd>{run.usage.promptTokens} / {run.budget.promptTokenLimit}</dd>
-                </div>
-                <div>
-                  <dt>Output-Tokens</dt>
-                  <dd>{run.usage.outputTokens} / {run.budget.outputTokenLimit}</dd>
-                </div>
-                <div>
-                  <dt>Aktionen</dt>
-                  <dd>{run.usage.actionCount} / {run.budget.actionLimit}</dd>
-                </div>
-                <div>
-                  <dt>Reparaturen</dt>
-                  <dd>{run.usage.repairCount} / {run.budget.repairLimit}</dd>
-                </div>
-                <div>
-                  <dt>Zeit am letzten Ereignis</dt>
-                  <dd>
-                    {run.usage.elapsedAtLastEventMillis} / {run.budget.durationLimitMillis} ms
-                  </dd>
-                </div>
-              </dl>
-            </section>
-          </div>
-          <section class="activity-timeline" aria-labelledby="activity-timeline-heading">
-            <div class="timeline-heading">
-              <h4 id="activity-timeline-heading">Conversation- und Action-Timeline</h4>
-              {#if run.earlierEventsOmitted}<span>Ältere Ereignisse ausgeblendet</span>{/if}
-            </div>
-            <ol>
-              {#each run.timeline as item (item.sequence)}
-                <li class:problem={isProblemEvent(item)}>
-                  <span class="event-sequence">#{item.sequence}</span>
+            <div class="context-budget-grid">
+              <section aria-labelledby="context-status-heading">
+                <h4 id="context-status-heading">Context</h4>
+                <dl>
                   <div>
-                    <strong>{activityEventLabel(item)}</strong>
-                    <p>
-                      {item.occurredAtUnixMillis} ms
-                      {#if eventCodeLabel(item.code) !== null}
-                        · {eventCodeLabel(item.code)}
-                      {/if}
-                      {#if item.outcome !== null}
-                        · {item.outcome}{/if}
-                    </p>
+                    <dt>Snapshot</dt>
+                    <dd><code>{run.currentSnapshotId.slice(0, 16)}</code></dd>
                   </div>
-                </li>
-              {/each}
-            </ol>
-          </section>
+                  <div>
+                    <dt>Letztes Context Pack</dt>
+                    <dd>
+                      {#if latestContextSequence(run) === null}
+                        Nicht im sichtbaren Journalfenster
+                      {:else}
+                        Ereignis #{latestContextSequence(run)}
+                      {/if}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Stand</dt>
+                    <dd>{run.updatedAtUnixMillis} ms</dd>
+                  </div>
+                </dl>
+              </section>
+              <section aria-labelledby="run-budget-heading">
+                <h4 id="run-budget-heading">Run-Budget</h4>
+                <dl class="budget-list">
+                  <div>
+                    <dt>Turns</dt>
+                    <dd>{run.usage.turnCount} / {run.budget.turnLimit}</dd>
+                  </div>
+                  <div>
+                    <dt>Prompt-Tokens</dt>
+                    <dd>{run.usage.promptTokens} / {run.budget.promptTokenLimit}</dd>
+                  </div>
+                  <div>
+                    <dt>Output-Tokens</dt>
+                    <dd>{run.usage.outputTokens} / {run.budget.outputTokenLimit}</dd>
+                  </div>
+                  <div>
+                    <dt>Aktionen</dt>
+                    <dd>{run.usage.actionCount} / {run.budget.actionLimit}</dd>
+                  </div>
+                  <div>
+                    <dt>Reparaturen</dt>
+                    <dd>{run.usage.repairCount} / {run.budget.repairLimit}</dd>
+                  </div>
+                  <div>
+                    <dt>Zeit am letzten Ereignis</dt>
+                    <dd>
+                      {run.usage.elapsedAtLastEventMillis} / {run.budget.durationLimitMillis} ms
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+            <section class="activity-timeline" aria-labelledby="activity-timeline-heading">
+              <div class="timeline-heading">
+                <h4 id="activity-timeline-heading">Conversation- und Action-Timeline</h4>
+                {#if run.earlierEventsOmitted}<span>Ältere Ereignisse ausgeblendet</span>{/if}
+              </div>
+              <ol>
+                {#each run.timeline as item (item.sequence)}
+                  <li class:problem={isProblemEvent(item)}>
+                    <span class="event-sequence">#{item.sequence}</span>
+                    <div>
+                      <strong>{activityEventLabel(item)}</strong>
+                      <p>
+                        {item.occurredAtUnixMillis} ms
+                        {#if eventCodeLabel(item.code) !== null}
+                          · {eventCodeLabel(item.code)}
+                        {/if}
+                        {#if item.outcome !== null}
+                          · {item.outcome}{/if}
+                      </p>
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+            </section>
+          {/if}
         {/if}
-      {/if}
-    </section>
+      </section>
+    {/if}
   {/if}
 
   {#if goalView.kind === 'loading'}
@@ -1083,156 +1115,165 @@
       <button type="button" onclick={() => loadGoal(selectedTaskId)}>Erneut laden</button>
     </div>
   {:else if goalView.kind === 'available'}
-    <article class="goal-contract" aria-labelledby="goal-details-heading">
-      <header class="goal-actions">
-        <h3 id="goal-details-heading">Vertragsdetails</h3>
-        <button type="button" onclick={startRevision}>Neue Revision</button>
-      </header>
-      <div class="goal-metadata">
-        <code>{goalView.goal.taskId}</code>
-        <span>Zeitanker {goalView.goal.createdAtUnixMillis} ms</span>
-        {#if goalView.goal.revisionReason !== null}
-          <span>Änderungsgrund: {goalView.goal.revisionReason}</span>
-        {/if}
-      </div>
-      <div class="goal-columns">
-        <section aria-labelledby="criteria-heading">
-          <h4 id="criteria-heading">Akzeptanzkriterien</h4>
-          <ol class="criteria-list">
-            {#each goalView.goal.acceptanceCriteria as criterion (criterion.criterionId)}
-              <li>
-                <span class:should={criterion.requirement === 'should'}
-                  >{requirementLabel(criterion.requirement)}</span
-                >
-                <p>{criterion.statement}</p>
-              </li>
-            {/each}
-          </ol>
-        </section>
-        <section aria-labelledby="verification-heading">
-          <h4 id="verification-heading">Abschlussprüfung</h4>
-          <p>{goalView.goal.successVerification}</p>
-        </section>
-      </div>
-      <div class="boundary-grid">
-        <section>
-          <h4>Constraints</h4>
-          {#if goalView.goal.constraints.length === 0}<p>
-              Keine zusätzlichen Constraints.
-            </p>{:else}<ul>
-              {#each goalView.goal.constraints as item (item)}<li>{item}</li>{/each}
-            </ul>{/if}
-        </section>
-        <section>
-          <h4>Non-Goals</h4>
-          {#if goalView.goal.nonGoals.length === 0}<p>Keine Non-Goals festgelegt.</p>{:else}<ul>
-              {#each goalView.goal.nonGoals as item (item)}<li>{item}</li>{/each}
-            </ul>{/if}
-        </section>
-        <section>
-          <h4>Nutzerentscheidungen</h4>
-          {#if goalView.goal.userDecisions.length === 0}<p>
-              Noch keine expliziten Entscheidungen.
-            </p>{:else}<ul>
-              {#each goalView.goal.userDecisions as item (item)}<li>{item}</li>{/each}
-            </ul>{/if}
-        </section>
-      </div>
-    </article>
+    {#if workspaceView === 'contract'}
+      <article class="goal-contract" aria-labelledby="goal-details-heading">
+        <header class="goal-actions">
+          <h3 id="goal-details-heading">Vertragsdetails</h3>
+          <button type="button" onclick={startRevision}>Neue Revision</button>
+        </header>
+        <div class="goal-metadata">
+          <code>{goalView.goal.taskId}</code>
+          <span>Zeitanker {goalView.goal.createdAtUnixMillis} ms</span>
+          {#if goalView.goal.revisionReason !== null}
+            <span>Änderungsgrund: {goalView.goal.revisionReason}</span>
+          {/if}
+        </div>
+        <div class="goal-columns">
+          <section aria-labelledby="criteria-heading">
+            <h4 id="criteria-heading">Akzeptanzkriterien</h4>
+            <ol class="criteria-list">
+              {#each goalView.goal.acceptanceCriteria as criterion (criterion.criterionId)}
+                <li>
+                  <span class:should={criterion.requirement === 'should'}
+                    >{requirementLabel(criterion.requirement)}</span
+                  >
+                  <p>{criterion.statement}</p>
+                </li>
+              {/each}
+            </ol>
+          </section>
+          <section aria-labelledby="verification-heading">
+            <h4 id="verification-heading">Abschlussprüfung</h4>
+            <p>{goalView.goal.successVerification}</p>
+          </section>
+        </div>
+        <div class="boundary-grid">
+          <section>
+            <h4>Constraints</h4>
+            {#if goalView.goal.constraints.length === 0}<p>
+                Keine zusätzlichen Constraints.
+              </p>{:else}<ul>
+                {#each goalView.goal.constraints as item (item)}<li>{item}</li>{/each}
+              </ul>{/if}
+          </section>
+          <section>
+            <h4>Non-Goals</h4>
+            {#if goalView.goal.nonGoals.length === 0}<p>Keine Non-Goals festgelegt.</p>{:else}<ul>
+                {#each goalView.goal.nonGoals as item (item)}<li>{item}</li>{/each}
+              </ul>{/if}
+          </section>
+          <section>
+            <h4>Nutzerentscheidungen</h4>
+            {#if goalView.goal.userDecisions.length === 0}<p>
+                Noch keine expliziten Entscheidungen.
+              </p>{:else}<ul>
+                {#each goalView.goal.userDecisions as item (item)}<li>{item}</li>{/each}
+              </ul>{/if}
+          </section>
+        </div>
+      </article>
+    {/if}
   {/if}
 
   {#if editorMode !== 'closed'}
-    <form class="goal-editor" aria-labelledby="goal-editor-heading" onsubmit={submitGoal}>
-      <div class="editor-heading">
-        <div>
-          <p>{editorMode === 'create' ? 'Neue Aufgabe' : 'Immutable Revision'}</p>
-          <h3 id="goal-editor-heading">
-            {editorMode === 'create' ? 'Goal Contract anlegen' : 'Goal Contract revidieren'}
-          </h3>
-        </div>
-        {#if goalView.kind === 'available' || editorMode === 'revise'}
-          <button type="button" onclick={closeEditor}>Editor schließen</button>
-        {/if}
-      </div>
-      {#if editorMode === 'revise'}
-        <label>
-          Änderungsgrund
-          <textarea required maxlength="4096" rows="2" bind:value={revisionReason}></textarea>
-        </label>
-      {/if}
-      <label>
-        Ziel
-        <textarea required maxlength="16384" rows="4" bind:value={draft.objective}></textarea>
-      </label>
-      <fieldset class="criteria-editor">
-        <legend>Akzeptanzkriterien</legend>
-        {#each draft.acceptanceCriteria as criterion, index (criterion.criterionId ?? `new-${index}`)}
-          <div class="criterion-editor">
-            <label>
-              Kriterium {index + 1}
-              <textarea required maxlength="4096" rows="2" bind:value={criterion.statement}
-              ></textarea>
-            </label>
-            <label>
-              Anforderung
-              <select bind:value={criterion.requirement}>
-                <option value="must">Muss · blockiert Done</option>
-                <option value="should">Soll · bleibt sichtbar</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              disabled={draft.acceptanceCriteria.length === 1}
-              onclick={() => removeCriterion(index)}
-            >
-              Kriterium entfernen
-            </button>
+    <div
+      class="goal-editor-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="goal-editor-heading"
+    >
+      <form class="goal-editor" onsubmit={submitGoal}>
+        <div class="editor-heading">
+          <div>
+            <p>{editorMode === 'create' ? 'Neue Aufgabe' : 'Immutable Revision'}</p>
+            <h3 id="goal-editor-heading">
+              {editorMode === 'create' ? 'Goal Contract anlegen' : 'Goal Contract revidieren'}
+            </h3>
           </div>
-        {/each}
-        <button
-          type="button"
-          disabled={draft.acceptanceCriteria.length >= 64}
-          onclick={addCriterion}
-        >
-          Kriterium hinzufügen
-        </button>
-      </fieldset>
-      <GoalTextList
-        legend="Constraints"
-        itemLabel="Constraint"
-        addLabel="Constraint hinzufügen"
-        bind:values={draft.constraints}
-      />
-      <GoalTextList
-        legend="Non-Goals"
-        itemLabel="Non-Goal"
-        addLabel="Non-Goal hinzufügen"
-        bind:values={draft.nonGoals}
-      />
-      <GoalTextList
-        legend="Nutzerentscheidungen"
-        itemLabel="Entscheidung"
-        addLabel="Entscheidung hinzufügen"
-        bind:values={draft.userDecisions}
-      />
-      <label>
-        Abschlussprüfung
-        <textarea required maxlength="8192" rows="3" bind:value={draft.successVerification}
-        ></textarea>
-      </label>
-      <div class="editor-actions">
-        <button class="primary" type="submit" disabled={submitting}>
-          {submitting
-            ? 'Wird dauerhaft gespeichert …'
-            : editorMode === 'create'
-              ? 'Goal Contract anlegen'
-              : 'Neue Revision anhängen'}
-        </button>
-        {#if goalView.kind === 'available' || editorMode === 'revise'}
-          <button type="button" disabled={submitting} onclick={closeEditor}>Abbrechen</button>
+          {#if goalView.kind === 'available' || editorMode === 'revise'}
+            <button type="button" onclick={closeEditor}>Editor schließen</button>
+          {/if}
+        </div>
+        {#if editorMode === 'revise'}
+          <label>
+            Änderungsgrund
+            <textarea required maxlength="4096" rows="2" bind:value={revisionReason}></textarea>
+          </label>
         {/if}
-      </div>
-    </form>
+        <label>
+          Ziel
+          <textarea required maxlength="16384" rows="4" bind:value={draft.objective}></textarea>
+        </label>
+        <fieldset class="criteria-editor">
+          <legend>Akzeptanzkriterien</legend>
+          {#each draft.acceptanceCriteria as criterion, index (criterion.criterionId ?? `new-${index}`)}
+            <div class="criterion-editor">
+              <label>
+                Kriterium {index + 1}
+                <textarea required maxlength="4096" rows="2" bind:value={criterion.statement}
+                ></textarea>
+              </label>
+              <label>
+                Anforderung
+                <select bind:value={criterion.requirement}>
+                  <option value="must">Muss · blockiert Done</option>
+                  <option value="should">Soll · bleibt sichtbar</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={draft.acceptanceCriteria.length === 1}
+                onclick={() => removeCriterion(index)}
+              >
+                Kriterium entfernen
+              </button>
+            </div>
+          {/each}
+          <button
+            type="button"
+            disabled={draft.acceptanceCriteria.length >= 64}
+            onclick={addCriterion}
+          >
+            Kriterium hinzufügen
+          </button>
+        </fieldset>
+        <GoalTextList
+          legend="Constraints"
+          itemLabel="Constraint"
+          addLabel="Constraint hinzufügen"
+          bind:values={draft.constraints}
+        />
+        <GoalTextList
+          legend="Non-Goals"
+          itemLabel="Non-Goal"
+          addLabel="Non-Goal hinzufügen"
+          bind:values={draft.nonGoals}
+        />
+        <GoalTextList
+          legend="Nutzerentscheidungen"
+          itemLabel="Entscheidung"
+          addLabel="Entscheidung hinzufügen"
+          bind:values={draft.userDecisions}
+        />
+        <label>
+          Abschlussprüfung
+          <textarea required maxlength="8192" rows="3" bind:value={draft.successVerification}
+          ></textarea>
+        </label>
+        <div class="editor-actions">
+          <button class="primary" type="submit" disabled={submitting}>
+            {submitting
+              ? 'Wird dauerhaft gespeichert …'
+              : editorMode === 'create'
+                ? 'Goal Contract anlegen'
+                : 'Neue Revision anhängen'}
+          </button>
+          {#if goalView.kind === 'available' || editorMode === 'revise'}
+            <button type="button" disabled={submitting} onclick={closeEditor}>Abbrechen</button>
+          {/if}
+        </div>
+      </form>
+    </div>
   {/if}
 
   {#if actionMessage !== null}

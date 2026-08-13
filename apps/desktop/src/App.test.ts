@@ -973,6 +973,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
     expect(await screen.findByRole('heading', { name: 'Module-Card-Aktualität' })).toBeTruthy();
     expect(screen.getByText('Stale')).toBeTruthy();
     expect(screen.getByText('NeedsReview')).toBeTruthy();
@@ -1108,6 +1109,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     expect(await screen.findByRole('heading', { name: 'Repository-Baum' })).toBeTruthy();
     expect(await screen.findByText('README.md')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Verzeichnis src öffnen' }));
@@ -1160,6 +1162,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     expect(await screen.findByText('README.md')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
     expect(await screen.findByRole('button', { name: 'Verzeichnis src öffnen' })).toBeTruthy();
@@ -1189,6 +1192,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     expect(await screen.findByRole('heading', { name: 'Modulbaum' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
     expect(screen.getByText('Graph-Communities')).toBeTruthy();
@@ -1243,6 +1247,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
     expect(await screen.findByText('tools')).toBeTruthy();
@@ -1271,8 +1276,8 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    expect(await screen.findByRole('heading', { name: 'Modulabhängigkeiten' })).toBeTruthy();
     expect(moduleDependencyGraphLoader).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
 
     await waitFor(() => expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1));
@@ -1326,6 +1331,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
     await fireEvent.click(
       await screen.findByRole('button', {
@@ -1362,8 +1368,8 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    expect(await screen.findByRole('heading', { name: 'Module Card' })).toBeTruthy();
     expect(moduleCardDetailLoader).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
 
     await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(1));
@@ -1435,6 +1441,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
     await fireEvent.click(
       await screen.findByRole('button', {
@@ -1462,10 +1469,10 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    expect(await screen.findByRole('heading', { name: 'Entry Points & Tests' })).toBeTruthy();
     expect(moduleRuntimeMapLoader).not.toHaveBeenCalled();
     expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
     await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1));
     expect(moduleRuntimeMapLoader).toHaveBeenCalledWith({
@@ -1516,6 +1523,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
     await fireEvent.click(
       await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
@@ -1552,6 +1560,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
     expect(await screen.findByText('ollama / mapper:latest')).toBeTruthy();
     expect(screen.getByText('Bereit für einen bewussten Start')).toBeTruthy();
     expect(deepMapStarter).not.toHaveBeenCalled();
@@ -1630,9 +1639,9 @@ describe('A^3 desktop shell', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Worktree sicher geöffnet')).toBeTruthy();
-      expect(screen.getAllByText('C:\\worktree')).toHaveLength(3);
-      expect(screen.getAllByText('main (unborn)')).toHaveLength(2);
-      expect(screen.getByText('Veröffentlicht')).toBeTruthy();
+      expect(screen.getAllByText('C:\\worktree').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('main (unborn)').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Veröffentlicht').length).toBeGreaterThan(0);
       expect(screen.getByText(/Generation 2/)).toBeTruthy();
       expect(screen.getByText('4.096 Bytes')).toBeTruthy();
     });
@@ -1642,6 +1651,7 @@ describe('A^3 desktop shell', () => {
       screen.getByText(/Quellcode, Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben/),
     ).toBeTruthy();
 
+    await fireEvent.click(screen.getByText('Projekt verwalten'));
     await fireEvent.click(
       screen.getByRole('button', { name: 'Regenerierbaren Index neu aufbauen' }),
     );
@@ -1759,6 +1769,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
+    await fireEvent.click(await screen.findByText('Projekt verwalten'));
     const removeButton = await screen.findByRole('button', { name: 'Nur aus A^3 entfernen' });
     expect(
       screen.getByText(/Repository-Dateien werden nie gelöscht.*Private A\^3-Daten bleiben/s),

@@ -52,13 +52,27 @@ U1-Akzeptanzkriterien objektiv nachgewiesen und U1 ist abgeschlossen.
 
 UX-Überarbeitung vom 2026-08-13: Die vier URL-gebundenen Hauptbereiche erscheinen nicht mehr als
 aufeinanderfolgende One-Page-Sektionen. Eine feste primäre App-Sidebar, eine kompakte globale
-Statuszeile, eine bereichsspezifische Kontextleiste und genau ein scrollbarer Inhalts-Viewport
-bilden jetzt eine zusammenhängende Desktop-Shell. `Projects` trennt Projektverwaltung und
-Indexübersicht von der eigenen `Map`-Arbeitsfläche; `Agent` und `Settings` bleiben eigenständige,
-lokal lazy geladene Views. Ein Routewechsel aktualisiert sichtbaren Seitentitel, Kontextnavigation,
-Fokusziel und `data-workspace-area`, ohne fachliche Autorität in die WebView zu verschieben. Der
-Bestätigungszustand für das nicht destruktive Entfernen eines Projekts wird als benannter nativer
-Modal-Dialog angezeigt.
+Statuszeile, ein schmaler Seitenkopf mit optionalem `Ansicht`-Menü und genau ein scrollbarer
+Inhalts-Viewport bilden jetzt eine zusammenhängende Desktop-Shell. `Projects` trennt
+Projektverwaltung und Indexübersicht von der eigenen `Map`-Arbeitsfläche; `Agent` und `Settings`
+bleiben eigenständige, lokal lazy geladene Views. Ein Routewechsel aktualisiert sichtbaren
+Seitentitel, Fokusziel und `data-workspace-area`, ohne fachliche Autorität in die WebView zu
+verschieben. Der Bestätigungszustand für das nicht destruktive Entfernen eines Projekts wird als
+benannter nativer Modal-Dialog angezeigt.
+
+Vereinfachungsrunde vom 2026-08-13: Die dauerhaft sichtbare zweite Kontextspalte und die redundante
+Fußleiste entfallen. Projects priorisiert Öffnen oder aktives Projekt; Core-Diagnose, Indexdetails,
+Rebuild und Entfernen werden erst über benannte Details geöffnet. Map rendert jeweils nur
+`Recherche`, `Explorer`, `Modul` oder `Mapping` und innerhalb von Modul genau eine Detailansicht.
+Agent startet mit dem Plan und trennt Aktivität, Review und Vertragsdetails in ausdrückliche Tabs.
+Settings trennt Allgemein, Modelle, Projekt und Datenschutz. Theme-Auswahl und seltene
+Bereichssprünge liegen in Menüs. Damit bleibt jede vorhandene Aktion erreichbar, während große
+Nebenflächen weder gleichzeitig sichtbar noch nur per CSS im DOM versteckt werden.
+
+Die angepassten Component- und M8-Workflow-Verträge durchlaufen die neuen Tabs, Details und Modale
+explizit. Formatter, ESLint, Svelte-Typecheck ohne Warnung, 209 Frontendtests, fünf Tooltests und der
+Produktionsbuild bestehen. Der reale Chromium-Smoke bestätigt die kompakte Dark-Theme-Shell bei
+1.280 × 720 ohne horizontale Dokumentüberbreite.
 
 ## U2 Projects
 

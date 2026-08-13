@@ -212,6 +212,7 @@ describe('AgentGoalWorkspace', () => {
     });
     expect(await screen.findByText('Goal Contract dauerhaft angelegt.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText('Muss')).toBeTruthy();
     expect(goalLoader).toHaveBeenCalledWith(taskId);
   });
@@ -242,6 +243,7 @@ describe('AgentGoalWorkspace', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Neue Revision' }));
     await fireEvent.input(screen.getByLabelText('Änderungsgrund'), {
       target: { value: 'Ziel präzisiert' },
@@ -315,6 +317,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
     expect(await screen.findByRole('heading', { name: 'Diff und Verification' })).toBeTruthy();
     await waitFor(() => expect(inspectionLoader).toHaveBeenCalledWith(taskId));
     expect(screen.getByText(/noch kein verifizierbares Ledger/u)).toBeTruthy();
@@ -419,6 +422,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
     expect(await screen.findByText('Explizite Freigabe fehlt.')).toBeTruthy();
     expect(screen.getByText('Aktionsauswahl Prozess · noch keine Ausführung')).toBeTruthy();
     expect(screen.getByText('Ausführungsaktion · Tool tatsächlich aufgerufen')).toBeTruthy();
@@ -488,6 +492,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
     const resume = await screen.findByRole('button', { name: 'Resume' });
     const replan = screen.getByRole('button', { name: 'Replan' });
     const cancel = screen.getByRole('button', { name: 'Cancel' });
@@ -561,6 +566,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
     const pause = await screen.findByRole('button', { name: 'Pause' });
     expect(pause.hasAttribute('disabled')).toBe(false);
     await fireEvent.click(pause);
@@ -639,6 +645,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
     await fireEvent.click(await screen.findByRole('button', { name: scenario.button }));
     await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
     expect(runController).toHaveBeenCalledWith(taskId, 3, '7', scenario.action);
@@ -727,6 +734,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader: async () => tasks(1),
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
     expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
     expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
   });

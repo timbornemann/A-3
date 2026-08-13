@@ -284,7 +284,9 @@ describe('M8 desktop user workflow', () => {
     expect(
       await screen.findByRole('heading', { name: 'M8 vollständig verifizieren' }),
     ).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Aktivität', pressed: false }));
     expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Review', pressed: false }));
     expect(
       await screen.findByText(/Done · alle Muss-Kriterien besitzen exakte frische Beweise/u),
     ).toBeTruthy();

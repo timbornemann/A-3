@@ -60,6 +60,7 @@
   let mappingParallelism = $state(1);
   let embeddingModelId = $state('');
   let embeddingBatchSize = $state(8);
+  let settingsView = $state<'general' | 'models' | 'project' | 'privacy'>('general');
 
   onMount(() => {
     void loadSettings();
@@ -199,6 +200,29 @@
     <button type="button" onclick={loadSettings}>Neu laden</button>
   </div>
 
+  <nav class="surface-tabs" aria-label="Settings-Bereich">
+    <button
+      type="button"
+      aria-pressed={settingsView === 'general'}
+      onclick={() => (settingsView = 'general')}>Allgemein</button
+    >
+    <button
+      type="button"
+      aria-pressed={settingsView === 'models'}
+      onclick={() => (settingsView = 'models')}>Modelle</button
+    >
+    <button
+      type="button"
+      aria-pressed={settingsView === 'project'}
+      onclick={() => (settingsView = 'project')}>Projekt</button
+    >
+    <button
+      type="button"
+      aria-pressed={settingsView === 'privacy'}
+      onclick={() => (settingsView = 'privacy')}>Datenschutz</button
+    >
+  </nav>
+
   {#if view.kind === 'loading'}
     <p class="settings-status" role="status" aria-live="polite">Settings werden lokal gelesen …</p>
   {:else if view.kind === 'error'}
@@ -207,197 +231,203 @@
       <button type="button" onclick={loadSettings}>Settings erneut laden</button>
     </div>
   {:else}
-    <div class="settings-section" aria-labelledby="provider-settings-heading">
-      <div class="settings-section-heading">
-        <div>
-          <h3 id="provider-settings-heading">Lokaler Provider</h3>
-          <p>Prüfungen starten nur durch deinen Klick. Es gibt keine Hintergrund-Erkennung.</p>
+    {#if settingsView === 'general'}
+      <div class="settings-section" aria-labelledby="provider-settings-heading">
+        <div class="settings-section-heading">
+          <div>
+            <h3 id="provider-settings-heading">Lokaler Provider</h3>
+            <p>Prüfungen starten nur durch deinen Klick. Es gibt keine Hintergrund-Erkennung.</p>
+          </div>
+          <span class="settings-badge">{healthLabel(view.settings)}</span>
         </div>
-        <span class="settings-badge">{healthLabel(view.settings)}</span>
+        <form
+          class="endpoint-form"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void saveEndpoint(false);
+          }}
+        >
+          <label for="model-endpoint">Ollama Endpoint (credential-freier Origin)</label>
+          <div class="endpoint-controls">
+            <input
+              id="model-endpoint"
+              type="url"
+              maxlength="2048"
+              required
+              spellcheck="false"
+              autocomplete="off"
+              bind:value={endpointOrigin}
+              disabled={action.kind !== 'idle'}
+            />
+            <button type="submit" disabled={action.kind !== 'idle'}>Speichern</button>
+            <button
+              type="button"
+              disabled={action.kind !== 'idle'}
+              onclick={() => saveEndpoint(true)}>Modellfrei</button
+            >
+          </div>
+        </form>
+        {#if view.settings.endpoint === null}
+          <p class="model-free-notice" role="status">
+            Modellfreier Betrieb ist aktiv. Projektbrowser, Fast Index und gespeicherte Fakten
+            bleiben nutzbar.
+          </p>
+        {:else if view.settings.endpoint.scope === 'remote'}
+          <div class="remote-warning" role="alert">
+            <strong>Remote-Verbindung blockiert</strong>
+            <p>
+              Dieser HTTPS-Endpoint verlässt den lokalen Rechner. A^3 führt ohne exakte Freigabe
+              weder Prüfung noch Anfrage aus; es wurden keine Repository-Daten gesendet.
+            </p>
+          </div>
+        {:else}
+          <p class="local-endpoint-note">
+            Lokal gebunden: <code>{view.settings.endpoint.origin}</code>
+          </p>
+        {/if}
       </div>
-      <form
-        class="endpoint-form"
-        onsubmit={(event) => {
-          event.preventDefault();
-          void saveEndpoint(false);
-        }}
-      >
-        <label for="model-endpoint">Ollama Endpoint (credential-freier Origin)</label>
-        <div class="endpoint-controls">
-          <input
-            id="model-endpoint"
-            type="url"
-            maxlength="2048"
-            required
-            spellcheck="false"
-            autocomplete="off"
-            bind:value={endpointOrigin}
-            disabled={action.kind !== 'idle'}
-          />
-          <button type="submit" disabled={action.kind !== 'idle'}>Speichern</button>
-          <button type="button" disabled={action.kind !== 'idle'} onclick={() => saveEndpoint(true)}
-            >Modellfrei</button
-          >
-        </div>
-      </form>
-      {#if view.settings.endpoint === null}
-        <p class="model-free-notice" role="status">
-          Modellfreier Betrieb ist aktiv. Projektbrowser, Fast Index und gespeicherte Fakten bleiben
-          nutzbar.
-        </p>
-      {:else if view.settings.endpoint.scope === 'remote'}
-        <div class="remote-warning" role="alert">
-          <strong>Remote-Verbindung blockiert</strong>
-          <p>
-            Dieser HTTPS-Endpoint verlässt den lokalen Rechner. A^3 führt ohne exakte Freigabe weder
-            Prüfung noch Anfrage aus; es wurden keine Repository-Daten gesendet.
-          </p>
-        </div>
-      {:else}
-        <p class="local-endpoint-note">
-          Lokal gebunden: <code>{view.settings.endpoint.origin}</code>
-        </p>
-      {/if}
-    </div>
+    {/if}
 
-    <div class="model-profile-grid" aria-label="Modellprofile">
-      <form
-        class="model-profile-card"
-        onsubmit={(event) => {
-          event.preventDefault();
-          void probe({
-            contextTokens: codingContextTokens,
-            modelId: codingModelId,
-            outputTokens: codingOutputTokens,
-            parallelism: codingParallelism,
-            role: 'coding',
-          });
-        }}
-      >
-        <div>
-          <p class="profile-role">Coding</p>
-          <h3>Coding Agent</h3>
-          <p
-            class:capability-limited={view.settings.codingProfile?.activation ===
-              'capabilityLimited'}
-          >
-            {llmState(view.settings.codingProfile)}
-          </p>
-        </div>
-        <label>
-          Modell-ID
-          <input required maxlength="512" spellcheck="false" bind:value={codingModelId} />
-        </label>
-        <div class="resource-grid">
+    {#if settingsView === 'models'}
+      <div class="model-profile-grid" aria-label="Modellprofile">
+        <form
+          class="model-profile-card"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void probe({
+              contextTokens: codingContextTokens,
+              modelId: codingModelId,
+              outputTokens: codingOutputTokens,
+              parallelism: codingParallelism,
+              role: 'coding',
+            });
+          }}
+        >
+          <div>
+            <p class="profile-role">Coding</p>
+            <h3>Coding Agent</h3>
+            <p
+              class:capability-limited={view.settings.codingProfile?.activation ===
+                'capabilityLimited'}
+            >
+              {llmState(view.settings.codingProfile)}
+            </p>
+          </div>
           <label>
-            Kontext
-            <input type="number" min="1024" max="1048576" bind:value={codingContextTokens} />
+            Modell-ID
+            <input required maxlength="512" spellcheck="false" bind:value={codingModelId} />
           </label>
-          <label>
-            Output
-            <input type="number" min="1" max="262144" bind:value={codingOutputTokens} />
-          </label>
-          <label>
-            Parallelität
-            <input type="number" min="1" max="64" bind:value={codingParallelism} />
-          </label>
-        </div>
-        {#if isRoleBusy('coding')}
-          <button type="button" class="cancel-probe" onclick={() => cancelProbe('coding')}>
-            {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
-          </button>
-        {:else}
-          <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
-        {/if}
-      </form>
+          <div class="resource-grid">
+            <label>
+              Kontext
+              <input type="number" min="1024" max="1048576" bind:value={codingContextTokens} />
+            </label>
+            <label>
+              Output
+              <input type="number" min="1" max="262144" bind:value={codingOutputTokens} />
+            </label>
+            <label>
+              Parallelität
+              <input type="number" min="1" max="64" bind:value={codingParallelism} />
+            </label>
+          </div>
+          {#if isRoleBusy('coding')}
+            <button type="button" class="cancel-probe" onclick={() => cancelProbe('coding')}>
+              {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
+            </button>
+          {:else}
+            <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
+          {/if}
+        </form>
 
-      <form
-        class="model-profile-card"
-        onsubmit={(event) => {
-          event.preventDefault();
-          void probe({
-            contextTokens: mappingContextTokens,
-            modelId: mappingModelId,
-            outputTokens: mappingOutputTokens,
-            parallelism: mappingParallelism,
-            role: 'mapping',
-          });
-        }}
-      >
-        <div>
-          <p class="profile-role">Mapping</p>
-          <h3>Deep Map</h3>
-          <p
-            class:capability-limited={view.settings.mappingProfile?.activation ===
-              'capabilityLimited'}
-          >
-            {llmState(view.settings.mappingProfile)}
-          </p>
-        </div>
-        <label>
-          Modell-ID
-          <input required maxlength="512" spellcheck="false" bind:value={mappingModelId} />
-        </label>
-        <div class="resource-grid">
+        <form
+          class="model-profile-card"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void probe({
+              contextTokens: mappingContextTokens,
+              modelId: mappingModelId,
+              outputTokens: mappingOutputTokens,
+              parallelism: mappingParallelism,
+              role: 'mapping',
+            });
+          }}
+        >
+          <div>
+            <p class="profile-role">Mapping</p>
+            <h3>Deep Map</h3>
+            <p
+              class:capability-limited={view.settings.mappingProfile?.activation ===
+                'capabilityLimited'}
+            >
+              {llmState(view.settings.mappingProfile)}
+            </p>
+          </div>
           <label>
-            Kontext
-            <input type="number" min="1024" max="1048576" bind:value={mappingContextTokens} />
+            Modell-ID
+            <input required maxlength="512" spellcheck="false" bind:value={mappingModelId} />
           </label>
-          <label>
-            Output
-            <input type="number" min="1" max="262144" bind:value={mappingOutputTokens} />
-          </label>
-          <label>
-            Parallelität
-            <input type="number" min="1" max="64" bind:value={mappingParallelism} />
-          </label>
-        </div>
-        {#if isRoleBusy('mapping')}
-          <button type="button" class="cancel-probe" onclick={() => cancelProbe('mapping')}>
-            {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
-          </button>
-        {:else}
-          <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
-        {/if}
-      </form>
+          <div class="resource-grid">
+            <label>
+              Kontext
+              <input type="number" min="1024" max="1048576" bind:value={mappingContextTokens} />
+            </label>
+            <label>
+              Output
+              <input type="number" min="1" max="262144" bind:value={mappingOutputTokens} />
+            </label>
+            <label>
+              Parallelität
+              <input type="number" min="1" max="64" bind:value={mappingParallelism} />
+            </label>
+          </div>
+          {#if isRoleBusy('mapping')}
+            <button type="button" class="cancel-probe" onclick={() => cancelProbe('mapping')}>
+              {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
+            </button>
+          {:else}
+            <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
+          {/if}
+        </form>
 
-      <form
-        class="model-profile-card"
-        onsubmit={(event) => {
-          event.preventDefault();
-          void probe({
-            maxBatchSize: embeddingBatchSize,
-            modelId: embeddingModelId,
-            role: 'embedding',
-          });
-        }}
-      >
-        <div>
-          <p class="profile-role">Embedding</p>
-          <h3>Semantischer Abruf</h3>
-          <p>{embeddingState(view.settings.embeddingProfile)}</p>
-        </div>
-        <label>
-          Modell-ID
-          <input required maxlength="512" spellcheck="false" bind:value={embeddingModelId} />
-        </label>
-        <label>
-          Maximale Batch-Größe
-          <input type="number" min="1" max="64" bind:value={embeddingBatchSize} />
-        </label>
-        <p class="derived-setting">
-          Die Vektordimension wird aus einer echten Modellantwort abgeleitet und ist nicht
-          editierbar.
-        </p>
-        {#if isRoleBusy('embedding')}
-          <button type="button" class="cancel-probe" onclick={() => cancelProbe('embedding')}>
-            {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
-          </button>
-        {:else}
-          <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
-        {/if}
-      </form>
-    </div>
+        <form
+          class="model-profile-card"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void probe({
+              maxBatchSize: embeddingBatchSize,
+              modelId: embeddingModelId,
+              role: 'embedding',
+            });
+          }}
+        >
+          <div>
+            <p class="profile-role">Embedding</p>
+            <h3>Semantischer Abruf</h3>
+            <p>{embeddingState(view.settings.embeddingProfile)}</p>
+          </div>
+          <label>
+            Modell-ID
+            <input required maxlength="512" spellcheck="false" bind:value={embeddingModelId} />
+          </label>
+          <label>
+            Maximale Batch-Größe
+            <input type="number" min="1" max="64" bind:value={embeddingBatchSize} />
+          </label>
+          <p class="derived-setting">
+            Die Vektordimension wird aus einer echten Modellantwort abgeleitet und ist nicht
+            editierbar.
+          </p>
+          {#if isRoleBusy('embedding')}
+            <button type="button" class="cancel-probe" onclick={() => cancelProbe('embedding')}>
+              {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Prüfung abbrechen'}
+            </button>
+          {:else}
+            <button type="submit" disabled={!canProbe(view.settings)}>Explizit live prüfen</button>
+          {/if}
+        </form>
+      </div>
+    {/if}
 
     {#if action.kind === 'error'}
       <p class="settings-error-message" role="alert">{action.message}</p>
@@ -413,24 +443,28 @@
       </p>
     {/if}
 
-    <div class="privacy-settings" aria-labelledby="privacy-heading">
-      <div>
-        <p class="section-kicker">Daten &amp; Datenschutz</p>
-        <h3 id="privacy-heading">Fail-closed in diesem Build</h3>
+    {#if settingsView === 'privacy'}
+      <div class="privacy-settings" aria-labelledby="privacy-heading">
+        <div>
+          <p class="section-kicker">Daten &amp; Datenschutz</p>
+          <h3 id="privacy-heading">Fail-closed in diesem Build</h3>
+        </div>
+        <ul>
+          <li><span>Telemetry</span><strong>Aus</strong></li>
+          <li><span>Cloud-Synchronisierung</span><strong>Aus</strong></li>
+          <li><span>Automatische Provider-Erkennung</span><strong>Aus</strong></li>
+          <li><span>Prompt-/Antwort-Logging</span><strong>Aus</strong></li>
+          <li><span>Remote-Anfragen ohne exakte Freigabe</span><strong>Aus</strong></li>
+        </ul>
+        <p>
+          Diese Werte sind Core-Aussagen, keine UI-Schalter. Eine gelockerte Projektion wird vom
+          Frontend als Protokollverletzung verworfen.
+        </p>
       </div>
-      <ul>
-        <li><span>Telemetry</span><strong>Aus</strong></li>
-        <li><span>Cloud-Synchronisierung</span><strong>Aus</strong></li>
-        <li><span>Automatische Provider-Erkennung</span><strong>Aus</strong></li>
-        <li><span>Prompt-/Antwort-Logging</span><strong>Aus</strong></li>
-        <li><span>Remote-Anfragen ohne exakte Freigabe</span><strong>Aus</strong></li>
-      </ul>
-      <p>
-        Diese Werte sind Core-Aussagen, keine UI-Schalter. Eine gelockerte Projektion wird vom
-        Frontend als Protokollverletzung verworfen.
-      </p>
-    </div>
+    {/if}
   {/if}
 
-  <ProjectSettingsPanel />
+  {#if settingsView === 'project'}
+    <ProjectSettingsPanel />
+  {/if}
 </section>

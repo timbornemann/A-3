@@ -37,6 +37,7 @@ describe('SettingsPanel', () => {
     render(SettingsPanel, { settingsLoader: vi.fn().mockResolvedValue(response()) });
 
     expect(await screen.findByText(/Modellfreier Betrieb ist aktiv/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
     const probeButtons = screen.getAllByRole('button', { name: 'Explizit live prüfen' });
     expect(probeButtons).toHaveLength(3);
     expect(probeButtons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
@@ -58,6 +59,7 @@ describe('SettingsPanel', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Remote-Verbindung blockiert');
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
     const probeButtons = screen.getAllByRole('button', { name: 'Explizit live prüfen' });
     expect(probeButtons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   });
@@ -87,6 +89,7 @@ describe('SettingsPanel', () => {
       ),
     });
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
     expect(
       await screen.findByText(/Nicht ausführbar · erforderliches Structured Output fehlt/),
     ).toBeTruthy();
@@ -103,6 +106,7 @@ describe('SettingsPanel', () => {
         .fn()
         .mockResolvedValue(response({ endpoint: localEndpoint, revision: '1' })),
     });
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
     const modelInputs = (await screen.findAllByLabelText('Modell-ID')) as HTMLInputElement[];
     await fireEvent.input(modelInputs[0] as HTMLInputElement, {
       target: { value: 'qwen2.5-coder:7b' },
