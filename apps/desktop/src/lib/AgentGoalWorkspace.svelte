@@ -1185,8 +1185,8 @@
 
 <style>
   .agent-goal-workspace {
-    background: color-mix(in srgb, var(--surface, #ffffff) 95%, #eef3ff);
-    border: 1px solid var(--line, #d8d9df);
+    background: color-mix(in srgb, var(--color-surface-raised) 95%, var(--color-info-surface));
+    border: 1px solid var(--color-border-soft);
     border-radius: 1rem;
     display: grid;
     gap: 1rem;
@@ -1205,7 +1205,7 @@
 
   .workspace-heading p,
   .editor-heading p {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.78rem;
     font-weight: 800;
     letter-spacing: 0.12em;
@@ -1240,16 +1240,16 @@
   }
 
   .goal-contract {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
     overflow: clip;
   }
 
   .persistent-anchors {
-    background: var(--surface, #ffffff);
-    border: 1px solid var(--line, #d8d9df);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
-    box-shadow: 0 0.4rem 1rem rgb(17 39 30 / 8%);
+    box-shadow: 0 0.4rem 1rem var(--color-shadow);
     display: grid;
     gap: 1rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1262,7 +1262,7 @@
   .persistent-anchors span,
   .bounded-note,
   .goal-metadata {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.85rem;
   }
 
@@ -1272,8 +1272,8 @@
   }
 
   .goal-actions {
-    background: var(--surface, #ffffff);
-    border-bottom: 1px solid var(--line, #d8d9df);
+    background: var(--color-surface-raised);
+    border-bottom: 1px solid var(--color-border-soft);
     padding: 1rem;
   }
 
@@ -1304,7 +1304,7 @@
 
   .goal-columns section,
   .boundary-grid section {
-    background: var(--surface, #ffffff);
+    background: var(--color-surface-raised);
     border-radius: 0.7rem;
     padding: 0.9rem;
   }
@@ -1325,16 +1325,16 @@
   }
 
   .criteria-list li > span {
-    background: #153c70;
+    background: var(--color-info);
     border-radius: 99px;
-    color: white;
+    color: var(--color-on-accent);
     font-size: 0.72rem;
     font-weight: 800;
     padding: 0.2rem 0.5rem;
   }
 
   .criteria-list li > span.should {
-    background: #68521a;
+    background: var(--color-warning);
   }
 
   .criteria-list p {
@@ -1342,8 +1342,8 @@
   }
 
   .goal-editor {
-    background: var(--surface, #ffffff);
-    border: 1px solid var(--line, #d8d9df);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
     display: grid;
     gap: 1rem;
@@ -1352,7 +1352,7 @@
 
   .task-ledger,
   .agent-activity {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
     display: grid;
     gap: 0.8rem;
@@ -1362,7 +1362,7 @@
   .task-ledger header p,
   .agent-activity > header p,
   .persistent-anchors > div > span {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.78rem;
     font-weight: 800;
     letter-spacing: 0.1em;
@@ -1377,7 +1377,7 @@
   }
 
   .ledger-metadata {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.85rem;
     margin: 0;
   }
@@ -1391,7 +1391,7 @@
   }
 
   .ledger-steps li {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.55rem;
     display: grid;
     gap: 0.55rem;
@@ -1400,7 +1400,7 @@
   }
 
   .ledger-steps li.current {
-    border-color: #153c70;
+    border-color: var(--color-info);
   }
 
   .ledger-steps span {
@@ -1412,8 +1412,8 @@
   }
 
   .blockers {
-    background: #fff6e6;
-    border-left: 0.25rem solid #9a6417;
+    background: var(--color-warning-surface);
+    border-left: 0.25rem solid var(--color-warning-strong);
     padding: 0.8rem;
   }
 
@@ -1448,28 +1448,28 @@
 
   .run-summary > div > span,
   .timeline-heading span {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.78rem;
     font-weight: 700;
   }
 
   .run-lifecycle {
-    background: #e8f2ff;
+    background: var(--color-info-surface);
     border-radius: 99px;
-    color: #153c70;
+    color: var(--color-info);
     font-size: 0.78rem;
     font-weight: 800;
     padding: 0.3rem 0.65rem;
   }
 
   .run-lifecycle.terminal {
-    background: #eceef2;
-    color: #3f4652;
+    background: var(--color-neutral-surface);
+    color: var(--color-neutral);
   }
 
   .run-controls {
-    background: var(--surface, #ffffff);
-    border: 1px solid var(--line, #d8d9df);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.65rem;
     display: grid;
     gap: 0.75rem;
@@ -1477,7 +1477,7 @@
   }
 
   .run-controls > div:first-child p {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.72rem;
     font-weight: 800;
     letter-spacing: 0.08em;
@@ -1502,7 +1502,7 @@
   }
 
   .recovery-facts dt {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.78rem;
   }
 
@@ -1518,8 +1518,8 @@
   }
 
   .danger-action {
-    border-color: #8f2222;
-    color: #8f2222;
+    border-color: var(--color-danger-strong);
+    color: var(--color-danger-strong);
   }
 
   .context-budget-grid {
@@ -1529,8 +1529,8 @@
   }
 
   .context-budget-grid > section {
-    background: var(--surface, #ffffff);
-    border: 1px solid var(--line, #d8d9df);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.65rem;
     padding: 0.8rem;
   }
@@ -1552,7 +1552,7 @@
   }
 
   .context-budget-grid dt {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
   }
 
   .context-budget-grid dd {
@@ -1588,7 +1588,7 @@
 
   .activity-timeline li {
     align-items: start;
-    border-left: 0.2rem solid #8ca3c1;
+    border-left: 0.2rem solid var(--color-info);
     display: grid;
     gap: 0.65rem;
     grid-template-columns: auto minmax(0, 1fr);
@@ -1596,23 +1596,23 @@
   }
 
   .activity-timeline li.problem {
-    background: #fff0f0;
-    border-left-color: #a32d2d;
+    background: var(--color-danger-surface);
+    border-left-color: var(--color-danger-strong);
   }
 
   .activity-timeline li p {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-size: 0.82rem;
     margin: 0.2rem 0 0;
   }
 
   .event-sequence {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
     font-variant-numeric: tabular-nums;
   }
 
   .criteria-editor {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.75rem;
     display: grid;
     gap: 0.8rem;
@@ -1628,24 +1628,24 @@
   }
 
   .primary {
-    background: #153c70;
-    color: white;
+    background: var(--color-info);
+    color: var(--color-on-accent);
   }
 
   .success-state {
-    background: #e6f5ec;
-    border-left: 0.25rem solid #287847;
+    background: var(--color-positive-surface);
+    border-left: 0.25rem solid var(--color-positive);
     padding: 0.8rem;
   }
 
   .error-state {
-    background: #fff0f0;
-    border-left: 0.25rem solid #a32d2d;
+    background: var(--color-danger-surface);
+    border-left: 0.25rem solid var(--color-danger-strong);
     padding: 0.8rem;
   }
 
   .empty-state {
-    color: var(--muted, #646b79);
+    color: var(--color-muted);
   }
 
   @media (max-width: 860px) {

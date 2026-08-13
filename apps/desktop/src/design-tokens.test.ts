@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const tokensCss = readFileSync(resolve(process.cwd(), 'src/design-tokens.css'), 'utf8');
 const componentCss = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8');
+const scopedComponentCss = readScopedComponentCss(resolve(process.cwd(), 'src'));
 
 const REQUIRED_FOUNDATION_TOKENS = [
   '--font-sans',
@@ -27,10 +28,14 @@ const REQUIRED_THEME_TOKENS = [
   '--color-on-accent',
   '--color-surface-raised',
   '--color-positive',
+  '--color-info',
+  '--color-neutral',
   '--color-warning',
   '--color-danger',
   '--color-hypothesis',
   '--color-focus',
+  '--color-code',
+  '--color-on-code',
 ] as const;
 
 const CONTRAST_PAIRS = [
@@ -39,7 +44,11 @@ const CONTRAST_PAIRS = [
   ['--color-subtle', '--color-canvas'],
   ['--color-accent-text', '--color-surface-raised'],
   ['--color-on-accent', '--color-accent-strong'],
+  ['--color-on-accent', '--color-info'],
+  ['--color-on-accent', '--color-warning'],
   ['--color-positive', '--color-positive-surface'],
+  ['--color-info', '--color-info-surface'],
+  ['--color-neutral', '--color-neutral-surface'],
   ['--color-warning', '--color-warning-surface'],
   ['--color-danger', '--color-danger-surface'],
   ['--color-hypothesis', '--color-hypothesis-surface'],
@@ -77,10 +86,42 @@ describe('U9 design tokens', () => {
   });
 
   it('keeps raw component colors out of the component stylesheet', () => {
-    expect(componentCss).not.toMatch(/#[0-9a-f]{3,8}\b/iu);
-    expect(componentCss).not.toMatch(/\brgba?\(/iu);
+    for (const [source, css] of [['styles.css', componentCss], ...scopedComponentCss] as const) {
+      expect(css, `${source} contains a raw hex color`).not.toMatch(/#[0-9a-f]{3,8}\b/iu);
+      expect(css, `${source} contains a raw rgb color`).not.toMatch(/\brgba?\(/iu);
+      expect(css, `${source} contains a raw named color`).not.toMatch(
+        /(?:^|[;{])\s*(?:color|background(?:-color)?):\s*(?:black|white)\b/imu,
+      );
+    }
+  });
+
+  it('keeps text scalable and suppresses non-essential motion through the user preference', () => {
+    const allComponentCss = [componentCss, ...scopedComponentCss.map(([, css]) => css)].join('\n');
+    expect(allComponentCss).not.toMatch(/font-size:\s*[^;{}]*px\b/iu);
+    expect(componentCss).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(componentCss).toContain('scroll-behavior: auto !important');
+    expect(componentCss).toContain('animation-duration: 0.01ms !important');
+    expect(componentCss).toContain('animation-iteration-count: 1 !important');
+    expect(componentCss).toContain('transition-duration: 0.01ms !important');
   });
 });
+
+function readScopedComponentCss(directory: string): Array<readonly [string, string]> {
+  const sources: Array<readonly [string, string]> = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      sources.push(...readScopedComponentCss(path));
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.svelte')) continue;
+    const source = readFileSync(path, 'utf8');
+    for (const match of source.matchAll(/<style(?:\s[^>]*)?>(?<css>[\s\S]*?)<\/style>/gu)) {
+      sources.push([path, match.groups?.css ?? '']);
+    }
+  }
+  return sources;
+}
 
 function selectorTokens(selector: string): Map<string, string> {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

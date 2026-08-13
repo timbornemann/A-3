@@ -46,7 +46,7 @@
 
 <style>
   .goal-text-list {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.75rem;
     display: grid;
     gap: 0.75rem;

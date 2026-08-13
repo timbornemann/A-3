@@ -107,7 +107,7 @@ textarea {
 }
 
 .theme-controls button {
-  min-height: 2.25rem;
+  min-height: var(--control-min-size);
   padding: var(--space-1) var(--space-3);
   border: 1px solid transparent;
   border-radius: calc(var(--radius-control) - 0.15rem);
@@ -266,7 +266,7 @@ h1 {
   min-width: 0;
   padding: 0.62rem 0.7rem;
   color: var(--color-text);
-  background: white;
+  background: var(--color-surface-raised);
 }
 
 .model-free-notice,
@@ -2302,6 +2302,8 @@ footer {
   *::before,
   *::after {
     scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }

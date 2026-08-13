@@ -366,7 +366,7 @@
 
 <style>
   .approval-center {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
     display: grid;
     gap: 0.9rem;
@@ -379,7 +379,7 @@
     gap: 1rem;
   }
   header p {
-    color: var(--muted, #626775);
+    color: var(--color-muted);
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -392,7 +392,7 @@
     margin-block: 0;
   }
   .status-chip {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 999px;
     padding: 0.3rem 0.65rem;
   }
@@ -405,14 +405,14 @@
   }
   .approval-facts div,
   .action-detail dl div {
-    background: color-mix(in srgb, var(--surface, #fff) 88%, #eef3ff);
+    background: color-mix(in srgb, var(--color-surface-raised) 88%, var(--color-info-surface));
     border-radius: 0.55rem;
     display: grid;
     gap: 0.2rem;
     padding: 0.65rem;
   }
   dt {
-    color: var(--muted, #626775);
+    color: var(--color-muted);
     font-size: 0.78rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -441,7 +441,7 @@
     gap: 0.25rem;
   }
   .action-detail small {
-    color: var(--muted, #626775);
+    color: var(--color-muted);
     overflow-wrap: anywhere;
   }
   .argv {
@@ -455,11 +455,11 @@
     grid-template-columns: auto 1fr;
   }
   .argv span {
-    color: var(--muted, #626775);
+    color: var(--color-muted);
     font-size: 0.78rem;
   }
   .decision-options {
-    border: 1px solid var(--line, #d8d9df);
+    border: 1px solid var(--color-border-soft);
     border-radius: 0.7rem;
     display: grid;
     gap: 0.7rem;
@@ -477,8 +477,8 @@
     gap: 0.65rem;
   }
   button {
-    background: var(--surface, #fff);
-    border: 1px solid var(--line-strong, #aeb1bb);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-strong);
     border-radius: 0.55rem;
     color: inherit;
     cursor: pointer;
@@ -490,12 +490,12 @@
   }
   .bounded-note,
   .empty-state {
-    color: var(--muted, #626775);
+    color: var(--color-muted);
   }
   .error-state {
-    color: var(--danger, #9c2f2f);
+    color: var(--color-danger);
   }
   .success-state {
-    color: var(--success, #28714d);
+    color: var(--color-positive);
   }
 </style>

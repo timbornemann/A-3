@@ -45,6 +45,10 @@
   --color-accent-surface: #e3f2eb;
   --color-positive: #187049;
   --color-positive-surface: #dff2e9;
+  --color-info: #153c70;
+  --color-info-surface: #e8f2ff;
+  --color-neutral: #3f4652;
+  --color-neutral-surface: #eceef2;
   --color-warning: #664a0d;
   --color-warning-strong: #986d10;
   --color-warning-surface: #fff6dc;
@@ -59,6 +63,8 @@
   --color-border-strong: #526a62;
   --color-focus: #0f654b;
   --color-focus-ring: rgb(15 101 75 / 28%);
+  --color-code: #171a17;
+  --color-on-code: #eef3eb;
   --color-shadow: rgb(29 63 54 / 12%);
   --color-status-ready: #187049;
   --color-status-ready-ring: rgb(24 112 73 / 18%);
@@ -88,6 +94,10 @@
   --color-accent-surface: #203d33;
   --color-positive: #8addb9;
   --color-positive-surface: #17372b;
+  --color-info: #afd2ff;
+  --color-info-surface: #162c45;
+  --color-neutral: #d2dbd7;
+  --color-neutral-surface: #303b37;
   --color-warning: #ffd898;
   --color-warning-strong: #e5ad47;
   --color-warning-surface: #3a2a10;
@@ -102,6 +112,8 @@
   --color-border-strong: #91a69e;
   --color-focus: #8ee5c2;
   --color-focus-ring: rgb(142 229 194 / 32%);
+  --color-code: #080c0a;
+  --color-on-code: #eef3eb;
   --color-shadow: rgb(0 0 0 / 42%);
   --color-status-ready: #8addb9;
   --color-status-ready-ring: rgb(138 221 185 / 20%);
@@ -132,6 +144,10 @@
     --color-accent-surface: #203d33;
     --color-positive: #8addb9;
     --color-positive-surface: #17372b;
+    --color-info: #afd2ff;
+    --color-info-surface: #162c45;
+    --color-neutral: #d2dbd7;
+    --color-neutral-surface: #303b37;
     --color-warning: #ffd898;
     --color-warning-strong: #e5ad47;
     --color-warning-surface: #3a2a10;
@@ -146,6 +162,8 @@
     --color-border-strong: #91a69e;
     --color-focus: #8ee5c2;
     --color-focus-ring: rgb(142 229 194 / 32%);
+    --color-code: #080c0a;
+    --color-on-code: #eef3eb;
     --color-shadow: rgb(0 0 0 / 42%);
     --color-status-ready: #8addb9;
     --color-status-ready-ring: rgb(138 221 185 / 20%);
