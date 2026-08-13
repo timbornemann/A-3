@@ -46,6 +46,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0019](0019-durable-mutation-reconciliation.md)        | Dauerhafte Mutationsdisposition und Reconciliation         |
 | [0020](0020-agent-runtime-ownership-and-pause.md)      | Agent-Laufzeitbesitz und kooperative Pause                 |
 | [0021](0021-bounded-agent-inspection.md)               | Begrenzte taskgebundene Diff- und Verification-Inspektion  |
+| [0022](0022-task-bound-approval-center.md)              | Taskgebundenes Approval Center mit expliziter Fortsetzung  |
 
 ## Neue ADRs
 
