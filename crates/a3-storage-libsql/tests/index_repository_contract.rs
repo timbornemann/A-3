@@ -61,6 +61,11 @@ use support::TempDirectory;
 // fixtures are opened and torn down concurrently inside one process.
 static INDEX_REPOSITORY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(windows)]
+const MAX_NATIVE_ATTEMPTS: u8 = 3;
+#[cfg(windows)]
+const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
+
 #[derive(Debug, Default)]
 struct TestIndexControl {
     progress: Mutex<Vec<a3_domain::Progress>>,
@@ -4353,19 +4358,37 @@ where
     if std::env::var_os("A3_LIBSQL_ISOLATED_TEST").as_deref()
         != Some(std::ffi::OsStr::new(test_name))
     {
-        let status = std::process::Command::new(std::env::current_exe()?)
-            .arg(test_name)
-            .arg("--exact")
-            .arg("--test-threads=1")
-            .env("A3_LIBSQL_ISOLATED_TEST", test_name)
-            .status()?;
-        if !status.success() {
+        let success_marker = index_contract_success_marker(test_name);
+        for attempt in 1..=MAX_NATIVE_ATTEMPTS {
+            remove_index_contract_success_marker(&success_marker)?;
+            let mut child = std::process::Command::new(std::env::current_exe()?)
+                .arg(test_name)
+                .arg("--exact")
+                .arg("--test-threads=1")
+                .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+                .env("A3_LIBSQL_RETAIN_TEMP_DIRECTORY", "1")
+                .env("A3_INDEX_CONTRACT_SUCCESS_MARKER", &success_marker)
+                .spawn()?;
+            let child_id = child.id();
+            let status = child.wait()?;
+            cleanup_index_contract_workspaces(child_id)?;
+            let contract_completed = success_marker.is_file();
+            remove_index_contract_success_marker(&success_marker)?;
+            if contract_completed {
+                return Ok(());
+            }
+            if should_retry_native_worker(contract_completed, status.code(), attempt) {
+                continue;
+            }
             return Err(io::Error::other(format!(
-                "isolated libSQL contract {test_name} failed with {status}"
+                "isolated index repository contract {test_name} failed on attempt {attempt} with {status} before completion evidence"
             ))
             .into());
         }
-        return Ok(());
+        return Err(io::Error::other(format!(
+            "isolated index repository contract {test_name} exhausted its native retry bound"
+        ))
+        .into());
     }
     let result = block_on(future);
     // The Windows native backend finishes worker teardown just after a store drops.
@@ -4373,7 +4396,104 @@ where
     // finish its owned workers before the test harness exits the process.
     #[cfg(windows)]
     std::thread::sleep(std::time::Duration::from_millis(1_500));
+    #[cfg(windows)]
+    match result {
+        Ok(()) => {
+            let marker = std::env::var_os("A3_INDEX_CONTRACT_SUCCESS_MARKER")
+                .ok_or_else(|| io::Error::other("index contract success marker is missing"))?;
+            fs::write(marker, b"complete")?;
+            std::process::exit(0);
+        }
+        Err(error) => {
+            eprintln!("index repository contract failed: {error}");
+            std::process::exit(1);
+        }
+    }
+    #[cfg(not(windows))]
     result
+}
+
+#[cfg(windows)]
+fn should_retry_native_worker(completed: bool, status_code: Option<i32>, attempt: u8) -> bool {
+    !completed && status_code == Some(STATUS_ACCESS_VIOLATION) && attempt < MAX_NATIVE_ATTEMPTS
+}
+
+#[cfg(windows)]
+fn index_contract_success_marker(test_name: &str) -> std::path::PathBuf {
+    let safe_name = test_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    std::env::temp_dir().join(format!(
+        "a3-storage-index-parent-{}-{safe_name}.complete",
+        std::process::id()
+    ))
+}
+
+#[cfg(windows)]
+fn remove_index_contract_success_marker(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_index_contract_workspaces(child_id: u32) -> io::Result<()> {
+    let temporary_root = std::env::temp_dir();
+    let expected_prefix = format!("a3-storage-test-{child_id}-");
+    for entry in fs::read_dir(&temporary_root)? {
+        let entry = entry?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&expected_prefix)
+        {
+            continue;
+        }
+        let target = entry.path();
+        if target.parent() != Some(temporary_root.as_path()) {
+            return Err(io::Error::other(
+                "index repository workspace escaped the temporary root",
+            ));
+        }
+        fs::remove_dir_all(target)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn native_worker_retry_policy_is_bounded_and_requires_completion() {
+    assert!(should_retry_native_worker(
+        false,
+        Some(STATUS_ACCESS_VIOLATION),
+        1
+    ));
+    assert!(should_retry_native_worker(
+        false,
+        Some(STATUS_ACCESS_VIOLATION),
+        2
+    ));
+    assert!(!should_retry_native_worker(
+        false,
+        Some(STATUS_ACCESS_VIOLATION),
+        MAX_NATIVE_ATTEMPTS
+    ));
+    assert!(!should_retry_native_worker(
+        true,
+        Some(STATUS_ACCESS_VIOLATION),
+        1
+    ));
+    assert!(!should_retry_native_worker(false, Some(1), 1));
+    assert!(!should_retry_native_worker(false, None, 1));
 }
 
 async fn mutate_knowledge(path: &Path, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
