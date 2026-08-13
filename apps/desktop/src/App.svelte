@@ -537,6 +537,7 @@
   let globalRunStatus = $state<GlobalRunStatus>({ kind: 'loading' });
   let uiScheduler: UiScheduler | null = null;
   let appMounted = false;
+  let workspaceContent: HTMLElement;
   let agentWorkspaceBoundary: HTMLElement;
   let agentWorkspaceComponent = $state<AgentGoalWorkspaceComponent | null>(null);
   let agentWorkspaceState = $state<LazySurfaceState>('idle');
@@ -546,18 +547,61 @@
   let ModuleDependencyGraph = $state<ModuleDependencyGraphComponent | null>(null);
   let moduleDependencyGraphChunkState = $state<LazySurfaceState>('idle');
 
+  const workspaceMeta: Record<
+    WorkspaceArea,
+    { description: string; eyebrow: string; title: string }
+  > = {
+    projects: {
+      description: 'Worktrees, Indexzustand und lokale Projektdaten verwalten.',
+      eyebrow: 'Workspace',
+      title: 'Projects',
+    },
+    map: {
+      description: 'Repository-Struktur, Evidence und Laufzeitbeziehungen untersuchen.',
+      eyebrow: 'Repository intelligence',
+      title: 'Project Map',
+    },
+    agent: {
+      description: 'Goal, Plan, Ausführung und Verifikation in einem kontrollierten Run.',
+      eyebrow: 'Autonomous workspace',
+      title: 'Agent',
+    },
+    settings: {
+      description: 'Lokale Modelle, Ressourcen und Sicherheitsgrenzen konfigurieren.',
+      eyebrow: 'Configuration',
+      title: 'Settings',
+    },
+  };
+
   function navigateWorkspace(area: WorkspaceArea): void {
     currentWorkspaceArea = area;
+    resetWorkspaceScroll();
     if (area === 'agent') void loadAgentWorkspaceChunk();
     if (area === 'settings') void loadSettingsChunk();
     document.getElementById(area)?.focus({ preventScroll: true });
   }
 
+  function resetWorkspaceScroll(): void {
+    workspaceContent.scrollTop = 0;
+    workspaceContent.scrollLeft = 0;
+  }
+
+  function focusWorkspaceSection(id: string): void {
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }
+
+  function workspaceProjectContextLabel(): string {
+    return projectStatusView.kind === 'active'
+      ? 'Lokaler Worktree aktiv'
+      : globalProjectItem().value;
+  }
+
   function syncWorkspaceRoute(focusTarget: boolean): void {
     currentWorkspaceArea = workspaceAreaFromHash(window.location.hash);
+    if (focusTarget) resetWorkspaceScroll();
     if (currentWorkspaceArea === 'agent') void loadAgentWorkspaceChunk();
     if (currentWorkspaceArea === 'settings') void loadSettingsChunk();
-    if (focusTarget) document.getElementById(currentWorkspaceArea)?.focus();
+    if (focusTarget) document.getElementById(currentWorkspaceArea)?.focus({ preventScroll: true });
   }
 
   function updateGlobalRunStatus(status: GlobalRunStatus): void {
@@ -1729,6 +1773,19 @@
     removalView = { kind: 'idle' };
   }
 
+  function presentModal(node: HTMLDialogElement): { destroy: () => void } {
+    if (typeof node.showModal === 'function') {
+      node.showModal();
+    } else {
+      node.setAttribute('open', '');
+    }
+    return {
+      destroy: () => {
+        if (typeof node.close === 'function' && node.open) node.close();
+      },
+    };
+  }
+
   async function confirmProjectRemoval(): Promise<void> {
     removalView = { kind: 'submitting' };
     try {
@@ -2118,2229 +2175,2531 @@
   <title>A^3</title>
 </svelte:head>
 
-<main id="main-content" class="app-shell" tabindex="-1">
+<main id="main-content" class="app-shell" data-workspace-area={currentWorkspaceArea} tabindex="-1">
   <a class="skip-link" href="#workspace-content">Zum Arbeitsbereich springen</a>
-  <header class="product-header">
-    <div>
-      <p class="eyebrow">Local-first coding agent</p>
-      <h1>A^3</h1>
-      <p class="subtitle">Autonomous Agent Assistant</p>
+  <aside class="app-sidebar" aria-label="A^3 Anwendungsnavigation">
+    <header class="product-header">
+      <div class="product-mark" aria-hidden="true">A^3</div>
+      <div class="product-identity">
+        <p class="eyebrow">Local-first coding agent</p>
+        <h1>A^3</h1>
+        <p class="subtitle">Autonomous Agent Assistant</p>
+      </div>
+    </header>
+    <PrimaryNavigation current={currentWorkspaceArea} onNavigate={navigateWorkspace} />
+    <div class="sidebar-footer">
+      <ThemeControls />
+      <p><span aria-hidden="true">●</span> Local core</p>
     </div>
-    <ThemeControls />
-  </header>
-
-  <PrimaryNavigation current={currentWorkspaceArea} onNavigate={navigateWorkspace} />
-  <GlobalStatusBar
-    project={globalProjectItem()}
-    index={globalIndexItem()}
-    model={globalModelItem()}
-    run={globalRunItem()}
-  />
+  </aside>
 
   <section
-    id="workspace-content"
-    class="health-card"
-    aria-labelledby="health-heading"
-    tabindex="-1"
+    class="workspace-shell"
+    aria-label={`${workspaceMeta[currentWorkspaceArea].title} workspace`}
   >
-    <div class="section-heading">
+    <header class="workspace-toolbar">
       <div>
-        <p class="section-kicker">Systemstatus</p>
-        <h2 id="health-heading">Desktop Core</h2>
+        <p class="section-kicker">{workspaceMeta[currentWorkspaceArea].eyebrow}</p>
+        <h2>{workspaceMeta[currentWorkspaceArea].title}</h2>
+        <p>{workspaceMeta[currentWorkspaceArea].description}</p>
       </div>
-      <span
-        class:pending={healthView.kind === 'loading'}
-        class:failed={healthView.kind === 'error'}
-        class="status-dot"
-        aria-hidden="true"
-      ></span>
-    </div>
-
-    {#if healthView.kind === 'loading'}
-      <p class="status-message" role="status" aria-live="polite">Core wird geprüft …</p>
-    {:else if healthView.kind === 'ready'}
-      <p class="ready-label" role="status" aria-live="polite">Bereit</p>
-      <dl class="health-grid">
-        <div>
-          <dt>App-Version</dt>
-          <dd>{healthView.health.applicationVersion}</dd>
-        </div>
-        <div>
-          <dt>Protokoll</dt>
-          <dd>V{healthView.health.protocolVersion}</dd>
-        </div>
-        <div>
-          <dt>Plattform</dt>
-          <dd>{healthView.health.platform}</dd>
-        </div>
-      </dl>
-    {:else}
-      <div class="error-state" role="alert">
-        <p>Die Health-Abfrage ist fehlgeschlagen.</p>
-        <button type="button" onclick={loadHealth}>Erneut prüfen</button>
+      <div class="workspace-project-context">
+        <span>Aktiver Kontext</span>
+        <strong>{workspaceProjectContextLabel()}</strong>
       </div>
-    {/if}
-  </section>
+    </header>
 
-  <section id="projects" class="project-card" aria-labelledby="project-heading" tabindex="-1">
-    <div class="section-heading">
-      <div>
-        <p class="section-kicker">Lokaler Workspace</p>
-        <h2 id="project-heading">Projekt öffnen</h2>
-      </div>
-    </div>
+    <GlobalStatusBar
+      project={globalProjectItem()}
+      index={globalIndexItem()}
+      model={globalModelItem()}
+      run={globalRunItem()}
+    />
 
-    <p class="project-copy">
-      Wähle den Root eines Git-Worktrees. A^3 erhält nur Zugriff auf diesen ausdrücklich gewählten
-      Ordner.
-    </p>
-    <button
-      class="primary-action"
-      type="button"
-      disabled={projectView.kind === 'opening'}
-      onclick={chooseProject}
-    >
-      {projectView.kind === 'opening'
-        ? 'Ordnerdialog geöffnet …'
-        : projectView.kind === 'opened'
-          ? 'Anderen Worktree auswählen'
-          : 'Projektordner auswählen'}
-    </button>
+    <div class="workspace-layout">
+      <aside class="context-sidebar" aria-label="Bereichsnavigation">
+        <p class="context-sidebar-label">In diesem Bereich</p>
+        <nav aria-label={`${workspaceMeta[currentWorkspaceArea].title} Abschnitte`}>
+          {#if currentWorkspaceArea === 'projects'}
+            <button type="button" onclick={() => focusWorkspaceSection('project-heading')}
+              >Projektübersicht</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('health-heading')}
+              >Core-Status</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('recent-projects-heading')}
+              >Zuletzt verwendet</button
+            >
+          {:else if currentWorkspaceArea === 'map'}
+            <button
+              type="button"
+              onclick={() => focusWorkspaceSection('project-map-search-heading')}
+              >Search &amp; Task Lens</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('repository-tree-heading')}
+              >Repository</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('module-tree-heading')}
+              >Module</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('deep-map-heading')}
+              >Deep Map</button
+            >
+          {:else if currentWorkspaceArea === 'agent'}
+            <button type="button" onclick={() => focusWorkspaceSection('agent-workspace-heading')}
+              >Goal &amp; Plan</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('agent-activity-heading')}
+              >Run-Aktivität</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('agent-inspection-heading')}
+              >Diff &amp; Verification</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('approval-center-heading')}
+              >Approvals</button
+            >
+          {:else}
+            <button type="button" onclick={() => focusWorkspaceSection('provider-settings-heading')}
+              >Modelle</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('project-settings-heading')}
+              >Projektregeln</button
+            >
+            <button type="button" onclick={() => focusWorkspaceSection('privacy-heading')}
+              >Datenschutz</button
+            >
+          {/if}
+        </nav>
+        <div class="context-sidebar-note">
+          <span>Mode</span>
+          <strong>Offline by default</strong>
+          <p>Keine Cloud-, Telemetrie- oder Netzwerkaktivität ohne explizite Freigabe.</p>
+        </div>
+      </aside>
 
-    {#if projectView.kind === 'cancelled'}
-      <p class="project-status" role="status" aria-live="polite">Auswahl abgebrochen.</p>
-    {:else if projectView.kind === 'opened'}
-      <p class="ready-label" role="status" aria-live="polite">Worktree sicher geöffnet</p>
-    {:else if projectView.kind === 'error'}
-      <p class="project-error" role="alert">{projectView.message}</p>
-    {/if}
+      <div
+        id="workspace-content"
+        class="workspace-content"
+        tabindex="-1"
+        bind:this={workspaceContent}
+      >
+        <section class="health-card" aria-labelledby="health-heading">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">Systemstatus</p>
+              <h2 id="health-heading">Desktop Core</h2>
+            </div>
+            <span
+              class:pending={healthView.kind === 'loading'}
+              class:failed={healthView.kind === 'error'}
+              class="status-dot"
+              aria-hidden="true"
+            ></span>
+          </div>
 
-    {#if projectStatusView.kind === 'loading'}
-      <p class="project-status" role="status" aria-live="polite">Projektstatus wird geladen …</p>
-    {:else if projectStatusView.kind === 'active'}
-      <div class="project-result" aria-labelledby="active-project-heading">
-        <h3 id="active-project-heading">Aktiver Worktree</h3>
-        <dl class="project-grid">
-          <div>
-            <dt>Root</dt>
-            <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
-          </div>
-          <div>
-            <dt>Branch</dt>
-            <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
-          </div>
-          <div>
-            <dt>Worktree-ID</dt>
-            <dd>{projectStatusView.result.project.worktreeId}</dd>
-          </div>
-          <div>
-            <dt>Indexstatus</dt>
-            <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
-          </div>
-          <div>
-            <dt>Aktueller Indexlauf</dt>
-            {#if indexActivityView.kind === 'active'}
-              <dd>{indexActivityStateLabel(indexActivityView.result.activity.state)}</dd>
-            {:else if indexActivityView.kind === 'loading'}
-              <dd>Wird geladen …</dd>
-            {:else}
-              <dd>Nicht verfügbar</dd>
-            {/if}
-          </div>
-          <div>
-            <dt>A^3-Speicher</dt>
-            <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
-          </div>
-          <div>
-            <dt>Letzter Snapshot</dt>
-            {#if projectStatusView.result.index.latestSnapshot === null}
-              <dd>Noch kein Snapshot</dd>
-            {:else}
-              <dd>
-                Generation {projectStatusView.result.index.latestSnapshot.generation}<br />
-                {projectStatusView.result.index.latestSnapshot.snapshotId}
-              </dd>
-            {/if}
-          </div>
-        </dl>
-        {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
-          <div class="index-progress" aria-labelledby="index-progress-heading">
-            <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
-            <p role="status" aria-live="polite">
-              {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
-                Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
-                {indexPhaseLabel(indexActivityView.result.activity.phase)}
-              {:else}
-                Phase {indexActivityView.result.activity.completedPhases + 1} von
-                {indexActivityView.result.activity.totalPhases}:
-                {indexPhaseLabel(indexActivityView.result.activity.phase)}
-              {/if}
-            </p>
-            <progress
-              aria-label="Fast-Index-Fortschritt"
-              max={indexActivityView.result.activity.totalPhases}
-              value={indexActivityView.result.activity.completedPhases}
-            ></progress>
-            {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
-              <p>
-                Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs vollständig lesbar.
-              </p>
-            {/if}
-          </div>
-        {/if}
-        <div class="index-overview" aria-labelledby="index-overview-heading">
-          <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
-          {#if indexOverviewView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Veröffentlichter Index wird gelesen …
-            </p>
-          {:else if indexOverviewView.kind === 'noPublishedIndex'}
-            <p class="project-status">
-              Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau bleibt davon
-              getrennt.
-            </p>
-          {:else if indexOverviewView.kind === 'published'}
-            <p class="index-snapshot">
-              Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
-            </p>
-            <dl class="index-metrics">
+          {#if healthView.kind === 'loading'}
+            <p class="status-message" role="status" aria-live="polite">Core wird geprüft …</p>
+          {:else if healthView.kind === 'ready'}
+            <p class="ready-label" role="status" aria-live="polite">Bereit</p>
+            <dl class="health-grid">
               <div>
-                <dt>Dateien</dt>
-                <dd>{countLabel(indexOverviewView.result.overview.counts.fileCount)}</dd>
+                <dt>App-Version</dt>
+                <dd>{healthView.health.applicationVersion}</dd>
               </div>
               <div>
-                <dt>Symbole</dt>
-                <dd>{countLabel(indexOverviewView.result.overview.counts.symbolCount)}</dd>
+                <dt>Protokoll</dt>
+                <dd>V{healthView.health.protocolVersion}</dd>
               </div>
               <div>
-                <dt>Diagnostics</dt>
-                <dd>{countLabel(indexOverviewView.result.overview.counts.diagnosticCount)}</dd>
-              </div>
-              <div>
-                <dt>Parse Coverage</dt>
-                <dd>{percentageLabel(indexOverviewView.result.overview.coverageBasisPoints)}</dd>
+                <dt>Plattform</dt>
+                <dd>{healthView.health.platform}</dd>
               </div>
             </dl>
-            <p class="index-coverage-note">
-              {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
-              {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien strukturell geparst.
-            </p>
-            {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
-              <p class="ready-label">Keine Parser-Diagnostics im veröffentlichten Snapshot.</p>
-            {:else}
-              <div class="file-diagnostics" aria-labelledby="file-diagnostics-heading">
-                <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
-                <ul>
-                  {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
-                    <li>
-                      <div class="diagnostic-file-heading">
-                        <code>{file.pathDisplay}{file.pathDisplayTruncated ? '…' : ''}</code>
-                        <span>{indexLanguageLabel(file.language)}</span>
-                      </div>
-                      <p>
-                        {countLabel(file.diagnosticCount)} Diagnostics · Coverage
-                        {percentageLabel(file.coverageBasisPoints)}
-                      </p>
-                      <ul>
-                        {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
-                          <li>
-                            <strong>{diagnosticSeverityLabel(diagnostic.severity)}:</strong>
-                            {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
-                            <span>Bytes {diagnostic.startByte}–{diagnostic.endByte}</span>
-                          </li>
-                        {/each}
-                      </ul>
-                      {#if file.diagnosticsTruncated}
-                        <p>
-                          Weitere Diagnostics dieser Datei sind in dieser begrenzten Ansicht
-                          verborgen.
-                        </p>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-                {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
-                  <p>
-                    Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien begrenzten Ansicht
-                    verborgen.
-                  </p>
-                {/if}
-              </div>
-            {/if}
-          {:else if indexOverviewView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={() => void loadIndexOverview()}
-                >Indexübersicht erneut laden</button
-              >
-            </div>
-          {/if}
-        </div>
-        <section
-          id="map"
-          class="repository-tree-panel project-map-search"
-          aria-labelledby="project-map-search-heading"
-          tabindex="-1"
-        >
-          <div class="repository-tree-heading">
-            <div>
-              <h4 id="project-map-search-heading">Project Map</h4>
-              <p>Wechsle zwischen bewusster Repository-Suche und dauerhafter Task Lens.</p>
-            </div>
-          </div>
-          <div class="project-map-mode-switch" role="group" aria-label="Project-Map-Ansicht">
-            <button
-              type="button"
-              aria-pressed={projectMapMode === 'search'}
-              class:active={projectMapMode === 'search'}
-              onclick={showProjectMapSearch}>Suche</button
-            >
-            <button
-              type="button"
-              aria-pressed={projectMapMode === 'taskLens'}
-              class:active={projectMapMode === 'taskLens'}
-              onclick={showTaskLens}>Task Lens</button
-            >
-          </div>
-          {#if projectMapMode === 'search'}
-            <form class="project-map-search-form" role="search" onsubmit={submitProjectMapSearch}>
-              <label for="project-map-search-query">Pfad, Symbol oder Signatur suchen</label>
-              <div>
-                <input
-                  id="project-map-search-query"
-                  name="query"
-                  type="search"
-                  autocomplete="off"
-                  maxlength="4096"
-                  bind:value={projectMapSearchText}
-                  disabled={projectMapSearchView.kind === 'loading'}
-                  aria-describedby="project-map-search-help"
-                />
-                <button
-                  type="submit"
-                  disabled={projectMapSearchText.trim().length < 3 ||
-                    projectMapSearchView.kind === 'loading'}
-                >
-                  {projectMapSearchView.kind === 'loading' ? 'Suche läuft …' : 'Suchen'}
-                </button>
-              </div>
-              <p id="project-map-search-help">
-                Mindestens ein durchsuchbarer Begriff mit drei Zeichen. Source wird nicht an die
-                WebView übertragen.
-              </p>
-            </form>
-            {#if projectMapSearchView.kind === 'idle'}
-              <p class="project-status">
-                Die Suche läuft nie automatisch. Gib einen konkreten Identifier, Pfad oder eine
-                Signatur ein.
-              </p>
-            {:else if projectMapSearchView.kind === 'loading'}
-              <p class="project-status" role="status" aria-live="polite">
-                Exact- und Lexical-Projektion werden begrenzt gelesen und fusioniert …
-              </p>
-            {:else if projectMapSearchView.kind === 'noProject'}
-              <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
-            {:else if projectMapSearchView.kind === 'noPublishedIndex'}
-              <p class="project-status">
-                Noch kein veröffentlichter Index für die Suche verfügbar.
-              </p>
-            {:else if projectMapSearchView.kind === 'projectionUnavailable'}
-              <p class="project-status">
-                Die {projectMapSearchView.channel === 'exact' ? 'Exact-' : 'Lexical-'}Projektion
-                fehlt im historischen Index. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
-              </p>
-            {:else if projectMapSearchView.kind === 'available'}
-              {@const search = projectMapSearchView.result.search}
-              <div class="project-map-search-summary">
-                <p>
-                  <strong>{search.hits.length} Treffer</strong> für „{search.query}“ · Fusion V{search.fusionPolicyVersion}
-                </p>
-                <p>
-                  Indexlauf <code>{search.indexRunId}</code> · Snapshot
-                  <code>{search.snapshotId}</code>
-                </p>
-              </div>
-              <p class="module-card-safety-note">
-                Exact und Lexical liefern aktuelle Index-Evidence. Semantische Ähnlichkeit ist in
-                dieser faktentragenden Trefferliste nicht zugelassen und wäre niemals ein Beweis.
-              </p>
-              {#if search.truncated}
-                <p class="project-map-search-truncated" role="status">
-                  Die begrenzte Ansicht lässt weitere Kandidaten sichtbar aus. Verfeinere die Suche,
-                  um andere Treffer zu prüfen.
-                </p>
-              {/if}
-              {#if search.hits.length === 0}
-                <p class="project-status">Keine aktuellen Exact- oder Lexical-Treffer.</p>
-              {:else}
-                <ol class="project-map-search-results" aria-label="Project-Map-Suchergebnisse">
-                  {#each search.hits as hit (hit.rank)}
-                    <li>
-                      <div class="project-map-search-hit-heading">
-                        <div>
-                          <span>#{hit.rank}</span>
-                          <strong>{projectMapSearchTargetLabel(hit.target)}</strong>
-                        </div>
-                        <span class:project-map-search-exact={hit.priority === 'exact'}>
-                          {hit.priority === 'exact' ? 'Exact-Priorität' : 'Evidence-Priorität'}
-                        </span>
-                      </div>
-                      <p class="project-map-search-target-kind">
-                        {hit.target.kind === 'symbol'
-                          ? projectMapSearchSymbolKindLabel(hit.target.symbolKind)
-                          : 'Dateirevision'}
-                        · Fusionsscore {countLabel(String(hit.finalScore))}
-                      </p>
-                      <ul
-                        class="project-map-search-sources"
-                        aria-label={`Herkunft von Treffer ${hit.rank}`}
-                      >
-                        {#each hit.sources as source (source.channel)}
-                          <li>
-                            <strong>{projectMapSearchSourceLabel(source)}</strong>
-                            <span>{projectMapSearchExplanationLabel(source)}</span>
-                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
-                          </li>
-                        {/each}
-                      </ul>
-                      <details class="project-map-search-evidence">
-                        <summary>Evidence anzeigen</summary>
-                        <dl>
-                          <div>
-                            <dt>Aktueller Pfad</dt>
-                            <dd><code>{hit.target.evidence.pathDisplay}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Content-Hash</dt>
-                            <dd><code>{hit.target.evidence.contentHash}</code></dd>
-                          </div>
-                          {#if hit.target.kind === 'symbol'}
-                            <div>
-                              <dt>Symbol-ID</dt>
-                              <dd><code>{hit.target.symbolId}</code></dd>
-                            </div>
-                            {#if hit.target.signature !== null}
-                              <div>
-                                <dt>Signatur</dt>
-                                <dd><code>{hit.target.signature}</code></dd>
-                              </div>
-                            {/if}
-                          {/if}
-                          {#if hit.target.evidence.declarationRange !== null}
-                            <div>
-                              <dt>Deklaration</dt>
-                              <dd>
-                                Bytes {hit.target.evidence.declarationRange.startByte}–{hit.target
-                                  .evidence.declarationRange.endByte}
-                              </dd>
-                            </div>
-                          {/if}
-                        </dl>
-                      </details>
-                    </li>
-                  {/each}
-                </ol>
-              {/if}
-            {:else if projectMapSearchView.kind === 'error'}
-              <div class="recent-projects-error" role="alert">
-                <p>Die Project-Map-Suche konnte nicht sicher ausgewertet werden.</p>
-                <button type="button" onclick={runProjectMapSearch}>
-                  Suche erneut ausführen
-                </button>
-              </div>
-            {/if}
           {:else}
-            <div class="task-lens-selector" aria-label="Dauerhafte Task-Lens-Anker">
-              <p class="module-card-safety-note">
-                Goal Contract und aktiver Plan-Schritt kommen ausschließlich aus dem aktuellen Task
-                Ledger. Die WebView kann weder Seeds noch Projektpfade erfinden.
-              </p>
-              {#if taskLensTasksView.kind === 'idle' || taskLensTasksView.kind === 'loading'}
-                <p class="project-status" role="status" aria-live="polite">
-                  Dauerhafte Tasks werden begrenzt gelesen …
-                </p>
-              {:else if taskLensTasksView.kind === 'noProject'}
-                <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
-              {:else if taskLensTasksView.kind === 'error'}
-                <div class="recent-projects-error" role="alert">
-                  <p>Die dauerhaften Task-Anker konnten nicht sicher gelesen werden.</p>
-                  <button type="button" onclick={loadTaskLensTasks}>Tasks erneut laden</button>
-                </div>
-              {:else}
-                <label for="task-lens-task">Goal Contract</label>
-                <select
-                  id="task-lens-task"
-                  value={selectedTaskLensTaskId}
-                  onchange={selectTaskLensTask}
-                  disabled={taskLensTaskView.kind === 'loading' || taskLensView.kind === 'loading'}
-                >
-                  <option value="">Task auswählen …</option>
-                  {#each taskLensTasksView.result.tasks as task (task.taskId)}
-                    <option value={task.taskId}>R{task.goalRevision} · {task.objective}</option>
-                  {/each}
-                </select>
-                {#if taskLensTasksView.result.truncated}
-                  <p class="project-map-search-truncated" role="status">
-                    Die Auswahl zeigt höchstens 20 Tasks; weitere aktuelle Goal Contracts bleiben
-                    sichtbar ausgelassen.
-                  </p>
-                {/if}
-                {#if taskLensTasksView.result.tasks.length === 0}
-                  <p class="project-status">
-                    Noch kein dauerhafter Goal Contract. Task-Erstellung folgt im Agent Workspace.
-                  </p>
-                {/if}
-
-                {#if taskLensTaskView.kind === 'loading'}
-                  <p class="project-status" role="status">Aktueller Task Ledger wird gelesen …</p>
-                {:else if taskLensTaskView.kind === 'ledgerUnavailable'}
-                  <p class="project-status">
-                    Für diesen Goal Contract existiert noch kein materialisierter Task Ledger.
-                  </p>
-                {:else if taskLensTaskView.kind === 'goalRevisionMismatch'}
-                  <p class="project-map-search-truncated" role="status">
-                    Goal R{taskLensTaskView.currentGoalRevision} ist aktueller als Ledger-Goal R{taskLensTaskView.ledgerGoalRevision}.
-                    Die Lens bleibt gesperrt, bis der Plan neu erstellt wurde.
-                  </p>
-                {:else if taskLensTaskView.kind === 'taskNotFound'}
-                  <p class="project-status">Der ausgewählte Task ist nicht mehr aktuell.</p>
-                {:else if taskLensTaskView.kind === 'noProject'}
-                  <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
-                {:else if taskLensTaskView.kind === 'error'}
-                  <p class="project-status" role="alert">
-                    Der aktuelle Task Ledger konnte nicht sicher gelesen werden.
-                  </p>
-                {:else if taskLensTaskView.kind === 'available'}
-                  <label for="task-lens-step">Aktueller Fokus-Schritt</label>
-                  <select
-                    id="task-lens-step"
-                    value={selectedTaskLensStepId}
-                    onchange={selectTaskLensStep}
-                    disabled={taskLensView.kind === 'loading'}
-                  >
-                    <option value="">Plan-Schritt auswählen …</option>
-                    {#each taskLensTaskView.result.steps as step (step.stepId)}
-                      <option value={step.stepId}>
-                        {taskLensStepStatusLabel(step.status)} · {step.intendedOutcome}
-                      </option>
-                    {/each}
-                  </select>
-                  <p>
-                    Ledger R{taskLensTaskView.result.ledgerRevision} · Store-Version
-                    {taskLensTaskView.result.ledgerStoreVersion}
-                  </p>
-                  <button
-                    type="button"
-                    onclick={runTaskLensCompile}
-                    disabled={selectedTaskLensStepId === '' || taskLensView.kind === 'loading'}
-                  >
-                    {taskLensView.kind === 'loading'
-                      ? 'Task Lens wird kompiliert …'
-                      : 'Task Lens aktualisieren'}
-                  </button>
-                {/if}
-              {/if}
+            <div class="error-state" role="alert">
+              <p>Die Health-Abfrage ist fehlgeschlagen.</p>
+              <button type="button" onclick={loadHealth}>Erneut prüfen</button>
             </div>
-
-            {#if taskLensView.kind === 'idle'}
-              <p class="project-status">
-                Wähle Task und aktiven Plan-Schritt; die Lens läuft nie als offener Chat-Loop.
-              </p>
-            {:else if taskLensView.kind === 'loading'}
-              <p class="project-status" role="status" aria-live="polite">
-                Exact → Lexical → Graph/Test → aktuelle Claims werden begrenzt kompiliert …
-              </p>
-            {:else if taskLensView.kind === 'noPublishedIndex'}
-              <p class="project-status">Noch kein veröffentlichter Index für die Task Lens.</p>
-            {:else if taskLensView.kind === 'stepUnavailable'}
-              <p class="project-map-search-truncated" role="status">
-                Der ausgewählte Schritt wurde inzwischen entfernt oder retirert. Lade den Task
-                erneut.
-              </p>
-            {:else if taskLensView.kind === 'goalRevisionMismatch'}
-              <p class="project-map-search-truncated" role="status">
-                Goal R{taskLensView.currentGoalRevision} und Ledger-Goal R{taskLensView.ledgerGoalRevision}
-                stimmen nicht mehr überein.
-              </p>
-            {:else if taskLensView.kind === 'ledgerUnavailable' || taskLensView.kind === 'taskNotFound'}
-              <p class="project-status">Der dauerhafte Task-Anker ist nicht mehr verfügbar.</p>
-            {:else if taskLensView.kind === 'noProject'}
-              <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
-            {:else if taskLensView.kind === 'error'}
-              <div class="recent-projects-error" role="alert">
-                <p>Die Task Lens konnte nicht sicher aus aktueller Evidence kompiliert werden.</p>
-                <button type="button" onclick={runTaskLensCompile}>Erneut kompilieren</button>
-              </div>
-            {:else if taskLensView.kind === 'available'}
-              {@const lens = taskLensView.result.lens}
-              <div class="project-map-search-summary task-lens-summary">
-                <p>
-                  <strong>{lens.entries.length} Einträge · {lens.claims.length} Claims</strong>
-                  · {countLabel(String(lens.estimatedTokens))}/{countLabel(
-                    String(lens.tokenBudget),
-                  )}
-                  Tokens
-                </p>
-                <p>
-                  Goal R{lens.goalRevision} · Ledger R{lens.ledgerRevision} · Task-Lens V{lens.policyVersion}
-                  · Fusion V{lens.fusionPolicyVersion}
-                </p>
-                <p>
-                  Indexlauf <code>{lens.indexRunId}</code> · Snapshot
-                  <code>{lens.snapshotId}</code>
-                </p>
-              </div>
-              <p class="module-card-safety-note">
-                Semantische Ähnlichkeit erzeugt ausschließlich Kandidaten. Facts benötigen weiterhin
-                aktuelle, aufgelöste Evidence; {lens.excludedStaleClaims} stale Claims wurden vollständig
-                ausgeschlossen.
-              </p>
-              {#if lens.truncated}
-                <p class="project-map-search-truncated" role="status">
-                  Mindestens eine feste Kandidaten-, Manifest-, Claim- oder Token-Grenze hat weitere
-                  Details sichtbar ausgelassen.
-                </p>
-              {/if}
-              <ol
-                class="project-map-search-results task-lens-entries"
-                aria-label="Task-Lens-Einträge"
-              >
-                {#each lens.entries as entry (entry.position)}
-                  <li>
-                    <div class="project-map-search-hit-heading">
-                      <div>
-                        <span>#{entry.position}</span>
-                        <strong>{taskLensTargetLabel(entry.target)}</strong>
-                      </div>
-                      <span>{taskLensTargetLevel(entry.target)}</span>
-                    </div>
-                    <p class="project-map-search-target-kind">
-                      {entry.estimatedTokens} geschätzte Tokens
-                      {#if entry.reason.kind === 'repositoryAnchor'}
-                        · deterministischer Pflichtanker
-                      {:else if entry.reason.kind === 'claim'}
-                        · Claim <code>{entry.reason.claimId}</code>
-                      {:else}
-                        · Fusionsrang {entry.reason.rank} · Score {countLabel(
-                          String(entry.reason.finalScore),
-                        )}
-                      {/if}
-                    </p>
-                    {#if entry.reason.kind === 'retrieval'}
-                      <ul
-                        class="project-map-search-sources"
-                        aria-label={`Herkunft von Lens-Eintrag ${entry.position}`}
-                      >
-                        {#each entry.reason.sources as source (source.channel)}
-                          <li class:task-lens-semantic-source={source.channel === 'semantic'}>
-                            <strong>{taskLensChannelLabel(source.channel)}</strong>
-                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
-                            {#if source.channel === 'semantic'}<span>kein Beweis</span>{/if}
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-                    <details class="project-map-search-evidence">
-                      <summary>Evidence anzeigen</summary>
-                      <dl>
-                        {#if entry.target.kind === 'repository'}
-                          <div>
-                            <dt>Publikation</dt>
-                            <dd><code>{lens.indexRunId}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Snapshot</dt>
-                            <dd><code>{lens.snapshotId}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Struktur</dt>
-                            <dd>
-                              {entry.target.fileCount} Dateien · {entry.target.symbolCount} Symbole
-                            </dd>
-                          </div>
-                        {:else if entry.target.kind === 'module'}
-                          <div>
-                            <dt>Modul-ID</dt>
-                            <dd><code>{entry.target.moduleId}</code></dd>
-                          </div>
-                          {#if entry.target.root !== null}
-                            <div>
-                              <dt>Grenze</dt>
-                              <dd><code>{entry.target.root.pathDisplay}</code></dd>
-                            </div>
-                          {/if}
-                          {#each entry.target.manifests as manifest (manifest.pathHex)}
-                            <div>
-                              <dt>Manifest</dt>
-                              <dd>
-                                <code>{manifest.pathDisplay}</code> ·
-                                <code>{manifest.contentHash}</code>
-                              </dd>
-                            </div>
-                          {/each}
-                          {#if entry.target.manifests.length === 0}
-                            <div>
-                              <dt>Projektion</dt>
-                              <dd>
-                                Strukturell an Indexlauf und Snapshot gebunden; keine eigenständige
-                                Source-Behauptung.
-                              </dd>
-                            </div>
-                          {/if}
-                        {:else}
-                          <div>
-                            <dt>Pfad</dt>
-                            <dd><code>{entry.target.evidence.pathDisplay}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Content-Hash</dt>
-                            <dd><code>{entry.target.evidence.contentHash}</code></dd>
-                          </div>
-                          {#if entry.target.kind === 'symbol' || entry.target.kind === 'sourceSpan'}
-                            <div>
-                              <dt>Symbol-ID</dt>
-                              <dd><code>{entry.target.symbolId}</code></dd>
-                            </div>
-                          {/if}
-                          {#if entry.target.evidence.declarationRange !== null}
-                            <div>
-                              <dt>Deklaration</dt>
-                              <dd>
-                                Bytes {entry.target.evidence.declarationRange.startByte}–{entry
-                                  .target.evidence.declarationRange.endByte}
-                              </dd>
-                            </div>
-                          {/if}
-                        {/if}
-                      </dl>
-                    </details>
-                  </li>
-                {/each}
-              </ol>
-
-              <div class="task-lens-claims" aria-label="Aktuelle Task-Lens-Claims">
-                <h5>Evidence-gebundene Claims</h5>
-                {#if lens.claims.length === 0}
-                  <p class="project-status">Keine aktuellen Claims für die ausgewählten Ziele.</p>
-                {:else}
-                  <ul>
-                    {#each lens.claims as claim (claim.claimId)}
-                      <li class:task-lens-hypothesis={claim.kind === 'hypothesis'}>
-                        <div class="project-map-search-hit-heading">
-                          <strong>{taskLensClaimKindLabel(claim.kind)}</strong>
-                          <span>{percentageLabel(claim.confidenceBasisPoints)}</span>
-                        </div>
-                        <p>{taskLensPredicateLabel(claim.predicate)}</p>
-                        <details class="project-map-search-evidence">
-                          <summary>Evidence / Beweisstatus</summary>
-                          {#if claim.evidence.length === 0}
-                            <p>
-                              Keine beweisende Evidence vorhanden. Diese Architekturabsicht bleibt
-                              ausdrücklich eine Hypothese.
-                            </p>
-                          {:else}
-                            <dl>
-                              {#each claim.evidence as evidence (evidence.kind === 'graphEdge' ? evidence.edge.evidenceId : evidence.evidenceId)}
-                                {#if evidence.kind === 'graphEdge'}
-                                  <div>
-                                    <dt>Graph-Edge</dt>
-                                    <dd>
-                                      {evidence.relation} · <code>{evidence.edge.evidenceId}</code>
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Source-Pfad (hex)</dt>
-                                    <dd><code>{evidence.edge.pathHex}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Range</dt>
-                                    <dd>
-                                      Bytes {evidence.edge.range.startByte}–{evidence.edge.range
-                                        .endByte}
-                                    </dd>
-                                  </div>
-                                {:else}
-                                  <div>
-                                    <dt>Evidence-ID</dt>
-                                    <dd><code>{evidence.evidenceId}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Pfad</dt>
-                                    <dd><code>{evidence.revision.pathDisplay}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Content-Hash</dt>
-                                    <dd><code>{evidence.revision.contentHash}</code></dd>
-                                  </div>
-                                {/if}
-                              {/each}
-                            </dl>
-                          {/if}
-                        </details>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-            {/if}
           {/if}
         </section>
-        <div class="repository-tree-panel" aria-labelledby="repository-tree-heading">
-          <div class="repository-tree-heading">
+
+        <section
+          id="projects"
+          class="project-card"
+          class:project-active={projectStatusView.kind === 'active'}
+          aria-label={currentWorkspaceArea === 'map' ? 'Project Map' : undefined}
+          aria-labelledby={currentWorkspaceArea === 'projects' ? 'project-heading' : undefined}
+          tabindex="-1"
+        >
+          <div class="section-heading">
             <div>
-              <h4 id="repository-tree-heading">Repository-Baum</h4>
-              <p>Direkte Kinder des veröffentlichten Index, progressiv und ohne Vollbaum-Ladung.</p>
+              <p class="section-kicker">Lokaler Workspace</p>
+              <h2 id="project-heading">Projekt öffnen</h2>
             </div>
-            <button type="button" onclick={loadRepositoryTreeRoot}>Zum Root</button>
           </div>
-          {#if repositoryTreeView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Repository-Baum wird gelesen …
-            </p>
-          {:else if repositoryTreeView.kind === 'noPublishedIndex'}
-            <p class="project-status">
-              Noch kein vollständiger Snapshot veröffentlicht; der Repository-Baum bleibt leer.
-            </p>
-          {:else if repositoryTreeView.kind === 'available'}
-            <p class="index-snapshot">
-              Indexlauf <code>{repositoryTreeView.result.page.indexRunId}</code>
-            </p>
-            <nav class="repository-tree-breadcrumbs" aria-label="Repository-Pfad">
-              <button type="button" onclick={() => openRepositoryBreadcrumb(-1)}>Repository</button>
-              {#each repositoryTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.pathHex)}
-                <span aria-hidden="true">/</span>
-                <button
-                  type="button"
-                  aria-current={breadcrumbIndex === repositoryTreeBreadcrumbs.length - 1
-                    ? 'page'
-                    : undefined}
-                  onclick={() => openRepositoryBreadcrumb(breadcrumbIndex)}
-                >
-                  {breadcrumb.name}
-                </button>
-              {/each}
-            </nav>
-            {#if repositoryTreeView.result.page.entries.length === 0}
-              <p class="ready-label">Keine weiteren indexierten Einträge in diesem Bereich.</p>
-            {:else}
-              <ul class="repository-tree-entries">
-                {#each repositoryTreeView.result.page.entries as entry (entry.pathHex)}
-                  <li>
-                    {#if entry.kind === 'directory'}
-                      <button
-                        class="repository-directory"
-                        type="button"
-                        aria-label={`Verzeichnis ${entry.name} öffnen`}
-                        onclick={() => openRepositoryDirectory(entry)}
-                      >
-                        <span aria-hidden="true">▸</span>
-                        <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
-                      </button>
-                      <span>{countLabel(entry.descendantFileCount)} Dateien</span>
-                    {:else}
-                      <div class="repository-file">
-                        <span aria-hidden="true">·</span>
-                        <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
-                      </div>
-                      <span>Revision {entry.contentHash?.slice(0, 12)}</span>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-            {#if repositoryTreePageIndex > 0 || repositoryTreeView.result.page.nextAfterNameHex !== null}
-              <nav class="repository-tree-pagination" aria-label="Repository-Baum-Seiten">
-                <button
-                  type="button"
-                  disabled={repositoryTreeLoadingMore || repositoryTreePageIndex === 0}
-                  onclick={loadPreviousRepositoryPage}
-                >
-                  Vorherige Seite
-                </button>
-                <span>Seite {repositoryTreePageIndex + 1} · höchstens 50 Einträge im DOM</span>
-                <button
-                  type="button"
-                  disabled={repositoryTreeLoadingMore ||
-                    repositoryTreeView.result.page.nextAfterNameHex === null}
-                  onclick={loadNextRepositoryPage}
-                >
-                  {repositoryTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
-                </button>
-              </nav>
-            {/if}
-          {:else if repositoryTreeView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Der Repository-Baum konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={loadRepositoryTreeRoot}>Vom Root neu laden</button>
-            </div>
+
+          <p class="project-copy">
+            Wähle den Root eines Git-Worktrees. A^3 erhält nur Zugriff auf diesen ausdrücklich
+            gewählten Ordner.
+          </p>
+          <button
+            class="primary-action"
+            type="button"
+            disabled={projectView.kind === 'opening'}
+            onclick={chooseProject}
+          >
+            {projectView.kind === 'opening'
+              ? 'Ordnerdialog geöffnet …'
+              : projectView.kind === 'opened'
+                ? 'Anderen Worktree auswählen'
+                : 'Projektordner auswählen'}
+          </button>
+
+          {#if projectView.kind === 'cancelled'}
+            <p class="project-status" role="status" aria-live="polite">Auswahl abgebrochen.</p>
+          {:else if projectView.kind === 'opened'}
+            <p class="ready-label" role="status" aria-live="polite">Worktree sicher geöffnet</p>
+          {:else if projectView.kind === 'error'}
+            <p class="project-error" role="alert">{projectView.message}</p>
           {/if}
-        </div>
-        <div class="repository-tree-panel module-tree-panel" aria-labelledby="module-tree-heading">
-          <div class="repository-tree-heading">
-            <div>
-              <h4 id="module-tree-heading">Modulbaum</h4>
-              <p>Direkte deterministische Modulgrenzen; Graph-Communities bleiben Zusatzsignale.</p>
-            </div>
-            <button type="button" onclick={loadModuleTreeRoot}>Zum Root</button>
-          </div>
-          {#if moduleTreeView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">Modulbaum wird gelesen …</p>
-          {:else if moduleTreeView.kind === 'noPublishedIndex'}
-            <p class="project-status">
-              Noch kein vollständiger Snapshot veröffentlicht; der Modulbaum bleibt leer.
-            </p>
-          {:else if moduleTreeView.kind === 'projectionUnavailable'}
-            <p class="project-status">
-              Der veröffentlichte historische Index enthält noch keine deterministische
-              Modulprojektion. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
-            </p>
-          {:else if moduleTreeView.kind === 'available'}
-            <p class="index-snapshot">
-              Indexlauf <code>{moduleTreeView.result.page.indexRunId}</code>
-            </p>
-            <dl class="module-tree-summary">
-              <div>
-                <dt>Primäre Module</dt>
-                <dd>{countLabel(moduleTreeView.result.page.primaryModuleCount)}</dd>
-              </div>
-              <div>
-                <dt>Graph-Communities</dt>
-                <dd>{countLabel(moduleTreeView.result.page.graphCommunityCount)}</dd>
-              </div>
-            </dl>
-            <nav class="repository-tree-breadcrumbs" aria-label="Modulpfad">
-              <button type="button" onclick={() => openModuleBreadcrumb(-1)}>Modul-Root</button>
-              {#each moduleTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.moduleId)}
-                <span aria-hidden="true">/</span>
-                <button
-                  type="button"
-                  aria-current={breadcrumbIndex === moduleTreeBreadcrumbs.length - 1
-                    ? 'page'
-                    : undefined}
-                  onclick={() => openModuleBreadcrumb(breadcrumbIndex)}
-                >
-                  {breadcrumb.name}
-                </button>
-              {/each}
-            </nav>
-            {#if moduleTreeView.result.page.entries.length === 0}
-              <p class="ready-label">Keine direkten primären Module in diesem Bereich.</p>
-            {:else}
-              <ul class="module-tree-entries">
-                {#each moduleTreeView.result.page.entries as entry (entry.moduleId)}
-                  <li>
-                    <div class="module-tree-entry-heading">
-                      {#if entry.childState === 'hasChildren'}
-                        <button
-                          type="button"
-                          aria-label={`Modul ${entry.name} öffnen`}
-                          onclick={() => openModule(entry)}
-                        >
-                          <span aria-hidden="true">▸</span>
-                          <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
-                        </button>
-                      {:else}
-                        <div>
-                          <span aria-hidden="true">·</span>
-                          <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
-                        </div>
-                      {/if}
-                      <span>{moduleKindLabel(entry)}</span>
-                    </div>
-                    <dl class="module-tree-entry-metrics">
-                      <div>
-                        <dt>Manifeste</dt>
-                        <dd>{countLabel(entry.manifestCount)}</dd>
-                      </div>
-                      <div>
-                        <dt>Dateien</dt>
-                        <dd>{countLabel(entry.fileCount)}</dd>
-                      </div>
-                      <div>
-                        <dt>Symbole</dt>
-                        <dd>{countLabel(entry.symbolCount)}</dd>
-                      </div>
-                      <div>
-                        <dt>Zentral</dt>
-                        <dd>{moduleFeatureLabel(entry.centralSymbols)}</dd>
-                      </div>
-                      <div>
-                        <dt>Einstiege</dt>
-                        <dd>{moduleFeatureLabel(entry.entrypoints)}</dd>
-                      </div>
-                      <div>
-                        <dt>Tests</dt>
-                        <dd>{moduleFeatureLabel(entry.tests)}</dd>
-                      </div>
-                    </dl>
-                    <p class="module-tree-evidence">
-                      {#if entry.boundaryEvidence.manifestRevision !== null}
-                        Manifest-Evidenz
-                        <code
-                          >{entry.boundaryEvidence.manifestRevision.contentHash.slice(0, 12)}</code
-                        >
-                      {:else if entry.boundaryEvidence.representativeRevision !== null}
-                        Repräsentative Revision
-                        <code
-                          >{entry.boundaryEvidence.representativeRevision.contentHash.slice(
-                            0,
-                            12,
-                          )}</code
-                        >
-                      {:else}
-                        Leeres strukturelles Modul ohne Revisionsrepräsentant
-                      {/if}
-                    </p>
-                    <div class="module-entry-actions">
-                      <button
-                        class="module-card-open"
-                        type="button"
-                        aria-pressed={moduleCardSelection?.moduleId === entry.moduleId}
-                        onclick={() => openModuleCard(entry)}
-                      >
-                        Module Card
-                      </button>
-                      <button
-                        class="module-dependency-open"
-                        type="button"
-                        aria-pressed={moduleRuntimeSelection?.moduleId === entry.moduleId}
-                        onclick={() => openModuleRuntime(entry)}
-                      >
-                        Entry Points &amp; Tests
-                      </button>
-                      <button
-                        class="module-dependency-open"
-                        type="button"
-                        aria-pressed={moduleDependencySelection?.moduleId === entry.moduleId}
-                        onclick={() => openModuleDependencies(entry)}
-                      >
-                        Abhängigkeiten anzeigen
-                      </button>
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-            {#if moduleTreePageIndex > 0 || moduleTreeView.result.page.nextAfterModuleId !== null}
-              <nav class="repository-tree-pagination" aria-label="Modulbaum-Seiten">
-                <button
-                  type="button"
-                  disabled={moduleTreeLoadingMore || moduleTreePageIndex === 0}
-                  onclick={loadPreviousModulePage}
-                >
-                  Vorherige Seite
-                </button>
-                <span>Seite {moduleTreePageIndex + 1} · höchstens 50 Module im DOM</span>
-                <button
-                  type="button"
-                  disabled={moduleTreeLoadingMore ||
-                    moduleTreeView.result.page.nextAfterModuleId === null}
-                  onclick={loadNextModulePage}
-                >
-                  {moduleTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
-                </button>
-              </nav>
-            {/if}
-          {:else if moduleTreeView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
-            </div>
-          {/if}
-        </div>
-        <div class="repository-tree-panel module-card-panel" aria-labelledby="module-card-heading">
-          <div class="repository-tree-heading">
-            <div>
-              <h4 id="module-card-heading">Module Card</h4>
-              <p>Verifizierte Felder mit getrennt sichtbarer Klassifikation und Aktualität.</p>
-            </div>
-            <button
-              type="button"
-              disabled={moduleCardSelection === null || moduleCardDetailView.kind === 'loading'}
-              onclick={reloadModuleCardDetail}
-            >
-              Aktualisieren
-            </button>
-          </div>
-          {#if moduleCardDetailView.kind === 'idle' || moduleCardDetailView.kind === 'noProject'}
-            <p class="project-status">
-              Wähle im Modulbaum „Module Card“, um die neueste dauerhaft verifizierte Karte bewusst
-              zu laden.
-            </p>
-          {:else if moduleCardDetailView.kind === 'loading'}
+
+          {#if projectStatusView.kind === 'loading'}
             <p class="project-status" role="status" aria-live="polite">
-              Module Card für {moduleCardSelection?.name ?? 'das Modul'} wird atomar gelesen …
+              Projektstatus wird geladen …
             </p>
-          {:else if moduleCardDetailView.kind === 'noPublishedIndex'}
-            <p class="project-status">Noch kein veröffentlichter Index.</p>
-          {:else if moduleCardDetailView.kind === 'projectionUnavailable'}
-            <p class="project-status">
-              Der historische Index enthält noch keine deterministische Modulprojektion. Ein Rebuild
-              erzeugt sie mit dem aktuellen Schema.
-            </p>
-          {:else if moduleCardDetailView.kind === 'moduleUnavailable'}
-            <div class="recent-projects-error" role="status">
-              <p>Das ausgewählte primäre Modul gehört nicht mehr zur aktuellen Publikation.</p>
-              <button type="button" onclick={loadModuleTreeRoot}>Modulbaum neu laden</button>
-            </div>
-          {:else if moduleCardDetailView.kind === 'cardUnavailable'}
-            <p class="project-status">
-              Für {moduleCardSelection?.name ?? 'dieses Modul'} wurde noch keine verifizierte Module Card
-              veröffentlicht.
-            </p>
-          {:else if moduleCardDetailView.kind === 'available'}
-            {@const card = moduleCardDetailView.result.detail}
-            <section class="module-card-signals" aria-labelledby="module-card-signals-heading">
-              <div class="module-card-signals-heading">
-                <h5 id="module-card-signals-heading">Confidence, Coverage und Freshness</h5>
-                <p>Drei unabhängige Signale der ausgewählten, publikationsgebundenen Card.</p>
-              </div>
-              <div class="module-card-signal-grid">
-                <article class="module-card-signal module-card-confidence">
-                  <h6>Confidence</h6>
-                  <strong>{percentageLabel(card.confidenceBasisPoints)}</strong>
-                  <p>Numerische Einschätzung der verifizierten Card, kein Faktenstatus.</p>
-                </article>
-                <article class="module-card-signal module-card-coverage">
-                  <h6>Coverage</h6>
-                  <strong>
-                    {card.coverage.coveredFieldCount} von {card.coverage.totalFieldCount} Feldern ·
-                    {percentageLabel(card.coverage.basisPoints)}
-                  </strong>
-                  <p>
-                    {card.coverage.must.coveredFieldCount} von {card.coverage.must.totalFieldCount}
-                    Muss-Feldern · {card.coverage.should.coveredFieldCount} von
-                    {card.coverage.should.totalFieldCount} Soll-Feldern
-                  </p>
-                  <details class="module-card-coverage-gaps">
-                    <summary>Feldabdeckung im Detail</summary>
-                    <div>
-                      <section aria-labelledby="module-card-missing-must">
-                        <h6 id="module-card-missing-must">Fehlende Muss-Felder</h6>
-                        {#if card.coverage.must.missingFields.length === 0}
-                          <p>Alle Muss-Felder sind verifiziert abgedeckt.</p>
-                        {:else}
-                          <ul>
-                            {#each card.coverage.must.missingFields as field (field)}
-                              <li>{moduleCardFieldLabel(field)}</li>
-                            {/each}
-                          </ul>
-                        {/if}
-                      </section>
-                      <section aria-labelledby="module-card-missing-should">
-                        <h6 id="module-card-missing-should">Fehlende Soll-Felder</h6>
-                        {#if card.coverage.should.missingFields.length === 0}
-                          <p>Alle Soll-Felder sind verifiziert abgedeckt.</p>
-                        {:else}
-                          <ul>
-                            {#each card.coverage.should.missingFields as field (field)}
-                              <li>{moduleCardFieldLabel(field)}</li>
-                            {/each}
-                          </ul>
-                        {/if}
-                      </section>
-                    </div>
-                  </details>
-                </article>
-                <article
-                  class:module-card-lifecycle-current={card.lifecycle.status === 'current'}
-                  class:module-card-lifecycle-stale={card.lifecycle.status === 'stale'}
-                  class:module-card-lifecycle-review={card.lifecycle.status === 'needsReview'}
-                  class="module-card-signal module-card-lifecycle"
-                  role={card.lifecycle.status === 'current' ? 'note' : 'alert'}
-                >
-                  <h6>Freshness</h6>
-                  <strong>
-                    {card.lifecycle.status === 'current'
-                      ? 'Current'
-                      : card.lifecycle.status === 'stale'
-                        ? 'Stale — keine aktuelle Faktenquelle'
-                        : 'NeedsReview — keine aktuelle Faktenquelle'}
-                  </strong>
-                  <p>
-                    {card.lifecycle.status === 'current'
-                      ? 'Card und sichtbare Claims lösen gegen die aktuelle Publikation auf.'
-                      : moduleCardFreshnessReasonLabel(card.lifecycle.reason)}
-                  </p>
-                </article>
-              </div>
-            </section>
-            <p class="module-card-safety-note" role="note">
-              Confidence, Coverage, Claim-Typ und Aktualität werden nicht miteinander verrechnet.
-              Ein als „Fact“ klassifizierter, aber „Stale“ oder „NeedsReview“ markierter Wert wird
-              nicht als aktuelles Faktum verwendet.
-            </p>
-            <dl class="module-card-envelope">
-              <div>
-                <dt>Ausgewähltes Modul</dt>
-                <dd>{moduleCardSelection?.name ?? card.moduleId.slice(0, 12)}</dd>
-              </div>
-              <div>
-                <dt>Schema und Mapper</dt>
-                <dd>V{card.schemaVersion} · Mapper V{card.mapperProfileVersion}</dd>
-              </div>
-              <div>
-                <dt>Aktueller Indexlauf</dt>
-                <dd><code>{card.currentIndexRunId}</code></dd>
-              </div>
-              <div>
-                <dt>Verifiziert in</dt>
-                <dd><code>{card.sourceIndexRunId}</code></dd>
-              </div>
-            </dl>
-            <div class="module-card-fields">
-              {#each card.fields as field (field.kind)}
-                <section class="module-card-field" aria-labelledby={`module-card-${field.kind}`}>
-                  <div class="module-card-field-heading">
-                    <h5 id={`module-card-${field.kind}`}>{moduleCardFieldLabel(field.kind)}</h5>
-                    <span>{field.evidenceIds.length} Feld-Evidence</span>
-                  </div>
-                  <ol>
-                    {#each field.values as item (item.claim.claimId)}
-                      <li
-                        class:module-card-value-current={item.claim.state === 'current'}
-                        class:module-card-value-stale={item.claim.state === 'stale'}
-                        class:module-card-value-review={item.claim.state === 'needsReview'}
-                      >
-                        <div class="module-card-claim-badges">
-                          <span
-                            class={`module-card-claim-kind module-card-claim-${item.claim.kind}`}
-                          >
-                            {moduleCardClaimKindLabel(item.claim.kind)}
-                          </span>
-                          <span
-                            class={`module-card-claim-state module-card-claim-${item.claim.state}`}
-                          >
-                            {item.claim.state === 'current'
-                              ? 'Current'
-                              : item.claim.state === 'stale'
-                                ? 'Stale'
-                                : 'NeedsReview'}
-                          </span>
-                          <span>{percentageLabel(item.claim.confidenceBasisPoints)}</span>
-                        </div>
-                        <p>{item.value}</p>
-                        <details class="module-card-evidence-identities">
-                          <summary>{item.claim.evidenceIds.length} Claim-Evidence-ID(s)</summary>
-                          {#if item.claim.evidenceIds.length === 0}
-                            <p>Architecture-Hypothese ohne deterministische Evidence.</p>
-                          {:else}
-                            <ul>
-                              {#each item.claim.evidenceIds as evidenceId (evidenceId)}
-                                <li>
-                                  <button
-                                    type="button"
-                                    aria-label={`Evidence ${evidenceId} für „${item.value}“ untersuchen`}
-                                    aria-pressed={selectedModuleCardEvidenceId === evidenceId}
-                                    onclick={() => inspectModuleCardEvidence(evidenceId)}
-                                  >
-                                    <code>{evidenceId}</code>
-                                    <span>Untersuchen</span>
-                                  </button>
-                                </li>
-                              {/each}
-                            </ul>
-                          {/if}
-                        </details>
-                      </li>
-                    {/each}
-                  </ol>
-                </section>
-              {/each}
-            </div>
-            <aside
-              class="dependency-evidence module-card-evidence-inspector"
-              aria-labelledby="module-card-evidence-heading"
-            >
-              <div>
-                <div>
-                  <h5 id="module-card-evidence-heading">Evidence Inspector</h5>
-                  <p>Card-gebundene, typisierte Provenienz ohne Quelltextzugriff.</p>
-                </div>
-                {#if moduleCardEvidenceView.kind !== 'idle'}
-                  <button type="button" onclick={resetModuleCardEvidence}>Schließen</button>
-                {/if}
-              </div>
-              {#if moduleCardEvidenceView.kind === 'idle'}
-                <p class="project-status">
-                  Öffne eine Claim-Evidence-ID, um ihre exakte Revision oder Graph-Beziehung zu
-                  prüfen.
-                </p>
-              {:else if moduleCardEvidenceView.kind === 'loading'}
-                <p class="project-status" role="status" aria-live="polite">
-                  Evidence {moduleCardEvidenceView.evidenceId.slice(0, 12)} wird gegen die sichtbare Card
-                  geprüft …
-                </p>
-              {:else if moduleCardEvidenceView.kind === 'selectionChanged'}
-                <div class="recent-projects-error" role="alert">
-                  <p>
-                    Publikation oder neueste Card haben sich geändert. Die alte Auswahl wird nicht
-                    gegen einen anderen Stand aufgelöst.
-                  </p>
-                  <button type="button" onclick={reloadModuleCardDetail}
-                    >Module Card neu laden</button
-                  >
-                </div>
-              {:else if moduleCardEvidenceView.kind === 'evidenceUnavailable'}
-                <p class="project-status" role="status">
-                  Diese ID gehört nicht zur aktuell ausgewählten neuesten Card und wird deshalb
-                  nicht geöffnet.
-                </p>
-              {:else if moduleCardEvidenceView.kind === 'cardUnavailable'}
-                <p class="project-status" role="status">
-                  Die ausgewählte Card ist nicht mehr die neueste dauerhaft verifizierte Karte.
-                </p>
-              {:else if moduleCardEvidenceView.kind === 'moduleUnavailable'}
-                <p class="project-status" role="status">
-                  Das ausgewählte primäre Modul ist in der aktuellen Publikation nicht mehr
-                  verfügbar.
-                </p>
-              {:else if moduleCardEvidenceView.kind === 'projectionUnavailable'}
-                <p class="project-status">Für diese Publikation existiert keine Modulprojektion.</p>
-              {:else if moduleCardEvidenceView.kind === 'noPublishedIndex'}
-                <p class="project-status">Noch kein veröffentlichter Index.</p>
-              {:else if moduleCardEvidenceView.kind === 'noProject'}
-                <p class="project-status">Kein Projekt ist aktiv.</p>
-              {:else if moduleCardEvidenceView.kind === 'available'}
-                {@const evidence = moduleCardEvidenceView.result.detail}
-                <div
-                  class:module-card-evidence-current={evidence.freshness === 'current'}
-                  class:module-card-evidence-stale={evidence.freshness === 'stale'}
-                  class="module-card-evidence-freshness"
-                  role={evidence.freshness === 'stale' ? 'alert' : 'note'}
-                >
-                  <strong>
-                    {evidence.freshness === 'current'
-                      ? 'Evidence Current'
-                      : 'Evidence Stale — nur historische Provenienz'}
-                  </strong>
-                  <span>
-                    {evidence.freshness === 'current'
-                      ? 'Die exakte Evidence löst im aktuellen veröffentlichten Index auf.'
-                      : 'Die exakte Evidence ist im aktuellen veröffentlichten Index nicht mehr vorhanden.'}
-                  </span>
-                </div>
-                <p class="module-card-evidence-card-state" role="note">
-                  <strong>Card-Zustand:</strong>
-                  {evidence.cardLifecycle.status === 'current'
-                    ? ' Current'
-                    : evidence.cardLifecycle.status === 'stale'
-                      ? ' Stale — keine aktuelle Faktenquelle'
-                      : ' NeedsReview — keine aktuelle Faktenquelle'}
-                  {#if evidence.cardLifecycle.status !== 'current'}
-                    · {moduleCardFreshnessReasonLabel(evidence.cardLifecycle.reason)}
-                  {/if}
-                </p>
-                <dl>
+          {:else if projectStatusView.kind === 'active'}
+            <div class="project-result" aria-labelledby="active-project-heading">
+              <div class="projects-workspace-view">
+                <h3 id="active-project-heading">Aktiver Worktree</h3>
+                <dl class="project-grid">
                   <div>
-                    <dt>Evidence-ID</dt>
-                    <dd><code>{evidence.evidenceId}</code></dd>
+                    <dt>Root</dt>
+                    <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
+                  </div>
+                  <div>
+                    <dt>Branch</dt>
+                    <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
+                  </div>
+                  <div>
+                    <dt>Worktree-ID</dt>
+                    <dd>{projectStatusView.result.project.worktreeId}</dd>
+                  </div>
+                  <div>
+                    <dt>Indexstatus</dt>
+                    <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
                   </div>
                   <div>
                     <dt>Aktueller Indexlauf</dt>
-                    <dd><code>{evidence.currentIndexRunId}</code></dd>
+                    {#if indexActivityView.kind === 'active'}
+                      <dd>{indexActivityStateLabel(indexActivityView.result.activity.state)}</dd>
+                    {:else if indexActivityView.kind === 'loading'}
+                      <dd>Wird geladen …</dd>
+                    {:else}
+                      <dd>Nicht verfügbar</dd>
+                    {/if}
                   </div>
                   <div>
-                    <dt>Evidence-Quelle</dt>
-                    <dd><code>{evidence.sourceIndexRunId}</code></dd>
+                    <dt>A^3-Speicher</dt>
+                    <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
+                  </div>
+                  <div>
+                    <dt>Letzter Snapshot</dt>
+                    {#if projectStatusView.result.index.latestSnapshot === null}
+                      <dd>Noch kein Snapshot</dd>
+                    {:else}
+                      <dd>
+                        Generation {projectStatusView.result.index.latestSnapshot.generation}<br />
+                        {projectStatusView.result.index.latestSnapshot.snapshotId}
+                      </dd>
+                    {/if}
                   </div>
                 </dl>
-                {#if evidence.payload.kind === 'file'}
-                  <section class="module-card-evidence-payload" aria-label="Datei-Evidence">
-                    <h6>Dateirevision</h6>
-                    <dl>
+                {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
+                  <div class="index-progress" aria-labelledby="index-progress-heading">
+                    <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
+                    <p role="status" aria-live="polite">
+                      {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
+                        Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
+                        {indexPhaseLabel(indexActivityView.result.activity.phase)}
+                      {:else}
+                        Phase {indexActivityView.result.activity.completedPhases + 1} von
+                        {indexActivityView.result.activity.totalPhases}:
+                        {indexPhaseLabel(indexActivityView.result.activity.phase)}
+                      {/if}
+                    </p>
+                    <progress
+                      aria-label="Fast-Index-Fortschritt"
+                      max={indexActivityView.result.activity.totalPhases}
+                      value={indexActivityView.result.activity.completedPhases}
+                    ></progress>
+                    {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
+                      <p>
+                        Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs vollständig
+                        lesbar.
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
+                <div class="index-overview" aria-labelledby="index-overview-heading">
+                  <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
+                  {#if indexOverviewView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Veröffentlichter Index wird gelesen …
+                    </p>
+                  {:else if indexOverviewView.kind === 'noPublishedIndex'}
+                    <p class="project-status">
+                      Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau bleibt
+                      davon getrennt.
+                    </p>
+                  {:else if indexOverviewView.kind === 'published'}
+                    <p class="index-snapshot">
+                      Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
+                    </p>
+                    <dl class="index-metrics">
                       <div>
-                        <dt>Pfad</dt>
+                        <dt>Dateien</dt>
+                        <dd>{countLabel(indexOverviewView.result.overview.counts.fileCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Symbole</dt>
+                        <dd>{countLabel(indexOverviewView.result.overview.counts.symbolCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Diagnostics</dt>
                         <dd>
-                          <code>{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code>
+                          {countLabel(indexOverviewView.result.overview.counts.diagnosticCount)}
                         </dd>
                       </div>
                       <div>
-                        <dt>Content Hash</dt>
-                        <dd><code>{evidence.payload.revision.contentHash}</code></dd>
-                      </div>
-                    </dl>
-                  </section>
-                {:else if evidence.payload.kind === 'symbol'}
-                  <section class="module-card-evidence-payload" aria-label="Symbol-Evidence">
-                    <h6>Strukturelles Symbol</h6>
-                    <dl>
-                      <div>
-                        <dt>Symbol-ID</dt>
-                        <dd><code>{evidence.payload.symbolId}</code></dd>
-                      </div>
-                      <div>
-                        <dt>Revision</dt>
+                        <dt>Parse Coverage</dt>
                         <dd>
-                          <code>{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code>
-                          · {evidence.payload.revision.contentHash}
-                        </dd>
-                      </div>
-                    </dl>
-                  </section>
-                {:else}
-                  {@const edge = evidence.payload.edge}
-                  <section class="module-card-evidence-payload" aria-label="Graph-Evidence">
-                    <h6>Deterministische Graph-Beziehung</h6>
-                    <dl>
-                      <div>
-                        <dt>Relation</dt>
-                        <dd>{moduleCardEvidenceRelationLabel(evidence.payload.relation)}</dd>
-                      </div>
-                      <div>
-                        <dt>Quelle</dt>
-                        <dd>
-                          {#if edge.source.kind === 'file'}
-                            Datei <code>{pathDisplayFromHex(edge.source.pathHex)}</code>
-                          {:else}
-                            Symbol <code>{edge.source.symbolId}</code>
-                          {/if}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Ziel</dt>
-                        <dd>
-                          {#if edge.target.kind === 'file'}
-                            Datei <code>{pathDisplayFromHex(edge.target.pathHex)}</code>
-                          {:else}
-                            Symbol <code>{edge.target.symbolId}</code>
-                          {/if}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Quellrevision</dt>
-                        <dd>
-                          <code>{pathDisplayFromHex(edge.pathHex)}</code> · {edge.contentHash}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Bereich</dt>
-                        <dd>
-                          Bytes {edge.range.startByte}–{edge.range.endByte} · Zeile {edge.range
-                            .start.row + 1}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Beobachtung</dt>
-                        <dd>
-                          {edge.provider} · {edge.resolution} · {percentageLabel(
-                            edge.confidenceBasisPoints,
-                          )}
+                          {percentageLabel(indexOverviewView.result.overview.coverageBasisPoints)}
                         </dd>
                       </div>
                     </dl>
-                  </section>
-                {/if}
-              {:else if moduleCardEvidenceView.kind === 'error'}
-                <div class="recent-projects-error" role="alert">
-                  <p>Die Evidence konnte nicht sicher gelesen werden.</p>
-                </div>
-              {/if}
-            </aside>
-          {:else if moduleCardDetailView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Die Module Card konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={reloadModuleCardDetail}>Erneut laden</button>
-            </div>
-          {/if}
-        </div>
-        <div
-          class="repository-tree-panel module-runtime-panel"
-          aria-labelledby="module-runtime-heading"
-        >
-          <div class="repository-tree-heading">
-            <div>
-              <h4 id="module-runtime-heading">Entry Points &amp; Tests</h4>
-              <p>Aktuelle strukturelle Wurzeln und bewusst geladene, begrenzte Evidence-Pfade.</p>
-            </div>
-            <button
-              type="button"
-              disabled={moduleRuntimeSelection === null || moduleRuntimeMapView.kind === 'loading'}
-              onclick={reloadModuleRuntime}
-            >
-              Aktualisieren
-            </button>
-          </div>
-          {#if moduleRuntimeMapView.kind === 'idle' || moduleRuntimeMapView.kind === 'noProject'}
-            <p class="project-status">
-              Wähle im Modulbaum „Entry Points &amp; Tests“, um die aktuellen Root-Symbole zu laden.
-            </p>
-          {:else if moduleRuntimeMapView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Entry Points und Tests für {moduleRuntimeSelection?.name ?? 'das Modul'} werden gelesen
-              …
-            </p>
-          {:else if moduleRuntimeMapView.kind === 'noPublishedIndex'}
-            <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
-          {:else if moduleRuntimeMapView.kind === 'projectionUnavailable'}
-            <p class="project-status">
-              Der historische Index enthält noch keine deterministische V8-Modulprojektion. Ein
-              Rebuild erzeugt sie mit dem aktuellen Schema.
-            </p>
-          {:else if moduleRuntimeMapView.kind === 'moduleUnavailable'}
-            <p class="project-status" role="alert">
-              Das gewählte Primärmodul ist im aktuellen Index nicht mehr vorhanden.
-            </p>
-          {:else if moduleRuntimeMapView.kind === 'stale'}
-            <div class="recent-projects-error" role="alert">
-              <p>
-                Die sichtbare Root-Liste ist nicht mehr verifizierbar. Alte Roots und Evidence
-                bleiben ausgeblendet, bis der aktuelle Index erneut gelesen wurde.
-              </p>
-              <button type="button" onclick={reloadModuleRuntime}>Roots neu laden</button>
-            </div>
-          {:else if moduleRuntimeMapView.kind === 'available'}
-            {@const runtimeMap = moduleRuntimeMapView.result.map}
-            <p class="index-snapshot">
-              Indexlauf <code>{runtimeMap.indexRunId}</code>
-            </p>
-            <div class="runtime-observation-note" role="note">
-              <strong>Strukturelle Beobachtung.</strong> Entry Points, Tests und Beziehungen stammen aus
-              deterministischen Adaptern. Sie belegen Quellstruktur, nicht eine tatsächlich ausgeführte
-              Laufzeitspur.
-            </div>
-            <div class="runtime-root-columns">
-              <section aria-labelledby="runtime-entrypoints-heading">
-                <div class="runtime-root-heading">
-                  <h5 id="runtime-entrypoints-heading">Entry Points</h5>
-                  <span>{countLabel(runtimeMap.entrypoints.storedCount)} gespeichert</span>
-                </div>
-                {#if runtimeMap.entrypoints.roots.length === 0}
-                  <p class="project-status">Keine strukturellen Entry Points beobachtet.</p>
-                {:else}
-                  <ol class="runtime-root-list">
-                    {#each runtimeMap.entrypoints.roots as root (root.symbol.symbolId)}
-                      <li>
-                        <button
-                          class="runtime-root-flow"
-                          type="button"
-                          aria-label={`Aufrufpfad für Entry Point ${root.symbol.name} anzeigen`}
-                          onclick={() => loadModuleRuntimeFlow(root)}
-                        >
-                          <strong>{root.symbol.name}</strong>
-                          <span>Rang {root.rank} · {pathDisplayFromHex(root.symbol.pathHex)}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onclick={() =>
-                            (selectedModuleRuntimeEvidence = {
-                              kind: 'symbol',
-                              symbol: root.symbol,
-                            })}
-                        >
-                          Symbol-Evidence
-                        </button>
-                      </li>
-                    {/each}
-                  </ol>
-                {/if}
-                {#if runtimeMap.entrypoints.roots.length < Number(runtimeMap.entrypoints.storedCount)}
-                  <button
-                    class="repository-tree-more"
-                    type="button"
-                    onclick={() => loadMoreModuleRuntimeRoots('entrypoint')}
-                  >
-                    Weitere Entry Points laden
-                  </button>
-                {/if}
-                {#if runtimeMap.entrypoints.projectionTruncated}
-                  <p class="runtime-truncation-note">
-                    Die Modulbildung hat weitere, niedriger gerankte Entry Points hinter ihrer
-                    festen 256-Root-Grenze ausgelassen.
-                  </p>
-                {/if}
-              </section>
-              <section aria-labelledby="runtime-tests-heading">
-                <div class="runtime-root-heading">
-                  <h5 id="runtime-tests-heading">Tests</h5>
-                  <span>{countLabel(runtimeMap.tests.storedCount)} gespeichert</span>
-                </div>
-                {#if runtimeMap.tests.roots.length === 0}
-                  <p class="project-status">Keine strukturellen Testdefinitionen beobachtet.</p>
-                {:else}
-                  <ol class="runtime-root-list">
-                    {#each runtimeMap.tests.roots as root (root.symbol.symbolId)}
-                      <li>
-                        <button
-                          class="runtime-root-flow"
-                          type="button"
-                          aria-label={`Testziele für Test ${root.symbol.name} anzeigen`}
-                          onclick={() => loadModuleRuntimeFlow(root)}
-                        >
-                          <strong>{root.symbol.name}</strong>
-                          <span>Rang {root.rank} · {pathDisplayFromHex(root.symbol.pathHex)}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onclick={() =>
-                            (selectedModuleRuntimeEvidence = {
-                              kind: 'symbol',
-                              symbol: root.symbol,
-                            })}
-                        >
-                          Symbol-Evidence
-                        </button>
-                      </li>
-                    {/each}
-                  </ol>
-                {/if}
-                {#if runtimeMap.tests.roots.length < Number(runtimeMap.tests.storedCount)}
-                  <button
-                    class="repository-tree-more"
-                    type="button"
-                    onclick={() => loadMoreModuleRuntimeRoots('test')}
-                  >
-                    Weitere Tests laden
-                  </button>
-                {/if}
-                {#if runtimeMap.tests.projectionTruncated}
-                  <p class="runtime-truncation-note">
-                    Die Modulbildung hat weitere, niedriger gerankte Tests hinter ihrer festen
-                    256-Root-Grenze ausgelassen.
-                  </p>
-                {/if}
-              </section>
-            </div>
-
-            <section class="runtime-flow" aria-labelledby="runtime-flow-heading">
-              <h5 id="runtime-flow-heading">Expliziter Evidence-Pfad</h5>
-              {#if moduleRuntimeFlowView.kind === 'idle'}
-                <p class="project-status">
-                  Wähle einen Root: Entry Points folgen höchstens zwei „Calls“-Kanten, Tests genau
-                  einer direkten „Tests“-Kante.
-                </p>
-              {:else if moduleRuntimeFlowView.kind === 'loading'}
-                <p class="project-status" role="status" aria-live="polite">
-                  Evidence-Pfad für {moduleRuntimeFlowView.rootName} wird gelesen …
-                </p>
-              {:else if moduleRuntimeFlowView.kind === 'publicationChanged'}
-                <div class="recent-projects-error" role="alert">
-                  <p>
-                    Seit der Root-Auswahl wurde ein anderer Index veröffentlicht. Die alte Evidence
-                    wird nicht mit dem neuen Snapshot gemischt.
-                  </p>
-                  <button type="button" onclick={reloadModuleRuntime}>Roots neu laden</button>
-                </div>
-              {:else if moduleRuntimeFlowView.kind === 'rootUnavailable'}
-                <p class="project-status" role="alert">
-                  Das Symbol ist kein aktueller Root dieser Rolle mehr. Lade die Root-Liste neu.
-                </p>
-              {:else if moduleRuntimeFlowView.kind === 'moduleUnavailable'}
-                <p class="project-status" role="alert">Das Primärmodul ist nicht mehr aktuell.</p>
-              {:else if moduleRuntimeFlowView.kind === 'projectionUnavailable'}
-                <p class="project-status">Die erforderliche Graphprojektion ist nicht verfügbar.</p>
-              {:else if moduleRuntimeFlowView.kind === 'noPublishedIndex' || moduleRuntimeFlowView.kind === 'noProject'}
-                <p class="project-status">Kein aktueller veröffentlichter Index verfügbar.</p>
-              {:else if moduleRuntimeFlowView.kind === 'available'}
-                {@const flow = moduleRuntimeFlowView.result.flow}
-                {#if flow.hits.length === 0}
-                  <p class="ready-label">Keine Ziele für das feste Relationspreset beobachtet.</p>
-                {:else}
-                  <ol class="runtime-flow-list">
-                    {#each flow.hits as hit, hitIndex (hitIndex)}
-                      <li>
-                        <div class="runtime-flow-target">
-                          <strong>{moduleRuntimeTargetLabel(hit.target)}</strong>
-                          <button
-                            type="button"
-                            onclick={() => selectModuleRuntimeTargetEvidence(hit.target)}
-                          >
-                            Ziel-Evidence
-                          </button>
-                        </div>
-                        <ol aria-label={`Evidence-Pfad zu ${moduleRuntimeTargetLabel(hit.target)}`}>
-                          {#each hit.path as step, stepIndex (step.evidence.evidenceId)}
+                    <p class="index-coverage-note">
+                      {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
+                      {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien strukturell
+                      geparst.
+                    </p>
+                    {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
+                      <p class="ready-label">
+                        Keine Parser-Diagnostics im veröffentlichten Snapshot.
+                      </p>
+                    {:else}
+                      <div class="file-diagnostics" aria-labelledby="file-diagnostics-heading">
+                        <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
+                        <ul>
+                          {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
                             <li>
-                              <span>
-                                Schritt {stepIndex + 1}: {step.relation === 'calls'
-                                  ? 'beobachteter Aufruf'
-                                  : 'beobachtete Testbeziehung'}
-                              </span>
-                              <button
-                                type="button"
-                                onclick={() =>
-                                  (selectedModuleRuntimeEvidence = {
-                                    kind: 'edge',
-                                    evidence: step.evidence,
-                                  })}
+                              <div class="diagnostic-file-heading">
+                                <code>{file.pathDisplay}{file.pathDisplayTruncated ? '…' : ''}</code
+                                >
+                                <span>{indexLanguageLabel(file.language)}</span>
+                              </div>
+                              <p>
+                                {countLabel(file.diagnosticCount)} Diagnostics · Coverage
+                                {percentageLabel(file.coverageBasisPoints)}
+                              </p>
+                              <ul>
+                                {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
+                                  <li>
+                                    <strong>{diagnosticSeverityLabel(diagnostic.severity)}:</strong>
+                                    {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
+                                    <span>Bytes {diagnostic.startByte}–{diagnostic.endByte}</span>
+                                  </li>
+                                {/each}
+                              </ul>
+                              {#if file.diagnosticsTruncated}
+                                <p>
+                                  Weitere Diagnostics dieser Datei sind in dieser begrenzten Ansicht
+                                  verborgen.
+                                </p>
+                              {/if}
+                            </li>
+                          {/each}
+                        </ul>
+                        {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
+                          <p>
+                            Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien begrenzten
+                            Ansicht verborgen.
+                          </p>
+                        {/if}
+                      </div>
+                    {/if}
+                  {:else if indexOverviewView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={() => void loadIndexOverview()}
+                        >Indexübersicht erneut laden</button
+                      >
+                    </div>
+                  {/if}
+                </div>
+              </div>
+              <div class="map-workspace-view">
+                <section
+                  id="map"
+                  class="repository-tree-panel project-map-search"
+                  aria-labelledby="project-map-search-heading"
+                  tabindex="-1"
+                >
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="project-map-search-heading">Project Map</h4>
+                      <p>Wechsle zwischen bewusster Repository-Suche und dauerhafter Task Lens.</p>
+                    </div>
+                  </div>
+                  <div
+                    class="project-map-mode-switch"
+                    role="group"
+                    aria-label="Project-Map-Ansicht"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={projectMapMode === 'search'}
+                      class:active={projectMapMode === 'search'}
+                      onclick={showProjectMapSearch}>Suche</button
+                    >
+                    <button
+                      type="button"
+                      aria-pressed={projectMapMode === 'taskLens'}
+                      class:active={projectMapMode === 'taskLens'}
+                      onclick={showTaskLens}>Task Lens</button
+                    >
+                  </div>
+                  {#if projectMapMode === 'search'}
+                    <form
+                      class="project-map-search-form"
+                      role="search"
+                      onsubmit={submitProjectMapSearch}
+                    >
+                      <label for="project-map-search-query">Pfad, Symbol oder Signatur suchen</label
+                      >
+                      <div>
+                        <input
+                          id="project-map-search-query"
+                          name="query"
+                          type="search"
+                          autocomplete="off"
+                          maxlength="4096"
+                          bind:value={projectMapSearchText}
+                          disabled={projectMapSearchView.kind === 'loading'}
+                          aria-describedby="project-map-search-help"
+                        />
+                        <button
+                          type="submit"
+                          disabled={projectMapSearchText.trim().length < 3 ||
+                            projectMapSearchView.kind === 'loading'}
+                        >
+                          {projectMapSearchView.kind === 'loading' ? 'Suche läuft …' : 'Suchen'}
+                        </button>
+                      </div>
+                      <p id="project-map-search-help">
+                        Mindestens ein durchsuchbarer Begriff mit drei Zeichen. Source wird nicht an
+                        die WebView übertragen.
+                      </p>
+                    </form>
+                    {#if projectMapSearchView.kind === 'idle'}
+                      <p class="project-status">
+                        Die Suche läuft nie automatisch. Gib einen konkreten Identifier, Pfad oder
+                        eine Signatur ein.
+                      </p>
+                    {:else if projectMapSearchView.kind === 'loading'}
+                      <p class="project-status" role="status" aria-live="polite">
+                        Exact- und Lexical-Projektion werden begrenzt gelesen und fusioniert …
+                      </p>
+                    {:else if projectMapSearchView.kind === 'noProject'}
+                      <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+                    {:else if projectMapSearchView.kind === 'noPublishedIndex'}
+                      <p class="project-status">
+                        Noch kein veröffentlichter Index für die Suche verfügbar.
+                      </p>
+                    {:else if projectMapSearchView.kind === 'projectionUnavailable'}
+                      <p class="project-status">
+                        Die {projectMapSearchView.channel === 'exact'
+                          ? 'Exact-'
+                          : 'Lexical-'}Projektion fehlt im historischen Index. Ein Rebuild erzeugt
+                        sie mit dem aktuellen Schema.
+                      </p>
+                    {:else if projectMapSearchView.kind === 'available'}
+                      {@const search = projectMapSearchView.result.search}
+                      <div class="project-map-search-summary">
+                        <p>
+                          <strong>{search.hits.length} Treffer</strong> für „{search.query}“ ·
+                          Fusion V{search.fusionPolicyVersion}
+                        </p>
+                        <p>
+                          Indexlauf <code>{search.indexRunId}</code> · Snapshot
+                          <code>{search.snapshotId}</code>
+                        </p>
+                      </div>
+                      <p class="module-card-safety-note">
+                        Exact und Lexical liefern aktuelle Index-Evidence. Semantische Ähnlichkeit
+                        ist in dieser faktentragenden Trefferliste nicht zugelassen und wäre niemals
+                        ein Beweis.
+                      </p>
+                      {#if search.truncated}
+                        <p class="project-map-search-truncated" role="status">
+                          Die begrenzte Ansicht lässt weitere Kandidaten sichtbar aus. Verfeinere
+                          die Suche, um andere Treffer zu prüfen.
+                        </p>
+                      {/if}
+                      {#if search.hits.length === 0}
+                        <p class="project-status">Keine aktuellen Exact- oder Lexical-Treffer.</p>
+                      {:else}
+                        <ol
+                          class="project-map-search-results"
+                          aria-label="Project-Map-Suchergebnisse"
+                        >
+                          {#each search.hits as hit (hit.rank)}
+                            <li>
+                              <div class="project-map-search-hit-heading">
+                                <div>
+                                  <span>#{hit.rank}</span>
+                                  <strong>{projectMapSearchTargetLabel(hit.target)}</strong>
+                                </div>
+                                <span class:project-map-search-exact={hit.priority === 'exact'}>
+                                  {hit.priority === 'exact'
+                                    ? 'Exact-Priorität'
+                                    : 'Evidence-Priorität'}
+                                </span>
+                              </div>
+                              <p class="project-map-search-target-kind">
+                                {hit.target.kind === 'symbol'
+                                  ? projectMapSearchSymbolKindLabel(hit.target.symbolKind)
+                                  : 'Dateirevision'}
+                                · Fusionsscore {countLabel(String(hit.finalScore))}
+                              </p>
+                              <ul
+                                class="project-map-search-sources"
+                                aria-label={`Herkunft von Treffer ${hit.rank}`}
                               >
-                                Kanten-Evidence
-                              </button>
+                                {#each hit.sources as source (source.channel)}
+                                  <li>
+                                    <strong>{projectMapSearchSourceLabel(source)}</strong>
+                                    <span>{projectMapSearchExplanationLabel(source)}</span>
+                                    <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span
+                                    >
+                                  </li>
+                                {/each}
+                              </ul>
+                              <details class="project-map-search-evidence">
+                                <summary>Evidence anzeigen</summary>
+                                <dl>
+                                  <div>
+                                    <dt>Aktueller Pfad</dt>
+                                    <dd><code>{hit.target.evidence.pathDisplay}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Content-Hash</dt>
+                                    <dd><code>{hit.target.evidence.contentHash}</code></dd>
+                                  </div>
+                                  {#if hit.target.kind === 'symbol'}
+                                    <div>
+                                      <dt>Symbol-ID</dt>
+                                      <dd><code>{hit.target.symbolId}</code></dd>
+                                    </div>
+                                    {#if hit.target.signature !== null}
+                                      <div>
+                                        <dt>Signatur</dt>
+                                        <dd><code>{hit.target.signature}</code></dd>
+                                      </div>
+                                    {/if}
+                                  {/if}
+                                  {#if hit.target.evidence.declarationRange !== null}
+                                    <div>
+                                      <dt>Deklaration</dt>
+                                      <dd>
+                                        Bytes {hit.target.evidence.declarationRange.startByte}–{hit
+                                          .target.evidence.declarationRange.endByte}
+                                      </dd>
+                                    </div>
+                                  {/if}
+                                </dl>
+                              </details>
                             </li>
                           {/each}
                         </ol>
-                      </li>
-                    {/each}
-                  </ol>
+                      {/if}
+                    {:else if projectMapSearchView.kind === 'error'}
+                      <div class="recent-projects-error" role="alert">
+                        <p>Die Project-Map-Suche konnte nicht sicher ausgewertet werden.</p>
+                        <button type="button" onclick={runProjectMapSearch}>
+                          Suche erneut ausführen
+                        </button>
+                      </div>
+                    {/if}
+                  {:else}
+                    <div class="task-lens-selector" aria-label="Dauerhafte Task-Lens-Anker">
+                      <p class="module-card-safety-note">
+                        Goal Contract und aktiver Plan-Schritt kommen ausschließlich aus dem
+                        aktuellen Task Ledger. Die WebView kann weder Seeds noch Projektpfade
+                        erfinden.
+                      </p>
+                      {#if taskLensTasksView.kind === 'idle' || taskLensTasksView.kind === 'loading'}
+                        <p class="project-status" role="status" aria-live="polite">
+                          Dauerhafte Tasks werden begrenzt gelesen …
+                        </p>
+                      {:else if taskLensTasksView.kind === 'noProject'}
+                        <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+                      {:else if taskLensTasksView.kind === 'error'}
+                        <div class="recent-projects-error" role="alert">
+                          <p>Die dauerhaften Task-Anker konnten nicht sicher gelesen werden.</p>
+                          <button type="button" onclick={loadTaskLensTasks}
+                            >Tasks erneut laden</button
+                          >
+                        </div>
+                      {:else}
+                        <label for="task-lens-task">Goal Contract</label>
+                        <select
+                          id="task-lens-task"
+                          value={selectedTaskLensTaskId}
+                          onchange={selectTaskLensTask}
+                          disabled={taskLensTaskView.kind === 'loading' ||
+                            taskLensView.kind === 'loading'}
+                        >
+                          <option value="">Task auswählen …</option>
+                          {#each taskLensTasksView.result.tasks as task (task.taskId)}
+                            <option value={task.taskId}
+                              >R{task.goalRevision} · {task.objective}</option
+                            >
+                          {/each}
+                        </select>
+                        {#if taskLensTasksView.result.truncated}
+                          <p class="project-map-search-truncated" role="status">
+                            Die Auswahl zeigt höchstens 20 Tasks; weitere aktuelle Goal Contracts
+                            bleiben sichtbar ausgelassen.
+                          </p>
+                        {/if}
+                        {#if taskLensTasksView.result.tasks.length === 0}
+                          <p class="project-status">
+                            Noch kein dauerhafter Goal Contract. Task-Erstellung folgt im Agent
+                            Workspace.
+                          </p>
+                        {/if}
+
+                        {#if taskLensTaskView.kind === 'loading'}
+                          <p class="project-status" role="status">
+                            Aktueller Task Ledger wird gelesen …
+                          </p>
+                        {:else if taskLensTaskView.kind === 'ledgerUnavailable'}
+                          <p class="project-status">
+                            Für diesen Goal Contract existiert noch kein materialisierter Task
+                            Ledger.
+                          </p>
+                        {:else if taskLensTaskView.kind === 'goalRevisionMismatch'}
+                          <p class="project-map-search-truncated" role="status">
+                            Goal R{taskLensTaskView.currentGoalRevision} ist aktueller als Ledger-Goal
+                            R{taskLensTaskView.ledgerGoalRevision}. Die Lens bleibt gesperrt, bis
+                            der Plan neu erstellt wurde.
+                          </p>
+                        {:else if taskLensTaskView.kind === 'taskNotFound'}
+                          <p class="project-status">Der ausgewählte Task ist nicht mehr aktuell.</p>
+                        {:else if taskLensTaskView.kind === 'noProject'}
+                          <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+                        {:else if taskLensTaskView.kind === 'error'}
+                          <p class="project-status" role="alert">
+                            Der aktuelle Task Ledger konnte nicht sicher gelesen werden.
+                          </p>
+                        {:else if taskLensTaskView.kind === 'available'}
+                          <label for="task-lens-step">Aktueller Fokus-Schritt</label>
+                          <select
+                            id="task-lens-step"
+                            value={selectedTaskLensStepId}
+                            onchange={selectTaskLensStep}
+                            disabled={taskLensView.kind === 'loading'}
+                          >
+                            <option value="">Plan-Schritt auswählen …</option>
+                            {#each taskLensTaskView.result.steps as step (step.stepId)}
+                              <option value={step.stepId}>
+                                {taskLensStepStatusLabel(step.status)} · {step.intendedOutcome}
+                              </option>
+                            {/each}
+                          </select>
+                          <p>
+                            Ledger R{taskLensTaskView.result.ledgerRevision} · Store-Version
+                            {taskLensTaskView.result.ledgerStoreVersion}
+                          </p>
+                          <button
+                            type="button"
+                            onclick={runTaskLensCompile}
+                            disabled={selectedTaskLensStepId === '' ||
+                              taskLensView.kind === 'loading'}
+                          >
+                            {taskLensView.kind === 'loading'
+                              ? 'Task Lens wird kompiliert …'
+                              : 'Task Lens aktualisieren'}
+                          </button>
+                        {/if}
+                      {/if}
+                    </div>
+
+                    {#if taskLensView.kind === 'idle'}
+                      <p class="project-status">
+                        Wähle Task und aktiven Plan-Schritt; die Lens läuft nie als offener
+                        Chat-Loop.
+                      </p>
+                    {:else if taskLensView.kind === 'loading'}
+                      <p class="project-status" role="status" aria-live="polite">
+                        Exact → Lexical → Graph/Test → aktuelle Claims werden begrenzt kompiliert …
+                      </p>
+                    {:else if taskLensView.kind === 'noPublishedIndex'}
+                      <p class="project-status">
+                        Noch kein veröffentlichter Index für die Task Lens.
+                      </p>
+                    {:else if taskLensView.kind === 'stepUnavailable'}
+                      <p class="project-map-search-truncated" role="status">
+                        Der ausgewählte Schritt wurde inzwischen entfernt oder retirert. Lade den
+                        Task erneut.
+                      </p>
+                    {:else if taskLensView.kind === 'goalRevisionMismatch'}
+                      <p class="project-map-search-truncated" role="status">
+                        Goal R{taskLensView.currentGoalRevision} und Ledger-Goal R{taskLensView.ledgerGoalRevision}
+                        stimmen nicht mehr überein.
+                      </p>
+                    {:else if taskLensView.kind === 'ledgerUnavailable' || taskLensView.kind === 'taskNotFound'}
+                      <p class="project-status">
+                        Der dauerhafte Task-Anker ist nicht mehr verfügbar.
+                      </p>
+                    {:else if taskLensView.kind === 'noProject'}
+                      <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+                    {:else if taskLensView.kind === 'error'}
+                      <div class="recent-projects-error" role="alert">
+                        <p>
+                          Die Task Lens konnte nicht sicher aus aktueller Evidence kompiliert
+                          werden.
+                        </p>
+                        <button type="button" onclick={runTaskLensCompile}
+                          >Erneut kompilieren</button
+                        >
+                      </div>
+                    {:else if taskLensView.kind === 'available'}
+                      {@const lens = taskLensView.result.lens}
+                      <div class="project-map-search-summary task-lens-summary">
+                        <p>
+                          <strong
+                            >{lens.entries.length} Einträge · {lens.claims.length} Claims</strong
+                          >
+                          · {countLabel(String(lens.estimatedTokens))}/{countLabel(
+                            String(lens.tokenBudget),
+                          )}
+                          Tokens
+                        </p>
+                        <p>
+                          Goal R{lens.goalRevision} · Ledger R{lens.ledgerRevision} · Task-Lens V{lens.policyVersion}
+                          · Fusion V{lens.fusionPolicyVersion}
+                        </p>
+                        <p>
+                          Indexlauf <code>{lens.indexRunId}</code> · Snapshot
+                          <code>{lens.snapshotId}</code>
+                        </p>
+                      </div>
+                      <p class="module-card-safety-note">
+                        Semantische Ähnlichkeit erzeugt ausschließlich Kandidaten. Facts benötigen
+                        weiterhin aktuelle, aufgelöste Evidence; {lens.excludedStaleClaims} stale Claims
+                        wurden vollständig ausgeschlossen.
+                      </p>
+                      {#if lens.truncated}
+                        <p class="project-map-search-truncated" role="status">
+                          Mindestens eine feste Kandidaten-, Manifest-, Claim- oder Token-Grenze hat
+                          weitere Details sichtbar ausgelassen.
+                        </p>
+                      {/if}
+                      <ol
+                        class="project-map-search-results task-lens-entries"
+                        aria-label="Task-Lens-Einträge"
+                      >
+                        {#each lens.entries as entry (entry.position)}
+                          <li>
+                            <div class="project-map-search-hit-heading">
+                              <div>
+                                <span>#{entry.position}</span>
+                                <strong>{taskLensTargetLabel(entry.target)}</strong>
+                              </div>
+                              <span>{taskLensTargetLevel(entry.target)}</span>
+                            </div>
+                            <p class="project-map-search-target-kind">
+                              {entry.estimatedTokens} geschätzte Tokens
+                              {#if entry.reason.kind === 'repositoryAnchor'}
+                                · deterministischer Pflichtanker
+                              {:else if entry.reason.kind === 'claim'}
+                                · Claim <code>{entry.reason.claimId}</code>
+                              {:else}
+                                · Fusionsrang {entry.reason.rank} · Score {countLabel(
+                                  String(entry.reason.finalScore),
+                                )}
+                              {/if}
+                            </p>
+                            {#if entry.reason.kind === 'retrieval'}
+                              <ul
+                                class="project-map-search-sources"
+                                aria-label={`Herkunft von Lens-Eintrag ${entry.position}`}
+                              >
+                                {#each entry.reason.sources as source (source.channel)}
+                                  <li
+                                    class:task-lens-semantic-source={source.channel === 'semantic'}
+                                  >
+                                    <strong>{taskLensChannelLabel(source.channel)}</strong>
+                                    <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span
+                                    >
+                                    {#if source.channel === 'semantic'}<span>kein Beweis</span>{/if}
+                                  </li>
+                                {/each}
+                              </ul>
+                            {/if}
+                            <details class="project-map-search-evidence">
+                              <summary>Evidence anzeigen</summary>
+                              <dl>
+                                {#if entry.target.kind === 'repository'}
+                                  <div>
+                                    <dt>Publikation</dt>
+                                    <dd><code>{lens.indexRunId}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Snapshot</dt>
+                                    <dd><code>{lens.snapshotId}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Struktur</dt>
+                                    <dd>
+                                      {entry.target.fileCount} Dateien · {entry.target.symbolCount} Symbole
+                                    </dd>
+                                  </div>
+                                {:else if entry.target.kind === 'module'}
+                                  <div>
+                                    <dt>Modul-ID</dt>
+                                    <dd><code>{entry.target.moduleId}</code></dd>
+                                  </div>
+                                  {#if entry.target.root !== null}
+                                    <div>
+                                      <dt>Grenze</dt>
+                                      <dd><code>{entry.target.root.pathDisplay}</code></dd>
+                                    </div>
+                                  {/if}
+                                  {#each entry.target.manifests as manifest (manifest.pathHex)}
+                                    <div>
+                                      <dt>Manifest</dt>
+                                      <dd>
+                                        <code>{manifest.pathDisplay}</code> ·
+                                        <code>{manifest.contentHash}</code>
+                                      </dd>
+                                    </div>
+                                  {/each}
+                                  {#if entry.target.manifests.length === 0}
+                                    <div>
+                                      <dt>Projektion</dt>
+                                      <dd>
+                                        Strukturell an Indexlauf und Snapshot gebunden; keine
+                                        eigenständige Source-Behauptung.
+                                      </dd>
+                                    </div>
+                                  {/if}
+                                {:else}
+                                  <div>
+                                    <dt>Pfad</dt>
+                                    <dd><code>{entry.target.evidence.pathDisplay}</code></dd>
+                                  </div>
+                                  <div>
+                                    <dt>Content-Hash</dt>
+                                    <dd><code>{entry.target.evidence.contentHash}</code></dd>
+                                  </div>
+                                  {#if entry.target.kind === 'symbol' || entry.target.kind === 'sourceSpan'}
+                                    <div>
+                                      <dt>Symbol-ID</dt>
+                                      <dd><code>{entry.target.symbolId}</code></dd>
+                                    </div>
+                                  {/if}
+                                  {#if entry.target.evidence.declarationRange !== null}
+                                    <div>
+                                      <dt>Deklaration</dt>
+                                      <dd>
+                                        Bytes {entry.target.evidence.declarationRange
+                                          .startByte}–{entry.target.evidence.declarationRange
+                                          .endByte}
+                                      </dd>
+                                    </div>
+                                  {/if}
+                                {/if}
+                              </dl>
+                            </details>
+                          </li>
+                        {/each}
+                      </ol>
+
+                      <div class="task-lens-claims" aria-label="Aktuelle Task-Lens-Claims">
+                        <h5>Evidence-gebundene Claims</h5>
+                        {#if lens.claims.length === 0}
+                          <p class="project-status">
+                            Keine aktuellen Claims für die ausgewählten Ziele.
+                          </p>
+                        {:else}
+                          <ul>
+                            {#each lens.claims as claim (claim.claimId)}
+                              <li class:task-lens-hypothesis={claim.kind === 'hypothesis'}>
+                                <div class="project-map-search-hit-heading">
+                                  <strong>{taskLensClaimKindLabel(claim.kind)}</strong>
+                                  <span>{percentageLabel(claim.confidenceBasisPoints)}</span>
+                                </div>
+                                <p>{taskLensPredicateLabel(claim.predicate)}</p>
+                                <details class="project-map-search-evidence">
+                                  <summary>Evidence / Beweisstatus</summary>
+                                  {#if claim.evidence.length === 0}
+                                    <p>
+                                      Keine beweisende Evidence vorhanden. Diese Architekturabsicht
+                                      bleibt ausdrücklich eine Hypothese.
+                                    </p>
+                                  {:else}
+                                    <dl>
+                                      {#each claim.evidence as evidence (evidence.kind === 'graphEdge' ? evidence.edge.evidenceId : evidence.evidenceId)}
+                                        {#if evidence.kind === 'graphEdge'}
+                                          <div>
+                                            <dt>Graph-Edge</dt>
+                                            <dd>
+                                              {evidence.relation} ·
+                                              <code>{evidence.edge.evidenceId}</code>
+                                            </dd>
+                                          </div>
+                                          <div>
+                                            <dt>Source-Pfad (hex)</dt>
+                                            <dd><code>{evidence.edge.pathHex}</code></dd>
+                                          </div>
+                                          <div>
+                                            <dt>Range</dt>
+                                            <dd>
+                                              Bytes {evidence.edge.range.startByte}–{evidence.edge
+                                                .range.endByte}
+                                            </dd>
+                                          </div>
+                                        {:else}
+                                          <div>
+                                            <dt>Evidence-ID</dt>
+                                            <dd><code>{evidence.evidenceId}</code></dd>
+                                          </div>
+                                          <div>
+                                            <dt>Pfad</dt>
+                                            <dd><code>{evidence.revision.pathDisplay}</code></dd>
+                                          </div>
+                                          <div>
+                                            <dt>Content-Hash</dt>
+                                            <dd><code>{evidence.revision.contentHash}</code></dd>
+                                          </div>
+                                        {/if}
+                                      {/each}
+                                    </dl>
+                                  {/if}
+                                </details>
+                              </li>
+                            {/each}
+                          </ul>
+                        {/if}
+                      </div>
+                    {/if}
+                  {/if}
+                </section>
+                <div class="repository-tree-panel" aria-labelledby="repository-tree-heading">
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="repository-tree-heading">Repository-Baum</h4>
+                      <p>
+                        Direkte Kinder des veröffentlichten Index, progressiv und ohne
+                        Vollbaum-Ladung.
+                      </p>
+                    </div>
+                    <button type="button" onclick={loadRepositoryTreeRoot}>Zum Root</button>
+                  </div>
+                  {#if repositoryTreeView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Repository-Baum wird gelesen …
+                    </p>
+                  {:else if repositoryTreeView.kind === 'noPublishedIndex'}
+                    <p class="project-status">
+                      Noch kein vollständiger Snapshot veröffentlicht; der Repository-Baum bleibt
+                      leer.
+                    </p>
+                  {:else if repositoryTreeView.kind === 'available'}
+                    <p class="index-snapshot">
+                      Indexlauf <code>{repositoryTreeView.result.page.indexRunId}</code>
+                    </p>
+                    <nav class="repository-tree-breadcrumbs" aria-label="Repository-Pfad">
+                      <button type="button" onclick={() => openRepositoryBreadcrumb(-1)}
+                        >Repository</button
+                      >
+                      {#each repositoryTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.pathHex)}
+                        <span aria-hidden="true">/</span>
+                        <button
+                          type="button"
+                          aria-current={breadcrumbIndex === repositoryTreeBreadcrumbs.length - 1
+                            ? 'page'
+                            : undefined}
+                          onclick={() => openRepositoryBreadcrumb(breadcrumbIndex)}
+                        >
+                          {breadcrumb.name}
+                        </button>
+                      {/each}
+                    </nav>
+                    {#if repositoryTreeView.result.page.entries.length === 0}
+                      <p class="ready-label">
+                        Keine weiteren indexierten Einträge in diesem Bereich.
+                      </p>
+                    {:else}
+                      <ul class="repository-tree-entries">
+                        {#each repositoryTreeView.result.page.entries as entry (entry.pathHex)}
+                          <li>
+                            {#if entry.kind === 'directory'}
+                              <button
+                                class="repository-directory"
+                                type="button"
+                                aria-label={`Verzeichnis ${entry.name} öffnen`}
+                                onclick={() => openRepositoryDirectory(entry)}
+                              >
+                                <span aria-hidden="true">▸</span>
+                                <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
+                              </button>
+                              <span>{countLabel(entry.descendantFileCount)} Dateien</span>
+                            {:else}
+                              <div class="repository-file">
+                                <span aria-hidden="true">·</span>
+                                <code>{entry.name}{entry.nameTruncated ? '…' : ''}</code>
+                              </div>
+                              <span>Revision {entry.contentHash?.slice(0, 12)}</span>
+                            {/if}
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                    {#if repositoryTreePageIndex > 0 || repositoryTreeView.result.page.nextAfterNameHex !== null}
+                      <nav class="repository-tree-pagination" aria-label="Repository-Baum-Seiten">
+                        <button
+                          type="button"
+                          disabled={repositoryTreeLoadingMore || repositoryTreePageIndex === 0}
+                          onclick={loadPreviousRepositoryPage}
+                        >
+                          Vorherige Seite
+                        </button>
+                        <span
+                          >Seite {repositoryTreePageIndex + 1} · höchstens 50 Einträge im DOM</span
+                        >
+                        <button
+                          type="button"
+                          disabled={repositoryTreeLoadingMore ||
+                            repositoryTreeView.result.page.nextAfterNameHex === null}
+                          onclick={loadNextRepositoryPage}
+                        >
+                          {repositoryTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
+                        </button>
+                      </nav>
+                    {/if}
+                  {:else if repositoryTreeView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Der Repository-Baum konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={loadRepositoryTreeRoot}
+                        >Vom Root neu laden</button
+                      >
+                    </div>
+                  {/if}
+                </div>
+                <div
+                  class="repository-tree-panel module-tree-panel"
+                  aria-labelledby="module-tree-heading"
+                >
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="module-tree-heading">Modulbaum</h4>
+                      <p>
+                        Direkte deterministische Modulgrenzen; Graph-Communities bleiben
+                        Zusatzsignale.
+                      </p>
+                    </div>
+                    <button type="button" onclick={loadModuleTreeRoot}>Zum Root</button>
+                  </div>
+                  {#if moduleTreeView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Modulbaum wird gelesen …
+                    </p>
+                  {:else if moduleTreeView.kind === 'noPublishedIndex'}
+                    <p class="project-status">
+                      Noch kein vollständiger Snapshot veröffentlicht; der Modulbaum bleibt leer.
+                    </p>
+                  {:else if moduleTreeView.kind === 'projectionUnavailable'}
+                    <p class="project-status">
+                      Der veröffentlichte historische Index enthält noch keine deterministische
+                      Modulprojektion. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
+                    </p>
+                  {:else if moduleTreeView.kind === 'available'}
+                    <p class="index-snapshot">
+                      Indexlauf <code>{moduleTreeView.result.page.indexRunId}</code>
+                    </p>
+                    <dl class="module-tree-summary">
+                      <div>
+                        <dt>Primäre Module</dt>
+                        <dd>{countLabel(moduleTreeView.result.page.primaryModuleCount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Graph-Communities</dt>
+                        <dd>{countLabel(moduleTreeView.result.page.graphCommunityCount)}</dd>
+                      </div>
+                    </dl>
+                    <nav class="repository-tree-breadcrumbs" aria-label="Modulpfad">
+                      <button type="button" onclick={() => openModuleBreadcrumb(-1)}
+                        >Modul-Root</button
+                      >
+                      {#each moduleTreeBreadcrumbs as breadcrumb, breadcrumbIndex (breadcrumb.moduleId)}
+                        <span aria-hidden="true">/</span>
+                        <button
+                          type="button"
+                          aria-current={breadcrumbIndex === moduleTreeBreadcrumbs.length - 1
+                            ? 'page'
+                            : undefined}
+                          onclick={() => openModuleBreadcrumb(breadcrumbIndex)}
+                        >
+                          {breadcrumb.name}
+                        </button>
+                      {/each}
+                    </nav>
+                    {#if moduleTreeView.result.page.entries.length === 0}
+                      <p class="ready-label">Keine direkten primären Module in diesem Bereich.</p>
+                    {:else}
+                      <ul class="module-tree-entries">
+                        {#each moduleTreeView.result.page.entries as entry (entry.moduleId)}
+                          <li>
+                            <div class="module-tree-entry-heading">
+                              {#if entry.childState === 'hasChildren'}
+                                <button
+                                  type="button"
+                                  aria-label={`Modul ${entry.name} öffnen`}
+                                  onclick={() => openModule(entry)}
+                                >
+                                  <span aria-hidden="true">▸</span>
+                                  <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
+                                </button>
+                              {:else}
+                                <div>
+                                  <span aria-hidden="true">·</span>
+                                  <strong>{entry.name}{entry.nameTruncated ? '…' : ''}</strong>
+                                </div>
+                              {/if}
+                              <span>{moduleKindLabel(entry)}</span>
+                            </div>
+                            <dl class="module-tree-entry-metrics">
+                              <div>
+                                <dt>Manifeste</dt>
+                                <dd>{countLabel(entry.manifestCount)}</dd>
+                              </div>
+                              <div>
+                                <dt>Dateien</dt>
+                                <dd>{countLabel(entry.fileCount)}</dd>
+                              </div>
+                              <div>
+                                <dt>Symbole</dt>
+                                <dd>{countLabel(entry.symbolCount)}</dd>
+                              </div>
+                              <div>
+                                <dt>Zentral</dt>
+                                <dd>{moduleFeatureLabel(entry.centralSymbols)}</dd>
+                              </div>
+                              <div>
+                                <dt>Einstiege</dt>
+                                <dd>{moduleFeatureLabel(entry.entrypoints)}</dd>
+                              </div>
+                              <div>
+                                <dt>Tests</dt>
+                                <dd>{moduleFeatureLabel(entry.tests)}</dd>
+                              </div>
+                            </dl>
+                            <p class="module-tree-evidence">
+                              {#if entry.boundaryEvidence.manifestRevision !== null}
+                                Manifest-Evidenz
+                                <code
+                                  >{entry.boundaryEvidence.manifestRevision.contentHash.slice(
+                                    0,
+                                    12,
+                                  )}</code
+                                >
+                              {:else if entry.boundaryEvidence.representativeRevision !== null}
+                                Repräsentative Revision
+                                <code
+                                  >{entry.boundaryEvidence.representativeRevision.contentHash.slice(
+                                    0,
+                                    12,
+                                  )}</code
+                                >
+                              {:else}
+                                Leeres strukturelles Modul ohne Revisionsrepräsentant
+                              {/if}
+                            </p>
+                            <div class="module-entry-actions">
+                              <button
+                                class="module-card-open"
+                                type="button"
+                                aria-pressed={moduleCardSelection?.moduleId === entry.moduleId}
+                                onclick={() => openModuleCard(entry)}
+                              >
+                                Module Card
+                              </button>
+                              <button
+                                class="module-dependency-open"
+                                type="button"
+                                aria-pressed={moduleRuntimeSelection?.moduleId === entry.moduleId}
+                                onclick={() => openModuleRuntime(entry)}
+                              >
+                                Entry Points &amp; Tests
+                              </button>
+                              <button
+                                class="module-dependency-open"
+                                type="button"
+                                aria-pressed={moduleDependencySelection?.moduleId ===
+                                  entry.moduleId}
+                                onclick={() => openModuleDependencies(entry)}
+                              >
+                                Abhängigkeiten anzeigen
+                              </button>
+                            </div>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                    {#if moduleTreePageIndex > 0 || moduleTreeView.result.page.nextAfterModuleId !== null}
+                      <nav class="repository-tree-pagination" aria-label="Modulbaum-Seiten">
+                        <button
+                          type="button"
+                          disabled={moduleTreeLoadingMore || moduleTreePageIndex === 0}
+                          onclick={loadPreviousModulePage}
+                        >
+                          Vorherige Seite
+                        </button>
+                        <span>Seite {moduleTreePageIndex + 1} · höchstens 50 Module im DOM</span>
+                        <button
+                          type="button"
+                          disabled={moduleTreeLoadingMore ||
+                            moduleTreeView.result.page.nextAfterModuleId === null}
+                          onclick={loadNextModulePage}
+                        >
+                          {moduleTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
+                        </button>
+                      </nav>
+                    {/if}
+                  {:else if moduleTreeView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Der Modulbaum konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={loadModuleTreeRoot}>Vom Root neu laden</button>
+                    </div>
+                  {/if}
+                </div>
+                <div
+                  class="repository-tree-panel module-card-panel"
+                  aria-labelledby="module-card-heading"
+                >
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="module-card-heading">Module Card</h4>
+                      <p>
+                        Verifizierte Felder mit getrennt sichtbarer Klassifikation und Aktualität.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={moduleCardSelection === null ||
+                        moduleCardDetailView.kind === 'loading'}
+                      onclick={reloadModuleCardDetail}
+                    >
+                      Aktualisieren
+                    </button>
+                  </div>
+                  {#if moduleCardDetailView.kind === 'idle' || moduleCardDetailView.kind === 'noProject'}
+                    <p class="project-status">
+                      Wähle im Modulbaum „Module Card“, um die neueste dauerhaft verifizierte Karte
+                      bewusst zu laden.
+                    </p>
+                  {:else if moduleCardDetailView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Module Card für {moduleCardSelection?.name ?? 'das Modul'} wird atomar gelesen …
+                    </p>
+                  {:else if moduleCardDetailView.kind === 'noPublishedIndex'}
+                    <p class="project-status">Noch kein veröffentlichter Index.</p>
+                  {:else if moduleCardDetailView.kind === 'projectionUnavailable'}
+                    <p class="project-status">
+                      Der historische Index enthält noch keine deterministische Modulprojektion. Ein
+                      Rebuild erzeugt sie mit dem aktuellen Schema.
+                    </p>
+                  {:else if moduleCardDetailView.kind === 'moduleUnavailable'}
+                    <div class="recent-projects-error" role="status">
+                      <p>
+                        Das ausgewählte primäre Modul gehört nicht mehr zur aktuellen Publikation.
+                      </p>
+                      <button type="button" onclick={loadModuleTreeRoot}>Modulbaum neu laden</button
+                      >
+                    </div>
+                  {:else if moduleCardDetailView.kind === 'cardUnavailable'}
+                    <p class="project-status">
+                      Für {moduleCardSelection?.name ?? 'dieses Modul'} wurde noch keine verifizierte
+                      Module Card veröffentlicht.
+                    </p>
+                  {:else if moduleCardDetailView.kind === 'available'}
+                    {@const card = moduleCardDetailView.result.detail}
+                    <section
+                      class="module-card-signals"
+                      aria-labelledby="module-card-signals-heading"
+                    >
+                      <div class="module-card-signals-heading">
+                        <h5 id="module-card-signals-heading">Confidence, Coverage und Freshness</h5>
+                        <p>
+                          Drei unabhängige Signale der ausgewählten, publikationsgebundenen Card.
+                        </p>
+                      </div>
+                      <div class="module-card-signal-grid">
+                        <article class="module-card-signal module-card-confidence">
+                          <h6>Confidence</h6>
+                          <strong>{percentageLabel(card.confidenceBasisPoints)}</strong>
+                          <p>Numerische Einschätzung der verifizierten Card, kein Faktenstatus.</p>
+                        </article>
+                        <article class="module-card-signal module-card-coverage">
+                          <h6>Coverage</h6>
+                          <strong>
+                            {card.coverage.coveredFieldCount} von {card.coverage.totalFieldCount} Feldern
+                            ·
+                            {percentageLabel(card.coverage.basisPoints)}
+                          </strong>
+                          <p>
+                            {card.coverage.must.coveredFieldCount} von {card.coverage.must
+                              .totalFieldCount}
+                            Muss-Feldern · {card.coverage.should.coveredFieldCount} von
+                            {card.coverage.should.totalFieldCount} Soll-Feldern
+                          </p>
+                          <details class="module-card-coverage-gaps">
+                            <summary>Feldabdeckung im Detail</summary>
+                            <div>
+                              <section aria-labelledby="module-card-missing-must">
+                                <h6 id="module-card-missing-must">Fehlende Muss-Felder</h6>
+                                {#if card.coverage.must.missingFields.length === 0}
+                                  <p>Alle Muss-Felder sind verifiziert abgedeckt.</p>
+                                {:else}
+                                  <ul>
+                                    {#each card.coverage.must.missingFields as field (field)}
+                                      <li>{moduleCardFieldLabel(field)}</li>
+                                    {/each}
+                                  </ul>
+                                {/if}
+                              </section>
+                              <section aria-labelledby="module-card-missing-should">
+                                <h6 id="module-card-missing-should">Fehlende Soll-Felder</h6>
+                                {#if card.coverage.should.missingFields.length === 0}
+                                  <p>Alle Soll-Felder sind verifiziert abgedeckt.</p>
+                                {:else}
+                                  <ul>
+                                    {#each card.coverage.should.missingFields as field (field)}
+                                      <li>{moduleCardFieldLabel(field)}</li>
+                                    {/each}
+                                  </ul>
+                                {/if}
+                              </section>
+                            </div>
+                          </details>
+                        </article>
+                        <article
+                          class:module-card-lifecycle-current={card.lifecycle.status === 'current'}
+                          class:module-card-lifecycle-stale={card.lifecycle.status === 'stale'}
+                          class:module-card-lifecycle-review={card.lifecycle.status ===
+                            'needsReview'}
+                          class="module-card-signal module-card-lifecycle"
+                          role={card.lifecycle.status === 'current' ? 'note' : 'alert'}
+                        >
+                          <h6>Freshness</h6>
+                          <strong>
+                            {card.lifecycle.status === 'current'
+                              ? 'Current'
+                              : card.lifecycle.status === 'stale'
+                                ? 'Stale — keine aktuelle Faktenquelle'
+                                : 'NeedsReview — keine aktuelle Faktenquelle'}
+                          </strong>
+                          <p>
+                            {card.lifecycle.status === 'current'
+                              ? 'Card und sichtbare Claims lösen gegen die aktuelle Publikation auf.'
+                              : moduleCardFreshnessReasonLabel(card.lifecycle.reason)}
+                          </p>
+                        </article>
+                      </div>
+                    </section>
+                    <p class="module-card-safety-note" role="note">
+                      Confidence, Coverage, Claim-Typ und Aktualität werden nicht miteinander
+                      verrechnet. Ein als „Fact“ klassifizierter, aber „Stale“ oder „NeedsReview“
+                      markierter Wert wird nicht als aktuelles Faktum verwendet.
+                    </p>
+                    <dl class="module-card-envelope">
+                      <div>
+                        <dt>Ausgewähltes Modul</dt>
+                        <dd>{moduleCardSelection?.name ?? card.moduleId.slice(0, 12)}</dd>
+                      </div>
+                      <div>
+                        <dt>Schema und Mapper</dt>
+                        <dd>V{card.schemaVersion} · Mapper V{card.mapperProfileVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Aktueller Indexlauf</dt>
+                        <dd><code>{card.currentIndexRunId}</code></dd>
+                      </div>
+                      <div>
+                        <dt>Verifiziert in</dt>
+                        <dd><code>{card.sourceIndexRunId}</code></dd>
+                      </div>
+                    </dl>
+                    <div class="module-card-fields">
+                      {#each card.fields as field (field.kind)}
+                        <section
+                          class="module-card-field"
+                          aria-labelledby={`module-card-${field.kind}`}
+                        >
+                          <div class="module-card-field-heading">
+                            <h5 id={`module-card-${field.kind}`}>
+                              {moduleCardFieldLabel(field.kind)}
+                            </h5>
+                            <span>{field.evidenceIds.length} Feld-Evidence</span>
+                          </div>
+                          <ol>
+                            {#each field.values as item (item.claim.claimId)}
+                              <li
+                                class:module-card-value-current={item.claim.state === 'current'}
+                                class:module-card-value-stale={item.claim.state === 'stale'}
+                                class:module-card-value-review={item.claim.state === 'needsReview'}
+                              >
+                                <div class="module-card-claim-badges">
+                                  <span
+                                    class={`module-card-claim-kind module-card-claim-${item.claim.kind}`}
+                                  >
+                                    {moduleCardClaimKindLabel(item.claim.kind)}
+                                  </span>
+                                  <span
+                                    class={`module-card-claim-state module-card-claim-${item.claim.state}`}
+                                  >
+                                    {item.claim.state === 'current'
+                                      ? 'Current'
+                                      : item.claim.state === 'stale'
+                                        ? 'Stale'
+                                        : 'NeedsReview'}
+                                  </span>
+                                  <span>{percentageLabel(item.claim.confidenceBasisPoints)}</span>
+                                </div>
+                                <p>{item.value}</p>
+                                <details class="module-card-evidence-identities">
+                                  <summary
+                                    >{item.claim.evidenceIds.length} Claim-Evidence-ID(s)</summary
+                                  >
+                                  {#if item.claim.evidenceIds.length === 0}
+                                    <p>Architecture-Hypothese ohne deterministische Evidence.</p>
+                                  {:else}
+                                    <ul>
+                                      {#each item.claim.evidenceIds as evidenceId (evidenceId)}
+                                        <li>
+                                          <button
+                                            type="button"
+                                            aria-label={`Evidence ${evidenceId} für „${item.value}“ untersuchen`}
+                                            aria-pressed={selectedModuleCardEvidenceId ===
+                                              evidenceId}
+                                            onclick={() => inspectModuleCardEvidence(evidenceId)}
+                                          >
+                                            <code>{evidenceId}</code>
+                                            <span>Untersuchen</span>
+                                          </button>
+                                        </li>
+                                      {/each}
+                                    </ul>
+                                  {/if}
+                                </details>
+                              </li>
+                            {/each}
+                          </ol>
+                        </section>
+                      {/each}
+                    </div>
+                    <aside
+                      class="dependency-evidence module-card-evidence-inspector"
+                      aria-labelledby="module-card-evidence-heading"
+                    >
+                      <div>
+                        <div>
+                          <h5 id="module-card-evidence-heading">Evidence Inspector</h5>
+                          <p>Card-gebundene, typisierte Provenienz ohne Quelltextzugriff.</p>
+                        </div>
+                        {#if moduleCardEvidenceView.kind !== 'idle'}
+                          <button type="button" onclick={resetModuleCardEvidence}>Schließen</button>
+                        {/if}
+                      </div>
+                      {#if moduleCardEvidenceView.kind === 'idle'}
+                        <p class="project-status">
+                          Öffne eine Claim-Evidence-ID, um ihre exakte Revision oder Graph-Beziehung
+                          zu prüfen.
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'loading'}
+                        <p class="project-status" role="status" aria-live="polite">
+                          Evidence {moduleCardEvidenceView.evidenceId.slice(0, 12)} wird gegen die sichtbare
+                          Card geprüft …
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'selectionChanged'}
+                        <div class="recent-projects-error" role="alert">
+                          <p>
+                            Publikation oder neueste Card haben sich geändert. Die alte Auswahl wird
+                            nicht gegen einen anderen Stand aufgelöst.
+                          </p>
+                          <button type="button" onclick={reloadModuleCardDetail}
+                            >Module Card neu laden</button
+                          >
+                        </div>
+                      {:else if moduleCardEvidenceView.kind === 'evidenceUnavailable'}
+                        <p class="project-status" role="status">
+                          Diese ID gehört nicht zur aktuell ausgewählten neuesten Card und wird
+                          deshalb nicht geöffnet.
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'cardUnavailable'}
+                        <p class="project-status" role="status">
+                          Die ausgewählte Card ist nicht mehr die neueste dauerhaft verifizierte
+                          Karte.
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'moduleUnavailable'}
+                        <p class="project-status" role="status">
+                          Das ausgewählte primäre Modul ist in der aktuellen Publikation nicht mehr
+                          verfügbar.
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'projectionUnavailable'}
+                        <p class="project-status">
+                          Für diese Publikation existiert keine Modulprojektion.
+                        </p>
+                      {:else if moduleCardEvidenceView.kind === 'noPublishedIndex'}
+                        <p class="project-status">Noch kein veröffentlichter Index.</p>
+                      {:else if moduleCardEvidenceView.kind === 'noProject'}
+                        <p class="project-status">Kein Projekt ist aktiv.</p>
+                      {:else if moduleCardEvidenceView.kind === 'available'}
+                        {@const evidence = moduleCardEvidenceView.result.detail}
+                        <div
+                          class:module-card-evidence-current={evidence.freshness === 'current'}
+                          class:module-card-evidence-stale={evidence.freshness === 'stale'}
+                          class="module-card-evidence-freshness"
+                          role={evidence.freshness === 'stale' ? 'alert' : 'note'}
+                        >
+                          <strong>
+                            {evidence.freshness === 'current'
+                              ? 'Evidence Current'
+                              : 'Evidence Stale — nur historische Provenienz'}
+                          </strong>
+                          <span>
+                            {evidence.freshness === 'current'
+                              ? 'Die exakte Evidence löst im aktuellen veröffentlichten Index auf.'
+                              : 'Die exakte Evidence ist im aktuellen veröffentlichten Index nicht mehr vorhanden.'}
+                          </span>
+                        </div>
+                        <p class="module-card-evidence-card-state" role="note">
+                          <strong>Card-Zustand:</strong>
+                          {evidence.cardLifecycle.status === 'current'
+                            ? ' Current'
+                            : evidence.cardLifecycle.status === 'stale'
+                              ? ' Stale — keine aktuelle Faktenquelle'
+                              : ' NeedsReview — keine aktuelle Faktenquelle'}
+                          {#if evidence.cardLifecycle.status !== 'current'}
+                            · {moduleCardFreshnessReasonLabel(evidence.cardLifecycle.reason)}
+                          {/if}
+                        </p>
+                        <dl>
+                          <div>
+                            <dt>Evidence-ID</dt>
+                            <dd><code>{evidence.evidenceId}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Aktueller Indexlauf</dt>
+                            <dd><code>{evidence.currentIndexRunId}</code></dd>
+                          </div>
+                          <div>
+                            <dt>Evidence-Quelle</dt>
+                            <dd><code>{evidence.sourceIndexRunId}</code></dd>
+                          </div>
+                        </dl>
+                        {#if evidence.payload.kind === 'file'}
+                          <section class="module-card-evidence-payload" aria-label="Datei-Evidence">
+                            <h6>Dateirevision</h6>
+                            <dl>
+                              <div>
+                                <dt>Pfad</dt>
+                                <dd>
+                                  <code
+                                    >{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code
+                                  >
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Content Hash</dt>
+                                <dd><code>{evidence.payload.revision.contentHash}</code></dd>
+                              </div>
+                            </dl>
+                          </section>
+                        {:else if evidence.payload.kind === 'symbol'}
+                          <section
+                            class="module-card-evidence-payload"
+                            aria-label="Symbol-Evidence"
+                          >
+                            <h6>Strukturelles Symbol</h6>
+                            <dl>
+                              <div>
+                                <dt>Symbol-ID</dt>
+                                <dd><code>{evidence.payload.symbolId}</code></dd>
+                              </div>
+                              <div>
+                                <dt>Revision</dt>
+                                <dd>
+                                  <code
+                                    >{pathDisplayFromHex(evidence.payload.revision.pathHex)}</code
+                                  >
+                                  · {evidence.payload.revision.contentHash}
+                                </dd>
+                              </div>
+                            </dl>
+                          </section>
+                        {:else}
+                          {@const edge = evidence.payload.edge}
+                          <section class="module-card-evidence-payload" aria-label="Graph-Evidence">
+                            <h6>Deterministische Graph-Beziehung</h6>
+                            <dl>
+                              <div>
+                                <dt>Relation</dt>
+                                <dd>
+                                  {moduleCardEvidenceRelationLabel(evidence.payload.relation)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Quelle</dt>
+                                <dd>
+                                  {#if edge.source.kind === 'file'}
+                                    Datei <code>{pathDisplayFromHex(edge.source.pathHex)}</code>
+                                  {:else}
+                                    Symbol <code>{edge.source.symbolId}</code>
+                                  {/if}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Ziel</dt>
+                                <dd>
+                                  {#if edge.target.kind === 'file'}
+                                    Datei <code>{pathDisplayFromHex(edge.target.pathHex)}</code>
+                                  {:else}
+                                    Symbol <code>{edge.target.symbolId}</code>
+                                  {/if}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Quellrevision</dt>
+                                <dd>
+                                  <code>{pathDisplayFromHex(edge.pathHex)}</code> · {edge.contentHash}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Bereich</dt>
+                                <dd>
+                                  Bytes {edge.range.startByte}–{edge.range.endByte} · Zeile {edge
+                                    .range.start.row + 1}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Beobachtung</dt>
+                                <dd>
+                                  {edge.provider} · {edge.resolution} · {percentageLabel(
+                                    edge.confidenceBasisPoints,
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                          </section>
+                        {/if}
+                      {:else if moduleCardEvidenceView.kind === 'error'}
+                        <div class="recent-projects-error" role="alert">
+                          <p>Die Evidence konnte nicht sicher gelesen werden.</p>
+                        </div>
+                      {/if}
+                    </aside>
+                  {:else if moduleCardDetailView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Die Module Card konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={reloadModuleCardDetail}>Erneut laden</button>
+                    </div>
+                  {/if}
+                </div>
+                <div
+                  class="repository-tree-panel module-runtime-panel"
+                  aria-labelledby="module-runtime-heading"
+                >
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="module-runtime-heading">Entry Points &amp; Tests</h4>
+                      <p>
+                        Aktuelle strukturelle Wurzeln und bewusst geladene, begrenzte
+                        Evidence-Pfade.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={moduleRuntimeSelection === null ||
+                        moduleRuntimeMapView.kind === 'loading'}
+                      onclick={reloadModuleRuntime}
+                    >
+                      Aktualisieren
+                    </button>
+                  </div>
+                  {#if moduleRuntimeMapView.kind === 'idle' || moduleRuntimeMapView.kind === 'noProject'}
+                    <p class="project-status">
+                      Wähle im Modulbaum „Entry Points &amp; Tests“, um die aktuellen Root-Symbole
+                      zu laden.
+                    </p>
+                  {:else if moduleRuntimeMapView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Entry Points und Tests für {moduleRuntimeSelection?.name ?? 'das Modul'} werden
+                      gelesen …
+                    </p>
+                  {:else if moduleRuntimeMapView.kind === 'noPublishedIndex'}
+                    <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
+                  {:else if moduleRuntimeMapView.kind === 'projectionUnavailable'}
+                    <p class="project-status">
+                      Der historische Index enthält noch keine deterministische V8-Modulprojektion.
+                      Ein Rebuild erzeugt sie mit dem aktuellen Schema.
+                    </p>
+                  {:else if moduleRuntimeMapView.kind === 'moduleUnavailable'}
+                    <p class="project-status" role="alert">
+                      Das gewählte Primärmodul ist im aktuellen Index nicht mehr vorhanden.
+                    </p>
+                  {:else if moduleRuntimeMapView.kind === 'stale'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>
+                        Die sichtbare Root-Liste ist nicht mehr verifizierbar. Alte Roots und
+                        Evidence bleiben ausgeblendet, bis der aktuelle Index erneut gelesen wurde.
+                      </p>
+                      <button type="button" onclick={reloadModuleRuntime}>Roots neu laden</button>
+                    </div>
+                  {:else if moduleRuntimeMapView.kind === 'available'}
+                    {@const runtimeMap = moduleRuntimeMapView.result.map}
+                    <p class="index-snapshot">
+                      Indexlauf <code>{runtimeMap.indexRunId}</code>
+                    </p>
+                    <div class="runtime-observation-note" role="note">
+                      <strong>Strukturelle Beobachtung.</strong> Entry Points, Tests und Beziehungen stammen
+                      aus deterministischen Adaptern. Sie belegen Quellstruktur, nicht eine tatsächlich
+                      ausgeführte Laufzeitspur.
+                    </div>
+                    <div class="runtime-root-columns">
+                      <section aria-labelledby="runtime-entrypoints-heading">
+                        <div class="runtime-root-heading">
+                          <h5 id="runtime-entrypoints-heading">Entry Points</h5>
+                          <span>{countLabel(runtimeMap.entrypoints.storedCount)} gespeichert</span>
+                        </div>
+                        {#if runtimeMap.entrypoints.roots.length === 0}
+                          <p class="project-status">Keine strukturellen Entry Points beobachtet.</p>
+                        {:else}
+                          <ol class="runtime-root-list">
+                            {#each runtimeMap.entrypoints.roots as root (root.symbol.symbolId)}
+                              <li>
+                                <button
+                                  class="runtime-root-flow"
+                                  type="button"
+                                  aria-label={`Aufrufpfad für Entry Point ${root.symbol.name} anzeigen`}
+                                  onclick={() => loadModuleRuntimeFlow(root)}
+                                >
+                                  <strong>{root.symbol.name}</strong>
+                                  <span
+                                    >Rang {root.rank} · {pathDisplayFromHex(
+                                      root.symbol.pathHex,
+                                    )}</span
+                                  >
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() =>
+                                    (selectedModuleRuntimeEvidence = {
+                                      kind: 'symbol',
+                                      symbol: root.symbol,
+                                    })}
+                                >
+                                  Symbol-Evidence
+                                </button>
+                              </li>
+                            {/each}
+                          </ol>
+                        {/if}
+                        {#if runtimeMap.entrypoints.roots.length < Number(runtimeMap.entrypoints.storedCount)}
+                          <button
+                            class="repository-tree-more"
+                            type="button"
+                            onclick={() => loadMoreModuleRuntimeRoots('entrypoint')}
+                          >
+                            Weitere Entry Points laden
+                          </button>
+                        {/if}
+                        {#if runtimeMap.entrypoints.projectionTruncated}
+                          <p class="runtime-truncation-note">
+                            Die Modulbildung hat weitere, niedriger gerankte Entry Points hinter
+                            ihrer festen 256-Root-Grenze ausgelassen.
+                          </p>
+                        {/if}
+                      </section>
+                      <section aria-labelledby="runtime-tests-heading">
+                        <div class="runtime-root-heading">
+                          <h5 id="runtime-tests-heading">Tests</h5>
+                          <span>{countLabel(runtimeMap.tests.storedCount)} gespeichert</span>
+                        </div>
+                        {#if runtimeMap.tests.roots.length === 0}
+                          <p class="project-status">
+                            Keine strukturellen Testdefinitionen beobachtet.
+                          </p>
+                        {:else}
+                          <ol class="runtime-root-list">
+                            {#each runtimeMap.tests.roots as root (root.symbol.symbolId)}
+                              <li>
+                                <button
+                                  class="runtime-root-flow"
+                                  type="button"
+                                  aria-label={`Testziele für Test ${root.symbol.name} anzeigen`}
+                                  onclick={() => loadModuleRuntimeFlow(root)}
+                                >
+                                  <strong>{root.symbol.name}</strong>
+                                  <span
+                                    >Rang {root.rank} · {pathDisplayFromHex(
+                                      root.symbol.pathHex,
+                                    )}</span
+                                  >
+                                </button>
+                                <button
+                                  type="button"
+                                  onclick={() =>
+                                    (selectedModuleRuntimeEvidence = {
+                                      kind: 'symbol',
+                                      symbol: root.symbol,
+                                    })}
+                                >
+                                  Symbol-Evidence
+                                </button>
+                              </li>
+                            {/each}
+                          </ol>
+                        {/if}
+                        {#if runtimeMap.tests.roots.length < Number(runtimeMap.tests.storedCount)}
+                          <button
+                            class="repository-tree-more"
+                            type="button"
+                            onclick={() => loadMoreModuleRuntimeRoots('test')}
+                          >
+                            Weitere Tests laden
+                          </button>
+                        {/if}
+                        {#if runtimeMap.tests.projectionTruncated}
+                          <p class="runtime-truncation-note">
+                            Die Modulbildung hat weitere, niedriger gerankte Tests hinter ihrer
+                            festen 256-Root-Grenze ausgelassen.
+                          </p>
+                        {/if}
+                      </section>
+                    </div>
+
+                    <section class="runtime-flow" aria-labelledby="runtime-flow-heading">
+                      <h5 id="runtime-flow-heading">Expliziter Evidence-Pfad</h5>
+                      {#if moduleRuntimeFlowView.kind === 'idle'}
+                        <p class="project-status">
+                          Wähle einen Root: Entry Points folgen höchstens zwei „Calls“-Kanten, Tests
+                          genau einer direkten „Tests“-Kante.
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'loading'}
+                        <p class="project-status" role="status" aria-live="polite">
+                          Evidence-Pfad für {moduleRuntimeFlowView.rootName} wird gelesen …
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'publicationChanged'}
+                        <div class="recent-projects-error" role="alert">
+                          <p>
+                            Seit der Root-Auswahl wurde ein anderer Index veröffentlicht. Die alte
+                            Evidence wird nicht mit dem neuen Snapshot gemischt.
+                          </p>
+                          <button type="button" onclick={reloadModuleRuntime}
+                            >Roots neu laden</button
+                          >
+                        </div>
+                      {:else if moduleRuntimeFlowView.kind === 'rootUnavailable'}
+                        <p class="project-status" role="alert">
+                          Das Symbol ist kein aktueller Root dieser Rolle mehr. Lade die Root-Liste
+                          neu.
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'moduleUnavailable'}
+                        <p class="project-status" role="alert">
+                          Das Primärmodul ist nicht mehr aktuell.
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'projectionUnavailable'}
+                        <p class="project-status">
+                          Die erforderliche Graphprojektion ist nicht verfügbar.
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'noPublishedIndex' || moduleRuntimeFlowView.kind === 'noProject'}
+                        <p class="project-status">
+                          Kein aktueller veröffentlichter Index verfügbar.
+                        </p>
+                      {:else if moduleRuntimeFlowView.kind === 'available'}
+                        {@const flow = moduleRuntimeFlowView.result.flow}
+                        {#if flow.hits.length === 0}
+                          <p class="ready-label">
+                            Keine Ziele für das feste Relationspreset beobachtet.
+                          </p>
+                        {:else}
+                          <ol class="runtime-flow-list">
+                            {#each flow.hits as hit, hitIndex (hitIndex)}
+                              <li>
+                                <div class="runtime-flow-target">
+                                  <strong>{moduleRuntimeTargetLabel(hit.target)}</strong>
+                                  <button
+                                    type="button"
+                                    onclick={() => selectModuleRuntimeTargetEvidence(hit.target)}
+                                  >
+                                    Ziel-Evidence
+                                  </button>
+                                </div>
+                                <ol
+                                  aria-label={`Evidence-Pfad zu ${moduleRuntimeTargetLabel(hit.target)}`}
+                                >
+                                  {#each hit.path as step, stepIndex (step.evidence.evidenceId)}
+                                    <li>
+                                      <span>
+                                        Schritt {stepIndex + 1}: {step.relation === 'calls'
+                                          ? 'beobachteter Aufruf'
+                                          : 'beobachtete Testbeziehung'}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onclick={() =>
+                                          (selectedModuleRuntimeEvidence = {
+                                            kind: 'edge',
+                                            evidence: step.evidence,
+                                          })}
+                                      >
+                                        Kanten-Evidence
+                                      </button>
+                                    </li>
+                                  {/each}
+                                </ol>
+                              </li>
+                            {/each}
+                          </ol>
+                        {/if}
+                        {#if flow.truncated}
+                          <p class="runtime-truncation-note">
+                            Weitere Ziele liegen hinter der festen Ergebnis- oder
+                            Kanteninspektionsgrenze.
+                          </p>
+                        {/if}
+                      {:else if moduleRuntimeFlowView.kind === 'error'}
+                        <p class="project-error" role="alert">
+                          Der Evidence-Pfad konnte nicht sicher gelesen werden.
+                        </p>
+                      {/if}
+                    </section>
+
+                    {#if selectedModuleRuntimeEvidence !== null}
+                      <aside class="dependency-evidence" aria-labelledby="runtime-evidence-heading">
+                        <div>
+                          <h5 id="runtime-evidence-heading">
+                            {selectedModuleRuntimeEvidence.kind === 'edge'
+                              ? 'Graph-Kanten-Evidence'
+                              : selectedModuleRuntimeEvidence.kind === 'symbol'
+                                ? 'Symbol-Evidence'
+                                : 'Datei-Evidence'}
+                          </h5>
+                          <button
+                            type="button"
+                            onclick={() => (selectedModuleRuntimeEvidence = null)}
+                          >
+                            Schließen
+                          </button>
+                        </div>
+                        {#if selectedModuleRuntimeEvidence.kind === 'symbol'}
+                          {@const selectedSymbol = selectedModuleRuntimeEvidence.symbol}
+                          <dl>
+                            <div>
+                              <dt>Name</dt>
+                              <dd>{selectedSymbol.name}</dd>
+                            </div>
+                            <div>
+                              <dt>Evidence-ID</dt>
+                              <dd><code>{selectedSymbol.evidenceId}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Aktuelle Revision</dt>
+                              <dd>
+                                <code>{pathDisplayFromHex(selectedSymbol.pathHex)}</code> ·
+                                {selectedSymbol.contentHash.slice(0, 12)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Auswahlbereich</dt>
+                              <dd>
+                                Bytes {selectedSymbol.selectionRange.startByte}–{selectedSymbol
+                                  .selectionRange.endByte}
+                                · Zeile {selectedSymbol.selectionRange.start.row + 1}
+                              </dd>
+                            </div>
+                          </dl>
+                        {:else if selectedModuleRuntimeEvidence.kind === 'edge'}
+                          {@const selectedEdge = selectedModuleRuntimeEvidence.evidence}
+                          <dl>
+                            <div>
+                              <dt>Evidence-ID</dt>
+                              <dd><code>{selectedEdge.evidenceId}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Aktuelle Revision</dt>
+                              <dd>
+                                <code>{pathDisplayFromHex(selectedEdge.pathHex)}</code> ·
+                                {selectedEdge.contentHash.slice(0, 12)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Bereich</dt>
+                              <dd>
+                                Bytes {selectedEdge.range.startByte}–{selectedEdge.range.endByte} · Zeile
+                                {selectedEdge.range.start.row + 1}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Confidence</dt>
+                              <dd>{percentageLabel(selectedEdge.confidenceBasisPoints)}</dd>
+                            </div>
+                          </dl>
+                        {:else}
+                          <dl>
+                            <div>
+                              <dt>Evidence-ID</dt>
+                              <dd><code>{selectedModuleRuntimeEvidence.evidenceId}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Aktuelle Revision</dt>
+                              <dd>
+                                <code
+                                  >{pathDisplayFromHex(selectedModuleRuntimeEvidence.pathHex)}</code
+                                >
+                                ·
+                                {selectedModuleRuntimeEvidence.contentHash.slice(0, 12)}
+                              </dd>
+                            </div>
+                          </dl>
+                        {/if}
+                      </aside>
+                    {/if}
+                  {:else if moduleRuntimeMapView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Entry Points und Tests konnten nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={reloadModuleRuntime}>Erneut laden</button>
+                    </div>
+                  {/if}
+                </div>
+                <div
+                  class="repository-tree-panel module-dependency-panel"
+                  aria-labelledby="module-dependency-heading"
+                >
+                  <div class="repository-tree-heading">
+                    <div>
+                      <h4 id="module-dependency-heading">Modulabhängigkeiten</h4>
+                      <p>
+                        Direkte, belegte Beziehungen eines Primärmoduls; große Nachbarschaften
+                        bleiben sichtbar begrenzt.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={moduleDependencySelection === null ||
+                        moduleDependencyGraphView.kind === 'loading'}
+                      onclick={reloadModuleDependencies}
+                    >
+                      Aktualisieren
+                    </button>
+                  </div>
+                  {#if moduleDependencyGraphView.kind === 'idle'}
+                    <p class="project-status">
+                      Wähle im Modulbaum „Abhängigkeiten anzeigen“, um einen direkten Ausschnitt zu
+                      laden.
+                    </p>
+                  {:else if moduleDependencyGraphView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Abhängigkeiten für {moduleDependencySelection?.name ?? 'das Modul'} werden gelesen
+                      …
+                    </p>
+                  {:else if moduleDependencyGraphView.kind === 'noPublishedIndex'}
+                    <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
+                  {:else if moduleDependencyGraphView.kind === 'projectionUnavailable'}
+                    <p class="project-status">
+                      Der historische Index enthält noch keine deterministische Modulprojektion. Ein
+                      Rebuild erzeugt sie mit dem aktuellen Schema.
+                    </p>
+                  {:else if moduleDependencyGraphView.kind === 'centerUnavailable'}
+                    <p class="project-status" role="alert">
+                      Das gewählte Primärmodul ist im aktuellen veröffentlichten Index nicht mehr
+                      vorhanden.
+                    </p>
+                  {:else if moduleDependencyGraphView.kind === 'available'}
+                    {@const graph = moduleDependencyGraphView.result.graph}
+                    {#if ModuleDependencyGraph !== null}
+                      <ModuleDependencyGraph
+                        {graph}
+                        selectedEvidence={selectedDependencyEvidence}
+                        onSelectEvidence={(evidence) => (selectedDependencyEvidence = evidence)}
+                        onClearEvidence={() => (selectedDependencyEvidence = null)}
+                      />
+                    {:else if moduleDependencyGraphChunkState === 'error'}
+                      <div class="recent-projects-error" role="alert">
+                        <p>Die lokale Graphdarstellung konnte nicht geladen werden.</p>
+                        <button type="button" onclick={loadModuleDependencyGraphChunk}
+                          >Erneut laden</button
+                        >
+                      </div>
+                    {:else}
+                      <p class="project-status" role="status">Graphdarstellung wird geladen …</p>
+                    {/if}
+                  {:else if moduleDependencyGraphView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Der Modulabhängigkeitsgraph konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={reloadModuleDependencies}>Erneut laden</button>
+                    </div>
+                  {/if}
+                </div>
+                <div
+                  class="index-overview module-card-freshness"
+                  aria-labelledby="module-card-freshness-heading"
+                >
+                  <div class="module-card-freshness-heading">
+                    <div>
+                      <h4 id="module-card-freshness-heading">Module-Card-Aktualität</h4>
+                      <p>Autoritative Lebenszyklen der jeweils neuesten Karte pro Modul.</p>
+                    </div>
+                    <button type="button" onclick={() => void loadModuleCardFreshness()}
+                      >Aktualisieren</button
+                    >
+                  </div>
+                  {#if moduleCardFreshnessView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Module-Card-Aktualität wird gelesen …
+                    </p>
+                  {:else if moduleCardFreshnessView.kind === 'noPublishedIndex'}
+                    <p class="project-status">
+                      Noch kein veröffentlichter Index; daher existiert noch keine aktuelle
+                      Lebenszyklusprojektion.
+                    </p>
+                  {:else if moduleCardFreshnessView.kind === 'available'}
+                    <p class="index-snapshot">
+                      Indexlauf <code>{moduleCardFreshnessView.result.freshness.indexRunId}</code>
+                    </p>
+                    <dl class="index-metrics module-card-freshness-metrics">
+                      <div>
+                        <dt>Current</dt>
+                        <dd>
+                          {countLabel(
+                            moduleCardFreshnessView.result.freshness.counts.publishedCount,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Stale</dt>
+                        <dd>
+                          {countLabel(moduleCardFreshnessView.result.freshness.counts.staleCount)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>NeedsReview</dt>
+                        <dd>
+                          {countLabel(
+                            moduleCardFreshnessView.result.freshness.counts.needsReviewCount,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Gesamt</dt>
+                        <dd>
+                          {countLabel(moduleCardFreshnessView.result.freshness.counts.totalCount)}
+                        </dd>
+                      </div>
+                    </dl>
+                    {#if moduleCardFreshnessView.result.freshness.reasons.length === 0}
+                      <p class="ready-label">Alle bekannten Module Cards sind aktuell.</p>
+                    {:else}
+                      <ul class="module-card-freshness-reasons">
+                        {#each moduleCardFreshnessView.result.freshness.reasons as reason (reason.status + reason.reason)}
+                          <li>
+                            <strong>{reason.status === 'stale' ? 'Stale' : 'NeedsReview'}:</strong>
+                            {moduleCardFreshnessReasonLabel(reason.reason)} · {countLabel(
+                              reason.count,
+                            )}
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  {:else if moduleCardFreshnessView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Die Module-Card-Aktualität konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={() => void loadModuleCardFreshness()}
+                        >Erneut laden</button
+                      >
+                    </div>
+                  {/if}
+                </div>
+                <div class="deep-map-panel" aria-labelledby="deep-map-heading">
+                  <div class="deep-map-heading">
+                    <div>
+                      <h4 id="deep-map-heading">Deep Map</h4>
+                      <p>
+                        Startet niemals automatisch. Modell und harte Budgets werden vor jeder neuen
+                        Exploration sichtbar festgelegt.
+                      </p>
+                    </div>
+                    <button type="button" onclick={() => void loadDeepMap()}
+                      >Status aktualisieren</button
+                    >
+                  </div>
+                  {#if deepMapView.kind === 'loading'}
+                    <p class="project-status" role="status" aria-live="polite">
+                      Deep-Map-Status wird geladen …
+                    </p>
+                  {:else if deepMapView.kind === 'unavailable'}
+                    <div class="deep-map-unavailable" role="status">
+                      <strong>Keine Modellarbeit aktiv</strong>
+                      <p>
+                        Es ist noch kein live verifiziertes lokales Mapping-Modell konfiguriert.
+                        Fast Index und veröffentlichte Daten bleiben ohne Modell vollständig
+                        nutzbar.
+                      </p>
+                      <button type="button" disabled>Deep Map bewusst starten</button>
+                    </div>
+                  {:else if deepMapView.kind === 'available'}
+                    <p class="deep-map-state" role="status" aria-live="polite">
+                      {deepMapStateLabel(deepMapView.result.activity.state)}
+                    </p>
+                    <dl class="deep-map-model">
+                      <div>
+                        <dt>Mapping-Modell</dt>
+                        <dd>
+                          {deepMapView.result.configuration.model.providerId} /
+                          {deepMapView.result.configuration.model.modelId}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Kontextlimit</dt>
+                        <dd>
+                          {countLabel(String(deepMapView.result.configuration.model.contextTokens))} Tokens
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Outputlimit je Antwort</dt>
+                        <dd>
+                          {countLabel(String(deepMapView.result.configuration.model.outputTokens))} Tokens
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Verifiziertes Profil</dt>
+                        <dd><code>{deepMapView.result.configuration.model.profileId}</code></dd>
+                      </div>
+                    </dl>
+                    <fieldset
+                      class="deep-map-budget"
+                      disabled={deepMapActionView.kind === 'submitting' ||
+                        !deepMapCanStart(deepMapView.result.activity.state)}
+                    >
+                      <legend>Harte Budgets vor Start</legend>
+                      <label>
+                        Tokenbudget
+                        <input
+                          type="number"
+                          min={deepMapView.result.configuration.minimumBudget.tokenLimit}
+                          max={deepMapView.result.configuration.maximumBudget.tokenLimit}
+                          bind:value={deepMapBudget.tokenLimit}
+                        />
+                      </label>
+                      <label>
+                        Zeitbudget in Millisekunden
+                        <input
+                          type="number"
+                          min={deepMapView.result.configuration.minimumBudget.timeLimitMillis}
+                          max={deepMapView.result.configuration.maximumBudget.timeLimitMillis}
+                          bind:value={deepMapBudget.timeLimitMillis}
+                        />
+                      </label>
+                      <label>
+                        Read-only-Werkzeugaufrufe
+                        <input
+                          type="number"
+                          min={deepMapView.result.configuration.minimumBudget.toolCallLimit}
+                          max={deepMapView.result.configuration.maximumBudget.toolCallLimit}
+                          bind:value={deepMapBudget.toolCallLimit}
+                        />
+                      </label>
+                    </fieldset>
+                    {#if deepMapView.result.activity.budget !== null}
+                      <p class="deep-map-run-budget">
+                        Laufbudget: {countLabel(
+                          String(deepMapView.result.activity.budget.tokenLimit),
+                        )}
+                        Tokens · {countLabel(
+                          String(deepMapView.result.activity.budget.timeLimitMillis),
+                        )} ms ·
+                        {countLabel(String(deepMapView.result.activity.budget.toolCallLimit))} Read-Aufrufe
+                      </p>
+                    {/if}
+                    {#if deepMapView.result.activity.progress !== null}
+                      <progress
+                        aria-label="Deep-Map-Fortschritt"
+                        max={deepMapView.result.activity.progress.total}
+                        value={deepMapView.result.activity.progress.completed}
+                      ></progress>
+                    {/if}
+                    {#if deepMapView.result.activity.totalSteps !== '0'}
+                      <p>
+                        Bestätigte Schritte:
+                        {countLabel(deepMapView.result.activity.confirmedSteps)} von
+                        {countLabel(deepMapView.result.activity.totalSteps)}
+                      </p>
+                    {/if}
+                    <div class="project-actions deep-map-actions">
+                      <button
+                        class="primary-action"
+                        type="button"
+                        disabled={deepMapActionView.kind === 'submitting' ||
+                          !deepMapCanStart(deepMapView.result.activity.state)}
+                        onclick={requestDeepMapStart}>Deep Map bewusst starten</button
+                      >
+                      <button
+                        type="button"
+                        disabled={deepMapActionView.kind === 'submitting' ||
+                          deepMapView.result.activity.state !== 'running'}
+                        onclick={() => requestDeepMapControl(deepMapPauser)}>Pausieren</button
+                      >
+                      <button
+                        type="button"
+                        disabled={deepMapActionView.kind === 'submitting' ||
+                          deepMapView.result.activity.state !== 'paused'}
+                        onclick={() => requestDeepMapControl(deepMapResumer)}>Fortsetzen</button
+                      >
+                      <button
+                        class="risk-action"
+                        type="button"
+                        disabled={deepMapActionView.kind === 'submitting' ||
+                          !['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(
+                            deepMapView.result.activity.state,
+                          )}
+                        onclick={() => requestDeepMapControl(deepMapCanceller)}>Abbrechen</button
+                      >
+                    </div>
+                    {#if deepMapActionView.kind === 'error'}
+                      <p class="project-error" role="alert">{deepMapActionView.message}</p>
+                    {/if}
+                  {:else if deepMapView.kind === 'error'}
+                    <div class="recent-projects-error" role="alert">
+                      <p>Der Deep-Map-Status konnte nicht sicher gelesen werden.</p>
+                      <button type="button" onclick={() => void loadDeepMap()}>Erneut laden</button>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+              <div class="project-maintenance" aria-labelledby="rebuild-heading">
+                <h4 id="rebuild-heading">Index neu aufbauen</h4>
+                <p>
+                  Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode, Snapshots,
+                  Aufgaben, Entscheidungen und User-Evidence bleiben erhalten.
+                </p>
+                <p class="project-status" role="status" aria-live="polite">
+                  {rebuildStateLabel(projectStatusView.result.rebuildState)}
+                </p>
+                <div class="project-actions">
+                  <button
+                    type="button"
+                    disabled={rebuildView.kind === 'submitting' ||
+                      projectStatusView.result.rebuildState === 'queued' ||
+                      projectStatusView.result.rebuildState === 'running'}
+                    onclick={requestIndexRebuild}
+                  >
+                    {rebuildView.kind === 'submitting'
+                      ? 'Rebuild wird angefordert …'
+                      : 'Regenerierbaren Index neu aufbauen'}
+                  </button>
+                  <button type="button" onclick={refreshProjectDetails}>Status aktualisieren</button
+                  >
+                </div>
+                {#if rebuildView.kind === 'error'}
+                  <p class="project-error" role="alert">{rebuildView.message}</p>
                 {/if}
-                {#if flow.truncated}
-                  <p class="runtime-truncation-note">
-                    Weitere Ziele liegen hinter der festen Ergebnis- oder Kanteninspektionsgrenze.
+              </div>
+              <div class="project-maintenance project-removal" aria-labelledby="removal-heading">
+                <h4 id="removal-heading">Worktree aus A^3 entfernen</h4>
+                <p>
+                  Entfernt nur diesen Eintrag aus der A^3-Projektliste. Repository-Dateien werden
+                  nie gelöscht. Private A^3-Daten bleiben erhalten und stehen beim sicheren
+                  Wiederöffnen erneut bereit.
+                </p>
+                {#if removalView.kind === 'confirming'}
+                  <dialog
+                    class="removal-confirmation modal-dialog"
+                    aria-labelledby="removal-confirmation-heading"
+                    aria-describedby="removal-confirmation-copy"
+                    use:presentModal
+                    oncancel={(event) => {
+                      event.preventDefault();
+                      cancelRemoval();
+                    }}
+                  >
+                    <div class="modal-heading">
+                      <div>
+                        <p class="section-kicker">Projektliste</p>
+                        <h3 id="removal-confirmation-heading">Worktree aus A^3 entfernen?</h3>
+                      </div>
+                      <button type="button" aria-label="Dialog schließen" onclick={cancelRemoval}
+                        >×</button
+                      >
+                    </div>
+                    <p id="removal-confirmation-copy">
+                      Nur der Eintrag wird entfernt. Repository und private A^3-Daten bleiben
+                      erhalten. Der lokale Worktree bleibt vollständig bestehen.
+                    </p>
+                    <div class="modal-actions">
+                      <button type="button" onclick={cancelRemoval}>Abbrechen</button>
+                      <button class="risk-action" type="button" onclick={confirmProjectRemoval}
+                        >Entfernen bestätigen</button
+                      >
+                    </div>
+                  </dialog>
+                {:else}
+                  <div class="project-actions">
+                    <button
+                      class="risk-action"
+                      type="button"
+                      disabled={removalView.kind === 'submitting'}
+                      onclick={requestRemovalConfirmation}
+                    >
+                      {removalView.kind === 'submitting'
+                        ? 'Worktree wird entfernt …'
+                        : 'Nur aus A^3 entfernen'}
+                    </button>
+                  </div>
+                {/if}
+                {#if removalView.kind === 'error'}
+                  <p class="project-error" role="alert">
+                    {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
                   </p>
                 {/if}
-              {:else if moduleRuntimeFlowView.kind === 'error'}
-                <p class="project-error" role="alert">
-                  Der Evidence-Pfad konnte nicht sicher gelesen werden.
-                </p>
-              {/if}
-            </section>
+              </div>
+            </div>
+          {:else if projectStatusView.kind === 'error'}
+            <div class="recent-projects-error" role="alert">
+              <p>Der aktive Projektstatus konnte nicht sicher geladen werden.</p>
+              <button type="button" onclick={loadProjectStatus}>Status erneut laden</button>
+            </div>
+          {/if}
 
-            {#if selectedModuleRuntimeEvidence !== null}
-              <aside class="dependency-evidence" aria-labelledby="runtime-evidence-heading">
-                <div>
-                  <h5 id="runtime-evidence-heading">
-                    {selectedModuleRuntimeEvidence.kind === 'edge'
-                      ? 'Graph-Kanten-Evidence'
-                      : selectedModuleRuntimeEvidence.kind === 'symbol'
-                        ? 'Symbol-Evidence'
-                        : 'Datei-Evidence'}
-                  </h5>
-                  <button type="button" onclick={() => (selectedModuleRuntimeEvidence = null)}>
-                    Schließen
-                  </button>
-                </div>
-                {#if selectedModuleRuntimeEvidence.kind === 'symbol'}
-                  {@const selectedSymbol = selectedModuleRuntimeEvidence.symbol}
-                  <dl>
-                    <div>
-                      <dt>Name</dt>
-                      <dd>{selectedSymbol.name}</dd>
-                    </div>
-                    <div>
-                      <dt>Evidence-ID</dt>
-                      <dd><code>{selectedSymbol.evidenceId}</code></dd>
-                    </div>
-                    <div>
-                      <dt>Aktuelle Revision</dt>
-                      <dd>
-                        <code>{pathDisplayFromHex(selectedSymbol.pathHex)}</code> ·
-                        {selectedSymbol.contentHash.slice(0, 12)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Auswahlbereich</dt>
-                      <dd>
-                        Bytes {selectedSymbol.selectionRange.startByte}–{selectedSymbol
-                          .selectionRange.endByte}
-                        · Zeile {selectedSymbol.selectionRange.start.row + 1}
-                      </dd>
-                    </div>
-                  </dl>
-                {:else if selectedModuleRuntimeEvidence.kind === 'edge'}
-                  {@const selectedEdge = selectedModuleRuntimeEvidence.evidence}
-                  <dl>
-                    <div>
-                      <dt>Evidence-ID</dt>
-                      <dd><code>{selectedEdge.evidenceId}</code></dd>
-                    </div>
-                    <div>
-                      <dt>Aktuelle Revision</dt>
-                      <dd>
-                        <code>{pathDisplayFromHex(selectedEdge.pathHex)}</code> ·
-                        {selectedEdge.contentHash.slice(0, 12)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Bereich</dt>
-                      <dd>
-                        Bytes {selectedEdge.range.startByte}–{selectedEdge.range.endByte} · Zeile
-                        {selectedEdge.range.start.row + 1}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Confidence</dt>
-                      <dd>{percentageLabel(selectedEdge.confidenceBasisPoints)}</dd>
-                    </div>
-                  </dl>
-                {:else}
-                  <dl>
-                    <div>
-                      <dt>Evidence-ID</dt>
-                      <dd><code>{selectedModuleRuntimeEvidence.evidenceId}</code></dd>
-                    </div>
-                    <div>
-                      <dt>Aktuelle Revision</dt>
-                      <dd>
-                        <code>{pathDisplayFromHex(selectedModuleRuntimeEvidence.pathHex)}</code> ·
-                        {selectedModuleRuntimeEvidence.contentHash.slice(0, 12)}
-                      </dd>
-                    </div>
-                  </dl>
-                {/if}
-              </aside>
-            {/if}
-          {:else if moduleRuntimeMapView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Entry Points und Tests konnten nicht sicher gelesen werden.</p>
-              <button type="button" onclick={reloadModuleRuntime}>Erneut laden</button>
-            </div>
+          {#if removalView.kind === 'removed'}
+            <p class="ready-label" role="status" aria-live="polite">
+              Worktree aus der A^3-Projektliste entfernt. Repository und private A^3-Daten bleiben
+              erhalten.
+            </p>
           {/if}
-        </div>
-        <div
-          class="repository-tree-panel module-dependency-panel"
-          aria-labelledby="module-dependency-heading"
-        >
-          <div class="repository-tree-heading">
-            <div>
-              <h4 id="module-dependency-heading">Modulabhängigkeiten</h4>
-              <p>
-                Direkte, belegte Beziehungen eines Primärmoduls; große Nachbarschaften bleiben
-                sichtbar begrenzt.
+
+          <div class="recent-projects" aria-labelledby="recent-projects-heading">
+            <h3 id="recent-projects-heading">Zuletzt verwendet</h3>
+            {#if recentProjectsView.kind === 'loading'}
+              <p class="project-status" role="status" aria-live="polite">
+                Projektliste wird geladen …
               </p>
-            </div>
-            <button
-              type="button"
-              disabled={moduleDependencySelection === null ||
-                moduleDependencyGraphView.kind === 'loading'}
-              onclick={reloadModuleDependencies}
-            >
-              Aktualisieren
-            </button>
-          </div>
-          {#if moduleDependencyGraphView.kind === 'idle'}
-            <p class="project-status">
-              Wähle im Modulbaum „Abhängigkeiten anzeigen“, um einen direkten Ausschnitt zu laden.
-            </p>
-          {:else if moduleDependencyGraphView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Abhängigkeiten für {moduleDependencySelection?.name ?? 'das Modul'} werden gelesen …
-            </p>
-          {:else if moduleDependencyGraphView.kind === 'noPublishedIndex'}
-            <p class="project-status">Noch kein vollständiger Snapshot veröffentlicht.</p>
-          {:else if moduleDependencyGraphView.kind === 'projectionUnavailable'}
-            <p class="project-status">
-              Der historische Index enthält noch keine deterministische Modulprojektion. Ein Rebuild
-              erzeugt sie mit dem aktuellen Schema.
-            </p>
-          {:else if moduleDependencyGraphView.kind === 'centerUnavailable'}
-            <p class="project-status" role="alert">
-              Das gewählte Primärmodul ist im aktuellen veröffentlichten Index nicht mehr vorhanden.
-            </p>
-          {:else if moduleDependencyGraphView.kind === 'available'}
-            {@const graph = moduleDependencyGraphView.result.graph}
-            {#if ModuleDependencyGraph !== null}
-              <ModuleDependencyGraph
-                {graph}
-                selectedEvidence={selectedDependencyEvidence}
-                onSelectEvidence={(evidence) => (selectedDependencyEvidence = evidence)}
-                onClearEvidence={() => (selectedDependencyEvidence = null)}
-              />
-            {:else if moduleDependencyGraphChunkState === 'error'}
+            {:else if recentProjectsView.kind === 'error'}
               <div class="recent-projects-error" role="alert">
-                <p>Die lokale Graphdarstellung konnte nicht geladen werden.</p>
-                <button type="button" onclick={loadModuleDependencyGraphChunk}>Erneut laden</button>
+                <p>Die lokale Projektliste konnte nicht geladen werden.</p>
+                <button type="button" onclick={loadRecentProjects}>Erneut laden</button>
               </div>
+            {:else if recentProjectsView.projects.length === 0}
+              <p class="project-status">Noch keine Projekte gespeichert.</p>
             {:else}
-              <p class="project-status" role="status">Graphdarstellung wird geladen …</p>
-            {/if}
-          {:else if moduleDependencyGraphView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Der Modulabhängigkeitsgraph konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={reloadModuleDependencies}>Erneut laden</button>
-            </div>
-          {/if}
-        </div>
-        <div
-          class="index-overview module-card-freshness"
-          aria-labelledby="module-card-freshness-heading"
-        >
-          <div class="module-card-freshness-heading">
-            <div>
-              <h4 id="module-card-freshness-heading">Module-Card-Aktualität</h4>
-              <p>Autoritative Lebenszyklen der jeweils neuesten Karte pro Modul.</p>
-            </div>
-            <button type="button" onclick={() => void loadModuleCardFreshness()}
-              >Aktualisieren</button
-            >
-          </div>
-          {#if moduleCardFreshnessView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Module-Card-Aktualität wird gelesen …
-            </p>
-          {:else if moduleCardFreshnessView.kind === 'noPublishedIndex'}
-            <p class="project-status">
-              Noch kein veröffentlichter Index; daher existiert noch keine aktuelle
-              Lebenszyklusprojektion.
-            </p>
-          {:else if moduleCardFreshnessView.kind === 'available'}
-            <p class="index-snapshot">
-              Indexlauf <code>{moduleCardFreshnessView.result.freshness.indexRunId}</code>
-            </p>
-            <dl class="index-metrics module-card-freshness-metrics">
-              <div>
-                <dt>Current</dt>
-                <dd>
-                  {countLabel(moduleCardFreshnessView.result.freshness.counts.publishedCount)}
-                </dd>
-              </div>
-              <div>
-                <dt>Stale</dt>
-                <dd>{countLabel(moduleCardFreshnessView.result.freshness.counts.staleCount)}</dd>
-              </div>
-              <div>
-                <dt>NeedsReview</dt>
-                <dd>
-                  {countLabel(moduleCardFreshnessView.result.freshness.counts.needsReviewCount)}
-                </dd>
-              </div>
-              <div>
-                <dt>Gesamt</dt>
-                <dd>{countLabel(moduleCardFreshnessView.result.freshness.counts.totalCount)}</dd>
-              </div>
-            </dl>
-            {#if moduleCardFreshnessView.result.freshness.reasons.length === 0}
-              <p class="ready-label">Alle bekannten Module Cards sind aktuell.</p>
-            {:else}
-              <ul class="module-card-freshness-reasons">
-                {#each moduleCardFreshnessView.result.freshness.reasons as reason (reason.status + reason.reason)}
+              <ol class="recent-project-list">
+                {#each recentProjectsView.projects as recent (recent.project.worktreeId)}
                   <li>
-                    <strong>{reason.status === 'stale' ? 'Stale' : 'NeedsReview'}:</strong>
-                    {moduleCardFreshnessReasonLabel(reason.reason)} · {countLabel(reason.count)}
+                    <span>{recent.project.worktreeRootDisplay}</span>
+                    <span>{branchLabel(recent.project.head)}</span>
+                    <code>{recent.project.worktreeId}</code>
                   </li>
                 {/each}
-              </ul>
+              </ol>
             {/if}
-          {:else if moduleCardFreshnessView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Die Module-Card-Aktualität konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={() => void loadModuleCardFreshness()}
-                >Erneut laden</button
-              >
-            </div>
-          {/if}
-        </div>
-        <div class="deep-map-panel" aria-labelledby="deep-map-heading">
-          <div class="deep-map-heading">
-            <div>
-              <h4 id="deep-map-heading">Deep Map</h4>
-              <p>
-                Startet niemals automatisch. Modell und harte Budgets werden vor jeder neuen
-                Exploration sichtbar festgelegt.
-              </p>
-            </div>
-            <button type="button" onclick={() => void loadDeepMap()}>Status aktualisieren</button>
           </div>
-          {#if deepMapView.kind === 'loading'}
-            <p class="project-status" role="status" aria-live="polite">
-              Deep-Map-Status wird geladen …
-            </p>
-          {:else if deepMapView.kind === 'unavailable'}
-            <div class="deep-map-unavailable" role="status">
-              <strong>Keine Modellarbeit aktiv</strong>
-              <p>
-                Es ist noch kein live verifiziertes lokales Mapping-Modell konfiguriert. Fast Index
-                und veröffentlichte Daten bleiben ohne Modell vollständig nutzbar.
+        </section>
+
+        {#if projectStatusView.kind !== 'active'}
+          <section
+            id="map"
+            class="route-placeholder"
+            aria-labelledby="map-placeholder-heading"
+            tabindex="-1"
+          >
+            <p class="section-kicker">Map</p>
+            <h2 id="map-placeholder-heading">Project Map</h2>
+            {#if projectStatusView.kind === 'loading'}
+              <p role="status">Project Map wartet auf den Projektstatus …</p>
+            {:else if projectStatusView.kind === 'error'}
+              <p role="alert">
+                Project Map ist verfügbar, sobald der Projektstatus wieder geladen wurde.
               </p>
-              <button type="button" disabled>Deep Map bewusst starten</button>
-            </div>
-          {:else if deepMapView.kind === 'available'}
-            <p class="deep-map-state" role="status" aria-live="polite">
-              {deepMapStateLabel(deepMapView.result.activity.state)}
-            </p>
-            <dl class="deep-map-model">
-              <div>
-                <dt>Mapping-Modell</dt>
-                <dd>
-                  {deepMapView.result.configuration.model.providerId} /
-                  {deepMapView.result.configuration.model.modelId}
-                </dd>
-              </div>
-              <div>
-                <dt>Kontextlimit</dt>
-                <dd>
-                  {countLabel(String(deepMapView.result.configuration.model.contextTokens))} Tokens
-                </dd>
-              </div>
-              <div>
-                <dt>Outputlimit je Antwort</dt>
-                <dd>
-                  {countLabel(String(deepMapView.result.configuration.model.outputTokens))} Tokens
-                </dd>
-              </div>
-              <div>
-                <dt>Verifiziertes Profil</dt>
-                <dd><code>{deepMapView.result.configuration.model.profileId}</code></dd>
-              </div>
-            </dl>
-            <fieldset
-              class="deep-map-budget"
-              disabled={deepMapActionView.kind === 'submitting' ||
-                !deepMapCanStart(deepMapView.result.activity.state)}
-            >
-              <legend>Harte Budgets vor Start</legend>
-              <label>
-                Tokenbudget
-                <input
-                  type="number"
-                  min={deepMapView.result.configuration.minimumBudget.tokenLimit}
-                  max={deepMapView.result.configuration.maximumBudget.tokenLimit}
-                  bind:value={deepMapBudget.tokenLimit}
-                />
-              </label>
-              <label>
-                Zeitbudget in Millisekunden
-                <input
-                  type="number"
-                  min={deepMapView.result.configuration.minimumBudget.timeLimitMillis}
-                  max={deepMapView.result.configuration.maximumBudget.timeLimitMillis}
-                  bind:value={deepMapBudget.timeLimitMillis}
-                />
-              </label>
-              <label>
-                Read-only-Werkzeugaufrufe
-                <input
-                  type="number"
-                  min={deepMapView.result.configuration.minimumBudget.toolCallLimit}
-                  max={deepMapView.result.configuration.maximumBudget.toolCallLimit}
-                  bind:value={deepMapBudget.toolCallLimit}
-                />
-              </label>
-            </fieldset>
-            {#if deepMapView.result.activity.budget !== null}
-              <p class="deep-map-run-budget">
-                Laufbudget: {countLabel(String(deepMapView.result.activity.budget.tokenLimit))}
-                Tokens · {countLabel(String(deepMapView.result.activity.budget.timeLimitMillis))} ms ·
-                {countLabel(String(deepMapView.result.activity.budget.toolCallLimit))} Read-Aufrufe
-              </p>
+            {:else}
+              <p>Öffne einen lokalen Worktree, um Project Map und Evidence zu verwenden.</p>
             {/if}
-            {#if deepMapView.result.activity.progress !== null}
-              <progress
-                aria-label="Deep-Map-Fortschritt"
-                max={deepMapView.result.activity.progress.total}
-                value={deepMapView.result.activity.progress.completed}
-              ></progress>
-            {/if}
-            {#if deepMapView.result.activity.totalSteps !== '0'}
-              <p>
-                Bestätigte Schritte:
-                {countLabel(deepMapView.result.activity.confirmedSteps)} von
-                {countLabel(deepMapView.result.activity.totalSteps)}
-              </p>
-            {/if}
-            <div class="project-actions deep-map-actions">
-              <button
-                class="primary-action"
-                type="button"
-                disabled={deepMapActionView.kind === 'submitting' ||
-                  !deepMapCanStart(deepMapView.result.activity.state)}
-                onclick={requestDeepMapStart}>Deep Map bewusst starten</button
-              >
-              <button
-                type="button"
-                disabled={deepMapActionView.kind === 'submitting' ||
-                  deepMapView.result.activity.state !== 'running'}
-                onclick={() => requestDeepMapControl(deepMapPauser)}>Pausieren</button
-              >
-              <button
-                type="button"
-                disabled={deepMapActionView.kind === 'submitting' ||
-                  deepMapView.result.activity.state !== 'paused'}
-                onclick={() => requestDeepMapControl(deepMapResumer)}>Fortsetzen</button
-              >
-              <button
-                class="risk-action"
-                type="button"
-                disabled={deepMapActionView.kind === 'submitting' ||
-                  !['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(
-                    deepMapView.result.activity.state,
-                  )}
-                onclick={() => requestDeepMapControl(deepMapCanceller)}>Abbrechen</button
-              >
-            </div>
-            {#if deepMapActionView.kind === 'error'}
-              <p class="project-error" role="alert">{deepMapActionView.message}</p>
-            {/if}
-          {:else if deepMapView.kind === 'error'}
-            <div class="recent-projects-error" role="alert">
-              <p>Der Deep-Map-Status konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={() => void loadDeepMap()}>Erneut laden</button>
-            </div>
-          {/if}
-        </div>
-        <div class="project-maintenance" aria-labelledby="rebuild-heading">
-          <h4 id="rebuild-heading">Index neu aufbauen</h4>
-          <p>
-            Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode, Snapshots,
-            Aufgaben, Entscheidungen und User-Evidence bleiben erhalten.
-          </p>
-          <p class="project-status" role="status" aria-live="polite">
-            {rebuildStateLabel(projectStatusView.result.rebuildState)}
-          </p>
-          <div class="project-actions">
-            <button
-              type="button"
-              disabled={rebuildView.kind === 'submitting' ||
-                projectStatusView.result.rebuildState === 'queued' ||
-                projectStatusView.result.rebuildState === 'running'}
-              onclick={requestIndexRebuild}
-            >
-              {rebuildView.kind === 'submitting'
-                ? 'Rebuild wird angefordert …'
-                : 'Regenerierbaren Index neu aufbauen'}
-            </button>
-            <button type="button" onclick={refreshProjectDetails}>Status aktualisieren</button>
-          </div>
-          {#if rebuildView.kind === 'error'}
-            <p class="project-error" role="alert">{rebuildView.message}</p>
-          {/if}
-        </div>
-        <div class="project-maintenance project-removal" aria-labelledby="removal-heading">
-          <h4 id="removal-heading">Worktree aus A^3 entfernen</h4>
-          <p>
-            Entfernt nur diesen Eintrag aus der A^3-Projektliste. Repository-Dateien werden nie
-            gelöscht. Private A^3-Daten bleiben erhalten und stehen beim sicheren Wiederöffnen
-            erneut bereit.
-          </p>
-          {#if removalView.kind === 'confirming'}
-            <div class="removal-confirmation" role="group" aria-labelledby="removal-confirmation">
-              <p id="removal-confirmation">
-                Wirklich nur aus der Projektliste entfernen? Der lokale Worktree bleibt vollständig
-                bestehen.
-              </p>
-              <div class="project-actions">
-                <button class="risk-action" type="button" onclick={confirmProjectRemoval}
-                  >Entfernen bestätigen</button
-                >
-                <button type="button" onclick={cancelRemoval}>Abbrechen</button>
-              </div>
-            </div>
+          </section>
+        {/if}
+
+        <div id="agent" class="lazy-boundary" bind:this={agentWorkspaceBoundary} tabindex="-1">
+          {#if agentWorkspaceComponent !== null}
+            {@const AgentWorkspace = agentWorkspaceComponent}
+            <AgentWorkspace
+              activeProject={projectStatusView.kind === 'active'}
+              activityLoader={agentActivityLoader}
+              approvalController={agentApprovalController}
+              approvalLoader={agentApprovalLoader}
+              goalCreator={agentGoalCreator}
+              goalLoader={agentGoalLoader}
+              goalReviser={agentGoalReviser}
+              inspectionLoader={agentInspectionLoader}
+              inspectionLogLoader={agentInspectionLogLoader}
+              ledgerLoader={taskLensTaskLoader}
+              onRunStatusChange={updateGlobalRunStatus}
+              recoveryLoader={agentRecoveryLoader}
+              runController={agentRunController}
+              tasksLoader={agentGoalTasksLoader}
+            />
           {:else}
-            <div class="project-actions">
-              <button
-                class="risk-action"
-                type="button"
-                disabled={removalView.kind === 'submitting'}
-                onclick={requestRemovalConfirmation}
-              >
-                {removalView.kind === 'submitting'
-                  ? 'Worktree wird entfernt …'
-                  : 'Nur aus A^3 entfernen'}
-              </button>
-            </div>
+            <section class="lazy-surface" aria-labelledby="lazy-agent-heading">
+              <h2 id="lazy-agent-heading">Agent Workspace</h2>
+              {#if agentWorkspaceState === 'error'}
+                <p role="alert">Der lokale Agent-Workspace-Chunk konnte nicht geladen werden.</p>
+                <button type="button" onclick={loadAgentWorkspaceChunk}>Erneut laden</button>
+              {:else}
+                <p role="status">Agent Workspace wird bei Sichtbarkeit geladen …</p>
+                <button type="button" onclick={loadAgentWorkspaceChunk}>Jetzt laden</button>
+              {/if}
+            </section>
           {/if}
-          {#if removalView.kind === 'error'}
-            <p class="project-error" role="alert">
-              {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
-            </p>
+        </div>
+
+        <div id="settings" class="lazy-boundary" bind:this={settingsBoundary} tabindex="-1">
+          {#if settingsComponent !== null}
+            {@const Settings = settingsComponent}
+            <Settings />
+          {:else}
+            <section class="lazy-surface" aria-labelledby="lazy-settings-heading">
+              <h2 id="lazy-settings-heading">Modelle, Ressourcen und Datenschutz</h2>
+              {#if settingsState === 'error'}
+                <p role="alert">Der lokale Settings-Chunk konnte nicht geladen werden.</p>
+                <button type="button" onclick={loadSettingsChunk}>Erneut laden</button>
+              {:else}
+                <p role="status">Settings werden bei Sichtbarkeit geladen …</p>
+                <button type="button" onclick={loadSettingsChunk}>Jetzt laden</button>
+              {/if}
+            </section>
           {/if}
         </div>
       </div>
-    {:else if projectStatusView.kind === 'error'}
-      <div class="recent-projects-error" role="alert">
-        <p>Der aktive Projektstatus konnte nicht sicher geladen werden.</p>
-        <button type="button" onclick={loadProjectStatus}>Status erneut laden</button>
-      </div>
-    {/if}
-
-    {#if removalView.kind === 'removed'}
-      <p class="ready-label" role="status" aria-live="polite">
-        Worktree aus der A^3-Projektliste entfernt. Repository und private A^3-Daten bleiben
-        erhalten.
-      </p>
-    {/if}
-
-    <div class="recent-projects" aria-labelledby="recent-projects-heading">
-      <h3 id="recent-projects-heading">Zuletzt verwendet</h3>
-      {#if recentProjectsView.kind === 'loading'}
-        <p class="project-status" role="status" aria-live="polite">Projektliste wird geladen …</p>
-      {:else if recentProjectsView.kind === 'error'}
-        <div class="recent-projects-error" role="alert">
-          <p>Die lokale Projektliste konnte nicht geladen werden.</p>
-          <button type="button" onclick={loadRecentProjects}>Erneut laden</button>
-        </div>
-      {:else if recentProjectsView.projects.length === 0}
-        <p class="project-status">Noch keine Projekte gespeichert.</p>
-      {:else}
-        <ol class="recent-project-list">
-          {#each recentProjectsView.projects as recent (recent.project.worktreeId)}
-            <li>
-              <span>{recent.project.worktreeRootDisplay}</span>
-              <span>{branchLabel(recent.project.head)}</span>
-              <code>{recent.project.worktreeId}</code>
-            </li>
-          {/each}
-        </ol>
-      {/if}
     </div>
+
+    <footer class="app-statusbar">
+      <span>Offline by default</span>
+      <span aria-hidden="true">·</span>
+      <span>Typed IPC</span>
+      <span aria-hidden="true">·</span>
+      <span>Local core</span>
+      <span class="statusbar-spacer"></span>
+      <span>A^3 Desktop</span>
+    </footer>
   </section>
-
-  {#if projectStatusView.kind !== 'active'}
-    <section
-      id="map"
-      class="route-placeholder"
-      aria-labelledby="map-placeholder-heading"
-      tabindex="-1"
-    >
-      <p class="section-kicker">Map</p>
-      <h2 id="map-placeholder-heading">Project Map</h2>
-      {#if projectStatusView.kind === 'loading'}
-        <p role="status">Project Map wartet auf den Projektstatus …</p>
-      {:else if projectStatusView.kind === 'error'}
-        <p role="alert">
-          Project Map ist verfügbar, sobald der Projektstatus wieder geladen wurde.
-        </p>
-      {:else}
-        <p>Öffne einen lokalen Worktree, um Project Map und Evidence zu verwenden.</p>
-      {/if}
-    </section>
-  {/if}
-
-  <div id="agent" class="lazy-boundary" bind:this={agentWorkspaceBoundary} tabindex="-1">
-    {#if agentWorkspaceComponent !== null}
-      {@const AgentWorkspace = agentWorkspaceComponent}
-      <AgentWorkspace
-        activeProject={projectStatusView.kind === 'active'}
-        activityLoader={agentActivityLoader}
-        approvalController={agentApprovalController}
-        approvalLoader={agentApprovalLoader}
-        goalCreator={agentGoalCreator}
-        goalLoader={agentGoalLoader}
-        goalReviser={agentGoalReviser}
-        inspectionLoader={agentInspectionLoader}
-        inspectionLogLoader={agentInspectionLogLoader}
-        ledgerLoader={taskLensTaskLoader}
-        onRunStatusChange={updateGlobalRunStatus}
-        recoveryLoader={agentRecoveryLoader}
-        runController={agentRunController}
-        tasksLoader={agentGoalTasksLoader}
-      />
-    {:else}
-      <section class="lazy-surface" aria-labelledby="lazy-agent-heading">
-        <h2 id="lazy-agent-heading">Agent Workspace</h2>
-        {#if agentWorkspaceState === 'error'}
-          <p role="alert">Der lokale Agent-Workspace-Chunk konnte nicht geladen werden.</p>
-          <button type="button" onclick={loadAgentWorkspaceChunk}>Erneut laden</button>
-        {:else}
-          <p role="status">Agent Workspace wird bei Sichtbarkeit geladen …</p>
-          <button type="button" onclick={loadAgentWorkspaceChunk}>Jetzt laden</button>
-        {/if}
-      </section>
-    {/if}
-  </div>
-
-  <div id="settings" class="lazy-boundary" bind:this={settingsBoundary} tabindex="-1">
-    {#if settingsComponent !== null}
-      {@const Settings = settingsComponent}
-      <Settings />
-    {:else}
-      <section class="lazy-surface" aria-labelledby="lazy-settings-heading">
-        <h2 id="lazy-settings-heading">Modelle, Ressourcen und Datenschutz</h2>
-        {#if settingsState === 'error'}
-          <p role="alert">Der lokale Settings-Chunk konnte nicht geladen werden.</p>
-          <button type="button" onclick={loadSettingsChunk}>Erneut laden</button>
-        {:else}
-          <p role="status">Settings werden bei Sichtbarkeit geladen …</p>
-          <button type="button" onclick={loadSettingsChunk}>Jetzt laden</button>
-        {/if}
-      </section>
-    {/if}
-  </div>
-
-  <footer>
-    <span>Offline by default</span>
-    <span aria-hidden="true">·</span>
-    <span>Typed IPC</span>
-    <span aria-hidden="true">·</span>
-    <span>Local core</span>
-  </footer>
 </main>

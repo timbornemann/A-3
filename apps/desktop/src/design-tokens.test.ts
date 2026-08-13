@@ -66,6 +66,9 @@ describe('U9 design tokens', () => {
       expect(light.has(token), `light is missing ${token}`).toBe(true);
       expect(dark.has(token), `dark is missing ${token}`).toBe(true);
     }
+    expect(light.get('--radius-control')).toBe('0.25rem');
+    expect(light.get('--radius-panel')).toBe('0.35rem');
+    expect(light.get('--radius-card')).toBe('0.5rem');
     expect(componentCss).toMatch(/^@import '\.\/design-tokens\.css';/u);
   });
 
@@ -103,6 +106,18 @@ describe('U9 design tokens', () => {
     expect(componentCss).toContain('animation-duration: 0.01ms !important');
     expect(componentCss).toContain('animation-iteration-count: 1 !important');
     expect(componentCss).toContain('transition-duration: 0.01ms !important');
+  });
+
+  it('keeps dense desktop status and settings layouts bounded inside the workspace pane', () => {
+    expect(componentCss).toMatch(
+      /\.global-status dl > div\s*\{[^}]*grid-template-columns:\s*auto auto minmax\(0, 1fr\)/u,
+    );
+    expect(componentCss).toMatch(
+      /\.workspace-content\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/u,
+    );
+    expect(componentCss).toMatch(
+      /@media \(width <= 1100px\)\s*\{[\s\S]*?\.model-profile-grid,[\s\S]*?\.project-policy-grid,[\s\S]*?\.privacy-settings\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/u,
+    );
   });
 });
 

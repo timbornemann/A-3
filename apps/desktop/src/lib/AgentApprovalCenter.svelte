@@ -367,7 +367,7 @@
 <style>
   .approval-center {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.9rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.9rem;
     padding: 1rem;
@@ -393,7 +393,7 @@
   }
   .status-chip {
     border: 1px solid var(--color-border-soft);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     padding: 0.3rem 0.65rem;
   }
   .approval-facts,
@@ -406,7 +406,7 @@
   .approval-facts div,
   .action-detail dl div {
     background: color-mix(in srgb, var(--color-surface-raised) 88%, var(--color-info-surface));
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.2rem;
     padding: 0.65rem;
@@ -460,7 +460,7 @@
   }
   .decision-options {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.7rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.7rem;
     padding: 0.8rem;
@@ -479,7 +479,7 @@
   button {
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-strong);
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     color: inherit;
     cursor: pointer;
     padding: 0.55rem 0.8rem;

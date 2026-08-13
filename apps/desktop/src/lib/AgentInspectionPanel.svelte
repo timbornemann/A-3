@@ -546,7 +546,7 @@
     gap: 1rem;
     padding: 1.15rem;
     border: 1px solid var(--color-border-soft);
-    border-radius: 1rem;
+    border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--color-surface-raised) 92%, var(--color-warning-surface));
   }
 
@@ -608,7 +608,7 @@
   .evidence-card {
     padding: 0.8rem;
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.7rem;
+    border-radius: var(--radius-control);
     background: var(--color-surface-raised);
   }
 
@@ -639,7 +639,7 @@
   .done-proof-state {
     padding: 0.65rem 0.75rem;
     border: 1px solid var(--color-warning-strong);
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     background: var(--color-warning-surface);
   }
 
@@ -657,7 +657,7 @@
     display: grid;
     gap: 0.25rem;
     padding: 0.55rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-control);
     background: var(--color-positive-surface);
     font-size: 0.78rem;
   }
@@ -672,7 +672,7 @@
   .stream button,
   .notice button {
     border: 1px solid var(--color-border);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-control);
     background: var(--color-surface-raised);
     color: inherit;
     cursor: pointer;
@@ -688,11 +688,11 @@
   }
 
   .segmented button:first-child {
-    border-radius: 0.5rem 0 0 0.5rem;
+    border-radius: var(--radius-control) 0 0 var(--radius-control);
   }
 
   .segmented button:last-child {
-    border-radius: 0 0.5rem 0.5rem 0;
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
   }
 
   .segmented button.active {
@@ -757,7 +757,7 @@
     margin-top: 0.65rem;
     overflow: auto;
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-control);
     background: var(--color-surface-subtle);
   }
 
@@ -779,7 +779,7 @@
   .notice {
     margin-top: 0.55rem;
     padding: 0.6rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-control);
     background: var(--color-warning-surface);
     color: var(--color-warning);
     font-size: 0.82rem;
@@ -810,7 +810,7 @@
     max-height: 18rem;
     overflow: auto;
     padding: 0.7rem;
-    border-radius: 0.45rem;
+    border-radius: var(--radius-control);
     background: var(--color-code);
     color: var(--color-on-code);
     white-space: pre-wrap;

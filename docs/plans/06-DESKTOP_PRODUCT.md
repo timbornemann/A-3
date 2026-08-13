@@ -50,6 +50,16 @@ DOM-/Fokusgate Keyboard-first. Formatter, ESLint, Svelte-Typecheck ohne Warnung,
 vier Tooltests, Produktionsbuild und die Markdown-Linkprüfung bestehen. Damit sind alle drei
 U1-Akzeptanzkriterien objektiv nachgewiesen und U1 ist abgeschlossen.
 
+UX-Überarbeitung vom 2026-08-13: Die vier URL-gebundenen Hauptbereiche erscheinen nicht mehr als
+aufeinanderfolgende One-Page-Sektionen. Eine feste primäre App-Sidebar, eine kompakte globale
+Statuszeile, eine bereichsspezifische Kontextleiste und genau ein scrollbarer Inhalts-Viewport
+bilden jetzt eine zusammenhängende Desktop-Shell. `Projects` trennt Projektverwaltung und
+Indexübersicht von der eigenen `Map`-Arbeitsfläche; `Agent` und `Settings` bleiben eigenständige,
+lokal lazy geladene Views. Ein Routewechsel aktualisiert sichtbaren Seitentitel, Kontextnavigation,
+Fokusziel und `data-workspace-area`, ohne fachliche Autorität in die WebView zu verschieben. Der
+Bestätigungszustand für das nicht destruktive Entfernen eines Projekts wird als benannter nativer
+Modal-Dialog angezeigt.
+
 ## U2 Projects
 
 Abhängigkeiten: Project Open
@@ -631,6 +641,13 @@ ESLint, Svelte-Typecheck ohne Warnung, 186 Frontendtests, vier Tooltests und der
 bestehen; die Markdown-Prüfung bestätigt 52 Dateien und 129 lokale Links. Damit sind alle drei
 U9-Akzeptanzkriterien objektiv nachgewiesen und U9 ist abgeschlossen.
 
+Die UX-Überarbeitung verwendet dieselben semantischen Rollen mit einer neutraleren Desktop-Palette,
+einer durchgehend serifenlosen UI sowie zentralen Radien von 0,25, 0,35 und 0,5 rem. Numerische
+Komponentenradien wurden auf diese Quelle vereinheitlicht; 44-CSS-Pixel-Controls, der 3-Pixel-Fokus,
+Reduced Motion und die Kontrastverträge bleiben unverändert. Der reale Browserlauf bestätigte Dark
+und Light bei 1.280 × 720 sowie null horizontale Dokumentüberbreite bei 720 × 600 und 640 × 600.
+Die Browserkonsole blieb ohne Warnung oder Fehler.
+
 ## U10 Frontend Performance
 
 - [x] große Editor- und Graphmodule lazy laden
@@ -668,6 +685,14 @@ Prozessbaum 121,475 MiB privaten residenten Idle-Median und 122,734 MiB Sample-P
 200-MB-Budgets lokal. Formatter, ESLint, Svelte-Typecheck ohne Warnung, 197 Frontendtests, vier
 Tooltests, der Produktions- und native Releasebuild sowie 53 Markdowndateien mit 139 lokalen Links
 bestehen. Alle U10-Akzeptanzkriterien sind objektiv nachgewiesen und U10 ist abgeschlossen.
+
+Der Produktionsbuild nach der UX-Überarbeitung hält Agent Workspace, Settings, Inspector, Approval
+Center und Graph weiterhin in getrennten lokalen Lazy-Chunks. Der initiale Chunk liegt nun bei
+293,90 kB roh beziehungsweise 82,17 kB gzip; die vorhandenen U10-Budgetclaims werden dadurch nicht
+als neue Messung ersetzt. Eine zusätzliche native Tauri-Prüfung mit aktivem Worktree belegt die
+getrennten Projects-, Map-, Agent- und Settings-Arbeitsbereiche, den einzeiligen globalen
+Statusstreifen, den begrenzten Settings-Inhalt, das Zurücksetzen der Arbeitsfläche bei Seitenwechsel
+und den sicheren Abbruch des modalen Entfernungsdialogs.
 
 ## Gate M8
 

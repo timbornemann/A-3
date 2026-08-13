@@ -16,9 +16,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at 15% 10%, var(--color-canvas-glow), transparent 34rem),
-    linear-gradient(145deg, var(--color-canvas) 0%, var(--color-canvas-deep) 100%);
+  background: var(--color-canvas);
 }
 
 button,
@@ -91,7 +89,7 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-panel);
   background: var(--color-surface-raised);
-  box-shadow: 0 0.5rem 1.5rem var(--color-shadow);
+  box-shadow: none;
 }
 
 .primary-navigation ul {
@@ -211,7 +209,7 @@ textarea {
   border-color: var(--color-border);
   color: var(--color-accent-text);
   background: var(--color-surface-raised);
-  box-shadow: 0 1px 3px var(--color-shadow);
+  box-shadow: none;
 }
 
 .eyebrow,
@@ -254,10 +252,10 @@ h1 {
   align-self: start;
   padding: clamp(1.4rem, 4vw, 2.25rem);
   border: 1px solid var(--color-border-soft);
-  border-radius: 1.5rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface);
-  box-shadow: 0 1.5rem 4rem var(--color-shadow);
-  backdrop-filter: blur(20px);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .route-placeholder {
@@ -295,7 +293,7 @@ h1 {
 .settings-card button,
 .settings-card input {
   border: 1px solid var(--color-border);
-  border-radius: 0.65rem;
+  border-radius: var(--radius-control);
   font: inherit;
 }
 
@@ -320,7 +318,7 @@ h1 {
 .privacy-settings {
   padding: 1.1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -342,7 +340,7 @@ h1 {
 .settings-badge {
   flex: 0 0 auto;
   padding: 0.35rem 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   color: var(--color-accent-text);
   background: var(--color-accent-surface);
   font-size: 0.76rem;
@@ -389,7 +387,7 @@ h1 {
   margin-top: 1rem;
   padding: 0.9rem 1rem;
   border: 1px solid var(--color-warning-strong);
-  border-radius: 0.8rem;
+  border-radius: var(--radius-control);
   color: var(--color-warning);
   background: var(--color-warning-surface);
 }
@@ -412,7 +410,7 @@ h1 {
   min-width: 0;
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface);
 }
 
@@ -452,7 +450,7 @@ h1 {
 .settings-error-message {
   padding: 0.85rem 1rem;
   border: 1px solid var(--color-status-failed-ring);
-  border-radius: 0.8rem;
+  border-radius: var(--radius-control);
   color: var(--color-danger);
   background: var(--color-danger-surface);
 }
@@ -516,7 +514,7 @@ h1 {
 .project-policy-block {
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.9rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -588,7 +586,7 @@ h1 {
 
 .command-catalog > li {
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface);
 }
 
@@ -620,7 +618,7 @@ h1 {
 .command-argv {
   display: block;
   padding: 0.42rem 0.5rem;
-  border-radius: 0.45rem;
+  border-radius: var(--radius-control);
   color: var(--color-heading);
   background: var(--color-surface-muted);
   white-space: pre-wrap;
@@ -643,7 +641,7 @@ h1 {
   margin-bottom: 0;
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.65rem;
+  border-radius: var(--radius-control);
   color: var(--color-accent-text);
   background: var(--color-accent-surface);
 }
@@ -698,7 +696,7 @@ h1 {
 
 .health-grid div {
   padding: 1rem;
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -726,7 +724,7 @@ h1 {
 .error-state button {
   padding: 0.7rem 1rem;
   border: 1px solid var(--color-danger-strong);
-  border-radius: 0.8rem;
+  border-radius: var(--radius-control);
   color: var(--color-danger);
   background: transparent;
   cursor: pointer;
@@ -749,7 +747,7 @@ h1 {
 .primary-action {
   padding: 0.8rem 1.1rem;
   border: 1px solid var(--color-accent-strong);
-  border-radius: 0.8rem;
+  border-radius: var(--radius-control);
   color: var(--color-on-accent);
   background: var(--color-accent-strong);
   cursor: pointer;
@@ -789,7 +787,7 @@ h1 {
 
 .project-grid div {
   padding: 1rem;
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -813,7 +811,7 @@ h1 {
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-accent-surface);
 }
 
@@ -836,7 +834,7 @@ h1 {
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -846,7 +844,7 @@ h1 {
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -878,14 +876,14 @@ h1 {
   width: fit-content;
   padding: 0.2rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
 .project-map-mode-switch button {
   padding: 0.45rem 0.75rem;
   border: 0;
-  border-radius: 0.52rem;
+  border-radius: var(--radius-control);
   color: var(--color-muted);
   background: transparent;
   font: inherit;
@@ -897,7 +895,7 @@ h1 {
 .project-map-mode-switch button.active {
   color: var(--color-accent-text);
   background: var(--color-surface-raised);
-  box-shadow: 0 1px 3px var(--color-border-soft);
+  box-shadow: none;
 }
 
 .project-map-mode-switch button:focus-visible,
@@ -924,7 +922,7 @@ h1 {
   min-width: 0;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-surface-raised);
   font: inherit;
@@ -979,7 +977,7 @@ h1 {
   min-width: 0;
   padding: 0.8rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1005,7 +1003,7 @@ h1 {
 .project-map-search-hit-heading > span {
   flex: 0 0 auto;
   padding: 0.18rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   color: var(--color-muted);
   background: var(--color-surface-muted);
   font-size: 0.68rem;
@@ -1031,7 +1029,7 @@ h1 {
   flex-wrap: wrap;
   gap: 0.4rem;
   padding: 0.35rem 0.5rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   color: var(--color-muted);
   background: var(--color-surface-muted);
   font-size: 0.72rem;
@@ -1048,7 +1046,7 @@ h1 {
   gap: 0.65rem;
   padding: 0.85rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1063,7 +1061,7 @@ h1 {
   min-width: 0;
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-surface-raised);
   font: inherit;
@@ -1107,7 +1105,7 @@ h1 {
   min-width: 0;
   padding: 0.8rem;
   border-left: 0.3rem solid var(--color-accent);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-accent-surface);
 }
 
@@ -1190,7 +1188,7 @@ h1 {
   justify-content: space-between;
   min-width: 0;
   padding: 0.65rem 0.75rem;
-  border-radius: 0.65rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -1246,7 +1244,7 @@ h1 {
 .module-tree-summary div,
 .module-tree-entry-metrics div {
   padding: 0.55rem 0.65rem;
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -1275,7 +1273,7 @@ h1 {
   gap: 0.65rem;
   padding: 0.75rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1329,7 +1327,7 @@ h1 {
   justify-self: start;
   padding: 0.4rem 0.65rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   color: var(--color-accent);
   background: var(--color-surface-subtle);
   font: inherit;
@@ -1391,7 +1389,7 @@ h1 {
   min-width: 0;
   padding: 0.8rem 0.85rem;
   border-left: 0.3rem solid var(--color-accent);
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   background: var(--color-accent-surface);
 }
 
@@ -1470,7 +1468,7 @@ h1 {
   margin: 0;
   padding: 0.75rem 0.85rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.65rem;
+  border-radius: var(--radius-control);
   color: var(--color-muted);
   background: var(--color-surface-subtle);
   line-height: 1.5;
@@ -1486,7 +1484,7 @@ h1 {
 .module-card-envelope > div {
   min-width: 0;
   padding: 0.65rem 0.75rem;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -1511,7 +1509,7 @@ h1 {
   min-width: 0;
   padding: 0.8rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1544,7 +1542,7 @@ h1 {
   min-width: 0;
   padding: 0.7rem 0.75rem;
   border-left: 0.25rem solid var(--color-accent);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -1572,7 +1570,7 @@ h1 {
   display: inline-flex;
   padding: 0.18rem 0.45rem;
   border: 1px solid var(--color-border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-surface-raised);
   font-weight: 800;
@@ -1654,7 +1652,7 @@ h1 {
   width: 100%;
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-surface-raised);
   font: inherit;
@@ -1699,7 +1697,7 @@ h1 {
   gap: 0.25rem;
   padding: 0.75rem 0.85rem;
   border-left: 0.3rem solid var(--color-accent);
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-accent-surface);
 }
@@ -1717,7 +1715,7 @@ h1 {
 .module-card-evidence-card-state {
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   color: var(--color-muted);
   background: var(--color-surface-raised);
 }
@@ -1741,7 +1739,7 @@ h1 {
 .runtime-truncation-note {
   padding: 0.7rem 0.8rem;
   border-left: 0.25rem solid var(--color-accent);
-  border-radius: 0.45rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-accent-surface);
 }
@@ -1765,7 +1763,7 @@ h1 {
   min-width: 0;
   padding: 0.8rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1809,7 +1807,7 @@ h1 {
   min-width: 0;
   padding: 0.65rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -1853,7 +1851,7 @@ h1 {
 .dependency-boundary-note {
   padding: 0.7rem 0.8rem;
   border-left: 0.25rem solid var(--color-warning-strong);
-  border-radius: 0.45rem;
+  border-radius: var(--radius-control);
   color: var(--color-warning);
   background: var(--color-warning-surface);
 }
@@ -1869,7 +1867,7 @@ h1 {
   min-width: min(100%, 12rem);
   padding: 0.75rem 1rem;
   border: 2px solid var(--color-accent);
-  border-radius: 0.8rem;
+  border-radius: var(--radius-control);
   text-align: center;
   background: var(--color-accent-surface);
 }
@@ -1896,7 +1894,7 @@ h1 {
   align-items: center;
   padding: 0.7rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.65rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -1938,7 +1936,7 @@ h1 {
   min-width: 0;
   padding: 0.55rem 0.65rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -1958,7 +1956,7 @@ h1 {
   gap: 0.75rem;
   padding: 0.8rem;
   border: 1px solid var(--color-border);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-raised);
 }
 
@@ -2025,7 +2023,7 @@ h1 {
   margin-top: 1.25rem;
   padding: 1.1rem;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 0.9rem;
+  border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--surface) 92%, var(--accent));
 }
 
@@ -2050,7 +2048,7 @@ h1 {
   gap: 0.65rem;
   padding: 0.85rem;
   border: 1px dashed var(--line);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
 }
 
 .deep-map-model {
@@ -2063,7 +2061,7 @@ h1 {
 .deep-map-model div {
   min-width: 0;
   padding: 0.75rem;
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--surface);
 }
 
@@ -2084,7 +2082,7 @@ h1 {
   margin: 0;
   padding: 0.9rem;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
 }
 
 .deep-map-budget legend {
@@ -2104,7 +2102,7 @@ h1 {
   box-sizing: border-box;
   padding: 0.6rem;
   border: 1px solid var(--line);
-  border-radius: 0.55rem;
+  border-radius: var(--radius-control);
   color: var(--text);
   background: var(--surface);
   font: inherit;
@@ -2160,7 +2158,7 @@ h1 {
 
 .index-metrics div {
   padding: 0.75rem;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -2195,7 +2193,7 @@ h1 {
 .file-diagnostics > ul > li {
   padding: 0.85rem;
   border-left: 0.25rem solid var(--color-danger-strong);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-danger-surface);
 }
 
@@ -2230,7 +2228,7 @@ h1 {
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--color-border-soft);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
 }
 
@@ -2254,7 +2252,7 @@ h1 {
 .project-actions button {
   padding: 0.65rem 0.9rem;
   border: 1px solid var(--color-border-strong);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   color: var(--color-text);
   background: var(--color-surface-raised);
   cursor: pointer;
@@ -2288,7 +2286,7 @@ h1 {
 
 .removal-confirmation {
   padding: 0.75rem;
-  border-radius: 0.75rem;
+  border-radius: var(--radius-control);
   background: var(--color-danger-surface);
 }
 
@@ -2321,7 +2319,7 @@ h1 {
   display: grid;
   gap: 0.35rem;
   padding: 0.9rem 1rem;
-  border-radius: 0.9rem;
+  border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
 
@@ -2347,7 +2345,7 @@ h1 {
 .recent-projects-error button {
   padding: 0.6rem 0.85rem;
   border: 1px solid var(--color-danger-strong);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   color: var(--color-danger);
   background: transparent;
   cursor: pointer;
@@ -2457,5 +2455,870 @@ footer {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Desktop application shell ------------------------------------------------ */
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  min-height: 100%;
+  color: var(--color-text);
+  background: var(--color-canvas);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 13.5rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 32.5rem;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+.app-sidebar {
+  position: relative;
+  z-index: 30;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  border-inline-end: 1px solid var(--color-border-soft);
+  color: var(--color-sidebar-text);
+  background: var(--color-sidebar);
+}
+
+.product-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 4.75rem;
+  padding: var(--space-3);
+  gap: var(--space-3);
+  border-block-end: 1px solid var(--color-border-soft);
+}
+
+.product-mark {
+  display: grid;
+  flex: 0 0 2.5rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-sidebar-text);
+  background: var(--color-sidebar-raised);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.product-identity {
+  min-width: 0;
+}
+
+.product-header h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-sidebar-text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-header .eyebrow {
+  display: none;
+}
+
+.product-header .subtitle {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--color-sidebar-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary-navigation {
+  position: static;
+  min-height: 0;
+  padding: var(--space-3) var(--space-2);
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.primary-navigation ul {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-1);
+}
+
+.primary-navigation a {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  min-height: var(--control-min-size);
+  place-items: center start;
+  padding: 0 var(--space-3);
+  gap: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-sidebar-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.primary-navigation a:hover {
+  border-color: transparent;
+  color: var(--color-sidebar-text);
+  background: var(--color-sidebar-raised);
+}
+
+.primary-navigation a[aria-current='page'] {
+  border-color: var(--color-border-strong);
+  color: var(--color-sidebar-text);
+  background: var(--color-sidebar-raised);
+}
+
+.primary-navigation svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.sidebar-footer {
+  display: grid;
+  padding: var(--space-3);
+  gap: var(--space-2);
+  border-block-start: 1px solid var(--color-border-soft);
+}
+
+.sidebar-footer > p {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  gap: var(--space-2);
+  color: var(--color-sidebar-muted);
+  font-size: var(--font-size-xs);
+}
+
+.sidebar-footer > p span {
+  color: var(--color-positive);
+  font-size: 0.6rem;
+}
+
+.theme-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: var(--space-1);
+  gap: var(--space-1);
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-sidebar-raised);
+}
+
+.theme-controls button {
+  min-width: 0;
+  min-height: var(--control-min-size);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--color-sidebar-muted);
+  font-size: var(--font-size-xs);
+}
+
+.theme-controls button[aria-pressed='true'] {
+  border-color: var(--color-border-strong);
+  color: var(--color-sidebar-text);
+  background: var(--color-sidebar);
+  box-shadow: none;
+}
+
+.workspace-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 4.75rem;
+  padding: var(--space-3) var(--space-5);
+  gap: var(--space-5);
+  border-block-end: 1px solid var(--color-border-soft);
+  background: var(--color-surface-raised);
+}
+
+.workspace-toolbar > div:first-child {
+  min-width: 0;
+}
+
+.workspace-toolbar .section-kicker {
+  margin: 0 0 var(--space-1);
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+}
+
+.workspace-toolbar h2 {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: var(--font-size-title);
+  line-height: 1.2;
+}
+
+.workspace-toolbar h2 + p {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-project-context {
+  display: grid;
+  min-width: 10rem;
+  max-width: 24rem;
+  padding-inline-start: var(--space-4);
+  gap: 0.1rem;
+  border-inline-start: 1px solid var(--color-border);
+  text-align: end;
+}
+
+.workspace-project-context span {
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.workspace-project-context strong {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-status {
+  padding: 0 var(--space-5);
+  border: 0;
+  border-block-end: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: var(--color-surface-subtle);
+}
+
+.global-status dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+}
+
+.global-status dl > div {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  min-height: 2.4rem;
+  padding: 0 var(--space-3);
+  gap: var(--space-2);
+  border: 0;
+  border-inline-start: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.global-status dl > div:last-child {
+  border-inline-end: 1px solid var(--color-border-soft);
+}
+
+.global-status dt {
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+}
+
+.global-status dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-status dl > div::before {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--color-border-strong);
+  content: '';
+}
+
+.global-status dl > div.pending::before {
+  background: var(--color-status-pending);
+}
+
+.global-status dl > div.ready::before {
+  background: var(--color-status-ready);
+}
+
+.global-status dl > div.warning::before {
+  background: var(--color-warning-strong);
+}
+
+.global-status dl > div.failed::before {
+  background: var(--color-status-failed);
+}
+
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.context-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-4) var(--space-3);
+  gap: var(--space-3);
+  overflow: auto;
+  border-inline-end: 1px solid var(--color-border-soft);
+  background: var(--color-surface-subtle);
+}
+
+.context-sidebar-label {
+  margin: 0;
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.context-sidebar nav {
+  display: grid;
+  align-content: start;
+  gap: 0.1rem;
+}
+
+.context-sidebar nav button {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+  background: transparent;
+  font-size: var(--font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.context-sidebar nav button:hover,
+.context-sidebar nav button:focus-visible {
+  color: var(--color-text);
+  background: var(--color-surface-muted);
+}
+
+.context-sidebar-note {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+}
+
+.context-sidebar-note span {
+  display: block;
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.context-sidebar-note strong {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.context-sidebar-note p {
+  margin: var(--space-2) 0 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.workspace-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--color-surface-raised);
+}
+
+.workspace-content > * {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.workspace-content > .health-card,
+.workspace-content > .project-card,
+.workspace-content > .route-placeholder,
+.workspace-content > .lazy-boundary {
+  display: none;
+}
+
+.app-shell[data-workspace-area='projects'] .workspace-content > .health-card,
+.app-shell[data-workspace-area='projects'] .workspace-content > .project-card,
+.app-shell[data-workspace-area='map'] .workspace-content > .project-card.project-active,
+.app-shell[data-workspace-area='map'] .workspace-content > .route-placeholder,
+.app-shell[data-workspace-area='agent'] .workspace-content > #agent,
+.app-shell[data-workspace-area='settings'] .workspace-content > #settings {
+  display: block;
+}
+
+.app-shell[data-workspace-area='projects'] .map-workspace-view {
+  display: none;
+}
+
+.app-shell[data-workspace-area='map'] .project-card > .section-heading,
+.app-shell[data-workspace-area='map'] .project-card > .project-copy,
+.app-shell[data-workspace-area='map'] .project-card > .primary-action,
+.app-shell[data-workspace-area='map'] .project-card > .project-status,
+.app-shell[data-workspace-area='map'] .project-card > .project-error,
+.app-shell[data-workspace-area='map'] .project-card > .ready-label,
+.app-shell[data-workspace-area='map'] .project-card > .recent-projects,
+.app-shell[data-workspace-area='map'] .projects-workspace-view,
+.app-shell[data-workspace-area='map'] .project-maintenance {
+  display: none;
+}
+
+.app-shell[data-workspace-area='map'] .map-workspace-view {
+  display: grid;
+  gap: 0;
+}
+
+.health-card,
+.project-card,
+.route-placeholder,
+.settings-card,
+.lazy-surface {
+  align-self: auto;
+  padding: var(--space-5);
+  border: 0;
+  border-block-end: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-shell[data-workspace-area='map'] .project-card,
+#agent .agent-goal-workspace,
+#settings .settings-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#agent .agent-goal-workspace,
+#settings .settings-card {
+  min-width: 0;
+  padding: var(--space-5);
+}
+
+.map-workspace-view > .repository-tree-panel,
+.map-workspace-view > .deep-map-panel {
+  margin: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  border-block-end: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.map-workspace-view > :last-child {
+  border-block-end: 0;
+}
+
+#settings .settings-section,
+#settings .privacy-settings {
+  min-width: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  border-block-start: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.health-card {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(18rem, 2fr);
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.health-card .section-heading {
+  align-items: center;
+}
+
+.health-card .ready-label,
+.health-card .status-message,
+.health-card .error-state {
+  grid-column: 1 / -1;
+}
+
+.health-grid,
+.project-grid,
+.index-metrics,
+.module-card-envelope,
+.deep-map-model {
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-control);
+  background: var(--color-border-soft);
+}
+
+.health-grid div,
+.project-grid div,
+.index-metrics div,
+.module-card-envelope > div,
+.deep-map-model div {
+  border-radius: 0;
+  background: var(--color-surface-subtle);
+}
+
+.project-result,
+.projects-workspace-view,
+.map-workspace-view,
+.lazy-boundary {
+  min-width: 0;
+}
+
+.section-heading {
+  align-items: center;
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--color-border-soft);
+}
+
+.section-heading h2 {
+  font-size: 1.05rem;
+}
+
+.section-kicker,
+.eyebrow {
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+}
+
+.primary-action,
+.project-actions button,
+.repository-tree-heading button,
+.repository-tree-pagination button,
+.project-map-mode-switch button,
+.project-map-search-form button,
+.task-lens-selector button,
+.lazy-surface button,
+.settings-card button {
+  border-radius: var(--radius-control);
+  box-shadow: none;
+}
+
+.primary-action {
+  color: var(--color-on-accent);
+  background: var(--color-accent-strong);
+}
+
+.repository-tree-panel,
+.module-card-panel,
+.module-runtime-panel,
+.deep-map-panel,
+.project-maintenance,
+.recent-project-list li,
+.project-map-search-results > li,
+.module-tree-entries > li,
+.module-card-field,
+.module-card-field > ol > li,
+.runtime-root-columns > section,
+.runtime-flow,
+.dependency-edge-list > li,
+.dependency-evidence,
+.file-diagnostics > ul > li {
+  border-radius: var(--radius-panel);
+  box-shadow: none;
+}
+
+.repository-tree-panel,
+.module-card-panel,
+.module-runtime-panel,
+.deep-map-panel,
+.project-maintenance {
+  margin-top: 0;
+  border-color: var(--color-border);
+  background: var(--color-surface-raised);
+}
+
+.app-statusbar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: 0 var(--space-3);
+  gap: var(--space-2);
+  overflow: hidden;
+  border-block-start: 1px solid var(--color-border-soft);
+  color: var(--color-subtle);
+  background: var(--color-surface-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.statusbar-spacer {
+  flex: 1;
+}
+
+.modal-dialog::backdrop {
+  background: color-mix(in srgb, var(--color-overlay) 72%, transparent);
+}
+
+.modal-dialog {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  width: min(calc(100% - 2rem), 34rem);
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  box-shadow: 0 1rem 3rem var(--color-shadow);
+}
+
+.modal-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  padding: var(--space-4);
+  gap: var(--space-4);
+  border-block-end: 1px solid var(--color-border-soft);
+}
+
+.modal-heading h3,
+.modal-heading p {
+  margin: 0;
+}
+
+.modal-heading button {
+  width: var(--control-min-size);
+  min-width: var(--control-min-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+  background: transparent;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.modal-dialog > p {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--color-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+  border-block-start: 1px solid var(--color-border-soft);
+  background: var(--color-surface-subtle);
+}
+
+.modal-actions button {
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  cursor: pointer;
+}
+
+.modal-actions .risk-action {
+  border-color: var(--color-danger-strong);
+  color: var(--color-on-accent);
+  background: var(--color-danger-strong);
+}
+
+@media (width <= 1040px) {
+  .workspace-layout {
+    grid-template-columns: 10rem minmax(0, 1fr);
+  }
+
+  .global-status {
+    padding-inline: var(--space-3);
+  }
+}
+
+@media (width <= 1100px) {
+  .model-profile-grid,
+  .project-policy-grid,
+  .privacy-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .privacy-settings > p {
+    grid-column: auto;
+  }
+}
+
+@media (width <= 900px) {
+  .app-shell {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+
+  .product-header {
+    justify-content: center;
+    padding-inline: var(--space-2);
+  }
+
+  .product-identity,
+  .sidebar-footer > p {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .primary-navigation a {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    min-height: 3.5rem;
+    padding-inline: var(--space-1);
+    gap: var(--space-1);
+    font-size: var(--font-size-xs);
+  }
+
+  .primary-navigation svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .sidebar-footer {
+    padding-inline: var(--space-2);
+  }
+
+  .theme-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .context-sidebar {
+    display: none;
+  }
+}
+
+@media (width <= 680px) {
+  .app-shell {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+
+  .workspace-toolbar {
+    min-height: 4.25rem;
+    padding-inline: var(--space-3);
+  }
+
+  .workspace-project-context,
+  .workspace-toolbar h2 + p {
+    display: none;
+  }
+
+  .global-status dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .global-status dl > div:nth-child(3) {
+    border-block-start: 1px solid var(--color-border-soft);
+  }
+
+  .global-status dl > div:nth-child(4) {
+    border-block-start: 1px solid var(--color-border-soft);
+  }
+
+  .health-card {
+    grid-template-columns: 1fr;
+  }
+
+  .health-card,
+  .project-card,
+  .route-placeholder,
+  .lazy-surface,
+  #agent .agent-goal-workspace,
+  #settings .settings-card {
+    padding: var(--space-4);
+  }
+
+  .modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }

@@ -1247,7 +1247,7 @@
   .agent-goal-workspace {
     background: color-mix(in srgb, var(--color-surface-raised) 95%, var(--color-info-surface));
     border: 1px solid var(--color-border-soft);
-    border-radius: 1rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 1rem;
     padding: clamp(1rem, 2vw, 1.6rem);
@@ -1301,15 +1301,15 @@
 
   .goal-contract {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.9rem;
+    border-radius: var(--radius-control);
     overflow: clip;
   }
 
   .persistent-anchors {
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.9rem;
-    box-shadow: 0 0.4rem 1rem var(--color-shadow);
+    border-radius: var(--radius-control);
+    box-shadow: none;
     display: grid;
     gap: 1rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1365,7 +1365,7 @@
   .goal-columns section,
   .boundary-grid section {
     background: var(--color-surface-raised);
-    border-radius: 0.7rem;
+    border-radius: var(--radius-control);
     padding: 0.9rem;
   }
 
@@ -1386,7 +1386,7 @@
 
   .criteria-list li > span {
     background: var(--color-info);
-    border-radius: 99px;
+    border-radius: var(--radius-control);
     color: var(--color-on-accent);
     font-size: 0.72rem;
     font-weight: 800;
@@ -1404,7 +1404,7 @@
   .goal-editor {
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.9rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 1rem;
     padding: 1rem;
@@ -1414,7 +1414,7 @@
   .agent-activity,
   .detail-loader {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.9rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.8rem;
     padding: 1rem;
@@ -1458,7 +1458,7 @@
 
   .ledger-steps li {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.55rem;
     grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
@@ -1521,7 +1521,7 @@
 
   .run-lifecycle {
     background: var(--color-info-surface);
-    border-radius: 99px;
+    border-radius: var(--radius-control);
     color: var(--color-info);
     font-size: 0.78rem;
     font-weight: 800;
@@ -1536,7 +1536,7 @@
   .run-controls {
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.65rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.75rem;
     padding: 0.8rem;
@@ -1597,7 +1597,7 @@
   .context-budget-grid > section {
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.65rem;
+    border-radius: var(--radius-control);
     padding: 0.8rem;
   }
 
@@ -1679,7 +1679,7 @@
 
   .criteria-editor {
     border: 1px solid var(--color-border-soft);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-control);
     display: grid;
     gap: 0.8rem;
     margin: 0;

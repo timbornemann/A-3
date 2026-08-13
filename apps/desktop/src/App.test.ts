@@ -900,6 +900,8 @@ describe('A^3 desktop shell', () => {
     try {
       const settings = screen.getByRole('link', { name: 'Settings' });
       expect(settings.getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('main').getAttribute('data-workspace-area')).toBe('settings');
+      expect(screen.getByRole('region', { name: 'Settings workspace' })).toBeTruthy();
 
       const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });
       await waitFor(() => {
@@ -917,9 +919,17 @@ describe('A^3 desktop shell', () => {
       await waitFor(() => expect(projectStatusLoader).toHaveBeenCalledTimes(2));
 
       const projects = screen.getByRole('link', { name: 'Projects' });
+      const workspace = document.getElementById('workspace-content');
+      if (workspace === null) throw new Error('workspace content is missing');
+      workspace.scrollTop = 240;
+      workspace.scrollLeft = 80;
       await fireEvent.click(projects);
       expect(projects.getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('main').getAttribute('data-workspace-area')).toBe('projects');
+      expect(screen.getByRole('region', { name: 'Projects workspace' })).toBeTruthy();
       expect(document.activeElement?.id).toBe('projects');
+      expect(workspace.scrollTop).toBe(0);
+      expect(workspace.scrollLeft).toBe(0);
     } finally {
       view.unmount();
       window.history.replaceState(null, '', routeBase);
@@ -1756,6 +1766,7 @@ describe('A^3 desktop shell', () => {
     await fireEvent.click(removeButton);
     expect(projectRemover).not.toHaveBeenCalled();
     expect(screen.getByText(/Der lokale Worktree bleibt vollständig bestehen/)).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Worktree aus A^3 entfernen?' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Entfernen bestätigen' }));
 
