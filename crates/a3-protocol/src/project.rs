@@ -140,6 +140,7 @@ pub enum GitHeadV1 {
     /// HEAD resolves to an object, optionally through a branch reference.
     Born {
         /// Lowercase SHA-1 or SHA-256 object identity.
+        #[serde(rename = "objectId")]
         object_id: String,
         /// Full branch reference, absent for detached HEAD.
         reference: Option<String>,
@@ -187,6 +188,25 @@ mod tests {
             })
         );
         assert_eq!(response.protocol_version(), ProtocolVersion::V1);
+        Ok(())
+    }
+
+    #[test]
+    fn born_head_serializes_object_id_with_the_v1_camel_case_name() -> Result<(), serde_json::Error>
+    {
+        let head = GitHeadV1::Born {
+            object_id: "ab".repeat(20),
+            reference: Some("refs/heads/main".to_owned()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&head)?,
+            json!({
+                "kind": "born",
+                "objectId": "ab".repeat(20),
+                "reference": "refs/heads/main"
+            })
+        );
         Ok(())
     }
 
