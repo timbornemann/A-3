@@ -5,6 +5,7 @@ mod agent_actions;
 mod agent_activity;
 mod agent_controller;
 mod agent_goal;
+mod agent_inspection;
 mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
@@ -98,6 +99,7 @@ pub use agent_goal::{
     AgentGoalMetadataFailure, AgentGoalMetadataSource, CreateAgentGoal, CreateAgentGoalFailure,
     GetAgentGoal, ReviseAgentGoal, ReviseAgentGoalFailure,
 };
+pub use agent_inspection::*;
 pub use agent_prompt::{
     AgentActionPrimaryOutcome, AgentActionRepair, AgentActionRepairFailure, AgentPromptContract,
     AgentPromptPrepareError, DecodeAgentActionTurn, PreparedAgentActionRepair, PreparedAgentPrompt,
