@@ -67,6 +67,7 @@ mod retrieval_fusion;
 mod run_journal;
 mod semantic_embedding_store;
 mod semantic_embeddings;
+mod settings;
 mod task_ledger;
 mod task_lens;
 mod task_lens_workspace;
@@ -371,6 +372,7 @@ pub use semantic_embeddings::{
     GenerateSemanticEmbeddings, GenerateSemanticEmbeddingsError, GenerateSemanticEmbeddingsOutcome,
     SemanticEmbeddingBatchJob, SemanticEmbeddingJobControl,
 };
+pub use settings::*;
 pub use task_ledger::{
     CreateTaskLedger, SaveTaskLedger, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
     TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,
