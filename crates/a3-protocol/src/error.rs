@@ -285,6 +285,12 @@ impl CommandErrorV1 {
         Self::project_open(code)
     }
 
+    /// Creates a safe global Settings or model-probe failure.
+    #[must_use]
+    pub fn settings(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
+    }
+
     fn new(code: ErrorCodeV1, message: &str) -> Self {
         Self {
             protocol_version: ProtocolVersion::CURRENT,

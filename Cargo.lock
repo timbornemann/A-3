@@ -45,6 +45,7 @@ dependencies = [
  "a3-application",
  "a3-domain",
  "a3-protocol",
+ "a3-provider",
  "a3-repo-index",
  "a3-storage-libsql",
  "a3-workspace",

@@ -4,9 +4,11 @@
   "description": "Allows the main window to invoke only typed A^3 product commands.",
   "windows": ["main"],
   "permissions": [
+    "allow-cancel-model-probe",
     "allow-list-recent-projects",
     "allow-cancel-deep-map",
     "allow-compile-task-lens",
+    "allow-configure-model-endpoint",
     "allow-control-agent-approval",
     "allow-control-agent-task-run",
     "allow-create-agent-goal",
@@ -34,8 +36,10 @@
     "allow-query-task-lens-tasks",
     "allow-query-project-status",
     "allow-query-health",
+    "allow-query-settings",
     "allow-rebuild-project-index",
     "allow-remove-project",
+    "allow-probe-model-role",
     "allow-revise-agent-goal",
     "allow-resume-deep-map",
     "allow-start-deep-map"

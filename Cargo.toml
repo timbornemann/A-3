@@ -27,6 +27,7 @@ a3-application = { path = "crates/a3-application" }
 a3-context = { path = "crates/a3-context" }
 a3-domain = { path = "crates/a3-domain" }
 a3-protocol = { path = "crates/a3-protocol" }
+a3-provider = { path = "crates/a3-provider" }
 a3-repo-index = { path = "crates/a3-repo-index" }
 a3-agent-harness-tests = { path = "tests/agent-harness" }
 a3-language-adapter-contract-tests = { path = "tests/language-adapter-contract" }

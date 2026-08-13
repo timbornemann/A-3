@@ -12,6 +12,7 @@ mod clock;
 pub mod commands;
 mod deep_map_manager;
 mod job_ids;
+mod model_settings_manager;
 mod platform;
 mod project_picker;
 mod project_reconciliation_dialog;
@@ -160,6 +161,7 @@ use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
 };
 use job_ids::DesktopJobIds;
+use model_settings_manager::ModelSettingsManager;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
@@ -180,6 +182,7 @@ const MAX_PROJECT_PATH_DISPLAY_CHARS: usize = 32_768;
 #[derive(Debug)]
 pub struct CompositionRoot {
     health_query: GetHealth,
+    model_settings: Option<ModelSettingsManager>,
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
@@ -258,6 +261,49 @@ impl CompositionRoot {
     #[must_use]
     pub fn query_health(&self) -> HealthResponseV1 {
         map_health_to_v1(self.health_query.execute())
+    }
+
+    /// Reads the current global model Settings without provider or network access.
+    pub async fn query_settings(&self) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .query()
+            .await
+    }
+
+    /// Validates and stores a credential-free endpoint without performing a request.
+    pub async fn configure_model_endpoint(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        endpoint: Option<&str>,
+    ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .configure_endpoint(expected, endpoint)
+            .await
+    }
+
+    /// Performs one explicit bounded local capability probe.
+    pub async fn probe_model_role(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        request: &a3_protocol::ProbeModelRoleRequestV1,
+    ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .probe(expected, request)
+            .await
+    }
+
+    /// Requests cooperative cancellation of the single explicit model probe.
+    pub fn cancel_model_probe(&self) -> a3_protocol::CancelModelProbeResponseV1 {
+        self.model_settings.as_ref().map_or_else(
+            || a3_protocol::CancelModelProbeResponseV1::new(false),
+            ModelSettingsManager::cancel_probe,
+        )
     }
 
     /// Executes one user-controlled native project selection and maps it to IPC V1.
@@ -1952,6 +1998,7 @@ struct CompositionBase {
 
 #[derive(Default)]
 struct OptionalCompositionPorts {
+    settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
@@ -1978,6 +2025,7 @@ struct OptionalCompositionPorts {
 }
 
 struct IndexingCompositionPorts {
+    settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
     module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
@@ -2051,6 +2099,7 @@ impl CompositionBase {
             project_reconciliation_confirmer,
             store,
             OptionalCompositionPorts {
+                settings_store: Some(ports.settings_store),
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
                 module_card_detail_store: Some(ports.module_card_detail_store),
@@ -2270,6 +2319,7 @@ impl CompositionBase {
         };
         Ok(CompositionRoot {
             health_query: self.health_query,
+            model_settings: ports.settings_store.map(ModelSettingsManager::new),
             open_project: OpenProject::new(
                 project_directory_picker,
                 Arc::new(RepositoryInspector::new()),
@@ -2335,6 +2385,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 tauri::async_runtime::block_on(LibsqlKnowledgeStore::open(&layout))
                     .map_err(CompositionRootError::Catalog)?,
             );
+            let settings_store: Arc<dyn a3_application::DesktopSettingsStore> = store.clone();
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
@@ -2364,6 +2415,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 )),
                 catalog_store,
                 IndexingCompositionPorts {
+                    settings_store,
                     index_store,
                     module_card_freshness_store,
                     module_card_detail_store,
@@ -2390,8 +2442,10 @@ pub fn run() -> Result<(), DesktopRunError> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::cancel_model_probe,
             commands::cancel_deep_map,
             commands::compile_task_lens,
+            commands::configure_model_endpoint,
             commands::control_agent_approval,
             commands::control_agent_task_run,
             commands::create_agent_goal,
@@ -2420,10 +2474,12 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_task_lens_tasks,
             commands::query_repository_tree,
             commands::query_health,
+            commands::query_settings,
             commands::rebuild_project_index,
             commands::resume_deep_map,
             commands::revise_agent_goal,
             commands::remove_project,
+            commands::probe_model_role,
             commands::start_deep_map
         ])
         .run(tauri::generate_context!())

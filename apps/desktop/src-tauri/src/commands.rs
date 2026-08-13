@@ -1,3 +1,4 @@
+use crate::model_settings_manager::settings_version_from_v1;
 use crate::{
     CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_approval_control_from_v1,
     map_agent_approval_task_id_from_v1, map_agent_goal_task_id_from_v1,
@@ -14,25 +15,27 @@ use a3_protocol::{
     AgentActivityResponseV1, AgentApprovalControlResponseV1, AgentApprovalResponseV1,
     AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
     AgentInspectionResponseV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
-    CommandErrorV1, CompileTaskLensRequestV1, ControlAgentApprovalRequestV1,
+    CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
+    CompileTaskLensRequestV1, ConfigureModelEndpointRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
     DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
     IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
     ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
     ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
-    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryAgentActivityRequestV1,
-    QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
-    QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
-    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
-    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
-    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
-    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
+    ProjectMapSearchResponseV1, ProjectStatusResponseV1, ProtocolVersion,
+    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
+    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+    QuerySettingsRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
+    RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
+    RemoveProjectRequestV1, RemoveProjectResponseV1, RepositoryTreeResponseV1,
+    ReviseAgentGoalRequestV1, SettingsResponseV1, StartDeepMapRequestV1, TaskLensCompileResponseV1,
+    TaskLensTaskResponseV1, TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -351,6 +354,42 @@ pub fn query_health(
     execute_query_health(request, root.inner())
 }
 
+#[tauri::command]
+/// Reads the global model Settings without contacting a provider.
+pub async fn query_settings(
+    request: QuerySettingsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    execute_query_settings(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Validates and stores one credential-free model origin or clears it.
+pub async fn configure_model_endpoint(
+    request: ConfigureModelEndpointRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    execute_configure_model_endpoint(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Runs one explicit bounded Core-owned capability probe for a closed role.
+pub async fn probe_model_role(
+    request: ProbeModelRoleRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    execute_probe_model_role(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Requests cooperative cancellation of the one active Core-owned model probe.
+pub fn cancel_model_probe(
+    request: CancelModelProbeRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<CancelModelProbeResponseV1, CommandErrorV1> {
+    execute_cancel_model_probe(request, root.inner())
+}
+
 fn execute_query_health(
     request: HealthRequestV1,
     root: &CompositionRoot,
@@ -360,6 +399,49 @@ fn execute_query_health(
     }
 
     Ok(root.query_health())
+}
+
+async fn execute_query_settings(
+    request: QuerySettingsRequestV1,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_settings().await
+}
+
+async fn execute_configure_model_endpoint(
+    request: ConfigureModelEndpointRequestV1,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.configure_model_endpoint(expected, request.endpoint_origin())
+        .await
+}
+
+async fn execute_probe_model_role(
+    request: ProbeModelRoleRequestV1,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.probe_model_role(expected, &request).await
+}
+
+fn execute_cancel_model_probe(
+    request: CancelModelProbeRequestV1,
+    root: &CompositionRoot,
+) -> Result<CancelModelProbeResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    Ok(root.cancel_model_probe())
 }
 
 async fn execute_open_project(

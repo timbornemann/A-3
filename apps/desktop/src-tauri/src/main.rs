@@ -104,7 +104,9 @@ mod tests {
         let app = mock_builder()
             .manage(root)
             .invoke_handler(tauri::generate_handler![
+                a3_desktop::commands::cancel_model_probe,
                 a3_desktop::commands::cancel_deep_map,
+                a3_desktop::commands::configure_model_endpoint,
                 a3_desktop::commands::list_recent_projects,
                 a3_desktop::commands::open_project,
                 a3_desktop::commands::pause_deep_map,
@@ -123,9 +125,11 @@ mod tests {
                 a3_desktop::commands::query_module_tree,
                 a3_desktop::commands::query_repository_tree,
                 a3_desktop::commands::query_health,
+                a3_desktop::commands::query_settings,
                 a3_desktop::commands::rebuild_project_index,
                 a3_desktop::commands::remove_project,
                 a3_desktop::commands::resume_deep_map,
+                a3_desktop::commands::probe_model_role,
                 a3_desktop::commands::start_deep_map
             ])
             .build(tauri::generate_context!())?;
