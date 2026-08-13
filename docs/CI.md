@@ -26,7 +26,8 @@ Der Bericht `target/reports/dependency-license-report.json` ist deterministisch 
 
 ## Plattformmatrix
 
-Die native Matrix führt Workspace-Tests und `tauri build --no-bundle` auf vier Runnern aus:
+Die native Matrix führt Workspace-Tests, `tauri build --no-bundle` und einen echten nativen
+UX-Smoke auf vier Runnern aus:
 
 | Ziel | Runner |
 | --- | --- |
@@ -35,7 +36,15 @@ Die native Matrix führt Workspace-Tests und `tauri build --no-bundle` auf vier 
 | macOS ARM64 | `macos-15` |
 | macOS x86_64 | `macos-15-intel` |
 
-Ubuntu 22.04 ist bewusst die ältere von Tauri empfohlene Linux-Baseline mit WebKitGTK 4.1. GitHub dokumentiert `macos-15` aktuell als ARM64- und `macos-15-intel` als Intel-Runner. Signierte Installer und Plattform-Smokes mit echter UI bleiben spätere Release-Arbeitspakete.
+Ubuntu 22.04 ist bewusst die ältere von Tauri empfohlene Linux-Baseline mit WebKitGTK 4.1. GitHub dokumentiert `macos-15` aktuell als ARM64- und `macos-15-intel` als Intel-Runner. Der Smoke
+startet jeweils das unveränderte Releasebinary, wartet auf ein sichtbares natives A^3-Fenster von
+mindestens 720 × 520 Bildpunkten und erstellt einen an die konkrete Prozess-/Fenster-ID gebundenen
+Screenshot. Windows verwendet `PrintWindow(PW_RENDERFULLCONTENT)` und prüft Stichprobenfarbvarianz,
+Linux verwendet WebKitGTK in einem Xvfb-Display und prüft die Bildstandardabweichung, macOS bindet
+das WKWebView-Fenster über CoreGraphics. Zu kleine oder visuell leere Bilder lassen den Job
+fehlschlagen. PNG und JSON-Messbericht werden pro Matrixziel 14 Tage als
+`desktop-ux-smoke-*`-Artefakt aufbewahrt. Signierte Installer bleiben ein späteres
+Release-Arbeitspaket.
 
 Quellen: [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), [Tauri AppImage baseline](https://v2.tauri.app/distribute/appimage/).
 

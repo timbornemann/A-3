@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   extractMarkdownLinks,
@@ -61,4 +62,23 @@ test('Dependency report is deterministic and contains both ecosystems', () => {
   assert.deepEqual(first.rust.summary.unknownLicensePackages, []);
   assert.deepEqual(first.javascript.summary.unknownLicensePackages, []);
   assert(!JSON.stringify(first).includes(repositoryRoot));
+});
+
+test('native UX smoke stays in every platform job without a shell-enabled Node runner', () => {
+  const workflow = readFileSync(
+    path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'),
+    'utf8',
+  );
+  const runner = readFileSync(
+    path.join(repositoryRoot, 'scripts', 'run-desktop-ux-smoke.mjs'),
+    'utf8',
+  );
+
+  for (const platform of ['linux-x86_64', 'windows-x86_64', 'macos-arm64', 'macos-x86_64']) {
+    assert.match(workflow, new RegExp(`artifact: ${platform}`, 'u'));
+  }
+  assert.match(workflow, /node scripts\/run-desktop-ux-smoke\.mjs/u);
+  assert.match(workflow, /desktop-ux-smoke-\$\{\{ matrix\.artifact \}\}/u);
+  assert.doesNotMatch(runner, /shell\s*:\s*true/u);
+  assert.match(runner, /screenshot\.size < 4096/u);
 });
