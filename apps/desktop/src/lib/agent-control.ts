@@ -9,8 +9,19 @@ const MAX_U64 = 18_446_744_073_709_551_615n;
 
 type InvokeCommand = (command: string, arguments_: Record<string, unknown>) => Promise<unknown>;
 
-export type AgentTaskControlActionV1 = 'cancel' | 'replan' | 'resume';
+export type AgentTaskControlActionV1 = 'cancel' | 'pause' | 'replan' | 'resume';
 export type AgentTaskControlOutcomeV1 = 'cancelled' | 'replanRequired' | 'resumed';
+export type AgentTaskControlAcceptedOutcomeV1 = 'cancelRequested' | 'pauseRequested';
+export type AgentTaskRuntimeStartV1 = 'failed' | 'queued' | 'unavailable';
+export type AgentTaskRuntimeStateV1 = 'cancelling' | 'pausing' | 'queued' | 'running';
+
+export interface AgentTaskRuntimeV1 {
+  canPause: boolean;
+  controllerState: AgentControllerStateV1;
+  ledgerRevision: number;
+  ledgerStoreVersion: string;
+  runtimeState: AgentTaskRuntimeStateV1;
+}
 
 export interface AgentTaskRecoveryV1 {
   canResume: boolean;
@@ -34,6 +45,8 @@ export type AgentTaskRecoveryResultV1 =
   | { status: 'activityChanged' }
   | { status: 'runUnavailable' }
   | { state: AgentControllerStateV1; status: 'runNotControllable' }
+  | { runtime: AgentTaskRuntimeV1; status: 'runtimeOwned' }
+  | { recovery: AgentTaskRecoveryV1; status: 'paused' }
   | { recovery: AgentTaskRecoveryV1; status: 'available' };
 
 export interface AgentTaskRecoveryResponseV1 {
@@ -51,11 +64,13 @@ export type AgentTaskControlResultV1 =
   | { state: AgentControllerStateV1; status: 'runNotControllable' }
   | { status: 'mutationReconciliationRequired' }
   | { status: 'resumeRequiresReplan' }
+  | { outcome: AgentTaskControlAcceptedOutcomeV1; status: 'accepted' }
   | {
       interruptedToolAttempts: number;
       ledgerStoreVersion: string;
       outcome: AgentTaskControlOutcomeV1;
       reopenedStepCount: number;
+      runtimeStart: AgentTaskRuntimeStartV1 | null;
       state: AgentControllerStateV1;
       status: 'applied';
     };
@@ -132,10 +147,17 @@ function parseRecoveryResult(value: unknown): AgentTaskRecoveryResultV1 {
   if (common !== null) return common;
   if (
     isRecord(value) &&
-    value.status === 'available' &&
+    value.status === 'runtimeOwned' &&
+    hasExactKeys(value, ['runtime', 'status'])
+  ) {
+    return { runtime: parseRuntime(value.runtime), status: 'runtimeOwned' };
+  }
+  if (
+    isRecord(value) &&
+    (value.status === 'available' || value.status === 'paused') &&
     hasExactKeys(value, ['recovery', 'status'])
   ) {
-    return { recovery: parseRecovery(value.recovery), status: 'available' };
+    return { recovery: parseRecovery(value.recovery), status: value.status };
   }
   throw new Error('Agent task recovery result uses an unsupported state.');
 }
@@ -143,6 +165,14 @@ function parseRecoveryResult(value: unknown): AgentTaskRecoveryResultV1 {
 function parseControlResult(value: unknown): AgentTaskControlResultV1 {
   const common = parseCommonResult(value);
   if (common !== null) return common;
+  if (
+    isRecord(value) &&
+    value.status === 'accepted' &&
+    hasExactKeys(value, ['outcome', 'status']) &&
+    isAcceptedControlOutcome(value.outcome)
+  ) {
+    return { outcome: value.outcome, status: 'accepted' };
+  }
   if (
     isRecord(value) &&
     (value.status === 'mutationReconciliationRequired' ||
@@ -159,6 +189,7 @@ function parseControlResult(value: unknown): AgentTaskControlResultV1 {
       'ledgerStoreVersion',
       'outcome',
       'reopenedStepCount',
+      'runtimeStart',
       'state',
       'status',
     ]) &&
@@ -166,18 +197,21 @@ function parseControlResult(value: unknown): AgentTaskControlResultV1 {
     isPositiveDecimal(value.ledgerStoreVersion) &&
     isControlOutcome(value.outcome) &&
     isU32(value.reopenedStepCount) &&
+    (value.runtimeStart === null || isRuntimeStart(value.runtimeStart)) &&
     isControllerState(value.state) &&
-    ((value.outcome === 'cancelled' && value.state === 'cancelled') ||
-      (value.outcome !== 'cancelled' && !isTerminalState(value.state)))
+    ((value.outcome === 'cancelled' &&
+      value.state === 'cancelled' &&
+      value.runtimeStart === null) ||
+      (value.outcome !== 'cancelled' &&
+        !isTerminalState(value.state) &&
+        value.runtimeStart !== null))
   ) {
     return value as AgentTaskControlResultV1;
   }
   throw new Error('Agent task control result uses an unsupported state.');
 }
 
-function parseCommonResult(
-  value: unknown,
-): Exclude<AgentTaskRecoveryResultV1, { status: 'available' }> | null {
+function parseCommonResult(value: unknown): CommonAgentTaskResultV1 | null {
   if (!isRecord(value) || typeof value.status !== 'string') return null;
   if (
     [
@@ -189,7 +223,7 @@ function parseCommonResult(
     ].includes(value.status) &&
     hasExactKeys(value, ['status'])
   ) {
-    return { status: value.status } as Exclude<AgentTaskRecoveryResultV1, { status: 'available' }>;
+    return { status: value.status } as CommonAgentTaskResultV1;
   }
   if (
     value.status === 'goalRevisionMismatch' &&
@@ -212,6 +246,38 @@ function parseCommonResult(
     return { state: value.state, status: 'runNotControllable' };
   }
   return null;
+}
+
+type CommonAgentTaskResultV1 =
+  | { status: 'noProject' }
+  | { status: 'taskNotFound' }
+  | { status: 'ledgerUnavailable' }
+  | { currentRevision: number; ledgerRevision: number; status: 'goalRevisionMismatch' }
+  | { status: 'activityChanged' }
+  | { status: 'runUnavailable' }
+  | { state: AgentControllerStateV1; status: 'runNotControllable' };
+
+function parseRuntime(value: unknown): AgentTaskRuntimeV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'canPause',
+      'controllerState',
+      'ledgerRevision',
+      'ledgerStoreVersion',
+      'runtimeState',
+    ]) ||
+    typeof value.canPause !== 'boolean' ||
+    !isControllerState(value.controllerState) ||
+    isTerminalState(value.controllerState) ||
+    !isPositiveU32(value.ledgerRevision) ||
+    !isPositiveDecimal(value.ledgerStoreVersion) ||
+    !isRuntimeState(value.runtimeState) ||
+    value.canPause !== (value.runtimeState === 'running')
+  ) {
+    throw new Error('Agent task runtime projection is invalid.');
+  }
+  return value as unknown as AgentTaskRuntimeV1;
 }
 
 function parseRecovery(value: unknown): AgentTaskRecoveryV1 {
@@ -292,11 +358,23 @@ function isTerminalState(value: AgentControllerStateV1): boolean {
 }
 
 function isControlAction(value: unknown): value is AgentTaskControlActionV1 {
-  return value === 'cancel' || value === 'replan' || value === 'resume';
+  return value === 'cancel' || value === 'pause' || value === 'replan' || value === 'resume';
 }
 
 function isControlOutcome(value: unknown): value is AgentTaskControlOutcomeV1 {
   return value === 'cancelled' || value === 'replanRequired' || value === 'resumed';
+}
+
+function isAcceptedControlOutcome(value: unknown): value is AgentTaskControlAcceptedOutcomeV1 {
+  return value === 'cancelRequested' || value === 'pauseRequested';
+}
+
+function isRuntimeStart(value: unknown): value is AgentTaskRuntimeStartV1 {
+  return value === 'failed' || value === 'queued' || value === 'unavailable';
+}
+
+function isRuntimeState(value: unknown): value is AgentTaskRuntimeStateV1 {
+  return value === 'cancelling' || value === 'pausing' || value === 'queued' || value === 'running';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

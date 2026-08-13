@@ -105,7 +105,9 @@ function minimalActiveActivity(): AgentActivityResponseV1 {
   };
 }
 
-function availableRecovery(): AgentTaskRecoveryResponseV1 {
+function availableRecovery(
+  status: 'available' | 'paused' = 'available',
+): AgentTaskRecoveryResponseV1 {
   return {
     protocolVersion: 1,
     result: {
@@ -122,7 +124,7 @@ function availableRecovery(): AgentTaskRecoveryResponseV1 {
         staleEvidenceCount: 2,
         state: 'execute',
       },
-      status: 'available',
+      status,
     },
   };
 }
@@ -408,7 +410,7 @@ describe('AgentGoalWorkspace', () => {
   it('keeps unsafe Resume disabled while Cancel remains reachable and task-bound', async () => {
     const recoveryLoader = vi
       .fn<(selectedTaskId: string) => Promise<AgentTaskRecoveryResponseV1>>()
-      .mockResolvedValueOnce(availableRecovery())
+      .mockResolvedValueOnce(availableRecovery('paused'))
       .mockResolvedValue({
         protocolVersion: 1,
         result: { state: 'cancelled', status: 'runNotControllable' },
@@ -422,7 +424,7 @@ describe('AgentGoalWorkspace', () => {
         selectedTaskId: string,
         expectedLedgerRevision: number,
         expectedLedgerStoreVersion: string,
-        action: 'cancel' | 'replan' | 'resume',
+        action: 'cancel' | 'pause' | 'replan' | 'resume',
       ) => Promise<AgentTaskControlResponseV1>
     >(async () => ({
       protocolVersion: 1,
@@ -431,6 +433,7 @@ describe('AgentGoalWorkspace', () => {
         ledgerStoreVersion: '8',
         outcome: 'cancelled',
         reopenedStepCount: 2,
+        runtimeStart: null,
         state: 'cancelled',
         status: 'applied',
       },
@@ -476,6 +479,146 @@ describe('AgentGoalWorkspace', () => {
     expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
     expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
     expect(activityLoader).toHaveBeenCalledTimes(2);
+  });
+
+  it('requests Pause only for a Core-owned running worker and reloads Pausing', async () => {
+    const runtimeResponse = (runtimeState: 'pausing' | 'running', canPause: boolean) => ({
+      protocolVersion: 1 as const,
+      result: {
+        runtime: {
+          canPause,
+          controllerState: 'execute' as const,
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          runtimeState,
+        },
+        status: 'runtimeOwned' as const,
+      },
+    });
+    const recoveryLoader = vi
+      .fn<(selectedTaskId: string) => Promise<AgentTaskRecoveryResponseV1>>()
+      .mockResolvedValueOnce(runtimeResponse('running', true))
+      .mockResolvedValueOnce(runtimeResponse('pausing', false))
+      .mockResolvedValue(availableRecovery('paused'));
+    const runController = vi.fn<
+      (
+        selectedTaskId: string,
+        expectedLedgerRevision: number,
+        expectedLedgerStoreVersion: string,
+        action: 'cancel' | 'pause' | 'replan' | 'resume',
+      ) => Promise<AgentTaskControlResponseV1>
+    >(async () => ({
+      protocolVersion: 1,
+      result: { outcome: 'pauseRequested', status: 'accepted' },
+    }));
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      activityLoader: async () => minimalActiveActivity(),
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [
+            {
+              intendedOutcome: 'Besessenen Worker pausieren',
+              status: 'inProgress',
+              stepId: '3'.repeat(64),
+            },
+          ],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+      recoveryLoader,
+      runController,
+      tasksLoader: async () => tasks(1),
+    });
+
+    const pause = await screen.findByRole('button', { name: 'Pause' });
+    expect(pause.hasAttribute('disabled')).toBe(false);
+    await fireEvent.click(pause);
+    await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
+    expect(runController).toHaveBeenCalledWith(taskId, 3, '7', 'pause');
+    expect(await screen.findByText(/Pause wurde angefordert/)).toBeTruthy();
+    expect(await screen.findByText('Pause läuft')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByText(/Produktlaufzeit pausiert/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Status aktualisieren' }));
+    expect(await screen.findByText(/Produktlaufzeit pausiert/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+  });
+
+  it.each([
+    {
+      action: 'resume' as const,
+      button: 'Resume',
+      message: /neuer besessener Versuch eingereiht/u,
+      outcome: 'resumed' as const,
+    },
+    {
+      action: 'replan' as const,
+      button: 'Replan',
+      message: /neuer besessener Replan-Versuch eingereiht/u,
+      outcome: 'replanRequired' as const,
+    },
+  ])('starts $button only after the durable recovery commit', async (scenario) => {
+    const recovery = availableRecovery('paused');
+    if (recovery.result.status !== 'paused') throw new Error('paused recovery fixture required');
+    recovery.result.recovery.canResume = true;
+    recovery.result.recovery.staleEvidenceCount = 0;
+    const runController = vi.fn<
+      (
+        selectedTaskId: string,
+        expectedLedgerRevision: number,
+        expectedLedgerStoreVersion: string,
+        action: 'cancel' | 'pause' | 'replan' | 'resume',
+      ) => Promise<AgentTaskControlResponseV1>
+    >(async () => ({
+      protocolVersion: 1,
+      result: {
+        interruptedToolAttempts: 1,
+        ledgerStoreVersion: '8',
+        outcome: scenario.outcome,
+        reopenedStepCount: scenario.action === 'replan' ? 2 : 0,
+        runtimeStart: 'queued',
+        state: 'execute',
+        status: 'applied',
+      },
+    }));
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      activityLoader: async () => minimalActiveActivity(),
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [
+            {
+              intendedOutcome: 'Recovery sicher fortsetzen',
+              status: 'inProgress',
+              stepId: '3'.repeat(64),
+            },
+          ],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+      recoveryLoader: async () => recovery,
+      runController,
+      tasksLoader: async () => tasks(1),
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: scenario.button }));
+    await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
+    expect(runController).toHaveBeenCalledWith(taskId, 3, '7', scenario.action);
+    expect(await screen.findByText(scenario.message)).toBeTruthy();
   });
 
   it('keeps a terminal run state visible', async () => {

@@ -180,7 +180,7 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Der U5-Agent-Recovery-Contract leitet den steuerbaren Run ausschließlich aus `TaskId` und aktivem
   retained Ledger-Versuch ab. Query und Mutation dürfen keine Run-, Snapshot-, Step-, Event- oder
   Worktree-ID aus der WebView akzeptieren; die Mutation bindet nur eine geschlossene
-  Resume-/Replan-/Cancel-Aktion an die exakt sichtbare Ledgerrevision und -Storeversion. H11/E8-
+  Pause-/Resume-/Replan-/Cancel-Aktion an die exakt sichtbare Ledgerrevision und -Storeversion. H11/E8-
   Storage-Contracts bleiben der atomare Nachweis für Published-Snapshot-, Ledger- und Run-CAS,
   stale Evidence, Unknown-Reconciliation und Reopen. Rust-/TypeScript-Contracts lehnen unbekannte
   Felder, nicht kanonische Anker und widersprüchliche Outcome-/Controllerzustände ab. Der
@@ -188,6 +188,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   halten und nach Erfolg den dauerhaften terminalen Zustand neu laden. Der Capability-Test muss
   jeden tatsächlich registrierten Agent-/Task-Lens-Command explizit allowlisten und weiterhin
   generische Dialog-, Datei-, Shell-, SQL-, Provider- und Netzwerkrechte ausschließen.
+  Manager-Contracts müssen zusätzlich beweisen, dass Mount und Polling keine Arbeit starten,
+  Queued Work keinen sicheren Pause-Checkpoint behauptet, ein laufender Versuch erst nach
+  terminaler Scheduler-Cancellation plus Executor-Bestätigung und H11-Revalidierung `Paused`
+  erreicht, ein Resume mit strikt neuerer Ledger-Store-Version einen neuen besessenen Job startet
+  und Cancel exakt die sichtbaren Anker verwendet. H11 darf einen im aktuellen Prozess lebenden
+  Worker nicht inspizieren. Projektwechsel und Shutdown dürfen keinen Worker ablösen.
 
 ### Persistenz
 

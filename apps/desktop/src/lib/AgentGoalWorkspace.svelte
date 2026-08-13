@@ -13,6 +13,7 @@
     type AgentTaskControlActionV1,
     type AgentTaskControlResponseV1,
     type AgentTaskRecoveryResponseV1,
+    type AgentTaskRuntimeStateV1,
   } from './agent-control';
   import {
     createAgentGoal,
@@ -226,27 +227,45 @@
   }
 
   async function applyRunControl(action: AgentTaskControlActionV1): Promise<void> {
-    if (
-      controllingRun ||
-      recoveryView.kind !== 'result' ||
-      recoveryView.result.status !== 'available'
-    ) {
+    if (controllingRun || recoveryView.kind !== 'result') {
       return;
     }
+    const anchor =
+      recoveryView.result.status === 'available'
+        ? recoveryView.result.recovery
+        : recoveryView.result.status === 'paused'
+          ? recoveryView.result.recovery
+          : recoveryView.result.status === 'runtimeOwned'
+            ? recoveryView.result.runtime
+            : null;
+    if (anchor === null) return;
     controllingRun = true;
     actionError = null;
     actionMessage = null;
-    const recovery = recoveryView.result.recovery;
     try {
       const response = await runController(
         selectedTaskId,
-        recovery.ledgerRevision,
-        recovery.ledgerStoreVersion,
+        anchor.ledgerRevision,
+        anchor.ledgerStoreVersion,
         action,
       );
       switch (response.result.status) {
         case 'applied':
-          actionMessage = controlOutcomeMessage(response.result.outcome);
+          actionMessage = controlOutcomeMessage(
+            response.result.outcome,
+            response.result.runtimeStart,
+          );
+          await Promise.all([
+            loadLedger(selectedTaskId),
+            loadActivity(selectedTaskId),
+            loadRecovery(selectedTaskId),
+          ]);
+          break;
+        case 'accepted':
+          actionMessage =
+            response.result.outcome === 'pauseRequested'
+              ? 'Pause wurde angefordert. Pausiert gilt der Run erst nach beendetem Worker und geprüftem Recovery-Checkpoint.'
+              : 'Cancel wurde angefordert. Der terminale Zustand erscheint erst nach Worker-Stopp und dauerhaftem H11-Commit.';
           await Promise.all([
             loadLedger(selectedTaskId),
             loadActivity(selectedTaskId),
@@ -444,6 +463,16 @@
     return labels[state];
   }
 
+  function agentRuntimeStateLabel(state: AgentTaskRuntimeStateV1): string {
+    const labels: Record<AgentTaskRuntimeStateV1, string> = {
+      cancelling: 'Cancel läuft',
+      pausing: 'Pause läuft',
+      queued: 'Eingereiht',
+      running: 'Läuft',
+    };
+    return labels[state];
+  }
+
   function activityEventLabel(item: AgentActivityEventV1): string {
     const event = item.event;
     switch (event.kind) {
@@ -509,12 +538,24 @@
     );
   }
 
-  function controlOutcomeMessage(outcome: 'cancelled' | 'replanRequired' | 'resumed'): string {
+  function controlOutcomeMessage(
+    outcome: 'cancelled' | 'replanRequired' | 'resumed',
+    runtimeStart: 'failed' | 'queued' | 'unavailable' | null,
+  ): string {
     const messages = {
       cancelled: 'Der Agent Run wurde dauerhaft abgebrochen.',
       replanRequired:
-        'Der Recovery-Stand wurde committed; vor weiterer Arbeit ist ein Replan erforderlich.',
-      resumed: 'Der aktuelle Snapshot wurde übernommen; der Run darf sicher fortgesetzt werden.',
+        runtimeStart === 'queued'
+          ? 'Der Recovery-Stand wurde committed und ein neuer besessener Replan-Versuch eingereiht.'
+          : runtimeStart === 'failed'
+            ? 'Der Recovery-Stand wurde committed, aber der besessene Replan-Versuch konnte nicht eingereiht werden.'
+            : 'Der Recovery-Stand wurde committed; ohne ausführbare Agent-Capability bleibt Replan bereit.',
+      resumed:
+        runtimeStart === 'queued'
+          ? 'Der aktuelle Snapshot wurde übernommen und ein neuer besessener Versuch eingereiht.'
+          : runtimeStart === 'failed'
+            ? 'Der aktuelle Snapshot wurde übernommen, aber der besessene Versuch konnte nicht eingereiht werden.'
+            : 'Der aktuelle Snapshot wurde übernommen; ohne ausführbare Agent-Capability bleibt Resume bereit.',
     } as const;
     return messages[outcome];
   }
@@ -710,8 +751,58 @@
                   Aktuellen Stand prüfen
                 </button>
               </div>
-            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'available'}
+            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runtimeOwned'}
+              {@const runtime = recoveryView.result.runtime}
+              <dl class="recovery-facts">
+                <div>
+                  <dt>Produktlaufzeit</dt>
+                  <dd>{agentRuntimeStateLabel(runtime.runtimeState)}</dd>
+                </div>
+                <div>
+                  <dt>Controller</dt>
+                  <dd>{controllerStateLabel(runtime.controllerState)}</dd>
+                </div>
+                <div>
+                  <dt>Ledgeranker</dt>
+                  <dd>R{runtime.ledgerRevision} · V{runtime.ledgerStoreVersion}</dd>
+                </div>
+              </dl>
+              <p class="bounded-note">
+                Dieser Prozess besitzt den Worker. Recovery unterbricht deshalb keinen laufenden
+                Toolversuch; Pause und Cancel stoppen zuerst kooperativ die Produktlaufzeit.
+              </p>
+              <div class="control-actions" aria-label="Agent Run Laufzeit-Aktionen">
+                <button
+                  type="button"
+                  disabled={controllingRun || !runtime.canPause}
+                  onclick={() => applyRunControl('pause')}
+                >
+                  Pause
+                </button>
+                <button
+                  class="danger-action"
+                  type="button"
+                  disabled={controllingRun || runtime.runtimeState === 'cancelling'}
+                  onclick={() => applyRunControl('cancel')}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={controllingRun}
+                  onclick={() => loadRecovery(selectedTaskId)}
+                >
+                  Status aktualisieren
+                </button>
+              </div>
+            {:else if recoveryView.kind === 'result' && (recoveryView.result.status === 'available' || recoveryView.result.status === 'paused')}
               {@const recovery = recoveryView.result.recovery}
+              {#if recoveryView.result.status === 'paused'}
+                <p class="bounded-note" role="status">
+                  Produktlaufzeit pausiert · der Worker ist beendet und der Recovery-Checkpoint
+                  wurde geprüft.
+                </p>
+              {/if}
               <dl class="recovery-facts">
                 <div>
                   <dt>Snapshot</dt>

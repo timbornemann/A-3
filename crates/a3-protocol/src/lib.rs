@@ -33,9 +33,11 @@ pub use agent_activity::{
     QueryAgentActivityRequestV1,
 };
 pub use agent_control::{
-    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
-    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
-    AgentTaskRecoveryV1, ControlAgentTaskRunRequestV1, QueryAgentTaskRecoveryRequestV1,
+    AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
+    AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
+    AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
+    AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, ControlAgentTaskRunRequestV1,
+    QueryAgentTaskRecoveryRequestV1,
 };
 pub use agent_goal::{
     AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,

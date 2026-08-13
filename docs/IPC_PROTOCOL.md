@@ -266,15 +266,29 @@ Run-, Snapshot-, Step-, Evidence- oder Worktree-IDs sind keine Requestfelder. Di
 nach einem Appneustart verlassene In-flight-Toolversuche dauerhaft als `Interrupted` und liefert
 nur content-freie Recovery-Fakten: endlichen Controllerzustand, Run-/Published-Snapshotanker,
 Snapshotwechsel, stale Evidence Count, Interrupted Count sowie die beiden Unknown-Mutationsgates.
+Besitzt der aktuelle Prozess dagegen noch einen Worker, wird diese unterbrechende H11-Inspektion
+nicht ausgeführt. `runtimeOwned` liefert nur Ledgerrevision/-Storeversion, nichtterminalen
+Controllerzustand, `queued|running|pausing|cancelling` und das ausschließlich für `running` wahre
+`canPause`. Nach tatsächlich beendetem Worker und erfolgreicher H11-Revalidierung liefert
+`paused` dieselben autoritativen Recovery-Fakten wie `available`, ohne `AgentControllerState` um
+einen Pausezustand zu erweitern.
 
-`control_agent_task_run` akzeptiert zusätzlich genau eine geschlossene Aktion `resume`, `replan`
-oder `cancel` sowie die zuvor sichtbare positive `expectedLedgerRevision` und den kanonischen
+`control_agent_task_run` akzeptiert zusätzlich genau eine geschlossene Aktion `pause`, `resume`,
+`replan` oder `cancel` sowie die zuvor sichtbare positive `expectedLedgerRevision` und den kanonischen
 positiven u64-Dezimaltext `expectedLedgerStoreVersion`. Event-ID, Zeit, Run und aktueller Published
 Snapshot stammen ausschließlich aus dem Core. H11/E8 prüft Evidence und Mutation Disposition neu
 und committed Published-Snapshot-, Ledger-Version- und Run-Sequenz-CAS gemeinsam. `resume` ist bei
 staler Evidence oder einem ausstehenden Mutation-Replan gesperrt; `replan` und `resume` sind vor
 der autoritativen Reconciliation einer unbekannten Wirkung gesperrt; `cancel` bleibt erreichbar
 und liefert nach erfolgreichem Commit den terminalen Controllerzustand `cancelled`.
+
+Für einen lebenden Worker quittiert `accepted` ausschließlich `pauseRequested` oder
+`cancelRequested`; es behauptet weder `Paused` noch einen dauerhaften Cancel. Pause ist nur für
+`running` zulässig. Cancel stoppt zuerst den Worker und verwendet danach die exakt übergebenen
+Ledgeranker für den H11-CAS. Ein atomar angewandtes Resume oder Replan enthält zusätzlich
+`runtimeStart`: `queued` für einen neu angenommenen Scheduler-Job, `unavailable` ohne verifizierte
+Executor-Capability oder `failed`, wenn der Recovery-Commit zwar dauerhaft war, der begrenzte
+Scheduler den neuen Versuch aber nicht annehmen konnte. Beim terminalen Cancel ist das Feld null.
 
 Beide Antworten unterscheiden fehlendes Projekt, Task, Ledger oder Run, Goal-Mismatch,
 gleichzeitige Änderung und nicht steuerbare terminale/historische Runs als geschlossene Zustände.

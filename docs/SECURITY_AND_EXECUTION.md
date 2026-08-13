@@ -156,13 +156,18 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Keine dieser IPC-Capabilities gewährt direkten Provider-, Netzwerk-, Datei-, Shell- oder
   Storagezugriff.
 - Die Agent-Recovery-Commands akzeptieren ausschließlich die bereits ausgewählte opake `TaskId`
-  und bei einer Mutation die zuvor sichtbaren Ledgerrevision/-Storeversion sowie genau Resume,
-  Replan oder Cancel. Der Core leitet Run, Step, Worktree und Snapshots selbst ab und erzeugt
+  und bei einer Mutation die zuvor sichtbaren Ledgerrevision/-Storeversion sowie genau Pause,
+  Resume, Replan oder Cancel. Der Core leitet Run, Step, Worktree und Snapshots selbst ab und erzeugt
   Event-ID sowie Zeit aus privilegierten lokalen Quellen. Vor dem atomaren Commit werden
   Published Snapshot, Ledger-CAS, Run-Sequenz, stale Evidence und Unknown-Mutationsdisposition neu
   geprüft. Resume kann deshalb weder stale Evidence noch eine unbekannte Wirkung übergehen;
   Cancel bleibt selbst bei Reconciliationbedarf erreichbar. Keine Run-/Snapshot-ID und kein
-  freier Recoverytext überschreiten die WebView-Grenze.
+  freier Recoverytext überschreiten die WebView-Grenze. Solange der Prozess einen Scheduler-Job
+  desselben Tasks besitzt, wird keine unterbrechende H11-Neustartinspektion ausgeführt. Pause und
+  Cancel können nur diesen Core-eigenen Worker kooperativ stoppen; Cancel bleibt bis zum
+  anschließenden atomaren Commit an die vom Nutzer bestätigten Ledgeranker gebunden. `Paused`
+  bestätigt sowohl den terminalen Worker-Stopp als auch einen nichtterminalen, neu geprüften
+  Recovery-Checkpoint.
 - Die zusätzlich gelieferte Storagegröße wird ausschließlich unter dem aus der validierten
   `WorktreeId` abgeleiteten privaten App-Data-Verzeichnis gemessen. Die Traversierung folgt keinen
   Symlinks, lehnt Spezialdateien und Ausbrüche ab und ist auf 100.000 Einträge, zwei Sekunden,

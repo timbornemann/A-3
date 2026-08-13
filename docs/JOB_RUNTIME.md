@@ -64,6 +64,23 @@ am ersten unbestätigten Planschritt fort. Cancel verwirft den Checkpoint. Proje
 Projektentfernung und Shutdown fordern ebenfalls Cancellation an und lassen keinen detached Worker
 zurück.
 
+Der Agent Workspace verwendet nach ADR-0020 dieselbe Trennung. Ein begrenzter
+`AgentRunManager` im Desktop-Composition-Root besitzt die Scheduler-Jobs und projiziert
+`Idle`, `Queued`, `Running`, `Pausing`, `Paused`, `Cancelling`, `Succeeded`, `Failed` oder
+`Cancelled`; diese Projektion ist weder der persistente Agent-Controller noch eine neue
+Wahrheitsquelle. Polling und WebView-Mount erzeugen keine Arbeit. Während ein Worker lebt, liefert
+Recovery ausschließlich Task-, Ledger- und Produktzustand aus einem read-only Core-Read und führt
+keine H11-Neustartinspektion aus.
+
+Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
+auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine
+erfolgreiche H11/E8-Inspektion eines weiterhin nichtterminalen Runs. Resume beziehungsweise
+Replan committen zuerst den bestehenden Snapshot-/Ledger-/Run-CAS und reichen danach einen neuen
+besessenen Versuch mit einer strikt neueren Ledger-Store-Version ein. Cancel stoppt zuerst den
+Worker und committed anschließend H11 gegen die zuvor sichtbaren Ledgeranker. Projektwechsel,
+Entfernung und Composition-Root-Shutdown quieszen die besessene Arbeit; ohne verifizierte
+Agent-Executor-Capability wird kein Manager und keine Modellarbeit erzeugt.
+
 Der Scheduler besitzt jeden Worker-Thread und akzeptiert nach Beginn des Shutdowns keine Arbeit mehr. `Drain` beendet die Queue kontrolliert und wartet anschließend auf alle Worker. `CancelAndWait` fordert zusätzlich für alle aktiven Jobs Cancellation an und wartet ebenfalls auf alle Worker. Der Destruktor verwendet als Sicherheitsnetz `CancelAndWait`; es gibt keinen detached Worker-Pfad.
 
 Der Shutdown-Report enthält die Anzahl gejointer Worker, geordnete finale Job-Snapshots und noch nicht konsumierte Ereignisse. Ein Panic innerhalb einer Aufgabe wird an einer Laufzeitgrenze abgefangen und als `Failed` abgeschlossen; ein Panic außerhalb dieser Grenze wird als Shutdown-Fehler gemeldet.

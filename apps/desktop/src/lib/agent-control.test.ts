@@ -62,6 +62,7 @@ describe('Agent task recovery V1', () => {
         ledgerStoreVersion: '8',
         outcome: 'cancelled',
         reopenedStepCount: 2,
+        runtimeStart: null,
         state: 'cancelled',
         status: 'applied',
       },
@@ -79,6 +80,46 @@ describe('Agent task recovery V1', () => {
     });
   });
 
+  it('keeps a live owned runtime separate from durable recovery and accepts Pause', async () => {
+    const runtime = parseAgentTaskRecoveryResponseV1({
+      protocolVersion: 1,
+      result: {
+        runtime: {
+          canPause: true,
+          controllerState: 'execute',
+          ledgerRevision: 2,
+          ledgerStoreVersion: '7',
+          runtimeState: 'running',
+        },
+        status: 'runtimeOwned',
+      },
+    });
+    expect(runtime.result.status).toBe('runtimeOwned');
+
+    const pausedPayload = recoveryResponse();
+    pausedPayload.result.status = 'paused';
+    const paused = parseAgentTaskRecoveryResponseV1(pausedPayload);
+    expect(paused.result.status).toBe('paused');
+    if (paused.result.status === 'paused') {
+      expect(paused.result.recovery.state).toBe('execute');
+    }
+
+    const invoke = vi.fn().mockResolvedValue({
+      protocolVersion: 1,
+      result: { outcome: 'pauseRequested', status: 'accepted' },
+    });
+    await controlAgentTaskRun(id('a'), 2, '7', 'pause', invoke);
+    expect(invoke).toHaveBeenCalledWith('control_agent_task_run', {
+      request: {
+        action: 'pause',
+        expectedLedgerRevision: 2,
+        expectedLedgerStoreVersion: '7',
+        protocolVersion: 1,
+        taskId: id('a'),
+      },
+    });
+  });
+
   it('rejects outcome/state contradictions and unknown response states', () => {
     expect(() =>
       parseAgentTaskControlResponseV1({
@@ -88,11 +129,27 @@ describe('Agent task recovery V1', () => {
           ledgerStoreVersion: '8',
           outcome: 'cancelled',
           reopenedStepCount: 0,
+          runtimeStart: null,
           state: 'execute',
           status: 'applied',
         },
       }),
     ).toThrow(/unsupported state/u);
+    expect(() =>
+      parseAgentTaskRecoveryResponseV1({
+        protocolVersion: 1,
+        result: {
+          runtime: {
+            canPause: true,
+            controllerState: 'execute',
+            ledgerRevision: 2,
+            ledgerStoreVersion: '7',
+            runtimeState: 'pausing',
+          },
+          status: 'runtimeOwned',
+        },
+      }),
+    ).toThrow(/runtime projection/u);
     expect(() =>
       parseAgentTaskControlResponseV1({ protocolVersion: 1, result: { status: 'paused' } }),
     ).toThrow(/unsupported state/u);

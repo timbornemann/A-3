@@ -50,6 +50,11 @@ Stand: 2026-08-03
 8. Produktspezifische Pausezustände DÜRFEN den gemeinsamen Scheduler-Automaten nicht umgehen. Eine
    Deep Map gilt erst nach terminaler kooperativer Cancellation und validiertem Checkpoint als
    pausiert; Resume ist ein neuer besessener Job mit unverändertem Budget.
+9. Dasselbe gilt für Agentenarbeit: Der flüchtige Produktzustand `Paused` darf erst nach
+   terminaler Scheduler-Cancellation, Executor-Bestätigung und H11/E8-Revalidierung erscheinen.
+   Er erweitert weder den fachlichen Agent-Controller noch dessen persistente Zustandsmaschine.
+   Resume und Replan starten ausschließlich nach erfolgreichem Recovery-CAS einen neuen
+   Scheduler-eigenen Versuch mit frischeren Ledgerankern.
 
 ## 6. Persistenz
 
@@ -109,6 +114,10 @@ Stand: 2026-08-03
    noch Zeitpunkt wählen. Resume, Replan und Cancel MÜSSEN den bestehenden H11/E8-Commit mit
    Published-Snapshot-, Ledger- und Run-CAS verwenden. Resume DARF stale Evidence oder eine
    unbekannte Mutationswirkung niemals umgehen; Cancel MUSS weiterhin erreichbar bleiben.
+10. Solange der aktuelle Prozess einen Agent-Worker in `Queued`, `Running`, `Pausing` oder
+    `Cancelling` besitzt, DARF Recovery denselben Task nicht als verlassen inspizieren. Die
+    WebView erhält nur eine content-freie Managerprojektion. Pause und Cancel stoppen zuerst den
+    Worker; Cancel verwendet anschließend weiterhin die exakt sichtbaren Ledgeranker.
 
 ## 11. Tests
 

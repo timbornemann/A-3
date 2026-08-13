@@ -38,12 +38,58 @@ impl QueryAgentTaskRecoveryRequestV1 {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentTaskControlActionV1 {
+    /// Stop currently owned work cooperatively without terminally cancelling the controller.
+    Pause,
     /// Continue only after Core verifies current snapshots and evidence.
     Resume,
     /// Reopen stale work and require a new plan before further model work.
     Replan,
     /// Atomically terminate the selected current run.
     Cancel,
+}
+
+/// Non-persistent product lifecycle while the Core still owns an Agent scheduler job.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentTaskRuntimeStateV1 {
+    /// The bounded scheduler accepted the attempt but has not started it.
+    Queued,
+    /// The scheduler currently owns executing Agent work.
+    Running,
+    /// Cooperative Pause cancellation was requested and has not yet terminated.
+    Pausing,
+    /// Explicit Cancel cancellation was requested and has not yet been durably committed.
+    Cancelling,
+}
+
+/// Content-free task and Ledger projection used instead of H11 inspection for a live worker.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentTaskRuntimeV1 {
+    ledger_revision: u32,
+    ledger_store_version: String,
+    controller_state: AgentControllerStateV1,
+    runtime_state: AgentTaskRuntimeStateV1,
+    can_pause: bool,
+}
+
+impl AgentTaskRuntimeV1 {
+    /// Creates a projection from Core-revalidated durable anchors and owned runtime state.
+    #[must_use]
+    pub const fn new(
+        ledger_revision: u32,
+        ledger_store_version: String,
+        controller_state: AgentControllerStateV1,
+        runtime_state: AgentTaskRuntimeStateV1,
+    ) -> Self {
+        Self {
+            ledger_revision,
+            ledger_store_version,
+            controller_state,
+            runtime_state,
+            can_pause: matches!(runtime_state, AgentTaskRuntimeStateV1::Running),
+        }
+    }
 }
 
 /// Applies one recovery choice against the exact Ledger anchors shown to the user.
@@ -157,7 +203,12 @@ impl AgentTaskRecoveryV1 {
 
 /// Expected bounded result of recovery inspection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum AgentTaskRecoveryResultV1 {
     /// No project is currently active in the Core.
     NoProject,
@@ -180,6 +231,16 @@ pub enum AgentTaskRecoveryResultV1 {
     RunNotControllable {
         /// Last materialized finite controller state.
         state: AgentControllerStateV1,
+    },
+    /// The current process still owns live work, so H11 inspection must not interrupt it.
+    RuntimeOwned {
+        /// Content-free scheduler product state plus freshly read durable anchors.
+        runtime: AgentTaskRuntimeV1,
+    },
+    /// The owned worker stopped and H11 revalidated a nonterminal durable checkpoint.
+    Paused {
+        /// Current authoritative recovery facts used by Resume, Replan, or Cancel.
+        recovery: AgentTaskRecoveryV1,
     },
     /// Recovery controls are available against the returned exact anchors.
     Available {
@@ -225,9 +286,36 @@ pub enum AgentTaskControlOutcomeV1 {
     Cancelled,
 }
 
+/// Accepted asynchronous effect that becomes durable only after the owned worker terminates.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentTaskControlAcceptedOutcomeV1 {
+    /// Cooperative Pause was requested; `paused` is not claimed yet.
+    PauseRequested,
+    /// Worker cancellation was requested before the durable H11 Cancel commit.
+    CancelRequested,
+}
+
+/// Immediate scheduler result after a durable Resume or Replan recovery commit.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentTaskRuntimeStartV1 {
+    /// No verified executable Agent capability is currently configured.
+    Unavailable,
+    /// A new scheduler-owned attempt was accepted.
+    Queued,
+    /// Recovery committed, but the bounded scheduler could not accept the new attempt.
+    Failed,
+}
+
 /// Expected bounded result of one explicit Agent task control command.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum AgentTaskControlResultV1 {
     /// No project is currently active in the Core.
     NoProject,
@@ -255,6 +343,11 @@ pub enum AgentTaskControlResultV1 {
     MutationReconciliationRequired,
     /// Resume is unsafe and requires the explicit Replan or Cancel choice.
     ResumeRequiresReplan,
+    /// A live worker accepted a cooperative stop request that is not yet a durable outcome.
+    Accepted {
+        /// Exact asynchronous product effect that was requested.
+        outcome: AgentTaskControlAcceptedOutcomeV1,
+    },
     /// The requested choice was atomically committed.
     Applied {
         /// Stable effect of the committed choice.
@@ -267,6 +360,8 @@ pub enum AgentTaskControlResultV1 {
         reopened_step_count: u32,
         /// Number of abandoned tool attempts marked interrupted.
         interrupted_tool_attempts: u32,
+        /// Scheduler result for Resume/Replan, or null for terminal Cancel.
+        runtime_start: Option<AgentTaskRuntimeStartV1>,
     },
 }
 
@@ -297,7 +392,10 @@ impl AgentTaskControlResponseV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentTaskControlActionV1, ControlAgentTaskRunRequestV1};
+    use super::{
+        AgentControllerStateV1, AgentTaskControlActionV1, AgentTaskRecoveryResponseV1,
+        AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, ControlAgentTaskRunRequestV1,
+    };
     use std::error::Error;
 
     #[test]
@@ -320,6 +418,39 @@ mod tests {
             "runId": "22".repeat(32)
         }));
         assert!(leaked.is_err());
+        let pause: ControlAgentTaskRunRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "11".repeat(32),
+            "expectedLedgerRevision": 2,
+            "expectedLedgerStoreVersion": "7",
+            "action": "pause"
+        }))?;
+        assert_eq!(pause.action(), AgentTaskControlActionV1::Pause);
+        Ok(())
+    }
+
+    #[test]
+    fn paused_response_keeps_product_state_separate_from_controller_state()
+    -> Result<(), Box<dyn Error>> {
+        let recovery = AgentTaskRecoveryV1::new(
+            2,
+            "8".to_owned(),
+            AgentControllerStateV1::Execute,
+            "11".repeat(32),
+            "22".repeat(32),
+            true,
+            1,
+            2,
+            false,
+            false,
+            false,
+        );
+        let response =
+            AgentTaskRecoveryResponseV1::new(AgentTaskRecoveryResultV1::Paused { recovery });
+        let json = serde_json::to_value(response)?;
+        assert_eq!(json["result"]["status"], "paused");
+        assert_eq!(json["result"]["recovery"]["state"], "execute");
+        assert!(json["result"].get("runtimeState").is_none());
         Ok(())
     }
 }

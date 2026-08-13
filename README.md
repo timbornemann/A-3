@@ -139,6 +139,13 @@ umfassende aktuelle Timeline kennzeichnet Modellantwort und Aktionsauswahl ausdr
 nicht ausgeführt; erst ein eigenes `ToolAction`-Ereignis erscheint als echte Ausführungsaktion.
 Aktuelle Ledger-Blocker sowie inhaltsfreie Fehler-, Denial-, Timeout- und Cancellation-Codes
 bleiben sichtbar, ohne rohe Modell-, Tool-, Fehler- oder Sourceausgaben in die WebView zu geben.
+Pause, Cancel, Resume und Replan bleiben ebenfalls Task- und Ledger-gebunden. Ein Desktop-eigener
+Agent-Manager trennt den flüchtigen Scheduler-Lifecycle vom fachlichen Controller: Ein laufender
+Worker wird kooperativ gestoppt und erst nach terminaler Cancellation plus H11/E8-Revalidierung
+als pausiert angezeigt. Resume und Replan starten nur nach erfolgreichem atomarem Recovery-Commit
+einen neuen besessenen Versuch; Cancel zeigt den Abschluss erst nach dauerhaftem
+Controller-Commit. Ohne verifizierte ausführbare Agent-Capability starten weder Mount noch Polling
+Modell- oder Toolarbeit.
 Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

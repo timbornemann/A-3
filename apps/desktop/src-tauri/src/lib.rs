@@ -2,6 +2,8 @@
 
 mod agent_goal_metadata;
 mod agent_recovery_metadata;
+mod agent_run_manager;
+mod agent_runtime_recovery;
 mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
@@ -14,16 +16,17 @@ mod repository_index_manager;
 
 use a3_application::{
     AgentActivity, AgentActivityLoadResult, AgentGoalCriterionDraft, AgentGoalDraft,
-    AgentGoalMetadataSource, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryStore,
-    AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
-    AgentTaskRecoveryLoadResult, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
-    CompileWorkspaceTaskLensResult, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
-    DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth,
-    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
-    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
-    GetPublishedIndexOverviewError, GetRepositoryTreePage, GetTaskLensTask, GoalContractStore,
-    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    AgentGoalMetadataSource, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryOutcomeKind,
+    AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor, AgentTaskControlFailure,
+    AgentTaskControlResult, AgentTaskRecovery, AgentTaskRecoveryLoadResult,
+    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
+    ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutor,
+    GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth, GetModuleCardDetail,
+    GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
+    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    GetRepositoryTreePage, GetTaskLensTask, GoalContractStore, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
     JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
     JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
@@ -72,8 +75,8 @@ use a3_domain::{
     RepositoryPath, ResolvedModuleCardEvidence, ResultSourceExplanation, RetrievalCandidateReason,
     RunEvent, RunEventCode, RunEventKind, RunEventOutcome, SnapshotId, SourceChannel,
     SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
-    TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus, TraversalResultLimit,
-    UserDecision, VerifiedClaimKind, VerifiedClaimStatus,
+    TaskLedgerRevision, TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus,
+    TraversalResultLimit, UserDecision, VerifiedClaimKind, VerifiedClaimStatus,
 };
 use a3_protocol::{
     AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
@@ -82,16 +85,17 @@ use a3_protocol::{
     AgentActivityV1, AgentControllerStateV1, AgentGoalContractV1, AgentGoalCriterionInputV1,
     AgentGoalCriterionRequirementV1, AgentGoalCriterionV1, AgentGoalDraftInputV1,
     AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentSelectedActionV1,
-    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
-    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
-    AgentTaskRecoveryV1, CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1,
-    DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1,
-    DeepMapModelV1, DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1,
-    HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1,
-    IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1,
-    IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1,
-    IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1,
-    ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
+    AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
+    AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
+    AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
+    AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
+    DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1,
+    DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1, DeepMapStatusResponseV1,
+    ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1,
+    IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1,
+    IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1,
+    IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1,
+    ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
     ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
     ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
     ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
@@ -132,6 +136,8 @@ use a3_storage_libsql::{
 use a3_workspace::RepositoryInspector;
 use agent_goal_metadata::SystemAgentGoalMetadata;
 use agent_recovery_metadata::SystemAgentRecoveryMetadata;
+use agent_run_manager::{AgentRunActivityState, AgentRunManager, AgentRunManagerControlError};
+use agent_runtime_recovery::CoreAgentRuntimeRecovery;
 use clock::SystemJobClock;
 use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
@@ -184,8 +190,10 @@ pub struct CompositionRoot {
     remove_project: Option<RemoveProjectFromList>,
     active_project: Mutex<Option<ActiveProject>>,
     project_operation_active: AtomicBool,
+    agent_task_operation_active: AtomicBool,
     index_manager: Option<RepositoryIndexManager>,
     deep_map_manager: Option<DeepMapManager>,
+    agent_run_manager: Option<AgentRunManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
 }
@@ -232,6 +240,9 @@ impl CompositionRoot {
     /// Executes one user-controlled native project selection and maps it to IPC V1.
     pub async fn open_project(&self) -> Result<OpenProjectResponseV1, CommandErrorV1> {
         let _operation = self.acquire_project_operation(CommandErrorV1::project_open)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::ProjectOperationBusy))?;
         let outcome = self
             .open_project
             .execute()
@@ -253,6 +264,20 @@ impl CompositionRoot {
             }
             return Err(CommandErrorV1::project_open(
                 ErrorCodeV1::DeepMapUnavailable,
+            ));
+        }
+        if let OpenProjectOutcome::Opened { project, .. } = &outcome
+            && let Some(manager) = &self.agent_run_manager
+            && manager.activate_project(project.as_ref().clone()).is_err()
+        {
+            if let Some(deep_map_manager) = &self.deep_map_manager {
+                let _deactivated = deep_map_manager.deactivate_project();
+            }
+            if let Some(index_manager) = &self.index_manager {
+                let _deactivated = index_manager.deactivate_project();
+            }
+            return Err(CommandErrorV1::project_open(
+                ErrorCodeV1::AgentTaskControlUnavailable,
             ));
         }
         if let OpenProjectOutcome::Opened {
@@ -828,12 +853,43 @@ impl CompositionRoot {
         &self,
         task_id: TaskId,
     ) -> Result<AgentTaskRecoveryResponseV1, CommandErrorV1> {
+        let Some(_operation) = self.try_acquire_agent_task_operation() else {
+            return Ok(AgentTaskRecoveryResponseV1::new(
+                AgentTaskRecoveryResultV1::ActivityChanged,
+            ));
+        };
         let active = lock_recovering_poison(&self.active_project).clone();
         let Some(active) = active else {
             return Ok(AgentTaskRecoveryResponseV1::new(
                 AgentTaskRecoveryResultV1::NoProject,
             ));
         };
+        if let Some(manager) = &self.agent_run_manager {
+            let runtime = manager.activity();
+            if runtime.state().owns_live_worker() && runtime.task_id() == Some(task_id) {
+                let target = load_agent_runtime_target(
+                    self.agent_activity.as_ref(),
+                    &active.project,
+                    task_id,
+                )
+                .await?;
+                let result = match target {
+                    AgentRuntimeTargetLoad::Expected(result) => result,
+                    AgentRuntimeTargetLoad::Available(target) => {
+                        AgentTaskRecoveryResultV1::RuntimeOwned {
+                            runtime: AgentTaskRuntimeV1::new(
+                                target.ledger_revision.get(),
+                                target.ledger_store_version.get().to_string(),
+                                map_agent_controller_state_to_v1(target.controller_state),
+                                map_agent_runtime_state_to_v1(runtime.state())
+                                    .ok_or_else(agent_task_control_unavailable)?,
+                            ),
+                        }
+                    }
+                };
+                return Ok(AgentTaskRecoveryResponseV1::new(result));
+            }
+        }
         let inspector = self
             .agent_task_recovery
             .as_ref()
@@ -852,9 +908,21 @@ impl CompositionRoot {
             )
             .await
             .map_err(map_agent_task_control_error_to_v1)?;
-        Ok(AgentTaskRecoveryResponseV1::new(
-            map_agent_task_recovery_result_to_v1(result),
-        ))
+        let result = map_agent_task_recovery_result_to_v1(result);
+        let result = if self.agent_run_manager.as_ref().is_some_and(|manager| {
+            let runtime = manager.activity();
+            runtime.state() == AgentRunActivityState::Paused && runtime.task_id() == Some(task_id)
+        }) {
+            match result {
+                AgentTaskRecoveryResultV1::Available { recovery } => {
+                    AgentTaskRecoveryResultV1::Paused { recovery }
+                }
+                result => result,
+            }
+        } else {
+            result
+        };
+        Ok(AgentTaskRecoveryResponseV1::new(result))
     }
 
     /// Atomically applies one explicit recovery decision against exact visible Ledger anchors.
@@ -865,12 +933,92 @@ impl CompositionRoot {
         expected_ledger_store_version: TaskLedgerStoreVersion,
         action: AgentTaskControlActionV1,
     ) -> Result<AgentTaskControlResponseV1, CommandErrorV1> {
+        let Some(_operation) = self.try_acquire_agent_task_operation() else {
+            return Ok(AgentTaskControlResponseV1::new(
+                AgentTaskControlResultV1::ActivityChanged,
+            ));
+        };
         let active = lock_recovering_poison(&self.active_project).clone();
         let Some(active) = active else {
             return Ok(AgentTaskControlResponseV1::new(
                 AgentTaskControlResultV1::NoProject,
             ));
         };
+        let runtime = self
+            .agent_run_manager
+            .as_ref()
+            .map(AgentRunManager::activity);
+        if let (Some(manager), Some(runtime)) = (&self.agent_run_manager, runtime.as_ref())
+            && runtime.task_id() == Some(task_id)
+            && (runtime.state().owns_live_worker()
+                || runtime.state() == AgentRunActivityState::Paused)
+        {
+            let target =
+                load_agent_runtime_target(self.agent_activity.as_ref(), &active.project, task_id)
+                    .await?;
+            let target = match target {
+                AgentRuntimeTargetLoad::Expected(result) => {
+                    return Ok(AgentTaskControlResponseV1::new(
+                        map_runtime_expected_to_control(result),
+                    ));
+                }
+                AgentRuntimeTargetLoad::Available(target) => target,
+            };
+            if target.ledger_revision.get() != expected_ledger_revision
+                || target.ledger_store_version != expected_ledger_store_version
+            {
+                return Ok(AgentTaskControlResponseV1::new(
+                    AgentTaskControlResultV1::ActivityChanged,
+                ));
+            }
+            match action {
+                AgentTaskControlActionV1::Pause if runtime.state().owns_live_worker() => {
+                    manager
+                        .pause(task_id)
+                        .map_err(map_agent_run_manager_error_to_v1)?;
+                    return Ok(AgentTaskControlResponseV1::new(
+                        AgentTaskControlResultV1::Accepted {
+                            outcome: AgentTaskControlAcceptedOutcomeV1::PauseRequested,
+                        },
+                    ));
+                }
+                AgentTaskControlActionV1::Cancel if runtime.state().owns_live_worker() => {
+                    let revision = TaskLedgerRevision::new(expected_ledger_revision)
+                        .map_err(|_| agent_task_control_unavailable())?;
+                    manager
+                        .cancel_owned_worker(AgentRunExecutionRequest::new(
+                            task_id,
+                            revision,
+                            expected_ledger_store_version,
+                        ))
+                        .map_err(map_agent_run_manager_error_to_v1)?;
+                    return Ok(AgentTaskControlResponseV1::new(
+                        AgentTaskControlResultV1::Accepted {
+                            outcome: AgentTaskControlAcceptedOutcomeV1::CancelRequested,
+                        },
+                    ));
+                }
+                AgentTaskControlActionV1::Resume | AgentTaskControlActionV1::Replan
+                    if runtime.state().owns_live_worker() =>
+                {
+                    return Ok(AgentTaskControlResponseV1::new(
+                        AgentTaskControlResultV1::ActivityChanged,
+                    ));
+                }
+                AgentTaskControlActionV1::Pause => {
+                    return Ok(AgentTaskControlResponseV1::new(
+                        AgentTaskControlResultV1::ActivityChanged,
+                    ));
+                }
+                AgentTaskControlActionV1::Resume
+                | AgentTaskControlActionV1::Replan
+                | AgentTaskControlActionV1::Cancel => {}
+            }
+        } else if action == AgentTaskControlActionV1::Pause {
+            return Ok(AgentTaskControlResponseV1::new(
+                AgentTaskControlResultV1::ActivityChanged,
+            ));
+        }
         let controller = self
             .agent_task_control
             .as_ref()
@@ -884,6 +1032,11 @@ impl CompositionRoot {
             .now()
             .map_err(|_| agent_task_control_unavailable())?;
         let choice = match action {
+            AgentTaskControlActionV1::Pause => {
+                return Ok(AgentTaskControlResponseV1::new(
+                    AgentTaskControlResultV1::ActivityChanged,
+                ));
+            }
             AgentTaskControlActionV1::Resume => AgentRecoveryChoice::Resume,
             AgentTaskControlActionV1::Replan => AgentRecoveryChoice::Replan,
             AgentTaskControlActionV1::Cancel => AgentRecoveryChoice::Cancel,
@@ -902,8 +1055,43 @@ impl CompositionRoot {
             )
             .await
             .map_err(map_agent_task_control_error_to_v1)?;
+        let runtime_start = match &result {
+            AgentTaskControlResult::Applied {
+                outcome:
+                    AgentRecoveryOutcomeKind::Resumed | AgentRecoveryOutcomeKind::ReplanRequired,
+                ledger_store_version,
+                ..
+            } => Some(match &self.agent_run_manager {
+                Some(manager) => {
+                    let revision = TaskLedgerRevision::new(expected_ledger_revision)
+                        .map_err(|_| agent_task_control_unavailable())?;
+                    match manager.start_attempt(AgentRunExecutionRequest::new(
+                        task_id,
+                        revision,
+                        *ledger_store_version,
+                    )) {
+                        Ok(()) => AgentTaskRuntimeStartV1::Queued,
+                        Err(_) => AgentTaskRuntimeStartV1::Failed,
+                    }
+                }
+                None => AgentTaskRuntimeStartV1::Unavailable,
+            }),
+            _ => None,
+        };
+        if matches!(
+            result,
+            AgentTaskControlResult::Applied {
+                outcome: AgentRecoveryOutcomeKind::Cancelled,
+                ..
+            }
+        ) && runtime.as_ref().is_some_and(|runtime| {
+            runtime.task_id() == Some(task_id) && runtime.state() == AgentRunActivityState::Paused
+        }) && let Some(manager) = &self.agent_run_manager
+        {
+            let _cleared = manager.complete_external_cancel(task_id);
+        }
         Ok(AgentTaskControlResponseV1::new(
-            map_agent_task_control_result_to_v1(result),
+            map_agent_task_control_result_to_v1(result, runtime_start),
         ))
     }
 
@@ -1058,6 +1246,9 @@ impl CompositionRoot {
     /// Removes the Core-owned active worktree from A^3 while retaining source and private data.
     pub async fn remove_project(&self) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
         let _operation = self.acquire_project_operation(CommandErrorV1::project_removal)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_removal(ErrorCodeV1::ProjectOperationBusy))?;
         let active = lock_recovering_poison(&self.active_project)
             .clone()
             .ok_or_else(|| CommandErrorV1::project_removal(ErrorCodeV1::NoActiveProject))?;
@@ -1080,6 +1271,17 @@ impl CompositionRoot {
                 ErrorCodeV1::ProjectRemovalUnavailable,
             ));
         }
+        if let Some(agent_run_manager) = &self.agent_run_manager
+            && agent_run_manager.deactivate_project().is_err()
+        {
+            if let Some(deep_map_manager) = &self.deep_map_manager {
+                let _restored = deep_map_manager.activate_project(active.project.clone());
+            }
+            let _restored = manager.activate_project(active.project.clone());
+            return Err(CommandErrorV1::project_removal(
+                ErrorCodeV1::ProjectRemovalUnavailable,
+            ));
+        }
         let outcome = remove.execute(&active.project, active.project_id).await;
         if let Err(error) = outcome {
             if manager.activate_project(active.project.clone()).is_err() {
@@ -1089,6 +1291,15 @@ impl CompositionRoot {
             }
             if let Some(deep_map_manager) = &self.deep_map_manager
                 && deep_map_manager
+                    .activate_project(active.project.clone())
+                    .is_err()
+            {
+                return Err(CommandErrorV1::project_removal(
+                    ErrorCodeV1::ProjectRemovalUnavailable,
+                ));
+            }
+            if let Some(agent_run_manager) = &self.agent_run_manager
+                && agent_run_manager
                     .activate_project(active.project.clone())
                     .is_err()
             {
@@ -1106,21 +1317,30 @@ impl CompositionRoot {
     fn acquire_project_operation(
         &self,
         error: fn(ErrorCodeV1) -> CommandErrorV1,
-    ) -> Result<ProjectOperationPermit<'_>, CommandErrorV1> {
+    ) -> Result<ExclusiveOperationPermit<'_>, CommandErrorV1> {
         self.project_operation_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| ProjectOperationPermit {
+            .map(|_| ExclusiveOperationPermit {
                 active: &self.project_operation_active,
             })
             .map_err(|_| error(ErrorCodeV1::ProjectOperationBusy))
     }
+
+    fn try_acquire_agent_task_operation(&self) -> Option<ExclusiveOperationPermit<'_>> {
+        self.agent_task_operation_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ExclusiveOperationPermit {
+                active: &self.agent_task_operation_active,
+            })
+    }
 }
 
-struct ProjectOperationPermit<'a> {
+struct ExclusiveOperationPermit<'a> {
     active: &'a AtomicBool,
 }
 
-impl Drop for ProjectOperationPermit<'_> {
+impl Drop for ExclusiveOperationPermit<'_> {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
     }
@@ -1420,6 +1640,7 @@ struct OptionalCompositionPorts {
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
     project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
+    agent_run_executor: Option<Arc<dyn AgentRunExecutor>>,
 }
 
 struct IndexingCompositionPorts {
@@ -1512,6 +1733,7 @@ impl CompositionBase {
                 project_storage: Some(ports.project_storage),
                 project_catalog_admin: Some(ports.project_catalog_admin),
                 deep_map_executor: None,
+                agent_run_executor: None,
             },
         )
     }
@@ -1649,6 +1871,29 @@ impl CompositionBase {
                 .map_err(|_| CompositionRootError::DeepMapManager)
             })
             .transpose()?;
+        let agent_run_manager = match (
+            ports.agent_run_executor,
+            agent_task_recovery.clone(),
+            agent_task_control.clone(),
+        ) {
+            (Some(executor), Some(inspector), Some(controller)) => {
+                let submitter = self
+                    .job_scheduler
+                    .submitter()
+                    .map_err(|_| CompositionRootError::AgentRunManagerUnavailable)?;
+                Some(
+                    AgentRunManager::start(
+                        submitter,
+                        self.job_events.clone(),
+                        executor,
+                        Arc::new(CoreAgentRuntimeRecovery::new(inspector, controller)),
+                        Arc::clone(&job_ids),
+                    )
+                    .map_err(|_| CompositionRootError::AgentRunManager)?,
+                )
+            }
+            _ => None,
+        };
         Ok(CompositionRoot {
             health_query: self.health_query,
             open_project: OpenProject::new(
@@ -1683,8 +1928,10 @@ impl CompositionBase {
             remove_project: ports.project_catalog_admin.map(RemoveProjectFromList::new),
             active_project: Mutex::new(None),
             project_operation_active: AtomicBool::new(false),
+            agent_task_operation_active: AtomicBool::new(false),
             index_manager,
             deep_map_manager,
+            agent_run_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
         })
@@ -3313,6 +3560,125 @@ fn map_agent_activity_to_v1(activity: &AgentActivity) -> Option<AgentActivityV1>
     ))
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AgentRuntimeTarget {
+    ledger_revision: TaskLedgerRevision,
+    ledger_store_version: TaskLedgerStoreVersion,
+    controller_state: AgentControllerState,
+}
+
+enum AgentRuntimeTargetLoad {
+    Expected(AgentTaskRecoveryResultV1),
+    Available(AgentRuntimeTarget),
+}
+
+async fn load_agent_runtime_target(
+    reader: Option<&GetAgentActivity>,
+    project: &ProjectIdentity,
+    task_id: TaskId,
+) -> Result<AgentRuntimeTargetLoad, CommandErrorV1> {
+    let reader = reader.ok_or_else(agent_task_control_unavailable)?;
+    let result = reader
+        .execute(project, task_id, &DesktopBoundedReadControl::new())
+        .await
+        .map_err(map_agent_activity_error_to_v1)?;
+    let activity = match result {
+        AgentActivityLoadResult::TaskNotFound => {
+            return Ok(AgentRuntimeTargetLoad::Expected(
+                AgentTaskRecoveryResultV1::TaskNotFound,
+            ));
+        }
+        AgentActivityLoadResult::LedgerUnavailable => {
+            return Ok(AgentRuntimeTargetLoad::Expected(
+                AgentTaskRecoveryResultV1::LedgerUnavailable,
+            ));
+        }
+        AgentActivityLoadResult::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        } => {
+            return Ok(AgentRuntimeTargetLoad::Expected(
+                AgentTaskRecoveryResultV1::GoalRevisionMismatch {
+                    current_revision,
+                    ledger_revision,
+                },
+            ));
+        }
+        AgentActivityLoadResult::ActivityChanged => {
+            return Ok(AgentRuntimeTargetLoad::Expected(
+                AgentTaskRecoveryResultV1::ActivityChanged,
+            ));
+        }
+        AgentActivityLoadResult::Available(activity) => activity,
+    };
+    let Some(run) = activity.run() else {
+        return Ok(AgentRuntimeTargetLoad::Expected(
+            AgentTaskRecoveryResultV1::RunUnavailable,
+        ));
+    };
+    if !run.is_active_attempt() || run.run().state().is_terminal() {
+        return Ok(AgentRuntimeTargetLoad::Expected(
+            AgentTaskRecoveryResultV1::RunNotControllable {
+                state: map_agent_controller_state_to_v1(run.run().state()),
+            },
+        ));
+    }
+    let ledger = activity.anchor().task_ledger();
+    if run.run().task_ledger_revision() != ledger.ledger().revision() {
+        return Ok(AgentRuntimeTargetLoad::Expected(
+            AgentTaskRecoveryResultV1::ActivityChanged,
+        ));
+    }
+    Ok(AgentRuntimeTargetLoad::Available(AgentRuntimeTarget {
+        ledger_revision: ledger.ledger().revision(),
+        ledger_store_version: ledger.version(),
+        controller_state: run.run().state(),
+    }))
+}
+
+fn map_runtime_expected_to_control(result: AgentTaskRecoveryResultV1) -> AgentTaskControlResultV1 {
+    match result {
+        AgentTaskRecoveryResultV1::NoProject => AgentTaskControlResultV1::NoProject,
+        AgentTaskRecoveryResultV1::TaskNotFound => AgentTaskControlResultV1::TaskNotFound,
+        AgentTaskRecoveryResultV1::LedgerUnavailable => AgentTaskControlResultV1::LedgerUnavailable,
+        AgentTaskRecoveryResultV1::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        } => AgentTaskControlResultV1::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        },
+        AgentTaskRecoveryResultV1::ActivityChanged => AgentTaskControlResultV1::ActivityChanged,
+        AgentTaskRecoveryResultV1::RunUnavailable => AgentTaskControlResultV1::RunUnavailable,
+        AgentTaskRecoveryResultV1::RunNotControllable { state } => {
+            AgentTaskControlResultV1::RunNotControllable { state }
+        }
+        AgentTaskRecoveryResultV1::RuntimeOwned { .. }
+        | AgentTaskRecoveryResultV1::Paused { .. }
+        | AgentTaskRecoveryResultV1::Available { .. } => AgentTaskControlResultV1::ActivityChanged,
+    }
+}
+
+const fn map_agent_runtime_state_to_v1(
+    state: AgentRunActivityState,
+) -> Option<AgentTaskRuntimeStateV1> {
+    match state {
+        AgentRunActivityState::Queued => Some(AgentTaskRuntimeStateV1::Queued),
+        AgentRunActivityState::Running => Some(AgentTaskRuntimeStateV1::Running),
+        AgentRunActivityState::Pausing => Some(AgentTaskRuntimeStateV1::Pausing),
+        AgentRunActivityState::Cancelling => Some(AgentTaskRuntimeStateV1::Cancelling),
+        AgentRunActivityState::Idle
+        | AgentRunActivityState::Paused
+        | AgentRunActivityState::Succeeded
+        | AgentRunActivityState::Failed
+        | AgentRunActivityState::Cancelled => None,
+    }
+}
+
+fn map_agent_run_manager_error_to_v1(_error: AgentRunManagerControlError) -> CommandErrorV1 {
+    agent_task_control_unavailable()
+}
+
 fn map_agent_task_recovery_result_to_v1(
     result: AgentTaskRecoveryLoadResult,
 ) -> AgentTaskRecoveryResultV1 {
@@ -3357,7 +3723,10 @@ fn map_agent_task_recovery_to_v1(recovery: &AgentTaskRecovery) -> AgentTaskRecov
     )
 }
 
-fn map_agent_task_control_result_to_v1(result: AgentTaskControlResult) -> AgentTaskControlResultV1 {
+fn map_agent_task_control_result_to_v1(
+    result: AgentTaskControlResult,
+    runtime_start: Option<AgentTaskRuntimeStartV1>,
+) -> AgentTaskControlResultV1 {
     match result {
         AgentTaskControlResult::TaskNotFound => AgentTaskControlResultV1::TaskNotFound,
         AgentTaskControlResult::LedgerUnavailable => AgentTaskControlResultV1::LedgerUnavailable,
@@ -3403,6 +3772,7 @@ fn map_agent_task_control_result_to_v1(result: AgentTaskControlResult) -> AgentT
             state: map_agent_controller_state_to_v1(state),
             reopened_step_count,
             interrupted_tool_attempts,
+            runtime_start,
         },
     }
 }
@@ -4411,6 +4781,10 @@ pub enum CompositionRootError {
     DeepMapManagerUnavailable,
     /// The owned Deep-Map coordinator could not be started.
     DeepMapManager,
+    /// The scheduler stopped before the Agent Run coordinator could acquire a submit capability.
+    AgentRunManagerUnavailable,
+    /// The owned Agent Run coordinator could not be started.
+    AgentRunManager,
     /// Tauri could not resolve the private application-data directory.
     AppDataPath(tauri::Error),
     /// The private application-data storage boundary could not be established.
@@ -4437,6 +4811,10 @@ impl fmt::Display for CompositionRootError {
                 formatter.write_str("Deep Map manager is unavailable")
             }
             Self::DeepMapManager => formatter.write_str("Deep Map manager failed"),
+            Self::AgentRunManagerUnavailable => {
+                formatter.write_str("Agent Run manager is unavailable")
+            }
+            Self::AgentRunManager => formatter.write_str("Agent Run manager failed"),
             Self::AppDataPath(_) => formatter.write_str("application data path is unavailable"),
             Self::StorageLayout(error) => write!(formatter, "storage layout failed: {error}"),
             Self::Catalog(error) => write!(formatter, "catalog open failed: {error}"),
@@ -4452,7 +4830,10 @@ impl Error for CompositionRootError {
             Self::JobScheduler(error) => Some(error),
             Self::IndexManagerUnavailable => None,
             Self::IndexManager => None,
-            Self::DeepMapManagerUnavailable | Self::DeepMapManager => None,
+            Self::DeepMapManagerUnavailable
+            | Self::DeepMapManager
+            | Self::AgentRunManagerUnavailable
+            | Self::AgentRunManager => None,
             Self::AppDataPath(error) => Some(error),
             Self::StorageLayout(error) => Some(error),
             Self::Catalog(error) => Some(error),
@@ -4490,15 +4871,18 @@ impl Error for DesktopRunError {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PROJECT_PATH_DISPLAY_CHARS, map_agent_goal_to_v1, map_create_agent_goal_from_v1,
-        project_path_display,
+        MAX_PROJECT_PATH_DISPLAY_CHARS, map_agent_goal_to_v1, map_agent_task_control_result_to_v1,
+        map_create_agent_goal_from_v1, project_path_display,
+    };
+    use a3_application::{
+        AgentRecoveryOutcomeKind, AgentTaskControlResult, TaskLedgerStoreVersion,
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
         AcceptanceCriterionStatement, GoalContract, GoalContractDraft, GoalContractTimestamp,
         GoalObjective, SuccessVerification, TaskId,
     };
-    use a3_protocol::CreateAgentGoalRequestV1;
+    use a3_protocol::{AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1};
     use serde_json::json;
     use std::error::Error;
     use std::path::Path;
@@ -4567,6 +4951,26 @@ mod tests {
             serde_json::to_value(map_agent_goal_to_v1(&goal))?["acceptanceCriteria"][0]["requirement"],
             "should"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_boundary_reports_new_job_only_after_a_nonterminal_commit()
+    -> Result<(), Box<dyn Error>> {
+        let response = map_agent_task_control_result_to_v1(
+            AgentTaskControlResult::Applied {
+                outcome: AgentRecoveryOutcomeKind::Resumed,
+                ledger_store_version: TaskLedgerStoreVersion::new(8)?,
+                state: a3_domain::AgentControllerState::Execute,
+                reopened_step_count: 0,
+                interrupted_tool_attempts: 1,
+            },
+            Some(AgentTaskRuntimeStartV1::Queued),
+        );
+        let json = serde_json::to_value(response)?;
+        assert_eq!(json["status"], "applied");
+        assert_eq!(json["runtimeStart"], "queued");
+        assert_eq!(json["state"], "execute");
         Ok(())
     }
 }

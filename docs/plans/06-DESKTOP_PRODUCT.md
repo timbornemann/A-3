@@ -348,7 +348,7 @@ Abhängigkeiten: Gate M7
 - [x] Task Ledger und aktueller Step
 - [x] kompakte Conversation- und Action Timeline
 - [x] Context- und Budgetanzeige
-- [ ] Pause, Cancel, Resume und Replan
+- [x] Pause, Cancel, Resume und Replan
 - [x] Fehler und Blocker
 
 Akzeptanz:
@@ -405,6 +405,37 @@ Task-Bindung. Die Tauri-Capability enthält nun auch alle bereits registrierten 
 Task-Lens-, Agent-Goal- und Agent-Activity-Commands explizit; direkte privilegierte Plugins bleiben
 ausgeschlossen. Der U5-Gesamtpunkt bleibt offen, bis Pause an einen tatsächlich besitzenden,
 kooperativ abbrechbaren Agent-Runtimepfad angebunden ist.
+
+Abnahme des vollständigen U5-Agent-Workspace am 2026-08-13: ADR-0020 trennt den flüchtigen
+`Idle|Queued|Running|Pausing|Paused|Cancelling|Succeeded|Failed|Cancelled`-Produktlifecycle vom
+unveränderten ADR-0010-Controller. Der Desktop-Composition-Root besitzt einen begrenzten
+`AgentRunManager`; Mount und Polling starten keine Arbeit. Während eines live besessenen Workers
+läuft keine H11-Neustartinspektion, sondern nur eine content-freie, Task- und Ledger-gebundene
+Runtimeprojektion. Pause ist ausschließlich aus `Running` möglich und bestätigt `Paused` erst nach
+terminaler Scheduler-Cancellation, Executor-Acknowledgement und einer weiterhin nichtterminalen
+H11/E8-Revalidierung. Queued Work kann keinen Checkpoint vortäuschen.
+
+Resume und Replan verwenden zuerst den bestehenden atomaren Published-Snapshot-/Ledger-/Run-CAS
+und dürfen erst danach einen neuen Scheduler-eigenen Versuch mit strikt neuerer Ledger-
+Storeversion einreihen. Cancel eines lebenden Workers stoppt ihn zuerst und committed danach gegen
+die exakt sichtbaren Anker; aus einem bestätigten `Paused`-Zustand liefert derselbe H11/E8-Pfad
+direkt den dauerhaften `Applied/Cancelled`-Abschluss. Projektwechsel, Entfernung und Shutdown
+quieszen besessene Arbeit ohne einen Nutzer-Cancel vorzutäuschen. Ohne verifizierte Agent-
+Executor-Capability bleibt die Funktion sicher unavailable und erzeugt keine Modellarbeit.
+
+Sieben deterministische Manager-Tests belegen Startfreiheit vor der expliziten Aktion,
+Queued-/Running-Grenzen, Pause, Resume als neuen Job, exakte Cancel-Anker, extern committed Cancel,
+Projektwechsel und Scheduler-Join beim Shutdown. Rust-/TypeScript-IPC- und Component-Contracts
+prüfen `runtimeOwned`, `pausing`, erst anschließend `paused`, alle vier Controls, strikt geschlossene
+camelCase-Formen sowie dauerhafte UI-Endzustände. Workspace-Clippy über alle Targets/Features mit
+Warnings denied, die geänderten Rust-Suites, 130 Frontendtests, Formatter, ESLint,
+Svelte-Typecheck, Produktionsbuild, Rustdoc mit Warnings denied, 48 Markdown-Dateien mit 85 lokalen
+Links, Dependency-/Lizenzbericht und der native Tauri-Release-Build ohne Bundle sind grün. Der
+vollständige serielle Windows-Workspace-Lauf bestand alle fachlichen Suites; nur der bereits
+dokumentierte native libSQL-Teardown verlor einmal nach erfolgreichem Contractprozess mit
+`0xc0000005`. Der exakte isolierte Snapshot-Contract bestand unmittelbar danach vollständig.
+Die abschließende vollständige Wiederholung bestand danach ohne Ausfall. Damit sind alle drei
+U5-Akzeptanzkriterien objektiv nachgewiesen und U5 ist abgeschlossen.
 
 ## U6 Diff und Verification
 
