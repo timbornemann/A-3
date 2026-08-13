@@ -8,6 +8,7 @@ mod agent_goal;
 mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
+mod agent_runtime;
 mod agent_source_reader;
 mod agent_task_control;
 mod agent_turn;
@@ -106,6 +107,10 @@ pub use agent_recovery::{
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryInspection,
     AgentRecoveryOutcome, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, InspectAgentRunRecovery, RecoverAgentRun,
+};
+pub use agent_runtime::{
+    AgentRunExecutionFailure, AgentRunExecutionFuture, AgentRunExecutionOutcome,
+    AgentRunExecutionRequest, AgentRunExecutor,
 };
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
