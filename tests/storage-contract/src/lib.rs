@@ -15,15 +15,16 @@ mod reconciliation;
 mod run_journal;
 mod search;
 mod semantic;
+mod settings;
 mod task_ledger;
 mod task_lens_workspace;
 mod verification;
 
 use a3_application::{
-    AgentActionStore, AgentRecoveryStore, CommandAllowlistStore, GoalContractStore,
-    KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore, ModuleRemapQueueStore, PolicyStore,
-    RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore, TaskLensClaimStore,
-    TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore,
+    AgentActionStore, AgentRecoveryStore, CommandAllowlistStore, DesktopSettingsStore,
+    GoalContractStore, KnowledgeIndexStore, KnowledgeSearchStore, KnowledgeStore,
+    ModuleRemapQueueStore, PolicyStore, RunJournalStore, SemanticEmbeddingStore, TaskLedgerStore,
+    TaskLensClaimStore, TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore,
     VerifiedModuleCardPublisher,
 };
 use a3_domain::{
@@ -209,6 +210,7 @@ pub trait KnowledgeStoreContractFactory {
         + AgentActionStore
         + AgentRecoveryStore
         + CommandAllowlistStore
+        + DesktopSettingsStore
         + PolicyStore
         + RunJournalStore
         + KnowledgeSearchStore
@@ -263,6 +265,8 @@ pub enum KnowledgeStoreContractGroup {
     Policy,
     /// Append-only project command confirmations, CAS, reopen, and worktree isolation.
     CommandAllowlists,
+    /// Global settings snapshot CAS, complete profile persistence, and reopen behavior.
+    DesktopSettings,
     /// Typed verification evidence, acceptance, idempotence, reopen, and freshness.
     VerificationEvidence,
     /// Retrieval behavior before an index is published.
@@ -343,6 +347,7 @@ where
         KnowledgeStoreContractGroup::CommandAllowlists => {
             command_allowlist::verify(factory, &workspace).await
         }
+        KnowledgeStoreContractGroup::DesktopSettings => settings::verify(factory, &workspace).await,
         KnowledgeStoreContractGroup::VerificationEvidence => {
             verification::verify(factory, &workspace).await
         }

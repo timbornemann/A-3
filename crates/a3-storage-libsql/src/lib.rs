@@ -32,6 +32,7 @@ mod project_layout;
 mod repository_tree_repository;
 mod run_journal_repository;
 mod semantic_embedding_repository;
+mod settings_repository;
 mod task_ledger_repository;
 mod task_lens_claim_repository;
 mod task_lens_workspace_repository;

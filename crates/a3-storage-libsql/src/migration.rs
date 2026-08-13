@@ -152,6 +152,87 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             ON UPDATE RESTRICT ON DELETE RESTRICT\n\
           ) STRICT;",
     },
+    Migration {
+        version: 4,
+        name: "desktop_settings_snapshots",
+        sql: "CREATE TABLE desktop_settings_revisions (\n\
+          revision INTEGER PRIMARY KEY NOT NULL CHECK (revision > 0),\n\
+          endpoint_provider_id TEXT\n\
+            CHECK (endpoint_provider_id IS NULL OR length(CAST(endpoint_provider_id AS BLOB)) BETWEEN 1 AND 128),\n\
+          endpoint_origin TEXT\n\
+            CHECK (endpoint_origin IS NULL OR length(CAST(endpoint_origin AS BLOB)) BETWEEN 1 AND 2048),\n\
+          endpoint_scope TEXT CHECK (endpoint_scope IS NULL OR endpoint_scope IN ('local_loopback', 'remote')),\n\
+          health_status TEXT CHECK (health_status IS NULL OR health_status IN\n\
+            ('not_checked', 'healthy', 'capability_limited', 'unreachable', 'cancelled', 'remote_blocked')),\n\
+          health_checked_at_unix_millis INTEGER\n\
+            CHECK (health_checked_at_unix_millis IS NULL OR health_checked_at_unix_millis >= 0),\n\
+          CHECK ((endpoint_provider_id IS NULL AND endpoint_origin IS NULL AND endpoint_scope IS NULL\n\
+              AND health_status IS NULL AND health_checked_at_unix_millis IS NULL) OR\n\
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL\n\
+              AND endpoint_scope = 'local_loopback' AND health_status = 'not_checked'\n\
+              AND health_checked_at_unix_millis IS NULL) OR\n\
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL\n\
+              AND endpoint_scope = 'local_loopback'\n\
+              AND health_status IN ('healthy', 'capability_limited', 'unreachable', 'cancelled')\n\
+              AND health_checked_at_unix_millis IS NOT NULL) OR\n\
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL\n\
+              AND endpoint_scope = 'remote' AND health_status = 'remote_blocked'\n\
+              AND health_checked_at_unix_millis IS NULL))\n\
+          ) STRICT;\n\
+          CREATE TABLE desktop_llm_profiles (\n\
+          revision INTEGER NOT NULL CHECK (revision > 0),\n\
+          role TEXT NOT NULL CHECK (role IN ('coding', 'mapping')),\n\
+          provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),\n\
+          model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),\n\
+          context_tokens INTEGER NOT NULL CHECK (context_tokens BETWEEN 1024 AND 1048576),\n\
+          output_tokens INTEGER NOT NULL CHECK (output_tokens BETWEEN 1 AND 262144\n\
+            AND output_tokens <= context_tokens),\n\
+          parallelism INTEGER NOT NULL CHECK (parallelism BETWEEN 1 AND 64),\n\
+          temperature_milli INTEGER NOT NULL CHECK (temperature_milli BETWEEN 0 AND 2000),\n\
+          top_p_milli INTEGER NOT NULL CHECK (top_p_milli BETWEEN 1 AND 1000),\n\
+          schema_grounding TEXT NOT NULL CHECK (schema_grounding IN ('format_only', 'repeat_in_prompt')),\n\
+          structured_output TEXT NOT NULL CHECK (structured_output IN ('verified', 'unavailable')),\n\
+          tool_call_mode TEXT NOT NULL CHECK (tool_call_mode IN ('disabled', 'native_reported')),\n\
+          probed_at_unix_millis INTEGER NOT NULL CHECK (probed_at_unix_millis >= 0),\n\
+          PRIMARY KEY (revision, role),\n\
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)\n\
+            ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+          ) STRICT;\n\
+          CREATE TABLE desktop_embedding_profiles (\n\
+          revision INTEGER PRIMARY KEY NOT NULL CHECK (revision > 0),\n\
+          provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),\n\
+          model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),\n\
+          dimension INTEGER NOT NULL CHECK (dimension BETWEEN 1 AND 8192),\n\
+          max_batch_size INTEGER NOT NULL CHECK (max_batch_size BETWEEN 1 AND 64),\n\
+          probed_at_unix_millis INTEGER NOT NULL CHECK (probed_at_unix_millis >= 0),\n\
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)\n\
+            ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+          ) STRICT;\n\
+          CREATE TRIGGER desktop_settings_revisions_update_guard\n\
+          BEFORE UPDATE ON desktop_settings_revisions BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop settings revisions are immutable');\n\
+          END;\n\
+          CREATE TRIGGER desktop_settings_revisions_delete_guard\n\
+          BEFORE DELETE ON desktop_settings_revisions BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop settings revisions are append-only');\n\
+          END;\n\
+          CREATE TRIGGER desktop_llm_profiles_update_guard\n\
+          BEFORE UPDATE ON desktop_llm_profiles BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop llm profiles are immutable');\n\
+          END;\n\
+          CREATE TRIGGER desktop_llm_profiles_delete_guard\n\
+          BEFORE DELETE ON desktop_llm_profiles BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop llm profiles are append-only');\n\
+          END;\n\
+          CREATE TRIGGER desktop_embedding_profiles_update_guard\n\
+          BEFORE UPDATE ON desktop_embedding_profiles BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop embedding profiles are immutable');\n\
+          END;\n\
+          CREATE TRIGGER desktop_embedding_profiles_delete_guard\n\
+          BEFORE DELETE ON desktop_embedding_profiles BEGIN\n\
+            SELECT RAISE(ABORT, 'desktop embedding profiles are append-only');\n\
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -2214,7 +2295,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(3);
+    pub const CURRENT: Self = Self::new(4);
 
     /// Creates a schema version from a migration number.
     #[must_use]

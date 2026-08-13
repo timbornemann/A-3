@@ -118,6 +118,11 @@ fn libsql_satisfies_shared_command_allowlist_contract() -> Result<(), ContractEr
 }
 
 #[test]
+fn libsql_satisfies_shared_desktop_settings_contract() -> Result<(), ContractError> {
+    run_shared_contract(KnowledgeStoreContractGroup::DesktopSettings)
+}
+
+#[test]
 fn libsql_satisfies_shared_verification_evidence_contract() -> Result<(), ContractError> {
     run_shared_contract(KnowledgeStoreContractGroup::VerificationEvidence)
 }

@@ -11,14 +11,15 @@ use crate::{
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
     policy_repository, repository_tree_repository, run_journal_repository,
-    semantic_embedding_repository, task_ledger_repository, task_lens_claim_repository,
-    task_lens_workspace_repository, verification_evidence_repository,
+    semantic_embedding_repository, settings_repository, task_ledger_repository,
+    task_lens_claim_repository, task_lens_workspace_repository, verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, CommandAllowlistStore, CommandAllowlistStoreFailure,
-    CommandAllowlistStoreFuture, CommandAllowlistStoreVersion, EmbeddingOperationControl,
+    CommandAllowlistStoreFuture, CommandAllowlistStoreVersion, DesktopSettingsStore,
+    DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, EmbeddingOperationControl,
     EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
     IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
@@ -41,14 +42,14 @@ use a3_application::{
     RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
     RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
     RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredProjectCommandAllowlist,
-    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion,
-    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
-    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceFuture,
-    TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore, TaskLensWorkspaceTask,
-    TaskLensWorkspaceTaskLimit, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
-    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredDesktopSettings,
+    StoredProjectCommandAllowlist, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
+    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
+    TaskLensIndexStoreFuture, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore,
+    TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit, VerificationEvidenceStore,
+    VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
     VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
@@ -110,6 +111,28 @@ impl std::fmt::Debug for LibsqlKnowledgeStore {
             .field("layout", &self.layout)
             .field("catalog", &self.catalog)
             .finish()
+    }
+}
+
+impl DesktopSettingsStore for LibsqlKnowledgeStore {
+    fn load<'a>(&'a self) -> DesktopSettingsStoreFuture<'a, StoredDesktopSettings> {
+        Box::pin(async move {
+            settings_repository::load(&self.catalog)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn append<'a>(
+        &'a self,
+        expected: DesktopSettingsStoreVersion,
+        settings: &'a a3_application::DesktopSettings,
+    ) -> DesktopSettingsStoreFuture<'a, StoredDesktopSettings> {
+        Box::pin(async move {
+            settings_repository::append(&self.catalog, expected, settings)
+                .await
+                .map_err(|error| error.classify())
+        })
     }
 }
 
