@@ -9,7 +9,6 @@ import type { AgentInspectionResponseV1 } from './lib/agent-inspection';
 import type { HealthResponseV1 } from './lib/health';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
-import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 import type { TaskLensTaskResponseV1, TaskLensTasksResponseV1 } from './lib/task-lens';
 
 const id = (value: string): string => value.repeat(64);
@@ -267,10 +266,6 @@ describe('M8 desktop user workflow', () => {
         healthLoader: async () => health,
         projectOpener,
         projectStatusLoader,
-        recentProjectsLoader: async (): Promise<RecentProjectsResponseV1> => ({
-          projects: [],
-          protocolVersion: 1,
-        }),
         taskLensTaskLoader: ledgerLoader,
       },
     });
@@ -278,7 +273,7 @@ describe('M8 desktop user workflow', () => {
     expect((await screen.findAllByText('Kein Projekt geöffnet')).length).toBeGreaterThan(0);
     expect(tasksLoader).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
-    expect(await screen.findByText('Worktree sicher geöffnet')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('link', { name: 'Agent' }));
     expect(

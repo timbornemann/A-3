@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { DeepMapControlResponseV1, DeepMapStatusResponseV1 } from './lib/deep-map';
@@ -16,7 +16,6 @@ import type { ProjectMapSearchResponseV1 } from './lib/project-map-search';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
-import type { RecentProjectsResponseV1 } from './lib/recent-projects';
 import type { RepositoryTreeResponseV1 } from './lib/repository-tree';
 import type {
   TaskLensCompileResponseV1,
@@ -44,11 +43,6 @@ const openedProject: OpenProjectResponseV1 = {
     project: projectSummary,
     status: 'opened',
   },
-};
-
-const emptyRecentProjects: RecentProjectsResponseV1 = {
-  projects: [],
-  protocolVersion: 1,
 };
 
 const noProjectStatus: ProjectStatusResponseV1 = {
@@ -769,16 +763,6 @@ const removedProject: RemoveProjectResponseV1 = {
   result: { retainedPrivateStorage: true, status: 'removed' },
 };
 
-const recentProjects: RecentProjectsResponseV1 = {
-  projects: [
-    {
-      project: projectSummary,
-      projectId: '3'.repeat(64),
-    },
-  ],
-  protocolVersion: 1,
-};
-
 describe('A^3 desktop shell', () => {
   it('keeps heavy product surfaces unloaded until visibility or explicit activation', async () => {
     class DeferredIntersectionObserver implements IntersectionObserver {
@@ -799,7 +783,6 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
     try {
@@ -811,7 +794,7 @@ describe('A^3 desktop shell', () => {
 
       const explicitLoadButtons = screen.getAllByRole('button', { name: 'Jetzt laden' });
       await fireEvent.click(explicitLoadButtons[1]!);
-      expect(await screen.findByRole('button', { name: 'Neu laden' })).toBeTruthy();
+      expect(await screen.findByRole('navigation', { name: 'Settings-Bereich' })).toBeTruthy();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -825,11 +808,10 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
     try {
-      await screen.findByText('Bereit');
+      await screen.findByRole('heading', { name: 'Projekt öffnen' });
       const activityTimer = setInterval.mock.results[0]?.value;
       expect(activityTimer).toBeDefined();
       view.unmount();
@@ -840,25 +822,25 @@ describe('A^3 desktop shell', () => {
     }
   });
 
-  it('shows the exact product identity and mapped health state', async () => {
-    render(App, {
+  it('shows the exact product identity and keeps technical app information in Settings', async () => {
+    const { container } = render(App, {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
     expect(screen.getByRole('heading', { level: 1, name: 'A^3' })).toBeTruthy();
     expect(screen.getByText('Autonomous Agent Assistant')).toBeTruthy();
 
-    await waitFor(() => {
-      expect(screen.getByText('Bereit')).toBeTruthy();
-    });
-
-    expect(screen.getByText('0.1.0')).toBeTruthy();
-    expect(screen.getByText('V1')).toBeTruthy();
-    expect(screen.getByText('windows')).toBeTruthy();
+    const settings = container.querySelector<HTMLElement>('#settings');
+    expect(settings).not.toBeNull();
+    await waitFor(() => expect(settings?.textContent).toContain('0.1.0'));
+    expect(settings?.textContent).toContain('V1');
+    expect(settings?.textContent).toContain('windows');
+    expect(container.querySelector('.health-card')).toBeNull();
+    expect(container.querySelector('.workspace-menu')).toBeNull();
+    expect(container.querySelector('.sidebar-footer')).toBeNull();
   });
 
   it('keeps an unknown project from being projected as a known empty run', async () => {
@@ -868,7 +850,6 @@ describe('A^3 desktop shell', () => {
         projectStatusLoader: async () => {
           throw new Error('status unavailable');
         },
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -894,7 +875,6 @@ describe('A^3 desktop shell', () => {
       indexActivityLoader: async () => runningIndexActivity,
       indexOverviewLoader: async () => publishedIndexOverview,
       projectStatusLoader,
-      recentProjectsLoader: async () => emptyRecentProjects,
     };
     let view = render(App, { props });
     try {
@@ -904,6 +884,9 @@ describe('A^3 desktop shell', () => {
       expect(screen.getByRole('region', { name: 'Settings workspace' })).toBeTruthy();
 
       const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });
+      const toolbar = globalStatus.closest('header');
+      expect(toolbar?.classList.contains('workspace-toolbar')).toBe(true);
+      expect(toolbar?.textContent).toContain('Settings');
       await waitFor(() => {
         expect(globalStatus.textContent).toContain('C:\\worktree');
         expect(globalStatus.textContent).toContain('Beziehungen verknüpfen · 4/6');
@@ -943,10 +926,11 @@ describe('A^3 desktop shell', () => {
         indexActivityLoader: async () => runningIndexActivity,
         indexOverviewLoader: async () => publishedIndexOverview,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Projekt verwalten' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Index' }));
     expect(await screen.findByText('Phase 4 von 6: Beziehungen verknüpfen')).toBeTruthy();
     expect(
       screen.getByText(
@@ -969,7 +953,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         moduleCardFreshnessLoader: async () => moduleCardFreshness,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -988,7 +971,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         projectMapSearchLoader,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1026,7 +1008,6 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
         taskLensCompiler,
         taskLensTaskLoader,
         taskLensTasksLoader,
@@ -1104,7 +1085,6 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
         repositoryTreeLoader,
       },
     });
@@ -1157,7 +1137,6 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
         repositoryTreeLoader,
       },
     });
@@ -1188,7 +1167,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         moduleTreeLoader,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1243,7 +1221,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         moduleTreeLoader,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1272,7 +1249,6 @@ describe('A^3 desktop shell', () => {
         moduleDependencyGraphLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1327,7 +1303,6 @@ describe('A^3 desktop shell', () => {
           result: { project: nextProject, status: 'opened' },
         }),
         projectStatusLoader,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1340,7 +1315,7 @@ describe('A^3 desktop shell', () => {
     );
     expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Anderen Worktree auswählen' }));
     expect((await screen.findAllByText('D:\\next-worktree')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
     expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
@@ -1364,7 +1339,6 @@ describe('A^3 desktop shell', () => {
         moduleCardEvidenceLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1437,7 +1411,6 @@ describe('A^3 desktop shell', () => {
         moduleCardEvidenceLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1465,7 +1438,6 @@ describe('A^3 desktop shell', () => {
         moduleRuntimeMapLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1519,7 +1491,6 @@ describe('A^3 desktop shell', () => {
         moduleRuntimeMapLoader,
         moduleTreeLoader: async () => moduleTreeRoot,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1556,7 +1527,6 @@ describe('A^3 desktop shell', () => {
         deepMapStatusLoader: async () => idleDeepMapStatus,
         healthLoader: async () => health,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1583,7 +1553,7 @@ describe('A^3 desktop shell', () => {
     });
   });
 
-  it('shows a safe error and supports retry', async () => {
+  it('keeps unavailable app information terse in Settings and supports retry', async () => {
     const healthLoader = vi
       .fn<() => Promise<HealthResponseV1>>()
       .mockRejectedValueOnce(new Error('sensitive internal detail'))
@@ -1593,28 +1563,28 @@ describe('A^3 desktop shell', () => {
       props: {
         healthLoader,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Die Health-Abfrage ist fehlgeschlagen.');
-    expect(alert.textContent).not.toContain('sensitive internal detail');
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    const aboutSummary = await screen.findByText('Über A^3');
+    const about = aboutSummary.closest('details');
+    expect(about).not.toBeNull();
+    expect(
+      await within(about!).findByText('App-Informationen sind derzeit nicht verfügbar.'),
+    ).toBeTruthy();
+    expect(about?.textContent).not.toContain('sensitive internal detail');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Erneut prüfen' }));
+    await fireEvent.click(within(about!).getByRole('button', { name: 'Erneut laden' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Bereit')).toBeTruthy();
+      expect(about?.textContent).toContain('0.1.0');
     });
     expect(healthLoader).toHaveBeenCalledTimes(2);
   });
 
-  it('persists a project after explicit interaction and refreshes the recent list', async () => {
+  it('opens a project after explicit interaction and keeps technical details in one dialog', async () => {
     const projectOpener = vi.fn(async () => openedProject);
-    const recentProjectsLoader = vi
-      .fn<() => Promise<RecentProjectsResponseV1>>()
-      .mockResolvedValueOnce(emptyRecentProjects)
-      .mockResolvedValueOnce(recentProjects);
     const projectStatusLoader = vi
       .fn<() => Promise<ProjectStatusResponseV1>>()
       .mockResolvedValueOnce(noProjectStatus)
@@ -1630,7 +1600,6 @@ describe('A^3 desktop shell', () => {
         projectOpener,
         projectRebuilder,
         projectStatusLoader,
-        recentProjectsLoader,
       },
     });
 
@@ -1638,22 +1607,23 @@ describe('A^3 desktop shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Worktree sicher geöffnet')).toBeTruthy();
-      expect(screen.getAllByText('C:\\worktree').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('main (unborn)').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Veröffentlicht').length).toBeGreaterThan(0);
-      expect(screen.getByText(/Generation 2/)).toBeTruthy();
-      expect(screen.getByText('4.096 Bytes')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
+      expect(screen.getAllByText('C:\\worktree')).toHaveLength(2);
     });
     expect(projectOpener).toHaveBeenCalledTimes(1);
-    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
-    expect(
-      screen.getByText(/Quellcode, Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben/),
-    ).toBeTruthy();
 
     await fireEvent.click(screen.getByText('Projekt verwalten'));
+    const dialog = screen.getByRole('dialog', { name: 'Projekt verwalten' });
+    expect(within(dialog).getByText(/Generation 2/)).toBeTruthy();
+    expect(within(dialog).getByText('4.096 Bytes')).toBeTruthy();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Wartung' }));
+    expect(
+      within(dialog).getByText(
+        /Quellcode, Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben/,
+      ),
+    ).toBeTruthy();
     await fireEvent.click(
-      screen.getByRole('button', { name: 'Regenerierbaren Index neu aufbauen' }),
+      within(dialog).getByRole('button', { name: 'Regenerierbaren Index neu aufbauen' }),
     );
     await waitFor(() => expect(screen.getByText('Rebuild wartet')).toBeTruthy());
     expect(projectRebuilder).toHaveBeenCalledTimes(1);
@@ -1668,7 +1638,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         projectOpener,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1690,7 +1659,6 @@ describe('A^3 desktop shell', () => {
         healthLoader: async () => health,
         projectOpener,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => emptyRecentProjects,
       },
     });
 
@@ -1702,90 +1670,46 @@ describe('A^3 desktop shell', () => {
     expect(alert.textContent).not.toContain('secret');
   });
 
-  it('keeps recent-project storage details out of the UI and supports retry', async () => {
-    const recentProjectsLoader = vi
-      .fn<() => Promise<RecentProjectsResponseV1>>()
-      .mockRejectedValueOnce(new Error('D:\\private\\catalog.db is corrupt'))
-      .mockResolvedValueOnce(recentProjects);
+  it('keeps Projects focused on actions and omits the passive recent-project list', async () => {
     render(App, {
       props: {
         healthLoader: async () => health,
         projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader,
       },
     });
 
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('lokale Projektliste konnte nicht geladen werden');
-    expect(alert.textContent).not.toContain('catalog.db');
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
-    await waitFor(() => {
-      expect(screen.getByText('C:\\worktree')).toBeTruthy();
-    });
-    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
-  });
-
-  it('renders linked worktrees that share one catalog project identity', async () => {
-    const linkedRecentProjects: RecentProjectsResponseV1 = {
-      projects: [
-        recentProjects.projects[0],
-        {
-          project: {
-            ...projectSummary,
-            worktreeId: '4'.repeat(64),
-            worktreeRootDisplay: 'C:\\linked-worktree',
-          },
-          projectId: recentProjects.projects[0].projectId,
-        },
-      ],
-      protocolVersion: 1,
-    };
-
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        projectStatusLoader: async () => noProjectStatus,
-        recentProjectsLoader: async () => linkedRecentProjects,
-      },
-    });
-
-    expect(await screen.findByText('C:\\worktree')).toBeTruthy();
-    expect(screen.getByText('C:\\linked-worktree')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Projekt öffnen' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Projektordner auswählen' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Zuletzt verwendet' })).toBeNull();
   });
 
   it('requires explicit confirmation and explains non-destructive project removal', async () => {
     const projectRemover = vi.fn(async () => removedProject);
-    const recentProjectsLoader = vi
-      .fn<() => Promise<RecentProjectsResponseV1>>()
-      .mockResolvedValueOnce(recentProjects)
-      .mockResolvedValueOnce(emptyRecentProjects);
     render(App, {
       props: {
         healthLoader: async () => health,
         projectRemover,
         projectStatusLoader: async () => activeProjectStatus,
-        recentProjectsLoader,
       },
     });
 
     await fireEvent.click(await screen.findByText('Projekt verwalten'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Wartung' }));
     const removeButton = await screen.findByRole('button', { name: 'Nur aus A^3 entfernen' });
     expect(
-      screen.getByText(/Repository-Dateien werden nie gelöscht.*Private A\^3-Daten bleiben/s),
+      screen.getByText(/Repository und private Projektdaten.*vollständig erhalten/s),
     ).toBeTruthy();
     await fireEvent.click(removeButton);
     expect(projectRemover).not.toHaveBeenCalled();
-    expect(screen.getByText(/Der lokale Worktree bleibt vollständig bestehen/)).toBeTruthy();
+    expect(screen.getByText(/lokale Worktree bleiben vollständig bestehen/i)).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Worktree aus A^3 entfernen?' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Entfernen bestätigen' }));
 
     await waitFor(() => {
       expect(screen.getByText(/Worktree aus der A\^3-Projektliste entfernt/)).toBeTruthy();
-      expect(screen.getByText('Noch keine Projekte gespeichert.')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Zuletzt verwendet' })).toBeNull();
     });
     expect(projectRemover).toHaveBeenCalledTimes(1);
-    expect(recentProjectsLoader).toHaveBeenCalledTimes(2);
   });
 });

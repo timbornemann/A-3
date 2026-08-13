@@ -16,21 +16,21 @@ describe('U9 accessibility contract', () => {
           protocolVersion: 1,
           result: { status: 'noProject' },
         }),
-        recentProjectsLoader: async () => ({ projects: [], protocolVersion: 1 }),
       },
     });
 
-    await waitFor(() => expect(screen.getByText('Bereit')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2, name: 'Projekt öffnen' })).toBeTruthy(),
+    );
 
     expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(screen.getByRole('heading', { level: 1, name: 'A^3' })).toBeTruthy();
     expect(
       screen.getByRole('link', { name: 'Zum Arbeitsbereich springen' }).getAttribute('href'),
     ).toBe('#workspace-content');
-    expect(screen.getByRole('group', { name: 'Darstellung' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'System' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    );
+    expect(container.querySelector('.workspace-menu')).toBeNull();
+    expect(container.querySelector('.sidebar-footer')).toBeNull();
+    expect(container.querySelector('.app-sidebar fieldset')).toBeNull();
 
     assertUniqueIds(container);
     assertSequentialHeadings(container);

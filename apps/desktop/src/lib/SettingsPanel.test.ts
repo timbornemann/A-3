@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import SettingsPanel from './SettingsPanel.svelte';
 import type { SettingsResponseV1 } from './settings';
@@ -34,9 +34,24 @@ const localEndpoint = {
 
 describe('SettingsPanel', () => {
   it('keeps the index-capable model-free state visible and probes disabled', async () => {
-    render(SettingsPanel, { settingsLoader: vi.fn().mockResolvedValue(response()) });
+    render(SettingsPanel, {
+      healthLoader: vi.fn().mockResolvedValue({
+        applicationVersion: '0.1.0',
+        platform: 'windows',
+        protocolVersion: 1,
+        status: 'ready',
+      }),
+      settingsLoader: vi.fn().mockResolvedValue(response()),
+    });
 
     expect(await screen.findByText(/Modellfreier Betrieb ist aktiv/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Darstellung' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Farbschema' })).toBeTruthy();
+    const about = screen.getByText('Über A^3').closest('details');
+    expect(about?.open).toBe(false);
+    expect(within(about!).getByText('0.1.0')).toBeTruthy();
+    expect(within(about!).getByText('V1')).toBeTruthy();
+    expect(within(about!).getByText('windows')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
     const probeButtons = screen.getAllByRole('button', { name: 'Explizit live prüfen' });
     expect(probeButtons).toHaveLength(3);

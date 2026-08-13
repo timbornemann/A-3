@@ -14,20 +14,15 @@
   }
 </script>
 
-<details class="appearance-menu">
-  <summary>Darstellung</summary>
-  <fieldset class="theme-controls">
-    <legend>Darstellung</legend>
-    <button
-      type="button"
-      aria-pressed={preference === 'system'}
-      onclick={() => selectTheme('system')}>System</button
-    >
-    <button type="button" aria-pressed={preference === 'light'} onclick={() => selectTheme('light')}
-      >Hell</button
-    >
-    <button type="button" aria-pressed={preference === 'dark'} onclick={() => selectTheme('dark')}
-      >Dunkel</button
-    >
-  </fieldset>
-</details>
+<fieldset class="theme-controls">
+  <legend>Farbschema</legend>
+  <button type="button" aria-pressed={preference === 'system'} onclick={() => selectTheme('system')}
+    >System</button
+  >
+  <button type="button" aria-pressed={preference === 'light'} onclick={() => selectTheme('light')}
+    >Hell</button
+  >
+  <button type="button" aria-pressed={preference === 'dark'} onclick={() => selectTheme('dark')}
+    >Dunkel</button
+  >
+</fieldset>

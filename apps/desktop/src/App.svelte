@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import GlobalStatusBar from './lib/GlobalStatusBar.svelte';
   import PrimaryNavigation from './lib/PrimaryNavigation.svelte';
-  import ThemeControls from './lib/ThemeControls.svelte';
   import { UiScheduler } from './lib/ui-scheduler';
   import type { AgentActivityResponseV1 } from './lib/agent-activity';
   import type {
@@ -126,11 +125,6 @@
     type RebuildStateV1,
   } from './lib/project-status';
   import {
-    listRecentProjects,
-    type RecentProjectSummaryV1,
-    type RecentProjectsResponseV1,
-  } from './lib/recent-projects';
-  import {
     queryRepositoryTree,
     type RepositoryTreeEntryV1,
     type RepositoryTreeQueryV1,
@@ -216,7 +210,6 @@
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
-    recentProjectsLoader?: () => Promise<RecentProjectsResponseV1>;
     repositoryTreeLoader?: (query: RepositoryTreeQueryV1) => Promise<RepositoryTreeResponseV1>;
     taskLensTasksLoader?: () => Promise<TaskLensTasksResponseV1>;
     taskLensTaskLoader?: (query: TaskLensTaskQueryV1) => Promise<TaskLensTaskResponseV1>;
@@ -229,8 +222,6 @@
   type SettingsPanelComponent = typeof import('./lib/SettingsPanel.svelte').default;
   type LazySurfaceState = 'error' | 'idle' | 'loading' | 'ready';
 
-  type ViewState =
-    { kind: 'loading' } | { health: HealthResponseV1; kind: 'ready' } | { kind: 'error' };
   type ProjectView =
     | { kind: 'idle' }
     | { kind: 'opening' }
@@ -432,8 +423,7 @@
     | { kind: 'submitting' }
     | { kind: 'removed' }
     | { kind: 'error'; message: string };
-  type RecentProjectsView =
-    { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
+  type ProjectDialogView = 'index' | 'overview' | 'maintenance';
 
   let {
     agentActivityLoader,
@@ -467,13 +457,11 @@
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
     projectStatusLoader = queryProjectStatus,
-    recentProjectsLoader = listRecentProjects,
     repositoryTreeLoader = queryRepositoryTree,
     taskLensTasksLoader = queryTaskLensTasks,
     taskLensTaskLoader = queryTaskLensTask,
     taskLensCompiler = compileTaskLens,
   }: Props = $props();
-  let healthView = $state<ViewState>({ kind: 'loading' });
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
@@ -522,7 +510,8 @@
   let deepMapBudgetProfile = $state<string | null>(null);
   let rebuildView = $state<RebuildView>({ kind: 'idle' });
   let removalView = $state<RemovalView>({ kind: 'idle' });
-  let recentProjectsView = $state<RecentProjectsView>({ kind: 'loading' });
+  let projectDialogOpen = $state(false);
+  let projectDialogView = $state<ProjectDialogView>('overview');
   let indexActivityObserved = false;
   let moduleRuntimeMapRequestSequence = 0;
   let moduleRuntimeFlowRequestSequence = 0;
@@ -549,30 +538,11 @@
   let ModuleDependencyGraph = $state<ModuleDependencyGraphComponent | null>(null);
   let moduleDependencyGraphChunkState = $state<LazySurfaceState>('idle');
 
-  const workspaceMeta: Record<
-    WorkspaceArea,
-    { description: string; eyebrow: string; title: string }
-  > = {
-    projects: {
-      description: 'Worktrees, Indexzustand und lokale Projektdaten verwalten.',
-      eyebrow: 'Workspace',
-      title: 'Projects',
-    },
-    map: {
-      description: 'Repository-Struktur, Evidence und Laufzeitbeziehungen untersuchen.',
-      eyebrow: 'Repository intelligence',
-      title: 'Project Map',
-    },
-    agent: {
-      description: 'Goal, Plan, Ausführung und Verifikation in einem kontrollierten Run.',
-      eyebrow: 'Autonomous workspace',
-      title: 'Agent',
-    },
-    settings: {
-      description: 'Lokale Modelle, Ressourcen und Sicherheitsgrenzen konfigurieren.',
-      eyebrow: 'Configuration',
-      title: 'Settings',
-    },
+  const workspaceTitles: Record<WorkspaceArea, string> = {
+    projects: 'Projects',
+    map: 'Project Map',
+    agent: 'Agent',
+    settings: 'Settings',
   };
 
   function navigateWorkspace(area: WorkspaceArea): void {
@@ -586,16 +556,6 @@
   function resetWorkspaceScroll(): void {
     workspaceContent.scrollTop = 0;
     workspaceContent.scrollLeft = 0;
-  }
-
-  function focusWorkspaceSection(id: string): void {
-    document.getElementById(id)?.scrollIntoView({ block: 'start' });
-  }
-
-  function workspaceProjectContextLabel(): string {
-    return projectStatusView.kind === 'active'
-      ? 'Lokaler Worktree aktiv'
-      : globalProjectItem().value;
   }
 
   function syncWorkspaceRoute(focusTarget: boolean): void {
@@ -867,18 +827,10 @@
     deepMapView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
     deepMapActionView = { kind: 'idle' };
     deepMapBudgetProfile = null;
+    projectDialogOpen = false;
+    projectDialogView = 'overview';
     globalRunStatus = noProject ? { kind: 'noProject' } : { kind: 'idle' };
     indexActivityObserved = false;
-  }
-
-  async function loadHealth(): Promise<void> {
-    healthView = { kind: 'loading' };
-
-    try {
-      healthView = { health: await healthLoader(), kind: 'ready' };
-    } catch {
-      healthView = { kind: 'error' };
-    }
   }
 
   onMount(() => {
@@ -894,8 +846,6 @@
     scheduler.ownAppCleanup(() => window.removeEventListener('hashchange', handleHashChange));
     observeLazySurface(agentWorkspaceBoundary, loadAgentWorkspaceChunk);
     observeLazySurface(settingsBoundary, loadSettingsChunk);
-    void loadHealth();
-    void loadRecentProjects();
     void initializeProjectViews();
     const activityTimer = window.setInterval(() => {
       pollProjectActivity();
@@ -1698,17 +1648,8 @@
     ]);
   }
 
-  async function loadRecentProjects(): Promise<void> {
-    recentProjectsView = { kind: 'loading' };
-    try {
-      const response = await recentProjectsLoader();
-      recentProjectsView = { kind: 'ready', projects: response.projects };
-    } catch {
-      recentProjectsView = { kind: 'error' };
-    }
-  }
-
   async function chooseProject(): Promise<void> {
+    projectDialogOpen = false;
     projectView = { kind: 'opening' };
     try {
       const response = await projectOpener();
@@ -1725,7 +1666,6 @@
           loadModuleCardFreshness(),
           loadModuleTreeRoot(),
           loadRepositoryTreeRoot(),
-          loadRecentProjects(),
         ]);
       } else {
         projectView = { kind: 'cancelled' };
@@ -1777,6 +1717,15 @@
     removalView = { kind: 'confirming' };
   }
 
+  function openProjectDialog(view: ProjectDialogView = 'overview'): void {
+    projectDialogView = view;
+    projectDialogOpen = true;
+  }
+
+  function closeProjectDialog(): void {
+    projectDialogOpen = false;
+  }
+
   function cancelRemoval(): void {
     removalView = { kind: 'idle' };
   }
@@ -1801,9 +1750,9 @@
       removalView = { kind: 'removed' };
       projectView = { kind: 'idle' };
       projectStatusView = { kind: 'noProject' };
+      projectDialogOpen = false;
       uiScheduler?.beginProject(null);
       resetProjectOwnedUi('noProject');
-      await loadRecentProjects();
     } catch (error) {
       removalView = {
         kind: 'error',
@@ -2194,76 +2143,21 @@
       </div>
     </header>
     <PrimaryNavigation current={currentWorkspaceArea} onNavigate={navigateWorkspace} />
-    <div class="sidebar-footer">
-      <ThemeControls />
-      <p><span aria-hidden="true">●</span> Lokal</p>
-    </div>
   </aside>
 
   <section
     class="workspace-shell"
-    aria-label={`${workspaceMeta[currentWorkspaceArea].title} workspace`}
+    aria-label={`${workspaceTitles[currentWorkspaceArea]} workspace`}
   >
     <header class="workspace-toolbar">
-      <div>
-        <h2>{workspaceMeta[currentWorkspaceArea].title}</h2>
-      </div>
-      <details class="workspace-menu">
-        <summary>Ansicht</summary>
-        <div>
-          <p>{workspaceProjectContextLabel()}</p>
-          <nav aria-label={`${workspaceMeta[currentWorkspaceArea].title} Abschnitte`}>
-            {#if currentWorkspaceArea === 'projects'}
-              <button type="button" onclick={() => focusWorkspaceSection('project-heading')}
-                >Projekt</button
-              >
-              <button type="button" onclick={() => focusWorkspaceSection('health-heading')}
-                >Systemdetails</button
-              >
-              <button type="button" onclick={() => focusWorkspaceSection('recent-projects-heading')}
-                >Zuletzt verwendet</button
-              >
-            {:else if currentWorkspaceArea === 'map'}
-              <button type="button" onclick={() => (mapWorkspaceView = 'search')}>Suche</button>
-              <button type="button" onclick={() => (mapWorkspaceView = 'explore')}>Explorer</button>
-              <button type="button" onclick={() => (mapWorkspaceView = 'module')}>Modul</button>
-              <button type="button" onclick={() => (mapWorkspaceView = 'mapping')}>Mapping</button>
-            {:else if currentWorkspaceArea === 'agent'}
-              <button type="button" onclick={() => focusWorkspaceSection('agent-workspace-heading')}
-                >Aufgabe</button
-              >
-              <button type="button" onclick={() => focusWorkspaceSection('agent-activity-heading')}
-                >Aktivität</button
-              >
-              <button
-                type="button"
-                onclick={() => focusWorkspaceSection('agent-inspection-heading')}>Review</button
-              >
-            {:else}
-              <button
-                type="button"
-                onclick={() => focusWorkspaceSection('provider-settings-heading')}>Provider</button
-              >
-              <button
-                type="button"
-                onclick={() => focusWorkspaceSection('project-settings-heading')}
-                >Projektregeln</button
-              >
-              <button type="button" onclick={() => focusWorkspaceSection('privacy-heading')}
-                >Datenschutz</button
-              >
-            {/if}
-          </nav>
-        </div>
-      </details>
+      <h2>{workspaceTitles[currentWorkspaceArea]}</h2>
+      <GlobalStatusBar
+        project={globalProjectItem()}
+        index={globalIndexItem()}
+        model={globalModelItem()}
+        run={globalRunItem()}
+      />
     </header>
-
-    <GlobalStatusBar
-      project={globalProjectItem()}
-      index={globalIndexItem()}
-      model={globalModelItem()}
-      run={globalRunItem()}
-    />
 
     <div class="workspace-layout">
       <div
@@ -2272,86 +2166,44 @@
         tabindex="-1"
         bind:this={workspaceContent}
       >
-        <details class="health-card">
-          <summary>
-            <span
-              class:pending={healthView.kind === 'loading'}
-              class:failed={healthView.kind === 'error'}
-              class="status-dot"
-              aria-hidden="true"
-            ></span>
-            <h2 id="health-heading">Desktop Core</h2>
-            <span>
-              {healthView.kind === 'ready'
-                ? 'Bereit'
-                : healthView.kind === 'loading'
-                  ? 'Wird geprüft'
-                  : 'Prüfung fehlgeschlagen'}
-            </span>
-          </summary>
-
-          <div class="health-details">
-            {#if healthView.kind === 'loading'}
-              <p class="status-message" role="status" aria-live="polite">Core wird geprüft …</p>
-            {:else if healthView.kind === 'ready'}
-              <dl class="health-grid">
-                <div>
-                  <dt>App-Version</dt>
-                  <dd>{healthView.health.applicationVersion}</dd>
-                </div>
-                <div>
-                  <dt>Protokoll</dt>
-                  <dd>V{healthView.health.protocolVersion}</dd>
-                </div>
-                <div>
-                  <dt>Plattform</dt>
-                  <dd>{healthView.health.platform}</dd>
-                </div>
-              </dl>
-            {:else}
-              <div class="error-state" role="alert">
-                <p>Die Health-Abfrage ist fehlgeschlagen.</p>
-                <button type="button" onclick={loadHealth}>Erneut prüfen</button>
-              </div>
-            {/if}
-          </div>
-        </details>
-
         <section
           id="projects"
           class="project-card"
           class:project-active={projectStatusView.kind === 'active'}
           aria-label={currentWorkspaceArea === 'map' ? 'Project Map' : undefined}
-          aria-labelledby={currentWorkspaceArea === 'projects' ? 'project-heading' : undefined}
+          aria-labelledby={currentWorkspaceArea === 'projects'
+            ? projectStatusView.kind === 'active'
+              ? 'active-project-heading'
+              : 'project-heading'
+            : undefined}
           tabindex="-1"
         >
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">Lokaler Workspace</p>
-              <h2 id="project-heading">Projekt öffnen</h2>
+          {#if projectStatusView.kind !== 'active'}
+            <div class="section-heading">
+              <div>
+                <h2 id="project-heading">Projekt öffnen</h2>
+              </div>
             </div>
-          </div>
 
-          <p class="project-copy">
-            Wähle den Root eines Git-Worktrees. A^3 erhält nur Zugriff auf diesen ausdrücklich
-            gewählten Ordner.
-          </p>
-          <button
-            class="primary-action"
-            type="button"
-            disabled={projectView.kind === 'opening'}
-            onclick={chooseProject}
-          >
-            {projectView.kind === 'opening'
-              ? 'Ordnerdialog geöffnet …'
-              : projectView.kind === 'opened'
-                ? 'Anderen Worktree auswählen'
+            <p class="project-copy">
+              Wähle den Root eines Git-Worktrees. A^3 erhält nur Zugriff auf diesen ausdrücklich
+              gewählten Ordner.
+            </p>
+            <button
+              class="primary-action"
+              type="button"
+              disabled={projectView.kind === 'opening'}
+              onclick={chooseProject}
+            >
+              {projectView.kind === 'opening'
+                ? 'Ordnerdialog geöffnet …'
                 : 'Projektordner auswählen'}
-          </button>
+            </button>
+          {/if}
 
           {#if projectView.kind === 'cancelled'}
             <p class="project-status" role="status" aria-live="polite">Auswahl abgebrochen.</p>
-          {:else if projectView.kind === 'opened'}
+          {:else if projectView.kind === 'opened' && projectStatusView.kind !== 'active'}
             <p class="ready-label" role="status" aria-live="polite">Worktree sicher geöffnet</p>
           {:else if projectView.kind === 'error'}
             <p class="project-error" role="alert">{projectView.message}</p>
@@ -2364,186 +2216,368 @@
           {:else if projectStatusView.kind === 'active'}
             <div class="project-result" aria-labelledby="active-project-heading">
               <div class="projects-workspace-view">
-                <h3 id="active-project-heading">Aktiver Worktree</h3>
-                <p class="active-project-summary">
-                  <strong>{projectStatusView.result.project.worktreeRootDisplay}</strong>
-                  <span>{branchLabel(projectStatusView.result.project.head)}</span>
-                  <span>{indexStateLabel(projectStatusView.result.index.state)}</span>
-                </p>
-                <details class="project-details">
-                  <summary>Projekt- und Indexdetails</summary>
-                  <dl class="project-grid">
-                    <div>
-                      <dt>Root</dt>
-                      <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
+                <div class="active-project-card">
+                  <div class="project-folder-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M3 6.5h7l2 2h9v9H3z"></path>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 id="active-project-heading">Aktives Projekt</h3>
+                    <strong>{projectStatusView.result.project.worktreeRootDisplay}</strong>
+                    <p>{branchLabel(projectStatusView.result.project.head)}</p>
+                  </div>
+                </div>
+                <div class="project-launcher-actions" aria-label="Projektaktionen">
+                  <button
+                    class="primary-action"
+                    type="button"
+                    onclick={() => navigateWorkspace('map')}>Project Map öffnen</button
+                  >
+                  <button type="button" onclick={() => navigateWorkspace('agent')}
+                    >Agent öffnen</button
+                  >
+                  <button type="button" onclick={() => openProjectDialog()}
+                    >Projekt verwalten</button
+                  >
+                  <button
+                    type="button"
+                    disabled={projectView.kind === 'opening'}
+                    onclick={chooseProject}
+                  >
+                    {projectView.kind === 'opening'
+                      ? 'Ordnerdialog geöffnet …'
+                      : 'Anderen Worktree auswählen'}
+                  </button>
+                </div>
+
+                {#if projectDialogOpen}
+                  <dialog
+                    class="modal-dialog project-dialog"
+                    aria-labelledby="project-dialog-heading"
+                    use:presentModal
+                    oncancel={(event) => {
+                      event.preventDefault();
+                      closeProjectDialog();
+                    }}
+                  >
+                    <div class="modal-heading">
+                      <h3 id="project-dialog-heading">Projekt verwalten</h3>
+                      <button
+                        type="button"
+                        aria-label="Dialog schließen"
+                        onclick={closeProjectDialog}>×</button
+                      >
                     </div>
-                    <div>
-                      <dt>Branch</dt>
-                      <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
-                    </div>
-                    <div>
-                      <dt>Worktree-ID</dt>
-                      <dd>{projectStatusView.result.project.worktreeId}</dd>
-                    </div>
-                    <div>
-                      <dt>Indexstatus</dt>
-                      <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
-                    </div>
-                    <div>
-                      <dt>Aktueller Indexlauf</dt>
-                      {#if indexActivityView.kind === 'active'}
-                        <dd>{indexActivityStateLabel(indexActivityView.result.activity.state)}</dd>
-                      {:else if indexActivityView.kind === 'loading'}
-                        <dd>Wird geladen …</dd>
-                      {:else}
-                        <dd>Nicht verfügbar</dd>
-                      {/if}
-                    </div>
-                    <div>
-                      <dt>A^3-Speicher</dt>
-                      <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
-                    </div>
-                    <div>
-                      <dt>Letzter Snapshot</dt>
-                      {#if projectStatusView.result.index.latestSnapshot === null}
-                        <dd>Noch kein Snapshot</dd>
-                      {:else}
-                        <dd>
-                          Generation {projectStatusView.result.index.latestSnapshot.generation}<br
-                          />
-                          {projectStatusView.result.index.latestSnapshot.snapshotId}
-                        </dd>
-                      {/if}
-                    </div>
-                  </dl>
-                  {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
-                    <div class="index-progress" aria-labelledby="index-progress-heading">
-                      <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
-                      <p role="status" aria-live="polite">
-                        {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
-                          Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
-                          {indexPhaseLabel(indexActivityView.result.activity.phase)}
-                        {:else}
-                          Phase {indexActivityView.result.activity.completedPhases + 1} von
-                          {indexActivityView.result.activity.totalPhases}:
-                          {indexPhaseLabel(indexActivityView.result.activity.phase)}
+                    <nav class="surface-tabs" aria-label="Projektverwaltung">
+                      <button
+                        type="button"
+                        aria-pressed={projectDialogView === 'overview'}
+                        onclick={() => (projectDialogView = 'overview')}>Übersicht</button
+                      >
+                      <button
+                        type="button"
+                        aria-pressed={projectDialogView === 'index'}
+                        onclick={() => (projectDialogView = 'index')}>Index</button
+                      >
+                      <button
+                        type="button"
+                        aria-pressed={projectDialogView === 'maintenance'}
+                        onclick={() => (projectDialogView = 'maintenance')}>Wartung</button
+                      >
+                    </nav>
+
+                    <div class="project-dialog-content">
+                      {#if projectDialogView === 'overview'}
+                        <dl class="project-grid">
+                          <div>
+                            <dt>Root</dt>
+                            <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
+                          </div>
+                          <div>
+                            <dt>Branch</dt>
+                            <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
+                          </div>
+                          <div>
+                            <dt>Worktree-ID</dt>
+                            <dd>{projectStatusView.result.project.worktreeId}</dd>
+                          </div>
+                          <div>
+                            <dt>Indexstatus</dt>
+                            <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
+                          </div>
+                          <div>
+                            <dt>Aktueller Indexlauf</dt>
+                            {#if indexActivityView.kind === 'active'}
+                              <dd>
+                                {indexActivityStateLabel(indexActivityView.result.activity.state)}
+                              </dd>
+                            {:else if indexActivityView.kind === 'loading'}
+                              <dd>Wird geladen …</dd>
+                            {:else}
+                              <dd>Nicht verfügbar</dd>
+                            {/if}
+                          </div>
+                          <div>
+                            <dt>A^3-Speicher</dt>
+                            <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
+                          </div>
+                          <div>
+                            <dt>Letzter Snapshot</dt>
+                            {#if projectStatusView.result.index.latestSnapshot === null}
+                              <dd>Noch kein Snapshot</dd>
+                            {:else}
+                              <dd>
+                                Generation {projectStatusView.result.index.latestSnapshot
+                                  .generation}<br />
+                                {projectStatusView.result.index.latestSnapshot.snapshotId}
+                              </dd>
+                            {/if}
+                          </div>
+                        </dl>
+                      {:else if projectDialogView === 'index'}
+                        {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
+                          <div class="index-progress" aria-labelledby="index-progress-heading">
+                            <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
+                            <p role="status" aria-live="polite">
+                              {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
+                                Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
+                                {indexPhaseLabel(indexActivityView.result.activity.phase)}
+                              {:else}
+                                Phase {indexActivityView.result.activity.completedPhases + 1} von
+                                {indexActivityView.result.activity.totalPhases}:
+                                {indexPhaseLabel(indexActivityView.result.activity.phase)}
+                              {/if}
+                            </p>
+                            <progress
+                              aria-label="Fast-Index-Fortschritt"
+                              max={indexActivityView.result.activity.totalPhases}
+                              value={indexActivityView.result.activity.completedPhases}
+                            ></progress>
+                            {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
+                              <p>
+                                Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs
+                                vollständig lesbar.
+                              </p>
+                            {/if}
+                          </div>
                         {/if}
-                      </p>
-                      <progress
-                        aria-label="Fast-Index-Fortschritt"
-                        max={indexActivityView.result.activity.totalPhases}
-                        value={indexActivityView.result.activity.completedPhases}
-                      ></progress>
-                      {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
-                        <p>
-                          Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs
-                          vollständig lesbar.
-                        </p>
-                      {/if}
-                    </div>
-                  {/if}
-                  <div class="index-overview" aria-labelledby="index-overview-heading">
-                    <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
-                    {#if indexOverviewView.kind === 'loading'}
-                      <p class="project-status" role="status" aria-live="polite">
-                        Veröffentlichter Index wird gelesen …
-                      </p>
-                    {:else if indexOverviewView.kind === 'noPublishedIndex'}
-                      <p class="project-status">
-                        Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau bleibt
-                        davon getrennt.
-                      </p>
-                    {:else if indexOverviewView.kind === 'published'}
-                      <p class="index-snapshot">
-                        Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
-                      </p>
-                      <dl class="index-metrics">
-                        <div>
-                          <dt>Dateien</dt>
-                          <dd>{countLabel(indexOverviewView.result.overview.counts.fileCount)}</dd>
-                        </div>
-                        <div>
-                          <dt>Symbole</dt>
-                          <dd>
-                            {countLabel(indexOverviewView.result.overview.counts.symbolCount)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Diagnostics</dt>
-                          <dd>
-                            {countLabel(indexOverviewView.result.overview.counts.diagnosticCount)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Parse Coverage</dt>
-                          <dd>
-                            {percentageLabel(indexOverviewView.result.overview.coverageBasisPoints)}
-                          </dd>
-                        </div>
-                      </dl>
-                      <p class="index-coverage-note">
-                        {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
-                        {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien strukturell
-                        geparst.
-                      </p>
-                      {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
-                        <p class="ready-label">
-                          Keine Parser-Diagnostics im veröffentlichten Snapshot.
-                        </p>
-                      {:else}
-                        <div class="file-diagnostics" aria-labelledby="file-diagnostics-heading">
-                          <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
-                          <ul>
-                            {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
-                              <li>
-                                <div class="diagnostic-file-heading">
-                                  <code
-                                    >{file.pathDisplay}{file.pathDisplayTruncated ? '…' : ''}</code
-                                  >
-                                  <span>{indexLanguageLabel(file.language)}</span>
-                                </div>
-                                <p>
-                                  {countLabel(file.diagnosticCount)} Diagnostics · Coverage
-                                  {percentageLabel(file.coverageBasisPoints)}
-                                </p>
+                        <div class="index-overview" aria-labelledby="index-overview-heading">
+                          <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
+                          {#if indexOverviewView.kind === 'loading'}
+                            <p class="project-status" role="status" aria-live="polite">
+                              Veröffentlichter Index wird gelesen …
+                            </p>
+                          {:else if indexOverviewView.kind === 'noPublishedIndex'}
+                            <p class="project-status">
+                              Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau
+                              bleibt davon getrennt.
+                            </p>
+                          {:else if indexOverviewView.kind === 'published'}
+                            <p class="index-snapshot">
+                              Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
+                            </p>
+                            <dl class="index-metrics">
+                              <div>
+                                <dt>Dateien</dt>
+                                <dd>
+                                  {countLabel(indexOverviewView.result.overview.counts.fileCount)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Symbole</dt>
+                                <dd>
+                                  {countLabel(indexOverviewView.result.overview.counts.symbolCount)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Diagnostics</dt>
+                                <dd>
+                                  {countLabel(
+                                    indexOverviewView.result.overview.counts.diagnosticCount,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Parse Coverage</dt>
+                                <dd>
+                                  {percentageLabel(
+                                    indexOverviewView.result.overview.coverageBasisPoints,
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                            <p class="index-coverage-note">
+                              {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
+                              {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien
+                              strukturell geparst.
+                            </p>
+                            {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
+                              <p class="ready-label">
+                                Keine Parser-Diagnostics im veröffentlichten Snapshot.
+                              </p>
+                            {:else}
+                              <div
+                                class="file-diagnostics"
+                                aria-labelledby="file-diagnostics-heading"
+                              >
+                                <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
                                 <ul>
-                                  {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
+                                  {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
                                     <li>
-                                      <strong
-                                        >{diagnosticSeverityLabel(diagnostic.severity)}:</strong
-                                      >
-                                      {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
-                                      <span>Bytes {diagnostic.startByte}–{diagnostic.endByte}</span>
+                                      <div class="diagnostic-file-heading">
+                                        <code
+                                          >{file.pathDisplay}{file.pathDisplayTruncated
+                                            ? '…'
+                                            : ''}</code
+                                        >
+                                        <span>{indexLanguageLabel(file.language)}</span>
+                                      </div>
+                                      <p>
+                                        {countLabel(file.diagnosticCount)} Diagnostics · Coverage
+                                        {percentageLabel(file.coverageBasisPoints)}
+                                      </p>
+                                      <ul>
+                                        {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
+                                          <li>
+                                            <strong
+                                              >{diagnosticSeverityLabel(
+                                                diagnostic.severity,
+                                              )}:</strong
+                                            >
+                                            {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
+                                            <span
+                                              >Bytes {diagnostic.startByte}–{diagnostic.endByte}</span
+                                            >
+                                          </li>
+                                        {/each}
+                                      </ul>
+                                      {#if file.diagnosticsTruncated}
+                                        <p>
+                                          Weitere Diagnostics dieser Datei sind in dieser begrenzten
+                                          Ansicht verborgen.
+                                        </p>
+                                      {/if}
                                     </li>
                                   {/each}
                                 </ul>
-                                {#if file.diagnosticsTruncated}
+                                {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
                                   <p>
-                                    Weitere Diagnostics dieser Datei sind in dieser begrenzten
-                                    Ansicht verborgen.
+                                    Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien
+                                    begrenzten Ansicht verborgen.
                                   </p>
                                 {/if}
-                              </li>
-                            {/each}
-                          </ul>
-                          {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
-                            <p>
-                              Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien begrenzten
-                              Ansicht verborgen.
-                            </p>
+                              </div>
+                            {/if}
+                          {:else if indexOverviewView.kind === 'error'}
+                            <div class="recent-projects-error" role="alert">
+                              <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
+                              <button type="button" onclick={() => void loadIndexOverview()}
+                                >Indexübersicht erneut laden</button
+                              >
+                            </div>
                           {/if}
                         </div>
+                      {:else}
+                        <div class="project-dialog-maintenance">
+                          <section class="project-maintenance" aria-labelledby="rebuild-heading">
+                            <h4 id="rebuild-heading">Index neu aufbauen</h4>
+                            <p>
+                              Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode,
+                              Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben
+                              erhalten.
+                            </p>
+                            <p class="project-status" role="status" aria-live="polite">
+                              {rebuildStateLabel(projectStatusView.result.rebuildState)}
+                            </p>
+                            <div class="project-actions">
+                              <button
+                                type="button"
+                                disabled={rebuildView.kind === 'submitting' ||
+                                  projectStatusView.result.rebuildState === 'queued' ||
+                                  projectStatusView.result.rebuildState === 'running'}
+                                onclick={requestIndexRebuild}
+                              >
+                                {rebuildView.kind === 'submitting'
+                                  ? 'Rebuild wird angefordert …'
+                                  : 'Regenerierbaren Index neu aufbauen'}
+                              </button>
+                              <button type="button" onclick={refreshProjectDetails}
+                                >Status aktualisieren</button
+                              >
+                            </div>
+                            {#if rebuildView.kind === 'error'}
+                              <p class="project-error" role="alert">{rebuildView.message}</p>
+                            {/if}
+                          </section>
+                          <section
+                            class="project-maintenance project-removal"
+                            aria-labelledby="removal-heading"
+                          >
+                            <h4 id="removal-heading">Projekt aus A^3 entfernen</h4>
+                            <p>
+                              Entfernt nur den Eintrag aus A^3. Repository und private Projektdaten
+                              bleiben vollständig erhalten.
+                            </p>
+                            {#if removalView.kind === 'confirming'}
+                              <dialog
+                                class="removal-confirmation modal-dialog"
+                                aria-labelledby="removal-confirmation-heading"
+                                aria-describedby="removal-confirmation-copy"
+                                use:presentModal
+                                oncancel={(event) => {
+                                  event.preventDefault();
+                                  cancelRemoval();
+                                }}
+                              >
+                                <div class="modal-heading">
+                                  <h3 id="removal-confirmation-heading">
+                                    Worktree aus A^3 entfernen?
+                                  </h3>
+                                  <button
+                                    type="button"
+                                    aria-label="Dialog schließen"
+                                    onclick={cancelRemoval}>×</button
+                                  >
+                                </div>
+                                <p id="removal-confirmation-copy">
+                                  Nur der Eintrag wird entfernt. Repository, private A^3-Daten und
+                                  der lokale Worktree bleiben vollständig bestehen.
+                                </p>
+                                <div class="modal-actions">
+                                  <button type="button" onclick={cancelRemoval}>Abbrechen</button>
+                                  <button
+                                    class="risk-action"
+                                    type="button"
+                                    onclick={confirmProjectRemoval}>Entfernen bestätigen</button
+                                  >
+                                </div>
+                              </dialog>
+                            {:else}
+                              <div class="project-actions">
+                                <button
+                                  class="risk-action"
+                                  type="button"
+                                  disabled={removalView.kind === 'submitting'}
+                                  onclick={requestRemovalConfirmation}
+                                >
+                                  {removalView.kind === 'submitting'
+                                    ? 'Worktree wird entfernt …'
+                                    : 'Nur aus A^3 entfernen'}
+                                </button>
+                              </div>
+                            {/if}
+                            {#if removalView.kind === 'error'}
+                              <p class="project-error" role="alert">
+                                {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
+                              </p>
+                            {/if}
+                          </section>
+                        </div>
                       {/if}
-                    {:else if indexOverviewView.kind === 'error'}
-                      <div class="recent-projects-error" role="alert">
-                        <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
-                        <button type="button" onclick={() => void loadIndexOverview()}
-                          >Indexübersicht erneut laden</button
-                        >
-                      </div>
-                    {/if}
-                  </div>
-                </details>
+                    </div>
+                  </dialog>
+                {/if}
               </div>
               <div class="map-workspace-view">
                 <nav class="surface-tabs" aria-label="Project-Map-Arbeitsansicht">
@@ -4595,96 +4629,6 @@
                   </div>
                 {/if}
               </div>
-              <details class="project-management">
-                <summary>Projekt verwalten</summary>
-                <div class="project-maintenance" aria-labelledby="rebuild-heading">
-                  <h4 id="rebuild-heading">Index neu aufbauen</h4>
-                  <p>
-                    Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode, Snapshots,
-                    Aufgaben, Entscheidungen und User-Evidence bleiben erhalten.
-                  </p>
-                  <p class="project-status" role="status" aria-live="polite">
-                    {rebuildStateLabel(projectStatusView.result.rebuildState)}
-                  </p>
-                  <div class="project-actions">
-                    <button
-                      type="button"
-                      disabled={rebuildView.kind === 'submitting' ||
-                        projectStatusView.result.rebuildState === 'queued' ||
-                        projectStatusView.result.rebuildState === 'running'}
-                      onclick={requestIndexRebuild}
-                    >
-                      {rebuildView.kind === 'submitting'
-                        ? 'Rebuild wird angefordert …'
-                        : 'Regenerierbaren Index neu aufbauen'}
-                    </button>
-                    <button type="button" onclick={refreshProjectDetails}
-                      >Status aktualisieren</button
-                    >
-                  </div>
-                  {#if rebuildView.kind === 'error'}
-                    <p class="project-error" role="alert">{rebuildView.message}</p>
-                  {/if}
-                </div>
-                <div class="project-maintenance project-removal" aria-labelledby="removal-heading">
-                  <h4 id="removal-heading">Worktree aus A^3 entfernen</h4>
-                  <p>
-                    Entfernt nur diesen Eintrag aus der A^3-Projektliste. Repository-Dateien werden
-                    nie gelöscht. Private A^3-Daten bleiben erhalten und stehen beim sicheren
-                    Wiederöffnen erneut bereit.
-                  </p>
-                  {#if removalView.kind === 'confirming'}
-                    <dialog
-                      class="removal-confirmation modal-dialog"
-                      aria-labelledby="removal-confirmation-heading"
-                      aria-describedby="removal-confirmation-copy"
-                      use:presentModal
-                      oncancel={(event) => {
-                        event.preventDefault();
-                        cancelRemoval();
-                      }}
-                    >
-                      <div class="modal-heading">
-                        <div>
-                          <p class="section-kicker">Projektliste</p>
-                          <h3 id="removal-confirmation-heading">Worktree aus A^3 entfernen?</h3>
-                        </div>
-                        <button type="button" aria-label="Dialog schließen" onclick={cancelRemoval}
-                          >×</button
-                        >
-                      </div>
-                      <p id="removal-confirmation-copy">
-                        Nur der Eintrag wird entfernt. Repository und private A^3-Daten bleiben
-                        erhalten. Der lokale Worktree bleibt vollständig bestehen.
-                      </p>
-                      <div class="modal-actions">
-                        <button type="button" onclick={cancelRemoval}>Abbrechen</button>
-                        <button class="risk-action" type="button" onclick={confirmProjectRemoval}
-                          >Entfernen bestätigen</button
-                        >
-                      </div>
-                    </dialog>
-                  {:else}
-                    <div class="project-actions">
-                      <button
-                        class="risk-action"
-                        type="button"
-                        disabled={removalView.kind === 'submitting'}
-                        onclick={requestRemovalConfirmation}
-                      >
-                        {removalView.kind === 'submitting'
-                          ? 'Worktree wird entfernt …'
-                          : 'Nur aus A^3 entfernen'}
-                      </button>
-                    </div>
-                  {/if}
-                  {#if removalView.kind === 'error'}
-                    <p class="project-error" role="alert">
-                      {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
-                    </p>
-                  {/if}
-                </div>
-              </details>
             </div>
           {:else if projectStatusView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
@@ -4699,32 +4643,6 @@
               erhalten.
             </p>
           {/if}
-
-          <div class="recent-projects" aria-labelledby="recent-projects-heading">
-            <h3 id="recent-projects-heading">Zuletzt verwendet</h3>
-            {#if recentProjectsView.kind === 'loading'}
-              <p class="project-status" role="status" aria-live="polite">
-                Projektliste wird geladen …
-              </p>
-            {:else if recentProjectsView.kind === 'error'}
-              <div class="recent-projects-error" role="alert">
-                <p>Die lokale Projektliste konnte nicht geladen werden.</p>
-                <button type="button" onclick={loadRecentProjects}>Erneut laden</button>
-              </div>
-            {:else if recentProjectsView.projects.length === 0}
-              <p class="project-status">Noch keine Projekte gespeichert.</p>
-            {:else}
-              <ol class="recent-project-list">
-                {#each recentProjectsView.projects as recent (recent.project.worktreeId)}
-                  <li>
-                    <span>{recent.project.worktreeRootDisplay}</span>
-                    <span>{branchLabel(recent.project.head)}</span>
-                    <code>{recent.project.worktreeId}</code>
-                  </li>
-                {/each}
-              </ol>
-            {/if}
-          </div>
         </section>
 
         {#if projectStatusView.kind !== 'active'}
@@ -4734,7 +4652,6 @@
             aria-labelledby="map-placeholder-heading"
             tabindex="-1"
           >
-            <p class="section-kicker">Map</p>
             <h2 id="map-placeholder-heading">Project Map</h2>
             {#if projectStatusView.kind === 'loading'}
               <p role="status">Project Map wartet auf den Projektstatus …</p>
@@ -4784,7 +4701,7 @@
         <div id="settings" class="lazy-boundary" bind:this={settingsBoundary} tabindex="-1">
           {#if settingsComponent !== null}
             {@const Settings = settingsComponent}
-            <Settings />
+            <Settings {healthLoader} />
           {:else}
             <section class="lazy-surface" aria-labelledby="lazy-settings-heading">
               <h2 id="lazy-settings-heading">Modelle, Ressourcen und Datenschutz</h2>

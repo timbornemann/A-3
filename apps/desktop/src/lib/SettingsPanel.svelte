@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { parseCommandErrorV1 } from './command-error';
   import ProjectSettingsPanel from './ProjectSettingsPanel.svelte';
+  import ThemeControls from './ThemeControls.svelte';
+  import { queryHealth, type HealthResponseV1 } from './health';
   import {
     cancelModelProbe,
     configureModelEndpoint,
@@ -22,6 +24,7 @@
       endpointOrigin: string | null,
     ) => Promise<SettingsResponseV1>;
     probeCanceller?: () => Promise<CancelModelProbeResponseV1>;
+    healthLoader?: () => Promise<HealthResponseV1>;
     roleProber?: (
       expectedRevision: string,
       input: ModelProbeInputV1,
@@ -39,15 +42,19 @@
     | { kind: 'probing'; role: ModelRoleV1 }
     | { kind: 'cancelling'; role: ModelRoleV1 }
     | { kind: 'error'; message: string };
+  type HealthView =
+    { kind: 'loading' } | { kind: 'ready'; health: HealthResponseV1 } | { kind: 'error' };
 
   let {
     endpointConfigurer = configureModelEndpoint,
+    healthLoader = queryHealth,
     probeCanceller = cancelModelProbe,
     roleProber = probeModelRole,
     settingsLoader = querySettings,
   }: Props = $props();
 
   let view = $state<View>({ kind: 'loading' });
+  let healthView = $state<HealthView>({ kind: 'loading' });
   let action = $state<Action>({ kind: 'idle' });
   let endpointOrigin = $state('http://127.0.0.1:11434');
   let codingModelId = $state('');
@@ -64,7 +71,17 @@
 
   onMount(() => {
     void loadSettings();
+    void loadAppInfo();
   });
+
+  async function loadAppInfo(): Promise<void> {
+    healthView = { kind: 'loading' };
+    try {
+      healthView = { kind: 'ready', health: await healthLoader() };
+    } catch {
+      healthView = { kind: 'error' };
+    }
+  }
 
   async function loadSettings(): Promise<void> {
     view = { kind: 'loading' };
@@ -191,15 +208,7 @@
   }
 </script>
 
-<section class="settings-card" aria-labelledby="settings-heading">
-  <div class="section-heading">
-    <div>
-      <p class="section-kicker">Settings</p>
-      <h2 id="settings-heading">Modelle, Ressourcen und Datenschutz</h2>
-    </div>
-    <button type="button" onclick={loadSettings}>Neu laden</button>
-  </div>
-
+<section class="settings-card" aria-label="Einstellungen">
   <nav class="surface-tabs" aria-label="Settings-Bereich">
     <button
       type="button"
@@ -446,7 +455,6 @@
     {#if settingsView === 'privacy'}
       <div class="privacy-settings" aria-labelledby="privacy-heading">
         <div>
-          <p class="section-kicker">Daten &amp; Datenschutz</p>
           <h3 id="privacy-heading">Fail-closed in diesem Build</h3>
         </div>
         <ul>
@@ -462,6 +470,42 @@
         </p>
       </div>
     {/if}
+  {/if}
+
+  {#if settingsView === 'general'}
+    <div class="settings-general">
+      <section class="settings-section" aria-labelledby="appearance-settings-heading">
+        <div class="settings-section-heading">
+          <h3 id="appearance-settings-heading">Darstellung</h3>
+        </div>
+        <ThemeControls />
+      </section>
+
+      <details class="settings-about">
+        <summary>Über A^3</summary>
+        {#if healthView.kind === 'loading'}
+          <p role="status" aria-live="polite">App-Informationen werden geladen …</p>
+        {:else if healthView.kind === 'ready'}
+          <dl>
+            <div>
+              <dt>Version</dt>
+              <dd>{healthView.health.applicationVersion}</dd>
+            </div>
+            <div>
+              <dt>Protokoll</dt>
+              <dd>V{healthView.health.protocolVersion}</dd>
+            </div>
+            <div>
+              <dt>Plattform</dt>
+              <dd>{healthView.health.platform}</dd>
+            </div>
+          </dl>
+        {:else}
+          <p>App-Informationen sind derzeit nicht verfügbar.</p>
+          <button type="button" onclick={loadAppInfo}>Erneut laden</button>
+        {/if}
+      </details>
+    </div>
   {/if}
 
   {#if settingsView === 'project'}

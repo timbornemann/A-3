@@ -52,25 +52,36 @@ U1-Akzeptanzkriterien objektiv nachgewiesen und U1 ist abgeschlossen.
 
 UX-Überarbeitung vom 2026-08-13: Die vier URL-gebundenen Hauptbereiche erscheinen nicht mehr als
 aufeinanderfolgende One-Page-Sektionen. Eine feste primäre App-Sidebar, eine kompakte globale
-Statuszeile, ein schmaler Seitenkopf mit optionalem `Ansicht`-Menü und genau ein scrollbarer
-Inhalts-Viewport bilden jetzt eine zusammenhängende Desktop-Shell. `Projects` trennt
+Statusprojektion im schmalen Seitenkopf und genau ein scrollbarer Inhalts-Viewport bilden jetzt
+eine zusammenhängende Desktop-Shell. Bereichstitel, Projekt, Index, Modell und Run belegen dabei
+eine gemeinsame Toolbar statt zweier übereinanderliegender Leisten. `Projects` trennt
 Projektverwaltung und Indexübersicht von der eigenen `Map`-Arbeitsfläche; `Agent` und `Settings`
 bleiben eigenständige, lokal lazy geladene Views. Ein Routewechsel aktualisiert sichtbaren
 Seitentitel, Fokusziel und `data-workspace-area`, ohne fachliche Autorität in die WebView zu
 verschieben. Der Bestätigungszustand für das nicht destruktive Entfernen eines Projekts wird als
 benannter nativer Modal-Dialog angezeigt.
 
-Vereinfachungsrunde vom 2026-08-13: Die dauerhaft sichtbare zweite Kontextspalte und die redundante
-Fußleiste entfallen. Projects priorisiert Öffnen oder aktives Projekt; Core-Diagnose, Indexdetails,
-Rebuild und Entfernen werden erst über benannte Details geöffnet. Map rendert jeweils nur
+Vereinfachungsrunde vom 2026-08-14: Die dauerhaft sichtbare zweite Kontextspalte und die redundante
+Fußleiste entfallen. Projects ist bei aktivem Worktree ein kompakter Launcher: Pfad und Branch
+stehen neben direkten Einstiegen in Project Map und Agent sowie den Aktionen `Projekt verwalten`
+und `Anderen Worktree auswählen`. Technische Projekt-, Index- und Wartungsdaten liegen in einem
+einzigen scrollbaren Modal mit den drei eindeutigen Tabs `Übersicht`, `Index` und `Wartung`; die
+Hauptfläche enthält keine aufklappbaren Detailsektionen mehr. Map rendert jeweils nur
 `Recherche`, `Explorer`, `Modul` oder `Mapping` und innerhalb von Modul genau eine Detailansicht.
 Agent startet mit dem Plan und trennt Aktivität, Review und Vertragsdetails in ausdrückliche Tabs.
-Settings trennt Allgemein, Modelle, Projekt und Datenschutz. Theme-Auswahl und seltene
-Bereichssprünge liegen in Menüs. Damit bleibt jede vorhandene Aktion erreichbar, während große
+Settings trennt Allgemein, Modelle, Projekt und Datenschutz. Das redundante `Ansicht`-Sprungmenü,
+der `Lokal`-Mikrostatus und die dauerhaft sichtbare Desktop-Core-Diagnose sind entfernt. Farbschema
+und technische App-Metadaten liegen stattdessen unter Allgemein; Version, Protokoll und Plattform
+bleiben bis zum Öffnen von `Über A^3` eingeklappt. Die passive Recent-Projects-Projektion wird nicht
+mehr gerendert: Der akzeptierte V1-IPC-Vertrag erlaubt weder Auswahl noch erneutes Öffnen und eine
+nicht interaktive Liste widerspricht dem Launcher-Zweck. Der bounded Core-Katalog bleibt dabei
+unverändert; bis zu einem gesondert entschiedenen sicheren Auswahl-Use-Case erfolgt der Wechsel
+weiter über den nativen Ordnerdialog. Rein wiederholende Abschnittstitel und -labels werden
+ebenfalls nicht mehr gerendert. Damit bleibt jede relevante Aktion erreichbar, während große
 Nebenflächen weder gleichzeitig sichtbar noch nur per CSS im DOM versteckt werden.
 
-Die angepassten Component- und M8-Workflow-Verträge durchlaufen die neuen Tabs, Details und Modale
-explizit. Formatter, ESLint, Svelte-Typecheck ohne Warnung, 209 Frontendtests, fünf Tooltests und der
+Die angepassten Component- und M8-Workflow-Verträge durchlaufen die neuen Tabs und Modale explizit.
+Formatter, ESLint, Svelte-Typecheck ohne Warnung, 208 Frontendtests, fünf Tooltests und der
 Produktionsbuild bestehen. Der reale Chromium-Smoke bestätigt die kompakte Dark-Theme-Shell bei
 1.280 × 720 ohne horizontale Dokumentüberbreite.
 
