@@ -80,7 +80,7 @@ pub(crate) struct VerificationStateQuery<'a> {
     worktree_id: WorktreeId,
     task_id: TaskId,
     evidence_ids: &'a [TaskEvidenceId],
-    expected_snapshot_id: SnapshotId,
+    expected_snapshot_id: Option<SnapshotId>,
     published: PublishedIndex,
     timeout: Duration,
 }
@@ -98,7 +98,24 @@ impl<'a> VerificationStateQuery<'a> {
             worktree_id,
             task_id,
             evidence_ids,
-            expected_snapshot_id,
+            expected_snapshot_id: Some(expected_snapshot_id),
+            published,
+            timeout,
+        }
+    }
+
+    pub(crate) const fn for_inspection(
+        worktree_id: WorktreeId,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        published: PublishedIndex,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            worktree_id,
+            task_id,
+            evidence_ids,
+            expected_snapshot_id: None,
             published,
             timeout,
         }
@@ -111,7 +128,10 @@ pub(crate) async fn load_state(
     control: &dyn AgentControllerControl,
 ) -> Result<StoredVerificationState, VerificationEvidenceRepositoryError> {
     let guard = OperationGuard::new(query.timeout, control)?;
-    if query.published.publication().graph().snapshot_id() != query.expected_snapshot_id {
+    if query
+        .expected_snapshot_id
+        .is_some_and(|expected| query.published.publication().graph().snapshot_id() != expected)
+    {
         return Err(VerificationEvidenceRepositoryError::SnapshotMismatch);
     }
     let transaction = connection

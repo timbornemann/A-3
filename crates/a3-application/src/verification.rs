@@ -320,6 +320,16 @@ pub trait VerificationEvidenceStore: fmt::Debug + Send + Sync {
         timeout: Duration,
         control: &'a dyn AgentControllerControl,
     ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState>;
+
+    /// Loads requested artifacts with the latest published index even when evidence is stale.
+    fn load_verification_inspection_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: a3_domain::TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState>;
 }
 
 /// Stable classification of verification-evidence persistence failures.
@@ -957,6 +967,17 @@ mod tests {
             _task_id: TaskId,
             _evidence_ids: &'a [TaskEvidenceId],
             _expected_snapshot_id: SnapshotId,
+            _timeout: Duration,
+            _control: &'a dyn AgentControllerControl,
+        ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState> {
+            Box::pin(async move { Ok(self.state.clone()) })
+        }
+
+        fn load_verification_inspection_state<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _task_id: TaskId,
+            _evidence_ids: &'a [TaskEvidenceId],
             _timeout: Duration,
             _control: &'a dyn AgentControllerControl,
         ) -> VerificationEvidenceStoreFuture<'a, StoredVerificationState> {

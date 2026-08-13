@@ -14,11 +14,11 @@ use a3_domain::{
     AcceptanceCriterionStatement, AgentRun, AgentRunId, AgentRunTimestamp, AgentToolEvidence,
     AgentToolEvidenceSet, ApprovalRequestId, CommandEvidence, CommandEvidenceContext, ContentHash,
     DiagnosticCount, DiagnosticEvidence, DiagnosticPolicy, DiffEvidence, DiffInvariantMode,
-    DiffInvariantVerification, DiscoveredCommandId, EvidenceDependency, ExpectedTaskEvidence,
-    FileRevision, GoalConstraint, GoalContract, GoalContractDraft, GoalContractTimestamp,
-    GoalObjective, MinimumTestCaseCount, ModelProfileId, ModelProfileReference,
-    ModelProfileVersion, NonGoal, PatchAction, PatchActionSchemaVersion, PatchChange,
-    PatchChangeSet, PatchFileContent, PatchOperation, PatchRationale, PatchUpdate,
+    DiffInvariantVerification, DiscoveredCommandId, EvidenceDependency, EvidenceFreshness,
+    ExpectedTaskEvidence, FileRevision, GoalConstraint, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, MinimumTestCaseCount, ModelProfileId,
+    ModelProfileReference, ModelProfileVersion, NonGoal, PatchAction, PatchActionSchemaVersion,
+    PatchChange, PatchChangeSet, PatchFileContent, PatchOperation, PatchRationale, PatchUpdate,
     PathPolicyOperation, PathScopeCoverage, PolicyAction, PolicyDecisionId, PolicyDecisionOutcome,
     PolicyEvaluationTiming, PolicyPathScope, PolicyResourceId, ProcessDuration, ProcessExit,
     ProcessOutputCapture, ProcessOutputContent, ProcessOutputDigest, ProcessOutputRedaction,
@@ -508,6 +508,41 @@ where
         .latest_published_index(&project, &ContractIndexControl)
         .await?
         .ok_or_else(|| std::io::Error::other("replacement index publication is missing"))?;
+    assert_eq!(
+        reopened
+            .load_verification_state(
+                &project,
+                task_id,
+                &[evidence.id()],
+                snapshot_id,
+                Duration::from_secs(5),
+                &ActiveControl,
+            )
+            .await,
+        Err(VerificationEvidenceStoreFailure::SnapshotMismatch)
+    );
+    let inspection_state = reopened
+        .load_verification_inspection_state(
+            &project,
+            task_id,
+            &[evidence.id()],
+            Duration::from_secs(5),
+            &ActiveControl,
+        )
+        .await?;
+    assert_eq!(inspection_state.evidence(), std::slice::from_ref(&evidence));
+    assert_eq!(
+        inspection_state
+            .published_index()
+            .publication()
+            .graph()
+            .snapshot_id(),
+        replacement_id
+    );
+    assert!(matches!(
+        EvidenceFreshness::evaluate(&evidence, inspection_state.published_index()),
+        EvidenceFreshness::Stale(_)
+    ));
     let index_diff_evidence = VerificationEvidence::Diff(DiffEvidence::from_published_indexes(
         VerificationRunId::from_bytes([64; 32]),
         diff_spec_id,

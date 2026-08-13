@@ -1268,6 +1268,53 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
             .map_err(|error| error.classify())
         })
     }
+
+    fn load_verification_inspection_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+        evidence_ids: &'a [TaskEvidenceId],
+        timeout: Duration,
+        control: &'a dyn AgentControllerControl,
+    ) -> VerificationEvidenceStoreFuture<'a, a3_application::StoredVerificationState> {
+        Box::pin(async move {
+            if timeout.is_zero() {
+                return Err(VerificationEvidenceStoreFailure::TimedOut);
+            }
+            let operation = VerificationIndexControl::new(control, timeout);
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(classify_verification_index_failure)?;
+            operation.checkpoint()?;
+            let published = index_publication::latest_published_index(
+                knowledge.connection(),
+                project.worktree().id(),
+                &operation,
+            )
+            .await
+            .map_err(|error| operation.classify_index_failure(error.classify()))?
+            .ok_or(VerificationEvidenceStoreFailure::InvalidStoredData)?;
+            operation.checkpoint()?;
+            let remaining = timeout
+                .checked_sub(operation.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
+            verification_evidence_repository::load_state(
+                knowledge.connection(),
+                verification_evidence_repository::VerificationStateQuery::for_inspection(
+                    project.worktree().id(),
+                    task_id,
+                    evidence_ids,
+                    published,
+                    remaining,
+                ),
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
 }
 
 impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {

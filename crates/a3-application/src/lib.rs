@@ -70,6 +70,7 @@ mod task_ledger;
 mod task_lens;
 mod task_lens_workspace;
 mod verification;
+mod verification_inspection;
 mod workspace_directory;
 mod workspace_patch;
 
@@ -394,6 +395,7 @@ pub use verification::{
     VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
     VerificationOrderingError,
 };
+pub use verification_inspection::*;
 pub use workspace_directory::{
     WorkspaceDirectoryLister, WorkspaceDirectoryListerFuture, WorkspaceDirectoryProgressError,
     WorkspaceDirectoryReadControl, WorkspaceDirectoryReadFailure,
