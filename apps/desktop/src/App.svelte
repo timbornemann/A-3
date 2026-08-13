@@ -1010,6 +1010,26 @@
     if (taskLensTasksView.kind === 'idle') void loadTaskLensTasks();
   }
 
+  function handleProjectMapTabKey(event: KeyboardEvent): void {
+    let nextMode: 'search' | 'taskLens';
+    if (event.key === 'ArrowLeft' || event.key === 'Home') {
+      nextMode = 'search';
+    } else if (event.key === 'ArrowRight' || event.key === 'End') {
+      nextMode = 'taskLens';
+    } else {
+      return;
+    }
+    event.preventDefault();
+    if (nextMode === 'search') {
+      showProjectMapSearch();
+    } else {
+      showTaskLens();
+    }
+    requestAnimationFrame(() => {
+      document.getElementById(`project-map-${nextMode}-tab`)?.focus();
+    });
+  }
+
   async function loadTaskLensTasks(): Promise<void> {
     const requestSequence = ++taskLensTasksRequestSequence;
     taskLensTasksView = { kind: 'loading' };
@@ -2013,501 +2033,525 @@
           </div>
           <div class="project-map-mode-switch" role="tablist" aria-label="Project-Map-Ansicht">
             <button
+              id="project-map-search-tab"
               type="button"
               role="tab"
+              aria-controls="project-map-search-panel"
               aria-selected={projectMapMode === 'search'}
+              tabindex={projectMapMode === 'search' ? 0 : -1}
               class:active={projectMapMode === 'search'}
+              onkeydown={handleProjectMapTabKey}
               onclick={showProjectMapSearch}>Suche</button
             >
             <button
+              id="project-map-taskLens-tab"
               type="button"
               role="tab"
+              aria-controls="project-map-taskLens-panel"
               aria-selected={projectMapMode === 'taskLens'}
+              tabindex={projectMapMode === 'taskLens' ? 0 : -1}
               class:active={projectMapMode === 'taskLens'}
+              onkeydown={handleProjectMapTabKey}
               onclick={showTaskLens}>Task Lens</button
             >
           </div>
           {#if projectMapMode === 'search'}
-            <form class="project-map-search-form" role="search" onsubmit={submitProjectMapSearch}>
-              <label for="project-map-search-query">Pfad, Symbol oder Signatur suchen</label>
-              <div>
-                <input
-                  id="project-map-search-query"
-                  name="query"
-                  type="search"
-                  autocomplete="off"
-                  maxlength="4096"
-                  bind:value={projectMapSearchText}
-                  disabled={projectMapSearchView.kind === 'loading'}
-                  aria-describedby="project-map-search-help"
-                />
-                <button
-                  type="submit"
-                  disabled={projectMapSearchText.trim().length < 3 ||
-                    projectMapSearchView.kind === 'loading'}
-                >
-                  {projectMapSearchView.kind === 'loading' ? 'Suche läuft …' : 'Suchen'}
-                </button>
-              </div>
-              <p id="project-map-search-help">
-                Mindestens ein durchsuchbarer Begriff mit drei Zeichen. Source wird nicht an die
-                WebView übertragen.
-              </p>
-            </form>
-            {#if projectMapSearchView.kind === 'idle'}
-              <p class="project-status">
-                Die Suche läuft nie automatisch. Gib einen konkreten Identifier, Pfad oder eine
-                Signatur ein.
-              </p>
-            {:else if projectMapSearchView.kind === 'loading'}
-              <p class="project-status" role="status" aria-live="polite">
-                Exact- und Lexical-Projektion werden begrenzt gelesen und fusioniert …
-              </p>
-            {:else if projectMapSearchView.kind === 'noProject'}
-              <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
-            {:else if projectMapSearchView.kind === 'noPublishedIndex'}
-              <p class="project-status">
-                Noch kein veröffentlichter Index für die Suche verfügbar.
-              </p>
-            {:else if projectMapSearchView.kind === 'projectionUnavailable'}
-              <p class="project-status">
-                Die {projectMapSearchView.channel === 'exact' ? 'Exact-' : 'Lexical-'}Projektion
-                fehlt im historischen Index. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
-              </p>
-            {:else if projectMapSearchView.kind === 'available'}
-              {@const search = projectMapSearchView.result.search}
-              <div class="project-map-search-summary">
-                <p>
-                  <strong>{search.hits.length} Treffer</strong> für „{search.query}“ · Fusion V{search.fusionPolicyVersion}
+            <div
+              id="project-map-search-panel"
+              role="tabpanel"
+              aria-labelledby="project-map-search-tab"
+              tabindex="0"
+            >
+              <form class="project-map-search-form" role="search" onsubmit={submitProjectMapSearch}>
+                <label for="project-map-search-query">Pfad, Symbol oder Signatur suchen</label>
+                <div>
+                  <input
+                    id="project-map-search-query"
+                    name="query"
+                    type="search"
+                    autocomplete="off"
+                    maxlength="4096"
+                    bind:value={projectMapSearchText}
+                    disabled={projectMapSearchView.kind === 'loading'}
+                    aria-describedby="project-map-search-help"
+                  />
+                  <button
+                    type="submit"
+                    disabled={projectMapSearchText.trim().length < 3 ||
+                      projectMapSearchView.kind === 'loading'}
+                  >
+                    {projectMapSearchView.kind === 'loading' ? 'Suche läuft …' : 'Suchen'}
+                  </button>
+                </div>
+                <p id="project-map-search-help">
+                  Mindestens ein durchsuchbarer Begriff mit drei Zeichen. Source wird nicht an die
+                  WebView übertragen.
                 </p>
-                <p>
-                  Indexlauf <code>{search.indexRunId}</code> · Snapshot
-                  <code>{search.snapshotId}</code>
+              </form>
+              {#if projectMapSearchView.kind === 'idle'}
+                <p class="project-status">
+                  Die Suche läuft nie automatisch. Gib einen konkreten Identifier, Pfad oder eine
+                  Signatur ein.
                 </p>
-              </div>
-              <p class="module-card-safety-note">
-                Exact und Lexical liefern aktuelle Index-Evidence. Semantische Ähnlichkeit ist in
-                dieser faktentragenden Trefferliste nicht zugelassen und wäre niemals ein Beweis.
-              </p>
-              {#if search.truncated}
-                <p class="project-map-search-truncated" role="status">
-                  Die begrenzte Ansicht lässt weitere Kandidaten sichtbar aus. Verfeinere die Suche,
-                  um andere Treffer zu prüfen.
+              {:else if projectMapSearchView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Exact- und Lexical-Projektion werden begrenzt gelesen und fusioniert …
                 </p>
+              {:else if projectMapSearchView.kind === 'noProject'}
+                <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+              {:else if projectMapSearchView.kind === 'noPublishedIndex'}
+                <p class="project-status">
+                  Noch kein veröffentlichter Index für die Suche verfügbar.
+                </p>
+              {:else if projectMapSearchView.kind === 'projectionUnavailable'}
+                <p class="project-status">
+                  Die {projectMapSearchView.channel === 'exact' ? 'Exact-' : 'Lexical-'}Projektion
+                  fehlt im historischen Index. Ein Rebuild erzeugt sie mit dem aktuellen Schema.
+                </p>
+              {:else if projectMapSearchView.kind === 'available'}
+                {@const search = projectMapSearchView.result.search}
+                <div class="project-map-search-summary">
+                  <p>
+                    <strong>{search.hits.length} Treffer</strong> für „{search.query}“ · Fusion V{search.fusionPolicyVersion}
+                  </p>
+                  <p>
+                    Indexlauf <code>{search.indexRunId}</code> · Snapshot
+                    <code>{search.snapshotId}</code>
+                  </p>
+                </div>
+                <p class="module-card-safety-note">
+                  Exact und Lexical liefern aktuelle Index-Evidence. Semantische Ähnlichkeit ist in
+                  dieser faktentragenden Trefferliste nicht zugelassen und wäre niemals ein Beweis.
+                </p>
+                {#if search.truncated}
+                  <p class="project-map-search-truncated" role="status">
+                    Die begrenzte Ansicht lässt weitere Kandidaten sichtbar aus. Verfeinere die
+                    Suche, um andere Treffer zu prüfen.
+                  </p>
+                {/if}
+                {#if search.hits.length === 0}
+                  <p class="project-status">Keine aktuellen Exact- oder Lexical-Treffer.</p>
+                {:else}
+                  <ol class="project-map-search-results" aria-label="Project-Map-Suchergebnisse">
+                    {#each search.hits as hit (hit.rank)}
+                      <li>
+                        <div class="project-map-search-hit-heading">
+                          <div>
+                            <span>#{hit.rank}</span>
+                            <strong>{projectMapSearchTargetLabel(hit.target)}</strong>
+                          </div>
+                          <span class:project-map-search-exact={hit.priority === 'exact'}>
+                            {hit.priority === 'exact' ? 'Exact-Priorität' : 'Evidence-Priorität'}
+                          </span>
+                        </div>
+                        <p class="project-map-search-target-kind">
+                          {hit.target.kind === 'symbol'
+                            ? projectMapSearchSymbolKindLabel(hit.target.symbolKind)
+                            : 'Dateirevision'}
+                          · Fusionsscore {countLabel(String(hit.finalScore))}
+                        </p>
+                        <ul
+                          class="project-map-search-sources"
+                          aria-label={`Herkunft von Treffer ${hit.rank}`}
+                        >
+                          {#each hit.sources as source (source.channel)}
+                            <li>
+                              <strong>{projectMapSearchSourceLabel(source)}</strong>
+                              <span>{projectMapSearchExplanationLabel(source)}</span>
+                              <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
+                            </li>
+                          {/each}
+                        </ul>
+                        <details class="project-map-search-evidence">
+                          <summary>Evidence anzeigen</summary>
+                          <dl>
+                            <div>
+                              <dt>Aktueller Pfad</dt>
+                              <dd><code>{hit.target.evidence.pathDisplay}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Content-Hash</dt>
+                              <dd><code>{hit.target.evidence.contentHash}</code></dd>
+                            </div>
+                            {#if hit.target.kind === 'symbol'}
+                              <div>
+                                <dt>Symbol-ID</dt>
+                                <dd><code>{hit.target.symbolId}</code></dd>
+                              </div>
+                              {#if hit.target.signature !== null}
+                                <div>
+                                  <dt>Signatur</dt>
+                                  <dd><code>{hit.target.signature}</code></dd>
+                                </div>
+                              {/if}
+                            {/if}
+                            {#if hit.target.evidence.declarationRange !== null}
+                              <div>
+                                <dt>Deklaration</dt>
+                                <dd>
+                                  Bytes {hit.target.evidence.declarationRange.startByte}–{hit.target
+                                    .evidence.declarationRange.endByte}
+                                </dd>
+                              </div>
+                            {/if}
+                          </dl>
+                        </details>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+              {:else if projectMapSearchView.kind === 'error'}
+                <div class="recent-projects-error" role="alert">
+                  <p>Die Project-Map-Suche konnte nicht sicher ausgewertet werden.</p>
+                  <button type="button" onclick={runProjectMapSearch}>
+                    Suche erneut ausführen
+                  </button>
+                </div>
               {/if}
-              {#if search.hits.length === 0}
-                <p class="project-status">Keine aktuellen Exact- oder Lexical-Treffer.</p>
-              {:else}
-                <ol class="project-map-search-results" aria-label="Project-Map-Suchergebnisse">
-                  {#each search.hits as hit (hit.rank)}
+            </div>
+          {:else}
+            <div
+              id="project-map-taskLens-panel"
+              role="tabpanel"
+              aria-labelledby="project-map-taskLens-tab"
+              tabindex="0"
+            >
+              <div class="task-lens-selector" aria-label="Dauerhafte Task-Lens-Anker">
+                <p class="module-card-safety-note">
+                  Goal Contract und aktiver Plan-Schritt kommen ausschließlich aus dem aktuellen
+                  Task Ledger. Die WebView kann weder Seeds noch Projektpfade erfinden.
+                </p>
+                {#if taskLensTasksView.kind === 'idle' || taskLensTasksView.kind === 'loading'}
+                  <p class="project-status" role="status" aria-live="polite">
+                    Dauerhafte Tasks werden begrenzt gelesen …
+                  </p>
+                {:else if taskLensTasksView.kind === 'noProject'}
+                  <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
+                {:else if taskLensTasksView.kind === 'error'}
+                  <div class="recent-projects-error" role="alert">
+                    <p>Die dauerhaften Task-Anker konnten nicht sicher gelesen werden.</p>
+                    <button type="button" onclick={loadTaskLensTasks}>Tasks erneut laden</button>
+                  </div>
+                {:else}
+                  <label for="task-lens-task">Goal Contract</label>
+                  <select
+                    id="task-lens-task"
+                    value={selectedTaskLensTaskId}
+                    onchange={selectTaskLensTask}
+                    disabled={taskLensTaskView.kind === 'loading' ||
+                      taskLensView.kind === 'loading'}
+                  >
+                    <option value="">Task auswählen …</option>
+                    {#each taskLensTasksView.result.tasks as task (task.taskId)}
+                      <option value={task.taskId}>R{task.goalRevision} · {task.objective}</option>
+                    {/each}
+                  </select>
+                  {#if taskLensTasksView.result.truncated}
+                    <p class="project-map-search-truncated" role="status">
+                      Die Auswahl zeigt höchstens 20 Tasks; weitere aktuelle Goal Contracts bleiben
+                      sichtbar ausgelassen.
+                    </p>
+                  {/if}
+                  {#if taskLensTasksView.result.tasks.length === 0}
+                    <p class="project-status">
+                      Noch kein dauerhafter Goal Contract. Task-Erstellung folgt im Agent Workspace.
+                    </p>
+                  {/if}
+
+                  {#if taskLensTaskView.kind === 'loading'}
+                    <p class="project-status" role="status">Aktueller Task Ledger wird gelesen …</p>
+                  {:else if taskLensTaskView.kind === 'ledgerUnavailable'}
+                    <p class="project-status">
+                      Für diesen Goal Contract existiert noch kein materialisierter Task Ledger.
+                    </p>
+                  {:else if taskLensTaskView.kind === 'goalRevisionMismatch'}
+                    <p class="project-map-search-truncated" role="status">
+                      Goal R{taskLensTaskView.currentGoalRevision} ist aktueller als Ledger-Goal R{taskLensTaskView.ledgerGoalRevision}.
+                      Die Lens bleibt gesperrt, bis der Plan neu erstellt wurde.
+                    </p>
+                  {:else if taskLensTaskView.kind === 'taskNotFound'}
+                    <p class="project-status">Der ausgewählte Task ist nicht mehr aktuell.</p>
+                  {:else if taskLensTaskView.kind === 'noProject'}
+                    <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+                  {:else if taskLensTaskView.kind === 'error'}
+                    <p class="project-status" role="alert">
+                      Der aktuelle Task Ledger konnte nicht sicher gelesen werden.
+                    </p>
+                  {:else if taskLensTaskView.kind === 'available'}
+                    <label for="task-lens-step">Aktueller Fokus-Schritt</label>
+                    <select
+                      id="task-lens-step"
+                      value={selectedTaskLensStepId}
+                      onchange={selectTaskLensStep}
+                      disabled={taskLensView.kind === 'loading'}
+                    >
+                      <option value="">Plan-Schritt auswählen …</option>
+                      {#each taskLensTaskView.result.steps as step (step.stepId)}
+                        <option value={step.stepId}>
+                          {taskLensStepStatusLabel(step.status)} · {step.intendedOutcome}
+                        </option>
+                      {/each}
+                    </select>
+                    <p>
+                      Ledger R{taskLensTaskView.result.ledgerRevision} · Store-Version
+                      {taskLensTaskView.result.ledgerStoreVersion}
+                    </p>
+                    <button
+                      type="button"
+                      onclick={runTaskLensCompile}
+                      disabled={selectedTaskLensStepId === '' || taskLensView.kind === 'loading'}
+                    >
+                      {taskLensView.kind === 'loading'
+                        ? 'Task Lens wird kompiliert …'
+                        : 'Task Lens aktualisieren'}
+                    </button>
+                  {/if}
+                {/if}
+              </div>
+
+              {#if taskLensView.kind === 'idle'}
+                <p class="project-status">
+                  Wähle Task und aktiven Plan-Schritt; die Lens läuft nie als offener Chat-Loop.
+                </p>
+              {:else if taskLensView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Exact → Lexical → Graph/Test → aktuelle Claims werden begrenzt kompiliert …
+                </p>
+              {:else if taskLensView.kind === 'noPublishedIndex'}
+                <p class="project-status">Noch kein veröffentlichter Index für die Task Lens.</p>
+              {:else if taskLensView.kind === 'stepUnavailable'}
+                <p class="project-map-search-truncated" role="status">
+                  Der ausgewählte Schritt wurde inzwischen entfernt oder retirert. Lade den Task
+                  erneut.
+                </p>
+              {:else if taskLensView.kind === 'goalRevisionMismatch'}
+                <p class="project-map-search-truncated" role="status">
+                  Goal R{taskLensView.currentGoalRevision} und Ledger-Goal R{taskLensView.ledgerGoalRevision}
+                  stimmen nicht mehr überein.
+                </p>
+              {:else if taskLensView.kind === 'ledgerUnavailable' || taskLensView.kind === 'taskNotFound'}
+                <p class="project-status">Der dauerhafte Task-Anker ist nicht mehr verfügbar.</p>
+              {:else if taskLensView.kind === 'noProject'}
+                <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
+              {:else if taskLensView.kind === 'error'}
+                <div class="recent-projects-error" role="alert">
+                  <p>Die Task Lens konnte nicht sicher aus aktueller Evidence kompiliert werden.</p>
+                  <button type="button" onclick={runTaskLensCompile}>Erneut kompilieren</button>
+                </div>
+              {:else if taskLensView.kind === 'available'}
+                {@const lens = taskLensView.result.lens}
+                <div class="project-map-search-summary task-lens-summary">
+                  <p>
+                    <strong>{lens.entries.length} Einträge · {lens.claims.length} Claims</strong>
+                    · {countLabel(String(lens.estimatedTokens))}/{countLabel(
+                      String(lens.tokenBudget),
+                    )}
+                    Tokens
+                  </p>
+                  <p>
+                    Goal R{lens.goalRevision} · Ledger R{lens.ledgerRevision} · Task-Lens V{lens.policyVersion}
+                    · Fusion V{lens.fusionPolicyVersion}
+                  </p>
+                  <p>
+                    Indexlauf <code>{lens.indexRunId}</code> · Snapshot
+                    <code>{lens.snapshotId}</code>
+                  </p>
+                </div>
+                <p class="module-card-safety-note">
+                  Semantische Ähnlichkeit erzeugt ausschließlich Kandidaten. Facts benötigen
+                  weiterhin aktuelle, aufgelöste Evidence; {lens.excludedStaleClaims} stale Claims wurden
+                  vollständig ausgeschlossen.
+                </p>
+                {#if lens.truncated}
+                  <p class="project-map-search-truncated" role="status">
+                    Mindestens eine feste Kandidaten-, Manifest-, Claim- oder Token-Grenze hat
+                    weitere Details sichtbar ausgelassen.
+                  </p>
+                {/if}
+                <ol
+                  class="project-map-search-results task-lens-entries"
+                  aria-label="Task-Lens-Einträge"
+                >
+                  {#each lens.entries as entry (entry.position)}
                     <li>
                       <div class="project-map-search-hit-heading">
                         <div>
-                          <span>#{hit.rank}</span>
-                          <strong>{projectMapSearchTargetLabel(hit.target)}</strong>
+                          <span>#{entry.position}</span>
+                          <strong>{taskLensTargetLabel(entry.target)}</strong>
                         </div>
-                        <span class:project-map-search-exact={hit.priority === 'exact'}>
-                          {hit.priority === 'exact' ? 'Exact-Priorität' : 'Evidence-Priorität'}
-                        </span>
+                        <span>{taskLensTargetLevel(entry.target)}</span>
                       </div>
                       <p class="project-map-search-target-kind">
-                        {hit.target.kind === 'symbol'
-                          ? projectMapSearchSymbolKindLabel(hit.target.symbolKind)
-                          : 'Dateirevision'}
-                        · Fusionsscore {countLabel(String(hit.finalScore))}
+                        {entry.estimatedTokens} geschätzte Tokens
+                        {#if entry.reason.kind === 'repositoryAnchor'}
+                          · deterministischer Pflichtanker
+                        {:else if entry.reason.kind === 'claim'}
+                          · Claim <code>{entry.reason.claimId}</code>
+                        {:else}
+                          · Fusionsrang {entry.reason.rank} · Score {countLabel(
+                            String(entry.reason.finalScore),
+                          )}
+                        {/if}
                       </p>
-                      <ul
-                        class="project-map-search-sources"
-                        aria-label={`Herkunft von Treffer ${hit.rank}`}
-                      >
-                        {#each hit.sources as source (source.channel)}
-                          <li>
-                            <strong>{projectMapSearchSourceLabel(source)}</strong>
-                            <span>{projectMapSearchExplanationLabel(source)}</span>
-                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
-                          </li>
-                        {/each}
-                      </ul>
+                      {#if entry.reason.kind === 'retrieval'}
+                        <ul
+                          class="project-map-search-sources"
+                          aria-label={`Herkunft von Lens-Eintrag ${entry.position}`}
+                        >
+                          {#each entry.reason.sources as source (source.channel)}
+                            <li class:task-lens-semantic-source={source.channel === 'semantic'}>
+                              <strong>{taskLensChannelLabel(source.channel)}</strong>
+                              <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
+                              {#if source.channel === 'semantic'}<span>kein Beweis</span>{/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      {/if}
                       <details class="project-map-search-evidence">
                         <summary>Evidence anzeigen</summary>
                         <dl>
-                          <div>
-                            <dt>Aktueller Pfad</dt>
-                            <dd><code>{hit.target.evidence.pathDisplay}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Content-Hash</dt>
-                            <dd><code>{hit.target.evidence.contentHash}</code></dd>
-                          </div>
-                          {#if hit.target.kind === 'symbol'}
+                          {#if entry.target.kind === 'repository'}
                             <div>
-                              <dt>Symbol-ID</dt>
-                              <dd><code>{hit.target.symbolId}</code></dd>
+                              <dt>Publikation</dt>
+                              <dd><code>{lens.indexRunId}</code></dd>
                             </div>
-                            {#if hit.target.signature !== null}
-                              <div>
-                                <dt>Signatur</dt>
-                                <dd><code>{hit.target.signature}</code></dd>
-                              </div>
-                            {/if}
-                          {/if}
-                          {#if hit.target.evidence.declarationRange !== null}
                             <div>
-                              <dt>Deklaration</dt>
+                              <dt>Snapshot</dt>
+                              <dd><code>{lens.snapshotId}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Struktur</dt>
                               <dd>
-                                Bytes {hit.target.evidence.declarationRange.startByte}–{hit.target
-                                  .evidence.declarationRange.endByte}
+                                {entry.target.fileCount} Dateien · {entry.target.symbolCount} Symbole
                               </dd>
                             </div>
+                          {:else if entry.target.kind === 'module'}
+                            <div>
+                              <dt>Modul-ID</dt>
+                              <dd><code>{entry.target.moduleId}</code></dd>
+                            </div>
+                            {#if entry.target.root !== null}
+                              <div>
+                                <dt>Grenze</dt>
+                                <dd><code>{entry.target.root.pathDisplay}</code></dd>
+                              </div>
+                            {/if}
+                            {#each entry.target.manifests as manifest (manifest.pathHex)}
+                              <div>
+                                <dt>Manifest</dt>
+                                <dd>
+                                  <code>{manifest.pathDisplay}</code> ·
+                                  <code>{manifest.contentHash}</code>
+                                </dd>
+                              </div>
+                            {/each}
+                            {#if entry.target.manifests.length === 0}
+                              <div>
+                                <dt>Projektion</dt>
+                                <dd>
+                                  Strukturell an Indexlauf und Snapshot gebunden; keine
+                                  eigenständige Source-Behauptung.
+                                </dd>
+                              </div>
+                            {/if}
+                          {:else}
+                            <div>
+                              <dt>Pfad</dt>
+                              <dd><code>{entry.target.evidence.pathDisplay}</code></dd>
+                            </div>
+                            <div>
+                              <dt>Content-Hash</dt>
+                              <dd><code>{entry.target.evidence.contentHash}</code></dd>
+                            </div>
+                            {#if entry.target.kind === 'symbol' || entry.target.kind === 'sourceSpan'}
+                              <div>
+                                <dt>Symbol-ID</dt>
+                                <dd><code>{entry.target.symbolId}</code></dd>
+                              </div>
+                            {/if}
+                            {#if entry.target.evidence.declarationRange !== null}
+                              <div>
+                                <dt>Deklaration</dt>
+                                <dd>
+                                  Bytes {entry.target.evidence.declarationRange.startByte}–{entry
+                                    .target.evidence.declarationRange.endByte}
+                                </dd>
+                              </div>
+                            {/if}
                           {/if}
                         </dl>
                       </details>
                     </li>
                   {/each}
                 </ol>
-              {/if}
-            {:else if projectMapSearchView.kind === 'error'}
-              <div class="recent-projects-error" role="alert">
-                <p>Die Project-Map-Suche konnte nicht sicher ausgewertet werden.</p>
-                <button type="button" onclick={runProjectMapSearch}>
-                  Suche erneut ausführen
-                </button>
-              </div>
-            {/if}
-          {:else}
-            <div class="task-lens-selector" aria-label="Dauerhafte Task-Lens-Anker">
-              <p class="module-card-safety-note">
-                Goal Contract und aktiver Plan-Schritt kommen ausschließlich aus dem aktuellen Task
-                Ledger. Die WebView kann weder Seeds noch Projektpfade erfinden.
-              </p>
-              {#if taskLensTasksView.kind === 'idle' || taskLensTasksView.kind === 'loading'}
-                <p class="project-status" role="status" aria-live="polite">
-                  Dauerhafte Tasks werden begrenzt gelesen …
-                </p>
-              {:else if taskLensTasksView.kind === 'noProject'}
-                <p class="project-status">Öffne zuerst einen lokalen Worktree.</p>
-              {:else if taskLensTasksView.kind === 'error'}
-                <div class="recent-projects-error" role="alert">
-                  <p>Die dauerhaften Task-Anker konnten nicht sicher gelesen werden.</p>
-                  <button type="button" onclick={loadTaskLensTasks}>Tasks erneut laden</button>
-                </div>
-              {:else}
-                <label for="task-lens-task">Goal Contract</label>
-                <select
-                  id="task-lens-task"
-                  value={selectedTaskLensTaskId}
-                  onchange={selectTaskLensTask}
-                  disabled={taskLensTaskView.kind === 'loading' || taskLensView.kind === 'loading'}
-                >
-                  <option value="">Task auswählen …</option>
-                  {#each taskLensTasksView.result.tasks as task (task.taskId)}
-                    <option value={task.taskId}>R{task.goalRevision} · {task.objective}</option>
-                  {/each}
-                </select>
-                {#if taskLensTasksView.result.truncated}
-                  <p class="project-map-search-truncated" role="status">
-                    Die Auswahl zeigt höchstens 20 Tasks; weitere aktuelle Goal Contracts bleiben
-                    sichtbar ausgelassen.
-                  </p>
-                {/if}
-                {#if taskLensTasksView.result.tasks.length === 0}
-                  <p class="project-status">
-                    Noch kein dauerhafter Goal Contract. Task-Erstellung folgt im Agent Workspace.
-                  </p>
-                {/if}
 
-                {#if taskLensTaskView.kind === 'loading'}
-                  <p class="project-status" role="status">Aktueller Task Ledger wird gelesen …</p>
-                {:else if taskLensTaskView.kind === 'ledgerUnavailable'}
-                  <p class="project-status">
-                    Für diesen Goal Contract existiert noch kein materialisierter Task Ledger.
-                  </p>
-                {:else if taskLensTaskView.kind === 'goalRevisionMismatch'}
-                  <p class="project-map-search-truncated" role="status">
-                    Goal R{taskLensTaskView.currentGoalRevision} ist aktueller als Ledger-Goal R{taskLensTaskView.ledgerGoalRevision}.
-                    Die Lens bleibt gesperrt, bis der Plan neu erstellt wurde.
-                  </p>
-                {:else if taskLensTaskView.kind === 'taskNotFound'}
-                  <p class="project-status">Der ausgewählte Task ist nicht mehr aktuell.</p>
-                {:else if taskLensTaskView.kind === 'noProject'}
-                  <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
-                {:else if taskLensTaskView.kind === 'error'}
-                  <p class="project-status" role="alert">
-                    Der aktuelle Task Ledger konnte nicht sicher gelesen werden.
-                  </p>
-                {:else if taskLensTaskView.kind === 'available'}
-                  <label for="task-lens-step">Aktueller Fokus-Schritt</label>
-                  <select
-                    id="task-lens-step"
-                    value={selectedTaskLensStepId}
-                    onchange={selectTaskLensStep}
-                    disabled={taskLensView.kind === 'loading'}
-                  >
-                    <option value="">Plan-Schritt auswählen …</option>
-                    {#each taskLensTaskView.result.steps as step (step.stepId)}
-                      <option value={step.stepId}>
-                        {taskLensStepStatusLabel(step.status)} · {step.intendedOutcome}
-                      </option>
-                    {/each}
-                  </select>
-                  <p>
-                    Ledger R{taskLensTaskView.result.ledgerRevision} · Store-Version
-                    {taskLensTaskView.result.ledgerStoreVersion}
-                  </p>
-                  <button
-                    type="button"
-                    onclick={runTaskLensCompile}
-                    disabled={selectedTaskLensStepId === '' || taskLensView.kind === 'loading'}
-                  >
-                    {taskLensView.kind === 'loading'
-                      ? 'Task Lens wird kompiliert …'
-                      : 'Task Lens aktualisieren'}
-                  </button>
-                {/if}
+                <div class="task-lens-claims" aria-label="Aktuelle Task-Lens-Claims">
+                  <h5>Evidence-gebundene Claims</h5>
+                  {#if lens.claims.length === 0}
+                    <p class="project-status">Keine aktuellen Claims für die ausgewählten Ziele.</p>
+                  {:else}
+                    <ul>
+                      {#each lens.claims as claim (claim.claimId)}
+                        <li class:task-lens-hypothesis={claim.kind === 'hypothesis'}>
+                          <div class="project-map-search-hit-heading">
+                            <strong>{taskLensClaimKindLabel(claim.kind)}</strong>
+                            <span>{percentageLabel(claim.confidenceBasisPoints)}</span>
+                          </div>
+                          <p>{taskLensPredicateLabel(claim.predicate)}</p>
+                          <details class="project-map-search-evidence">
+                            <summary>Evidence / Beweisstatus</summary>
+                            {#if claim.evidence.length === 0}
+                              <p>
+                                Keine beweisende Evidence vorhanden. Diese Architekturabsicht bleibt
+                                ausdrücklich eine Hypothese.
+                              </p>
+                            {:else}
+                              <dl>
+                                {#each claim.evidence as evidence (evidence.kind === 'graphEdge' ? evidence.edge.evidenceId : evidence.evidenceId)}
+                                  {#if evidence.kind === 'graphEdge'}
+                                    <div>
+                                      <dt>Graph-Edge</dt>
+                                      <dd>
+                                        {evidence.relation} ·
+                                        <code>{evidence.edge.evidenceId}</code>
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Source-Pfad (hex)</dt>
+                                      <dd><code>{evidence.edge.pathHex}</code></dd>
+                                    </div>
+                                    <div>
+                                      <dt>Range</dt>
+                                      <dd>
+                                        Bytes {evidence.edge.range.startByte}–{evidence.edge.range
+                                          .endByte}
+                                      </dd>
+                                    </div>
+                                  {:else}
+                                    <div>
+                                      <dt>Evidence-ID</dt>
+                                      <dd><code>{evidence.evidenceId}</code></dd>
+                                    </div>
+                                    <div>
+                                      <dt>Pfad</dt>
+                                      <dd><code>{evidence.revision.pathDisplay}</code></dd>
+                                    </div>
+                                    <div>
+                                      <dt>Content-Hash</dt>
+                                      <dd><code>{evidence.revision.contentHash}</code></dd>
+                                    </div>
+                                  {/if}
+                                {/each}
+                              </dl>
+                            {/if}
+                          </details>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
               {/if}
             </div>
-
-            {#if taskLensView.kind === 'idle'}
-              <p class="project-status">
-                Wähle Task und aktiven Plan-Schritt; die Lens läuft nie als offener Chat-Loop.
-              </p>
-            {:else if taskLensView.kind === 'loading'}
-              <p class="project-status" role="status" aria-live="polite">
-                Exact → Lexical → Graph/Test → aktuelle Claims werden begrenzt kompiliert …
-              </p>
-            {:else if taskLensView.kind === 'noPublishedIndex'}
-              <p class="project-status">Noch kein veröffentlichter Index für die Task Lens.</p>
-            {:else if taskLensView.kind === 'stepUnavailable'}
-              <p class="project-map-search-truncated" role="status">
-                Der ausgewählte Schritt wurde inzwischen entfernt oder retirert. Lade den Task
-                erneut.
-              </p>
-            {:else if taskLensView.kind === 'goalRevisionMismatch'}
-              <p class="project-map-search-truncated" role="status">
-                Goal R{taskLensView.currentGoalRevision} und Ledger-Goal R{taskLensView.ledgerGoalRevision}
-                stimmen nicht mehr überein.
-              </p>
-            {:else if taskLensView.kind === 'ledgerUnavailable' || taskLensView.kind === 'taskNotFound'}
-              <p class="project-status">Der dauerhafte Task-Anker ist nicht mehr verfügbar.</p>
-            {:else if taskLensView.kind === 'noProject'}
-              <p class="project-status">Der aktive Worktree wurde geschlossen.</p>
-            {:else if taskLensView.kind === 'error'}
-              <div class="recent-projects-error" role="alert">
-                <p>Die Task Lens konnte nicht sicher aus aktueller Evidence kompiliert werden.</p>
-                <button type="button" onclick={runTaskLensCompile}>Erneut kompilieren</button>
-              </div>
-            {:else if taskLensView.kind === 'available'}
-              {@const lens = taskLensView.result.lens}
-              <div class="project-map-search-summary task-lens-summary">
-                <p>
-                  <strong>{lens.entries.length} Einträge · {lens.claims.length} Claims</strong>
-                  · {countLabel(String(lens.estimatedTokens))}/{countLabel(
-                    String(lens.tokenBudget),
-                  )}
-                  Tokens
-                </p>
-                <p>
-                  Goal R{lens.goalRevision} · Ledger R{lens.ledgerRevision} · Task-Lens V{lens.policyVersion}
-                  · Fusion V{lens.fusionPolicyVersion}
-                </p>
-                <p>
-                  Indexlauf <code>{lens.indexRunId}</code> · Snapshot
-                  <code>{lens.snapshotId}</code>
-                </p>
-              </div>
-              <p class="module-card-safety-note">
-                Semantische Ähnlichkeit erzeugt ausschließlich Kandidaten. Facts benötigen weiterhin
-                aktuelle, aufgelöste Evidence; {lens.excludedStaleClaims} stale Claims wurden vollständig
-                ausgeschlossen.
-              </p>
-              {#if lens.truncated}
-                <p class="project-map-search-truncated" role="status">
-                  Mindestens eine feste Kandidaten-, Manifest-, Claim- oder Token-Grenze hat weitere
-                  Details sichtbar ausgelassen.
-                </p>
-              {/if}
-              <ol
-                class="project-map-search-results task-lens-entries"
-                aria-label="Task-Lens-Einträge"
-              >
-                {#each lens.entries as entry (entry.position)}
-                  <li>
-                    <div class="project-map-search-hit-heading">
-                      <div>
-                        <span>#{entry.position}</span>
-                        <strong>{taskLensTargetLabel(entry.target)}</strong>
-                      </div>
-                      <span>{taskLensTargetLevel(entry.target)}</span>
-                    </div>
-                    <p class="project-map-search-target-kind">
-                      {entry.estimatedTokens} geschätzte Tokens
-                      {#if entry.reason.kind === 'repositoryAnchor'}
-                        · deterministischer Pflichtanker
-                      {:else if entry.reason.kind === 'claim'}
-                        · Claim <code>{entry.reason.claimId}</code>
-                      {:else}
-                        · Fusionsrang {entry.reason.rank} · Score {countLabel(
-                          String(entry.reason.finalScore),
-                        )}
-                      {/if}
-                    </p>
-                    {#if entry.reason.kind === 'retrieval'}
-                      <ul
-                        class="project-map-search-sources"
-                        aria-label={`Herkunft von Lens-Eintrag ${entry.position}`}
-                      >
-                        {#each entry.reason.sources as source (source.channel)}
-                          <li class:task-lens-semantic-source={source.channel === 'semantic'}>
-                            <strong>{taskLensChannelLabel(source.channel)}</strong>
-                            <span>{percentageLabel(source.normalizedScoreBasisPoints)}</span>
-                            {#if source.channel === 'semantic'}<span>kein Beweis</span>{/if}
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-                    <details class="project-map-search-evidence">
-                      <summary>Evidence anzeigen</summary>
-                      <dl>
-                        {#if entry.target.kind === 'repository'}
-                          <div>
-                            <dt>Publikation</dt>
-                            <dd><code>{lens.indexRunId}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Snapshot</dt>
-                            <dd><code>{lens.snapshotId}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Struktur</dt>
-                            <dd>
-                              {entry.target.fileCount} Dateien · {entry.target.symbolCount} Symbole
-                            </dd>
-                          </div>
-                        {:else if entry.target.kind === 'module'}
-                          <div>
-                            <dt>Modul-ID</dt>
-                            <dd><code>{entry.target.moduleId}</code></dd>
-                          </div>
-                          {#if entry.target.root !== null}
-                            <div>
-                              <dt>Grenze</dt>
-                              <dd><code>{entry.target.root.pathDisplay}</code></dd>
-                            </div>
-                          {/if}
-                          {#each entry.target.manifests as manifest (manifest.pathHex)}
-                            <div>
-                              <dt>Manifest</dt>
-                              <dd>
-                                <code>{manifest.pathDisplay}</code> ·
-                                <code>{manifest.contentHash}</code>
-                              </dd>
-                            </div>
-                          {/each}
-                          {#if entry.target.manifests.length === 0}
-                            <div>
-                              <dt>Projektion</dt>
-                              <dd>
-                                Strukturell an Indexlauf und Snapshot gebunden; keine eigenständige
-                                Source-Behauptung.
-                              </dd>
-                            </div>
-                          {/if}
-                        {:else}
-                          <div>
-                            <dt>Pfad</dt>
-                            <dd><code>{entry.target.evidence.pathDisplay}</code></dd>
-                          </div>
-                          <div>
-                            <dt>Content-Hash</dt>
-                            <dd><code>{entry.target.evidence.contentHash}</code></dd>
-                          </div>
-                          {#if entry.target.kind === 'symbol' || entry.target.kind === 'sourceSpan'}
-                            <div>
-                              <dt>Symbol-ID</dt>
-                              <dd><code>{entry.target.symbolId}</code></dd>
-                            </div>
-                          {/if}
-                          {#if entry.target.evidence.declarationRange !== null}
-                            <div>
-                              <dt>Deklaration</dt>
-                              <dd>
-                                Bytes {entry.target.evidence.declarationRange.startByte}–{entry
-                                  .target.evidence.declarationRange.endByte}
-                              </dd>
-                            </div>
-                          {/if}
-                        {/if}
-                      </dl>
-                    </details>
-                  </li>
-                {/each}
-              </ol>
-
-              <div class="task-lens-claims" aria-label="Aktuelle Task-Lens-Claims">
-                <h5>Evidence-gebundene Claims</h5>
-                {#if lens.claims.length === 0}
-                  <p class="project-status">Keine aktuellen Claims für die ausgewählten Ziele.</p>
-                {:else}
-                  <ul>
-                    {#each lens.claims as claim (claim.claimId)}
-                      <li class:task-lens-hypothesis={claim.kind === 'hypothesis'}>
-                        <div class="project-map-search-hit-heading">
-                          <strong>{taskLensClaimKindLabel(claim.kind)}</strong>
-                          <span>{percentageLabel(claim.confidenceBasisPoints)}</span>
-                        </div>
-                        <p>{taskLensPredicateLabel(claim.predicate)}</p>
-                        <details class="project-map-search-evidence">
-                          <summary>Evidence / Beweisstatus</summary>
-                          {#if claim.evidence.length === 0}
-                            <p>
-                              Keine beweisende Evidence vorhanden. Diese Architekturabsicht bleibt
-                              ausdrücklich eine Hypothese.
-                            </p>
-                          {:else}
-                            <dl>
-                              {#each claim.evidence as evidence (evidence.kind === 'graphEdge' ? evidence.edge.evidenceId : evidence.evidenceId)}
-                                {#if evidence.kind === 'graphEdge'}
-                                  <div>
-                                    <dt>Graph-Edge</dt>
-                                    <dd>
-                                      {evidence.relation} · <code>{evidence.edge.evidenceId}</code>
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Source-Pfad (hex)</dt>
-                                    <dd><code>{evidence.edge.pathHex}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Range</dt>
-                                    <dd>
-                                      Bytes {evidence.edge.range.startByte}–{evidence.edge.range
-                                        .endByte}
-                                    </dd>
-                                  </div>
-                                {:else}
-                                  <div>
-                                    <dt>Evidence-ID</dt>
-                                    <dd><code>{evidence.evidenceId}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Pfad</dt>
-                                    <dd><code>{evidence.revision.pathDisplay}</code></dd>
-                                  </div>
-                                  <div>
-                                    <dt>Content-Hash</dt>
-                                    <dd><code>{evidence.revision.contentHash}</code></dd>
-                                  </div>
-                                {/if}
-                              {/each}
-                            </dl>
-                          {/if}
-                        </details>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-            {/if}
           {/if}
         </section>
         <div class="repository-tree-panel" aria-labelledby="repository-tree-heading">

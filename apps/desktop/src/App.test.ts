@@ -902,7 +902,18 @@ describe('A^3 desktop shell', () => {
     expect(taskLensTaskLoader).not.toHaveBeenCalled();
     expect(taskLensCompiler).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole('tab', { name: 'Task Lens' }));
+    const searchTab = screen.getByRole('tab', { name: 'Suche' });
+    const taskLensTab = screen.getByRole('tab', { name: 'Task Lens' });
+    expect(searchTab.getAttribute('aria-controls')).toBe('project-map-search-panel');
+    expect(searchTab.getAttribute('tabindex')).toBe('0');
+    await fireEvent.keyDown(searchTab, { key: 'ArrowRight' });
+    await waitFor(() => expect(document.activeElement).toBe(taskLensTab));
+    expect(taskLensTab.getAttribute('aria-selected')).toBe('true');
+    expect(taskLensTab.getAttribute('aria-controls')).toBe('project-map-taskLens-panel');
+    expect(taskLensTab.getAttribute('tabindex')).toBe('0');
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
+      'project-map-taskLens-tab',
+    );
     await waitFor(() => expect(taskLensTasksLoader).toHaveBeenCalledTimes(1));
     expect(screen.getByText(/WebView kann weder Seeds noch Projektpfade erfinden/)).toBeTruthy();
 
