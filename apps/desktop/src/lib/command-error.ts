@@ -51,7 +51,9 @@ export type ErrorCodeV1 =
   | 'invalidSettingsRequest'
   | 'modelEndpointInvalid'
   | 'modelProbeAlreadyActive'
-  | 'modelSettingsUnavailable';
+  | 'modelSettingsUnavailable'
+  | 'invalidProjectSettingsRequest'
+  | 'projectSettingsUnavailable';
 
 export interface CommandErrorV1 {
   code: ErrorCodeV1;
@@ -109,6 +111,8 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'modelEndpointInvalid',
   'modelProbeAlreadyActive',
   'modelSettingsUnavailable',
+  'invalidProjectSettingsRequest',
+  'projectSettingsUnavailable',
 ]);
 
 export function parseCommandErrorV1(value: unknown): CommandErrorV1 | null {

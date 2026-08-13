@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { parseCommandErrorV1 } from './command-error';
+  import ProjectSettingsPanel from './ProjectSettingsPanel.svelte';
   import {
     cancelModelProbe,
     configureModelEndpoint,
@@ -430,4 +431,6 @@
       </p>
     </div>
   {/if}
+
+  <ProjectSettingsPanel />
 </section>
