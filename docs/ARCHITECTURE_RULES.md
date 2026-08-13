@@ -118,6 +118,12 @@ Stand: 2026-08-03
     `Cancelling` besitzt, DARF Recovery denselben Task nicht als verlassen inspizieren. Die
     WebView erhält nur eine content-freie Managerprojektion. Pause und Cancel stoppen zuerst den
     Worker; Cancel verwendet anschließend weiterhin die exakt sichtbaren Ledgeranker.
+11. Approval-Control MUSS Task-, Presentation- und Ledger-gebunden sein. Die WebView DARF keine
+    Request-, Grant-, Run-, Snapshot-, Step-, Process-, Policy-, Event-ID oder Zeit als Autorität
+    liefern. AllowOnce DARF keinen Agent-Versuch starten; Continue MUSS die interne exakte
+    One-time-Grant-ID im Core auswählen. Deny MUSS den wartenden Step und Run atomar ohne
+    Toolwirkung schließen. Env-Werte und breite wiederverwendbare Freigaben DÜRFEN die Grenze
+    nicht überschreiten.
 
 ## 11. Tests
 

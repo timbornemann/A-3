@@ -486,17 +486,42 @@ nachgewiesen und U6 ist abgeschlossen.
 
 Abhängigkeiten: Policy Engine
 
-- [ ] Aktion, Risiko, Scope und Begründung
-- [ ] genaue ProcessSpec oder Dateipfade
-- [ ] einmal erlauben, scopegebunden erlauben oder ablehnen
-- [ ] Ablauf und Widerruf
-- [ ] kein manipulativer Default
+- [x] Aktion, Risiko, Scope und Begründung
+- [x] genaue ProcessSpec oder Dateipfade
+- [x] einmal erlauben, scopegebunden erlauben oder ablehnen
+- [x] Ablauf und Widerruf
+- [x] kein manipulativer Default
 
 Akzeptanz:
 
 - Zustimmung ist informiert und spezifisch;
 - Ablehnung führt zu Replan oder sauberem Blocked;
 - geheime Werte werden nicht angezeigt.
+
+Abnahme U7 vom 2026-08-13: Das taskgebundene Approval Center verbindet einen bereits dauerhaft
+persistierten exakten Request mit einer flüchtigen vollständigen E3-Patch- oder E4-ProcessSpec-
+Präsentation. Der Core revalidiert Task, Goal, Ledger, Run, Step, Snapshot, Request und optionalen
+Grant. Die WebView erhält Aktion, abgeleitete Klasse/Risiko, Scope, Policy-Grund, Ablauf sowie
+verlustfreie Pfadbytes oder getrennte argv-Tokens, CWD, ausschließlich Env-Namen, Limits,
+Execution Mode, Plan-/Netzwerkbindung und Specification-ID. Request-, Grant-, Run-, Process-,
+Policy- und Event-IDs bleiben Core-eigen.
+
+ADR-0022 konkretisiert den Planpunkt „scopegebunden erlauben“ als exaktes aktions- und
+scopegebundenes `AllowOnce`, nicht als breiten wiederverwendbaren Modus. GrantStored startet keine
+Mutation; erst die getrennte Continue-Aktion kann die interne Grant-ID an einen neuen
+scheduler-eigenen Versuch übergeben, sodass Revoke bis dahin möglich bleibt. Deny committed den
+wartenden Step als `Blocked`, den Run als `Failed` und `ApprovalDenied` atomar ohne Toolwirkung;
+Replan oder Cancel bleiben über U5 verfügbar. AllowOnce und Deny sind neutral, nicht vorausgewählt,
+und die Bestätigung bleibt bis zur expliziten Wahl deaktiviert.
+
+Der vollständige Rust-Workspace-Test über alle Targets und Features, darunter alle acht
+mutierenden Agent-Harnessfälle, 62 Desktop-Core-Tests und 29 libSQL-Shared-Contracts, ist grün.
+Workspace-Clippy mit Warnings denied, Rustdoc mit Warnings denied und rustfmt sind ebenfalls grün.
+Protocol-V1 besteht 45 Tests; die Desktop-IPC-/Capability-Grenze lehnt nicht kanonische oder
+autoritätstragende Eingaben ab. Prettier, ESLint, Svelte-Typecheck ohne Befund, 159 Frontendtests
+und der Produktionsbuild bestehen. Die lokale Markdown-Prüfung bestätigt 49 Dateien und 110
+gültige Links. Damit sind alle drei U7-Akzeptanzkriterien objektiv nachgewiesen und U7 ist
+abgeschlossen.
 
 ## U8 Settings und Model Health
 

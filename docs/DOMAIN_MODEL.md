@@ -541,6 +541,23 @@ Consumption benötigt denselben Run, dieselbe Action, denselben Scope und eine e
 `PolicyDecisionId` und ist nur einmal möglich. Mismatch, Ablauf, Widerruf und Wiederverwendung
 bleiben blockiert und erzeugen eine neue begründete Entscheidung statt stiller Scope-Erweiterung.
 
+`AgentApprovalPresentation` ist die flüchtige, taskgebundene Verbindung zwischen einem bereits
+dauerhaften `ApprovalRequest` und genau der validierten Aktion, über die entschieden wird. Für
+Patches enthält sie Rationale sowie jede Add-/Update-/Move-/Delete-Quell- und Zielpfadform; für
+Prozesse enthält sie die vollständige `ProcessSpec` mit getrennten argv-Tokens, CWD,
+Environment-Allowlist-Namen, Timeout, Outputlimits, Execution Mode, Planbindung, Netzwerkscope und
+Specification-ID. Werte aus der Host-Umgebung sind kein Präsentationsfeld. Die Presentation
+besitzt eine monotone prozesslokale Revision und kann nur `Pending`, an eine interne Grant-ID
+`Granted` oder `Denied` sein.
+
+`AgentApprovalCenter` kombiniert diese Presentation nach erneuter Ankerprüfung mit Request,
+optionalem Grant, ausgewähltem Run und Task Ledger. Sein effektiver Status ist `Pending`, `Active`,
+`Consumed`, `Revoked`, `Expired` oder `Denied`; zulässige Controls sind daraus disjunkt abgeleitet.
+Pending erlaubt ausschließlich AllowOnce oder Deny, Active ausschließlich Continue oder Revoke.
+AllowOnce ändert den Run nicht. Deny beendet den aktiven Step-Versuch als `Blocked` und den Run als
+`Failed` in einem CAS-Commit. Continue gibt die interne aktive `ApprovalId` nur an den
+Composition-Root-Scheduler zurück; sie ist kein IPC-Datentyp.
+
 ### Sichere Dateiwerkzeuge
 
 `WorkspaceDirectoryListRequest` bindet genau einen `WorktreeId`, einen veröffentlichten

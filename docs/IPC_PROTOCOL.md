@@ -295,6 +295,39 @@ verworfenes Overflow. Redigierte Streams liefern leeren Text und keine Folgeseit
 sind rein lesend und gewähren weder Datei-, Source-, Prozesswiederholungs-, Approval-, Shell-,
 SQL-, Provider- noch Mutationsbefugnis.
 
+## Agent Approval Center V1
+
+`query_agent_approval` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake
+`taskId`. Projekt und Worktree stammen aus dem Composition Root. Request-, Grant-, Run-, Snapshot-,
+Step-, Verification-Spec-, Process-, Policy- und Event-IDs sind keine Requestfelder. Die Antwort
+unterscheidet `noProject`, `taskNotFound`, `ledgerUnavailable`, `goalRevisionMismatch`,
+`activityChanged`, `unavailable` und `available`.
+
+`available` enthält die prozesslokale positive `approvalRevision`, Ledgerrevision/-Storeversion,
+Controller- und Stepzustand, sichtbare Step-/Snapshotanker, Scope-Digest, abgeleitete Klasse,
+Risiko, trusted Policy-Grund, Request-/Ablaufzeit, effektiven Lifecycle und disjunkte Controls. Die
+exakte Aktion ist entweder ein Patch mit Rationale und höchstens 64 Add-/Update-/Move-/Delete-
+Pfadformen oder eine ProcessSpec. Pfade tragen eine kontrollierte Anzeige und verlustfreie
+Hexbytes. ProcessSpec behält getrennte argv-Tokens, CWD, höchstens 64 kanonische Env-Namen ohne
+Werte, Timeout, positive Outputlimits, Execution Mode, Planbindung, Netzwerkscope und
+Specification-ID. Der unabhängige TypeScript-Decoder prüft Schlüsselmenge, IDs, Dezimalwerte,
+Grenzen, Pfadformen, argv-Gesamtgröße, Env-Namensyntax, Lifecycle-/Control-Paare und Planbindung.
+
+`control_agent_approval` akzeptiert zusätzlich ausschließlich die sichtbare positive
+`expectedApprovalRevision`, positive `expectedLedgerRevision`, kanonische positive
+`expectedLedgerStoreVersion` und genau `allowOnce`, `deny`, `continue` oder `revoke`. Der Core
+erzeugt Approval-/Event-ID und Zeit. `allowOnce` antwortet `grantStored`, startet aber keine Arbeit.
+`continue` liefert `continueRequested` und genau ein `runtimeStart` von `queued`, `unavailable` oder
+`failed`; die interne Grant-ID wird nie ausgegeben. `revoke` liefert `revoked`. `deny` liefert erst
+nach dem atomaren Step-`Blocked`-/Run-`Failed`-Commit `denied`. Alle anderen Outcomes müssen
+`runtimeStart: null` tragen. Veraltete Anker liefern `activityChanged`, nicht mehr zulässige
+Lifecycle-Aktionen `unavailable`.
+
+Die beiden expliziten Capabilities `allow-query-agent-approval` und
+`allow-control-agent-approval` gewähren keinen Datei-, Source-, Shell-, SQL-, Provider-, Netzwerk-
+oder allgemeinen Schedulerzugriff. Insbesondere ist weder ein breites wiederverwendbares
+Scope-Allow noch eine WebView-gesteuerte Grant-ID darstellbar.
+
 ## Agent Task Recovery und Control V1
 
 `query_agent_task_recovery` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake
@@ -392,7 +425,7 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-, Project-Map-, Task-Lens-, Agent-Goal-, Agent-Activity-,
-Agent-Recovery- und Deep-Map-Commands. Repository- und
+Agent-Recovery-, Agent-Approval- und Deep-Map-Commands. Repository- und
 Modulbaum besitzen
 ausschließlich `allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der
 Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist

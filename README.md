@@ -146,6 +146,14 @@ als pausiert angezeigt. Resume und Replan starten nur nach erfolgreichem atomare
 einen neuen besessenen Versuch; Cancel zeigt den Abschluss erst nach dauerhaftem
 Controller-Commit. Ohne verifizierte ausführbare Agent-Capability starten weder Mount noch Polling
 Modell- oder Toolarbeit.
+U7 ergänzt denselben taskgebundenen Workspace um ein Approval Center. Der Rust-Kern rekonstruiert
+die dauerhafte Request-/Grant-Lifecycle-Information und verbindet sie mit einer flüchtigen exakten
+E3-Patch- oder E4-ProcessSpec-Präsentation. Die UI zeigt Aktionsklasse, Risiko, Scope, Grund,
+verlustfreie Pfadbytes beziehungsweise einzelne argv-Tokens, CWD, ausschließlich Env-Namen,
+Limits, Plan- und Netzwerkbindung. `AllowOnce` speichert nur den exakten einmaligen Grant;
+Ausführung beginnt erst nach einer getrennten Continue-Entscheidung. Deny blockiert den Schritt
+atomar und beendet den Run ohne Toolwirkung. Es gibt keine Vorauswahl, kein breites
+wiederverwendbares Freigabefeld und keine WebView-gesteuerte Request-, Grant-, Run- oder Event-ID.
 Die verbindliche
 Architektur- und Entwicklungsbaseline liegt unter
 [`docs/`](docs/README.md); implementierte Funktionen dürfen den dort festgelegten Entscheidungen und

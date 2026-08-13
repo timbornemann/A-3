@@ -214,6 +214,25 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Trunkierung, sichtbare stale Steps/Evidence und die exakten Step-/Evidence-IDs jedes bewiesenen
   Muss-Kriteriums im Done-Zustand zeigen. Der Capability-Test erlaubt nur die beiden engen
   Read-Commands und keine Datei-, Shell-, SQL-, Provider-, Approval- oder Mutationsbefugnis.
+- Der U7-Approval-Center-Contract verbindet die flüchtige exakte E3-/E4-Präsentation nur mit einem
+  bereits dauerhaften Request und revalidiert Task, Goal, Ledger, Run, Step, Snapshot, Request und
+  optionalen Grant. Der reale Harness muss belegen, dass AwaitApproval den Worktree unverändert
+  lässt, AllowOnce einen exakten Grant speichert ohne auszuführen, Continue nur die interne
+  Grant-ID weitergibt, Verbrauch einmalig bleibt und Deny Step `Blocked` plus Run `Failed` atomar
+  ohne Toolwirkung committed. Der gemeinsame Storagevertrag lädt den Grant auch nach Reopen exakt
+  über seine Request-ID.
+- Rust-IPC und TypeScript akzeptieren für Query nur `TaskId`, für Control zusätzlich ausschließlich
+  die sichtbare Presentation-Revision, Ledgerrevision/-Storeversion und eine geschlossene Aktion.
+  Unbekannte Authority-Felder, nicht kanonische Anker, widersprüchliche Lifecycle-/Control- oder
+  Outcome-/Runtime-Paare, inkonsistente Patchpfade, übergroße argv sowie ungültige Env-Namen werden
+  abgelehnt. Request-, Grant-, Run-, Snapshot-, Process-, Policy- und Event-IDs oder Env-Werte
+  dürfen nicht aus der WebView stammen beziehungsweise in sie gelangen.
+- Component-Tests müssen Aktion, Risiko, Scope, Grund, Ablauf, verlustfreie Pfade oder die exakten
+  argv-Tokens samt CWD, Env-Namen, Limits, Modus, Plan-/Netzwerkbindung und Specification-ID zeigen.
+  AllowOnce und Deny bleiben neutral und nicht vorausgewählt; Bestätigung ist bis zur expliziten
+  Wahl deaktiviert. GrantStored darf nicht selbst Continue auslösen, und Active muss Continue und
+  Revoke getrennt anbieten. Der Capability-Test erlaubt nur die beiden engen Approval-Commands und
+  weiterhin keine generische privilegierte Capability.
 
 ### Persistenz
 

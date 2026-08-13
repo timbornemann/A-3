@@ -120,7 +120,7 @@ Ein Nutzer kann:
 - [ ] Map
 - [ ] Agent Workspace
 - [ ] Diff und Evidence Inspector
-- [ ] Approval UI
+- [x] Approval UI
 - [ ] Settings und Model Health
 - [ ] Keyboard und Accessibility
 - [ ] Cancellation und Recovery UX

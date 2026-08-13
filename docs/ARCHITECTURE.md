@@ -686,6 +686,19 @@ Artifact-Semantik, Freshness, Stepzustand und Must-/Should-Beweise im Applicatio
 versionierte IPC-Grenze mappt nur primitive DTOs; Unified und Side-by-side verwenden dieselben
 Core-Zeilen, und Logdetails benötigen eine Core-emittierte Revision und Record-ID.
 
+U7 hält die mutierende Approval-Entscheidung von der read-only Inspector-Projektion getrennt. Ein
+vom Composition Root besessener `AgentApprovalBuffer` erhält nur nach einem dauerhaft
+persistierten `ApprovalRequest` die exakte E3-Aktion oder E4-`ProcessSpec` und wird bei
+Projektwechsel sowie Shutdown geleert. `GetAgentApprovalCenter` revalidiert Task, Goal, Ledger,
+Run, Step, Snapshot, Request und optionalen Grant vor jeder Anzeige; Vektor- oder UI-Zustand ist
+keine Autorität. `ControlAgentApproval` bindet jede Entscheidung an die sichtbare positive
+Presentation-Revision und Ledgerrevision/-Storeversion. AllowOnce persistiert den exakten Grant,
+startet aber keine Arbeit. Erst Continue darf dessen interne `ApprovalId` an einen neuen
+scheduler-eigenen Versuch übergeben; die WebView sieht oder liefert diese ID nie. Revoke zieht
+einen ungenutzten Grant zurück. Deny committed Step `Blocked`, Run `Failed` und das typisierte
+`ApprovalDenied`-Event atomar, ohne eine Toolgrenze zu erreichen. Ein getrenntes breites oder
+wiederverwendbares Scope-Allow existiert gemäß ADR-0022 nicht.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;

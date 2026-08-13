@@ -283,6 +283,22 @@ anderer Pfad, Run oder Action-Fingerprint, eine abgelaufene, widerrufene oder be
 Freigabe bleibt blockiert. Grant, Widerruf und Verbrauch werden mit der Run-Materialisierung und
 einem typisierten content-freien Audit-Event atomar persistiert.
 
+Das taskgebundene Approval Center akzeptiert bei einem Read nur die bereits ausgewählte `TaskId`.
+Eine Entscheidung enthält zusätzlich ausschließlich die sichtbare Presentation-Revision,
+Ledgerrevision/-Storeversion und `allowOnce`, `deny`, `continue` oder `revoke`. Approval-Request-,
+Grant-, Run-, Snapshot-, Step-, Process-, Policy- und Event-IDs sowie Zeitpunkt entstehen oder
+bleiben im privilegierten Kern. Vor der Anzeige werden die exakte Patchpfadform oder die gesamte
+ProcessSpec und sämtliche dauerhaften Anker erneut abgeglichen. Bei ProcessSpec werden Env-Namen,
+niemals Hostwerte, übertragen; argv-Tokens bleiben getrennt, damit keine Shellanzeige eine andere
+Bedeutung vortäuscht.
+
+`allowOnce` ist zugleich aktions- und scopegenau und speichert genau einen zeitlich begrenzten
+Grant. Es ist kein breiter Scope-Modus und startet noch keine Mutation. Erst ein separates
+`continue` wählt die interne Grant-ID und kann einen scheduler-eigenen Versuch anfordern. Dadurch
+bleibt zwischen Grant und Ausführung ein Widerrufsfenster. `deny` blockiert den exakten Schritt und
+wechselt den Run ohne Toolwirkung nach `Failed`; Replan oder Cancel bleiben die expliziten
+Folgepfade. Die UI hat keine vorausgewählte Entscheidung und stellt AllowOnce und Deny neutral dar.
+
 ## Patch-Policy
 
 Eine PatchAction enthält:
