@@ -648,6 +648,18 @@ Reduced Motion und die Kontrastverträge bleiben unverändert. Der reale Browser
 und Light bei 1.280 × 720 sowie null horizontale Dokumentüberbreite bei 720 × 600 und 640 × 600.
 Die Browserkonsole blieb ohne Warnung oder Fehler.
 
+Das kanonische Schwarz-Weiß-Logo unter `docs/logo` speist über den reproduzierbaren Desktop-
+`icons`-Befehl den vollständigen Tauri-Icon-Satz. Die Bundle-Konfiguration bindet die nativen PNG-,
+ICO- und ICNS-Varianten explizit ein, sodass Anwendungsfenster, Taskleiste und durch spätere
+Plattformpakete erzeugte Verknüpfungen dieselbe A^3-Identität verwenden. Das WebView-Dokument nutzt
+die kleinste generierte PNG-Variante als Favicon; die Installer-Erzeugung bleibt davon unabhängig
+und weiterhin deaktiviert.
+
+Die Abnahme erzeugte den Satz über den öffentlichen `icons`-Befehl neu, bestand drei gezielte
+Icon-Vertragstests sowie den vollständigen Frontend-Gate mit 209 Tests und baute die native
+Windows-Release-EXE ohne Bundle. Das aus dieser EXE extrahierte 32-Pixel-Icon stimmt pixelgenau mit
+der generierten PNG-Variante überein.
+
 ## U10 Frontend Performance
 
 - [x] große Editor- und Graphmodule lazy laden

@@ -9,6 +9,7 @@
     "dev": "vite",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "icons": "tauri icon \"../../docs/logo/A^3-Icon.Scharz-Weiß.svg\"",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
     "tauri": "tauri",
