@@ -268,6 +268,14 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   misst einen sichtbaren 3-Pixel-Fokusring und prüft bei halbierter CSS-Viewportbreite als
   200-Prozent-Reflow-Äquivalent null horizontale Dokumentüberbreite. Agent-, Settings- und
   Fehlerflächen müssen in beiden Themes visuell lesbar bleiben.
+- Der M8-Nutzerworkflow besitzt zwei komplementäre Verträge. Das reale Offline-Coding-Eval führt
+  kleine Rust-, TypeScript-/Modul- und Python-Aufgaben sowie Replan und Context Compaction durch
+  Policy, exakte Freigabe, Patch, Reindex, kataloggebundenen Test, Verification-Evidence und
+  Acceptance bis zum durable `Done`. Der Desktop-Component-Contract beginnt ohne Projekt, öffnet
+  den nativen Projektpfad ausschließlich durch die injizierte enge Open-Grenze, liest danach den
+  aktiven Core-Zustand neu und bindet Goal, Ledger, terminale Activity sowie Must-Evidence an
+  dieselbe Task-ID. Globales `Done` darf nur gemeinsam mit exakten frischen Step- und Evidence-IDs
+  sichtbar werden.
 
 ### Persistenz
 

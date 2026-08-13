@@ -4,6 +4,18 @@
   import PrimaryNavigation from './lib/PrimaryNavigation.svelte';
   import ThemeControls from './lib/ThemeControls.svelte';
   import { UiScheduler } from './lib/ui-scheduler';
+  import type { AgentActivityResponseV1 } from './lib/agent-activity';
+  import type {
+    AgentApprovalControlActionV1,
+    AgentApprovalControlResponseV1,
+    AgentApprovalResponseV1,
+    AgentApprovalV1,
+  } from './lib/agent-approval';
+  import type {
+    AgentTaskControlActionV1,
+    AgentTaskControlResponseV1,
+    AgentTaskRecoveryResponseV1,
+  } from './lib/agent-control';
   import {
     createAgentGoal,
     queryAgentGoal,
@@ -12,6 +24,11 @@
     type AgentGoalMutationResponseV1,
     type AgentGoalResponseV1,
   } from './lib/agent-goal';
+  import type {
+    AgentInspectionLogResponseV1,
+    AgentInspectionResponseV1,
+    AgentInspectionStreamV1,
+  } from './lib/agent-inspection';
   import {
     deepMapRecoveryMessage,
     projectActionRecoveryMessage,
@@ -136,6 +153,13 @@
   } from './lib/task-lens';
 
   interface Props {
+    agentActivityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
+    agentApprovalController?: (
+      taskId: string,
+      approval: AgentApprovalV1,
+      action: AgentApprovalControlActionV1,
+    ) => Promise<AgentApprovalControlResponseV1>;
+    agentApprovalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
     agentGoalCreator?: (draft: AgentGoalDraftInputV1) => Promise<AgentGoalMutationResponseV1>;
     agentGoalLoader?: (taskId: string) => Promise<AgentGoalResponseV1>;
     agentGoalReviser?: (
@@ -145,6 +169,21 @@
       draft: AgentGoalDraftInputV1,
     ) => Promise<AgentGoalMutationResponseV1>;
     agentGoalTasksLoader?: () => Promise<TaskLensTasksResponseV1>;
+    agentInspectionLoader?: (taskId: string) => Promise<AgentInspectionResponseV1>;
+    agentInspectionLogLoader?: (
+      taskId: string,
+      revision: string,
+      inspectionId: string,
+      stream: AgentInspectionStreamV1,
+      offset: number,
+    ) => Promise<AgentInspectionLogResponseV1>;
+    agentRecoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;
+    agentRunController?: (
+      taskId: string,
+      expectedLedgerRevision: number,
+      expectedLedgerStoreVersion: string,
+      action: AgentTaskControlActionV1,
+    ) => Promise<AgentTaskControlResponseV1>;
     healthLoader?: () => Promise<HealthResponseV1>;
     deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV1>;
     deepMapStarter?: (budget: DeepMapBudgetV1) => Promise<DeepMapControlResponseV1>;
@@ -397,10 +436,17 @@
     { kind: 'loading' } | { kind: 'ready'; projects: RecentProjectSummaryV1[] } | { kind: 'error' };
 
   let {
+    agentActivityLoader,
+    agentApprovalController,
+    agentApprovalLoader,
     agentGoalCreator = createAgentGoal,
     agentGoalLoader = queryAgentGoal,
     agentGoalReviser = reviseAgentGoal,
     agentGoalTasksLoader = queryTaskLensTasks,
+    agentInspectionLoader,
+    agentInspectionLogLoader,
+    agentRecoveryLoader,
+    agentRunController,
     healthLoader = queryHealth,
     deepMapStatusLoader = queryDeepMap,
     deepMapStarter = startDeepMap,
@@ -4244,10 +4290,18 @@
       {@const AgentWorkspace = agentWorkspaceComponent}
       <AgentWorkspace
         activeProject={projectStatusView.kind === 'active'}
+        activityLoader={agentActivityLoader}
+        approvalController={agentApprovalController}
+        approvalLoader={agentApprovalLoader}
         goalCreator={agentGoalCreator}
         goalLoader={agentGoalLoader}
         goalReviser={agentGoalReviser}
+        inspectionLoader={agentInspectionLoader}
+        inspectionLogLoader={agentInspectionLogLoader}
+        ledgerLoader={taskLensTaskLoader}
         onRunStatusChange={updateGlobalRunStatus}
+        recoveryLoader={agentRecoveryLoader}
+        runController={agentRunController}
         tasksLoader={agentGoalTasksLoader}
       />
     {:else}

@@ -671,9 +671,27 @@ bestehen. Alle U10-Akzeptanzkriterien sind objektiv nachgewiesen und U10 ist abg
 
 ## Gate M8
 
-- [ ] vollständiger Nutzerworkflow vom Open bis Done
-- [ ] Accessibilitygate
-- [ ] keine generische privilegierte Frontendcapability
-- [ ] Performancebudget gemessen
-- [ ] Fehler-, Offline- und Recoveryzustände vorhanden
+- [x] vollständiger Nutzerworkflow vom Open bis Done
+- [x] Accessibilitygate
+- [x] keine generische privilegierte Frontendcapability
+- [x] Performancebudget gemessen
+- [x] Fehler-, Offline- und Recoveryzustände vorhanden
 - [ ] UX-Smoke auf Windows, Linux und macOS
+
+Teilabnahme M8 vom 2026-08-13: Das reproduzierbare E9-Coding-Eval führt fünf reale lokale
+Fixtures durch Command-Discovery, Goal/Ledger/Run, zentrale Policy, exaktes AllowOnce, Patch,
+atomaren Reindex, kataloggebundenen Offline-Test, frische Verification-Evidence und Acceptance bis
+zum dauerhaft gespeicherten `Done`. Der ergänzende Desktop-Vertrag beginnt bei `noProject`, öffnet
+den Worktree erst nach dem expliziten Klick, liest den Core-Projektzustand neu und navigiert dann
+zum taskgebundenen Agent Workspace. Terminaler Run, globales `Done`, Goal/Ledger und die exakten
+frischen Step-/Evidence-IDs jedes Muss-Beweises bleiben gemeinsam sichtbar; die UI erzeugt keinen
+eigenen Abschlusszustand.
+
+Das U9-Accessibilitygate, die real gemessenen U10-Budgets sowie die vorhandenen textuellen Lade-,
+Fehler-, Offline-, Stale- und Recoveryzustände bestehen unverändert. Der exakte
+`main-capability`-Contract erlaubt ausschließlich die gelisteten schmalen Produktcommands und
+weiterhin keine generische Dialog-, Datei-, Shell-, SQL-, Prozess-, Provider- oder
+Netzwerkfähigkeit. Der neue native Plattformharness ist lokal auf Windows gegen das unveränderte
+Releasebinary mit einem echten 976 × 719 großen WebView2-Fenster, 132 Stichprobenfarben und einem
+185.399-Byte-PNG bestanden. M8 bleibt offen, bis derselbe committed Matrixjob zusätzlich auf Linux
+x86_64 sowie macOS ARM64 und x86_64 grün ist und die prozessgebundenen Artefakte vorliegen.
