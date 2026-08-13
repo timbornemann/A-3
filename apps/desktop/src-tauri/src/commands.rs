@@ -1,5 +1,6 @@
 use crate::{
-    CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_goal_task_id_from_v1,
+    CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_approval_control_from_v1,
+    map_agent_approval_task_id_from_v1, map_agent_goal_task_id_from_v1,
     map_agent_inspection_log_query_from_v1, map_agent_inspection_task_id_from_v1,
     map_agent_task_control_from_v1, map_agent_task_recovery_task_id_from_v1,
     map_create_agent_goal_from_v1, map_module_card_detail_query_from_v1,
@@ -10,27 +11,28 @@ use crate::{
     map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
 };
 use a3_protocol::{
-    AgentActivityResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentTaskControlResponseV1,
-    AgentTaskRecoveryResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
+    AgentActivityResponseV1, AgentApprovalControlResponseV1, AgentApprovalResponseV1,
+    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
+    AgentInspectionResponseV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
+    CommandErrorV1, CompileTaskLensRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
     DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
     IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
     ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
     ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
     ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProjectMapSearchResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentGoalRequestV1,
-    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
-    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveProjectRequestV1,
-    RemoveProjectResponseV1, RepositoryTreeResponseV1, ReviseAgentGoalRequestV1,
-    StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
-    TaskLensTasksResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, QueryAgentActivityRequestV1,
+    QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
+    QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
+    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
+    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -212,6 +214,24 @@ pub async fn query_agent_inspection_log(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentInspectionLogResponseV1, CommandErrorV1> {
     execute_query_agent_inspection_log(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads the exact task-bound action and lifecycle shown before a privileged mutation.
+pub async fn query_agent_approval(
+    request: QueryAgentApprovalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentApprovalResponseV1, CommandErrorV1> {
+    execute_query_agent_approval(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Applies one closed approval decision against the exact visible optimistic anchors.
+pub async fn control_agent_approval(
+    request: ControlAgentApprovalRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentApprovalControlResponseV1, CommandErrorV1> {
+    execute_control_agent_approval(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -563,6 +583,36 @@ async fn execute_query_agent_inspection_log(
         .await
 }
 
+async fn execute_query_agent_approval(
+    request: QueryAgentApprovalRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentApprovalResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let task_id = map_agent_approval_task_id_from_v1(&request)?;
+    root.query_agent_approval(task_id).await
+}
+
+async fn execute_control_agent_approval(
+    request: ControlAgentApprovalRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentApprovalControlResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let (task_id, approval_revision, ledger_revision, ledger_store_version, action) =
+        map_agent_approval_control_from_v1(&request)?;
+    root.control_agent_approval(
+        task_id,
+        approval_revision,
+        ledger_revision,
+        ledger_store_version,
+        action,
+    )
+    .await
+}
+
 async fn execute_query_agent_task_recovery(
     request: QueryAgentTaskRecoveryRequestV1,
     root: &CompositionRoot,
@@ -677,9 +727,10 @@ async fn execute_remove_project(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_compile_task_lens, execute_control_agent_task_run, execute_control_deep_map,
-        execute_create_agent_goal, execute_list_recent_projects, execute_open_project,
-        execute_query_agent_activity, execute_query_agent_goal, execute_query_agent_inspection,
+        execute_compile_task_lens, execute_control_agent_approval, execute_control_agent_task_run,
+        execute_control_deep_map, execute_create_agent_goal, execute_list_recent_projects,
+        execute_open_project, execute_query_agent_activity, execute_query_agent_approval,
+        execute_query_agent_goal, execute_query_agent_inspection,
         execute_query_agent_inspection_log, execute_query_agent_task_recovery,
         execute_query_deep_map, execute_query_health, execute_query_index_activity,
         execute_query_index_overview, execute_query_module_card_detail,
@@ -701,18 +752,20 @@ mod tests {
     };
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        AgentActivityResultV1, AgentGoalResultV1, AgentInspectionLogResultV1,
-        AgentInspectionResultV1, AgentInspectionStreamV1, AgentTaskControlResultV1,
-        AgentTaskRecoveryResultV1, CompileTaskLensRequestV1, ControlAgentTaskRunRequestV1,
+        AgentActivityResultV1, AgentApprovalControlResultV1, AgentApprovalResultV1,
+        AgentGoalResultV1, AgentInspectionLogResultV1, AgentInspectionResultV1,
+        AgentInspectionStreamV1, AgentTaskControlResultV1, AgentTaskRecoveryResultV1,
+        CompileTaskLensRequestV1, ControlAgentApprovalRequestV1, ControlAgentTaskRunRequestV1,
         ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
         ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
         ListRecentProjectsRequestV1, ModuleCardDetailResultV1, ModuleCardEvidenceResultV1,
         ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
         ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
         OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
-        QueryAgentActivityRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
-        QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
-        QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+        QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
+        QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+        QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
+        QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
         QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
         QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
         QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
@@ -1652,6 +1705,79 @@ mod tests {
                 Err(ErrorCodeV1::InvalidAgentInspectionQuery)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn agent_approval_commands_are_task_bound_anchor_bound_and_version_first()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let query: QueryAgentApprovalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "11".repeat(32)
+        }))?;
+        let response = block_on(execute_query_agent_approval(query, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            AgentApprovalResultV1::NoProject
+        ));
+
+        let control: ControlAgentApprovalRequestV1 = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "taskId": "11".repeat(32),
+            "expectedApprovalRevision": "4",
+            "expectedLedgerRevision": 3,
+            "expectedLedgerStoreVersion": "8",
+            "action": "deny"
+        }))?;
+        let response = block_on(execute_control_agent_approval(control, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(
+            response.result(),
+            AgentApprovalControlResultV1::NoProject
+        ));
+
+        let invalid_query: QueryAgentApprovalRequestV1 =
+            serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "taskId": "not-an-id"
+            }))?;
+        assert_eq!(
+            block_on(execute_query_agent_approval(invalid_query, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidAgentApprovalRequest)
+        );
+
+        let invalid_control: ControlAgentApprovalRequestV1 =
+            serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "taskId": "11".repeat(32),
+                "expectedApprovalRevision": "04",
+                "expectedLedgerRevision": 0,
+                "expectedLedgerStoreVersion": "08",
+                "action": "continue"
+            }))?;
+        assert_eq!(
+            block_on(execute_control_agent_approval(invalid_control, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidAgentApprovalRequest)
+        );
+
+        let unsupported: ControlAgentApprovalRequestV1 =
+            serde_json::from_value(serde_json::json!({
+                "protocolVersion": 999,
+                "taskId": "not-an-id",
+                "expectedApprovalRevision": "bad",
+                "expectedLedgerRevision": 0,
+                "expectedLedgerStoreVersion": "bad",
+                "action": "revoke"
+            }))?;
+        assert_eq!(
+            block_on(execute_control_agent_approval(unsupported, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
         Ok(())
     }
 

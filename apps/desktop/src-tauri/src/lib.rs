@@ -1,5 +1,7 @@
 //! Desktop composition root and explicit boundary mappings for A^3.
 
+mod agent_approval_mapping;
+mod agent_approval_metadata;
 mod agent_goal_metadata;
 mod agent_inspection_mapping;
 mod agent_recovery_metadata;
@@ -16,56 +18,58 @@ mod project_reconciliation_dialog;
 mod repository_index_manager;
 
 use a3_application::{
-    AgentActivity, AgentActivityLoadResult, AgentControllerControl, AgentGoalCriterionDraft,
-    AgentGoalDraft, AgentGoalMetadataSource, AgentInspectionBuffer, AgentInspectionContext,
-    AgentInspectionId, AgentInspectionOverview, AgentInspectionQueryError, AgentInspectionRevision,
-    AgentLogPageLimit, AgentLogPageOffset, AgentRecoveryChoice, AgentRecoveryError,
-    AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor,
-    AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
+    AgentActionStore, AgentActivity, AgentActivityLoadResult, AgentApprovalBuffer,
+    AgentApprovalControlAction, AgentApprovalControlOutcome, AgentApprovalControlResult,
+    AgentApprovalLoadResult, AgentApprovalRevision, AgentControllerControl,
+    AgentGoalCriterionDraft, AgentGoalDraft, AgentGoalMetadataSource, AgentInspectionBuffer,
+    AgentInspectionContext, AgentInspectionId, AgentInspectionOverview, AgentInspectionQueryError,
+    AgentInspectionRevision, AgentLogPageLimit, AgentLogPageOffset, AgentRecoveryChoice,
+    AgentRecoveryError, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRunExecutionRequest,
+    AgentRunExecutor, AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
     AgentTaskRecoveryLoadResult, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
-    CompileWorkspaceTaskLensResult, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
-    DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth,
-    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
-    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
-    GetPublishedIndexOverviewError, GetRepositoryTreePage, GetTaskLensTask,
-    GetTaskVerificationInspection, GoalContractStore, HealthQuery, IndexPersistenceControl,
-    IndexPersistenceControlError, InspectAgentTaskRecovery, JobEventStream, JobScheduler,
-    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
-    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, ListTaskLensTasks,
-    ModuleCardClaimState, ModuleCardCoverageBand, ModuleCardDetail, ModuleCardDetailControl,
-    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
-    ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardEvidenceControl,
-    ModuleCardEvidenceControlError, ModuleCardEvidenceDetail, ModuleCardEvidenceFailure,
-    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
-    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshness,
-    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
-    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
-    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
-    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
-    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
-    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
-    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
-    ModuleRuntimeFlowQuery, ModuleRuntimeMap, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
-    ModuleRuntimeRoot, ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootSet,
-    ModuleRuntimeStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
-    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
-    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
-    OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
-    ProjectIndexStatus, ProjectInspectionFailure, ProjectMapSearchQuery,
-    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
-    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
-    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
-    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore, TaskLensCompilation,
-    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult,
-    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceStore,
-    TaskVerificationInspection, TaskVerificationInspectionLoadResult, TraceModuleRuntimeFlow,
-    VerificationEvidenceStore,
+    CompileWorkspaceTaskLensResult, ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal,
+    CreateAgentGoalFailure, DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure,
+    GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence,
+    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
+    GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
+    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
+    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
+    ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState, ModuleCardCoverageBand,
+    ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
+    ModuleCardEvidenceDetail, ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness,
+    ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload, ModuleCardEvidenceQuery,
+    ModuleCardEvidenceStore, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
+    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
+    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
+    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
+    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
+    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
+    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
+    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
+    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, PolicyStore,
+    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    ProjectInspectionFailure, ProjectMapSearchQuery, ProjectReconciliationConfirmer,
+    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
+    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
+    RepositoryTreeQuery, RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure,
+    RunJournalStore, RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure,
+    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore,
+    TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
+    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
+    TraceModuleRuntimeFlow, VerificationEvidenceStore,
 };
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
@@ -87,33 +91,36 @@ use a3_protocol::{
     AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
     AgentActivityCodeV1, AgentActivityEventKindV1, AgentActivityEventV1, AgentActivityOutcomeV1,
     AgentActivityResponseV1, AgentActivityRunV1, AgentActivityTurnV1, AgentActivityUsageV1,
-    AgentActivityV1, AgentControllerStateV1, AgentGoalContractV1, AgentGoalCriterionInputV1,
-    AgentGoalCriterionRequirementV1, AgentGoalCriterionV1, AgentGoalDraftInputV1,
-    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
-    AgentInspectionResponseV1, AgentSelectedActionV1, AgentTaskControlAcceptedOutcomeV1,
-    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
-    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
-    AgentTaskRecoveryV1, AgentTaskRuntimeStartV1, AgentTaskRuntimeStateV1, AgentTaskRuntimeV1,
-    CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1,
-    DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1,
-    DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1,
-    IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1,
-    IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1,
-    IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
-    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
-    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
-    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
-    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
-    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
-    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
-    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
-    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
-    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
-    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
-    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
-    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
-    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
-    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    AgentActivityV1, AgentApprovalControlActionV1, AgentApprovalControlOutcomeV1,
+    AgentApprovalControlResponseV1, AgentApprovalControlResultV1, AgentApprovalResponseV1,
+    AgentApprovalResultV1, AgentApprovalRuntimeStartV1, AgentControllerStateV1,
+    AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
+    AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSelectedActionV1,
+    AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
+    AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
+    AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
+    AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
+    DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1,
+    DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1, DeepMapStatusResponseV1,
+    ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1,
+    IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1,
+    IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1,
+    IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1,
+    ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
+    ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
+    ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
+    ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    ModuleCardLifecycleV1, ModuleCardValueV1, ModuleDependencyEdgeEvidenceV1,
+    ModuleDependencyEdgeV1, ModuleDependencyEndpointV1, ModuleDependencyGraphResponseV1,
+    ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1,
+    ModuleDependencyProviderV1, ModuleDependencyRelationV1, ModuleDependencyResolutionV1,
+    ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1, ModuleRuntimeFlowEdgeV1,
+    ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowRelationV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1,
+    ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
@@ -139,6 +146,8 @@ use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
 };
 use a3_workspace::RepositoryInspector;
+use agent_approval_mapping::map_agent_approval_to_v1;
+use agent_approval_metadata::SystemAgentApprovalMetadata;
 use agent_goal_metadata::SystemAgentGoalMetadata;
 use agent_inspection_mapping::{
     map_agent_inspection_to_v1, map_agent_log_page_to_v1, map_inspection_stream_from_v1,
@@ -188,6 +197,10 @@ pub struct CompositionRoot {
     agent_activity: Option<GetAgentActivity>,
     agent_verification: Option<GetTaskVerificationInspection>,
     agent_inspection: Arc<AgentInspectionBuffer>,
+    agent_approval: Arc<AgentApprovalBuffer>,
+    agent_approval_query: Option<GetAgentApprovalCenter>,
+    agent_approval_control: Option<ControlAgentApproval>,
+    agent_approval_metadata: SystemAgentApprovalMetadata,
     agent_task_recovery: Option<InspectAgentTaskRecovery>,
     agent_task_control: Option<ControlAgentTaskRun>,
     agent_recovery_metadata: SystemAgentRecoveryMetadata,
@@ -296,6 +309,7 @@ impl CompositionRoot {
         } = &outcome
         {
             self.agent_inspection.activate_project(project);
+            self.agent_approval.activate_project(project);
             *lock_recovering_poison(&self.active_project) = Some(ActiveProject {
                 project_id: *project_id,
                 project: project.as_ref().clone(),
@@ -983,6 +997,180 @@ impl CompositionRoot {
         }
     }
 
+    /// Loads the exact task-bound approval action and its current durable lifecycle.
+    pub async fn query_agent_approval(
+        &self,
+        task_id: TaskId,
+    ) -> Result<AgentApprovalResponseV1, CommandErrorV1> {
+        let Some(_operation) = self.try_acquire_agent_task_operation() else {
+            return Ok(AgentApprovalResponseV1::new(
+                AgentApprovalResultV1::ActivityChanged,
+            ));
+        };
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentApprovalResponseV1::new(
+                AgentApprovalResultV1::NoProject,
+            ));
+        };
+        let reader = self
+            .agent_approval_query
+            .as_ref()
+            .ok_or_else(agent_approval_unavailable)?;
+        let observed_at = self
+            .agent_approval_metadata
+            .now()
+            .map_err(|_| agent_approval_unavailable())?;
+        let result = reader
+            .execute(
+                &active.project,
+                task_id,
+                observed_at,
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(|_| agent_approval_unavailable())?;
+        Ok(AgentApprovalResponseV1::new(match result {
+            AgentApprovalLoadResult::TaskNotFound => AgentApprovalResultV1::TaskNotFound,
+            AgentApprovalLoadResult::LedgerUnavailable => AgentApprovalResultV1::LedgerUnavailable,
+            AgentApprovalLoadResult::GoalRevisionMismatch {
+                current_revision,
+                ledger_revision,
+            } => AgentApprovalResultV1::GoalRevisionMismatch {
+                current_revision,
+                ledger_revision,
+            },
+            AgentApprovalLoadResult::ActivityChanged => AgentApprovalResultV1::ActivityChanged,
+            AgentApprovalLoadResult::ApprovalUnavailable => AgentApprovalResultV1::Unavailable,
+            AgentApprovalLoadResult::Available(approval) => AgentApprovalResultV1::Available {
+                approval: Box::new(map_agent_approval_to_v1(&approval)),
+            },
+        }))
+    }
+
+    /// Applies one explicit approval choice using only the exact visible optimistic anchors.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn control_agent_approval(
+        &self,
+        task_id: TaskId,
+        expected_approval_revision: AgentApprovalRevision,
+        expected_ledger_revision: u32,
+        expected_ledger_store_version: TaskLedgerStoreVersion,
+        action: AgentApprovalControlActionV1,
+    ) -> Result<AgentApprovalControlResponseV1, CommandErrorV1> {
+        let Some(_operation) = self.try_acquire_agent_task_operation() else {
+            return Ok(AgentApprovalControlResponseV1::new(
+                AgentApprovalControlResultV1::ActivityChanged,
+            ));
+        };
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentApprovalControlResponseV1::new(
+                AgentApprovalControlResultV1::NoProject,
+            ));
+        };
+        let controller = self
+            .agent_approval_control
+            .as_ref()
+            .ok_or_else(agent_approval_unavailable)?;
+        let metadata = self
+            .agent_approval_metadata
+            .next()
+            .map_err(|_| agent_approval_unavailable())?;
+        let action = match action {
+            AgentApprovalControlActionV1::AllowOnce => AgentApprovalControlAction::AllowOnce,
+            AgentApprovalControlActionV1::Deny => AgentApprovalControlAction::Deny,
+            AgentApprovalControlActionV1::Continue => AgentApprovalControlAction::Continue,
+            AgentApprovalControlActionV1::Revoke => AgentApprovalControlAction::Revoke,
+        };
+        let result = controller
+            .execute(
+                &active.project,
+                task_id,
+                expected_approval_revision,
+                expected_ledger_revision,
+                expected_ledger_store_version,
+                action,
+                metadata,
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(|_| agent_approval_unavailable())?;
+        let result = match result {
+            AgentApprovalControlResult::TaskNotFound => AgentApprovalControlResultV1::TaskNotFound,
+            AgentApprovalControlResult::LedgerUnavailable => {
+                AgentApprovalControlResultV1::LedgerUnavailable
+            }
+            AgentApprovalControlResult::GoalRevisionMismatch => {
+                AgentApprovalControlResultV1::GoalRevisionMismatch
+            }
+            AgentApprovalControlResult::ActivityChanged => {
+                AgentApprovalControlResultV1::ActivityChanged
+            }
+            AgentApprovalControlResult::ApprovalUnavailable
+            | AgentApprovalControlResult::ActionUnavailable => {
+                AgentApprovalControlResultV1::Unavailable
+            }
+            AgentApprovalControlResult::Applied(outcome) => {
+                let (outcome, approval_revision, ledger_store_version, runtime_start) =
+                    match outcome {
+                        AgentApprovalControlOutcome::GrantStored { approval_revision } => (
+                            AgentApprovalControlOutcomeV1::GrantStored,
+                            approval_revision,
+                            expected_ledger_store_version,
+                            None,
+                        ),
+                        AgentApprovalControlOutcome::Denied {
+                            ledger_store_version,
+                            approval_revision,
+                        } => (
+                            AgentApprovalControlOutcomeV1::Denied,
+                            approval_revision,
+                            ledger_store_version,
+                            None,
+                        ),
+                        AgentApprovalControlOutcome::Revoked { approval_revision } => (
+                            AgentApprovalControlOutcomeV1::Revoked,
+                            approval_revision,
+                            expected_ledger_store_version,
+                            None,
+                        ),
+                        AgentApprovalControlOutcome::ContinueReady { approval_id } => {
+                            let revision = TaskLedgerRevision::new(expected_ledger_revision)
+                                .map_err(|_| agent_approval_unavailable())?;
+                            let runtime = match &self.agent_run_manager {
+                                Some(manager) => match manager.start_attempt(
+                                    AgentRunExecutionRequest::after_approval(
+                                        task_id,
+                                        revision,
+                                        expected_ledger_store_version,
+                                        approval_id,
+                                    ),
+                                ) {
+                                    Ok(()) => AgentApprovalRuntimeStartV1::Queued,
+                                    Err(_) => AgentApprovalRuntimeStartV1::Failed,
+                                },
+                                None => AgentApprovalRuntimeStartV1::Unavailable,
+                            };
+                            (
+                                AgentApprovalControlOutcomeV1::ContinueRequested,
+                                expected_approval_revision,
+                                expected_ledger_store_version,
+                                Some(runtime),
+                            )
+                        }
+                    };
+                AgentApprovalControlResultV1::Applied {
+                    outcome,
+                    approval_revision: approval_revision.get().to_string(),
+                    ledger_store_version: ledger_store_version.get().to_string(),
+                    runtime_start,
+                }
+            }
+        };
+        Ok(AgentApprovalControlResponseV1::new(result))
+    }
+
     /// Inspects current restart-safe controls for the active task-derived Agent run.
     pub async fn query_agent_task_recovery(
         &self,
@@ -1447,6 +1635,7 @@ impl CompositionRoot {
 
         *lock_recovering_poison(&self.active_project) = None;
         self.agent_inspection.deactivate_project();
+        self.agent_approval.deactivate_project();
         Ok(RemoveProjectResponseV1::removed())
     }
 
@@ -1775,6 +1964,8 @@ struct OptionalCompositionPorts {
     task_lens_workspace_store: Option<Arc<dyn TaskLensWorkspaceStore>>,
     verification_evidence_store: Option<Arc<dyn VerificationEvidenceStore>>,
     run_journal_store: Option<Arc<dyn RunJournalStore>>,
+    policy_store: Option<Arc<dyn PolicyStore>>,
+    agent_action_store: Option<Arc<dyn AgentActionStore>>,
     task_ledger_store: Option<Arc<dyn TaskLedgerStore>>,
     agent_recovery_store: Option<Arc<dyn AgentRecoveryStore>>,
     goal_contract_store: Option<Arc<dyn GoalContractStore>>,
@@ -1799,6 +1990,8 @@ struct IndexingCompositionPorts {
     task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore>,
     verification_evidence_store: Arc<dyn VerificationEvidenceStore>,
     run_journal_store: Arc<dyn RunJournalStore>,
+    policy_store: Arc<dyn PolicyStore>,
+    agent_action_store: Arc<dyn AgentActionStore>,
     task_ledger_store: Arc<dyn TaskLedgerStore>,
     agent_recovery_store: Arc<dyn AgentRecoveryStore>,
     goal_contract_store: Arc<dyn GoalContractStore>,
@@ -1870,6 +2063,8 @@ impl CompositionBase {
                 task_lens_workspace_store: Some(ports.task_lens_workspace_store),
                 verification_evidence_store: Some(ports.verification_evidence_store),
                 run_journal_store: Some(ports.run_journal_store),
+                policy_store: Some(ports.policy_store),
+                agent_action_store: Some(ports.agent_action_store),
                 task_ledger_store: Some(ports.task_ledger_store),
                 agent_recovery_store: Some(ports.agent_recovery_store),
                 goal_contract_store: Some(ports.goal_contract_store),
@@ -1953,6 +2148,34 @@ impl CompositionBase {
             .zip(ports.verification_evidence_store.clone())
             .map(|(workspace, evidence)| GetTaskVerificationInspection::new(workspace, evidence));
         let agent_inspection = Arc::new(AgentInspectionBuffer::new());
+        let agent_approval = Arc::new(AgentApprovalBuffer::new());
+        let approval_read_ports = ports
+            .task_lens_workspace_store
+            .clone()
+            .zip(ports.run_journal_store.clone())
+            .zip(ports.policy_store.clone());
+        let agent_approval_query =
+            approval_read_ports
+                .clone()
+                .map(|((workspace, journal), policy)| {
+                    GetAgentApprovalCenter::new(
+                        workspace,
+                        journal,
+                        policy,
+                        Arc::clone(&agent_approval),
+                    )
+                });
+        let agent_approval_control = approval_read_ports
+            .zip(ports.agent_action_store.clone())
+            .map(|(((workspace, journal), policy), actions)| {
+                ControlAgentApproval::new(
+                    workspace,
+                    journal,
+                    policy,
+                    actions,
+                    Arc::clone(&agent_approval),
+                )
+            });
         let recovery_ports = (
             ports.task_lens_workspace_store.clone(),
             ports.agent_recovery_store.clone(),
@@ -2069,6 +2292,10 @@ impl CompositionBase {
             agent_activity,
             agent_verification,
             agent_inspection,
+            agent_approval,
+            agent_approval_query,
+            agent_approval_control,
+            agent_approval_metadata: SystemAgentApprovalMetadata,
             agent_task_recovery,
             agent_task_control,
             agent_recovery_metadata: SystemAgentRecoveryMetadata,
@@ -2121,6 +2348,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             let task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore> = store.clone();
             let verification_evidence_store: Arc<dyn VerificationEvidenceStore> = store.clone();
             let run_journal_store: Arc<dyn RunJournalStore> = store.clone();
+            let policy_store: Arc<dyn PolicyStore> = store.clone();
+            let agent_action_store: Arc<dyn AgentActionStore> = store.clone();
             let task_ledger_store: Arc<dyn TaskLedgerStore> = store.clone();
             let agent_recovery_store: Arc<dyn AgentRecoveryStore> = store.clone();
             let goal_contract_store: Arc<dyn GoalContractStore> = store.clone();
@@ -2147,6 +2376,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     task_lens_workspace_store,
                     verification_evidence_store,
                     run_journal_store,
+                    policy_store,
+                    agent_action_store,
                     task_ledger_store,
                     agent_recovery_store,
                     goal_contract_store,
@@ -2161,6 +2392,7 @@ pub fn run() -> Result<(), DesktopRunError> {
         .invoke_handler(tauri::generate_handler![
             commands::cancel_deep_map,
             commands::compile_task_lens,
+            commands::control_agent_approval,
             commands::control_agent_task_run,
             commands::create_agent_goal,
             commands::list_recent_projects,
@@ -2178,6 +2410,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_runtime_map,
             commands::query_module_tree,
             commands::query_agent_activity,
+            commands::query_agent_approval,
             commands::query_agent_inspection,
             commands::query_agent_inspection_log,
             commands::query_agent_goal,
@@ -3530,6 +3763,49 @@ pub(crate) fn map_agent_inspection_task_id_from_v1(
         .map_err(|()| invalid_agent_inspection_query())
 }
 
+pub(crate) fn map_agent_approval_task_id_from_v1(
+    request: &a3_protocol::QueryAgentApprovalRequestV1,
+) -> Result<TaskId, CommandErrorV1> {
+    decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidAgentApprovalRequest))
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn map_agent_approval_control_from_v1(
+    request: &a3_protocol::ControlAgentApprovalRequestV1,
+) -> Result<
+    (
+        TaskId,
+        AgentApprovalRevision,
+        u32,
+        TaskLedgerStoreVersion,
+        AgentApprovalControlActionV1,
+    ),
+    CommandErrorV1,
+> {
+    let invalid = || CommandErrorV1::project_open(ErrorCodeV1::InvalidAgentApprovalRequest);
+    let task_id = decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| invalid())?;
+    let revision = parse_canonical_positive_u64(request.expected_approval_revision())
+        .and_then(|value| AgentApprovalRevision::new(value).map_err(|_| ()))
+        .map_err(|()| invalid())?;
+    if request.expected_ledger_revision() == 0 {
+        return Err(invalid());
+    }
+    let version = parse_canonical_positive_u64(request.expected_ledger_store_version())
+        .and_then(|value| TaskLedgerStoreVersion::new(value).map_err(|_| ()))
+        .map_err(|()| invalid())?;
+    Ok((
+        task_id,
+        revision,
+        request.expected_ledger_revision(),
+        version,
+        request.action(),
+    ))
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn map_agent_inspection_log_query_from_v1(
     request: &a3_protocol::QueryAgentInspectionLogRequestV1,
@@ -4811,6 +5087,10 @@ fn agent_task_control_unavailable() -> CommandErrorV1 {
 
 fn agent_inspection_unavailable() -> CommandErrorV1 {
     CommandErrorV1::project_open(ErrorCodeV1::AgentInspectionUnavailable)
+}
+
+fn agent_approval_unavailable() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::AgentApprovalUnavailable)
 }
 
 fn invalid_agent_inspection_query() -> CommandErrorV1 {

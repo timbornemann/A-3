@@ -71,6 +71,10 @@ pub enum ErrorCodeV1 {
     InvalidAgentTaskControl,
     /// Agent recovery state or its atomic control transaction could not be completed safely.
     AgentTaskControlUnavailable,
+    /// Approval selectors or optimistic anchors violated the strict task-bound contract.
+    InvalidAgentApprovalRequest,
+    /// Exact approval state or its atomic control could not be completed safely.
+    AgentApprovalUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -203,6 +207,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::AgentTaskControlUnavailable => {
                 "The Agent run could not be inspected or controlled safely."
+            }
+            ErrorCodeV1::InvalidAgentApprovalRequest => {
+                "The Agent approval request is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentApprovalUnavailable => {
+                "The exact Agent approval could not be inspected or controlled safely."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

@@ -1,6 +1,7 @@
 //! Versioned, infrastructure-independent IPC boundary types for A^3.
 
 mod agent_activity;
+mod agent_approval;
 mod agent_control;
 mod agent_goal;
 mod agent_inspection;
@@ -33,6 +34,7 @@ pub use agent_activity::{
     AgentActivityUsageV1, AgentActivityV1, AgentControllerStateV1, AgentSelectedActionV1,
     QueryAgentActivityRequestV1,
 };
+pub use agent_approval::*;
 pub use agent_control::{
     AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
     AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
