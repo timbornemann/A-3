@@ -1,33 +1,35 @@
 use crate::{
     AdvanceAgentController, AgentActionStore, AgentActionStoreFailure, AgentContextCompileInput,
     AgentContextCompiler, AgentControllerControl, AgentControllerError, AgentControllerSignal,
-    AgentMutationResultRecord, AgentRecoveryStore, AgentRecoveryStoreFailure, AppendRunEvent,
-    ContextCompileControl, ContextCompileFailure, ContextToolResult, ContextToolResultDigest,
-    EvaluateActionPolicy, EvaluateActionPolicyError, EvaluateStepVerification,
-    EvaluateStepVerificationError, MutationActionFingerprint, MutationActionFingerprintError,
-    MutationFailureClass, MutationProgressDecision, PatchApplyFailure, PatchAuthorizationError,
-    PatchPreviewFailure, PersistPolicyEvaluation, PolicyEvaluationContext, PolicyStore,
-    PolicyStoreFailure, PrepareDiscoveredCommand, ProcessAuthorizationError, ProcessEventSink,
-    ProcessRunControl, ProcessRunFailure, ProcessRunner, RefreshRepositoryIndex,
-    RefreshRepositoryIndexError, RepositoryChangeBatch, RepositoryChangeBatchError,
-    RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore, RunJournalStoreFailure,
-    StoredProjectCommandAllowlist, TaskLedgerStoreVersion, VerificationEvidenceStore,
-    VerificationEvidenceStoreFailure, WorkspacePatchControl, WorkspacePatchTool,
-    WorktreeMutationBusy, WorktreeMutationCoordinator,
+    AgentInspectionContext, AgentInspectionSink, AgentInspectionSinkFailure,
+    AgentMutationResultRecord, AgentProcessInspectionKind, AgentRecoveryStore,
+    AgentRecoveryStoreFailure, AppendRunEvent, ContextCompileControl, ContextCompileFailure,
+    ContextToolResult, ContextToolResultDigest, EvaluateActionPolicy, EvaluateActionPolicyError,
+    EvaluateStepVerification, EvaluateStepVerificationError, MutationActionFingerprint,
+    MutationActionFingerprintError, MutationFailureClass, MutationProgressDecision,
+    PatchApplyFailure, PatchAuthorizationError, PatchPreviewFailure, PersistPolicyEvaluation,
+    PolicyEvaluationContext, PolicyStore, PolicyStoreFailure, PrepareDiscoveredCommand,
+    ProcessAuthorizationError, ProcessEventSink, ProcessRunControl, ProcessRunFailure,
+    ProcessRunner, RefreshRepositoryIndex, RefreshRepositoryIndexError, RepositoryChangeBatch,
+    RepositoryChangeBatchError, RepositoryIndexCompiler, RepositoryIndexControl, RunJournalStore,
+    RunJournalStoreFailure, StoredProjectCommandAllowlist, TaskLedgerStoreVersion,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, WorkspacePatchControl,
+    WorkspacePatchTool, WorktreeMutationBusy, WorktreeMutationCoordinator,
 };
 use a3_domain::{
     AgentAction, AgentControllerState, AgentMutationDisposition, AgentMutationKind, AgentRun,
     AgentRunAction, AgentRunTimestamp, AgentToolAttemptStatus, ApprovalGrant, ApprovalRequestId,
-    CommandEvidence, CommandEvidenceContext, DiscoveredCommandId, EvidenceDependency, GoalContract,
-    ModelProfile, MutationApplicationState, MutationReconciliation, PatchAction, PatchChangeSet,
-    PolicyDecision, PolicyDecisionId, PolicyDecisionOutcome, PolicyEvaluationTiming,
-    ProcessOutputRedaction, ProcessRunResult, ProcessTermination, ProjectCommandCatalog,
-    ProjectIdentity, PublishedIndex, RunEventCode, RunEventId, RunEventKind, RunEventOutcome,
-    RunEventPayload, RunEventRedaction, RunEventRedactionSource, RunEventSubject, SnapshotId,
-    StepVerificationId, TaskEvidenceId, TaskLedger, TaskLedgerTimestamp, TaskLensSeed,
-    TaskStepBlockingReason, TaskStepFailureReason, TaskStepId, TaskStepResultSummary,
-    TaskStepStatus, ToolRunId, VerificationDependencies, VerificationEvidence, VerificationMethod,
-    VerificationRunId, VerificationSpec, VerificationTarget, WorkspacePolicy,
+    CommandEvidence, CommandEvidenceContext, DiscoveredCommandId, DiscoveredCommandKind,
+    EvidenceDependency, GoalContract, ModelProfile, MutationApplicationState,
+    MutationReconciliation, PatchAction, PatchChangeSet, PolicyDecision, PolicyDecisionId,
+    PolicyDecisionOutcome, PolicyEvaluationTiming, ProcessOutputRedaction, ProcessRunResult,
+    ProcessTermination, ProjectCommandCatalog, ProjectIdentity, PublishedIndex, RunEventCode,
+    RunEventId, RunEventKind, RunEventOutcome, RunEventPayload, RunEventRedaction,
+    RunEventRedactionSource, RunEventSubject, SnapshotId, StepVerificationId, TaskEvidenceId,
+    TaskLedger, TaskLedgerTimestamp, TaskLensSeed, TaskStepBlockingReason, TaskStepFailureReason,
+    TaskStepId, TaskStepResultSummary, TaskStepStatus, ToolRunId, VerificationDependencies,
+    VerificationEvidence, VerificationMethod, VerificationRunId, VerificationSpec,
+    VerificationTarget, WorkspacePolicy,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -375,6 +377,7 @@ enum PreparedMutation {
     Patch(PatchAction),
     Run {
         action: AgentRunAction,
+        command_kind: DiscoveredCommandKind,
         result_spec: a3_domain::ProcessSpec,
         dependencies: VerificationDependencies,
     },
@@ -413,6 +416,7 @@ pub struct ExecuteMutatingAgentAction<'a> {
     action_store: &'a dyn AgentActionStore,
     recovery: &'a dyn AgentRecoveryStore,
     evidence_store: &'a dyn VerificationEvidenceStore,
+    inspection: &'a dyn AgentInspectionSink,
     patch_tool: &'a dyn WorkspacePatchTool,
     process_runner: &'a dyn ProcessRunner,
     evidence_factory: &'a dyn ProcessVerificationEvidenceFactory,
@@ -431,6 +435,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         action_store: &'a dyn AgentActionStore,
         recovery: &'a dyn AgentRecoveryStore,
         evidence_store: &'a dyn VerificationEvidenceStore,
+        inspection: &'a dyn AgentInspectionSink,
         patch_tool: &'a dyn WorkspacePatchTool,
         process_runner: &'a dyn ProcessRunner,
         evidence_factory: &'a dyn ProcessVerificationEvidenceFactory,
@@ -444,6 +449,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             action_store,
             recovery,
             evidence_store,
+            inspection,
             patch_tool,
             process_runner,
             evidence_factory,
@@ -488,11 +494,14 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             .coordinator
             .try_acquire(run.id(), project.worktree().id(), fingerprint)?;
 
-        if let PreparedMutation::Patch(patch) = &prepared {
-            self.patch_tool
-                .preview(project, published, patch, control)
-                .await?;
-        }
+        let patch_preview = match &prepared {
+            PreparedMutation::Patch(patch) => Some(
+                self.patch_tool
+                    .preview(project, published, patch, control)
+                    .await?,
+            ),
+            PreparedMutation::Run { .. } => None,
+        };
 
         let decision = self
             .evaluate_and_persist_policy(
@@ -506,6 +515,17 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                 approval_expires_at,
             )
             .await?;
+
+        if let Some(preview) = patch_preview.as_ref() {
+            let spec_id = current_step_spec(ledger, step_id)?.id();
+            let context = inspection_context(run, step_id, spec_id, run.current_snapshot_id());
+            let recorded = self
+                .inspection
+                .record_patch_preview(project, context, preview);
+            if decision.outcome() == PolicyDecisionOutcome::ApprovalRequired {
+                recorded.map_err(MutationControllerFailure::Inspection)?;
+            }
+        }
 
         match decision.outcome() {
             PolicyDecisionOutcome::ApprovalRequired => {
@@ -598,6 +618,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             }
             PreparedMutation::Run {
                 action,
+                command_kind,
                 result_spec,
                 dependencies,
             } => {
@@ -612,6 +633,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     ledger,
                     ledger_version,
                     action,
+                    command_kind,
                     dependencies,
                     ids,
                     observed_at,
@@ -1027,6 +1049,7 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         ledger: &mut TaskLedger,
         ledger_version: &mut TaskLedgerStoreVersion,
         action: AgentRunAction,
+        command_kind: DiscoveredCommandKind,
         dependencies: VerificationDependencies,
         ids: MutationExecutionIds,
         observed_at: AgentRunTimestamp,
@@ -1095,6 +1118,8 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
                     .await;
             }
         };
+        let spec = current_step_spec(ledger, action.step_id())?;
+        let inspection_kind = AgentProcessInspectionKind::classify(spec.method(), command_kind);
         let observed_bytes = result
             .stdout()
             .observed_bytes()
@@ -1104,6 +1129,16 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             result.termination(),
             ProcessTermination::TimedOut | ProcessTermination::Cancelled
         ) {
+            self.observe_process_result(
+                project,
+                run,
+                action.step_id(),
+                spec,
+                ids.tool_run_id,
+                inspection_kind,
+                run.current_snapshot_id(),
+                &result,
+            );
             self.recovery
                 .finish_agent_mutation_attempt(
                     project,
@@ -1152,6 +1187,16 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
         {
             Ok(refresh) => refresh.published_index().clone(),
             Err(_) => {
+                self.observe_process_result(
+                    project,
+                    run,
+                    action.step_id(),
+                    spec,
+                    ids.tool_run_id,
+                    inspection_kind,
+                    run.current_snapshot_id(),
+                    &result,
+                );
                 self.recovery
                     .finish_agent_mutation_attempt(
                         project,
@@ -1179,6 +1224,16 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             }
         };
         let snapshot_id = current_index.run().snapshot_id();
+        self.observe_process_result(
+            project,
+            run,
+            action.step_id(),
+            spec,
+            ids.tool_run_id,
+            inspection_kind,
+            snapshot_id,
+            &result,
+        );
         self.record_successful_mutation_event(
             project,
             run,
@@ -1195,7 +1250,6 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             observed_at,
         )
         .await?;
-        let spec = current_step_spec(ledger, action.step_id())?;
         let evidence = match self
             .evidence_factory
             .create(ProcessVerificationEvidenceRequest {
@@ -1248,6 +1302,24 @@ impl<'a> ExecuteMutatingAgentAction<'a> {
             evidence,
         )
         .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observe_process_result(
+        self,
+        project: &ProjectIdentity,
+        run: &AgentRun,
+        step_id: TaskStepId,
+        spec: &VerificationSpec,
+        tool_run_id: ToolRunId,
+        kind: AgentProcessInspectionKind,
+        snapshot_id: SnapshotId,
+        result: &ProcessRunResult,
+    ) {
+        let context = inspection_context(run, step_id, spec.id(), snapshot_id);
+        let _recorded =
+            self.inspection
+                .record_process_result(project, context, tool_run_id, kind, result);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1917,6 +1989,7 @@ fn prepare_action(
             .map_err(|_| MutationControllerFailure::InvalidCommandSelection)?;
             PreparedMutation::Run {
                 action,
+                command_kind: command.kind(),
                 result_spec: spec,
                 dependencies,
             }
@@ -1959,6 +2032,21 @@ fn current_step_spec(
         .step(step_id)
         .map(|step| step.definition().verification_spec())
         .ok_or(MutationControllerFailure::AnchorMismatch)
+}
+
+const fn inspection_context(
+    run: &AgentRun,
+    step_id: TaskStepId,
+    verification_spec_id: a3_domain::VerificationSpecId,
+    snapshot_id: SnapshotId,
+) -> AgentInspectionContext {
+    AgentInspectionContext::new(
+        run.goal_contract().task_id(),
+        run.id(),
+        step_id,
+        verification_spec_id,
+        snapshot_id,
+    )
 }
 
 fn ledger_timestamp(
@@ -2137,6 +2225,8 @@ pub enum MutationControllerFailure {
     Fingerprint(MutationActionFingerprintError),
     /// Patch preview failed before policy evaluation.
     PatchPreview(PatchPreviewFailure),
+    /// Required exact pre-approval inspection could not be retained.
+    Inspection(AgentInspectionSinkFailure),
     /// Patch authorization did not match the durable central decision.
     PatchAuthorization(PatchAuthorizationError),
     /// Process authorization did not match the durable central decision.
@@ -2190,6 +2280,7 @@ impl fmt::Display for MutationControllerFailure {
             Self::Busy(_) => "worktree mutation boundary is busy",
             Self::Fingerprint(_) => "mutation action fingerprint is invalid",
             Self::PatchPreview(_) => "mutation patch preview failed",
+            Self::Inspection(_) => "mutation inspection failed",
             Self::PatchAuthorization(_) => "mutation patch authorization failed",
             Self::ProcessAuthorization(_) => "mutation process authorization failed",
             Self::Command(_) => "mutation command preparation failed",
@@ -2240,6 +2331,7 @@ impl MutationControllerFailure {
             | Self::Busy(_)
             | Self::Fingerprint(_)
             | Self::PatchPreview(_)
+            | Self::Inspection(_)
             | Self::PatchAuthorization(_)
             | Self::ProcessAuthorization(_)
             | Self::Command(_)
@@ -2258,6 +2350,7 @@ impl Error for MutationControllerFailure {
             Self::Busy(error) => Some(error),
             Self::Fingerprint(error) => Some(error),
             Self::PatchPreview(error) => Some(error),
+            Self::Inspection(error) => Some(error),
             Self::PatchAuthorization(error) => Some(error),
             Self::ProcessAuthorization(error) => Some(error),
             Self::Command(error) => Some(error),
@@ -2302,6 +2395,7 @@ macro_rules! failure_from {
 failure_from!(WorktreeMutationBusy, Busy);
 failure_from!(MutationActionFingerprintError, Fingerprint);
 failure_from!(PatchPreviewFailure, PatchPreview);
+failure_from!(AgentInspectionSinkFailure, Inspection);
 failure_from!(PatchAuthorizationError, PatchAuthorization);
 failure_from!(ProcessAuthorizationError, ProcessAuthorization);
 failure_from!(a3_domain::DiscoveredCommandProcessError, Command);

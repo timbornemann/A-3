@@ -1,17 +1,18 @@
 use crate::support::{TempDirectory, run_libsql_test};
 use a3_application::{
     AcceptanceVerificationRequest, AdvanceAgentController, AgentControllerControl,
-    AgentControllerSignal, AppendRunEvent, CompileTaskLens, ConfirmProjectCommandAllowlist,
-    ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
-    CreateAgentRun, CreateGoalContract, CreateTaskLedger, DeterministicAcceptanceVerifier,
-    DiscoverProjectCommands, ExecuteMutatingAgentAction, GoalContractStore, GrantPolicyApproval,
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeStore,
-    MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
-    ProcessEventSink, ProcessEventSinkError, ProcessRunControl, RefreshRepositoryIndex,
-    RepositoryChangeBatch, RepositoryIndexControl, RepositoryIndexControlError,
-    RepositoryRescanReason, RunEventPageLimit, RunJournalStore, TaskLedgerStore,
-    TaskLedgerStoreVersion, TaskLensControlError, VerifyAgentAcceptance, WorkspacePatchControl,
-    WorkspacePatchProgressError, WorktreeMutationCoordinator,
+    AgentControllerSignal, AgentInspectionBuffer, AppendRunEvent, CompileTaskLens,
+    ConfirmProjectCommandAllowlist, ConservativeProcessVerificationEvidenceFactory,
+    ContextCompileControl, ContextCompilePhase, CreateAgentRun, CreateGoalContract,
+    CreateTaskLedger, DeterministicAcceptanceVerifier, DiscoverProjectCommands,
+    ExecuteMutatingAgentAction, GoalContractStore, GrantPolicyApproval, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeStore, MutationCommandSelection,
+    MutationContextSeed, MutationControllerOutcome, MutationExecutionIds, ProcessEventSink,
+    ProcessEventSinkError, ProcessRunControl, RefreshRepositoryIndex, RepositoryChangeBatch,
+    RepositoryIndexControl, RepositoryIndexControlError, RepositoryRescanReason, RunEventPageLimit,
+    RunJournalStore, TaskLedgerStore, TaskLedgerStoreVersion, TaskLensControlError,
+    VerifyAgentAcceptance, WorkspacePatchControl, WorkspacePatchProgressError,
+    WorktreeMutationCoordinator,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
@@ -351,6 +352,8 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
     let patch_tool = WorkspacePatchAdapter::new();
     let process_runner = WorkspaceProcessRunner::new(process_environment()?);
     let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+    let inspection = AgentInspectionBuffer::new();
+    inspection.activate_project(&fixture.project);
     let controller = ExecuteMutatingAgentAction::new(
         &coordinator,
         fixture.store.as_ref(),
@@ -358,6 +361,7 @@ async fn evaluate_case(case: CodingCase) -> Result<CodingEvalResult, Box<dyn Err
         fixture.store.as_ref(),
         fixture.store.as_ref(),
         fixture.store.as_ref(),
+        &inspection,
         &patch_tool,
         &process_runner,
         &evidence_factory,

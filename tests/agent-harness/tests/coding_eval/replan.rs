@@ -72,6 +72,8 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
     let patch_tool = WorkspacePatchAdapter::new();
     let process_runner = WorkspaceProcessRunner::new(process_environment()?);
     let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+    let inspection = AgentInspectionBuffer::new();
+    inspection.activate_project(&fixture.project);
     let controller = ExecuteMutatingAgentAction::new(
         &coordinator,
         fixture.store.as_ref(),
@@ -79,6 +81,7 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
         fixture.store.as_ref(),
         fixture.store.as_ref(),
         fixture.store.as_ref(),
+        &inspection,
         &patch_tool,
         &process_runner,
         &evidence_factory,

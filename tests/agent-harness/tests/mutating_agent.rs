@@ -3,7 +3,7 @@
 mod support;
 
 use a3_application::{
-    AdvanceAgentController, AgentControllerControl, AgentControllerSignal,
+    AdvanceAgentController, AgentControllerControl, AgentControllerSignal, AgentInspectionBuffer,
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, AppendRunEvent, CompileTaskLens, ConfirmProjectCommandAllowlist,
     ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
@@ -97,6 +97,8 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -104,6 +106,7 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             fixture.store.as_ref(),
+            &inspection,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -137,6 +140,24 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         let MutationControllerOutcome::AwaitingApproval(request_id) = first else {
             return Err(test_error("patch crossed policy without exact approval"));
         };
+        let inspection_overview = inspection
+            .overview(&fixture.project, durable.run.goal_contract().task_id())?
+            .ok_or_else(|| test_error("approval wait lost its exact patch preview"))?;
+        let inspected_patch = inspection_overview
+            .patch()
+            .ok_or_else(|| test_error("approval wait has no patch inspection"))?;
+        if inspected_patch.context().snapshot_id() != fixture.published.run().snapshot_id()
+            || inspected_patch.files().len() != 1
+            || inspected_patch.files()[0]
+                .target_path()
+                .map(a3_domain::RepositoryPath::as_bytes)
+                != Some(b"src/lib.rs".as_slice())
+            || inspected_patch.files()[0].hunks().is_empty()
+        {
+            return Err(test_error(
+                "approval wait inspection does not match the exact E3 preview",
+            ));
+        }
         if durable.run.state() != AgentControllerState::AwaitApproval
             || durable.ledger.step(step_id).map(|step| step.status())
                 != Some(TaskStepStatus::AwaitingApproval)
@@ -280,6 +301,8 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -287,6 +310,7 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             fixture.store.as_ref(),
+            &inspection,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -411,6 +435,8 @@ fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), B
         };
         let process_runner = FailingProcessRunner::default();
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -418,6 +444,7 @@ fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), B
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             fixture.store.as_ref(),
+            &inspection,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -545,6 +572,8 @@ fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<()
             inner: fixture.store.as_ref(),
             fault: MutationStoreFault::Complete(AgentRecoveryStoreFailure::Unavailable),
         };
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -552,6 +581,7 @@ fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<()
             fixture.store.as_ref(),
             &failing_recovery,
             fixture.store.as_ref(),
+            &inspection,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -808,6 +838,8 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
                 inner: fixture.store.as_ref(),
                 fault: MutationStoreFault::Begin(failure),
             };
+            let inspection = AgentInspectionBuffer::new();
+            inspection.activate_project(&fixture.project);
             let controller = ExecuteMutatingAgentAction::new(
                 &coordinator,
                 fixture.store.as_ref(),
@@ -815,6 +847,7 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
                 fixture.store.as_ref(),
                 &faulting_recovery,
                 fixture.store.as_ref(),
+                &inspection,
                 &patch_tool,
                 &process_runner,
                 &evidence_factory,
@@ -925,6 +958,8 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
             let patch_tool = WorkspacePatchAdapter::new();
             let process_runner = ScriptedProcessRunner::new(mode);
             let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+            let inspection = AgentInspectionBuffer::new();
+            inspection.activate_project(&fixture.project);
             let controller = ExecuteMutatingAgentAction::new(
                 &coordinator,
                 fixture.store.as_ref(),
@@ -932,6 +967,7 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
                 fixture.store.as_ref(),
                 fixture.store.as_ref(),
                 fixture.store.as_ref(),
+                &inspection,
                 &patch_tool,
                 &process_runner,
                 &evidence_factory,
@@ -977,6 +1013,22 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
             {
                 return Err(test_error(
                     "process terminal state produced the wrong controller outcome",
+                ));
+            }
+            let process_inspection =
+                inspection.overview(&fixture.project, durable.run.goal_contract().task_id())?;
+            if matches!(mode, ScriptedProcessMode::CancelledBeforeStart) {
+                if process_inspection.is_some() {
+                    return Err(test_error(
+                        "cancel before process start produced fabricated log evidence",
+                    ));
+                }
+            } else if process_inspection
+                .as_ref()
+                .is_none_or(|overview| overview.processes().len() != 1)
+            {
+                return Err(test_error(
+                    "completed process result was not retained for explicit inspection",
                 ));
             }
             let attempt = fixture
@@ -1042,6 +1094,8 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
         let patch_tool = WorkspacePatchAdapter::new();
         let process_runner = FailingProcessRunner::default();
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -1049,6 +1103,7 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             fixture.store.as_ref(),
+            &inspection,
             &patch_tool,
             &process_runner,
             &evidence_factory,
