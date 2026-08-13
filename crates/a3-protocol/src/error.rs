@@ -95,6 +95,14 @@ pub enum ErrorCodeV1 {
     DeepMapNotRunning,
     /// Resume was requested without a validated paused checkpoint.
     DeepMapNotPaused,
+    /// Settings request fields or optimistic revision violated the strict contract.
+    InvalidSettingsRequest,
+    /// The configured endpoint is invalid, unsafe, or remote-blocked for probing.
+    ModelEndpointInvalid,
+    /// Another explicit model capability probe is still active.
+    ModelProbeAlreadyActive,
+    /// Model settings or explicit probe could not be completed safely.
+    ModelSettingsUnavailable,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -239,6 +247,18 @@ impl CommandErrorV1 {
             ErrorCodeV1::DeepMapNotRunning => "No Deep Map attempt is currently running.",
             ErrorCodeV1::DeepMapNotPaused => {
                 "No validated paused Deep Map checkpoint is available."
+            }
+            ErrorCodeV1::InvalidSettingsRequest => {
+                "The Settings request is outside the supported bounds or no longer current."
+            }
+            ErrorCodeV1::ModelEndpointInvalid => {
+                "The model endpoint is invalid, unsafe, or not authorized for this probe."
+            }
+            ErrorCodeV1::ModelProbeAlreadyActive => {
+                "Another explicit model capability probe is already running."
+            }
+            ErrorCodeV1::ModelSettingsUnavailable => {
+                "Local model settings could not be read, stored, or probed safely."
             }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."

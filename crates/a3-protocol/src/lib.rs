@@ -24,6 +24,7 @@ mod project_removal;
 mod project_status;
 mod recent_projects;
 mod repository_tree;
+mod settings;
 mod task_lens;
 mod version;
 
@@ -124,6 +125,7 @@ pub use repository_tree::{
     QueryRepositoryTreeRequestV1, RepositoryTreeEntryKindV1, RepositoryTreeEntryV1,
     RepositoryTreePageV1, RepositoryTreeResponseV1, RepositoryTreeResultV1,
 };
+pub use settings::*;
 pub use task_lens::{
     CompileTaskLensRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
     TaskLensClaimEvidenceV1, TaskLensClaimKindV1, TaskLensClaimPolarityV1,
