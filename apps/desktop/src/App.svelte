@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import AgentGoalWorkspace from './lib/AgentGoalWorkspace.svelte';
-  import SettingsPanel from './lib/SettingsPanel.svelte';
   import ThemeControls from './lib/ThemeControls.svelte';
+  import { UiScheduler } from './lib/ui-scheduler';
   import {
     createAgentGoal,
     queryAgentGoal,
@@ -64,8 +63,6 @@
     type ModuleDependencyEdgeEvidenceV1,
     type ModuleDependencyGraphQueryV1,
     type ModuleDependencyGraphResponseV1,
-    type ModuleDependencyNodeV1,
-    type ModuleDependencyRelationV1,
   } from './lib/module-dependency-graph';
   import {
     queryModuleTree,
@@ -178,6 +175,12 @@
     taskLensTaskLoader?: (query: TaskLensTaskQueryV1) => Promise<TaskLensTaskResponseV1>;
     taskLensCompiler?: (query: TaskLensCompileQueryV1) => Promise<TaskLensCompileResponseV1>;
   }
+
+  type AgentGoalWorkspaceComponent = typeof import('./lib/AgentGoalWorkspace.svelte').default;
+  type ModuleDependencyGraphComponent =
+    typeof import('./lib/ModuleDependencyGraphView.svelte').default;
+  type SettingsPanelComponent = typeof import('./lib/SettingsPanel.svelte').default;
+  type LazySurfaceState = 'error' | 'idle' | 'loading' | 'ready';
 
   type ViewState =
     { kind: 'loading' } | { health: HealthResponseV1; kind: 'ready' } | { kind: 'error' };
@@ -429,6 +432,8 @@
   let moduleTreeView = $state<ModuleTreeView>({ kind: 'loading' });
   let moduleTreeBreadcrumbs = $state<ModuleTreeBreadcrumb[]>([]);
   let moduleTreeLoadingMore = $state(false);
+  let moduleTreePageCursors = $state<(string | null)[]>([null]);
+  let moduleTreePageIndex = $state(0);
   let moduleDependencyGraphView = $state<ModuleDependencyGraphView>({ kind: 'idle' });
   let moduleDependencySelection = $state<{ moduleId: string; name: string } | null>(null);
   let selectedDependencyEvidence = $state<ModuleDependencyEdgeEvidenceV1 | null>(null);
@@ -441,6 +446,8 @@
   let repositoryTreeView = $state<RepositoryTreeView>({ kind: 'loading' });
   let repositoryTreeBreadcrumbs = $state<RepositoryTreeBreadcrumb[]>([]);
   let repositoryTreeLoadingMore = $state(false);
+  let repositoryTreePageCursors = $state<(string | null)[]>([null]);
+  let repositoryTreePageIndex = $state(0);
   let projectMapSearchText = $state('');
   let projectMapSearchView = $state<ProjectMapSearchView>({ kind: 'idle' });
   let projectMapMode = $state<'search' | 'taskLens'>('search');
@@ -465,10 +472,99 @@
   let moduleRuntimeFlowRequestSequence = 0;
   let moduleCardDetailRequestSequence = 0;
   let moduleCardEvidenceRequestSequence = 0;
+  let moduleDependencyGraphRequestSequence = 0;
+  let moduleTreeRequestSequence = 0;
   let projectMapSearchRequestSequence = 0;
+  let repositoryTreeRequestSequence = 0;
   let taskLensTasksRequestSequence = 0;
   let taskLensTaskRequestSequence = 0;
   let taskLensCompileRequestSequence = 0;
+  let uiScheduler: UiScheduler | null = null;
+  let appMounted = false;
+  let agentWorkspaceBoundary: HTMLElement;
+  let agentWorkspaceComponent = $state<AgentGoalWorkspaceComponent | null>(null);
+  let agentWorkspaceState = $state<LazySurfaceState>('idle');
+  let settingsBoundary: HTMLElement;
+  let settingsComponent = $state<SettingsPanelComponent | null>(null);
+  let settingsState = $state<LazySurfaceState>('idle');
+  let ModuleDependencyGraph = $state<ModuleDependencyGraphComponent | null>(null);
+  let moduleDependencyGraphChunkState = $state<LazySurfaceState>('idle');
+
+  function projectGeneration(): number | null {
+    return uiScheduler?.generation ?? null;
+  }
+
+  function isCurrentProjectGeneration(generation: number | null): boolean {
+    return generation === null || uiScheduler?.isCurrent(generation) === true;
+  }
+
+  function commitProjectView(key: string, generation: number | null, commit: () => void): void {
+    if (generation === null || uiScheduler === null) {
+      commit();
+      return;
+    }
+    uiScheduler.queueCommit(key, generation, commit);
+  }
+
+  async function loadAgentWorkspaceChunk(): Promise<void> {
+    if (agentWorkspaceState === 'loading' || agentWorkspaceState === 'ready') return;
+    agentWorkspaceState = 'loading';
+    try {
+      const component = await import('./lib/AgentGoalWorkspace.svelte');
+      if (!appMounted) return;
+      agentWorkspaceComponent = component.default;
+      agentWorkspaceState = 'ready';
+    } catch {
+      if (appMounted) agentWorkspaceState = 'error';
+    }
+  }
+
+  async function loadSettingsChunk(): Promise<void> {
+    if (settingsState === 'loading' || settingsState === 'ready') return;
+    settingsState = 'loading';
+    try {
+      const component = await import('./lib/SettingsPanel.svelte');
+      if (!appMounted) return;
+      settingsComponent = component.default;
+      settingsState = 'ready';
+    } catch {
+      if (appMounted) settingsState = 'error';
+    }
+  }
+
+  async function loadModuleDependencyGraphChunk(): Promise<void> {
+    if (
+      moduleDependencyGraphChunkState === 'loading' ||
+      moduleDependencyGraphChunkState === 'ready'
+    )
+      return;
+    moduleDependencyGraphChunkState = 'loading';
+    try {
+      const component = await import('./lib/ModuleDependencyGraphView.svelte');
+      if (!appMounted) return;
+      ModuleDependencyGraph = component.default;
+      moduleDependencyGraphChunkState = 'ready';
+    } catch {
+      if (appMounted) moduleDependencyGraphChunkState = 'error';
+    }
+  }
+
+  function observeLazySurface(element: HTMLElement, load: () => Promise<void>): void {
+    if (typeof IntersectionObserver === 'undefined') {
+      void load();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        void load();
+      },
+      { rootMargin: '600px 0px' },
+    );
+    observer.observe(element);
+    uiScheduler?.ownAppCleanup(() => observer.disconnect());
+  }
 
   function resetModuleCardEvidence(): void {
     moduleCardEvidenceRequestSequence += 1;
@@ -510,6 +606,39 @@
     selectedTaskLensStepId = '';
   }
 
+  function resetProjectOwnedUi(kind: 'idle' | 'noProject'): void {
+    const noProject = kind === 'noProject';
+    indexActivityView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    indexOverviewView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    moduleCardFreshnessView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    moduleTreeRequestSequence += 1;
+    moduleTreeView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    moduleTreeBreadcrumbs = [];
+    moduleTreeLoadingMore = false;
+    moduleTreePageCursors = [null];
+    moduleTreePageIndex = 0;
+    moduleDependencyGraphRequestSequence += 1;
+    moduleDependencyGraphView = { kind };
+    moduleDependencySelection = null;
+    selectedDependencyEvidence = null;
+    resetModuleCardDetail(kind);
+    resetModuleRuntime(kind);
+    repositoryTreeRequestSequence += 1;
+    repositoryTreeView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    repositoryTreeBreadcrumbs = [];
+    repositoryTreeLoadingMore = false;
+    repositoryTreePageCursors = [null];
+    repositoryTreePageIndex = 0;
+    projectMapSearchText = '';
+    resetProjectMapSearch(kind);
+    projectMapMode = 'search';
+    resetTaskLens(kind);
+    deepMapView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
+    deepMapActionView = { kind: 'idle' };
+    deepMapBudgetProfile = null;
+    indexActivityObserved = false;
+  }
+
   async function loadHealth(): Promise<void> {
     healthView = { kind: 'loading' };
 
@@ -521,82 +650,103 @@
   }
 
   onMount(() => {
+    const scheduler = new UiScheduler({
+      cancel: (frameId) => window.cancelAnimationFrame(frameId),
+      request: (callback) => window.requestAnimationFrame(callback),
+    });
+    uiScheduler = scheduler;
+    appMounted = true;
+    observeLazySurface(agentWorkspaceBoundary, loadAgentWorkspaceChunk);
+    observeLazySurface(settingsBoundary, loadSettingsChunk);
     void loadHealth();
-    void loadProjectStatus();
     void loadRecentProjects();
-    void loadIndexActivity();
-    void loadIndexOverview();
-    void loadModuleCardFreshness();
-    void loadModuleTreeRoot();
-    void loadRepositoryTreeRoot();
-    void loadDeepMap();
+    void initializeProjectViews();
     const activityTimer = window.setInterval(() => {
-      void loadIndexActivity();
-      void loadDeepMap();
+      pollProjectActivity();
     }, 500);
-    return () => window.clearInterval(activityTimer);
+    scheduler.ownAppCleanup(() => window.clearInterval(activityTimer));
+    return () => {
+      appMounted = false;
+      scheduler.dispose();
+      if (uiScheduler === scheduler) uiScheduler = null;
+    };
   });
 
-  async function loadIndexActivity(): Promise<void> {
+  async function initializeProjectViews(): Promise<void> {
+    await loadProjectStatus();
+    pollProjectActivity();
+    await Promise.all([
+      loadIndexOverview(),
+      loadModuleCardFreshness(),
+      loadModuleTreeRoot(),
+      loadRepositoryTreeRoot(),
+    ]);
+  }
+
+  function pollProjectActivity(): void {
+    if (uiScheduler === null) {
+      void Promise.all([loadIndexActivity(), loadDeepMap()]);
+      return;
+    }
+    uiScheduler.poll('project-activity', async (generation) => {
+      await Promise.all([loadIndexActivity(generation), loadDeepMap(generation)]);
+    });
+  }
+
+  async function loadIndexActivity(generation = projectGeneration()): Promise<void> {
     try {
-      const previousSucceeded =
-        indexActivityView.kind === 'active' &&
-        indexActivityView.result.activity.state === 'succeeded';
       const response = await indexActivityLoader();
-      indexActivityView =
-        response.result.status === 'active'
-          ? { kind: 'active', result: response.result }
-          : { kind: 'noProject' };
-      if (
-        indexActivityObserved &&
-        response.result.status === 'active' &&
-        response.result.activity.state === 'succeeded' &&
-        !previousSucceeded
-      ) {
-        void loadIndexOverview();
-        void loadModuleCardFreshness();
-        void loadModuleTreeRoot();
-        if (moduleDependencySelection !== null) {
-          void loadModuleDependencyGraph(
-            moduleDependencySelection.moduleId,
-            moduleDependencySelection.name,
-          );
+      commitProjectView('index-activity', generation, () => {
+        const previousSucceeded =
+          indexActivityView.kind === 'active' &&
+          indexActivityView.result.activity.state === 'succeeded';
+        indexActivityView =
+          response.result.status === 'active'
+            ? { kind: 'active', result: response.result }
+            : { kind: 'noProject' };
+        if (
+          indexActivityObserved &&
+          response.result.status === 'active' &&
+          response.result.activity.state === 'succeeded' &&
+          !previousSucceeded
+        ) {
+          void loadIndexOverview();
+          void loadModuleCardFreshness();
+          void loadModuleTreeRoot();
+          if (moduleDependencySelection !== null) {
+            void loadModuleDependencyGraph(
+              moduleDependencySelection.moduleId,
+              moduleDependencySelection.name,
+            );
+          }
+          if (moduleRuntimeSelection !== null) {
+            void loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
+          }
+          if (moduleCardSelection !== null) {
+            void loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
+          }
+          resetProjectMapSearch('idle');
+          taskLensCompileRequestSequence += 1;
+          taskLensView = { kind: 'idle' };
+          void loadRepositoryTreeRoot();
+        } else if (response.result.status === 'noProject') {
+          resetProjectOwnedUi('noProject');
         }
-        if (moduleRuntimeSelection !== null) {
-          void loadModuleRuntimeMap(moduleRuntimeSelection.moduleId, moduleRuntimeSelection.name);
-        }
-        if (moduleCardSelection !== null) {
-          void loadModuleCardDetail(moduleCardSelection.moduleId, moduleCardSelection.name);
-        }
-        resetProjectMapSearch('idle');
-        taskLensCompileRequestSequence += 1;
-        taskLensView = { kind: 'idle' };
-        void loadRepositoryTreeRoot();
-      } else if (response.result.status === 'noProject') {
-        indexOverviewView = { kind: 'noProject' };
-        moduleCardFreshnessView = { kind: 'noProject' };
-        moduleTreeView = { kind: 'noProject' };
-        moduleTreeBreadcrumbs = [];
-        moduleDependencyGraphView = { kind: 'noProject' };
-        moduleDependencySelection = null;
-        selectedDependencyEvidence = null;
-        resetModuleCardDetail('noProject');
-        resetModuleRuntime('noProject');
-        repositoryTreeView = { kind: 'noProject' };
-        repositoryTreeBreadcrumbs = [];
-        resetProjectMapSearch('noProject');
-        resetTaskLens('noProject');
-      }
-      indexActivityObserved = true;
+        indexActivityObserved = true;
+      });
     } catch {
-      indexActivityView = { kind: 'error' };
+      commitProjectView('index-activity', generation, () => {
+        indexActivityView = { kind: 'error' };
+      });
     }
   }
 
-  async function loadIndexOverview(): Promise<void> {
+  async function loadIndexOverview(generation = projectGeneration()): Promise<void> {
+    if (!isCurrentProjectGeneration(generation)) return;
     indexOverviewView = { kind: 'loading' };
     try {
       const response = await indexOverviewLoader();
+      if (!isCurrentProjectGeneration(generation)) return;
       if (response.result.status === 'published') {
         indexOverviewView = { kind: 'published', result: response.result };
       } else if (response.result.status === 'noPublishedIndex') {
@@ -605,14 +755,16 @@
         indexOverviewView = { kind: 'noProject' };
       }
     } catch {
-      indexOverviewView = { kind: 'error' };
+      if (isCurrentProjectGeneration(generation)) indexOverviewView = { kind: 'error' };
     }
   }
 
-  async function loadModuleCardFreshness(): Promise<void> {
+  async function loadModuleCardFreshness(generation = projectGeneration()): Promise<void> {
+    if (!isCurrentProjectGeneration(generation)) return;
     moduleCardFreshnessView = { kind: 'loading' };
     try {
       const response = await moduleCardFreshnessLoader();
+      if (!isCurrentProjectGeneration(generation)) return;
       if (response.result.status === 'available') {
         moduleCardFreshnessView = { kind: 'available', result: response.result };
       } else if (response.result.status === 'noPublishedIndex') {
@@ -621,60 +773,61 @@
         moduleCardFreshnessView = { kind: 'noProject' };
       }
     } catch {
-      moduleCardFreshnessView = { kind: 'error' };
+      if (isCurrentProjectGeneration(generation)) moduleCardFreshnessView = { kind: 'error' };
     }
   }
 
   async function loadModuleTree(
     parentModuleId: string | null,
     afterModuleId: string | null = null,
+    generation = projectGeneration(),
+    expectedPublication: { indexRunId: string; snapshotId: string } | null = null,
   ): Promise<void> {
-    const append = afterModuleId !== null;
-    if (append) {
+    if (!isCurrentProjectGeneration(generation)) return;
+    const requestSequence = ++moduleTreeRequestSequence;
+    if (expectedPublication !== null) {
       moduleTreeLoadingMore = true;
     } else {
       moduleTreeView = { kind: 'loading' };
     }
     try {
       const response = await moduleTreeLoader({ afterModuleId, limit: 50, parentModuleId });
+      if (requestSequence !== moduleTreeRequestSequence || !isCurrentProjectGeneration(generation))
+        return;
       if (response.result.status === 'available') {
-        if (append && moduleTreeView.kind === 'available') {
-          const current = moduleTreeView.result.page;
-          const next = response.result.page;
+        const page = response.result.page;
+        if (expectedPublication !== null) {
           const compatible =
-            current.indexRunId === next.indexRunId &&
-            current.snapshotId === next.snapshotId &&
-            current.parentModuleId === next.parentModuleId &&
-            current.nextAfterModuleId === afterModuleId &&
-            !next.entries.some((entry) =>
-              current.entries.some((currentEntry) => currentEntry.moduleId === entry.moduleId),
-            );
+            expectedPublication.indexRunId === page.indexRunId &&
+            expectedPublication.snapshotId === page.snapshotId &&
+            page.parentModuleId === parentModuleId;
           if (!compatible) {
             moduleTreeView = { kind: 'error' };
+            moduleTreePageCursors = [null];
+            moduleTreePageIndex = 0;
             return;
           }
-          moduleTreeView = {
-            kind: 'available',
-            result: {
-              page: { ...next, entries: [...current.entries, ...next.entries] },
-              status: 'available',
-            },
-          };
-        } else {
-          moduleTreeView = { kind: 'available', result: response.result };
         }
+        moduleTreeView = { kind: 'available', result: response.result };
       } else if (response.result.status === 'projectionUnavailable') {
         moduleTreeView = { kind: 'projectionUnavailable' };
+        moduleTreePageCursors = [null];
+        moduleTreePageIndex = 0;
       } else if (response.result.status === 'noPublishedIndex') {
         moduleTreeView = { kind: 'noPublishedIndex' };
+        moduleTreePageCursors = [null];
+        moduleTreePageIndex = 0;
       } else {
         moduleTreeView = { kind: 'noProject' };
         moduleTreeBreadcrumbs = [];
+        moduleTreePageCursors = [null];
+        moduleTreePageIndex = 0;
       }
     } catch {
-      moduleTreeView = { kind: 'error' };
+      if (requestSequence === moduleTreeRequestSequence && isCurrentProjectGeneration(generation))
+        moduleTreeView = { kind: 'error' };
     } finally {
-      moduleTreeLoadingMore = false;
+      if (requestSequence === moduleTreeRequestSequence) moduleTreeLoadingMore = false;
     }
   }
 
@@ -746,6 +899,8 @@
 
   async function loadModuleTreeRoot(): Promise<void> {
     moduleTreeBreadcrumbs = [];
+    moduleTreePageCursors = [null];
+    moduleTreePageIndex = 0;
     await loadModuleTree(null);
   }
 
@@ -755,6 +910,8 @@
       ...moduleTreeBreadcrumbs,
       { moduleId: entry.moduleId, name: entry.name },
     ];
+    moduleTreePageCursors = [null];
+    moduleTreePageIndex = 0;
     await loadModuleTree(entry.moduleId);
   }
 
@@ -766,17 +923,47 @@
     const target = moduleTreeBreadcrumbs[index];
     if (target === undefined) return;
     moduleTreeBreadcrumbs = moduleTreeBreadcrumbs.slice(0, index + 1);
+    moduleTreePageCursors = [null];
+    moduleTreePageIndex = 0;
     await loadModuleTree(target.moduleId);
   }
 
-  async function loadMoreModules(): Promise<void> {
+  async function loadNextModulePage(): Promise<void> {
     if (moduleTreeView.kind !== 'available') return;
     const page = moduleTreeView.result.page;
     if (page.nextAfterModuleId === null) return;
-    await loadModuleTree(page.parentModuleId, page.nextAfterModuleId);
+    const nextCursor = page.nextAfterModuleId;
+    await loadModuleTree(page.parentModuleId, nextCursor, projectGeneration(), {
+      indexRunId: page.indexRunId,
+      snapshotId: page.snapshotId,
+    });
+    if (moduleTreeView.kind !== 'available') return;
+    moduleTreePageCursors = [
+      ...moduleTreePageCursors.slice(0, moduleTreePageIndex + 1),
+      nextCursor,
+    ];
+    moduleTreePageIndex += 1;
   }
 
-  async function loadModuleDependencyGraph(moduleId: string, name: string): Promise<void> {
+  async function loadPreviousModulePage(): Promise<void> {
+    if (moduleTreeView.kind !== 'available' || moduleTreePageIndex === 0) return;
+    const page = moduleTreeView.result.page;
+    const previousCursor = moduleTreePageCursors[moduleTreePageIndex - 1];
+    if (previousCursor === undefined) return;
+    await loadModuleTree(page.parentModuleId, previousCursor, projectGeneration(), {
+      indexRunId: page.indexRunId,
+      snapshotId: page.snapshotId,
+    });
+    if (moduleTreeView.kind === 'available') moduleTreePageIndex -= 1;
+  }
+
+  async function loadModuleDependencyGraph(
+    moduleId: string,
+    name: string,
+    generation = projectGeneration(),
+  ): Promise<void> {
+    if (!isCurrentProjectGeneration(generation)) return;
+    const requestSequence = ++moduleDependencyGraphRequestSequence;
     moduleDependencySelection = { moduleId, name };
     moduleDependencyGraphView = { kind: 'loading' };
     selectedDependencyEvidence = null;
@@ -785,6 +972,11 @@
         centerModuleId: moduleId,
         nodeLimit: 50,
       });
+      if (
+        requestSequence !== moduleDependencyGraphRequestSequence ||
+        !isCurrentProjectGeneration(generation)
+      )
+        return;
       if (response.result.status === 'available') {
         moduleDependencyGraphView = { kind: 'available', result: response.result };
       } else if (response.result.status === 'centerUnavailable') {
@@ -798,20 +990,27 @@
         moduleDependencySelection = null;
       }
     } catch {
-      moduleDependencyGraphView = { kind: 'error' };
+      if (
+        requestSequence === moduleDependencyGraphRequestSequence &&
+        isCurrentProjectGeneration(generation)
+      )
+        moduleDependencyGraphView = { kind: 'error' };
     }
   }
 
   async function openModuleDependencies(entry: ModuleTreeEntryV1): Promise<void> {
-    await loadModuleDependencyGraph(entry.moduleId, entry.name);
+    await Promise.all([
+      loadModuleDependencyGraphChunk(),
+      loadModuleDependencyGraph(entry.moduleId, entry.name),
+    ]);
   }
 
   async function reloadModuleDependencies(): Promise<void> {
     if (moduleDependencySelection === null) return;
-    await loadModuleDependencyGraph(
-      moduleDependencySelection.moduleId,
-      moduleDependencySelection.name,
-    );
+    await Promise.all([
+      loadModuleDependencyGraphChunk(),
+      loadModuleDependencyGraph(moduleDependencySelection.moduleId, moduleDependencySelection.name),
+    ]);
   }
 
   async function loadModuleRuntimeMap(moduleId: string, name: string): Promise<void> {
@@ -917,9 +1116,12 @@
   async function loadRepositoryTree(
     directoryPathHex: string | null,
     afterNameHex: string | null = null,
+    generation = projectGeneration(),
+    expectedPublication: { indexRunId: string; snapshotId: string } | null = null,
   ): Promise<void> {
-    const append = afterNameHex !== null;
-    if (append) {
+    if (!isCurrentProjectGeneration(generation)) return;
+    const requestSequence = ++repositoryTreeRequestSequence;
+    if (expectedPublication !== null) {
       repositoryTreeLoadingMore = true;
     } else {
       repositoryTreeView = { kind: 'loading' };
@@ -930,42 +1132,44 @@
         directoryPathHex,
         limit: 50,
       });
+      if (
+        requestSequence !== repositoryTreeRequestSequence ||
+        !isCurrentProjectGeneration(generation)
+      )
+        return;
       if (response.result.status === 'available') {
-        if (append && repositoryTreeView.kind === 'available') {
-          const current = repositoryTreeView.result.page;
-          const next = response.result.page;
+        const page = response.result.page;
+        if (expectedPublication !== null) {
           const compatible =
-            current.indexRunId === next.indexRunId &&
-            current.snapshotId === next.snapshotId &&
-            current.directoryPathHex === next.directoryPathHex &&
-            current.nextAfterNameHex === afterNameHex &&
-            !next.entries.some((entry) =>
-              current.entries.some((currentEntry) => currentEntry.pathHex === entry.pathHex),
-            );
+            expectedPublication.indexRunId === page.indexRunId &&
+            expectedPublication.snapshotId === page.snapshotId &&
+            page.directoryPathHex === directoryPathHex;
           if (!compatible) {
             repositoryTreeView = { kind: 'error' };
+            repositoryTreePageCursors = [null];
+            repositoryTreePageIndex = 0;
             return;
           }
-          repositoryTreeView = {
-            kind: 'available',
-            result: {
-              page: { ...next, entries: [...current.entries, ...next.entries] },
-              status: 'available',
-            },
-          };
-        } else {
-          repositoryTreeView = { kind: 'available', result: response.result };
         }
+        repositoryTreeView = { kind: 'available', result: response.result };
       } else if (response.result.status === 'noPublishedIndex') {
         repositoryTreeView = { kind: 'noPublishedIndex' };
+        repositoryTreePageCursors = [null];
+        repositoryTreePageIndex = 0;
       } else {
         repositoryTreeView = { kind: 'noProject' };
         repositoryTreeBreadcrumbs = [];
+        repositoryTreePageCursors = [null];
+        repositoryTreePageIndex = 0;
       }
     } catch {
-      repositoryTreeView = { kind: 'error' };
+      if (
+        requestSequence === repositoryTreeRequestSequence &&
+        isCurrentProjectGeneration(generation)
+      )
+        repositoryTreeView = { kind: 'error' };
     } finally {
-      repositoryTreeLoadingMore = false;
+      if (requestSequence === repositoryTreeRequestSequence) repositoryTreeLoadingMore = false;
     }
   }
 
@@ -1132,6 +1336,8 @@
 
   async function loadRepositoryTreeRoot(): Promise<void> {
     repositoryTreeBreadcrumbs = [];
+    repositoryTreePageCursors = [null];
+    repositoryTreePageIndex = 0;
     await loadRepositoryTree(null);
   }
 
@@ -1141,6 +1347,8 @@
       ...repositoryTreeBreadcrumbs,
       { name: entry.name, pathHex: entry.pathHex },
     ];
+    repositoryTreePageCursors = [null];
+    repositoryTreePageIndex = 0;
     await loadRepositoryTree(entry.pathHex);
   }
 
@@ -1152,39 +1360,65 @@
     const target = repositoryTreeBreadcrumbs[index];
     if (target === undefined) return;
     repositoryTreeBreadcrumbs = repositoryTreeBreadcrumbs.slice(0, index + 1);
+    repositoryTreePageCursors = [null];
+    repositoryTreePageIndex = 0;
     await loadRepositoryTree(target.pathHex);
   }
 
-  async function loadMoreRepositoryEntries(): Promise<void> {
+  async function loadNextRepositoryPage(): Promise<void> {
     if (
       repositoryTreeView.kind !== 'available' ||
       repositoryTreeView.result.page.nextAfterNameHex === null
     )
       return;
-    await loadRepositoryTree(
-      repositoryTreeView.result.page.directoryPathHex,
-      repositoryTreeView.result.page.nextAfterNameHex,
-    );
+    const page = repositoryTreeView.result.page;
+    const nextCursor = page.nextAfterNameHex;
+    await loadRepositoryTree(page.directoryPathHex, nextCursor, projectGeneration(), {
+      indexRunId: page.indexRunId,
+      snapshotId: page.snapshotId,
+    });
+    if (repositoryTreeView.kind !== 'available') return;
+    repositoryTreePageCursors = [
+      ...repositoryTreePageCursors.slice(0, repositoryTreePageIndex + 1),
+      nextCursor,
+    ];
+    repositoryTreePageIndex += 1;
   }
 
-  async function loadDeepMap(): Promise<void> {
+  async function loadPreviousRepositoryPage(): Promise<void> {
+    if (repositoryTreeView.kind !== 'available' || repositoryTreePageIndex === 0) return;
+    const page = repositoryTreeView.result.page;
+    const previousCursor = repositoryTreePageCursors[repositoryTreePageIndex - 1];
+    if (previousCursor === undefined) return;
+    await loadRepositoryTree(page.directoryPathHex, previousCursor, projectGeneration(), {
+      indexRunId: page.indexRunId,
+      snapshotId: page.snapshotId,
+    });
+    if (repositoryTreeView.kind === 'available') repositoryTreePageIndex -= 1;
+  }
+
+  async function loadDeepMap(generation = projectGeneration()): Promise<void> {
     try {
       const response = await deepMapStatusLoader();
-      if (response.result.status === 'available') {
-        deepMapView = { kind: 'available', result: response.result };
-        if (deepMapBudgetProfile !== response.result.configuration.model.profileId) {
-          deepMapBudget = { ...response.result.configuration.defaultBudget };
-          deepMapBudgetProfile = response.result.configuration.model.profileId;
+      commitProjectView('deep-map', generation, () => {
+        if (response.result.status === 'available') {
+          deepMapView = { kind: 'available', result: response.result };
+          if (deepMapBudgetProfile !== response.result.configuration.model.profileId) {
+            deepMapBudget = { ...response.result.configuration.defaultBudget };
+            deepMapBudgetProfile = response.result.configuration.model.profileId;
+          }
+        } else if (response.result.status === 'unavailable') {
+          deepMapView = { kind: 'unavailable' };
+          deepMapBudgetProfile = null;
+        } else {
+          deepMapView = { kind: 'noProject' };
+          deepMapBudgetProfile = null;
         }
-      } else if (response.result.status === 'unavailable') {
-        deepMapView = { kind: 'unavailable' };
-        deepMapBudgetProfile = null;
-      } else {
-        deepMapView = { kind: 'noProject' };
-        deepMapBudgetProfile = null;
-      }
+      });
     } catch {
-      deepMapView = { kind: 'error' };
+      commitProjectView('deep-map', generation, () => {
+        deepMapView = { kind: 'error' };
+      });
     }
   }
 
@@ -1192,25 +1426,20 @@
     projectStatusView = { kind: 'loading' };
     try {
       const response = await projectStatusLoader();
+      const projectKey =
+        response.result.status === 'active' ? response.result.project.worktreeId : null;
+      const projectChanged = uiScheduler?.beginProject(projectKey) ?? false;
+      if (projectChanged) {
+        resetProjectOwnedUi(response.result.status === 'active' ? 'idle' : 'noProject');
+      }
       projectStatusView =
         response.result.status === 'active'
           ? { kind: 'active', result: response.result }
           : { kind: 'noProject' };
       if (response.result.status === 'noProject') {
-        indexOverviewView = { kind: 'noProject' };
-        moduleCardFreshnessView = { kind: 'noProject' };
-        moduleTreeView = { kind: 'noProject' };
-        moduleTreeBreadcrumbs = [];
-        moduleDependencyGraphView = { kind: 'noProject' };
-        moduleDependencySelection = null;
-        selectedDependencyEvidence = null;
-        resetModuleCardDetail('noProject');
-        resetModuleRuntime('noProject');
-        repositoryTreeView = { kind: 'noProject' };
-        repositoryTreeBreadcrumbs = [];
-        resetProjectMapSearch('noProject');
-        resetTaskLens('noProject');
+        resetProjectOwnedUi('noProject');
       }
+      if (projectChanged && response.result.status === 'active') pollProjectActivity();
     } catch {
       projectStatusView = { kind: 'error' };
     }
@@ -1245,24 +1474,18 @@
       if (response.result.status === 'opened') {
         projectView = { kind: 'opened' };
         removalView = { kind: 'idle' };
-        indexActivityObserved = false;
-        moduleDependencyGraphView = { kind: 'idle' };
-        moduleDependencySelection = null;
-        selectedDependencyEvidence = null;
-        resetModuleCardDetail('idle');
-        resetModuleRuntime('idle');
-        projectMapSearchText = '';
-        resetProjectMapSearch('idle');
-        projectMapMode = 'search';
-        resetTaskLens('idle');
+        if (uiScheduler?.beginProject(response.result.project.worktreeId) ?? false) {
+          resetProjectOwnedUi('idle');
+        }
         await loadProjectStatus();
-        await loadIndexActivity();
-        await loadIndexOverview();
-        await loadModuleCardFreshness();
-        await loadModuleTreeRoot();
-        await loadRepositoryTreeRoot();
-        await loadDeepMap();
-        await loadRecentProjects();
+        pollProjectActivity();
+        await Promise.all([
+          loadIndexOverview(),
+          loadModuleCardFreshness(),
+          loadModuleTreeRoot(),
+          loadRepositoryTreeRoot(),
+          loadRecentProjects(),
+        ]);
       } else {
         projectView = { kind: 'cancelled' };
       }
@@ -1324,26 +1547,8 @@
       removalView = { kind: 'removed' };
       projectView = { kind: 'idle' };
       projectStatusView = { kind: 'noProject' };
-      indexActivityView = { kind: 'noProject' };
-      indexOverviewView = { kind: 'noProject' };
-      moduleCardFreshnessView = { kind: 'noProject' };
-      moduleTreeView = { kind: 'noProject' };
-      moduleTreeBreadcrumbs = [];
-      moduleDependencyGraphView = { kind: 'noProject' };
-      moduleDependencySelection = null;
-      selectedDependencyEvidence = null;
-      resetModuleCardDetail('noProject');
-      resetModuleRuntime('noProject');
-      projectMapSearchText = '';
-      resetProjectMapSearch('noProject');
-      projectMapMode = 'search';
-      resetTaskLens('noProject');
-      repositoryTreeView = { kind: 'noProject' };
-      repositoryTreeBreadcrumbs = [];
-      deepMapView = { kind: 'noProject' };
-      deepMapActionView = { kind: 'idle' };
-      deepMapBudgetProfile = null;
-      indexActivityObserved = false;
+      uiScheduler?.beginProject(null);
+      resetProjectOwnedUi('noProject');
       await loadRecentProjects();
     } catch (error) {
       removalView = {
@@ -1426,35 +1631,6 @@
 
   function moduleFeatureLabel(feature: ModuleTreeEntryV1['centralSymbols']): string {
     return `${countLabel(feature.count)}${feature.truncated ? '+' : ''}`;
-  }
-
-  function moduleDependencyRelationLabel(relation: ModuleDependencyRelationV1): string {
-    const labels: Record<ModuleDependencyRelationV1, string> = {
-      builds: 'baut',
-      calls: 'ruft auf',
-      configures: 'konfiguriert',
-      documents: 'dokumentiert',
-      exports: 'exportiert nach',
-      extends: 'erweitert',
-      implements: 'implementiert',
-      imports: 'importiert',
-      reads: 'liest',
-      tests: 'testet',
-      writes: 'schreibt',
-    };
-    return labels[relation];
-  }
-
-  function moduleDependencyNodeName(moduleId: string): string {
-    if (moduleDependencyGraphView.kind !== 'available') return moduleId.slice(0, 12);
-    return (
-      moduleDependencyGraphView.result.graph.nodes.find((node) => node.moduleId === moduleId)
-        ?.name ?? moduleId.slice(0, 12)
-    );
-  }
-
-  function moduleDependencyNodeKind(node: ModuleDependencyNodeV1): string {
-    return node.kind === 'manifestBoundary' ? 'Manifest-Grenze' : 'Pfad-Grenze';
   }
 
   function moduleRuntimeTargetLabel(target: ModuleRuntimeFlowTargetV1): string {
@@ -1997,7 +2173,9 @@
           {:else if indexOverviewView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
               <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={loadIndexOverview}>Indexübersicht erneut laden</button>
+              <button type="button" onclick={() => void loadIndexOverview()}
+                >Indexübersicht erneut laden</button
+              >
             </div>
           {/if}
         </div>
@@ -2571,15 +2749,25 @@
                 {/each}
               </ul>
             {/if}
-            {#if repositoryTreeView.result.page.nextAfterNameHex !== null}
-              <button
-                class="repository-tree-more"
-                type="button"
-                disabled={repositoryTreeLoadingMore}
-                onclick={loadMoreRepositoryEntries}
-              >
-                {repositoryTreeLoadingMore ? 'Weitere Einträge werden geladen …' : 'Weitere laden'}
-              </button>
+            {#if repositoryTreePageIndex > 0 || repositoryTreeView.result.page.nextAfterNameHex !== null}
+              <nav class="repository-tree-pagination" aria-label="Repository-Baum-Seiten">
+                <button
+                  type="button"
+                  disabled={repositoryTreeLoadingMore || repositoryTreePageIndex === 0}
+                  onclick={loadPreviousRepositoryPage}
+                >
+                  Vorherige Seite
+                </button>
+                <span>Seite {repositoryTreePageIndex + 1} · höchstens 50 Einträge im DOM</span>
+                <button
+                  type="button"
+                  disabled={repositoryTreeLoadingMore ||
+                    repositoryTreeView.result.page.nextAfterNameHex === null}
+                  onclick={loadNextRepositoryPage}
+                >
+                  {repositoryTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
+                </button>
+              </nav>
             {/if}
           {:else if repositoryTreeView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
@@ -2734,15 +2922,25 @@
                 {/each}
               </ul>
             {/if}
-            {#if moduleTreeView.result.page.nextAfterModuleId !== null}
-              <button
-                class="repository-tree-more"
-                type="button"
-                disabled={moduleTreeLoadingMore}
-                onclick={loadMoreModules}
-              >
-                {moduleTreeLoadingMore ? 'Weitere Module werden geladen …' : 'Weitere Module laden'}
-              </button>
+            {#if moduleTreePageIndex > 0 || moduleTreeView.result.page.nextAfterModuleId !== null}
+              <nav class="repository-tree-pagination" aria-label="Modulbaum-Seiten">
+                <button
+                  type="button"
+                  disabled={moduleTreeLoadingMore || moduleTreePageIndex === 0}
+                  onclick={loadPreviousModulePage}
+                >
+                  Vorherige Seite
+                </button>
+                <span>Seite {moduleTreePageIndex + 1} · höchstens 50 Module im DOM</span>
+                <button
+                  type="button"
+                  disabled={moduleTreeLoadingMore ||
+                    moduleTreeView.result.page.nextAfterModuleId === null}
+                  onclick={loadNextModulePage}
+                >
+                  {moduleTreeLoadingMore ? 'Seite wird geladen …' : 'Nächste Seite'}
+                </button>
+              </nav>
             {/if}
           {:else if moduleTreeView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
@@ -3521,131 +3719,20 @@
             </p>
           {:else if moduleDependencyGraphView.kind === 'available'}
             {@const graph = moduleDependencyGraphView.result.graph}
-            {@const centerNode = graph.nodes.find((node) => node.moduleId === graph.centerModuleId)}
-            <p class="index-snapshot">
-              Indexlauf <code>{graph.indexRunId}</code>
-            </p>
-            <dl class="module-tree-summary dependency-summary">
-              <div>
-                <dt>Beobachtete Nachbarn</dt>
-                <dd>{countLabel(graph.observedNeighborCount)}{graph.nodesTruncated ? '+' : ''}</dd>
+            {#if ModuleDependencyGraph !== null}
+              <ModuleDependencyGraph
+                {graph}
+                selectedEvidence={selectedDependencyEvidence}
+                onSelectEvidence={(evidence) => (selectedDependencyEvidence = evidence)}
+                onClearEvidence={() => (selectedDependencyEvidence = null)}
+              />
+            {:else if moduleDependencyGraphChunkState === 'error'}
+              <div class="recent-projects-error" role="alert">
+                <p>Die lokale Graphdarstellung konnte nicht geladen werden.</p>
+                <button type="button" onclick={loadModuleDependencyGraphChunk}>Erneut laden</button>
               </div>
-              <div>
-                <dt>Relationsgruppen</dt>
-                <dd>{countLabel(graph.observedEdgeGroupCount)}{graph.edgesTruncated ? '+' : ''}</dd>
-              </div>
-              <div>
-                <dt>Inspizierte Kanten</dt>
-                <dd>
-                  {countLabel(graph.inspectedEdgeCount)}{graph.sourceEdgesTruncated ? '+' : ''}
-                </dd>
-              </div>
-              <div>
-                <dt>Nicht zugeordnet</dt>
-                <dd>{countLabel(graph.unmappedEdgeCount)}</dd>
-              </div>
-            </dl>
-            {#if graph.sourceEdgesTruncated || graph.nodesTruncated || graph.edgesTruncated || graph.unmappedEdgeCount !== '0'}
-              <div class="dependency-boundary-note" role="note">
-                <strong>Begrenzter Ausschnitt.</strong>
-                {#if graph.sourceEdgesTruncated}
-                  Weitere Graphkanten liegen hinter der 4.096-Kanten-Grenze.
-                {/if}
-                {#if graph.nodesTruncated}
-                  Weitere beobachtete Module sind nicht gerendert.
-                {/if}
-                {#if graph.edgesTruncated}
-                  Weitere Relationsgruppen der sichtbaren Module sind ausgeblendet.
-                {/if}
-                {#if graph.unmappedEdgeCount !== '0'}
-                  {countLabel(graph.unmappedEdgeCount)} inspizierte Kanten besitzen keinen eindeutig zuordenbaren
-                  Modulendpunkt.
-                {/if}
-              </div>
-            {/if}
-            <div class="module-dependency-graph" aria-label="Begrenzter Modulabhängigkeitsgraph">
-              {#if centerNode !== undefined}
-                <div class="dependency-center-node">
-                  <span>Zentrum</span>
-                  <strong>{centerNode.name}{centerNode.nameTruncated ? '…' : ''}</strong>
-                  <small>{moduleDependencyNodeKind(centerNode)}</small>
-                </div>
-              {/if}
-              {#if graph.edges.length === 0}
-                <p class="ready-label">
-                  Keine zugeordneten direkten Modulabhängigkeiten beobachtet.
-                </p>
-              {:else}
-                <ol class="dependency-edge-list">
-                  {#each graph.edges as edge (edge.sourceModuleId + edge.targetModuleId + edge.relation)}
-                    <li>
-                      <div class="dependency-relation">
-                        <strong>{moduleDependencyNodeName(edge.sourceModuleId)}</strong>
-                        <span>{moduleDependencyRelationLabel(edge.relation)}</span>
-                        <strong>{moduleDependencyNodeName(edge.targetModuleId)}</strong>
-                      </div>
-                      <span>{countLabel(edge.observedEvidenceCount)} beobachtete Belege</span>
-                      <button
-                        type="button"
-                        aria-label={`Evidence für ${moduleDependencyNodeName(edge.sourceModuleId)} ${moduleDependencyRelationLabel(edge.relation)} ${moduleDependencyNodeName(edge.targetModuleId)} anzeigen`}
-                        aria-pressed={selectedDependencyEvidence?.evidenceId ===
-                          edge.representativeEvidence.evidenceId}
-                        onclick={() => (selectedDependencyEvidence = edge.representativeEvidence)}
-                      >
-                        Evidence anzeigen
-                      </button>
-                    </li>
-                  {/each}
-                </ol>
-              {/if}
-              <ul class="dependency-node-list" aria-label="Gerenderte Module">
-                {#each graph.nodes as node (node.moduleId)}
-                  <li class:dependency-node-center={node.moduleId === graph.centerModuleId}>
-                    <strong>{node.name}{node.nameTruncated ? '…' : ''}</strong>
-                    <span>{moduleDependencyNodeKind(node)}</span>
-                    {#if node.representativeEvidence !== null}
-                      <code>{node.representativeEvidence.evidenceId.slice(0, 12)}</code>
-                    {:else}
-                      <span>Kein struktureller Repräsentant</span>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            </div>
-            {#if selectedDependencyEvidence !== null}
-              <aside class="dependency-evidence" aria-labelledby="dependency-evidence-heading">
-                <div>
-                  <h5 id="dependency-evidence-heading">Repräsentative Graph-Evidence</h5>
-                  <button type="button" onclick={() => (selectedDependencyEvidence = null)}>
-                    Schließen
-                  </button>
-                </div>
-                <dl>
-                  <div>
-                    <dt>Evidence-ID</dt>
-                    <dd><code>{selectedDependencyEvidence.evidenceId}</code></dd>
-                  </div>
-                  <div>
-                    <dt>Aktuelle Revision</dt>
-                    <dd>
-                      <code>{pathDisplayFromHex(selectedDependencyEvidence.pathHex)}</code>
-                      · {selectedDependencyEvidence.contentHash.slice(0, 12)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Bereich</dt>
-                    <dd>
-                      Bytes {selectedDependencyEvidence.range.startByte}–{selectedDependencyEvidence
-                        .range.endByte}
-                      · Zeile {selectedDependencyEvidence.range.start.row + 1}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Confidence</dt>
-                    <dd>{percentageLabel(selectedDependencyEvidence.confidenceBasisPoints)}</dd>
-                  </div>
-                </dl>
-              </aside>
+            {:else}
+              <p class="project-status" role="status">Graphdarstellung wird geladen …</p>
             {/if}
           {:else if moduleDependencyGraphView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
@@ -3663,7 +3750,9 @@
               <h4 id="module-card-freshness-heading">Module-Card-Aktualität</h4>
               <p>Autoritative Lebenszyklen der jeweils neuesten Karte pro Modul.</p>
             </div>
-            <button type="button" onclick={loadModuleCardFreshness}>Aktualisieren</button>
+            <button type="button" onclick={() => void loadModuleCardFreshness()}
+              >Aktualisieren</button
+            >
           </div>
           {#if moduleCardFreshnessView.kind === 'loading'}
             <p class="project-status" role="status" aria-live="polite">
@@ -3715,7 +3804,9 @@
           {:else if moduleCardFreshnessView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
               <p>Die Module-Card-Aktualität konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={loadModuleCardFreshness}>Erneut laden</button>
+              <button type="button" onclick={() => void loadModuleCardFreshness()}
+                >Erneut laden</button
+              >
             </div>
           {/if}
         </div>
@@ -3728,7 +3819,7 @@
                 Exploration sichtbar festgelegt.
               </p>
             </div>
-            <button type="button" onclick={loadDeepMap}>Status aktualisieren</button>
+            <button type="button" onclick={() => void loadDeepMap()}>Status aktualisieren</button>
           </div>
           {#if deepMapView.kind === 'loading'}
             <p class="project-status" role="status" aria-live="polite">
@@ -3863,7 +3954,7 @@
           {:else if deepMapView.kind === 'error'}
             <div class="recent-projects-error" role="alert">
               <p>Der Deep-Map-Status konnte nicht sicher gelesen werden.</p>
-              <button type="button" onclick={loadDeepMap}>Erneut laden</button>
+              <button type="button" onclick={() => void loadDeepMap()}>Erneut laden</button>
             </div>
           {/if}
         </div>
@@ -3974,15 +4065,47 @@
     </div>
   </section>
 
-  <AgentGoalWorkspace
-    activeProject={projectStatusView.kind === 'active'}
-    goalCreator={agentGoalCreator}
-    goalLoader={agentGoalLoader}
-    goalReviser={agentGoalReviser}
-    tasksLoader={agentGoalTasksLoader}
-  />
+  <div class="lazy-boundary" bind:this={agentWorkspaceBoundary}>
+    {#if agentWorkspaceComponent !== null}
+      {@const AgentWorkspace = agentWorkspaceComponent}
+      <AgentWorkspace
+        activeProject={projectStatusView.kind === 'active'}
+        goalCreator={agentGoalCreator}
+        goalLoader={agentGoalLoader}
+        goalReviser={agentGoalReviser}
+        tasksLoader={agentGoalTasksLoader}
+      />
+    {:else}
+      <section class="lazy-surface" aria-labelledby="lazy-agent-heading">
+        <h2 id="lazy-agent-heading">Agent Workspace</h2>
+        {#if agentWorkspaceState === 'error'}
+          <p role="alert">Der lokale Agent-Workspace-Chunk konnte nicht geladen werden.</p>
+          <button type="button" onclick={loadAgentWorkspaceChunk}>Erneut laden</button>
+        {:else}
+          <p role="status">Agent Workspace wird bei Sichtbarkeit geladen …</p>
+          <button type="button" onclick={loadAgentWorkspaceChunk}>Jetzt laden</button>
+        {/if}
+      </section>
+    {/if}
+  </div>
 
-  <SettingsPanel />
+  <div class="lazy-boundary" bind:this={settingsBoundary}>
+    {#if settingsComponent !== null}
+      {@const Settings = settingsComponent}
+      <Settings />
+    {:else}
+      <section class="lazy-surface" aria-labelledby="lazy-settings-heading">
+        <h2 id="lazy-settings-heading">Modelle, Ressourcen und Datenschutz</h2>
+        {#if settingsState === 'error'}
+          <p role="alert">Der lokale Settings-Chunk konnte nicht geladen werden.</p>
+          <button type="button" onclick={loadSettingsChunk}>Erneut laden</button>
+        {:else}
+          <p role="status">Settings werden bei Sichtbarkeit geladen …</p>
+          <button type="button" onclick={loadSettingsChunk}>Jetzt laden</button>
+        {/if}
+      </section>
+    {/if}
+  </div>
 
   <footer>
     <span>Offline by default</span>

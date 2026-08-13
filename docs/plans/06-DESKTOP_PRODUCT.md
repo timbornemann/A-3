@@ -610,18 +610,41 @@ U9-Akzeptanzkriterien objektiv nachgewiesen und U9 ist abgeschlossen.
 
 ## U10 Frontend Performance
 
-- [ ] große Editor- und Graphmodule lazy laden
-- [ ] Listen virtualisieren
-- [ ] paginierte IPC-Queries
-- [ ] Eventbatching
-- [ ] Renderingprofil für Indexburst
-- [ ] Memory-Leak-Test bei Projektwechseln
+- [x] große Editor- und Graphmodule lazy laden
+- [x] Listen virtualisieren
+- [x] paginierte IPC-Queries
+- [x] Eventbatching
+- [x] Renderingprofil für Indexburst
+- [x] Memory-Leak-Test bei Projektwechseln
 
 Akzeptanz:
 
 - UI-Blockade und Idle-RAM innerhalb QUALITY_GATES;
 - Graph mit großem Repository rendert nur begrenzte Subsets;
 - Projektwechsel lässt alte Listener und Buffers frei.
+
+ADR-0025 bindet die U10-Optimierungen an begrenzte Core-Projektionen und den UI-Lebenszyklus.
+Agent Workspace, Settings, Inspektor, Approval Center und Graphdarstellung liegen in getrennten
+lokalen Lazy-Chunks; der initiale JavaScript-Chunk sank von 420,17 kB roh/117,63 kB gzip auf
+279,29 kB roh/77,81 kB gzip. Repository- und Modulbaum behalten nur eine serverseitig auf 50
+Einträge begrenzte Seite mit validierter Cursorhistorie. Ein 128.000-Zeilen-Diff rendert durch
+Fensterung höchstens 20 Zeilen mit absoluten ARIA-Indizes; der Modulgraph rendert höchstens den
+angeforderten 50-Knoten-Ausschnitt und zeigt alle Core-Trunkierungen weiter an.
+
+Der Mount-gebundene `UiScheduler` fasst 10.000 gleichartige Commits auf genau einen Rendercommit
+zusammen, lässt pro Pollquelle höchstens einen laufenden und einen vorgemerkten Lauf zu und verwirft
+alte Frames über eine monotone Projektgeneration. Unit- und Component-Verträge prüfen zusätzlich
+idempotenten Timer-/Observer-Cleanup, Vor-/Zurück-Paging und das Freigeben von Graphauswahl sowie
+Evidence beim Projektwechsel.
+
+Das reale Chromium-151-Profil über 30 Samples mit je 10.000 Indexereignissen ergab Enqueue-P95
+1,1 ms, Interaktions-P95 1,3 ms und null Long Tasks. Das native Releaseprofil über 15 Sekunden
+Warm-up und 30 Ein-Sekunden-Samples maß für den vollständigen achtteiligen A^3-/WebView2-
+Prozessbaum 121,475 MiB privaten residenten Idle-Median und 122,734 MiB Sample-Peak; ein beobachteter
+`ollama`-Prozess blieb durch die Prozessbaumgrenze getrennt. Damit bestehen die 100-ms- und
+200-MB-Budgets lokal. Formatter, ESLint, Svelte-Typecheck ohne Warnung, 197 Frontendtests, vier
+Tooltests, der Produktions- und native Releasebuild sowie 53 Markdowndateien mit 139 lokalen Links
+bestehen. Alle U10-Akzeptanzkriterien sind objektiv nachgewiesen und U10 ist abgeschlossen.
 
 ## Gate M8
 

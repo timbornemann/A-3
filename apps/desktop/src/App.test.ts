@@ -780,6 +780,66 @@ const recentProjects: RecentProjectsResponseV1 = {
 };
 
 describe('A^3 desktop shell', () => {
+  it('keeps heavy product surfaces unloaded until visibility or explicit activation', async () => {
+    class DeferredIntersectionObserver implements IntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '0px';
+      readonly scrollMargin = '0px';
+      readonly thresholds = [0];
+
+      disconnect(): void {}
+      observe(): void {}
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+      unobserve(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', DeferredIntersectionObserver);
+    const view = render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => noProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+    try {
+      expect(
+        await screen.findByText(/Agent Workspace wird bei Sichtbarkeit geladen/u),
+      ).toBeTruthy();
+      expect(screen.getByText(/Settings werden bei Sichtbarkeit geladen/u)).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Lokaler Provider' })).toBeNull();
+
+      const explicitLoadButtons = screen.getAllByRole('button', { name: 'Jetzt laden' });
+      await fireEvent.click(explicitLoadButtons[1]!);
+      expect(await screen.findByRole('button', { name: 'Neu laden' })).toBeTruthy();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('releases the owned activity timer when the desktop shell unmounts', async () => {
+    const setInterval = vi.spyOn(window, 'setInterval');
+    const clearInterval = vi.spyOn(window, 'clearInterval');
+    const view = render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => noProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+    try {
+      await screen.findByText('Bereit');
+      const activityTimer = setInterval.mock.results[0]?.value;
+      expect(activityTimer).toBeDefined();
+      view.unmount();
+      expect(clearInterval).toHaveBeenCalledWith(activityTimer);
+    } finally {
+      setInterval.mockRestore();
+      clearInterval.mockRestore();
+    }
+  });
+
   it('shows the exact product identity and mapped health state', async () => {
     render(App, {
       props: {
@@ -986,6 +1046,61 @@ describe('A^3 desktop shell', () => {
     });
   });
 
+  it('keeps only one bounded repository page while navigating forward and backward', async () => {
+    const cursor = '524541444d452e6d64';
+    const rootResult = repositoryTreeRoot.result;
+    if (rootResult.status !== 'available')
+      throw new Error('repository root fixture is unavailable');
+    const firstPage: RepositoryTreeResponseV1 = {
+      ...repositoryTreeRoot,
+      result: {
+        ...rootResult,
+        page: {
+          ...rootResult.page,
+          entries: [rootResult.page.entries[0]!],
+          nextAfterNameHex: cursor,
+        },
+      },
+    };
+    const secondPage: RepositoryTreeResponseV1 = {
+      ...repositoryTreeRoot,
+      result: {
+        ...rootResult,
+        page: {
+          ...rootResult.page,
+          entries: [rootResult.page.entries[1]!],
+          nextAfterNameHex: null,
+        },
+      },
+    };
+    const repositoryTreeLoader = vi.fn(async (query: { afterNameHex: string | null }) =>
+      query.afterNameHex === null ? firstPage : secondPage,
+    );
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+        repositoryTreeLoader,
+      },
+    });
+
+    expect(await screen.findByText('README.md')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
+    expect(await screen.findByRole('button', { name: 'Verzeichnis src öffnen' })).toBeTruthy();
+    expect(screen.queryByText('README.md')).toBeNull();
+    expect(screen.getByText(/Seite 2 · höchstens 50 Einträge im DOM/u)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
+    expect(await screen.findByText('README.md')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Verzeichnis src öffnen' })).toBeNull();
+    expect(repositoryTreeLoader).toHaveBeenCalledWith({
+      afterNameHex: cursor,
+      directoryPathHex: null,
+      limit: 50,
+    });
+  });
+
   it('navigates only direct primary modules while exposing graph communities as a count', async () => {
     const moduleTreeLoader = vi.fn(async (query: { parentModuleId: string | null }) =>
       query.parentModuleId === null ? moduleTreeRoot : moduleTreeRepository,
@@ -1014,6 +1129,58 @@ describe('A^3 desktop shell', () => {
       afterModuleId: null,
       limit: 50,
       parentModuleId: 'a'.repeat(64),
+    });
+  });
+
+  it('keeps only one bounded module page while retaining validated cursor history', async () => {
+    const cursor = 'a'.repeat(64);
+    const rootResult = moduleTreeRoot.result;
+    const repositoryResult = moduleTreeRepository.result;
+    if (rootResult.status !== 'available' || repositoryResult.status !== 'available') {
+      throw new Error('module tree fixture is unavailable');
+    }
+    const firstPage: ModuleTreeResponseV1 = {
+      ...moduleTreeRoot,
+      result: {
+        ...rootResult,
+        page: { ...rootResult.page, nextAfterModuleId: cursor },
+      },
+    };
+    const secondPage: ModuleTreeResponseV1 = {
+      ...moduleTreeRepository,
+      result: {
+        ...repositoryResult,
+        page: {
+          ...repositoryResult.page,
+          parentModuleId: null,
+        },
+      },
+    };
+    const moduleTreeLoader = vi.fn(async (query: { afterModuleId: string | null }) =>
+      query.afterModuleId === null ? firstPage : secondPage,
+    );
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleTreeLoader,
+        projectStatusLoader: async () => activeProjectStatus,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
+    expect(await screen.findByText('tools')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Modul Repository öffnen' })).toBeNull();
+    expect(screen.getByText(/Seite 2 · höchstens 50 Module im DOM/u)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
+    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+    expect(screen.queryByText('tools')).toBeNull();
+    expect(moduleTreeLoader).toHaveBeenCalledWith({
+      afterModuleId: cursor,
+      limit: 50,
+      parentModuleId: null,
     });
   });
 
@@ -1052,6 +1219,51 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
     expect(screen.getByText('c'.repeat(64))).toBeTruthy();
     expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
+  });
+
+  it('releases graph selection and evidence when the active project changes', async () => {
+    const nextProject = {
+      ...projectSummary,
+      repositoryId: '9'.repeat(64),
+      worktreeId: '8'.repeat(64),
+      worktreeRootDisplay: 'D:\\next-worktree',
+    };
+    const nextStatus: ProjectStatusResponseV1 = {
+      ...activeProjectStatus,
+      result: { ...activeProjectResult, project: nextProject, projectId: '7'.repeat(64) },
+    };
+    const projectStatusLoader = vi
+      .fn<() => Promise<ProjectStatusResponseV1>>()
+      .mockResolvedValueOnce(activeProjectStatus)
+      .mockResolvedValue(nextStatus);
+    const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        moduleDependencyGraphLoader,
+        moduleTreeLoader: async () => moduleTreeRoot,
+        projectOpener: async () => ({
+          protocolVersion: 1,
+          result: { project: nextProject, status: 'opened' },
+        }),
+        projectStatusLoader,
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
+    await fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Evidence für Repository baut tools anzeigen',
+      }),
+    );
+    expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    expect(await screen.findByText('D:\\next-worktree')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
+    expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
+    expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1);
   });
 
   it('loads a Module Card only after selection and never presents a stale Fact as current', async () => {

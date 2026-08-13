@@ -124,6 +124,19 @@ Stand: 2026-08-03
     One-time-Grant-ID im Core auswählen. Deny MUSS den wartenden Step und Run atomar ohne
     Toolwirkung schließen. Env-Werte und breite wiederverwendbare Freigaben DÜRFEN die Grenze
     nicht überschreiten.
+12. Die initiale WebView MUSS große, nicht unmittelbar sichtbare Produktflächen als lokale
+    Lazy-Chunks laden. Lade-, Fehler- und Wiederholungszustände bleiben zugänglich; Lazy Loading
+    DARF keine fachliche Autorität oder zusätzliche privilegierte Capability erzeugen.
+13. Cursorpaginierte Baumprojektionen DÜRFEN im Frontend höchstens eine validierte Seite behalten.
+    Große gleichförmige Zeilenprojektionen MÜSSEN mit konstanter DOM-Obergrenze gefenstert werden;
+    serverseitige Payload-, Graph- und Evidence-Grenzen bleiben unabhängig davon verbindlich.
+14. Poll- und Renderbursts MÜSSEN einen App-Mount-gebundenen Scheduler mit nicht überlappenden
+    Polls, genau einem vorgemerkten Rerun und Latest-Wins-Commit pro Animationsframe verwenden.
+    Projektbezogene Commits tragen eine monotone Generation. Projektwechsel und Unmount MÜSSEN
+    alte Commitbuffer, Listener, Timer und Beobachter freigeben.
+15. Frontend-Performanceclaims benötigen getrennte deterministische Verträge, einen realen
+    Browserprofil-Lauf und eine native App-Prozessmessung. Synthetische DOM-Zeit allein ist kein
+    Beleg für Interaktionslatenz oder Idle-RAM.
 
 ## 11. Tests
 

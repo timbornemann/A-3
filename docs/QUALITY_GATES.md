@@ -538,6 +538,37 @@ Die Budgets gelten auf einer dokumentierten Referenzmaschine mit 8 CPU-Kernen, 3
 
 Diese Zahlen sind Releaseziele. Wird ein Ziel nicht erreicht, braucht der Release eine dokumentierte Abweichung, Messdaten und einen konkreten Folgetask.
 
+Idle-RAM bezeichnet den privaten residenten Speicher des vollständigen App-Prozessbaums nach
+Warm-up; Provider- und Modellserverprozesse werden über die Prozessbaumgrenze ausgeschlossen und
+getrennt ausgewiesen. Auf Windows ist dies die Summe von `Working Set - Private` für den nativen
+A^3-Prozess und alle seine WebView2-Kinder. Das gesamte Working Set und Private Bytes werden als
+Diagnosewerte mitgeführt, aber nicht als Idle-RAM ausgegeben, weil sie gemeinsam genutzte Seiten
+mehrfach beziehungsweise auch nicht residente Reservierungen zählen.
+
+U10 besitzt das reale lokale Browserprofil
+`apps/desktop/performance/u10-index-burst.html`. Es verwendet den produktiven `UiScheduler` für 30
+Samples mit je 10.000 gleichartigen Indexcommits und misst Enqueue-P95, Event-Loop-
+Interaktions-P95, Long Tasks, Pending-Commit-Obergrenze und gerenderte DOM-Zeilen. Auf Windows 11
+Pro Build 26200, AMD Ryzen 9 5900XT, 32 GiB RAM und Chromium 151 ergab der Lauf vom 2026-08-13
+Enqueue-P95 1,1 ms, Interaktions-P95 1,3 ms, null Long Tasks, genau einen pending und einen
+gerenderten Commit sowie 50 gerenderte Zeilen. Damit bleibt der synthetische Indexburst unter der
+100-ms-Blockadegrenze; der Lauf ersetzt weiterhin nicht den UX-Smoke eines echten Indexjobs.
+
+Das reproduzierbare native Profil
+`apps/desktop/performance/measure-u10-idle-ram.ps1` baut auf dem Releasebinary auf, wärmt 15 Sekunden
+auf und erfasst 30 Samples im Abstand von einer Sekunde. Auf derselben Maschine lag der private
+residente Median des stabilen achtteiligen A^3-/WebView2-Prozessbaums am 2026-08-13 bei 121,475 MiB,
+der Sample-Peak bei 122,734 MiB. Ein parallel beobachteter `ollama`-Prozess lag außerhalb dieses
+Baums und wurde getrennt ausgewiesen. Zur Diagnose betrugen das gesamte Working Set im Median
+411,738 MiB und Private Bytes 276,406 MiB. Das lokale Idle-RAM-Profil besteht damit das
+200-MB-Budget; es ersetzt nicht die abschließende V1-Referenzmessung auf der definierten
+8-Core-Maschine.
+
+Der U10-Produktionsbuild reduzierte den initialen JavaScript-Chunk gegenüber dem unmittelbar vor
+U10 gemessenen Stand von 420,17 kB roh/117,63 kB gzip auf 279,29 kB roh/77,81 kB gzip. Graph,
+Settings, Agent Workspace, Inspektor und Approval Center liegen in getrennten lokalen Lazy-Chunks;
+die Profilseite ist kein Build-Entry und wird nicht in das Produktbundle aufgenommen.
+
 S11 besitzt dafür den reproduzierbaren ignorierten Release-Test
 `incremental_index_performance::one_file_delta_meets_the_two_second_p95_target`. Das Fixture umfasst
 200 Rust-Dateien und 100.000 LOC; jede der 30 Stichproben misst vom gleich großen Ein-Datei-Write über

@@ -4,7 +4,6 @@
     queryAgentInspectionLog,
     type AgentCriterionInspectionV1,
     type AgentDiffFileV1,
-    type AgentDiffRowV1,
     type AgentInspectionLogResponseV1,
     type AgentInspectionResponseV1,
     type AgentInspectionStreamV1,
@@ -12,6 +11,7 @@
     type AgentVerificationEvidenceV1,
     type AgentVerificationStepV1,
   } from './agent-inspection';
+  import VirtualDiffRows from './VirtualDiffRows.svelte';
 
   interface Props {
     taskId: string;
@@ -213,10 +213,6 @@
       userConfirm: 'User-Confirmation',
     }[evidence.method];
   }
-
-  function linePrefix(row: AgentDiffRowV1): string {
-    return row.kind === 'added' ? '+' : row.kind === 'removed' ? '−' : ' ';
-  }
 </script>
 
 <section class="inspection-panel" aria-labelledby="agent-inspection-heading">
@@ -366,46 +362,7 @@
                   <div class="hunk-heading">
                     @@ −{hunk.beforeStart},{hunk.beforeCount} +{hunk.afterStart},{hunk.afterCount} @@
                   </div>
-                  {#if layout === 'unified'}
-                    <div class="unified-diff" role="table" aria-label="Unified Diff">
-                      {#each hunk.rows as row, rowIndex (rowIndex)}
-                        <div
-                          class:added={row.kind === 'added'}
-                          class:removed={row.kind === 'removed'}
-                          class="diff-row"
-                          role="row"
-                        >
-                          <span class="line-number"
-                            >{row.kind === 'added' ? '' : row.beforeLine}</span
-                          >
-                          <span class="line-number"
-                            >{row.kind === 'removed' ? '' : row.afterLine}</span
-                          >
-                          <span class="prefix">{linePrefix(row)}</span>
-                          <code>{row.line.text}</code>
-                        </div>
-                      {/each}
-                    </div>
-                  {:else}
-                    <div class="side-diff" role="table" aria-label="Side-by-side Diff">
-                      {#each hunk.rows as row, rowIndex (rowIndex)}
-                        <div class="side-row" role="row">
-                          <div class:removed={row.kind === 'removed'} class="side-cell">
-                            <span class="line-number"
-                              >{row.kind === 'added' ? '' : row.beforeLine}</span
-                            >
-                            <code>{row.kind === 'added' ? '' : row.line.text}</code>
-                          </div>
-                          <div class:added={row.kind === 'added'} class="side-cell">
-                            <span class="line-number"
-                              >{row.kind === 'removed' ? '' : row.afterLine}</span
-                            >
-                            <code>{row.kind === 'removed' ? '' : row.line.text}</code>
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
+                  <VirtualDiffRows rows={hunk.rows} {layout} />
                 </div>
               {/each}
             </article>
@@ -813,45 +770,6 @@
       SFMono-Regular,
       Consolas,
       monospace;
-  }
-
-  .diff-row {
-    display: grid;
-    grid-template-columns: 3rem 3rem 1.2rem minmax(20rem, 1fr);
-    min-width: max-content;
-  }
-
-  .diff-row > *,
-  .side-cell > * {
-    padding: 0.18rem 0.35rem;
-  }
-
-  .line-number {
-    color: var(--color-subtle);
-    text-align: right;
-    user-select: none;
-  }
-
-  .diff-row.added,
-  .side-cell.added {
-    background: var(--color-positive-surface);
-  }
-
-  .diff-row.removed,
-  .side-cell.removed {
-    background: var(--color-danger-surface);
-  }
-
-  .side-row {
-    display: grid;
-    grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 1fr);
-    min-width: max-content;
-  }
-
-  .side-cell {
-    display: grid;
-    grid-template-columns: 3rem minmax(15rem, 1fr);
-    border-right: 1px solid var(--color-border-soft);
   }
 
   .truncation-warning,

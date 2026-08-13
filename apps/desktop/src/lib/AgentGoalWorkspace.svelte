@@ -39,8 +39,6 @@
     type AgentApprovalResponseV1,
     type AgentApprovalV1,
   } from './agent-approval';
-  import AgentApprovalCenter from './AgentApprovalCenter.svelte';
-  import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import { agentGoalRecoveryMessage } from './command-error';
   import GoalTextList from './GoalTextList.svelte';
   import {
@@ -116,6 +114,9 @@
     | { kind: 'loading' }
     | { kind: 'error' }
     | { kind: 'result'; result: AgentTaskRecoveryResponseV1['result'] };
+  type AgentApprovalCenterComponent = typeof import('./AgentApprovalCenter.svelte').default;
+  type AgentInspectionPanelComponent = typeof import('./AgentInspectionPanel.svelte').default;
+  type DetailChunkState = 'error' | 'idle' | 'loading' | 'ready';
 
   let {
     activeProject,
@@ -152,6 +153,9 @@
   let ledgerRequest = 0;
   let activityRequest = 0;
   let recoveryRequest = 0;
+  let AgentApprovalCenter = $state<AgentApprovalCenterComponent | null>(null);
+  let AgentInspectionPanel = $state<AgentInspectionPanelComponent | null>(null);
+  let detailChunkState = $state<DetailChunkState>('idle');
   let currentLedgerStep = $derived(
     ledgerView.kind === 'result' && ledgerView.result.status === 'available'
       ? selectCurrentStep(ledgerView.result.steps)
@@ -196,6 +200,7 @@
       }
       selectedTaskId = nextTask.taskId;
       editorMode = 'closed';
+      void loadDetailChunks();
       await loadGoal(nextTask.taskId);
     } catch {
       if (request === taskRequest) {
@@ -222,6 +227,22 @@
       }
     } catch {
       if (request === goalRequest) goalView = { kind: 'error' };
+    }
+  }
+
+  async function loadDetailChunks(): Promise<void> {
+    if (detailChunkState === 'loading' || detailChunkState === 'ready') return;
+    detailChunkState = 'loading';
+    try {
+      const [inspection, approval] = await Promise.all([
+        import('./AgentInspectionPanel.svelte'),
+        import('./AgentApprovalCenter.svelte'),
+      ]);
+      AgentInspectionPanel = inspection.default;
+      AgentApprovalCenter = approval.default;
+      detailChunkState = 'ready';
+    } catch {
+      detailChunkState = 'error';
     }
   }
 
@@ -709,17 +730,29 @@
         </ol>
       {/if}
     </section>
-    <AgentInspectionPanel
-      taskId={selectedTaskId}
-      loader={inspectionLoader}
-      logLoader={inspectionLogLoader}
-    />
-    <AgentApprovalCenter
-      taskId={selectedTaskId}
-      loader={approvalLoader}
-      controller={approvalController}
-      onChanged={refreshAfterApproval}
-    />
+    {#if AgentInspectionPanel !== null && AgentApprovalCenter !== null}
+      <AgentInspectionPanel
+        taskId={selectedTaskId}
+        loader={inspectionLoader}
+        logLoader={inspectionLogLoader}
+      />
+      <AgentApprovalCenter
+        taskId={selectedTaskId}
+        loader={approvalLoader}
+        controller={approvalController}
+        onChanged={refreshAfterApproval}
+      />
+    {:else}
+      <section class="detail-loader" aria-labelledby="agent-detail-loader-heading">
+        <h3 id="agent-detail-loader-heading">Diff, Verification und Freigabe</h3>
+        {#if detailChunkState === 'error'}
+          <p role="alert">Die lokalen Inspektionsmodule konnten nicht geladen werden.</p>
+          <button type="button" onclick={loadDetailChunks}>Erneut laden</button>
+        {:else}
+          <p role="status">Inspektionsmodule werden bei Aufgabenauswahl geladen …</p>
+        {/if}
+      </section>
+    {/if}
     <section class="agent-activity" aria-labelledby="agent-activity-heading">
       <header>
         <p>Durable Run</p>
@@ -1351,12 +1384,18 @@
   }
 
   .task-ledger,
-  .agent-activity {
+  .agent-activity,
+  .detail-loader {
     border: 1px solid var(--color-border-soft);
     border-radius: 0.9rem;
     display: grid;
     gap: 0.8rem;
     padding: 1rem;
+  }
+
+  .detail-loader h3,
+  .detail-loader p {
+    margin: 0;
   }
 
   .task-ledger header p,
