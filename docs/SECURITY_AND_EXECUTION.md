@@ -52,8 +52,11 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
   `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
   `query_module_card_freshness`, `query_module_card_detail`, `query_module_card_evidence`,
-  `query_repository_tree`,
-  `query_module_tree`, `query_module_dependency_graph`, `query_deep_map`,
+  `query_repository_tree`, `query_module_tree`, `query_module_dependency_graph`,
+  `query_module_runtime_map`, `query_module_runtime_flow`, `query_project_map_search`,
+  `query_task_lens_tasks`, `query_task_lens_task`, `compile_task_lens`, `query_agent_goal`,
+  `create_agent_goal`, `revise_agent_goal`, `query_agent_activity`,
+  `query_agent_task_recovery`, `control_agent_task_run`, `query_deep_map`,
   `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
@@ -152,6 +155,14 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `paused` bestätigt. Resume wiederholt keine bestätigten Schritte, Cancel verwirft den Checkpoint.
   Keine dieser IPC-Capabilities gewährt direkten Provider-, Netzwerk-, Datei-, Shell- oder
   Storagezugriff.
+- Die Agent-Recovery-Commands akzeptieren ausschließlich die bereits ausgewählte opake `TaskId`
+  und bei einer Mutation die zuvor sichtbaren Ledgerrevision/-Storeversion sowie genau Resume,
+  Replan oder Cancel. Der Core leitet Run, Step, Worktree und Snapshots selbst ab und erzeugt
+  Event-ID sowie Zeit aus privilegierten lokalen Quellen. Vor dem atomaren Commit werden
+  Published Snapshot, Ledger-CAS, Run-Sequenz, stale Evidence und Unknown-Mutationsdisposition neu
+  geprüft. Resume kann deshalb weder stale Evidence noch eine unbekannte Wirkung übergehen;
+  Cancel bleibt selbst bei Reconciliationbedarf erreichbar. Keine Run-/Snapshot-ID und kein
+  freier Recoverytext überschreiten die WebView-Grenze.
 - Die zusätzlich gelieferte Storagegröße wird ausschließlich unter dem aus der validierten
   `WorktreeId` abgeleiteten privaten App-Data-Verzeichnis gemessen. Die Traversierung folgt keinen
   Symlinks, lehnt Spezialdateien und Ausbrüche ab und ist auf 100.000 Einträge, zwei Sekunden,

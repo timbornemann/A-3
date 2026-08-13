@@ -217,6 +217,14 @@ höchstens die letzten 64 zusammenhängenden Journalereignisse und prüft Task-,
 Run-Anker nach dem Read erneut. Die WebView kann weder eine Run-/Snapshot-ID wählen noch Journal-,
 Storage- oder Toolfähigkeiten erlangen; eine gleichzeitige Änderung wird als eigener
 `activityChanged`-Zustand zurückgegeben.
+`query_agent_task_recovery` und `control_agent_task_run` leiten den steuerbaren Run ebenfalls
+ausschließlich aus dieser Task-ID ab. Resume, Replan und Cancel laufen über den bestehenden
+atomaren H11/E8-Vertrag; die Mutation trägt nur die sichtbare Ledgerrevision/-Storeversion und
+eine geschlossene Aktion. Run, Snapshots, Event-ID und Zeit bleiben Core-eigen. Stale Evidence und
+Unknown-Mutationswirkung sperren Resume fail-closed, während Cancel erreichbar bleibt und seinen
+terminalen Zustand anschließend in derselben Activity-Projektion zeigt. Die Tauri-Capability
+allowlistet diese sowie die bereits implementierten Project-Map-, Task-Lens-, Goal- und
+Activity-Commands jetzt explizit; keine generische Capability wurde ergänzt.
 Die WebView erhält keine Datei-, Dialog-, Shell-, SQL-, Provider-
 oder Netzwerk-Plugin-Berechtigung. Nach einem erfolgreichen Open startet der Rust-Composition-Root
 einen besitzenden, begrenzten Repository-Watcher und aktualisiert den lokalen Index im Hintergrund.

@@ -18,6 +18,7 @@ const RECENT_RUN_EVENT_LIMIT: u16 = 64;
 pub struct AgentActivityRun {
     step_id: TaskStepId,
     attempt_number: u32,
+    active_attempt: bool,
     run: AgentRun,
     events: Vec<RunEvent>,
     earlier_events_omitted: bool,
@@ -34,6 +35,12 @@ impl AgentActivityRun {
     #[must_use]
     pub const fn attempt_number(&self) -> u32 {
         self.attempt_number
+    }
+
+    /// Returns whether the ledger still identifies this as its one active attempt.
+    #[must_use]
+    pub const fn is_active_attempt(&self) -> bool {
+        self.active_attempt
     }
 
     /// Returns the independently materialized current run state.
@@ -242,6 +249,7 @@ impl GetAgentActivity {
         Ok(Some(AgentActivityRun {
             step_id: selected.step_id,
             attempt_number: selected.attempt.number().get(),
+            active_attempt: matches!(selected.attempt.outcome(), TaskStepAttemptOutcome::Active),
             run,
             events: page.events().to_vec(),
             earlier_events_omitted,
@@ -496,6 +504,7 @@ mod tests {
             return Err("expected ledger-selected run".into());
         };
         assert_eq!(activity_run.step_id(), step_id);
+        assert!(activity_run.is_active_attempt());
         assert_eq!(activity_run.run().id(), run_id);
         assert_eq!(activity_run.events().len(), 1);
         assert!(!activity_run.earlier_events_omitted());
@@ -503,15 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn activity_returns_only_the_latest_sixty_four_contiguous_events()
-    -> Result<(), Box<dyn Error>> {
+    fn activity_returns_only_the_latest_sixty_four_contiguous_events() -> Result<(), Box<dyn Error>>
+    {
         let (goal, mut ledger, step_id) = anchors()?;
         let run_id = AgentRunId::from_bytes([84; 32]);
-        ledger.start_step(
-            step_id,
-            run_id,
-            TaskLedgerTimestamp::from_unix_millis(2)?,
-        )?;
+        ledger.start_step(step_id, run_id, TaskLedgerTimestamp::from_unix_millis(2)?)?;
         let snapshot_id = SnapshotId::from_bytes([86; 32]);
         let (mut run, start_event) = AgentRun::start(
             run_id,
@@ -544,13 +549,12 @@ mod tests {
             )),
         );
         let store = Arc::new(Store { task, run, events });
-        let result = futures::executor::block_on(
-            GetAgentActivity::new(store.clone(), store).execute(
+        let result =
+            futures::executor::block_on(GetAgentActivity::new(store.clone(), store).execute(
                 &project()?,
                 goal.task_id(),
                 &Control,
-            ),
-        )?;
+            ))?;
         let AgentActivityLoadResult::Available(activity) = result else {
             return Err("expected available Agent activity".into());
         };

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compile-task-lens"
+description = "Enables the compile_task_lens command without any pre-configured scope."
+commands.allow = ["compile_task_lens"]
+
+[[permission]]
+identifier = "deny-compile-task-lens"
+description = "Denies the compile_task_lens command without any pre-configured scope."
+commands.deny = ["compile_task_lens"]

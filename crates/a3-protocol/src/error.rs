@@ -63,6 +63,10 @@ pub enum ErrorCodeV1 {
     AgentGoalRevisionConflict,
     /// Goal Contract metadata or local persistence could not complete the requested operation.
     AgentGoalUnavailable,
+    /// A task-bound Agent recovery request used invalid optimistic anchors.
+    InvalidAgentTaskControl,
+    /// Agent recovery state or its atomic control transaction could not be completed safely.
+    AgentTaskControlUnavailable,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -183,6 +187,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::AgentGoalUnavailable => {
                 "The Goal Contract could not be read or stored safely."
+            }
+            ErrorCodeV1::InvalidAgentTaskControl => {
+                "The Agent run control request is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentTaskControlUnavailable => {
+                "The Agent run could not be inspected or controlled safely."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-revise-agent-goal"
+description = "Enables the revise_agent_goal command without any pre-configured scope."
+commands.allow = ["revise_agent_goal"]
+
+[[permission]]
+identifier = "deny-revise-agent-goal"
+description = "Denies the revise_agent_goal command without any pre-configured scope."
+commands.deny = ["revise_agent_goal"]

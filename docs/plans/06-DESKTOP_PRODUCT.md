@@ -392,6 +392,20 @@ Component-Tests decken Ableitung, 64er-Grenze, geschlossene Formen, monotone Seq
 Budget, Aktionsunterscheidung und sichtbaren terminalen Zustand ab. Der Schnitt besitzt keinerlei
 Mutation oder Run-Steuerung; Pause, Cancel, Resume und Replan bleiben der nächste U5-Schnitt.
 
+Teilabnahme der Recovery-Steuerung am 2026-08-13: `query_agent_task_recovery` und
+`control_agent_task_run` leiten den einzigen steuerbaren Run aus der ausgewählten `TaskId` und dem
+aktiven retained Ledger-Versuch ab. Die WebView kann weder Run, Snapshot, Step, Event-ID noch Zeit
+wählen und muss Resume, Replan oder Cancel gegen die exakt sichtbare Ledgerrevision und
+-Storeversion senden. Der bestehende H11/E8-Pfad revalidiert Published Snapshot, stale Evidence,
+Unknown-Mutationsdisposition, Ledger und Runsequenz und committed die Wirkung atomar. Resume bleibt
+bei stale Evidence oder Unknown gesperrt; Replan öffnet invalidierte Arbeit kontrolliert, Cancel
+bleibt erreichbar und wird als terminaler Activity-Zustand neu geladen. Strikte Protocol-,
+Command-, TypeScript- und Component-Tests belegen geschlossene Formen, fail-closed Controls und die
+Task-Bindung. Die Tauri-Capability enthält nun auch alle bereits registrierten Project-Map-,
+Task-Lens-, Agent-Goal- und Agent-Activity-Commands explizit; direkte privilegierte Plugins bleiben
+ausgeschlossen. Der U5-Gesamtpunkt bleibt offen, bis Pause an einen tatsächlich besitzenden,
+kooperativ abbrechbaren Agent-Runtimepfad angebunden ist.
+
 ## U6 Diff und Verification
 
 Abhängigkeiten: Patch und Verification Engine

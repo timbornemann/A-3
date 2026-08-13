@@ -9,6 +9,7 @@ mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
 mod agent_source_reader;
+mod agent_task_control;
 mod agent_turn;
 mod command_discovery;
 mod context_compiler;
@@ -109,6 +110,10 @@ pub use agent_recovery::{
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
     AgentSourceReader, AgentSourceReaderFuture,
+};
+pub use agent_task_control::{
+    AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
+    AgentTaskRecoveryLoadResult, ControlAgentTaskRun, InspectAgentTaskRecovery,
 };
 pub use agent_turn::{
     AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,

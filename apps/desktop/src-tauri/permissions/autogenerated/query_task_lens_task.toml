@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-task-lens-task"
+description = "Enables the query_task_lens_task command without any pre-configured scope."
+commands.allow = ["query_task_lens_task"]
+
+[[permission]]
+identifier = "deny-query-task-lens-task"
+description = "Denies the query_task_lens_task command without any pre-configured scope."
+commands.deny = ["query_task_lens_task"]

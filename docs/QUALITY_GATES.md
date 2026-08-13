@@ -177,6 +177,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Eventcodes und terminale Zustände. Eine `ModelInteraction` mit Aktionsauswahl bleibt sichtbar
   „noch keine Ausführung“; nur `ToolAction` wird als echte Ausführungsaktion bezeichnet. Rohes
   Modell-, Tool-, Fehler- oder Sourcematerial überschreitet IPC nicht.
+- Der U5-Agent-Recovery-Contract leitet den steuerbaren Run ausschließlich aus `TaskId` und aktivem
+  retained Ledger-Versuch ab. Query und Mutation dürfen keine Run-, Snapshot-, Step-, Event- oder
+  Worktree-ID aus der WebView akzeptieren; die Mutation bindet nur eine geschlossene
+  Resume-/Replan-/Cancel-Aktion an die exakt sichtbare Ledgerrevision und -Storeversion. H11/E8-
+  Storage-Contracts bleiben der atomare Nachweis für Published-Snapshot-, Ledger- und Run-CAS,
+  stale Evidence, Unknown-Reconciliation und Reopen. Rust-/TypeScript-Contracts lehnen unbekannte
+  Felder, nicht kanonische Anker und widersprüchliche Outcome-/Controllerzustände ab. Der
+  Component-Test muss Resume bei stale Evidence deaktivieren, Replan erklären, Cancel erreichbar
+  halten und nach Erfolg den dauerhaften terminalen Zustand neu laden. Der Capability-Test muss
+  jeden tatsächlich registrierten Agent-/Task-Lens-Command explizit allowlisten und weiterhin
+  generische Dialog-, Datei-, Shell-, SQL-, Provider- und Netzwerkrechte ausschließen.
 
 ### Persistenz
 

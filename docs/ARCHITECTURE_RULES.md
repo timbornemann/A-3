@@ -105,6 +105,10 @@ Stand: 2026-08-03
    WebView DARF keine Run- oder Snapshot-ID wählen. Es werden höchstens die letzten 64
    zusammenhängenden, inhaltsfreien Journalereignisse ausgeliefert; Modellantwort beziehungsweise
    Aktionsauswahl und tatsächliches `ToolAction` MÜSSEN unterschiedliche sichtbare Typen bleiben.
+9. Agent-Recovery MUSS Task-gebunden bleiben: Die WebView darf weder Run, Snapshot, Step, Event-ID
+   noch Zeitpunkt wählen. Resume, Replan und Cancel MÜSSEN den bestehenden H11/E8-Commit mit
+   Published-Snapshot-, Ledger- und Run-CAS verwenden. Resume DARF stale Evidence oder eine
+   unbekannte Mutationswirkung niemals umgehen; Cancel MUSS weiterhin erreichbar bleiben.
 
 ## 11. Tests
 

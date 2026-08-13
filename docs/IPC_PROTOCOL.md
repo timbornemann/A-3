@@ -258,6 +258,30 @@ Endpoint-Kontinuität, Zyklen, Zielübereinstimmung, Duplikate, Grenzen und die 
 sichtbaren Query erneut. Beide Commands laufen nur nach expliziter Modul-, Root-, Nachlade- oder
 Aktualisierungsaktion, nicht im Statuspolling.
 
+## Agent Task Recovery und Control V1
+
+`query_agent_task_recovery` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake
+`taskId`. Der Core leitet den einzigen steuerbaren Run aus dem aktiven retained Ledger-Versuch ab;
+Run-, Snapshot-, Step-, Evidence- oder Worktree-IDs sind keine Requestfelder. Die Abfrage markiert
+nach einem Appneustart verlassene In-flight-Toolversuche dauerhaft als `Interrupted` und liefert
+nur content-freie Recovery-Fakten: endlichen Controllerzustand, Run-/Published-Snapshotanker,
+Snapshotwechsel, stale Evidence Count, Interrupted Count sowie die beiden Unknown-Mutationsgates.
+
+`control_agent_task_run` akzeptiert zusätzlich genau eine geschlossene Aktion `resume`, `replan`
+oder `cancel` sowie die zuvor sichtbare positive `expectedLedgerRevision` und den kanonischen
+positiven u64-Dezimaltext `expectedLedgerStoreVersion`. Event-ID, Zeit, Run und aktueller Published
+Snapshot stammen ausschließlich aus dem Core. H11/E8 prüft Evidence und Mutation Disposition neu
+und committed Published-Snapshot-, Ledger-Version- und Run-Sequenz-CAS gemeinsam. `resume` ist bei
+staler Evidence oder einem ausstehenden Mutation-Replan gesperrt; `replan` und `resume` sind vor
+der autoritativen Reconciliation einer unbekannten Wirkung gesperrt; `cancel` bleibt erreichbar
+und liefert nach erfolgreichem Commit den terminalen Controllerzustand `cancelled`.
+
+Beide Antworten unterscheiden fehlendes Projekt, Task, Ledger oder Run, Goal-Mismatch,
+gleichzeitige Änderung und nicht steuerbare terminale/historische Runs als geschlossene Zustände.
+Unbekannte Felder, nicht kanonische IDs/Dezimalwerte, widersprüchliche Snapshot-/Resume-Flags und
+unmögliche Outcome-/Controller-Paare werden am Rust- und TypeScript-Rand abgelehnt. Der Vertrag
+gewährt weder Scheduler-, Provider-, Datei-, Shell-, SQL- noch Journalzugriff.
+
 ## Health Response V1
 
 `query_health` liefert:
@@ -316,7 +340,8 @@ Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefe
 
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
-Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail- und Deep-Map-Commands. Repository- und
+Module-Runtime-, Module-Card-, Project-Map-, Task-Lens-, Agent-Goal-, Agent-Activity-,
+Agent-Recovery- und Deep-Map-Commands. Repository- und
 Modulbaum besitzen
 ausschließlich `allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der
 Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist

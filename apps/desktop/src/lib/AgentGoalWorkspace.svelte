@@ -8,6 +8,13 @@
     type AgentSelectedActionV1,
   } from './agent-activity';
   import {
+    controlAgentTaskRun,
+    queryAgentTaskRecovery,
+    type AgentTaskControlActionV1,
+    type AgentTaskControlResponseV1,
+    type AgentTaskRecoveryResponseV1,
+  } from './agent-control';
+  import {
     createAgentGoal,
     queryAgentGoal,
     reviseAgentGoal,
@@ -39,6 +46,13 @@
       draft: AgentGoalDraftInputV1,
     ) => Promise<AgentGoalMutationResponseV1>;
     ledgerLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
+    recoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;
+    runController?: (
+      taskId: string,
+      expectedLedgerRevision: number,
+      expectedLedgerStoreVersion: string,
+      action: AgentTaskControlActionV1,
+    ) => Promise<AgentTaskControlResponseV1>;
     tasksLoader?: () => Promise<TaskLensTasksResponseV1>;
   }
 
@@ -65,6 +79,11 @@
     | { kind: 'loading' }
     | { kind: 'error' }
     | { kind: 'result'; result: AgentActivityResponseV1['result'] };
+  type RecoveryView =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'result'; result: AgentTaskRecoveryResponseV1['result'] };
 
   let {
     activeProject,
@@ -73,6 +92,8 @@
     goalLoader = queryAgentGoal,
     goalReviser = reviseAgentGoal,
     ledgerLoader = queryTaskLensTask,
+    recoveryLoader = queryAgentTaskRecovery,
+    runController = controlAgentTaskRun,
     tasksLoader = queryTaskLensTasks,
   }: Props = $props();
 
@@ -80,11 +101,13 @@
   let goalView = $state<GoalView>({ kind: 'idle' });
   let ledgerView = $state<LedgerView>({ kind: 'idle' });
   let activityView = $state<ActivityView>({ kind: 'idle' });
+  let recoveryView = $state<RecoveryView>({ kind: 'idle' });
   let selectedTaskId = $state('');
   let editorMode = $state<EditorMode>('closed');
   let draft = $state<AgentGoalDraftInputV1>(emptyDraft());
   let revisionReason = $state('');
   let submitting = $state(false);
+  let controllingRun = $state(false);
   let actionMessage = $state<string | null>(null);
   let actionError = $state<string | null>(null);
   let observedProject = false;
@@ -92,6 +115,7 @@
   let goalRequest = 0;
   let ledgerRequest = 0;
   let activityRequest = 0;
+  let recoveryRequest = 0;
   let currentLedgerStep = $derived(
     ledgerView.kind === 'result' && ledgerView.result.status === 'available'
       ? selectCurrentStep(ledgerView.result.steps)
@@ -158,7 +182,7 @@
         goalView = { kind: 'notFound' };
       } else {
         goalView = { kind: 'available', goal: response.result.goal };
-        await Promise.all([loadLedger(taskId), loadActivity(taskId)]);
+        await Promise.all([loadLedger(taskId), loadActivity(taskId), loadRecovery(taskId)]);
       }
     } catch {
       if (request === goalRequest) goalView = { kind: 'error' };
@@ -186,6 +210,82 @@
       activityView = { kind: 'result', result: response.result };
     } catch {
       if (request === activityRequest) activityView = { kind: 'error' };
+    }
+  }
+
+  async function loadRecovery(taskId: string): Promise<void> {
+    const request = ++recoveryRequest;
+    recoveryView = { kind: 'loading' };
+    try {
+      const response = await recoveryLoader(taskId);
+      if (request !== recoveryRequest || taskId !== selectedTaskId) return;
+      recoveryView = { kind: 'result', result: response.result };
+    } catch {
+      if (request === recoveryRequest) recoveryView = { kind: 'error' };
+    }
+  }
+
+  async function applyRunControl(action: AgentTaskControlActionV1): Promise<void> {
+    if (
+      controllingRun ||
+      recoveryView.kind !== 'result' ||
+      recoveryView.result.status !== 'available'
+    ) {
+      return;
+    }
+    controllingRun = true;
+    actionError = null;
+    actionMessage = null;
+    const recovery = recoveryView.result.recovery;
+    try {
+      const response = await runController(
+        selectedTaskId,
+        recovery.ledgerRevision,
+        recovery.ledgerStoreVersion,
+        action,
+      );
+      switch (response.result.status) {
+        case 'applied':
+          actionMessage = controlOutcomeMessage(response.result.outcome);
+          await Promise.all([
+            loadLedger(selectedTaskId),
+            loadActivity(selectedTaskId),
+            loadRecovery(selectedTaskId),
+          ]);
+          break;
+        case 'mutationReconciliationRequired':
+          actionError =
+            'Eine Mutation mit unbekannter Wirkung muss zuerst durch einen vollständigen Indexlauf reconciliert werden. Cancel bleibt möglich.';
+          await loadRecovery(selectedTaskId);
+          break;
+        case 'resumeRequiresReplan':
+          actionError =
+            'Fortsetzen ist wegen veralteter Evidence oder einer unbekannten Mutationswirkung gesperrt. Wähle Replan oder Cancel.';
+          await loadRecovery(selectedTaskId);
+          break;
+        case 'activityChanged':
+          actionError =
+            'Ledger oder Run haben sich geändert. Der aktuelle Stand wurde neu geladen.';
+          await Promise.all([
+            loadLedger(selectedTaskId),
+            loadActivity(selectedTaskId),
+            loadRecovery(selectedTaskId),
+          ]);
+          break;
+        case 'noProject':
+        case 'taskNotFound':
+        case 'ledgerUnavailable':
+        case 'goalRevisionMismatch':
+        case 'runUnavailable':
+        case 'runNotControllable':
+          actionError = 'Der Run ist in seinem aktuellen dauerhaften Zustand nicht steuerbar.';
+          await Promise.all([loadActivity(selectedTaskId), loadRecovery(selectedTaskId)]);
+          break;
+      }
+    } catch {
+      actionError = 'Die Run-Steuerung konnte nicht sicher abgeschlossen werden.';
+    } finally {
+      controllingRun = false;
     }
   }
 
@@ -265,6 +365,8 @@
     ledgerView = { kind: 'idle' };
     activityRequest += 1;
     activityView = { kind: 'idle' };
+    recoveryRequest += 1;
+    recoveryView = { kind: 'idle' };
   }
 
   function resetWorkspace(): void {
@@ -405,6 +507,16 @@
       [...run.timeline].reverse().find((item) => item.event.kind === 'contextCompiled')?.sequence ??
       null
     );
+  }
+
+  function controlOutcomeMessage(outcome: 'cancelled' | 'replanRequired' | 'resumed'): string {
+    const messages = {
+      cancelled: 'Der Agent Run wurde dauerhaft abgebrochen.',
+      replanRequired:
+        'Der Recovery-Stand wurde committed; vor weiterer Arbeit ist ein Replan erforderlich.',
+      resumed: 'Der aktuelle Snapshot wurde übernommen; der Run darf sicher fortgesetzt werden.',
+    } as const;
+    return messages[outcome];
   }
 </script>
 
@@ -577,6 +689,95 @@
             </span>
             <code>Versuch {run.attemptNumber} · Run {run.runId.slice(0, 12)}</code>
           </div>
+          <section class="run-controls" aria-labelledby="run-controls-heading">
+            <div>
+              <p>Explizite Recovery</p>
+              <h4 id="run-controls-heading">Run steuern</h4>
+            </div>
+            {#if recoveryView.kind === 'loading'}
+              <p role="status" aria-live="polite">Sichere Steueroptionen werden geprüft …</p>
+            {:else if recoveryView.kind === 'error'}
+              <div class="error-state" role="alert">
+                <p>Die Recovery-Anker konnten nicht sicher geprüft werden.</p>
+                <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
+                  Erneut prüfen
+                </button>
+              </div>
+            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'activityChanged'}
+              <div class="error-state" role="status">
+                <p>Der Run hat sich während der Recovery-Prüfung geändert.</p>
+                <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
+                  Aktuellen Stand prüfen
+                </button>
+              </div>
+            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'available'}
+              {@const recovery = recoveryView.result.recovery}
+              <dl class="recovery-facts">
+                <div>
+                  <dt>Snapshot</dt>
+                  <dd>{recovery.snapshotChanged ? 'Geändert' : 'Unverändert'}</dd>
+                </div>
+                <div>
+                  <dt>Stale Evidence</dt>
+                  <dd>{recovery.staleEvidenceCount}</dd>
+                </div>
+                <div>
+                  <dt>Unterbrochene Toolversuche</dt>
+                  <dd>{recovery.interruptedToolAttempts}</dd>
+                </div>
+              </dl>
+              {#if recovery.mutationReconciliationRequired}
+                <p class="error-state" role="alert">
+                  Eine Mutation hat eine unbekannte Wirkung. Resume und Replan bleiben bis zu einem
+                  autoritativen Full-Scan gesperrt; Cancel bleibt erreichbar.
+                </p>
+              {:else if recovery.mutationReplanRequired}
+                <p class="bounded-note">
+                  Die unbekannte Mutationswirkung wurde reconciliert. Vor weiterer Mutation ist
+                  Replan erforderlich.
+                </p>
+              {:else if recovery.staleEvidenceCount > 0}
+                <p class="bounded-note">
+                  Abgeschlossene Evidence ist veraltet. Resume ist gesperrt; Replan öffnet
+                  betroffene Schritte kontrolliert neu.
+                </p>
+              {/if}
+              <div class="control-actions" aria-label="Agent Run Recovery-Aktionen">
+                <button
+                  type="button"
+                  disabled={controllingRun || !recovery.canResume}
+                  onclick={() => applyRunControl('resume')}
+                >
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  disabled={controllingRun || recovery.mutationReconciliationRequired}
+                  onclick={() => applyRunControl('replan')}
+                >
+                  Replan
+                </button>
+                <button
+                  class="danger-action"
+                  type="button"
+                  disabled={controllingRun}
+                  onclick={() => applyRunControl('cancel')}
+                >
+                  Cancel
+                </button>
+              </div>
+            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runNotControllable'}
+              <p class="bounded-note">
+                Dieser Run ist {controllerStateLabel(recoveryView.result.state)} und nicht mehr steuerbar.
+              </p>
+            {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runUnavailable'}
+              <p class="empty-state">Noch kein aktiver Run-Versuch vorhanden.</p>
+            {:else if recoveryView.kind === 'result'}
+              <p class="error-state" role="alert">
+                Goal, Ledger oder aktiver Worktree stimmen für die Run-Steuerung nicht überein.
+              </p>
+            {/if}
+          </section>
           {#if !run.ledgerRevisionMatchesCurrent}
             <p class="bounded-note">
               Dieser letzte Run gehört zu Ledger R{run.ledgerRevision}; aktuell ist R{activity.currentLedgerRevision}.
@@ -1121,6 +1322,61 @@
     color: #3f4652;
   }
 
+  .run-controls {
+    background: var(--surface, #ffffff);
+    border: 1px solid var(--line, #d8d9df);
+    border-radius: 0.65rem;
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.8rem;
+  }
+
+  .run-controls > div:first-child p {
+    color: var(--muted, #646b79);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    margin: 0;
+    text-transform: uppercase;
+  }
+
+  .run-controls h4 {
+    margin: 0.2rem 0 0;
+  }
+
+  .recovery-facts {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0;
+  }
+
+  .recovery-facts > div {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .recovery-facts dt {
+    color: var(--muted, #646b79);
+    font-size: 0.78rem;
+  }
+
+  .recovery-facts dd {
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .control-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+
+  .danger-action {
+    border-color: #8f2222;
+    color: #8f2222;
+  }
+
   .context-budget-grid {
     display: grid;
     gap: 0.8rem;
@@ -1251,6 +1507,7 @@
     .goal-columns,
     .boundary-grid,
     .context-budget-grid,
+    .recovery-facts,
     .criterion-editor {
       grid-template-columns: 1fr;
     }

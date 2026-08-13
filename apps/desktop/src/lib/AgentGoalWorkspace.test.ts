@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import AgentGoalWorkspace from './AgentGoalWorkspace.svelte';
 import type { AgentActivityResponseV1 } from './agent-activity';
+import type { AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1 } from './agent-control';
 import type {
   AgentGoalContractV1,
   AgentGoalDraftInputV1,
@@ -48,6 +49,102 @@ function tasks(revision: number): TaskLensTasksResponseV1 {
 
 function availableGoal(revision: number): AgentGoalResponseV1 {
   return { protocolVersion: 1, result: { goal: goal(revision), status: 'available' } };
+}
+
+function minimalActiveActivity(): AgentActivityResponseV1 {
+  const snapshotId = '4'.repeat(64);
+  return {
+    protocolVersion: 1,
+    result: {
+      activity: {
+        blockers: [],
+        currentLedgerRevision: 3,
+        ledgerStoreVersion: '7',
+        run: {
+          attemptNumber: 1,
+          budget: {
+            actionLimit: 8,
+            durationLimitMillis: '60000',
+            outputTokenLimit: '2000',
+            promptTokenLimit: '8000',
+            repairLimit: 2,
+            turnLimit: 8,
+          },
+          createdAtUnixMillis: '1786000000000',
+          currentSnapshotId: snapshotId,
+          earlierEventsOmitted: false,
+          ledgerRevision: 3,
+          ledgerRevisionMatchesCurrent: true,
+          runId: '5'.repeat(64),
+          state: 'execute',
+          stepId: '3'.repeat(64),
+          terminal: false,
+          timeline: [
+            {
+              code: 'none',
+              event: { kind: 'runStarted' },
+              occurredAtUnixMillis: '1786000000000',
+              outcome: null,
+              sequence: '1',
+              snapshotId,
+            },
+          ],
+          updatedAtUnixMillis: '1786000000000',
+          usage: {
+            actionCount: 0,
+            elapsedAtLastEventMillis: '0',
+            outputTokens: '0',
+            promptTokens: '0',
+            repairCount: 0,
+            turnCount: 0,
+          },
+        },
+      },
+      status: 'available',
+    },
+  };
+}
+
+function availableRecovery(): AgentTaskRecoveryResponseV1 {
+  return {
+    protocolVersion: 1,
+    result: {
+      recovery: {
+        canResume: false,
+        interruptedToolAttempts: 1,
+        ledgerRevision: 3,
+        ledgerStoreVersion: '7',
+        mutationReconciliationRequired: false,
+        mutationReplanRequired: false,
+        publishedSnapshotId: '6'.repeat(64),
+        runSnapshotId: '4'.repeat(64),
+        snapshotChanged: true,
+        staleEvidenceCount: 2,
+        state: 'execute',
+      },
+      status: 'available',
+    },
+  };
+}
+
+function cancelledActivity(): AgentActivityResponseV1 {
+  const response = minimalActiveActivity();
+  if (response.result.status !== 'available' || response.result.activity.run === null) {
+    throw new Error('minimal activity fixture must contain a run');
+  }
+  const run = response.result.activity.run;
+  run.state = 'cancelled';
+  run.terminal = true;
+  run.updatedAtUnixMillis = '1786000000010';
+  run.timeline.push({
+    code: 'cancellation',
+    event: { from: 'execute', kind: 'stateTransition', to: 'cancelled' },
+    occurredAtUnixMillis: '1786000000010',
+    outcome: 'cancelled',
+    sequence: '2',
+    snapshotId: run.currentSnapshotId,
+  });
+  return response;
 }
 
 describe('AgentGoalWorkspace', () => {
@@ -306,6 +403,79 @@ describe('AgentGoalWorkspace', () => {
     expect(screen.getAllByText('1 / 8')).toHaveLength(2);
     expect(screen.getByText('Run aktiv oder fortsetzbar')).toBeTruthy();
     expect(activityLoader).toHaveBeenCalledWith(taskId);
+  });
+
+  it('keeps unsafe Resume disabled while Cancel remains reachable and task-bound', async () => {
+    const recoveryLoader = vi
+      .fn<(selectedTaskId: string) => Promise<AgentTaskRecoveryResponseV1>>()
+      .mockResolvedValueOnce(availableRecovery())
+      .mockResolvedValue({
+        protocolVersion: 1,
+        result: { state: 'cancelled', status: 'runNotControllable' },
+      });
+    const activityLoader = vi
+      .fn<(selectedTaskId: string) => Promise<AgentActivityResponseV1>>()
+      .mockResolvedValueOnce(minimalActiveActivity())
+      .mockResolvedValue(cancelledActivity());
+    const runController = vi.fn<
+      (
+        selectedTaskId: string,
+        expectedLedgerRevision: number,
+        expectedLedgerStoreVersion: string,
+        action: 'cancel' | 'replan' | 'resume',
+      ) => Promise<AgentTaskControlResponseV1>
+    >(async () => ({
+      protocolVersion: 1,
+      result: {
+        interruptedToolAttempts: 1,
+        ledgerStoreVersion: '8',
+        outcome: 'cancelled',
+        reopenedStepCount: 2,
+        state: 'cancelled',
+        status: 'applied',
+      },
+    }));
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      activityLoader,
+      goalLoader: async () => availableGoal(1),
+      ledgerLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          ledgerRevision: 3,
+          ledgerStoreVersion: '7',
+          status: 'available',
+          steps: [
+            {
+              intendedOutcome: 'Recovery sicher anwenden',
+              status: 'inProgress',
+              stepId: '3'.repeat(64),
+            },
+          ],
+          task: { goalRevision: 1, objective: goal(1).objective, taskId },
+        },
+      }),
+      recoveryLoader,
+      runController,
+      tasksLoader: async () => tasks(1),
+    });
+
+    const resume = await screen.findByRole('button', { name: 'Resume' });
+    const replan = screen.getByRole('button', { name: 'Replan' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(resume.hasAttribute('disabled')).toBe(true);
+    expect(replan.hasAttribute('disabled')).toBe(false);
+    expect(cancel.hasAttribute('disabled')).toBe(false);
+    expect(screen.getByText(/Abgeschlossene Evidence ist veraltet/)).toBeTruthy();
+
+    await fireEvent.click(cancel);
+    await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
+    expect(runController).toHaveBeenCalledWith(taskId, 3, '7', 'cancel');
+    expect(await screen.findByText('Der Agent Run wurde dauerhaft abgebrochen.')).toBeTruthy();
+    expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
+    expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
+    expect(activityLoader).toHaveBeenCalledTimes(2);
   });
 
   it('keeps a terminal run state visible', async () => {

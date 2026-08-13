@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-agent-task-recovery"
+description = "Enables the query_agent_task_recovery command without any pre-configured scope."
+commands.allow = ["query_agent_task_recovery"]
+
+[[permission]]
+identifier = "deny-query-agent-task-recovery"
+description = "Denies the query_agent_task_recovery command without any pre-configured scope."
+commands.deny = ["query_agent_task_recovery"]

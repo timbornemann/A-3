@@ -499,9 +499,9 @@ mod tests {
     use super::{
         AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
         AgentActivityCodeV1, AgentActivityEventKindV1, AgentActivityEventV1,
-        AgentActivityOutcomeV1, AgentActivityResponseV1, AgentActivityRunV1,
-        AgentActivityTurnV1, AgentActivityUsageV1, AgentActivityV1, AgentControllerStateV1,
-        AgentSelectedActionV1, QueryAgentActivityRequestV1,
+        AgentActivityOutcomeV1, AgentActivityResponseV1, AgentActivityRunV1, AgentActivityTurnV1,
+        AgentActivityUsageV1, AgentActivityV1, AgentControllerStateV1, AgentSelectedActionV1,
+        QueryAgentActivityRequestV1,
     };
     use serde_json::json;
 

@@ -1,6 +1,7 @@
 //! Desktop composition root and explicit boundary mappings for A^3.
 
 mod agent_goal_metadata;
+mod agent_recovery_metadata;
 mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
@@ -13,44 +14,47 @@ mod repository_index_manager;
 
 use a3_application::{
     AgentActivity, AgentActivityLoadResult, AgentGoalCriterionDraft, AgentGoalDraft,
-    AgentGoalMetadataSource, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
-    CompileWorkspaceTaskLensResult, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutor,
-    GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth, GetModuleCardDetail,
-    GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
-    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
-    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
-    GetRepositoryTreePage, GetTaskLensTask, GoalContractStore, HealthQuery,
-    IndexPersistenceControl, IndexPersistenceControlError, JobEventStream, JobScheduler,
-    JobSchedulerConfig, JobSchedulerConfigError, JobSchedulerCreateError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
-    KnowledgeStoreFailure, ListRecentProjects, ListRecentProjectsError, ListTaskLensTasks,
-    ModuleCardClaimState, ModuleCardCoverageBand, ModuleCardDetail, ModuleCardDetailControl,
-    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
-    ModuleCardDetailQuery, ModuleCardDetailStore, ModuleCardEvidenceControl,
-    ModuleCardEvidenceControlError, ModuleCardEvidenceDetail, ModuleCardEvidenceFailure,
-    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
-    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshness,
-    ModuleCardFreshnessControl, ModuleCardFreshnessControlError, ModuleCardFreshnessFailure,
-    ModuleCardFreshnessStatus, ModuleCardFreshnessStore, ModuleDependencyEdge,
-    ModuleDependencyGraph, ModuleDependencyGraphControl, ModuleDependencyGraphControlError,
-    ModuleDependencyGraphFailure, ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery,
-    ModuleDependencyGraphStore, ModuleDependencyNode, ModuleDependencyNodeLimit,
-    ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
-    ModuleRuntimeFailure, ModuleRuntimeFlowKind, ModuleRuntimeFlowLoadResult,
-    ModuleRuntimeFlowQuery, ModuleRuntimeMap, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
-    ModuleRuntimeRoot, ModuleRuntimeRootKind, ModuleRuntimeRootLimit, ModuleRuntimeRootSet,
-    ModuleRuntimeStore, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
-    ModuleTreeEntry, ModuleTreeEntryKind, ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage,
-    ModuleTreePageSize, ModuleTreeQuery, ModuleTreeStore, OpenProject, OpenProjectError,
-    OpenProjectOutcome, ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker,
-    ProjectIndexStatus, ProjectInspectionFailure, ProjectMapSearchQuery,
-    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
-    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
-    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
-    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLensClaimStore,
+    AgentGoalMetadataSource, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryStore,
+    AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
+    AgentTaskRecoveryLoadResult, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
+    CompileWorkspaceTaskLensResult, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
+    DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure, GetAgentGoal, GetHealth,
+    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
+    GetProjectStorageUsage, GetProjectStorageUsageError, GetPublishedIndexOverview,
+    GetPublishedIndexOverviewError, GetRepositoryTreePage, GetTaskLensTask, GoalContractStore,
+    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
+    JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
+    ListRecentProjectsError, ListTaskLensTasks, ModuleCardClaimState, ModuleCardCoverageBand,
+    ModuleCardDetail, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
+    ModuleCardEvidenceDetail, ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness,
+    ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload, ModuleCardEvidenceQuery,
+    ModuleCardEvidenceStore, ModuleCardFreshness, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardFreshnessStore, ModuleDependencyEdge, ModuleDependencyGraph,
+    ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
+    ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyGraphStore,
+    ModuleDependencyNode, ModuleDependencyNodeLimit, ModuleDependencyRelation,
+    ModuleRuntimeControl, ModuleRuntimeControlError, ModuleRuntimeFailure, ModuleRuntimeFlowKind,
+    ModuleRuntimeFlowLoadResult, ModuleRuntimeFlowQuery, ModuleRuntimeMap,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeRoot, ModuleRuntimeRootKind,
+    ModuleRuntimeRootLimit, ModuleRuntimeRootSet, ModuleRuntimeStore, ModuleTreeChildState,
+    ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
+    ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
+    ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, ProjectCatalogAdmin,
+    ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
+    ProjectInspectionFailure, ProjectMapSearchQuery, ProjectReconciliationConfirmer,
+    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
+    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
+    RepositoryTreeQuery, RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure,
+    RunJournalStore, RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure,
+    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore,
     TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
     TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
     TaskLensWorkspaceStore, TraceModuleRuntimeFlow,
@@ -77,27 +81,30 @@ use a3_protocol::{
     AgentActivityResponseV1, AgentActivityRunV1, AgentActivityTurnV1, AgentActivityUsageV1,
     AgentActivityV1, AgentControllerStateV1, AgentGoalContractV1, AgentGoalCriterionInputV1,
     AgentGoalCriterionRequirementV1, AgentGoalCriterionV1, AgentGoalDraftInputV1,
-    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentSelectedActionV1, CommandErrorV1,
-    CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
-    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,
-    DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
-    IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
-    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
-    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1,
-    ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
-    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
-    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
-    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
-    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
-    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
-    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
-    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
-    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
-    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
-    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
-    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
-    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentSelectedActionV1,
+    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
+    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
+    AgentTaskRecoveryV1, CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1,
+    DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1,
+    DeepMapModelV1, DeepMapProgressV1, DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1,
+    HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1,
+    IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1,
+    IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1,
+    IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1,
+    ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
+    ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
+    ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
+    ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    ModuleCardLifecycleV1, ModuleCardValueV1, ModuleDependencyEdgeEvidenceV1,
+    ModuleDependencyEdgeV1, ModuleDependencyEndpointV1, ModuleDependencyGraphResponseV1,
+    ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1,
+    ModuleDependencyProviderV1, ModuleDependencyRelationV1, ModuleDependencyResolutionV1,
+    ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1, ModuleRuntimeFlowEdgeV1,
+    ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowRelationV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1,
+    ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
@@ -124,6 +131,7 @@ use a3_storage_libsql::{
 };
 use a3_workspace::RepositoryInspector;
 use agent_goal_metadata::SystemAgentGoalMetadata;
+use agent_recovery_metadata::SystemAgentRecoveryMetadata;
 use clock::SystemJobClock;
 use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
@@ -164,6 +172,9 @@ pub struct CompositionRoot {
     task_lens_task: Option<GetTaskLensTask>,
     task_lens_compile: Option<CompileWorkspaceTaskLens>,
     agent_activity: Option<GetAgentActivity>,
+    agent_task_recovery: Option<InspectAgentTaskRecovery>,
+    agent_task_control: Option<ControlAgentTaskRun>,
+    agent_recovery_metadata: SystemAgentRecoveryMetadata,
     agent_goal_query: Option<GetAgentGoal>,
     agent_goal_create: Option<CreateAgentGoal>,
     agent_goal_revise: Option<ReviseAgentGoal>,
@@ -812,6 +823,90 @@ impl CompositionRoot {
         }
     }
 
+    /// Inspects current restart-safe controls for the active task-derived Agent run.
+    pub async fn query_agent_task_recovery(
+        &self,
+        task_id: TaskId,
+    ) -> Result<AgentTaskRecoveryResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentTaskRecoveryResponseV1::new(
+                AgentTaskRecoveryResultV1::NoProject,
+            ));
+        };
+        let inspector = self
+            .agent_task_recovery
+            .as_ref()
+            .ok_or_else(agent_task_control_unavailable)?;
+        let observed_at = self
+            .agent_recovery_metadata
+            .now()
+            .map_err(|_| agent_task_control_unavailable())?;
+        let result = inspector
+            .execute(
+                &active.project,
+                task_id,
+                observed_at,
+                &DesktopBoundedReadControl::new(),
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(map_agent_task_control_error_to_v1)?;
+        Ok(AgentTaskRecoveryResponseV1::new(
+            map_agent_task_recovery_result_to_v1(result),
+        ))
+    }
+
+    /// Atomically applies one explicit recovery decision against exact visible Ledger anchors.
+    pub async fn control_agent_task_run(
+        &self,
+        task_id: TaskId,
+        expected_ledger_revision: u32,
+        expected_ledger_store_version: TaskLedgerStoreVersion,
+        action: AgentTaskControlActionV1,
+    ) -> Result<AgentTaskControlResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(AgentTaskControlResponseV1::new(
+                AgentTaskControlResultV1::NoProject,
+            ));
+        };
+        let controller = self
+            .agent_task_control
+            .as_ref()
+            .ok_or_else(agent_task_control_unavailable)?;
+        let event_id = self
+            .agent_recovery_metadata
+            .next_event_id()
+            .map_err(|_| agent_task_control_unavailable())?;
+        let observed_at = self
+            .agent_recovery_metadata
+            .now()
+            .map_err(|_| agent_task_control_unavailable())?;
+        let choice = match action {
+            AgentTaskControlActionV1::Resume => AgentRecoveryChoice::Resume,
+            AgentTaskControlActionV1::Replan => AgentRecoveryChoice::Replan,
+            AgentTaskControlActionV1::Cancel => AgentRecoveryChoice::Cancel,
+        };
+        let result = controller
+            .execute(
+                &active.project,
+                task_id,
+                expected_ledger_revision,
+                expected_ledger_store_version,
+                choice,
+                event_id,
+                observed_at,
+                &DesktopBoundedReadControl::new(),
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(map_agent_task_control_error_to_v1)?;
+        Ok(AgentTaskControlResponseV1::new(
+            map_agent_task_control_result_to_v1(result),
+        ))
+    }
+
     /// Recompiles the selected current durable task/step through the existing R10 pipeline.
     pub async fn compile_task_lens(
         &self,
@@ -1317,6 +1412,8 @@ struct OptionalCompositionPorts {
     task_lens_claim_store: Option<Arc<dyn TaskLensClaimStore>>,
     task_lens_workspace_store: Option<Arc<dyn TaskLensWorkspaceStore>>,
     run_journal_store: Option<Arc<dyn RunJournalStore>>,
+    task_ledger_store: Option<Arc<dyn TaskLedgerStore>>,
+    agent_recovery_store: Option<Arc<dyn AgentRecoveryStore>>,
     goal_contract_store: Option<Arc<dyn GoalContractStore>>,
     module_tree_store: Option<Arc<dyn ModuleTreeStore>>,
     repository_tree_store: Option<Arc<dyn RepositoryTreeStore>>,
@@ -1337,6 +1434,8 @@ struct IndexingCompositionPorts {
     task_lens_claim_store: Arc<dyn TaskLensClaimStore>,
     task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore>,
     run_journal_store: Arc<dyn RunJournalStore>,
+    task_ledger_store: Arc<dyn TaskLedgerStore>,
+    agent_recovery_store: Arc<dyn AgentRecoveryStore>,
     goal_contract_store: Arc<dyn GoalContractStore>,
     module_tree_store: Arc<dyn ModuleTreeStore>,
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
@@ -1405,6 +1504,8 @@ impl CompositionBase {
                 task_lens_claim_store: Some(ports.task_lens_claim_store),
                 task_lens_workspace_store: Some(ports.task_lens_workspace_store),
                 run_journal_store: Some(ports.run_journal_store),
+                task_ledger_store: Some(ports.task_ledger_store),
+                agent_recovery_store: Some(ports.agent_recovery_store),
                 goal_contract_store: Some(ports.goal_contract_store),
                 module_tree_store: Some(ports.module_tree_store),
                 repository_tree_store: Some(ports.repository_tree_store),
@@ -1477,8 +1578,33 @@ impl CompositionBase {
         let agent_activity = ports
             .task_lens_workspace_store
             .clone()
-            .zip(ports.run_journal_store)
+            .zip(ports.run_journal_store.clone())
             .map(|(workspace, journal)| GetAgentActivity::new(workspace, journal));
+        let recovery_ports = (
+            ports.task_lens_workspace_store.clone(),
+            ports.agent_recovery_store.clone(),
+            ports.run_journal_store.clone(),
+            ports.task_ledger_store.clone(),
+            ports.index_store.clone(),
+        );
+        let agent_task_recovery = match &recovery_ports {
+            (Some(workspace), Some(recovery), Some(journal), Some(ledgers), Some(index)) => {
+                Some(InspectAgentTaskRecovery::new(
+                    Arc::clone(workspace),
+                    Arc::clone(recovery),
+                    Arc::clone(journal),
+                    Arc::clone(ledgers),
+                    Arc::clone(index),
+                ))
+            }
+            _ => None,
+        };
+        let agent_task_control = match recovery_ports {
+            (Some(workspace), Some(recovery), Some(journal), Some(ledgers), Some(index)) => Some(
+                ControlAgentTaskRun::new(workspace, recovery, journal, ledgers, index),
+            ),
+            _ => None,
+        };
         let agent_goal_metadata: Arc<dyn AgentGoalMetadataSource> =
             Arc::new(SystemAgentGoalMetadata);
         let agent_goal_query = ports.goal_contract_store.clone().map(GetAgentGoal::new);
@@ -1545,6 +1671,9 @@ impl CompositionBase {
             task_lens_task,
             task_lens_compile,
             agent_activity,
+            agent_task_recovery,
+            agent_task_control,
+            agent_recovery_metadata: SystemAgentRecoveryMetadata,
             agent_goal_query,
             agent_goal_create,
             agent_goal_revise,
@@ -1591,6 +1720,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             let task_lens_claim_store: Arc<dyn TaskLensClaimStore> = store.clone();
             let task_lens_workspace_store: Arc<dyn TaskLensWorkspaceStore> = store.clone();
             let run_journal_store: Arc<dyn RunJournalStore> = store.clone();
+            let task_ledger_store: Arc<dyn TaskLedgerStore> = store.clone();
+            let agent_recovery_store: Arc<dyn AgentRecoveryStore> = store.clone();
             let goal_contract_store: Arc<dyn GoalContractStore> = store.clone();
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
@@ -1614,6 +1745,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     task_lens_claim_store,
                     task_lens_workspace_store,
                     run_journal_store,
+                    task_ledger_store,
+                    agent_recovery_store,
                     goal_contract_store,
                     module_tree_store,
                     repository_tree_store,
@@ -1626,6 +1759,7 @@ pub fn run() -> Result<(), DesktopRunError> {
         .invoke_handler(tauri::generate_handler![
             commands::cancel_deep_map,
             commands::compile_task_lens,
+            commands::control_agent_task_run,
             commands::create_agent_goal,
             commands::list_recent_projects,
             commands::open_project,
@@ -1643,6 +1777,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_tree,
             commands::query_agent_activity,
             commands::query_agent_goal,
+            commands::query_agent_task_recovery,
             commands::query_project_map_search,
             commands::query_task_lens_task,
             commands::query_task_lens_tasks,
@@ -2949,6 +3084,43 @@ pub(crate) fn map_agent_activity_task_id_from_v1(
         .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidTaskLensSelection))
 }
 
+pub(crate) fn map_agent_task_recovery_task_id_from_v1(
+    request: &a3_protocol::QueryAgentTaskRecoveryRequestV1,
+) -> Result<TaskId, CommandErrorV1> {
+    decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| CommandErrorV1::project_open(ErrorCodeV1::InvalidAgentTaskControl))
+}
+
+pub(crate) fn map_agent_task_control_from_v1(
+    request: &a3_protocol::ControlAgentTaskRunRequestV1,
+) -> Result<
+    (
+        TaskId,
+        u32,
+        TaskLedgerStoreVersion,
+        AgentTaskControlActionV1,
+    ),
+    CommandErrorV1,
+> {
+    let invalid = || CommandErrorV1::project_open(ErrorCodeV1::InvalidAgentTaskControl);
+    let task_id = decode_stable_id(request.task_id())
+        .map(TaskId::from_bytes)
+        .map_err(|()| invalid())?;
+    if request.expected_ledger_revision() == 0 {
+        return Err(invalid());
+    }
+    let version = parse_canonical_positive_u64(request.expected_ledger_store_version())
+        .and_then(|value| TaskLedgerStoreVersion::new(value).map_err(|_| ()))
+        .map_err(|()| invalid())?;
+    Ok((
+        task_id,
+        request.expected_ledger_revision(),
+        version,
+        request.action(),
+    ))
+}
+
 pub(crate) fn map_create_agent_goal_from_v1(
     request: &a3_protocol::CreateAgentGoalRequestV1,
 ) -> Result<AgentGoalDraft, CommandErrorV1> {
@@ -3139,6 +3311,100 @@ fn map_agent_activity_to_v1(activity: &AgentActivity) -> Option<AgentActivityV1>
         blockers,
         run,
     ))
+}
+
+fn map_agent_task_recovery_result_to_v1(
+    result: AgentTaskRecoveryLoadResult,
+) -> AgentTaskRecoveryResultV1 {
+    match result {
+        AgentTaskRecoveryLoadResult::TaskNotFound => AgentTaskRecoveryResultV1::TaskNotFound,
+        AgentTaskRecoveryLoadResult::LedgerUnavailable => {
+            AgentTaskRecoveryResultV1::LedgerUnavailable
+        }
+        AgentTaskRecoveryLoadResult::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        } => AgentTaskRecoveryResultV1::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        },
+        AgentTaskRecoveryLoadResult::ActivityChanged => AgentTaskRecoveryResultV1::ActivityChanged,
+        AgentTaskRecoveryLoadResult::RunUnavailable => AgentTaskRecoveryResultV1::RunUnavailable,
+        AgentTaskRecoveryLoadResult::RunNotControllable { state } => {
+            AgentTaskRecoveryResultV1::RunNotControllable {
+                state: map_agent_controller_state_to_v1(state),
+            }
+        }
+        AgentTaskRecoveryLoadResult::Available(recovery) => AgentTaskRecoveryResultV1::Available {
+            recovery: map_agent_task_recovery_to_v1(&recovery),
+        },
+    }
+}
+
+fn map_agent_task_recovery_to_v1(recovery: &AgentTaskRecovery) -> AgentTaskRecoveryV1 {
+    AgentTaskRecoveryV1::new(
+        recovery.ledger_revision(),
+        recovery.ledger_store_version().get().to_string(),
+        map_agent_controller_state_to_v1(recovery.state()),
+        recovery.run_snapshot_id().to_string(),
+        recovery.published_snapshot_id().to_string(),
+        recovery.snapshot_changed(),
+        recovery.interrupted_tool_attempts(),
+        recovery.stale_evidence_count(),
+        recovery.mutation_reconciliation_required(),
+        recovery.mutation_replan_required(),
+        recovery.can_resume(),
+    )
+}
+
+fn map_agent_task_control_result_to_v1(result: AgentTaskControlResult) -> AgentTaskControlResultV1 {
+    match result {
+        AgentTaskControlResult::TaskNotFound => AgentTaskControlResultV1::TaskNotFound,
+        AgentTaskControlResult::LedgerUnavailable => AgentTaskControlResultV1::LedgerUnavailable,
+        AgentTaskControlResult::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        } => AgentTaskControlResultV1::GoalRevisionMismatch {
+            current_revision,
+            ledger_revision,
+        },
+        AgentTaskControlResult::ActivityChanged => AgentTaskControlResultV1::ActivityChanged,
+        AgentTaskControlResult::RunUnavailable => AgentTaskControlResultV1::RunUnavailable,
+        AgentTaskControlResult::RunNotControllable { state } => {
+            AgentTaskControlResultV1::RunNotControllable {
+                state: map_agent_controller_state_to_v1(state),
+            }
+        }
+        AgentTaskControlResult::MutationReconciliationRequired => {
+            AgentTaskControlResultV1::MutationReconciliationRequired
+        }
+        AgentTaskControlResult::ResumeRequiresReplan => {
+            AgentTaskControlResultV1::ResumeRequiresReplan
+        }
+        AgentTaskControlResult::Applied {
+            outcome,
+            ledger_store_version,
+            state,
+            reopened_step_count,
+            interrupted_tool_attempts,
+        } => AgentTaskControlResultV1::Applied {
+            outcome: match outcome {
+                a3_application::AgentRecoveryOutcomeKind::Resumed => {
+                    AgentTaskControlOutcomeV1::Resumed
+                }
+                a3_application::AgentRecoveryOutcomeKind::ReplanRequired => {
+                    AgentTaskControlOutcomeV1::ReplanRequired
+                }
+                a3_application::AgentRecoveryOutcomeKind::Cancelled => {
+                    AgentTaskControlOutcomeV1::Cancelled
+                }
+            },
+            ledger_store_version: ledger_store_version.get().to_string(),
+            state: map_agent_controller_state_to_v1(state),
+            reopened_step_count,
+            interrupted_tool_attempts,
+        },
+    }
 }
 
 fn map_agent_activity_run_to_v1(
@@ -3461,6 +3727,17 @@ fn decode_symbol_id(value: &str) -> Result<SymbolId, ()> {
 
 fn decode_stable_id(value: &str) -> Result<[u8; 32], ()> {
     decode_hex(value, 32)?.try_into().map_err(|_| ())
+}
+
+fn parse_canonical_positive_u64(value: &str) -> Result<u64, ()> {
+    if value.is_empty()
+        || value == "0"
+        || (value.len() > 1 && value.starts_with('0'))
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(());
+    }
+    value.parse::<u64>().map_err(|_| ())
 }
 
 pub(crate) fn map_repository_tree_query_from_v1(
@@ -3855,6 +4132,77 @@ fn map_agent_activity_error_to_v1(error: GetAgentActivityFailure) -> CommandErro
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
     }
+}
+
+fn map_agent_task_control_error_to_v1(error: AgentTaskControlFailure) -> CommandErrorV1 {
+    match error {
+        AgentTaskControlFailure::Activity(error) => map_agent_activity_error_to_v1(error),
+        AgentTaskControlFailure::Recovery(error) => map_agent_recovery_error_to_v1(error),
+        AgentTaskControlFailure::ResourceLimit => agent_task_control_unavailable(),
+    }
+}
+
+fn map_agent_recovery_error_to_v1(error: AgentRecoveryError) -> CommandErrorV1 {
+    let code = match error {
+        AgentRecoveryError::Journal(error) => match error {
+            RunJournalStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+            RunJournalStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+            RunJournalStoreFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+            RunJournalStoreFailure::InvalidStoredData
+            | RunJournalStoreFailure::RunAlreadyExists
+            | RunJournalStoreFailure::RunNotFound
+            | RunJournalStoreFailure::SequenceConflict => ErrorCodeV1::LocalStorageInvalidData,
+        },
+        AgentRecoveryError::Ledger(error) => match error {
+            TaskLedgerStoreFailure::Unavailable => ErrorCodeV1::LocalStorageUnavailable,
+            TaskLedgerStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+            TaskLedgerStoreFailure::UnsupportedSchema => ErrorCodeV1::LocalStorageUpgradeRequired,
+            TaskLedgerStoreFailure::InvalidStoredData
+            | TaskLedgerStoreFailure::LedgerAlreadyExists
+            | TaskLedgerStoreFailure::TaskNotFound
+            | TaskLedgerStoreFailure::VersionConflict => ErrorCodeV1::LocalStorageInvalidData,
+        },
+        AgentRecoveryError::Index(KnowledgeIndexFailure::Storage(error)) => {
+            map_storage_error_to_v1(error)
+        }
+        AgentRecoveryError::Store(error) => match error {
+            a3_application::AgentRecoveryStoreFailure::Unavailable => {
+                ErrorCodeV1::LocalStorageUnavailable
+            }
+            a3_application::AgentRecoveryStoreFailure::Corrupt => ErrorCodeV1::LocalStorageCorrupt,
+            a3_application::AgentRecoveryStoreFailure::UnsupportedSchema => {
+                ErrorCodeV1::LocalStorageUpgradeRequired
+            }
+            a3_application::AgentRecoveryStoreFailure::InvalidStoredData
+            | a3_application::AgentRecoveryStoreFailure::RunNotFound
+            | a3_application::AgentRecoveryStoreFailure::ToolAttemptConflict
+            | a3_application::AgentRecoveryStoreFailure::MutationReconciliationRequired
+            | a3_application::AgentRecoveryStoreFailure::RunSequenceConflict
+            | a3_application::AgentRecoveryStoreFailure::LedgerVersionConflict
+            | a3_application::AgentRecoveryStoreFailure::PublishedSnapshotConflict
+            | a3_application::AgentRecoveryStoreFailure::ResourceLimit => {
+                ErrorCodeV1::LocalStorageInvalidData
+            }
+        },
+        AgentRecoveryError::RunNotFound
+        | AgentRecoveryError::TerminalRun
+        | AgentRecoveryError::LedgerNotFound
+        | AgentRecoveryError::AnchorMismatch
+        | AgentRecoveryError::PublishedIndexUnavailable
+        | AgentRecoveryError::ResumeRequiresReplan
+        | AgentRecoveryError::MutationReconciliationRequired
+        | AgentRecoveryError::InvalidTimestamp
+        | AgentRecoveryError::InvalidRecoveryReason
+        | AgentRecoveryError::ResourceLimit
+        | AgentRecoveryError::Index(_)
+        | AgentRecoveryError::RunDomain(_)
+        | AgentRecoveryError::LedgerDomain(_) => ErrorCodeV1::AgentTaskControlUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn agent_task_control_unavailable() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::AgentTaskControlUnavailable)
 }
 
 fn invalid_agent_goal() -> CommandErrorV1 {
