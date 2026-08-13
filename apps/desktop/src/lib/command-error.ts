@@ -34,6 +34,10 @@ export type ErrorCodeV1 =
   | 'agentGoalUnavailable'
   | 'invalidAgentInspectionQuery'
   | 'agentInspectionUnavailable'
+  | 'invalidAgentTaskControl'
+  | 'agentTaskControlUnavailable'
+  | 'invalidAgentApprovalRequest'
+  | 'agentApprovalUnavailable'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -83,6 +87,10 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'agentGoalUnavailable',
   'invalidAgentInspectionQuery',
   'agentInspectionUnavailable',
+  'invalidAgentTaskControl',
+  'agentTaskControlUnavailable',
+  'invalidAgentApprovalRequest',
+  'agentApprovalUnavailable',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

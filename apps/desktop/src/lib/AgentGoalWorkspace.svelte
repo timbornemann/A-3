@@ -31,6 +31,15 @@
     type AgentInspectionResponseV1,
     type AgentInspectionStreamV1,
   } from './agent-inspection';
+  import {
+    controlAgentApproval,
+    queryAgentApproval,
+    type AgentApprovalControlActionV1,
+    type AgentApprovalControlResponseV1,
+    type AgentApprovalResponseV1,
+    type AgentApprovalV1,
+  } from './agent-approval';
+  import AgentApprovalCenter from './AgentApprovalCenter.svelte';
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import { agentGoalRecoveryMessage } from './command-error';
   import GoalTextList from './GoalTextList.svelte';
@@ -45,6 +54,12 @@
 
   interface Props {
     activeProject: boolean;
+    approvalLoader?: (taskId: string) => Promise<AgentApprovalResponseV1>;
+    approvalController?: (
+      taskId: string,
+      approval: AgentApprovalV1,
+      action: AgentApprovalControlActionV1,
+    ) => Promise<AgentApprovalControlResponseV1>;
     activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
     goalCreator?: (draft: AgentGoalDraftInputV1) => Promise<AgentGoalMutationResponseV1>;
     goalLoader?: (taskId: string) => Promise<AgentGoalResponseV1>;
@@ -104,6 +119,8 @@
 
   let {
     activeProject,
+    approvalLoader = queryAgentApproval,
+    approvalController = controlAgentApproval,
     activityLoader = queryAgentActivity,
     goalCreator = createAgentGoal,
     goalLoader = queryAgentGoal,
@@ -242,6 +259,14 @@
     } catch {
       if (request === recoveryRequest) recoveryView = { kind: 'error' };
     }
+  }
+
+  async function refreshAfterApproval(): Promise<void> {
+    await Promise.all([
+      loadLedger(selectedTaskId),
+      loadActivity(selectedTaskId),
+      loadRecovery(selectedTaskId),
+    ]);
   }
 
   async function applyRunControl(action: AgentTaskControlActionV1): Promise<void> {
@@ -688,6 +713,12 @@
       taskId={selectedTaskId}
       loader={inspectionLoader}
       logLoader={inspectionLogLoader}
+    />
+    <AgentApprovalCenter
+      taskId={selectedTaskId}
+      loader={approvalLoader}
+      controller={approvalController}
+      onChanged={refreshAfterApproval}
     />
     <section class="agent-activity" aria-labelledby="agent-activity-heading">
       <header>
