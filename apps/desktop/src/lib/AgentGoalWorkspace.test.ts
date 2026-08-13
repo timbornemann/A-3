@@ -9,6 +9,7 @@ import type {
   AgentGoalMutationResponseV1,
   AgentGoalResponseV1,
 } from './agent-goal';
+import type { AgentInspectionResponseV1 } from './agent-inspection';
 import type { TaskLensTaskResponseV1, TaskLensTasksResponseV1 } from './task-lens';
 
 const taskId = '1'.repeat(64);
@@ -300,6 +301,23 @@ describe('AgentGoalWorkspace', () => {
     expect(screen.getAllByText('In Arbeit')).toHaveLength(2);
     expect(screen.getByText('Gesamtgate ausführen')).toBeTruthy();
     expect(ledgerLoader).toHaveBeenCalledWith({ taskId });
+  });
+
+  it('binds the inspection panel to the selected durable task', async () => {
+    const inspectionLoader = vi.fn<(selectedTaskId: string) => Promise<AgentInspectionResponseV1>>(
+      async () => ({ protocolVersion: 1, result: { status: 'ledgerUnavailable' } }),
+    );
+
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      goalLoader: async () => availableGoal(1),
+      inspectionLoader,
+      tasksLoader: async () => tasks(1),
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Diff und Verification' })).toBeTruthy();
+    await waitFor(() => expect(inspectionLoader).toHaveBeenCalledWith(taskId));
+    expect(screen.getByText(/noch kein verifizierbares Ledger/u)).toBeTruthy();
   });
 
   it('shows bounded budget, blockers, and separates model selection from execution', async () => {

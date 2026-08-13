@@ -473,6 +473,8 @@ mod tests {
                 "allow-pause-deep-map",
                 "allow-query-deep-map",
                 "allow-query-agent-activity",
+                "allow-query-agent-inspection",
+                "allow-query-agent-inspection-log",
                 "allow-query-agent-goal",
                 "allow-query-agent-task-recovery",
                 "allow-query-index-activity",

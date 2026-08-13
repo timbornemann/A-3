@@ -81,4 +81,11 @@ describe('command error recovery', () => {
     ).not.toContain(secret);
     expect(agentGoalRecoveryMessage(new Error(secret))).not.toContain(secret);
   });
+
+  it.each(['invalidAgentInspectionQuery', 'agentInspectionUnavailable'])(
+    'recognizes the bounded inspection error code %s',
+    (code) => {
+      expect(parseCommandErrorV1(commandError(code))?.code).toBe(code);
+    },
+  );
 });

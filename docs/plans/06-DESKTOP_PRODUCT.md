@@ -441,18 +441,46 @@ U5-Akzeptanzkriterien objektiv nachgewiesen und U5 ist abgeschlossen.
 
 Abhängigkeiten: Patch und Verification Engine
 
-- [ ] Datei- und Hunkübersicht
-- [ ] Side-by-side und unified Diff
-- [ ] Useränderungs- und Agentenänderungsmarkierung, soweit zuverlässig
-- [ ] Test-, Build- und Diagnostic-Ergebnisse
-- [ ] Evidence zu Step und Acceptance
-- [ ] stale Verification sichtbar
+- [x] Datei- und Hunkübersicht
+- [x] Side-by-side und unified Diff
+- [x] Useränderungs- und Agentenänderungsmarkierung, soweit zuverlässig
+- [x] Test-, Build- und Diagnostic-Ergebnisse
+- [x] Evidence zu Step und Acceptance
+- [x] stale Verification sichtbar
 
 Akzeptanz:
 
 - Nutzer kann vor Freigabe genaue Pfade und Änderungen sehen;
 - verkürzte Logs sind als verkürzt markiert und gezielt nachladbar;
 - Done zeigt die Beweise pro Muss-Kriterium.
+
+Abnahme U6 vom 2026-08-13: Der taskgebundene Inspector verbindet die exakte bounded E3-
+Patchprojektion mit der dauerhaft neu ausgewerteten Verification-Inspection. Dateioperationen,
+verlustfreie Pfadbytes, kontrollierte Pfadanzeige, vollständige Hash-/Byteanker, gemeinsame
+koordinatengeprüfte Hunkzeilen und die vier verlässlichen Provenienzzustände werden im Core
+erzeugt; Unified und Side-by-side rendern dasselbe strikt decodierte Zeilenmodell. Die WebView
+sendet weder Pfade noch Run-, Step-, Snapshot-, Process-, Verification-Spec- oder Evidence-IDs für
+die Übersicht. Test-, Build-, Diagnostic-, Lint-, Format- und Commandresultate bleiben zunächst
+content-frei. Ein Logread ist eine bewusste, inspection-revisions- und recordgebundene Aktion mit
+exaktem Bytecursor; `pageTruncated` bietet gezieltes Nachladen, `sourceTruncated` kennzeichnet
+dauerhaft verworfenen Overflow, und Redaction kann keinen Text ausliefern. Das Mindestlimit von
+vier Byte garantiert auch an einem vier Byte langen UTF-8-Skalar bounded Paging-Fortschritt.
+
+Der dauerhafte Teil zeigt Goal-, Ledger- und Published-Snapshotanker, Step-/Attemptstatus, alle
+fünf typisierten Evidence-Varianten, Semantikergebnis und Freshness. Stale Steps und Artefakte
+bleiben sichtbar, liefern aber niemals einen Done-Beweis. Done erscheint nur, wenn jedes
+Muss-Kriterium exakte Step- und Evidence-IDs eines abgeschlossenen, bestandenen und frischen
+Versuchs besitzt. Der Workspace bindet den Inspector an dieselbe ausgewählte dauerhafte TaskId;
+Projektwechsel und Shutdown entfernen flüchtige Patch- und Logdaten.
+
+Die sechs Application-Inspector-Tests, der IPC-Grenztest, der Capability-Negativtest, die strikten
+TypeScript-Decoder- und Component-Tests, Formatter, ESLint, Svelte-Typecheck, 152 Frontendtests,
+Produktionsbuild sowie Clippy über alle Workspace-Targets und -Features mit Warnings denied sind
+grün. Ein vollständiger serieller Windows-Workspace-Lauf traf einmal nach fachlich erfolgreichem
+Contractprozess den bereits dokumentierten nativen libSQL-Teardown mit `0xc0000005`; der exakt
+betroffene Contract bestand unmittelbar isoliert und die anschließende vollständige
+Workspace-Wiederholung ohne Ausfall. Damit sind alle drei U6-Akzeptanzkriterien objektiv
+nachgewiesen und U6 ist abgeschlossen.
 
 ## U7 Approval Center
 

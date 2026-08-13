@@ -848,7 +848,7 @@ impl AgentLogPageOffset {
     }
 }
 
-/// Positive log-page limit capped at sixteen KiB.
+/// UTF-8-progress-safe log-page limit capped at sixteen KiB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentLogPageLimit(u32);
 
@@ -856,9 +856,9 @@ impl AgentLogPageLimit {
     /// Default page used for an explicit detail load.
     pub const DEFAULT: Self = Self(8 * 1_024);
 
-    /// Creates a positive bounded page size.
+    /// Creates a bounded page size that can retain at least one UTF-8 scalar.
     pub const fn new(value: u32) -> Result<Self, AgentLogPageLimitError> {
-        if value == 0 || value > MAX_LOG_PAGE_BYTES {
+        if value < 4 || value > MAX_LOG_PAGE_BYTES {
             return Err(AgentLogPageLimitError { value });
         }
         Ok(Self(value))
@@ -871,7 +871,7 @@ impl AgentLogPageLimit {
     }
 }
 
-/// Requested log-page size was zero or exceeded sixteen KiB.
+/// Requested log-page size was below one UTF-8 scalar or exceeded sixteen KiB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentLogPageLimitError {
     value: u32,
@@ -881,7 +881,7 @@ impl fmt::Display for AgentLogPageLimitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "Agent log page limit {} must be between 1 and {MAX_LOG_PAGE_BYTES}",
+            "Agent log page limit {} must be between 4 and {MAX_LOG_PAGE_BYTES}",
             self.value
         )
     }
@@ -1734,7 +1734,8 @@ mod tests {
         let buffer = AgentInspectionBuffer::new();
         buffer.activate_project(&project);
         let context = context();
-        let result = process_result("äbcdef", true)?;
+        assert!(AgentLogPageLimit::new(3).is_err());
+        let result = process_result("🙂bcdef", true)?;
         let process_id = buffer.record_process_result(
             &project,
             context,
@@ -1759,9 +1760,9 @@ mod tests {
             process_id,
             ProcessStream::Stdout,
             AgentLogPageOffset::START,
-            AgentLogPageLimit::new(3)?,
+            AgentLogPageLimit::new(4)?,
         )?;
-        assert_eq!(first.text(), "äb");
+        assert_eq!(first.text(), "🙂");
         assert!(first.page_truncated());
         assert!(first.source_truncated());
         let second = buffer.load_process_log_page(
@@ -1773,7 +1774,7 @@ mod tests {
             first.next_offset().ok_or("missing next page")?,
             AgentLogPageLimit::new(16)?,
         )?;
-        assert_eq!(second.text(), "cdef");
+        assert_eq!(second.text(), "bcdef");
         assert!(!second.page_truncated());
         assert!(second.source_truncated());
         assert_eq!(

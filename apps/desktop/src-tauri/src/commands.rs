@@ -1636,6 +1636,15 @@ mod tests {
                 0,
                 16 * 1_024 + 1,
             ),
+            QueryAgentInspectionLogRequestV1::new(
+                ProtocolVersion::CURRENT,
+                "11".repeat(32),
+                "1".to_owned(),
+                "22".repeat(32),
+                AgentInspectionStreamV1::Stdout,
+                0,
+                3,
+            ),
         ] {
             assert_eq!(
                 block_on(execute_query_agent_inspection_log(invalid, &root))

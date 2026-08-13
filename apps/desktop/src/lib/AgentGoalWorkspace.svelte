@@ -24,6 +24,14 @@
     type AgentGoalMutationResponseV1,
     type AgentGoalResponseV1,
   } from './agent-goal';
+  import {
+    queryAgentInspection,
+    queryAgentInspectionLog,
+    type AgentInspectionLogResponseV1,
+    type AgentInspectionResponseV1,
+    type AgentInspectionStreamV1,
+  } from './agent-inspection';
+  import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import { agentGoalRecoveryMessage } from './command-error';
   import GoalTextList from './GoalTextList.svelte';
   import {
@@ -46,6 +54,14 @@
       reason: string,
       draft: AgentGoalDraftInputV1,
     ) => Promise<AgentGoalMutationResponseV1>;
+    inspectionLoader?: (taskId: string) => Promise<AgentInspectionResponseV1>;
+    inspectionLogLoader?: (
+      taskId: string,
+      revision: string,
+      inspectionId: string,
+      stream: AgentInspectionStreamV1,
+      offset: number,
+    ) => Promise<AgentInspectionLogResponseV1>;
     ledgerLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     recoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;
     runController?: (
@@ -92,6 +108,8 @@
     goalCreator = createAgentGoal,
     goalLoader = queryAgentGoal,
     goalReviser = reviseAgentGoal,
+    inspectionLoader = queryAgentInspection,
+    inspectionLogLoader = queryAgentInspectionLog,
     ledgerLoader = queryTaskLensTask,
     recoveryLoader = queryAgentTaskRecovery,
     runController = controlAgentTaskRun,
@@ -666,6 +684,11 @@
         </ol>
       {/if}
     </section>
+    <AgentInspectionPanel
+      taskId={selectedTaskId}
+      loader={inspectionLoader}
+      logLoader={inspectionLogLoader}
+    />
     <section class="agent-activity" aria-labelledby="agent-activity-heading">
       <header>
         <p>Durable Run</p>

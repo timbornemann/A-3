@@ -194,6 +194,26 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   erreicht, ein Resume mit strikt neuerer Ledger-Store-Version einen neuen besessenen Job startet
   und Cancel exakt die sichtbaren Anker verwendet. H11 darf einen im aktuellen Prozess lebenden
   Worker nicht inspizieren. Projektwechsel und Shutdown dürfen keinen Worker ablösen.
+- Der U6-Diff-/Verification-Inspector-Contract lädt mit `query_agent_inspection` ausschließlich die
+  ausgewählte `TaskId`; Projekt, Worktree, Run, Step, Verification-Spec, Snapshot, Pfad, Process und
+  Evidence bleiben Core-eigen. Application-Tests prüfen eine exakte bounded E3-Patchprojektion,
+  gemeinsame Hunkzeilen für Unified und Side-by-side, getrennte Vorschlags-/Angewandt-/Extern-/
+  Unattributed-Provenienz, content-freie Test-/Build-/Diagnostic-Zeilen, Redaction sowie das
+  Entfernen flüchtiger Inhalte bei neuem Run, Projektwechsel und Shutdown. Durable Verification
+  wird konsistent doppelt gelesen und gegen den jüngsten Published Snapshot neu ausgewertet; stale
+  Evidence bleibt sichtbar, kann aber keinen Must-/Should-Beweis liefern. IPC- und TypeScript-
+  Contracts lehnen unbekannte Felder, nicht kanonische IDs, Pfade und Zahlen, inkonsistente
+  Dateioperationen, Hunkkoordinaten, Zähler, Trunkierung, Termination, Step-/Attempt-Historie,
+  höchstens 128 kanonisch geordnete Diff-Evidence-Pfade sowie
+  Proofs ohne abgeschlossenen Step und frische bestandene Evidence ab. Logtext wird erst nach
+  expliziter Auswahl über die zuvor emittierte positive Inspection-Revision, Inspection-ID,
+  `stdout|stderr` und einen exakten Bytecursor geladen; vier bis 16.384 Byte garantieren bounded
+  UTF-8-Fortschritt. `pageTruncated` bietet gezieltes Nachladen, `sourceTruncated` markiert dauerhaft
+  verworfene Ausgabe, und redigierte Seiten bleiben leer. Component-Tests müssen exakte Pfade und
+  Hunkparität beider Layouts, verlässliche Attribution, bedarfsgesteuertes Cursor-Paging, getrennte
+  Trunkierung, sichtbare stale Steps/Evidence und die exakten Step-/Evidence-IDs jedes bewiesenen
+  Muss-Kriteriums im Done-Zustand zeigen. Der Capability-Test erlaubt nur die beiden engen
+  Read-Commands und keine Datei-, Shell-, SQL-, Provider-, Approval- oder Mutationsbefugnis.
 
 ### Persistenz
 

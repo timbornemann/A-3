@@ -1,0 +1,924 @@
+<script lang="ts">
+  import {
+    queryAgentInspection,
+    queryAgentInspectionLog,
+    type AgentCriterionInspectionV1,
+    type AgentDiffFileV1,
+    type AgentDiffRowV1,
+    type AgentInspectionLogResponseV1,
+    type AgentInspectionResponseV1,
+    type AgentInspectionStreamV1,
+    type AgentProcessInspectionV1,
+    type AgentVerificationEvidenceV1,
+    type AgentVerificationStepV1,
+  } from './agent-inspection';
+
+  interface Props {
+    taskId: string;
+    loader?: (taskId: string) => Promise<AgentInspectionResponseV1>;
+    logLoader?: (
+      taskId: string,
+      revision: string,
+      inspectionId: string,
+      stream: AgentInspectionStreamV1,
+      offset: number,
+    ) => Promise<AgentInspectionLogResponseV1>;
+  }
+
+  type InspectionView =
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'result'; result: AgentInspectionResponseV1['result'] };
+  type DiffLayout = 'unified' | 'sideBySide';
+  const PROCESS_STREAMS: AgentInspectionStreamV1[] = ['stdout', 'stderr'];
+  type LogView =
+    | { kind: 'idle' }
+    | { kind: 'loading'; text: string }
+    | {
+        kind: 'available';
+        nextOffset: number | null;
+        pageTruncated: boolean;
+        sourceTruncated: boolean;
+        text: string;
+      }
+    | { kind: 'changed' }
+    | { kind: 'unavailable' }
+    | { kind: 'error' };
+
+  let {
+    taskId,
+    loader = queryAgentInspection,
+    logLoader = queryAgentInspectionLog,
+  }: Props = $props();
+  let view = $state<InspectionView>({ kind: 'loading' });
+  let layout = $state<DiffLayout>('unified');
+  let logs = $state<Record<string, LogView>>({});
+  let requestSequence = 0;
+  let observedTaskId = '';
+
+  $effect(() => {
+    if (taskId !== observedTaskId) {
+      observedTaskId = taskId;
+      void loadInspection();
+    }
+  });
+
+  async function loadInspection(): Promise<void> {
+    const request = ++requestSequence;
+    view = { kind: 'loading' };
+    logs = {};
+    try {
+      const response = await loader(taskId);
+      if (request === requestSequence && taskId === observedTaskId) {
+        view = { kind: 'result', result: response.result };
+      }
+    } catch {
+      if (request === requestSequence) view = { kind: 'error' };
+    }
+  }
+
+  function logKey(inspectionId: string, stream: AgentInspectionStreamV1): string {
+    return `${inspectionId}:${stream}`;
+  }
+
+  function logView(inspectionId: string, stream: AgentInspectionStreamV1): LogView {
+    return logs[logKey(inspectionId, stream)] ?? { kind: 'idle' };
+  }
+
+  async function loadLog(
+    process: AgentProcessInspectionV1,
+    stream: AgentInspectionStreamV1,
+    offset: number,
+  ): Promise<void> {
+    if (
+      view.kind !== 'result' ||
+      view.result.status !== 'available' ||
+      view.result.inspection.inspectionRevision === null
+    ) {
+      return;
+    }
+    const selectedTaskId = taskId;
+    const selectedRevision = view.result.inspection.inspectionRevision;
+    const key = logKey(process.inspectionId, stream);
+    const prior = logs[key];
+    const previousText = prior?.kind === 'available' ? prior.text : '';
+    logs[key] = { kind: 'loading', text: previousText };
+    try {
+      const response = await logLoader(
+        selectedTaskId,
+        selectedRevision,
+        process.inspectionId,
+        stream,
+        offset,
+      );
+      if (
+        taskId !== selectedTaskId ||
+        view.kind !== 'result' ||
+        view.result.status !== 'available' ||
+        view.result.inspection.inspectionRevision !== selectedRevision
+      ) {
+        return;
+      }
+      if (response.result.status === 'inspectionChanged') {
+        logs[key] = { kind: 'changed' };
+      } else if (response.result.status !== 'available') {
+        logs[key] = { kind: 'unavailable' };
+      } else {
+        const page = response.result.page;
+        logs[key] = {
+          kind: 'available',
+          nextOffset: page.nextOffset,
+          pageTruncated: page.pageTruncated,
+          sourceTruncated: page.sourceTruncated,
+          text: `${previousText}${page.text}`,
+        };
+      }
+    } catch {
+      if (
+        taskId === selectedTaskId &&
+        view.kind === 'result' &&
+        view.result.status === 'available' &&
+        view.result.inspection.inspectionRevision === selectedRevision
+      ) {
+        logs[key] = { kind: 'error' };
+      }
+    }
+  }
+
+  function processKindLabel(kind: AgentProcessInspectionV1['kind']): string {
+    return {
+      build: 'Build',
+      command: 'Command',
+      diagnostic: 'Diagnostic',
+      format: 'Format',
+      lint: 'Lint',
+      test: 'Test',
+    }[kind];
+  }
+
+  function processTerminationLabel(process: AgentProcessInspectionV1): string {
+    const termination = process.termination;
+    if (termination.kind === 'timedOut') return 'Timeout';
+    if (termination.kind === 'cancelled') return 'Abgebrochen';
+    if (termination.success) return 'Erfolgreich beendet';
+    return termination.code === null ? 'Fehlgeschlagen' : `Exit ${termination.code}`;
+  }
+
+  function operationLabel(file: AgentDiffFileV1): string {
+    return { add: 'Neu', delete: 'Gelöscht', move: 'Verschoben', update: 'Geändert' }[
+      file.operation
+    ];
+  }
+
+  function attributionLabel(file: AgentDiffFileV1): string {
+    return {
+      appliedAgent: 'Vom Agenten angewendet',
+      external: 'Extern beobachtet',
+      proposedAgent: 'Vom Agenten vorgeschlagen',
+      unattributed: 'Urheber nicht zuverlässig bestimmt',
+    }[file.attribution];
+  }
+
+  function criterionStateLabel(criterion: AgentCriterionInspectionV1): string {
+    return {
+      failed: 'Fehlgeschlagen',
+      missing: 'Kein aktiver Step zugeordnet',
+      pending: 'Ausstehend',
+      proven: 'Bewiesen',
+      stale: 'Veraltet',
+    }[criterion.proofState];
+  }
+
+  function stepStatusLabel(step: AgentVerificationStepV1): string {
+    return {
+      awaitingApproval: 'Wartet auf Freigabe',
+      blocked: 'Blockiert',
+      cancelled: 'Abgebrochen',
+      completed: 'Abgeschlossen',
+      failed: 'Fehlgeschlagen',
+      inProgress: 'In Arbeit',
+      pending: 'Ausstehend',
+      ready: 'Bereit',
+      stale: 'Veraltet',
+      verifying: 'Wird verifiziert',
+    }[step.status];
+  }
+
+  function evidenceLabel(evidence: AgentVerificationEvidenceV1): string {
+    return {
+      command: 'Command-Evidence',
+      diagnostic: 'Diagnostic-Evidence',
+      diffInvariant: 'Diff-Evidence',
+      test: 'Test-Evidence',
+      userConfirm: 'User-Confirmation',
+    }[evidence.method];
+  }
+
+  function linePrefix(row: AgentDiffRowV1): string {
+    return row.kind === 'added' ? '+' : row.kind === 'removed' ? '−' : ' ';
+  }
+</script>
+
+<section class="inspection-panel" aria-labelledby="agent-inspection-heading">
+  <header class="panel-heading">
+    <div>
+      <p class="eyebrow">Nachvollziehbarkeit</p>
+      <h3 id="agent-inspection-heading">Diff und Verification</h3>
+    </div>
+    <button class="secondary" type="button" onclick={loadInspection}>Aktualisieren</button>
+  </header>
+
+  {#if view.kind === 'loading'}
+    <p class="empty-state">Diffs und Verification werden sicher geladen …</p>
+  {:else if view.kind === 'error'}
+    <div class="notice error">
+      <p>Die Inspektion konnte nicht sicher geladen werden.</p>
+      <button type="button" onclick={loadInspection}>Erneut laden</button>
+    </div>
+  {:else if view.result.status === 'inspectionChanged'}
+    <div class="notice warning">
+      <p>Der Task hat sich während des Lesens geändert. Die alte Ansicht wird nicht gemischt.</p>
+      <button type="button" onclick={loadInspection}>Aktuellen Stand laden</button>
+    </div>
+  {:else if view.result.status !== 'available'}
+    <p class="empty-state">
+      {view.result.status === 'ledgerUnavailable'
+        ? 'Für diesen Task existiert noch kein verifizierbares Ledger.'
+        : view.result.status === 'goalRevisionMismatch'
+          ? 'Goal Contract und Ledger müssen vor der Inspektion neu abgeglichen werden.'
+          : 'Für diesen Task ist keine Inspektion verfügbar.'}
+    </p>
+  {:else}
+    {@const inspection = view.result.inspection}
+    {@const mustCriteria = inspection.verification.criteria.filter(
+      (criterion) => criterion.requirement === 'must',
+    )}
+    {@const doneProven =
+      mustCriteria.length > 0 &&
+      mustCriteria.every((criterion) => criterion.proofState === 'proven')}
+    <section class="verification-summary" aria-labelledby="acceptance-proof-heading">
+      <div class="subheading">
+        <div>
+          <p class="eyebrow">Goal Contract</p>
+          <h4 id="acceptance-proof-heading">Acceptance-Beweise</h4>
+        </div>
+        <span class="anchor"
+          >Goal R{inspection.verification.goalRevision} · Ledger R{inspection.verification
+            .ledgerRevision}</span
+        >
+      </div>
+      <p class:proof-summary={doneProven} class="done-proof-state">
+        {doneProven
+          ? 'Done · alle Muss-Kriterien besitzen exakte frische Beweise.'
+          : 'Done ist nicht belegt · mindestens ein Muss-Kriterium besitzt keinen frischen Beweis.'}
+      </p>
+      <ul class="criterion-list">
+        {#each inspection.verification.criteria as criterion (criterion.criterionId)}
+          <li class:stale={criterion.proofState === 'stale'}>
+            <div class="criterion-title">
+              <strong>{criterion.requirement === 'must' ? 'Muss' : 'Soll'}</strong>
+              <span class:proof={criterion.proofState === 'proven'}
+                >{criterionStateLabel(criterion)}</span
+              >
+            </div>
+            <p>{criterion.statement}</p>
+            {#if criterion.proofs.length > 0}
+              <ul class="proof-list" aria-label="Exakte Beweise">
+                {#each criterion.proofs as proof (proof.stepId)}
+                  <li>
+                    <span>Step <code>{proof.stepId}</code></span>
+                    {#each proof.evidenceIds as evidenceId (evidenceId)}
+                      <span>Evidence <code>{evidenceId}</code></span>
+                    {/each}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </section>
+
+    <section class="diff-section" aria-labelledby="patch-heading">
+      <div class="subheading">
+        <div>
+          <p class="eyebrow">Exakte E3-Vorschau</p>
+          <h4 id="patch-heading">Dateien und Hunks</h4>
+        </div>
+        {#if inspection.patch !== null}
+          <div class="segmented" aria-label="Diff-Darstellung">
+            <button
+              type="button"
+              class:active={layout === 'unified'}
+              aria-pressed={layout === 'unified'}
+              onclick={() => (layout = 'unified')}>Unified</button
+            >
+            <button
+              type="button"
+              class:active={layout === 'sideBySide'}
+              aria-pressed={layout === 'sideBySide'}
+              onclick={() => (layout = 'sideBySide')}>Side-by-side</button
+            >
+          </div>
+        {/if}
+      </div>
+      {#if inspection.patch === null}
+        <p class="empty-state">
+          Kein exakter flüchtiger Patch ist vorhanden. Nach einem Neustart bleiben nur dauerhafte
+          Evidence-Metadaten erhalten.
+        </p>
+      {:else}
+        <p class="anchor">
+          Snapshot <code>{inspection.patch.snapshotId}</code> · {inspection.patch.files.length}
+          Datei(en)
+        </p>
+        <div class="file-list">
+          {#each inspection.patch.files as file, index (`${file.sourcePath?.pathHex ?? ''}:${file.targetPath?.pathHex ?? ''}:${index}`)}
+            <article class="diff-file">
+              <header>
+                <div>
+                  <strong>{operationLabel(file)}</strong>
+                  <code class="path"
+                    >{file.targetPath?.displayPath ?? file.sourcePath?.displayPath}</code
+                  >
+                  {#if file.operation === 'move'}
+                    <span class="move-source">von {file.sourcePath?.displayPath}</span>
+                  {/if}
+                </div>
+                <div class="file-metrics">
+                  <span class="added">+{file.addedLines}</span>
+                  <span class="removed">−{file.removedLines}</span>
+                  <span>{attributionLabel(file)}</span>
+                </div>
+              </header>
+              <details class="path-proof">
+                <summary>Exakte Pfadbytes</summary>
+                <code>{file.targetPath?.pathHex ?? file.sourcePath?.pathHex}</code>
+              </details>
+              {#if file.contentTruncated}
+                <p class="truncation-warning">
+                  Inhalt ist eine exakte E3-Präfixvorschau. Der vollständige Hash und die Bytezahl
+                  bleiben sichtbar; der ausgelassene Tail ist nicht nachladbar.
+                </p>
+              {/if}
+              {#each file.hunks as hunk, hunkIndex (`${hunk.beforeStart}:${hunk.afterStart}:${hunkIndex}`)}
+                <div class="hunk">
+                  <div class="hunk-heading">
+                    @@ −{hunk.beforeStart},{hunk.beforeCount} +{hunk.afterStart},{hunk.afterCount} @@
+                  </div>
+                  {#if layout === 'unified'}
+                    <div class="unified-diff" role="table" aria-label="Unified Diff">
+                      {#each hunk.rows as row, rowIndex (rowIndex)}
+                        <div
+                          class:added={row.kind === 'added'}
+                          class:removed={row.kind === 'removed'}
+                          class="diff-row"
+                          role="row"
+                        >
+                          <span class="line-number"
+                            >{row.kind === 'added' ? '' : row.beforeLine}</span
+                          >
+                          <span class="line-number"
+                            >{row.kind === 'removed' ? '' : row.afterLine}</span
+                          >
+                          <span class="prefix">{linePrefix(row)}</span>
+                          <code>{row.line.text}</code>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="side-diff" role="table" aria-label="Side-by-side Diff">
+                      {#each hunk.rows as row, rowIndex (rowIndex)}
+                        <div class="side-row" role="row">
+                          <div class:removed={row.kind === 'removed'} class="side-cell">
+                            <span class="line-number"
+                              >{row.kind === 'added' ? '' : row.beforeLine}</span
+                            >
+                            <code>{row.kind === 'added' ? '' : row.line.text}</code>
+                          </div>
+                          <div class:added={row.kind === 'added'} class="side-cell">
+                            <span class="line-number"
+                              >{row.kind === 'removed' ? '' : row.afterLine}</span
+                            >
+                            <code>{row.kind === 'removed' ? '' : row.line.text}</code>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="process-section" aria-labelledby="process-results-heading">
+      <div class="subheading">
+        <div>
+          <p class="eyebrow">Test · Build · Diagnostic</p>
+          <h4 id="process-results-heading">Prozessergebnisse</h4>
+        </div>
+      </div>
+      {#if inspection.processes.length === 0}
+        <p class="empty-state">Keine flüchtigen Prozessresultate in dieser Laufzeit.</p>
+      {:else}
+        <div class="process-list">
+          {#each inspection.processes as process (process.inspectionId)}
+            <article class="process-card">
+              <header>
+                <div>
+                  <strong>{processKindLabel(process.kind)}</strong>
+                  <span>{processTerminationLabel(process)}</span>
+                </div>
+                <span>{process.durationMillis} ms</span>
+              </header>
+              {#each PROCESS_STREAMS as stream (stream)}
+                {@const summary = process[stream]}
+                {@const selectedLog = logView(process.inspectionId, stream)}
+                <section class="stream" aria-label={stream}>
+                  <div class="stream-heading">
+                    <strong>{stream}</strong>
+                    <span>{summary.observedBytes} Bytes beobachtet</span>
+                  </div>
+                  {#if summary.redaction !== null}
+                    <p class="redacted">Ausgabe redigiert: {summary.redaction}</p>
+                  {:else if summary.retainedBytes === '0'}
+                    <p class="empty-state">Keine retained Ausgabe.</p>
+                  {:else if selectedLog.kind === 'idle'}
+                    <button
+                      type="button"
+                      aria-label={`${stream}-Log gezielt laden`}
+                      onclick={() => loadLog(process, stream, 0)}>Log gezielt laden</button
+                    >
+                  {:else if selectedLog.kind === 'loading'}
+                    {#if selectedLog.text.length > 0}<pre>{selectedLog.text}</pre>{/if}
+                    <p>Lade nächste sichere Seite …</p>
+                  {:else if selectedLog.kind === 'available'}
+                    <pre>{selectedLog.text}</pre>
+                    {#if selectedLog.pageTruncated && selectedLog.nextOffset !== null}
+                      <p class="truncation-note">
+                        Weitere retained Ausgabe ist gezielt nachladbar.
+                      </p>
+                      <button
+                        type="button"
+                        aria-label={`Nächste ${stream}-Logseite laden`}
+                        onclick={() => loadLog(process, stream, selectedLog.nextOffset ?? 0)}
+                        >Nächste Logseite laden</button
+                      >
+                    {/if}
+                  {:else if selectedLog.kind === 'changed'}
+                    <p class="truncation-warning">Die Inspection hat sich geändert.</p>
+                    <button type="button" onclick={loadInspection}>Aktuellen Stand laden</button>
+                  {:else}
+                    <p class="truncation-warning">Diese Logseite ist nicht mehr verfügbar.</p>
+                  {/if}
+                  {#if summary.sourceTruncated || (selectedLog.kind === 'available' && selectedLog.sourceTruncated)}
+                    <p class="source-truncated">
+                      Ausgabe jenseits des Retention-Limits wurde dauerhaft verworfen und ist nicht
+                      nachladbar.
+                    </p>
+                  {/if}
+                </section>
+              {/each}
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="evidence-section" aria-labelledby="step-evidence-heading">
+      <div class="subheading">
+        <div>
+          <p class="eyebrow">Dauerhafte Wahrheit</p>
+          <h4 id="step-evidence-heading">Steps und Evidence</h4>
+        </div>
+        <span class="anchor"
+          >Published <code>{inspection.verification.publishedSnapshotId}</code></span
+        >
+      </div>
+      <div class="step-list">
+        {#each inspection.verification.steps as step (step.stepId)}
+          <article class:stale={step.status === 'stale'} class="verification-step">
+            <header>
+              <div>
+                <strong>{step.intendedOutcome}</strong>
+                <span>{stepStatusLabel(step)}</span>
+              </div>
+              <code>{step.stepId}</code>
+            </header>
+            {#if step.staleCause !== null}
+              <p class="source-truncated">
+                Verification ist stale: {step.staleCause.kind === 'dependency'
+                  ? 'ein abhängiger Step ist veraltet.'
+                  : `${step.staleCause.evidenceIds.length} Evidence-Artefakt(e) wurden invalidiert.`}
+              </p>
+            {/if}
+            {#each step.attempts as attempt (attempt.number)}
+              <details open={attempt.number === step.attempts.length}>
+                <summary>
+                  Versuch {attempt.number} · {attempt.outcome.status === 'passed'
+                    ? 'Ledger-Verifikation bestanden'
+                    : 'Ledger-Verifikation fehlgeschlagen'}
+                </summary>
+                <div class="evidence-list">
+                  {#each attempt.evidence as evidence (evidence.evidenceId)}
+                    <article
+                      class:stale={evidence.freshness.status === 'stale'}
+                      class="evidence-card"
+                    >
+                      <header>
+                        <strong>{evidenceLabel(evidence)}</strong>
+                        <span>
+                          {evidence.evaluation.status === 'passed'
+                            ? 'Semantik bestanden'
+                            : 'Semantik fehlgeschlagen'}
+                          · {evidence.freshness.status === 'fresh' ? 'Frisch' : 'Stale'}
+                        </span>
+                      </header>
+                      <code>{evidence.evidenceId}</code>
+                      {#if evidence.detail.kind === 'test'}
+                        <p>
+                          {evidence.detail.passed} bestanden · {evidence.detail.failed} fehlgeschlagen
+                          ·
+                          {evidence.detail.ignored} ignoriert
+                        </p>
+                        {#if evidence.detail.casesTruncated}<p class="truncation-note">
+                            Weitere strukturierte Testfälle wurden in dieser Ansicht begrenzt.
+                          </p>{/if}
+                      {:else if evidence.detail.kind === 'diagnostic'}
+                        <p>
+                          {evidence.detail.errors} Fehler · {evidence.detail.warnings} Warnungen
+                        </p>
+                      {:else if evidence.detail.kind === 'diff'}
+                        <p>{evidence.detail.changedPaths.length} tatsächlich geänderte Pfade</p>
+                        {#if evidence.detail.changedPaths.length > 0}
+                          <details class="evidence-paths">
+                            <summary>Exakte geänderte Pfade</summary>
+                            <ul>
+                              {#each evidence.detail.changedPaths as path (path.pathHex)}
+                                <li>
+                                  <code>{path.displayPath}</code>
+                                  <code class="path-bytes">{path.pathHex}</code>
+                                </li>
+                              {/each}
+                            </ul>
+                          </details>
+                        {/if}
+                      {:else if evidence.detail.kind === 'command'}
+                        <p>{evidence.detail.command.durationMillis} ms</p>
+                      {:else}
+                        <p>Vom Benutzer bestätigter Scope <code>{evidence.detail.scopeId}</code></p>
+                      {/if}
+                    </article>
+                  {/each}
+                </div>
+              </details>
+            {/each}
+          </article>
+        {/each}
+      </div>
+    </section>
+  {/if}
+</section>
+
+<style>
+  .inspection-panel {
+    display: grid;
+    gap: 1rem;
+    padding: 1.15rem;
+    border: 1px solid var(--line, #d6d3cc);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--surface, #fff) 92%, #f5efe2);
+  }
+
+  .panel-heading,
+  .subheading,
+  .diff-file > header,
+  .process-card > header,
+  .verification-step > header,
+  .evidence-card > header,
+  .stream-heading,
+  .criterion-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+  }
+
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+
+  h4 {
+    font-size: 1rem;
+  }
+
+  .eyebrow {
+    color: var(--muted, #625f58);
+    font-size: 0.7rem;
+    font-weight: 750;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .verification-summary,
+  .diff-section,
+  .process-section,
+  .evidence-section {
+    display: grid;
+    gap: 0.75rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line, #d6d3cc);
+  }
+
+  .criterion-list,
+  .proof-list {
+    display: grid;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .criterion-list > li,
+  .diff-file,
+  .process-card,
+  .verification-step,
+  .evidence-card {
+    padding: 0.8rem;
+    border: 1px solid var(--line, #d6d3cc);
+    border-radius: 0.7rem;
+    background: var(--surface, #fff);
+  }
+
+  .criterion-list > li.stale,
+  .verification-step.stale,
+  .evidence-card.stale {
+    border-color: #b45309;
+    background: #fff7ed;
+  }
+
+  .criterion-title span,
+  .file-metrics span,
+  .anchor,
+  .move-source,
+  .stream-heading span,
+  .process-card header span,
+  .verification-step header span,
+  .evidence-card header span {
+    color: var(--muted, #625f58);
+    font-size: 0.78rem;
+  }
+
+  .criterion-title .proof {
+    color: #166534;
+    font-weight: 700;
+  }
+
+  .done-proof-state {
+    padding: 0.65rem 0.75rem;
+    border: 1px solid #b45309;
+    border-radius: 0.55rem;
+    background: #fff7ed;
+  }
+
+  .done-proof-state.proof-summary {
+    border-color: #86a789;
+    background: #f0fdf4;
+    color: #166534;
+  }
+
+  .proof-list {
+    margin-top: 0.55rem;
+  }
+
+  .proof-list li {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.55rem;
+    border-radius: 0.5rem;
+    background: #f0fdf4;
+    font-size: 0.78rem;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+
+  .secondary,
+  .segmented button,
+  .stream button,
+  .notice button {
+    border: 1px solid var(--line, #b8b4aa);
+    border-radius: 0.5rem;
+    background: var(--surface, #fff);
+    color: inherit;
+    cursor: pointer;
+    padding: 0.45rem 0.7rem;
+  }
+
+  .segmented {
+    display: flex;
+  }
+
+  .segmented button {
+    border-radius: 0;
+  }
+
+  .segmented button:first-child {
+    border-radius: 0.5rem 0 0 0.5rem;
+  }
+
+  .segmented button:last-child {
+    border-radius: 0 0.5rem 0.5rem 0;
+  }
+
+  .segmented button.active {
+    background: #20231f;
+    color: #fff;
+  }
+
+  .file-list,
+  .process-list,
+  .step-list,
+  .evidence-list {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .path {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.9rem;
+  }
+
+  .file-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.45rem;
+  }
+
+  .file-metrics .added {
+    color: #166534;
+  }
+
+  .file-metrics .removed {
+    color: #991b1b;
+  }
+
+  .path-proof {
+    margin: 0.5rem 0;
+    color: var(--muted, #625f58);
+    font-size: 0.72rem;
+  }
+
+  .evidence-paths ul {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0.45rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .evidence-paths li {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .path-bytes {
+    color: var(--muted, #625f58);
+    font-size: 0.7rem;
+  }
+
+  .hunk {
+    margin-top: 0.65rem;
+    overflow: auto;
+    border: 1px solid #d6d3cc;
+    border-radius: 0.5rem;
+    background: #fbfaf7;
+  }
+
+  .hunk-heading {
+    padding: 0.35rem 0.6rem;
+    background: #f1eee7;
+    color: #4b5563;
+    font:
+      0.75rem ui-monospace,
+      SFMono-Regular,
+      Consolas,
+      monospace;
+  }
+
+  .diff-row {
+    display: grid;
+    grid-template-columns: 3rem 3rem 1.2rem minmax(20rem, 1fr);
+    min-width: max-content;
+  }
+
+  .diff-row > *,
+  .side-cell > * {
+    padding: 0.18rem 0.35rem;
+  }
+
+  .line-number {
+    color: #77746e;
+    text-align: right;
+    user-select: none;
+  }
+
+  .diff-row.added,
+  .side-cell.added {
+    background: #ecfdf3;
+  }
+
+  .diff-row.removed,
+  .side-cell.removed {
+    background: #fff1f2;
+  }
+
+  .side-row {
+    display: grid;
+    grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 1fr);
+    min-width: max-content;
+  }
+
+  .side-cell {
+    display: grid;
+    grid-template-columns: 3rem minmax(15rem, 1fr);
+    border-right: 1px solid #d6d3cc;
+  }
+
+  .truncation-warning,
+  .source-truncated,
+  .truncation-note,
+  .redacted,
+  .notice {
+    margin-top: 0.55rem;
+    padding: 0.6rem;
+    border-radius: 0.5rem;
+    background: #fffbeb;
+    color: #854d0e;
+    font-size: 0.82rem;
+  }
+
+  .source-truncated,
+  .redacted {
+    background: #fff1f2;
+    color: #9f1239;
+  }
+
+  .notice.error {
+    background: #fff1f2;
+  }
+
+  .process-card,
+  .verification-step {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .stream {
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--line, #d6d3cc);
+  }
+
+  pre {
+    max-height: 18rem;
+    overflow: auto;
+    padding: 0.7rem;
+    border-radius: 0.45rem;
+    background: #171a17;
+    color: #eef3eb;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  details summary {
+    cursor: pointer;
+  }
+
+  .empty-state {
+    color: var(--muted, #625f58);
+    font-size: 0.86rem;
+  }
+
+  @media (max-width: 760px) {
+    .panel-heading,
+    .subheading,
+    .diff-file > header,
+    .verification-step > header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .file-metrics {
+      justify-content: flex-start;
+    }
+  }
+</style>

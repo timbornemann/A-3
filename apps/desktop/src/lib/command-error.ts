@@ -32,6 +32,8 @@ export type ErrorCodeV1 =
   | 'agentGoalTaskNotFound'
   | 'agentGoalRevisionConflict'
   | 'agentGoalUnavailable'
+  | 'invalidAgentInspectionQuery'
+  | 'agentInspectionUnavailable'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -79,6 +81,8 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'agentGoalTaskNotFound',
   'agentGoalRevisionConflict',
   'agentGoalUnavailable',
+  'invalidAgentInspectionQuery',
+  'agentInspectionUnavailable',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',

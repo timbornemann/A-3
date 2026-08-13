@@ -277,7 +277,8 @@ Digest, beobachtete/retained Bytes, Limit, Redaction und `sourceTruncated`, aber
 
 Der dauerhafte Teil enthält den konsistent gelesenen Goal-/Ledger-/Published-Snapshotanker, alle
 aktiven Steps und ihre Verification-Attempts sowie alle exakt referenzierten E6-Artefakte.
-Command-, strukturierte Test-, Diff-, Diagnostic- und UserConfirm-Details bleiben typisiert.
+Command-, strukturierte Test-, Diff-, Diagnostic- und UserConfirm-Details bleiben typisiert;
+Diff-Evidence enthält höchstens 128 kanonisch geordnete exakte Pfade.
 Semantik und Freshness werden im Application-Kern neu abgeleitet. Jedes Must-/Should-Kriterium
 trägt genau `proven`, `pending`, `failed`, `stale` oder `missing`; nur `proven` darf exakte
 beweisende Step- und Evidence-IDs enthalten. Stale oder fehlgeschlagene Evidenz kann daher nie als
@@ -285,7 +286,8 @@ Done-Beweis erscheinen.
 
 `query_agent_inspection_log` akzeptiert zusätzlich ausschließlich die zuvor emittierte kanonische
 positive `inspectionRevision`, eine 64-stellige `inspectionId`, `stdout|stderr`, einen u32-Bytecursor
-und ein Limit von 1 bis 16.384 Bytes. Der Core revalidiert Projekt, Task, Revision, Record, Run,
+und ein Limit von 4 bis 16.384 Bytes. Das Minimum garantiert auch vor einem vier Byte langen
+UTF-8-Skalar einen begrenzten Seitenfortschritt. Der Core revalidiert Projekt, Task, Revision, Record, Run,
 Step, Verification-Spec und Published Snapshot vor jeder Seite. Die Antwort unterscheidet
 `noProject`, `unavailable`, `inspectionChanged` und `available`. Eine Seite trennt
 `pageTruncated` für gezielt nachladbaren retained Text von `sourceTruncated` für dauerhaft
