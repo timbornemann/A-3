@@ -861,6 +861,71 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByText('windows')).toBeTruthy();
   });
 
+  it('keeps an unknown project from being projected as a known empty run', async () => {
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectStatusLoader: async () => {
+          throw new Error('status unavailable');
+        },
+        recentProjectsLoader: async () => emptyRecentProjects,
+      },
+    });
+
+    const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });
+    await waitFor(() => {
+      expect(globalStatus.textContent).toContain('Projektstatus nicht verfügbar');
+      expect(globalStatus.textContent).toContain('Runstatus nicht verfügbar');
+    });
+    expect(globalStatus.textContent).not.toContain('Kein Projekt geöffnet');
+  });
+
+  it('restores hash navigation and keeps project, index, model, and run status global', async () => {
+    const routeBase = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, '', `${routeBase}#settings`);
+    const projectStatusLoader = vi.fn(async () => activeProjectStatus);
+    const props = {
+      agentGoalTasksLoader: async (): Promise<TaskLensTasksResponseV1> => ({
+        protocolVersion: 1,
+        result: { status: 'available', tasks: [], truncated: false },
+      }),
+      deepMapStatusLoader: async () => idleDeepMapStatus,
+      healthLoader: async () => health,
+      indexActivityLoader: async () => runningIndexActivity,
+      indexOverviewLoader: async () => publishedIndexOverview,
+      projectStatusLoader,
+      recentProjectsLoader: async () => emptyRecentProjects,
+    };
+    let view = render(App, { props });
+    try {
+      const settings = screen.getByRole('link', { name: 'Settings' });
+      expect(settings.getAttribute('aria-current')).toBe('page');
+
+      const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });
+      await waitFor(() => {
+        expect(globalStatus.textContent).toContain('C:\\worktree');
+        expect(globalStatus.textContent).toContain('Beziehungen verknüpfen · 4/6');
+        expect(globalStatus.textContent).toContain('Mapping bereit · mapper:latest');
+        expect(globalStatus.textContent).toContain('Kein Run ausgewählt');
+      });
+
+      view.unmount();
+      view = render(App, { props });
+      expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe(
+        'page',
+      );
+      await waitFor(() => expect(projectStatusLoader).toHaveBeenCalledTimes(2));
+
+      const projects = screen.getByRole('link', { name: 'Projects' });
+      await fireEvent.click(projects);
+      expect(projects.getAttribute('aria-current')).toBe('page');
+      expect(document.activeElement?.id).toBe('projects');
+    } finally {
+      view.unmount();
+      window.history.replaceState(null, '', routeBase);
+    }
+  });
+
   it('shows live Fast-Index phase progress while keeping the published snapshot readable', async () => {
     render(App, {
       props: {
@@ -1260,7 +1325,7 @@ describe('A^3 desktop shell', () => {
     expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
-    expect(await screen.findByText('D:\\next-worktree')).toBeTruthy();
+    expect((await screen.findAllByText('D:\\next-worktree')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
     expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
     expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1);
@@ -1555,7 +1620,7 @@ describe('A^3 desktop shell', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Worktree sicher geöffnet')).toBeTruthy();
-      expect(screen.getAllByText('C:\\worktree')).toHaveLength(2);
+      expect(screen.getAllByText('C:\\worktree')).toHaveLength(3);
       expect(screen.getAllByText('main (unborn)')).toHaveLength(2);
       expect(screen.getByText('Veröffentlicht')).toBeTruthy();
       expect(screen.getByText(/Generation 2/)).toBeTruthy();

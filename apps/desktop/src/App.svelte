@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import GlobalStatusBar from './lib/GlobalStatusBar.svelte';
+  import PrimaryNavigation from './lib/PrimaryNavigation.svelte';
   import ThemeControls from './lib/ThemeControls.svelte';
   import { UiScheduler } from './lib/ui-scheduler';
   import {
@@ -27,6 +29,12 @@
     type DeepMapStatusResponseV1,
   } from './lib/deep-map';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
+  import {
+    workspaceAreaFromHash,
+    type GlobalRunStatus,
+    type GlobalStatusItem,
+    type WorkspaceArea,
+  } from './lib/global-status';
   import {
     queryIndexActivity,
     type IndexActivityResponseV1,
@@ -479,6 +487,8 @@
   let taskLensTasksRequestSequence = 0;
   let taskLensTaskRequestSequence = 0;
   let taskLensCompileRequestSequence = 0;
+  let currentWorkspaceArea = $state<WorkspaceArea>('projects');
+  let globalRunStatus = $state<GlobalRunStatus>({ kind: 'loading' });
   let uiScheduler: UiScheduler | null = null;
   let appMounted = false;
   let agentWorkspaceBoundary: HTMLElement;
@@ -489,6 +499,135 @@
   let settingsState = $state<LazySurfaceState>('idle');
   let ModuleDependencyGraph = $state<ModuleDependencyGraphComponent | null>(null);
   let moduleDependencyGraphChunkState = $state<LazySurfaceState>('idle');
+
+  function navigateWorkspace(area: WorkspaceArea): void {
+    currentWorkspaceArea = area;
+    if (area === 'agent') void loadAgentWorkspaceChunk();
+    if (area === 'settings') void loadSettingsChunk();
+    document.getElementById(area)?.focus({ preventScroll: true });
+  }
+
+  function syncWorkspaceRoute(focusTarget: boolean): void {
+    currentWorkspaceArea = workspaceAreaFromHash(window.location.hash);
+    if (currentWorkspaceArea === 'agent') void loadAgentWorkspaceChunk();
+    if (currentWorkspaceArea === 'settings') void loadSettingsChunk();
+    if (focusTarget) document.getElementById(currentWorkspaceArea)?.focus();
+  }
+
+  function updateGlobalRunStatus(status: GlobalRunStatus): void {
+    if (projectStatusView.kind === 'error') {
+      globalRunStatus = { kind: 'error' };
+    } else if (projectStatusView.kind === 'loading') {
+      globalRunStatus = { kind: 'loading' };
+    } else if (projectStatusView.kind === 'noProject') {
+      globalRunStatus = { kind: 'noProject' };
+    } else {
+      globalRunStatus = status;
+    }
+  }
+
+  function globalProjectItem(): GlobalStatusItem {
+    switch (projectStatusView.kind) {
+      case 'active':
+        return { tone: 'ready', value: projectStatusView.result.project.worktreeRootDisplay };
+      case 'error':
+        return { tone: 'failed', value: 'Projektstatus nicht verfügbar' };
+      case 'loading':
+        return { tone: 'pending', value: 'Projektstatus wird geladen' };
+      case 'noProject':
+        return { tone: 'neutral', value: 'Kein Projekt geöffnet' };
+    }
+  }
+
+  function globalIndexItem(): GlobalStatusItem {
+    if (projectStatusView.kind === 'noProject') {
+      return { tone: 'neutral', value: 'Kein Projekt geöffnet' };
+    }
+    if (projectStatusView.kind === 'error' || indexActivityView.kind === 'error') {
+      return { tone: 'failed', value: 'Indexstatus nicht verfügbar' };
+    }
+    if (projectStatusView.kind === 'loading' || indexActivityView.kind === 'loading') {
+      return { tone: 'pending', value: 'Indexstatus wird geladen' };
+    }
+    if (indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null) {
+      const activity = indexActivityView.result.activity;
+      const activePhase = activity.phase;
+      if (activePhase === null) return { tone: 'pending', value: 'Indexstatus wird geladen' };
+      const phaseOrdinal = Math.min(activity.completedPhases + 1, activity.totalPhases);
+      const phase = `${indexPhaseLabel(activePhase)} · ${phaseOrdinal}/${activity.totalPhases}`;
+      const tone = ['failed', 'cancelled'].includes(activity.state)
+        ? 'failed'
+        : activity.state === 'succeeded'
+          ? 'ready'
+          : 'pending';
+      return { tone, value: phase };
+    }
+    if (indexOverviewView.kind === 'published') {
+      return {
+        tone: 'ready',
+        value: `Snapshot ${indexOverviewView.result.overview.snapshotId.slice(0, 12)}`,
+      };
+    }
+    if (indexOverviewView.kind === 'error') {
+      return { tone: 'failed', value: 'Publikation nicht verfügbar' };
+    }
+    if (indexOverviewView.kind === 'noPublishedIndex') {
+      return { tone: 'warning', value: 'Noch kein veröffentlichter Snapshot' };
+    }
+    return { tone: 'pending', value: 'Indexstatus wird geladen' };
+  }
+
+  function globalModelItem(): GlobalStatusItem {
+    switch (deepMapView.kind) {
+      case 'available':
+        return {
+          tone: 'ready',
+          value: `Mapping bereit · ${deepMapView.result.configuration.model.modelId}`,
+        };
+      case 'error':
+        return { tone: 'failed', value: 'Modellstatus nicht verfügbar' };
+      case 'loading':
+        return { tone: 'pending', value: 'Modellstatus wird geladen' };
+      case 'noProject':
+        return { tone: 'neutral', value: 'Kein Projekt geöffnet' };
+      case 'unavailable':
+        return { tone: 'warning', value: 'Kein verifiziertes Mapping-Modell' };
+    }
+  }
+
+  function globalRunItem(): GlobalStatusItem {
+    if (globalRunStatus.kind === 'available') {
+      const labels = {
+        awaitApproval: 'Wartet auf Freigabe',
+        cancelled: 'Abgebrochen',
+        done: 'Done',
+        execute: 'Ausführung',
+        failed: 'Fehlgeschlagen',
+        intake: 'Aufnahme',
+        localize: 'Kontextsuche',
+        plan: 'Planung',
+        replan: 'Neuplanung',
+        verify: 'Verifikation',
+      } as const;
+      const tone =
+        globalRunStatus.state === 'done'
+          ? 'ready'
+          : ['failed', 'cancelled'].includes(globalRunStatus.state)
+            ? 'failed'
+            : globalRunStatus.state === 'awaitApproval'
+              ? 'warning'
+              : 'pending';
+      return { tone, value: labels[globalRunStatus.state] };
+    }
+    const projections: Record<Exclude<GlobalRunStatus['kind'], 'available'>, GlobalStatusItem> = {
+      error: { tone: 'failed', value: 'Runstatus nicht verfügbar' },
+      idle: { tone: 'neutral', value: 'Kein Run ausgewählt' },
+      loading: { tone: 'pending', value: 'Runstatus wird geladen' },
+      noProject: { tone: 'neutral', value: 'Kein Projekt geöffnet' },
+      unavailable: { tone: 'warning', value: 'Kein aktueller Run verfügbar' },
+    };
+    return projections[globalRunStatus.kind];
+  }
 
   function projectGeneration(): number | null {
     return uiScheduler?.generation ?? null;
@@ -636,6 +775,7 @@
     deepMapView = noProject ? { kind: 'noProject' } : { kind: 'loading' };
     deepMapActionView = { kind: 'idle' };
     deepMapBudgetProfile = null;
+    globalRunStatus = noProject ? { kind: 'noProject' } : { kind: 'idle' };
     indexActivityObserved = false;
   }
 
@@ -656,6 +796,10 @@
     });
     uiScheduler = scheduler;
     appMounted = true;
+    syncWorkspaceRoute(false);
+    const handleHashChange = () => syncWorkspaceRoute(true);
+    window.addEventListener('hashchange', handleHashChange);
+    scheduler.ownAppCleanup(() => window.removeEventListener('hashchange', handleHashChange));
     observeLazySurface(agentWorkspaceBoundary, loadAgentWorkspaceChunk);
     observeLazySurface(settingsBoundary, loadSettingsChunk);
     void loadHealth();
@@ -1436,12 +1580,11 @@
         response.result.status === 'active'
           ? { kind: 'active', result: response.result }
           : { kind: 'noProject' };
-      if (response.result.status === 'noProject') {
-        resetProjectOwnedUi('noProject');
-      }
+      if (response.result.status === 'noProject') resetProjectOwnedUi('noProject');
       if (projectChanged && response.result.status === 'active') pollProjectActivity();
     } catch {
       projectStatusView = { kind: 'error' };
+      globalRunStatus = { kind: 'error' };
     }
   }
 
@@ -1940,6 +2083,14 @@
     <ThemeControls />
   </header>
 
+  <PrimaryNavigation current={currentWorkspaceArea} onNavigate={navigateWorkspace} />
+  <GlobalStatusBar
+    project={globalProjectItem()}
+    index={globalIndexItem()}
+    model={globalModelItem()}
+    run={globalRunItem()}
+  />
+
   <section
     id="workspace-content"
     class="health-card"
@@ -1985,7 +2136,7 @@
     {/if}
   </section>
 
-  <section class="project-card" aria-labelledby="project-heading">
+  <section id="projects" class="project-card" aria-labelledby="project-heading" tabindex="-1">
     <div class="section-heading">
       <div>
         <p class="section-kicker">Lokaler Workspace</p>
@@ -2180,8 +2331,10 @@
           {/if}
         </div>
         <section
+          id="map"
           class="repository-tree-panel project-map-search"
           aria-labelledby="project-map-search-heading"
+          tabindex="-1"
         >
           <div class="repository-tree-heading">
             <div>
@@ -4065,7 +4218,28 @@
     </div>
   </section>
 
-  <div class="lazy-boundary" bind:this={agentWorkspaceBoundary}>
+  {#if projectStatusView.kind !== 'active'}
+    <section
+      id="map"
+      class="route-placeholder"
+      aria-labelledby="map-placeholder-heading"
+      tabindex="-1"
+    >
+      <p class="section-kicker">Map</p>
+      <h2 id="map-placeholder-heading">Project Map</h2>
+      {#if projectStatusView.kind === 'loading'}
+        <p role="status">Project Map wartet auf den Projektstatus …</p>
+      {:else if projectStatusView.kind === 'error'}
+        <p role="alert">
+          Project Map ist verfügbar, sobald der Projektstatus wieder geladen wurde.
+        </p>
+      {:else}
+        <p>Öffne einen lokalen Worktree, um Project Map und Evidence zu verwenden.</p>
+      {/if}
+    </section>
+  {/if}
+
+  <div id="agent" class="lazy-boundary" bind:this={agentWorkspaceBoundary} tabindex="-1">
     {#if agentWorkspaceComponent !== null}
       {@const AgentWorkspace = agentWorkspaceComponent}
       <AgentWorkspace
@@ -4073,6 +4247,7 @@
         goalCreator={agentGoalCreator}
         goalLoader={agentGoalLoader}
         goalReviser={agentGoalReviser}
+        onRunStatusChange={updateGlobalRunStatus}
         tasksLoader={agentGoalTasksLoader}
       />
     {:else}
@@ -4089,7 +4264,7 @@
     {/if}
   </div>
 
-  <div class="lazy-boundary" bind:this={settingsBoundary}>
+  <div id="settings" class="lazy-boundary" bind:this={settingsBoundary} tabindex="-1">
     {#if settingsComponent !== null}
       {@const Settings = settingsComponent}
       <Settings />

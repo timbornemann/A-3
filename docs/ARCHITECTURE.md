@@ -53,6 +53,13 @@ flowchart TD
 
 Verantwortlich für Darstellung, Navigation, lokale Formzustände und Visualisierung. Sie enthält keine Indexierungs-, Agenten-, Sicherheits- oder Persistenzlogik. Sie kommuniziert ausschließlich über versionierte Commands, Queries und Events mit dem Rust-Kern.
 
+Die vier sichtbaren Hauptbereiche `Projects`, `Map`, `Agent` und `Settings` verwenden ausschließlich
+URL-Fragmente als wiederherstellbaren Präsentationszustand. Eine Route wählt kein Projekt, keinen
+Snapshot, Run oder Modellzustand. Die globale Statusleiste projiziert nur bereits validierte
+Project-, Index-, Deep-Map- und Agent-Activity-Read-Models in geschlossene Anzeigezustände. Nach
+einem WebView-Reload werden fachliche Zustände erneut aus dem Rust-Kern gelesen; der Fragmentzustand
+bestimmt nur Ziel, Fokus und explizit zu ladende lokale UI-Chunks.
+
 ### Tauri Composition Root
 
 Erzeugt und verbindet Ports, Adapter, Datenbankverbindungen, Job Scheduler und Window State. Er validiert IPC-Nachrichten, übersetzt Protokolltypen in Use-Case-Aufrufe und enthält keine Fachlogik.

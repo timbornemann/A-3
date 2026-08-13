@@ -15,17 +15,40 @@ Hauptbereiche:
 - Agent
 - Settings
 
-- [ ] Routen und Navigationszustand
-- [ ] globaler Projekt-, Index-, Modell- und Runstatus
-- [ ] leere, ladende, fehlgeschlagene und offline Zustände
-- [ ] keine Fachlogik im Frontend
-- [ ] Keyboard-first-Navigation
+- [x] Routen und Navigationszustand
+- [x] globaler Projekt-, Index-, Modell- und Runstatus
+- [x] leere, ladende, fehlgeschlagene und offline Zustände
+- [x] keine Fachlogik im Frontend
+- [x] Keyboard-first-Navigation
 
 Akzeptanz:
 
 - Nutzer erkennt stets aktives Projekt, Snapshot, Run und Modellzustand;
 - Reload der WebView verliert keinen fachlichen Zustand;
 - Navigation funktioniert ohne Maus.
+
+Verifiziert am 2026-08-13: Vier native Links bilden `Projects`, `Map`, `Agent` und `Settings` auf
+geschlossene URL-Fragmente ab. Unbekannte Fragmente fallen auf Projects zurück; direkte Reloads
+stellen die Route wieder her und lesen Projekt-, Index-, Modell- und Agentzustand erneut aus den
+bestehenden Core-Projektionen. Die Route besitzt keine Projekt-, Snapshot-, Run- oder
+Modellautorität. Agent und Settings laden weiterhin erst bei Sichtbarkeit oder ihrer ausdrücklichen
+Route als lokale U10-Chunks.
+
+Eine ständig sichtbare Statusleiste zeigt Projekt, laufende Indexphase beziehungsweise
+veröffentlichten Snapshot, verifiziertes Mapping-Modell und den im Agent Workspace ausgewählten
+Run. Kein Projekt, kein Snapshot, kein ausgewählter Run, nicht verifiziertes Modell, Loading und
+Readfehler sind eigene textuelle Zustände und werden nie nur farblich vermittelt. Der Agent-
+Callback projiziert ausschließlich den bereits taskgebundenen `AgentActivityV1`-Controllerzustand;
+Fachauswahl, Persistenz und Recovery bleiben im Rust-Kern.
+
+Component-Verträge prüfen Hash-Restore über Remount, erneutes Core-Laden, aktuelle Navigation,
+Fokusübergabe, alle vier Globalwerte und die Agent-Runprojektion. Der reale Chromium-Smoke bestätigte
+`#agent` mit fokussiertem Ziel, direkten Reload auf `#settings`, null doppelte IDs, null horizontale
+Überbreite sowie verständliche globale Fehler-/Offlinezustände ohne Tauri-Backend. Die Navigation
+verwendet native Links, besitzt keine positive Tabreihenfolge und erfüllt gemeinsam mit dem U9-
+DOM-/Fokusgate Keyboard-first. Formatter, ESLint, Svelte-Typecheck ohne Warnung, 204 Frontendtests,
+vier Tooltests, Produktionsbuild und die Markdown-Linkprüfung bestehen. Damit sind alle drei
+U1-Akzeptanzkriterien objektiv nachgewiesen und U1 ist abgeschlossen.
 
 ## U2 Projects
 

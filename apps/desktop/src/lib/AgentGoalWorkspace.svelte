@@ -40,6 +40,7 @@
     type AgentApprovalV1,
   } from './agent-approval';
   import { agentGoalRecoveryMessage } from './command-error';
+  import type { GlobalRunStatus } from './global-status';
   import GoalTextList from './GoalTextList.svelte';
   import {
     queryTaskLensTasks,
@@ -76,6 +77,7 @@
       offset: number,
     ) => Promise<AgentInspectionLogResponseV1>;
     ledgerLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
+    onRunStatusChange?: (status: GlobalRunStatus) => void;
     recoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;
     runController?: (
       taskId: string,
@@ -129,6 +131,7 @@
     inspectionLoader = queryAgentInspection,
     inspectionLogLoader = queryAgentInspectionLog,
     ledgerLoader = queryTaskLensTask,
+    onRunStatusChange = () => {},
     recoveryLoader = queryAgentTaskRecovery,
     runController = controlAgentTaskRun,
     tasksLoader = queryTaskLensTasks,
@@ -161,6 +164,30 @@
       ? selectCurrentStep(ledgerView.result.steps)
       : null,
   );
+
+  function projectedRunStatus(): GlobalRunStatus {
+    if (!activeProject || taskView.kind === 'noProject') return { kind: 'noProject' };
+    if (
+      taskView.kind === 'loading' ||
+      goalView.kind === 'loading' ||
+      activityView.kind === 'loading'
+    ) {
+      return { kind: 'loading' };
+    }
+    if (taskView.kind === 'error' || goalView.kind === 'error' || activityView.kind === 'error') {
+      return { kind: 'error' };
+    }
+    if (selectedTaskId === '') return { kind: 'idle' };
+    if (activityView.kind !== 'result') return { kind: 'loading' };
+    if (activityView.result.status === 'noProject') return { kind: 'noProject' };
+    if (activityView.result.status !== 'available') return { kind: 'unavailable' };
+    const run = activityView.result.activity.run;
+    return run === null ? { kind: 'idle' } : { kind: 'available', state: run.state };
+  }
+
+  $effect(() => {
+    onRunStatusChange(projectedRunStatus());
+  });
 
   $effect(() => {
     if (activeProject && !observedProject) {

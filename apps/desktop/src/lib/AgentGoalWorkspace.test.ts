@@ -399,6 +399,7 @@ describe('AgentGoalWorkspace', () => {
         },
       }),
     );
+    const onRunStatusChange = vi.fn();
 
     render(AgentGoalWorkspace, {
       activeProject: true,
@@ -414,6 +415,7 @@ describe('AgentGoalWorkspace', () => {
           task: { goalRevision: 1, objective: goal(1).objective, taskId },
         },
       }),
+      onRunStatusChange,
       tasksLoader: async () => tasks(1),
     });
 
@@ -423,6 +425,10 @@ describe('AgentGoalWorkspace', () => {
     expect(screen.getAllByText('1 / 8')).toHaveLength(2);
     expect(screen.getByText('Run aktiv oder fortsetzbar')).toBeTruthy();
     expect(activityLoader).toHaveBeenCalledWith(taskId);
+    expect(onRunStatusChange).toHaveBeenLastCalledWith({
+      kind: 'available',
+      state: 'awaitApproval',
+    });
   });
 
   it('keeps unsafe Resume disabled while Cancel remains reachable and task-bound', async () => {

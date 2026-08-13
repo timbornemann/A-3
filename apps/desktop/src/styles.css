@@ -83,6 +83,97 @@ textarea {
   align-self: end;
 }
 
+.primary-navigation {
+  position: sticky;
+  z-index: 20;
+  top: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: 0 0.5rem 1.5rem var(--color-shadow);
+}
+
+.primary-navigation ul {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-1);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.primary-navigation a {
+  display: grid;
+  min-height: var(--control-min-size);
+  place-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.primary-navigation a:hover,
+.primary-navigation a[aria-current='page'] {
+  border-color: var(--color-border);
+  color: var(--color-accent-text);
+  background: var(--color-accent-surface);
+}
+
+.global-status {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+
+.global-status dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.global-status dl > div {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 0.25rem solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-subtle);
+}
+
+.global-status dl > div.pending {
+  border-inline-start-color: var(--color-status-pending);
+}
+
+.global-status dl > div.ready {
+  border-inline-start-color: var(--color-status-ready);
+}
+
+.global-status dl > div.warning {
+  border-inline-start-color: var(--color-warning-strong);
+}
+
+.global-status dl > div.failed {
+  border-inline-start-color: var(--color-status-failed);
+}
+
+.global-status dt {
+  color: var(--color-subtle);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.global-status dd {
+  margin: var(--space-1) 0 0;
+  color: var(--color-heading);
+  font-weight: 700;
+}
+
 .theme-controls {
   display: flex;
   flex-wrap: wrap;
@@ -158,6 +249,7 @@ h1 {
 
 .health-card,
 .project-card,
+.route-placeholder,
 .settings-card {
   align-self: start;
   padding: clamp(1.4rem, 4vw, 2.25rem);
@@ -166,6 +258,23 @@ h1 {
   background: var(--color-surface);
   box-shadow: 0 1.5rem 4rem var(--color-shadow);
   backdrop-filter: blur(20px);
+}
+
+.route-placeholder {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.route-placeholder h2,
+.route-placeholder p {
+  margin: 0;
+}
+
+#projects,
+#map,
+#agent,
+#settings {
+  scroll-margin-top: 7rem;
 }
 
 .project-card {
@@ -2286,6 +2395,10 @@ footer {
 }
 
 @media (max-width: 840px) {
+  .global-status dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .model-profile-grid {
     grid-template-columns: 1fr;
   }
@@ -2302,6 +2415,11 @@ footer {
 
   .health-grid {
     grid-template-columns: 1fr;
+  }
+
+  .primary-navigation ul,
+  .global-status dl {
+    grid-template-columns: 1fr 1fr;
   }
 
   .index-metrics {
