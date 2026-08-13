@@ -1,4 +1,7 @@
 use crate::model_settings_manager::settings_version_from_v1;
+use crate::project_settings_manager::{
+    allowlist_version_from_v1, catalog_id_from_v1, command_ids_from_v1,
+};
 use crate::{
     CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_approval_control_from_v1,
     map_agent_approval_task_id_from_v1, map_agent_goal_task_id_from_v1,
@@ -16,26 +19,27 @@ use a3_protocol::{
     AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
     AgentInspectionResponseV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
     CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
-    CompileTaskLensRequestV1, ConfigureModelEndpointRequestV1, ControlAgentApprovalRequestV1,
+    CompileTaskLensRequestV1, ConfigureModelEndpointRequestV1,
+    ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
     DeepMapControlResponseV1, DeepMapStatusResponseV1, HealthRequestV1, HealthResponseV1,
     IndexActivityResponseV1, IndexOverviewResponseV1, ListRecentProjectsRequestV1,
     ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1,
     ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1,
     ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectMapSearchResponseV1, ProjectStatusResponseV1, ProtocolVersion,
-    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
-    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    ProjectMapSearchResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
+    ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1,
+    QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
     QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
     QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
     QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
     QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSearchRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-    QuerySettingsRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
-    RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
-    RemoveProjectRequestV1, RemoveProjectResponseV1, RepositoryTreeResponseV1,
-    ReviseAgentGoalRequestV1, SettingsResponseV1, StartDeepMapRequestV1, TaskLensCompileResponseV1,
-    TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    QueryProjectMapSearchRequestV1, QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1,
+    QueryRepositoryTreeRequestV1, QuerySettingsRequestV1, QueryTaskLensTaskRequestV1,
+    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
+    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, SettingsResponseV1, StartDeepMapRequestV1,
+    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -390,6 +394,24 @@ pub fn cancel_model_probe(
     execute_cancel_model_probe(request, root.inner())
 }
 
+#[tauri::command]
+/// Reads active-project ignore and safe-command Settings without accepting a project identity.
+pub async fn query_project_settings(
+    request: QueryProjectSettingsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectSettingsResponseV1, CommandErrorV1> {
+    execute_query_project_settings(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Confirms only command IDs from the exact current Core-reconstructed catalog.
+pub async fn confirm_project_command_allowlist(
+    request: ConfirmProjectCommandAllowlistRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectSettingsResponseV1, CommandErrorV1> {
+    execute_confirm_project_command_allowlist(request, root.inner()).await
+}
+
 fn execute_query_health(
     request: HealthRequestV1,
     root: &CompositionRoot,
@@ -442,6 +464,30 @@ fn execute_cancel_model_probe(
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
     Ok(root.cancel_model_probe())
+}
+
+async fn execute_query_project_settings(
+    request: QueryProjectSettingsRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectSettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_project_settings().await
+}
+
+async fn execute_confirm_project_command_allowlist(
+    request: ConfirmProjectCommandAllowlistRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectSettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let catalog_id = catalog_id_from_v1(request.expected_catalog_id())?;
+    let revision = allowlist_version_from_v1(request.expected_allowlist_revision())?;
+    let command_ids = command_ids_from_v1(request.command_ids())?;
+    root.confirm_project_command_allowlist(catalog_id, revision, command_ids)
+        .await
 }
 
 async fn execute_open_project(
@@ -819,10 +865,10 @@ mod tests {
         execute_query_module_card_evidence, execute_query_module_card_freshness,
         execute_query_module_dependency_graph, execute_query_module_runtime_flow,
         execute_query_module_runtime_map, execute_query_module_tree,
-        execute_query_project_map_search, execute_query_project_status,
-        execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
-        execute_rebuild_project_index, execute_remove_project, execute_revise_agent_goal,
-        execute_start_deep_map,
+        execute_query_project_map_search, execute_query_project_settings,
+        execute_query_project_status, execute_query_repository_tree, execute_query_task_lens_task,
+        execute_query_task_lens_tasks, execute_rebuild_project_index, execute_remove_project,
+        execute_revise_agent_goal, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -851,10 +897,11 @@ mod tests {
         QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
         QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
         QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-        QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
-        QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RemoveProjectRequestV1,
-        RepositoryTreeResultV1, ReviseAgentGoalRequestV1, StartDeepMapRequestV1,
-        TaskLensCompileResultV1, TaskLensTaskResultV1, TaskLensTasksResultV1,
+        QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+        QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
+        RemoveProjectRequestV1, RepositoryTreeResultV1, ReviseAgentGoalRequestV1,
+        StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
+        TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
     use std::path::PathBuf;
@@ -938,6 +985,23 @@ mod tests {
         assert_eq!(
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn project_settings_query_selects_no_project_without_webview_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let request: QueryProjectSettingsRequestV1 =
+            serde_json::from_value(serde_json::json!({"protocolVersion": 1}))?;
+
+        let response = block_on(execute_query_project_settings(request, &root))
+            .map_err(|error| format!("project Settings query failed: {:?}", error.code()))?;
+
+        assert_eq!(
+            serde_json::to_value(response)?["result"]["status"],
+            "noProject"
         );
         Ok(())
     }

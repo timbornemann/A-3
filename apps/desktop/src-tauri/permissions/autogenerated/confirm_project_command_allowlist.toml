@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-project-command-allowlist"
+description = "Enables the confirm_project_command_allowlist command without any pre-configured scope."
+commands.allow = ["confirm_project_command_allowlist"]
+
+[[permission]]
+identifier = "deny-confirm-project-command-allowlist"
+description = "Denies the confirm_project_command_allowlist command without any pre-configured scope."
+commands.deny = ["confirm_project_command_allowlist"]

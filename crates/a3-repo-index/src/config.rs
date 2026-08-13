@@ -1,7 +1,11 @@
 //! Strict bounded loading of repository-owned discovery configuration.
 
 use crate::path::{RepositoryPathObservation, observe_repository_path, open_regular_no_follow};
-use a3_domain::{DiscoveryPolicy, RepositoryPath};
+use a3_application::{
+    ProjectIgnoreSettings, ProjectIgnoreSettingsFuture, ProjectIgnoreSettingsSource,
+    ProjectIgnoreSettingsSourceFailure,
+};
+use a3_domain::{DiscoveryPolicy, ProjectIdentity, RepositoryPath};
 use gix::bstr::ByteSlice;
 use gix::ignore::glob::pattern::Case;
 use serde::Deserialize;
@@ -14,6 +18,8 @@ const PROJECT_CONFIG_PATH: &[u8] = b".a3/project.toml";
 #[derive(Debug, Default)]
 pub(crate) struct ProjectIgnore {
     search: gix::ignore::Search,
+    configuration_present: bool,
+    patterns: Vec<String>,
 }
 
 impl ProjectIgnore {
@@ -21,6 +27,32 @@ impl ProjectIgnore {
         self.search
             .pattern_matching_relative_path(path.as_bstr(), Some(is_dir), case)
             .is_some()
+    }
+
+    fn into_settings(self) -> Result<ProjectIgnoreSettings, ProjectIgnoreSettingsSourceFailure> {
+        ProjectIgnoreSettings::try_new(self.configuration_present, self.patterns)
+            .map_err(|_| ProjectIgnoreSettingsSourceFailure::InvalidConfiguration)
+    }
+}
+
+/// Reads only the dedicated exclusion-only `.a3/project.toml` configuration.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepositoryProjectIgnoreSettingsSource;
+
+impl ProjectIgnoreSettingsSource for RepositoryProjectIgnoreSettingsSource {
+    fn read<'a>(&'a self, project: &'a ProjectIdentity) -> ProjectIgnoreSettingsFuture<'a> {
+        Box::pin(async move {
+            load_project_ignore(project.worktree().root().as_path(), DiscoveryPolicy::v1())
+                .map_err(|error| match error {
+                    ProjectConfigurationError::Invalid => {
+                        ProjectIgnoreSettingsSourceFailure::InvalidConfiguration
+                    }
+                    ProjectConfigurationError::Io => {
+                        ProjectIgnoreSettingsSourceFailure::Unavailable
+                    }
+                })?
+                .into_settings()
+        })
     }
 }
 
@@ -78,6 +110,7 @@ pub(crate) fn load_project_ignore(
     validate_patterns(&parsed.discovery.ignore, policy)?;
 
     let expected_pattern_count = parsed.discovery.ignore.len();
+    let settings_patterns = parsed.discovery.ignore.clone();
     let patterns = parsed
         .discovery
         .ignore
@@ -93,7 +126,11 @@ pub(crate) fn load_project_ignore(
     if parsed_pattern_count != expected_pattern_count {
         return Err(ProjectConfigurationError::Invalid);
     }
-    Ok(ProjectIgnore { search })
+    Ok(ProjectIgnore {
+        search,
+        configuration_present: true,
+        patterns: settings_patterns,
+    })
 }
 
 fn validate_patterns(

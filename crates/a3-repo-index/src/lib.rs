@@ -16,6 +16,7 @@ mod snapshot;
 mod typescript_javascript_adapter;
 mod watcher;
 
+pub use config::RepositoryProjectIgnoreSettingsSource;
 pub use discovery::GitRepositoryDiscoverer;
 pub use graph::{
     DeterministicGraphLinker, DeterministicGraphRanker, DeterministicModuleFormer,

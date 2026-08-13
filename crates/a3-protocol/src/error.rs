@@ -103,6 +103,10 @@ pub enum ErrorCodeV1 {
     ModelProbeAlreadyActive,
     /// Model settings or explicit probe could not be completed safely.
     ModelSettingsUnavailable,
+    /// Project Settings input was malformed, stale, or outside fixed bounds.
+    InvalidProjectSettingsRequest,
+    /// Dedicated project configuration, index, or allowlist storage was unavailable.
+    ProjectSettingsUnavailable,
 }
 
 /// Safe, versioned error returned across the IPC boundary.
@@ -260,6 +264,12 @@ impl CommandErrorV1 {
             ErrorCodeV1::ModelSettingsUnavailable => {
                 "Local model settings could not be read, stored, or probed safely."
             }
+            ErrorCodeV1::InvalidProjectSettingsRequest => {
+                "The project Settings request is invalid or no longer current."
+            }
+            ErrorCodeV1::ProjectSettingsUnavailable => {
+                "Project ignore or command Settings could not be processed safely."
+            }
             ErrorCodeV1::UnsupportedProtocolVersion => {
                 "The requested protocol version is not supported."
             }
@@ -288,6 +298,12 @@ impl CommandErrorV1 {
     /// Creates a safe global Settings or model-probe failure.
     #[must_use]
     pub fn settings(code: ErrorCodeV1) -> Self {
+        Self::project_open(code)
+    }
+
+    /// Creates a safe active-project ignore or command Settings failure.
+    #[must_use]
+    pub fn project_settings(code: ErrorCodeV1) -> Self {
         Self::project_open(code)
     }
 

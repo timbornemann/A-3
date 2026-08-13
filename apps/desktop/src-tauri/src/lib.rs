@@ -16,6 +16,7 @@ mod model_settings_manager;
 mod platform;
 mod project_picker;
 mod project_reconciliation_dialog;
+mod project_settings_manager;
 mod repository_index_manager;
 
 use a3_application::{
@@ -165,6 +166,7 @@ use model_settings_manager::ModelSettingsManager;
 use platform::SystemPlatform;
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
+use project_settings_manager::ProjectSettingsManager;
 use repository_index_manager::{
     RepositoryIndexActivity, RepositoryIndexActivityState, RepositoryIndexDeactivationError,
     RepositoryIndexManager, RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
@@ -183,6 +185,7 @@ const MAX_PROJECT_PATH_DISPLAY_CHARS: usize = 32_768;
 pub struct CompositionRoot {
     health_query: GetHealth,
     model_settings: Option<ModelSettingsManager>,
+    project_settings: Option<ProjectSettingsManager>,
     open_project: OpenProject,
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
@@ -304,6 +307,48 @@ impl CompositionRoot {
             || a3_protocol::CancelModelProbeResponseV1::new(false),
             ModelSettingsManager::cancel_probe,
         )
+    }
+
+    /// Reads active-project ignore and manifest-evidenced command Settings.
+    pub async fn query_project_settings(
+        &self,
+    ) -> Result<a3_protocol::ProjectSettingsResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(a3_protocol::ProjectSettingsResponseV1::no_project());
+        };
+        self.project_settings
+            .as_ref()
+            .ok_or_else(|| {
+                CommandErrorV1::project_settings(ErrorCodeV1::ProjectSettingsUnavailable)
+            })?
+            .query(&active.project)
+            .await
+    }
+
+    /// Confirms a non-empty subset of the exact current safe-command catalog.
+    pub async fn confirm_project_command_allowlist(
+        &self,
+        expected_catalog_id: a3_domain::CommandCatalogId,
+        expected_revision: Option<a3_application::CommandAllowlistStoreVersion>,
+        command_ids: Vec<a3_domain::DiscoveredCommandId>,
+    ) -> Result<a3_protocol::ProjectSettingsResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_settings)?;
+        let active = lock_recovering_poison(&self.active_project)
+            .clone()
+            .ok_or_else(|| CommandErrorV1::project_settings(ErrorCodeV1::NoActiveProject))?;
+        self.project_settings
+            .as_ref()
+            .ok_or_else(|| {
+                CommandErrorV1::project_settings(ErrorCodeV1::ProjectSettingsUnavailable)
+            })?
+            .confirm(
+                &active.project,
+                expected_catalog_id,
+                expected_revision,
+                command_ids,
+            )
+            .await
     }
 
     /// Executes one user-controlled native project selection and maps it to IPC V1.
@@ -1999,6 +2044,8 @@ struct CompositionBase {
 #[derive(Default)]
 struct OptionalCompositionPorts {
     settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
+    command_allowlist_store: Option<Arc<dyn a3_application::CommandAllowlistStore>>,
+    project_ignore_settings_source: Option<Arc<dyn a3_application::ProjectIgnoreSettingsSource>>,
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
@@ -2026,6 +2073,8 @@ struct OptionalCompositionPorts {
 
 struct IndexingCompositionPorts {
     settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
+    command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore>,
+    project_ignore_settings_source: Arc<dyn a3_application::ProjectIgnoreSettingsSource>,
     index_store: Arc<dyn KnowledgeIndexStore>,
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
     module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
@@ -2100,6 +2149,8 @@ impl CompositionBase {
             store,
             OptionalCompositionPorts {
                 settings_store: Some(ports.settings_store),
+                command_allowlist_store: Some(ports.command_allowlist_store),
+                project_ignore_settings_source: Some(ports.project_ignore_settings_source),
                 index_store: Some(ports.index_store),
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
                 module_card_detail_store: Some(ports.module_card_detail_store),
@@ -2135,6 +2186,21 @@ impl CompositionBase {
         ports: OptionalCompositionPorts,
     ) -> Result<CompositionRoot, CompositionRootError> {
         let job_ids = Arc::new(DesktopJobIds::new());
+        let project_settings = match (
+            ports.project_ignore_settings_source.as_ref(),
+            ports.index_store.as_ref(),
+            ports.command_allowlist_store.as_ref(),
+        ) {
+            (Some(ignore), Some(index), Some(allowlist)) => Some(ProjectSettingsManager::new(
+                a3_application::GetProjectSettings::new(
+                    Arc::clone(ignore),
+                    Arc::clone(index),
+                    Arc::clone(allowlist),
+                ),
+                Arc::clone(allowlist),
+            )),
+            _ => None,
+        };
         let project_status = ports.index_store.clone().map(GetProjectIndexStatus::new);
         let index_overview = ports
             .index_store
@@ -2320,6 +2386,7 @@ impl CompositionBase {
         Ok(CompositionRoot {
             health_query: self.health_query,
             model_settings: ports.settings_store.map(ModelSettingsManager::new),
+            project_settings,
             open_project: OpenProject::new(
                 project_directory_picker,
                 Arc::new(RepositoryInspector::new()),
@@ -2386,6 +2453,11 @@ pub fn run() -> Result<(), DesktopRunError> {
                     .map_err(CompositionRootError::Catalog)?,
             );
             let settings_store: Arc<dyn a3_application::DesktopSettingsStore> = store.clone();
+            let command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore> =
+                store.clone();
+            let project_ignore_settings_source: Arc<
+                dyn a3_application::ProjectIgnoreSettingsSource,
+            > = Arc::new(a3_repo_index::RepositoryProjectIgnoreSettingsSource);
             let project_storage: Arc<dyn ProjectStorageStore> = store.clone();
             let project_catalog_admin: Arc<dyn ProjectCatalogAdmin> = store.clone();
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
@@ -2416,6 +2488,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                 catalog_store,
                 IndexingCompositionPorts {
                     settings_store,
+                    command_allowlist_store,
+                    project_ignore_settings_source,
                     index_store,
                     module_card_freshness_store,
                     module_card_detail_store,
@@ -2446,6 +2520,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::cancel_deep_map,
             commands::compile_task_lens,
             commands::configure_model_endpoint,
+            commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
             commands::control_agent_task_run,
             commands::create_agent_goal,
@@ -2454,6 +2529,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::pause_deep_map,
             commands::query_deep_map,
             commands::query_project_status,
+            commands::query_project_settings,
             commands::query_index_activity,
             commands::query_index_overview,
             commands::query_module_card_freshness,

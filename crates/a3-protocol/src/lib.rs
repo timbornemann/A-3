@@ -21,6 +21,7 @@ mod project;
 mod project_map_search;
 mod project_rebuild;
 mod project_removal;
+mod project_settings;
 mod project_status;
 mod recent_projects;
 mod repository_tree;
@@ -114,6 +115,12 @@ pub use project_map_search::{
 };
 pub use project_rebuild::{RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1};
 pub use project_removal::{RemoveProjectRequestV1, RemoveProjectResponseV1, RemoveProjectResultV1};
+pub use project_settings::{
+    ActiveProjectSettingsV1, ConfirmProjectCommandAllowlistRequestV1, DiscoveredCommandKindV1,
+    DiscoveredCommandV1, ProjectCommandConfirmationV1, ProjectCommandSettingsV1,
+    ProjectIgnoreSettingsV1, ProjectSettingsResponseV1, ProjectSettingsResultV1,
+    QueryProjectSettingsRequestV1,
+};
 pub use project_status::{
     IndexStateV1, ProjectIndexStatusV1, ProjectSnapshotV1, ProjectStatusResponseV1,
     ProjectStatusResultV1, QueryProjectStatusRequestV1, RebuildStateV1,

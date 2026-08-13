@@ -55,6 +55,7 @@ mod process_runner;
 mod project_map_search;
 mod project_reconciliation;
 mod project_removal;
+mod project_settings;
 mod project_status;
 mod project_storage;
 mod recent_projects;
@@ -319,6 +320,11 @@ pub use project_reconciliation::{
 pub use project_removal::{
     ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectCatalogAdminFuture,
     RemoveProjectFromList, RemoveProjectFromListError, RemovedProject,
+};
+pub use project_settings::{
+    GetProjectSettings, GetProjectSettingsError, ProjectCommandSettings, ProjectIgnoreSettings,
+    ProjectIgnoreSettingsError, ProjectIgnoreSettingsFuture, ProjectIgnoreSettingsSource,
+    ProjectIgnoreSettingsSourceFailure, ProjectSettingsSnapshot,
 };
 pub use project_status::{
     GetProjectIndexStatus, GetProjectIndexStatusError, ProjectIndexStatus, ProjectSnapshotStatus,
