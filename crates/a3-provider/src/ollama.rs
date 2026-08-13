@@ -1,13 +1,17 @@
 use crate::{OllamaEndpoint, OllamaEndpointPolicy};
 use a3_application::{
-    ModelCapabilityObservation, ModelCapabilityProbe, ModelCapabilityProbeFuture,
-    ModelCapabilityProbeRequest, ModelFinishReason, ModelMessageRole, ModelOperationControl,
-    ModelOutputChunk, ModelProvider, ModelProviderCompletion, ModelProviderFailure,
-    ModelProviderFuture, ModelProviderRequest, ModelProviderUsage, ModelRequestTimeout,
-    ProviderEvent, ProviderEventStream, ReportedModelContextLimit,
+    EmbeddingCapabilityProbe, EmbeddingCapabilityProbeFuture, EmbeddingCapabilityProbeRequest,
+    EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
+    EmbeddingProviderFuture, EmbeddingRequestTimeout, ModelCapabilityObservation,
+    ModelCapabilityProbe, ModelCapabilityProbeFuture, ModelCapabilityProbeRequest,
+    ModelFinishReason, ModelMessageRole, ModelOperationControl, ModelOutputChunk, ModelProvider,
+    ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
+    ModelProviderUsage, ModelRequestTimeout, ProviderEvent, ProviderEventStream, RawEmbeddingBatch,
+    ReportedModelContextLimit,
 };
 use a3_domain::{
-    ModelCapabilities, ModelId, ModelProviderId, ModelStructuredOutputCapability, ModelToolCallMode,
+    EmbeddingDimension, EmbeddingProviderId, ModelCapabilities, ModelId, ModelProviderId,
+    ModelStructuredOutputCapability, ModelToolCallMode, NormalizedSemanticCard,
 };
 use futures::future::{Either, select};
 use futures::stream::{BoxStream, StreamExt};
@@ -28,6 +32,8 @@ const MAX_OLLAMA_LINE_BYTES: usize = 128 * 1024;
 const MAX_OLLAMA_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OLLAMA_SHOW_BYTES: usize = 512 * 1024;
 const MAX_OLLAMA_PROBE_BYTES: usize = 128 * 1024;
+const MAX_OLLAMA_EMBED_BYTES: usize = 8 * 1024 * 1024;
+const MAX_OLLAMA_EMBED_PROBE_BYTES: usize = 256 * 1024;
 const MAX_OLLAMA_CAPABILITIES: usize = 64;
 const MAX_OLLAMA_CAPABILITY_BYTES: usize = 64;
 const MAX_OLLAMA_MODEL_INFO_FIELDS: usize = 2_048;
@@ -36,10 +42,12 @@ const OLLAMA_PROBE_CONTEXT_TOKENS: u32 = 4_096;
 const OLLAMA_PROBE_OUTPUT_TOKENS: u32 = 32;
 const OLLAMA_PROBE_PROMPT: &str =
     "Return exactly this JSON object and nothing else: {\"a3_probe\":\"ok\"}.";
+const OLLAMA_EMBED_PROBE_INPUT: &str = "A3 embedding capability probe";
 
 /// Ollama-compatible implementation of the general streaming model-provider port.
 pub struct OllamaModelProvider {
     provider_id: ModelProviderId,
+    embedding_provider_id: EmbeddingProviderId,
     endpoint: OllamaEndpoint,
     endpoint_policy: Arc<dyn OllamaEndpointPolicy>,
     client: reqwest::Client,
@@ -53,6 +61,8 @@ impl OllamaModelProvider {
     ) -> Result<Self, OllamaProviderCreateError> {
         let provider_id = ModelProviderId::try_from_string(OLLAMA_PROVIDER_ID.to_owned())
             .map_err(|_| OllamaProviderCreateError::InvalidProviderIdentity)?;
+        let embedding_provider_id = EmbeddingProviderId::new(OLLAMA_PROVIDER_ID.to_owned())
+            .map_err(|_| OllamaProviderCreateError::InvalidProviderIdentity)?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
@@ -60,6 +70,7 @@ impl OllamaModelProvider {
             .map_err(|_| OllamaProviderCreateError::HttpClient)?;
         Ok(Self {
             provider_id,
+            embedding_provider_id,
             endpoint,
             endpoint_policy,
             client,
@@ -72,9 +83,100 @@ impl fmt::Debug for OllamaModelProvider {
         formatter
             .debug_struct("OllamaModelProvider")
             .field("provider_id", &self.provider_id)
+            .field("embedding_provider_id", &self.embedding_provider_id)
             .field("endpoint", &self.endpoint)
             .field("endpoint_policy", &self.endpoint_policy)
             .finish_non_exhaustive()
+    }
+}
+
+impl EmbeddingCapabilityProbe for OllamaModelProvider {
+    fn provider_id(&self) -> &EmbeddingProviderId {
+        &self.embedding_provider_id
+    }
+
+    fn probe_embedding<'a>(
+        &'a self,
+        request: &'a EmbeddingCapabilityProbeRequest,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> EmbeddingCapabilityProbeFuture<'a> {
+        Box::pin(async move {
+            self.authorize_probe_request(control)?;
+            let deadline = Instant::now()
+                .checked_add(timeout.duration())
+                .ok_or(ModelProviderFailure::TimedOut)?;
+            let wire_request = OllamaEmbedRequest {
+                model: request.model_id().as_str(),
+                input: [OLLAMA_EMBED_PROBE_INPUT],
+                truncate: false,
+            };
+            let response = send_before_deadline(
+                self.client
+                    .post(self.endpoint.embed_url())
+                    .json(&wire_request),
+                deadline,
+                control,
+            )
+            .await?;
+            validate_json_response_head(&response)?;
+            let body =
+                read_bounded_response(response, MAX_OLLAMA_EMBED_PROBE_BYTES, control).await?;
+            embedding_probe_dimension(&body)
+        })
+    }
+}
+
+impl EmbeddingProvider for OllamaModelProvider {
+    fn embed<'a>(
+        &'a self,
+        profile: &'a a3_domain::EmbeddingModelProfile,
+        cards: &'a [NormalizedSemanticCard],
+        timeout: EmbeddingRequestTimeout,
+        control: &'a dyn EmbeddingOperationControl,
+    ) -> EmbeddingProviderFuture<'a> {
+        Box::pin(async move {
+            self.endpoint_policy
+                .authorize(&self.endpoint)
+                .map_err(|_| EmbeddingProviderFailure::Rejected)?;
+            if control.is_cancelled() {
+                return Err(EmbeddingProviderFailure::Cancelled);
+            }
+            if profile.provider_id() != &self.embedding_provider_id
+                || cards.is_empty()
+                || cards.len() > usize::from(profile.max_batch_size().get())
+            {
+                return Err(EmbeddingProviderFailure::Rejected);
+            }
+            let input = cards
+                .iter()
+                .map(NormalizedSemanticCard::body)
+                .collect::<Vec<_>>();
+            let wire_request = OllamaEmbedRequest {
+                model: profile.model_id().as_str(),
+                input,
+                truncate: false,
+            };
+            let response = self
+                .client
+                .post(self.endpoint.embed_url())
+                .timeout(timeout.duration())
+                .json(&wire_request)
+                .send()
+                .await
+                .map_err(classify_embedding_reqwest_error)?;
+            if control.is_cancelled() {
+                return Err(EmbeddingProviderFailure::Cancelled);
+            }
+            validate_json_response_head(&response).map_err(map_embedding_failure)?;
+            let body =
+                read_bounded_embedding_response(response, MAX_OLLAMA_EMBED_BYTES, control).await?;
+            let batch = parse_embedding_response(&body)?;
+            if batch.len() != cards.len() {
+                return Err(EmbeddingProviderFailure::InvalidResponse);
+            }
+            Ok(batch)
+        })
     }
 }
 
@@ -459,6 +561,95 @@ fn classify_reqwest_error(error: reqwest::Error) -> ModelProviderFailure {
         ModelProviderFailure::Rejected
     } else {
         ModelProviderFailure::Unavailable
+    }
+}
+
+#[derive(Serialize)]
+struct OllamaEmbedRequest<'a, T> {
+    model: &'a str,
+    input: T,
+    truncate: bool,
+}
+
+#[derive(Deserialize)]
+struct OllamaEmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+}
+
+fn parse_embedding_response(body: &[u8]) -> Result<RawEmbeddingBatch, EmbeddingProviderFailure> {
+    let response = serde_json::from_slice::<OllamaEmbedResponse>(body)
+        .map_err(|_| EmbeddingProviderFailure::InvalidResponse)?;
+    RawEmbeddingBatch::new(response.embeddings)
+        .map_err(|_| EmbeddingProviderFailure::InvalidResponse)
+}
+
+fn embedding_probe_dimension(body: &[u8]) -> Result<EmbeddingDimension, ModelProviderFailure> {
+    let response = serde_json::from_slice::<OllamaEmbedResponse>(body)
+        .map_err(|_| ModelProviderFailure::InvalidResponse)?;
+    if response.embeddings.len() != 1 {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    let vector = response
+        .embeddings
+        .into_iter()
+        .next()
+        .ok_or(ModelProviderFailure::InvalidResponse)?;
+    if vector.iter().any(|component| !component.is_finite())
+        || vector.iter().all(|component| *component == 0.0)
+    {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    let dimension =
+        u16::try_from(vector.len()).map_err(|_| ModelProviderFailure::InvalidResponse)?;
+    EmbeddingDimension::new(dimension).map_err(|_| ModelProviderFailure::InvalidResponse)
+}
+
+async fn read_bounded_embedding_response(
+    response: reqwest::Response,
+    maximum_bytes: usize,
+    control: &dyn EmbeddingOperationControl,
+) -> Result<Vec<u8>, EmbeddingProviderFailure> {
+    if response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .is_some_and(|length| length > maximum_bytes)
+    {
+        return Err(EmbeddingProviderFailure::InvalidResponse);
+    }
+    let mut body = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next().await {
+        if control.is_cancelled() {
+            return Err(EmbeddingProviderFailure::Cancelled);
+        }
+        let chunk = chunk.map_err(classify_embedding_reqwest_error)?;
+        if bytes.len().saturating_add(chunk.len()) > maximum_bytes {
+            return Err(EmbeddingProviderFailure::InvalidResponse);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn classify_embedding_reqwest_error(error: reqwest::Error) -> EmbeddingProviderFailure {
+    if error.is_timeout() {
+        EmbeddingProviderFailure::TimedOut
+    } else if error.is_builder() {
+        EmbeddingProviderFailure::Rejected
+    } else {
+        EmbeddingProviderFailure::Unavailable
+    }
+}
+
+fn map_embedding_failure(error: ModelProviderFailure) -> EmbeddingProviderFailure {
+    match error {
+        ModelProviderFailure::Unavailable => EmbeddingProviderFailure::Unavailable,
+        ModelProviderFailure::Rejected | ModelProviderFailure::EndpointDenied => {
+            EmbeddingProviderFailure::Rejected
+        }
+        ModelProviderFailure::InvalidResponse => EmbeddingProviderFailure::InvalidResponse,
+        ModelProviderFailure::TimedOut => EmbeddingProviderFailure::TimedOut,
+        ModelProviderFailure::Cancelled => EmbeddingProviderFailure::Cancelled,
     }
 }
 

@@ -1,3 +1,8 @@
+use a3_application::{
+    ConfiguredModelEndpoint, ModelEndpointScope, ModelEndpointValidationFailure,
+    ModelEndpointValidator,
+};
+use a3_domain::ModelProviderId;
 use std::error::Error;
 use std::fmt;
 use std::net::IpAddr;
@@ -52,6 +57,12 @@ impl OllamaEndpoint {
         self.scope
     }
 
+    /// Returns the normalized credential-free origin without an API path.
+    #[must_use]
+    pub fn canonical_origin(&self) -> String {
+        self.url.as_str().trim_end_matches('/').to_owned()
+    }
+
     pub(crate) fn chat_url(&self) -> reqwest::Url {
         let mut url = self.url.clone();
         url.set_path("/api/chat");
@@ -62,6 +73,38 @@ impl OllamaEndpoint {
         let mut url = self.url.clone();
         url.set_path("/api/show");
         url
+    }
+
+    pub(crate) fn embed_url(&self) -> reqwest::Url {
+        let mut url = self.url.clone();
+        url.set_path("/api/embed");
+        url
+    }
+}
+
+/// Pure Settings adapter for Ollama-compatible endpoint validation and canonicalization.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OllamaSettingsEndpointValidator;
+
+impl ModelEndpointValidator for OllamaSettingsEndpointValidator {
+    fn validate(
+        &self,
+        input: &str,
+    ) -> Result<ConfiguredModelEndpoint, ModelEndpointValidationFailure> {
+        let endpoint =
+            OllamaEndpoint::parse(input).map_err(|_| ModelEndpointValidationFailure::Invalid)?;
+        let provider_id = ModelProviderId::try_from_string("ollama".to_owned())
+            .map_err(|_| ModelEndpointValidationFailure::ProviderUnavailable)?;
+        let scope = match endpoint.scope() {
+            OllamaEndpointScope::LocalLoopback => ModelEndpointScope::LocalLoopback,
+            OllamaEndpointScope::Remote => ModelEndpointScope::Remote,
+        };
+        ConfiguredModelEndpoint::from_validated_adapter(
+            provider_id,
+            endpoint.canonical_origin(),
+            scope,
+        )
+        .map_err(|_| ModelEndpointValidationFailure::Invalid)
     }
 }
 

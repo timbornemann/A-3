@@ -161,9 +161,10 @@ pub use deep_map_read_tools::{
     DeepMapReadTools, ExplorerObservation, ExplorerObservationError, ExplorerObservationStatus,
 };
 pub use embedding_provider::{
+    EmbeddingCapabilityProbe, EmbeddingCapabilityProbeFuture, EmbeddingCapabilityProbeRequest,
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
     EmbeddingProviderFuture, EmbeddingRequestTimeout, EmbeddingRequestTimeoutError,
-    RawEmbeddingBatch, RawEmbeddingBatchError,
+    ProbeEmbeddingModelProfile, RawEmbeddingBatch, RawEmbeddingBatchError,
 };
 pub use exact_search::SearchExactIndex;
 pub use explorer_model_provider::{

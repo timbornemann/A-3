@@ -1,5 +1,8 @@
-use crate::JobContext;
-use a3_domain::{EmbeddingModelProfile, NormalizedSemanticCard};
+use crate::{JobContext, ModelOperationControl, ModelProviderFailure, ModelRequestTimeout};
+use a3_domain::{
+    EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
+    EmbeddingProviderId, NormalizedSemanticCard,
+};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -13,6 +16,87 @@ const MAX_EMBEDDING_REQUEST_TIMEOUT_MILLIS: u64 = 120_000;
 /// Owned future returned by the object-safe embedding-provider port.
 pub type EmbeddingProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RawEmbeddingBatch, EmbeddingProviderFailure>> + Send + 'a>>;
+
+/// Future returned by a bounded provider-owned embedding capability probe.
+pub type EmbeddingCapabilityProbeFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<EmbeddingDimension, ModelProviderFailure>> + Send + 'a>>;
+
+/// Provider-neutral input for one real embedding dimension probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingCapabilityProbeRequest {
+    model_id: EmbeddingModelId,
+    max_batch_size: EmbeddingBatchSize,
+}
+
+impl EmbeddingCapabilityProbeRequest {
+    /// Binds an opaque provider model identity to its user-selected local batch limit.
+    #[must_use]
+    pub const fn new(model_id: EmbeddingModelId, max_batch_size: EmbeddingBatchSize) -> Self {
+        Self {
+            model_id,
+            max_batch_size,
+        }
+    }
+
+    /// Returns the provider-native model identity.
+    #[must_use]
+    pub const fn model_id(&self) -> &EmbeddingModelId {
+        &self.model_id
+    }
+
+    /// Returns the bounded operational batch limit retained by the resulting profile.
+    #[must_use]
+    pub const fn max_batch_size(&self) -> EmbeddingBatchSize {
+        self.max_batch_size
+    }
+}
+
+/// Application-owned boundary for a real provider embedding-dimension observation.
+pub trait EmbeddingCapabilityProbe: fmt::Debug + Send + Sync {
+    /// Returns the stable provider identity without endpoint or credentials.
+    fn provider_id(&self) -> &EmbeddingProviderId;
+
+    /// Submits one fixed bounded probe input and returns only its validated dimension.
+    fn probe_embedding<'a>(
+        &'a self,
+        request: &'a EmbeddingCapabilityProbeRequest,
+        timeout: ModelRequestTimeout,
+        control: &'a dyn ModelOperationControl,
+    ) -> EmbeddingCapabilityProbeFuture<'a>;
+}
+
+/// Creates the embedding-specific profile only from one live dimension observation.
+#[derive(Debug)]
+pub struct ProbeEmbeddingModelProfile<'a> {
+    probe: &'a dyn EmbeddingCapabilityProbe,
+}
+
+impl<'a> ProbeEmbeddingModelProfile<'a> {
+    /// Binds the use case to a concrete provider adapter supplied by composition.
+    #[must_use]
+    pub const fn new(probe: &'a dyn EmbeddingCapabilityProbe) -> Self {
+        Self { probe }
+    }
+
+    /// Performs the bounded live probe and derives a vector-isolated V1 profile.
+    pub async fn execute(
+        &self,
+        request: &EmbeddingCapabilityProbeRequest,
+        timeout: ModelRequestTimeout,
+        control: &dyn ModelOperationControl,
+    ) -> Result<EmbeddingModelProfile, ModelProviderFailure> {
+        let dimension = self
+            .probe
+            .probe_embedding(request, timeout, control)
+            .await?;
+        Ok(EmbeddingModelProfile::v1(
+            self.probe.provider_id().clone(),
+            request.model_id().clone(),
+            dimension,
+            request.max_batch_size(),
+        ))
+    }
+}
 
 /// Cooperative cancellation visible to provider and storage adapters.
 pub trait EmbeddingOperationControl: fmt::Debug + Send + Sync {

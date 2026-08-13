@@ -5,6 +5,6 @@ mod ollama;
 
 pub use endpoint::{
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaEndpointError, OllamaEndpointPolicy,
-    OllamaEndpointPolicyError, OllamaEndpointScope,
+    OllamaEndpointPolicyError, OllamaEndpointScope, OllamaSettingsEndpointValidator,
 };
 pub use ollama::{OllamaModelProvider, OllamaProviderCreateError};

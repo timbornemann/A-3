@@ -1,16 +1,19 @@
 //! Offline HTTP contract for the Ollama-compatible streaming adapter.
 
 use a3_application::{
-    ModelCancellationFuture, ModelCapabilityProbeRequest, ModelFinishReason, ModelMessage,
-    ModelMessageRole, ModelOperationControl, ModelProvider, ModelProviderFailure,
-    ModelProviderRequest, ModelRequestTimeout, ProbeModelProfile, ProbeModelProfileFailure,
-    ProviderEvent, StructuredOutputSchema,
+    EmbeddingCapabilityProbeRequest, EmbeddingOperationControl, EmbeddingProvider,
+    EmbeddingRequestTimeout, ModelCancellationFuture, ModelCapabilityProbeRequest,
+    ModelFinishReason, ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider,
+    ModelProviderFailure, ModelProviderRequest, ModelRequestTimeout, ProbeEmbeddingModelProfile,
+    ProbeModelProfile, ProbeModelProfileFailure, ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{
-    ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
-    ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId,
-    ModelSamplingProfile, ModelStopSequence, ModelStopSequences, ModelStructuredOutputCapability,
-    ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
+    EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
+    EmbeddingProviderId, ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit,
+    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
+    ModelProviderId, ModelSamplingProfile, ModelStopSequence, ModelStopSequences,
+    ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
+    ModelToolCallMode, ModelTopP, NormalizedSemanticCard, SemanticCardId, SnapshotId,
 };
 use a3_model_provider_contract_tests::verify_model_provider_stream;
 use a3_provider::{LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider};
@@ -57,16 +60,22 @@ impl ModelOperationControl for TestControl {
 
     fn cancelled(&self) -> ModelCancellationFuture<'_> {
         Box::pin(futures::future::poll_fn(|context| {
-            if self.is_cancelled() {
+            if ModelOperationControl::is_cancelled(self) {
                 return Poll::Ready(());
             }
             self.waiter.register(context.waker());
-            if self.is_cancelled() {
+            if ModelOperationControl::is_cancelled(self) {
                 Poll::Ready(())
             } else {
                 Poll::Pending
             }
         }))
+    }
+}
+
+impl EmbeddingOperationControl for TestControl {
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -382,6 +391,87 @@ async fn invalid_structured_probe_output_creates_a_non_executable_profile() -> R
         ModelToolCallMode::NativeProviderReported
     );
     server.await??;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedding_probe_observes_real_dimension_without_accepting_a_ui_dimension()
+-> Result<(), TestError> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        let response = serde_json::to_vec(&json!({
+            "embeddings": [[0.25, -0.5, 0.75, 1.0]]
+        }))?;
+        write_json_response(&mut stream, "200 OK", &response).await?;
+        Ok::<StubHttpRequest, TestError>(request)
+    });
+    let provider = provider(endpoint)?;
+    let request = EmbeddingCapabilityProbeRequest::new(
+        EmbeddingModelId::new("nomic-embed-text".to_owned())?,
+        EmbeddingBatchSize::new(8)?,
+    );
+    let profile = ProbeEmbeddingModelProfile::new(&provider)
+        .execute(
+            &request,
+            ModelRequestTimeout::from_millis(2_000)?,
+            &TestControl::default(),
+        )
+        .await?;
+    let wire = server.await??;
+
+    assert_eq!(profile.dimension(), EmbeddingDimension::new(4)?);
+    assert_eq!(profile.max_batch_size(), EmbeddingBatchSize::new(8)?);
+    assert_eq!(wire.path, "/api/embed");
+    let body = serde_json::from_slice::<Value>(&wire.body)?;
+    assert_eq!(body["model"], "nomic-embed-text");
+    assert_eq!(body["truncate"], false);
+    assert_eq!(body["input"], json!(["A3 embedding capability probe"]));
+    assert!(body.get("dimension").is_none());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedding_adapter_encodes_bounded_canonical_card_bodies() -> Result<(), TestError> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        let response = serde_json::to_vec(&json!({
+            "embeddings": [[0.25, -0.5, 0.75, 1.0]]
+        }))?;
+        write_json_response(&mut stream, "200 OK", &response).await?;
+        Ok::<StubHttpRequest, TestError>(request)
+    });
+    let provider = provider(endpoint)?;
+    let profile = EmbeddingModelProfile::v1(
+        EmbeddingProviderId::new("ollama".to_owned())?,
+        EmbeddingModelId::new("nomic-embed-text".to_owned())?,
+        EmbeddingDimension::new(4)?,
+        EmbeddingBatchSize::new(8)?,
+    );
+    let cards = [NormalizedSemanticCard::normalize_v1(
+        SemanticCardId::from_bytes([71; 32]),
+        SnapshotId::from_bytes([72; 32]),
+        "  bounded   card\r\nbody  ",
+    )?];
+    let batch = provider
+        .embed(
+            &profile,
+            &cards,
+            EmbeddingRequestTimeout::from_millis(2_000)?,
+            &TestControl::default(),
+        )
+        .await?;
+    let wire = server.await??;
+
+    assert_eq!(batch.len(), 1);
+    let body = serde_json::from_slice::<Value>(&wire.body)?;
+    assert_eq!(body["input"], json!(["bounded card\nbody"]));
+    assert_eq!(body["truncate"], false);
     Ok(())
 }
 
