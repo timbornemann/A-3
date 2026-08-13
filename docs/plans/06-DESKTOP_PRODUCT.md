@@ -570,19 +570,43 @@ abgeschlossen.
 
 ## U9 Design System und Accessibility
 
-- [ ] Farb-, Typografie-, Spacing- und Focus-Tokens
-- [ ] Light und Dark Theme
-- [ ] WCAG-konforme Kontraste
-- [ ] Screenreader-Labels
-- [ ] Reduced Motion
-- [ ] skalierbare Schrift
-- [ ] keine Information nur über Farbe
+- [x] Farb-, Typografie-, Spacing- und Focus-Tokens
+- [x] Light und Dark Theme
+- [x] WCAG-konforme Kontraste
+- [x] Screenreader-Labels
+- [x] Reduced Motion
+- [x] skalierbare Schrift
+- [x] keine Information nur über Farbe
 
 Akzeptanz:
 
 - automatisierte Accessibilitychecks ohne kritische Befunde;
 - Kernworkflow vollständig per Tastatur;
 - 200-Prozent-Zoom ohne Funktionsverlust.
+
+Abnahme U9 vom 2026-08-13: ADR-0024 definiert eine einzige semantische V1-Tokenquelle für Farbe,
+Typografie, Spacing, Radien, Fokus und Controlgrößen. System, Hell und Dunkel verwenden dieselben
+Rollen; die Auswahl ist textuell und per `aria-pressed` sichtbar, folgt ohne explizite Wahl der
+OS-Präferenz und legt keinen zweiten dauerhaften Settings-Store neben ADR-0023 an. Ein
+automatisierter Sourcevertrag erfasst auch alle gekapselten Svelte-Styles und lehnt jede Rohfarbe
+außerhalb der Tokenquelle ab. Alle normativen Text-/Flächenpaare erreichen in Light und Dark
+rechnerisch mindestens WCAG AA 4,5:1.
+
+Der DOM-Contract belegt Main-Landmark, Skip-Link, eindeutige IDs, lückenlose Überschriften,
+benannte native Controls, keine positiven `tabindex`-Werte und nicht nur farbliche Zustände.
+Project-Map-Modi sind eine benannte native Togglegruppe; Formulare, Details, Auswahl-, Approval-
+und Run-Controls bleiben über Standardtastatur bedienbar. Der zentrale 3-Pixel-Fokusring ist in
+der echten Layout-Engine sichtbar. Controls sind mindestens 44 CSS-Pixel hoch, Schrift bleibt in
+relativen Einheiten skalierbar, und Reduced Motion schaltet Smooth Scrolling aus sowie Animationen
+und Transitions auf einen einzelnen praktisch sofortigen Durchlauf.
+
+Der Browser-Smoke schaltete System, Light und Dark in der realen Layout-Engine, fand und behob eine
+helle scoped Agentfläche im Dark Theme und bestätigte nach der Regression null horizontale
+Dokumentüberbreite bei von 1.265 auf 640 CSS-Pixel halbierter Breite als reproduzierbares
+200-Prozent-Reflow-Äquivalent. Agent Workspace und Settings blieben vollständig lesbar. Prettier,
+ESLint, Svelte-Typecheck ohne Warnung, 186 Frontendtests, vier Tooltests und der Produktionsbuild
+bestehen; die Markdown-Prüfung bestätigt 52 Dateien und 129 lokale Links. Damit sind alle drei
+U9-Akzeptanzkriterien objektiv nachgewiesen und U9 ist abgeschlossen.
 
 ## U10 Frontend Performance
 

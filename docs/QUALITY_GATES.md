@@ -253,6 +253,21 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   annehmen. Component-Tests zeigen den weiter nutzbaren modellfreien Indexbrowser, eine nicht nur
   farbliche Remote-Warnung, explizite Probe-/Abbruchaktionen, validierte Limits, fail-closed
   Privacy, read-only Indexignore und die evidence-gebundene Commandauswahl.
+- Der U9-Designsystemvertrag extrahiert globale und sämtliche scoped Svelte-Styles. Außerhalb der
+  zentralen Tokenquelle sind Hex-, RGB- und benannte Rohfarben verboten. Light und Dark müssen
+  dieselben semantischen Rollen für Text, Flächen, Status, Fokus, Info, Erfolg, Warnung, Gefahr,
+  Hypothese und Code definieren; normative Text-/Flächenpaare erreichen rechnerisch mindestens
+  WCAG AA 4,5:1.
+- Der U9-DOM-Contract prüft genau einen Main-Landmark, eindeutige IDs, lückenlose
+  Überschriftenebenen, benannte native Interaktionen, Skip-Link, textuell oder per `aria-pressed`
+  erkennbare Togglezustände und das Verbot positiver `tabindex`-Werte. Svelte-Typecheck und ESLint
+  müssen ohne Accessibilitywarnung bestehen. Schriftgrößen in Pixeln sind verboten; Controls
+  haben mindestens 44 CSS-Pixel Höhe.
+- Reduced Motion deaktiviert Smooth Scrolling und begrenzt Animationen und Transitions auf einen
+  einzelnen praktisch sofortigen Durchlauf. Der Browser-Smoke schaltet Light und Dark real um,
+  misst einen sichtbaren 3-Pixel-Fokusring und prüft bei halbierter CSS-Viewportbreite als
+  200-Prozent-Reflow-Äquivalent null horizontale Dokumentüberbreite. Agent-, Settings- und
+  Fehlerflächen müssen in beiden Themes visuell lesbar bleiben.
 
 ### Persistenz
 

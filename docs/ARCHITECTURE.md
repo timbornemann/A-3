@@ -726,6 +726,22 @@ rekonstruiert den Katalog vor dem Commit und lehnt stale Evidence, unbekannte Co
 Projektwechsel ohne Änderung ab. Die WebView kann weder Pfade noch argv, Worktree-IDs,
 Capabilitystatus, Profil-IDs, Zeit oder Endpoint in einen Probe-Request einschleusen.
 
+U9 zentralisiert gemäß ADR-0024 alle visuellen Zustände in semantischen V1-Designtokens. Light,
+Dark und der OS-gesteuerte Systemmodus verwenden identische Tokenrollen für Text, Flächen,
+Status, Fokus, Typografie, Spacing und Controlgrößen; weder globale noch scoped Svelte-Styles
+dürfen Rohfarben oder eigene Fallbackpaletten enthalten. Die explizite Theme-Wahl ist bewusst
+flüchtiger WebView-Präsentationszustand und erzeugt keinen zweiten Store neben den
+revisionsgebundenen Settings aus ADR-0023.
+
+Interaktionen bleiben native HTML-Controls mit benannten Gruppen, textuell oder per
+`aria-pressed` erkennbaren Zuständen und DOM-basierter Tastaturreihenfolge. Ein Skip-Link erreicht
+den Workspace, alle fokussierbaren Elemente erhalten einen sichtbaren tokenisierten Fokus, und
+positive `tabindex`-Werte sind verboten. Relative Schriftgrößen, 44-CSS-Pixel-Controls,
+wortweiser Reflow und `prefers-reduced-motion` halten die Kernoberfläche bei halbierter
+CSS-Viewportbreite als 200-Prozent-Reflow-Äquivalent ohne horizontale Dokumentüberbreite
+bedienbar. Farbe ist nie alleinige Information; Status, Warnung, Freshness und Auswahl besitzen
+zusätzlich Text oder strukturierte Semantik.
+
 ### Agentenlauf nach Appneustart
 
 1. Der Application-Kern lädt die materialisierte Runprojektion und das revisionsgebundene Ledger;
