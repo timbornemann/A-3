@@ -3,21 +3,25 @@
 mod support;
 
 use a3_application::{
-    AdvanceAgentController, AgentControllerControl, AgentControllerSignal, AgentInspectionBuffer,
+    AdvanceAgentController, AgentApprovalAction, AgentApprovalBuffer, AgentApprovalControlAction,
+    AgentApprovalControlMetadata, AgentApprovalControlOutcome, AgentApprovalControlResult,
+    AgentApprovalLoadResult, AgentControllerControl, AgentControllerSignal, AgentInspectionBuffer,
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, AppendRunEvent, CompileTaskLens, ConfirmProjectCommandAllowlist,
     ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
-    CreateAgentRun, CreateGoalContract, CreateTaskLedger, DiscoverProjectCommands,
-    ExecuteMutatingAgentAction, GrantPolicyApproval, IndexPersistenceControl,
-    IndexPersistenceControlError, InspectAgentRunRecovery, KnowledgeIndexStore, KnowledgeStore,
-    MutationActionFingerprint, MutationCommandSelection, MutationContextSeed,
-    MutationControllerFailure, MutationControllerOutcome, MutationExecutionIds, PatchApplyFailure,
-    PatchApplyFuture, PatchPreviewFuture, PolicyStore, ProcessEventSink, ProcessEventSinkError,
-    ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
-    ReconcileUnknownMutation, RecoverAgentRun, RefreshRepositoryIndex, RepositoryChangeBatch,
-    RepositoryIndexControl, RepositoryIndexControlError, RepositoryRescanReason, RunEventPageLimit,
-    RunJournalStore, TaskLedgerStoreVersion, TaskLensControlError, WorkspacePatchControl,
-    WorkspacePatchProgressError, WorkspacePatchTool, WorktreeMutationCoordinator,
+    ControlAgentApproval, CreateAgentRun, CreateGoalContract, CreateTaskLedger,
+    DiscoverProjectCommands, ExecuteMutatingAgentAction, GetAgentApprovalCenter,
+    GrantPolicyApproval, IndexPersistenceControl, IndexPersistenceControlError,
+    InspectAgentRunRecovery, KnowledgeIndexStore, KnowledgeStore, MutationActionFingerprint,
+    MutationCommandSelection, MutationContextSeed, MutationControllerFailure,
+    MutationControllerOutcome, MutationExecutionIds, PatchApplyFailure, PatchApplyFuture,
+    PatchPreviewFuture, PolicyStore, ProcessEventSink, ProcessEventSinkError, ProcessRunControl,
+    ProcessRunFailure, ProcessRunFuture, ProcessRunner, ReconcileUnknownMutation, RecoverAgentRun,
+    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
+    RepositoryIndexControlError, RepositoryRescanReason, RunEventPageLimit, RunJournalStore,
+    TaskLedgerStore, TaskLedgerStoreVersion, TaskLensControlError, TaskLensWorkspaceControl,
+    WorkspacePatchControl, WorkspacePatchProgressError, WorkspacePatchTool,
+    WorktreeMutationCoordinator,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
@@ -99,6 +103,8 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
         let inspection = AgentInspectionBuffer::new();
         inspection.activate_project(&fixture.project);
+        let approval = Arc::new(AgentApprovalBuffer::new());
+        approval.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -107,6 +113,7 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             &inspection,
+            approval.as_ref(),
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -140,6 +147,23 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
         let MutationControllerOutcome::AwaitingApproval(request_id) = first else {
             return Err(test_error("patch crossed policy without exact approval"));
         };
+        let approval_presentation = approval
+            .presentation(&fixture.project, durable.run.goal_contract().task_id())?
+            .ok_or_else(|| test_error("approval wait lost its exact action presentation"))?;
+        let AgentApprovalAction::Patch(approval_patch) = approval_presentation.action() else {
+            return Err(test_error("patch approval was presented as another action"));
+        };
+        if approval_presentation.request_id() != request_id
+            || approval_presentation.context().step_id() != step_id
+            || approval_patch.rationale() != "apply the E7 context freshness acceptance fixture"
+            || approval_patch.files().len() != 1
+            || approval_patch.files()[0].source_path() != Some(&path("src/lib.rs")?)
+            || approval_patch.files()[0].target_path() != Some(&path("src/lib.rs")?)
+        {
+            return Err(test_error(
+                "approval presentation did not retain the exact durable patch scope",
+            ));
+        }
         let inspection_overview = inspection
             .overview(&fixture.project, durable.run.goal_contract().task_id())?
             .ok_or_else(|| test_error("approval wait lost its exact patch preview"))?;
@@ -168,18 +192,92 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
             ));
         }
 
-        let approval_id = ApprovalId::from_bytes(id(70));
-        let mut approval = GrantPolicyApproval::new(fixture.store.as_ref())
+        let approval_query = GetAgentApprovalCenter::new(
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            Arc::clone(&approval),
+        );
+        let pending = approval_query
             .execute(
                 &fixture.project,
-                &mut durable.run,
-                request_id,
-                approval_id,
-                RunEventId::from_bytes(id(71)),
-                fixture.published.run().snapshot_id(),
+                durable.run.goal_contract().task_id(),
                 timestamp(21)?,
+                &ActiveControl,
             )
             .await?;
+        let AgentApprovalLoadResult::Available(pending) = pending else {
+            return Err(test_error("pending Approval Center was not available"));
+        };
+        if !pending.can_allow_once() || pending.can_continue() {
+            return Err(test_error("pending Approval Center exposed wrong controls"));
+        }
+        let approval_id = ApprovalId::from_bytes(id(70));
+        let approval_control = ControlAgentApproval::new(
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            Arc::clone(&approval),
+        );
+        let granted = approval_control
+            .execute(
+                &fixture.project,
+                durable.run.goal_contract().task_id(),
+                pending.presentation().revision(),
+                pending.ledger_revision(),
+                pending.ledger_store_version(),
+                AgentApprovalControlAction::AllowOnce,
+                AgentApprovalControlMetadata::new(
+                    approval_id,
+                    RunEventId::from_bytes(id(71)),
+                    timestamp(21)?,
+                ),
+                &ActiveControl,
+            )
+            .await?;
+        let AgentApprovalControlResult::Applied(AgentApprovalControlOutcome::GrantStored {
+            approval_revision,
+        }) = granted
+        else {
+            return Err(test_error("Allow once did not store the exact grant"));
+        };
+        let continued = approval_control
+            .execute(
+                &fixture.project,
+                durable.run.goal_contract().task_id(),
+                approval_revision,
+                pending.ledger_revision(),
+                pending.ledger_store_version(),
+                AgentApprovalControlAction::Continue,
+                AgentApprovalControlMetadata::new(
+                    ApprovalId::from_bytes(id(72)),
+                    RunEventId::from_bytes(id(73)),
+                    timestamp(21)?,
+                ),
+                &ActiveControl,
+            )
+            .await?;
+        if !matches!(
+            continued,
+            AgentApprovalControlResult::Applied(
+                AgentApprovalControlOutcome::ContinueReady { approval_id: selected }
+            ) if selected == approval_id
+        ) {
+            return Err(test_error(
+                "Continue did not select the internal exact grant",
+            ));
+        }
+        durable.run = fixture
+            .store
+            .load_agent_run(&fixture.project, durable.run.id())
+            .await?
+            .ok_or_else(|| test_error("grant audit run projection is missing"))?;
+        let mut approval = fixture
+            .store
+            .load_approval(&fixture.project, approval_id)
+            .await?
+            .ok_or_else(|| test_error("stored exact approval is missing"))?;
         let original_snapshot = fixture.published.run().snapshot_id();
         let outcome = controller
             .execute(
@@ -262,6 +360,177 @@ fn patch_waits_for_approval_then_reindexes_before_compiling_context() -> Result<
 }
 
 #[test]
+fn approval_denial_blocks_the_exact_step_without_a_tool_effect() -> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = Fixture::new().await?;
+        let criterion_id = AcceptanceCriterionId::from_bytes(id(75));
+        let step_id = TaskStepId::from_bytes(id(76));
+        let spec_id = VerificationSpecId::from_bytes(id(77));
+        let spec = VerificationSpec::user_confirm(
+            spec_id,
+            requirement("the user accepts the exact proposed patch")?,
+            PolicyResourceId::from_bytes(id(78)),
+        );
+        let mut durable = DurableMutation::new(&fixture, criterion_id, step_id, spec).await?;
+        let action = PatchAction::new(
+            PatchActionSchemaVersion::V1,
+            durable.run.id(),
+            fixture.project.worktree().id(),
+            fixture.published.run().snapshot_id(),
+            step_id,
+            spec_id,
+            PatchRationale::try_from_string("exercise the explicit denial path".to_owned())?,
+            vec![PatchOperation::Update(PatchUpdate::new(
+                FileRevision::new(path("src/lib.rs")?, hash(ORIGINAL_SOURCE)),
+                PatchFileContent::try_from_bytes(UPDATED_SOURCE.to_vec())?,
+            )?)],
+        )?;
+
+        let refresh = refresh(fixture.store.clone());
+        let context = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ));
+        let coordinator = WorktreeMutationCoordinator::new();
+        let patch_tool = WorkspacePatchAdapter::new();
+        let process_runner = FailingProcessRunner::default();
+        let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
+        let inspection = AgentInspectionBuffer::new();
+        inspection.activate_project(&fixture.project);
+        let approval = Arc::new(AgentApprovalBuffer::new());
+        approval.activate_project(&fixture.project);
+        let controller = ExecuteMutatingAgentAction::new(
+            &coordinator,
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &inspection,
+            approval.as_ref(),
+            &patch_tool,
+            &process_runner,
+            &evidence_factory,
+            &context,
+            &refresh,
+        );
+        let mut compiler = compiler()?;
+        let seed = durable.context_seed();
+        let outcome = controller
+            .execute(
+                &fixture.project,
+                &mut durable.run,
+                &mut durable.ledger,
+                &mut durable.ledger_version,
+                &fixture.published,
+                AgentAction::ApplyPatch(Box::new(action)),
+                None,
+                &WorkspacePolicy::unrestricted(),
+                None,
+                mutation_ids(95),
+                timestamp(20)?,
+                timestamp(100)?,
+                &seed,
+                &mut compiler,
+                &NoopProcessEvents,
+                &ActiveControl,
+            )
+            .await?;
+        if !matches!(outcome, MutationControllerOutcome::AwaitingApproval(_)) {
+            return Err(test_error("patch did not stop at the Approval Center"));
+        }
+
+        let query = GetAgentApprovalCenter::new(
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            Arc::clone(&approval),
+        );
+        let AgentApprovalLoadResult::Available(pending) = query
+            .execute(
+                &fixture.project,
+                durable.run.goal_contract().task_id(),
+                timestamp(21)?,
+                &ActiveControl,
+            )
+            .await?
+        else {
+            return Err(test_error("pending approval was not available for denial"));
+        };
+        let control = ControlAgentApproval::new(
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            fixture.store.clone(),
+            Arc::clone(&approval),
+        );
+        let denied = control
+            .execute(
+                &fixture.project,
+                durable.run.goal_contract().task_id(),
+                pending.presentation().revision(),
+                pending.ledger_revision(),
+                pending.ledger_store_version(),
+                AgentApprovalControlAction::Deny,
+                AgentApprovalControlMetadata::new(
+                    ApprovalId::from_bytes(id(200)),
+                    RunEventId::from_bytes(id(201)),
+                    timestamp(21)?,
+                ),
+                &ActiveControl,
+            )
+            .await?;
+        if !matches!(
+            denied,
+            AgentApprovalControlResult::Applied(AgentApprovalControlOutcome::Denied { .. })
+        ) {
+            return Err(test_error("explicit denial was not applied atomically"));
+        }
+
+        let stored_run = fixture
+            .store
+            .load_agent_run(&fixture.project, durable.run.id())
+            .await?
+            .ok_or_else(|| test_error("denied run is missing"))?;
+        let stored_ledger = fixture
+            .store
+            .load_task_ledger(&fixture.project, durable.run.goal_contract().task_id())
+            .await?
+            .ok_or_else(|| test_error("denied task ledger is missing"))?;
+        let AgentApprovalLoadResult::Available(resolved) = query
+            .execute(
+                &fixture.project,
+                durable.run.goal_contract().task_id(),
+                timestamp(22)?,
+                &ActiveControl,
+            )
+            .await?
+        else {
+            return Err(test_error("denied lifecycle was not inspectable"));
+        };
+        if stored_run.state() != AgentControllerState::Failed
+            || stored_ledger
+                .ledger()
+                .step(step_id)
+                .map(|step| step.status())
+                != Some(TaskStepStatus::Blocked)
+            || resolved.status() != a3_application::AgentApprovalStatus::Denied
+            || resolved.can_allow_once()
+            || resolved.can_deny()
+            || resolved.can_continue()
+            || resolved.can_revoke()
+            || std::fs::read(fixture.repository.path().join("src/lib.rs"))? != ORIGINAL_SOURCE
+        {
+            return Err(test_error(
+                "denial did not preserve the fail-closed run, ledger, or worktree state",
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
         let fixture = Fixture::new().await?;
@@ -303,6 +572,8 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
         let inspection = AgentInspectionBuffer::new();
         inspection.activate_project(&fixture.project);
+        let approval = AgentApprovalBuffer::new();
+        approval.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -311,6 +582,7 @@ fn diff_patch_completes_step_only_after_typed_current_verification() -> Result<(
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             &inspection,
+            &approval,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -437,6 +709,8 @@ fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), B
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
         let inspection = AgentInspectionBuffer::new();
         inspection.activate_project(&fixture.project);
+        let approval = AgentApprovalBuffer::new();
+        approval.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -445,6 +719,7 @@ fn patch_conflict_is_not_applied_and_preserves_foreign_content() -> Result<(), B
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             &inspection,
+            &approval,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -574,6 +849,8 @@ fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<()
         };
         let inspection = AgentInspectionBuffer::new();
         inspection.activate_project(&fixture.project);
+        let approval = AgentApprovalBuffer::new();
+        approval.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -582,6 +859,7 @@ fn crash_between_patch_and_journal_requires_full_scan_then_replan() -> Result<()
             &failing_recovery,
             fixture.store.as_ref(),
             &inspection,
+            &approval,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -840,6 +1118,8 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
             };
             let inspection = AgentInspectionBuffer::new();
             inspection.activate_project(&fixture.project);
+            let approval = AgentApprovalBuffer::new();
+            approval.activate_project(&fixture.project);
             let controller = ExecuteMutatingAgentAction::new(
                 &coordinator,
                 fixture.store.as_ref(),
@@ -848,6 +1128,7 @@ fn recovery_store_unavailable_or_corrupt_never_opens_process_boundary() -> Resul
                 &faulting_recovery,
                 fixture.store.as_ref(),
                 &inspection,
+                &approval,
                 &patch_tool,
                 &process_runner,
                 &evidence_factory,
@@ -960,6 +1241,8 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
             let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
             let inspection = AgentInspectionBuffer::new();
             inspection.activate_project(&fixture.project);
+            let approval = AgentApprovalBuffer::new();
+            approval.activate_project(&fixture.project);
             let controller = ExecuteMutatingAgentAction::new(
                 &coordinator,
                 fixture.store.as_ref(),
@@ -968,6 +1251,7 @@ fn process_failure_timeout_and_cancellation_have_explicit_dispositions()
                 fixture.store.as_ref(),
                 fixture.store.as_ref(),
                 &inspection,
+                &approval,
                 &patch_tool,
                 &process_runner,
                 &evidence_factory,
@@ -1096,6 +1380,8 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
         let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
         let inspection = AgentInspectionBuffer::new();
         inspection.activate_project(&fixture.project);
+        let approval = AgentApprovalBuffer::new();
+        approval.activate_project(&fixture.project);
         let controller = ExecuteMutatingAgentAction::new(
             &coordinator,
             fixture.store.as_ref(),
@@ -1104,6 +1390,7 @@ fn one_worktree_lock_and_repeated_failed_run_force_replan() -> Result<(), Box<dy
             fixture.store.as_ref(),
             fixture.store.as_ref(),
             &inspection,
+            &approval,
             &patch_tool,
             &process_runner,
             &evidence_factory,
@@ -1825,6 +2112,12 @@ impl ProcessEventSink for NoopProcessEvents {
 struct ActiveControl;
 
 impl AgentControllerControl for ActiveControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+impl TaskLensWorkspaceControl for ActiveControl {
     fn is_cancelled(&self) -> bool {
         false
     }

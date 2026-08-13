@@ -40,6 +40,13 @@ pub trait PolicyStore: fmt::Debug + Send + Sync {
         approval_id: ApprovalId,
     ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>>;
 
+    /// Loads the at-most-one grant created from an exact immutable request.
+    fn load_approval_for_request<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        request_id: ApprovalRequestId,
+    ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>>;
+
     /// Loads one immutable central decision for recovery and audit verification.
     fn load_policy_decision<'a>(
         &'a self,

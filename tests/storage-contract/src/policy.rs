@@ -117,6 +117,20 @@ where
         )
         .await?;
     assert_eq!(approval.state(), ApprovalGrantState::Active);
+    assert_eq!(
+        reopened
+            .load_approval_for_request(&project, first_request.id())
+            .await?,
+        Some(approval.clone())
+    );
+    let grant_reader = factory.open(&app_data_root).await?;
+    assert_eq!(
+        grant_reader
+            .load_approval_for_request(&project, first_request.id())
+            .await?,
+        Some(approval.clone())
+    );
+    crate::release_contract_store(grant_reader);
 
     let second_action = write_action(worktree_id, "src/second.rs")?;
     let mismatch_sequence = run.last_event_sequence();

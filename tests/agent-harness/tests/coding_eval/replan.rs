@@ -74,6 +74,8 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
     let evidence_factory = ConservativeProcessVerificationEvidenceFactory;
     let inspection = AgentInspectionBuffer::new();
     inspection.activate_project(&fixture.project);
+    let approval = AgentApprovalBuffer::new();
+    approval.activate_project(&fixture.project);
     let controller = ExecuteMutatingAgentAction::new(
         &coordinator,
         fixture.store.as_ref(),
@@ -82,6 +84,7 @@ pub(super) async fn evaluate() -> Result<CodingEvalResult, Box<dyn Error>> {
         fixture.store.as_ref(),
         fixture.store.as_ref(),
         &inspection,
+        &approval,
         &patch_tool,
         &process_runner,
         &evidence_factory,

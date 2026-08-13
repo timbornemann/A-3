@@ -622,6 +622,19 @@ impl PolicyStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn load_approval_for_request<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        request_id: ApprovalRequestId,
+    ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_policy(project).await?;
+            policy_repository::load_approval_for_request(database.connection(), request_id)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
     fn load_policy_decision<'a>(
         &'a self,
         project: &'a ProjectIdentity,

@@ -1,5 +1,5 @@
 use crate::{JobContext, TaskLedgerStoreVersion};
-use a3_domain::{ProjectIdentity, TaskId, TaskLedgerRevision};
+use a3_domain::{ApprovalId, ProjectIdentity, TaskId, TaskLedgerRevision};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -18,6 +18,16 @@ pub struct AgentRunExecutionRequest {
     task_id: TaskId,
     ledger_revision: TaskLedgerRevision,
     ledger_store_version: TaskLedgerStoreVersion,
+    trigger: AgentRunExecutionTrigger,
+}
+
+/// Core-owned reason that authorizes one scheduler attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunExecutionTrigger {
+    /// Ordinary start, replan, resume, or recovery under current durable anchors.
+    Standard,
+    /// Explicit continuation carrying the exact one-time grant selected by Core.
+    ApprovalGranted(ApprovalId),
 }
 
 impl AgentRunExecutionRequest {
@@ -32,6 +42,23 @@ impl AgentRunExecutionRequest {
             task_id,
             ledger_revision,
             ledger_store_version,
+            trigger: AgentRunExecutionTrigger::Standard,
+        }
+    }
+
+    /// Binds a fresh attempt to the exact live one-time grant selected by the approval use case.
+    #[must_use]
+    pub const fn after_approval(
+        task_id: TaskId,
+        ledger_revision: TaskLedgerRevision,
+        ledger_store_version: TaskLedgerStoreVersion,
+        approval_id: ApprovalId,
+    ) -> Self {
+        Self {
+            task_id,
+            ledger_revision,
+            ledger_store_version,
+            trigger: AgentRunExecutionTrigger::ApprovalGranted(approval_id),
         }
     }
 
@@ -51,6 +78,12 @@ impl AgentRunExecutionRequest {
     #[must_use]
     pub const fn ledger_store_version(self) -> TaskLedgerStoreVersion {
         self.ledger_store_version
+    }
+
+    /// Returns the Core-owned execution trigger; it is never reconstructed from WebView input.
+    #[must_use]
+    pub const fn trigger(self) -> AgentRunExecutionTrigger {
+        self.trigger
     }
 }
 
@@ -105,9 +138,9 @@ impl Error for AgentRunExecutionFailure {}
 
 #[cfg(test)]
 mod tests {
-    use super::AgentRunExecutionRequest;
+    use super::{AgentRunExecutionRequest, AgentRunExecutionTrigger};
     use crate::TaskLedgerStoreVersion;
-    use a3_domain::{TaskId, TaskLedgerRevision};
+    use a3_domain::{ApprovalId, TaskId, TaskLedgerRevision};
     use std::error::Error;
 
     #[test]
@@ -121,6 +154,24 @@ mod tests {
         assert_eq!(request.task_id(), TaskId::from_bytes([11; 32]));
         assert_eq!(request.ledger_revision().get(), 3);
         assert_eq!(request.ledger_store_version().get(), 7);
+        assert_eq!(request.trigger(), AgentRunExecutionTrigger::Standard);
+        Ok(())
+    }
+
+    #[test]
+    fn approval_continuation_retains_the_core_selected_grant() -> Result<(), Box<dyn Error>> {
+        let approval_id = ApprovalId::from_bytes([17; 32]);
+        let request = AgentRunExecutionRequest::after_approval(
+            TaskId::from_bytes([11; 32]),
+            TaskLedgerRevision::new(3)?,
+            TaskLedgerStoreVersion::new(7)?,
+            approval_id,
+        );
+
+        assert_eq!(
+            request.trigger(),
+            AgentRunExecutionTrigger::ApprovalGranted(approval_id)
+        );
         Ok(())
     }
 }

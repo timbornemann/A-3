@@ -111,18 +111,38 @@ pub(crate) async fn load_approval(
     connection: &Connection,
     approval_id: ApprovalId,
 ) -> Result<Option<ApprovalGrant>, PolicyRepositoryError> {
+    load_approval_by_column(connection, "g.approval_id", approval_id.as_bytes().to_vec()).await
+}
+
+pub(crate) async fn load_approval_for_request(
+    connection: &Connection,
+    request_id: ApprovalRequestId,
+) -> Result<Option<ApprovalGrant>, PolicyRepositoryError> {
+    load_approval_by_column(
+        connection,
+        "g.approval_request_id",
+        request_id.as_bytes().to_vec(),
+    )
+    .await
+}
+
+async fn load_approval_by_column(
+    connection: &Connection,
+    column: &str,
+    identity: Vec<u8>,
+) -> Result<Option<ApprovalGrant>, PolicyRepositoryError> {
+    let query = format!(
+        "SELECT g.approval_id, g.approval_request_id, g.run_id,
+         r.action_fingerprint, r.scope_digest, r.action_class, r.risk_level,
+         r.requested_at_unix_millis, r.expires_at_unix_millis,
+         g.granted_at_unix_millis, g.expires_at_unix_millis, g.status,
+         g.consumed_decision_id, g.consumed_at_unix_millis, g.revoked_at_unix_millis
+         FROM approval_grants AS g JOIN approval_requests AS r
+           ON r.approval_request_id = g.approval_request_id
+         WHERE {column} = ?1"
+    );
     let mut rows = connection
-        .query(
-            "SELECT g.approval_id, g.approval_request_id, g.run_id,
-             r.action_fingerprint, r.scope_digest, r.action_class, r.risk_level,
-             r.requested_at_unix_millis, r.expires_at_unix_millis,
-             g.granted_at_unix_millis, g.expires_at_unix_millis, g.status,
-             g.consumed_decision_id, g.consumed_at_unix_millis, g.revoked_at_unix_millis
-             FROM approval_grants AS g JOIN approval_requests AS r
-               ON r.approval_request_id = g.approval_request_id
-             WHERE g.approval_id = ?1",
-            params![id_bytes(approval_id)],
-        )
+        .query(&query, params![identity])
         .await
         .map_err(PolicyRepositoryError::Read)?;
     let Some(row) = rows.next().await.map_err(PolicyRepositoryError::Read)? else {

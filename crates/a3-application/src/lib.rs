@@ -3,6 +3,7 @@
 mod agent_action_codec;
 mod agent_actions;
 mod agent_activity;
+mod agent_approval;
 mod agent_controller;
 mod agent_goal;
 mod agent_inspection;
@@ -87,6 +88,7 @@ pub use agent_activity::{
     AgentActivity, AgentActivityLoadResult, AgentActivityRun, GetAgentActivity,
     GetAgentActivityFailure,
 };
+pub use agent_approval::*;
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
     AcceptanceVerifier, AcceptanceVerifierFailure, AcceptanceVerifierFuture,
@@ -113,7 +115,7 @@ pub use agent_recovery::{
 };
 pub use agent_runtime::{
     AgentRunExecutionFailure, AgentRunExecutionFuture, AgentRunExecutionOutcome,
-    AgentRunExecutionRequest, AgentRunExecutor,
+    AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
 };
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
