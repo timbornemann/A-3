@@ -472,9 +472,12 @@ mod tests {
         assert_eq!(
             capability.get("permissions"),
             Some(&json!([
+                "allow-cancel-model-probe",
                 "allow-list-recent-projects",
                 "allow-cancel-deep-map",
                 "allow-compile-task-lens",
+                "allow-configure-model-endpoint",
+                "allow-confirm-project-command-allowlist",
                 "allow-control-agent-approval",
                 "allow-control-agent-task-run",
                 "allow-create-agent-goal",
@@ -501,9 +504,12 @@ mod tests {
                 "allow-query-task-lens-task",
                 "allow-query-task-lens-tasks",
                 "allow-query-project-status",
+                "allow-query-project-settings",
                 "allow-query-health",
+                "allow-query-settings",
                 "allow-rebuild-project-index",
                 "allow-remove-project",
+                "allow-probe-model-role",
                 "allow-revise-agent-goal",
                 "allow-resume-deep-map",
                 "allow-start-deep-map"
