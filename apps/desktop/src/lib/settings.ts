@@ -8,7 +8,7 @@ const MODEL_ID_PATTERN = /^[A-Za-z0-9._+/@:-]{1,512}$/;
 const MAX_PERSISTED_INTEGER = 9_223_372_036_854_775_807n;
 
 export type ModelEndpointScopeV1 = 'localLoopback' | 'remote';
-export type ModelProviderKindV1 = 'ollama';
+export type ModelProviderKindV1 = 'ollama' | 'gemini';
 export type ProviderHealthStatusV1 =
   'notChecked' | 'healthy' | 'capabilityLimited' | 'unreachable' | 'cancelled' | 'remoteBlocked';
 export type ModelProfileActivationV1 = 'executable' | 'capabilityLimited';
@@ -219,7 +219,7 @@ export function parseProviderModelsResponseV1(payload: unknown): ProviderModelsR
       'truncated',
     ]) ||
     payload.protocolVersion !== CURRENT_PROTOCOL_VERSION ||
-    payload.providerKind !== 'ollama' ||
+    (payload.providerKind !== 'ollama' && payload.providerKind !== 'gemini') ||
     !Array.isArray(payload.modelIds) ||
     payload.modelIds.length > 256 ||
     typeof payload.settingsRevision !== 'string' ||

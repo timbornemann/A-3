@@ -21,8 +21,9 @@ use a3_protocol::{
     SettingsV1, StructuredOutputCapabilityV1,
 };
 use a3_provider::{
+    GeminiEndpoint, GeminiModelProvider, GeminiSettingsEndpointValidator,
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider,
-    OllamaSettingsEndpointValidator,
+    OllamaSettingsEndpointValidator, StandardGeminiEndpointPolicy,
 };
 use futures::task::AtomicWaker;
 use std::fmt;
@@ -37,19 +38,14 @@ const MODEL_DISCOVERY_TIMEOUT_MILLIS: u64 = 15_000;
 /// Owns the single explicit local model operation and durable Settings use cases.
 pub struct ModelSettingsManager {
     store: Arc<dyn DesktopSettingsStore>,
-    endpoint_configuration: ConfigureDesktopModelEndpoint,
     active_probe: Mutex<Option<Arc<ProbeCancellation>>>,
 }
 
 impl ModelSettingsManager {
-    /// Wires local settings persistence and pure Ollama endpoint validation.
+    /// Wires local settings persistence and credential-free endpoint validation.
     #[must_use]
     pub fn new(store: Arc<dyn DesktopSettingsStore>) -> Self {
         Self {
-            endpoint_configuration: ConfigureDesktopModelEndpoint::new(
-                Arc::clone(&store),
-                Arc::new(OllamaSettingsEndpointValidator),
-            ),
             store,
             active_probe: Mutex::new(None),
         }
@@ -71,16 +67,16 @@ impl ModelSettingsManager {
         provider_kind: ModelProviderKindV1,
         endpoint: Option<&str>,
     ) -> Result<SettingsResponseV1, CommandErrorV1> {
-        if provider_kind != ModelProviderKindV1::Ollama {
-            return Err(invalid_request());
-        }
         if self.probe_is_active() {
             return Err(CommandErrorV1::settings(
                 ErrorCodeV1::ModelProbeAlreadyActive,
             ));
         }
-        let stored = self
-            .endpoint_configuration
+        let validator: Arc<dyn a3_application::ModelEndpointValidator> = match provider_kind {
+            ModelProviderKindV1::Ollama => Arc::new(OllamaSettingsEndpointValidator),
+            ModelProviderKindV1::Gemini => Arc::new(GeminiSettingsEndpointValidator),
+        };
+        let stored = ConfigureDesktopModelEndpoint::new(Arc::clone(&self.store), validator)
             .execute(expected, endpoint)
             .await
             .map_err(map_configure_error)?;
@@ -140,31 +136,61 @@ impl ModelSettingsManager {
             .settings()
             .endpoint()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        if endpoint.scope() != ModelEndpointScope::LocalLoopback
-            || endpoint.provider_id().as_str() != "ollama"
-        {
-            return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
-        }
-        let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        let provider = OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
         let timeout = ModelRequestTimeout::from_millis(MODEL_DISCOVERY_TIMEOUT_MILLIS)
             .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
-        let catalog = DiscoverProviderModels::new(&provider)
-            .execute(timeout, control)
-            .await
-            .map_err(map_model_operation_error)?;
-        Ok(ProviderModelsResponseV1::new(
-            current.version().get().to_string(),
-            ModelProviderKindV1::Ollama,
-            catalog
-                .model_ids()
-                .iter()
-                .map(|model| model.as_str().to_owned())
-                .collect(),
-            catalog.truncated(),
-        ))
+
+        match endpoint.provider_id().as_str() {
+            "ollama" => {
+                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
+                    return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+                }
+                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let provider =
+                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                let catalog = DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+                    .map_err(map_model_operation_error)?;
+                Ok(ProviderModelsResponseV1::new(
+                    current.version().get().to_string(),
+                    ModelProviderKindV1::Ollama,
+                    catalog
+                        .model_ids()
+                        .iter()
+                        .map(|model| model.as_str().to_owned())
+                        .collect(),
+                    catalog.truncated(),
+                ))
+            }
+            "gemini" => {
+                let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let provider =
+                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy))
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                let catalog = DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+                    .map_err(map_model_operation_error)?;
+                Ok(ProviderModelsResponseV1::new(
+                    current.version().get().to_string(),
+                    ModelProviderKindV1::Gemini,
+                    catalog
+                        .model_ids()
+                        .iter()
+                        .map(|model| model.as_str().to_owned())
+                        .collect(),
+                    catalog.truncated(),
+                ))
+            }
+            _ => Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid)),
+        }
     }
 
     async fn probe_owned(
@@ -186,17 +212,55 @@ impl ModelSettingsManager {
             .settings()
             .endpoint()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        if endpoint.scope() != ModelEndpointScope::LocalLoopback {
-            return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
-        }
-        let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        let provider = OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
         let timeout = ModelRequestTimeout::from_millis(MODEL_PROBE_TIMEOUT_MILLIS)
             .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
         let recorder = RecordDesktopModelProbe::new(Arc::clone(&self.store));
 
+        match endpoint.provider_id().as_str() {
+            "ollama" => {
+                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
+                    return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+                }
+                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let provider =
+                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                self.execute_probe(
+                    &provider, &provider, expected, request, timeout, recorder, control,
+                )
+                .await
+            }
+            "gemini" => {
+                let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let provider =
+                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy))
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                self.execute_probe(
+                    &provider, &provider, expected, request, timeout, recorder, control,
+                )
+                .await
+            }
+            _ => Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid)),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_probe(
+        &self,
+        llm_prober: &dyn a3_application::ModelCapabilityProbe,
+        embedding_prober: &dyn a3_application::EmbeddingCapabilityProbe,
+        expected: DesktopSettingsStoreVersion,
+        request: &ProbeModelRoleRequestV1,
+        timeout: ModelRequestTimeout,
+        recorder: RecordDesktopModelProbe,
+        control: &dyn ModelOperationControl,
+    ) -> Result<SettingsResponseV1, CommandErrorV1> {
         let result = match request.role() {
             ModelRoleV1::Coding | ModelRoleV1::Mapping => {
                 let limits = request.llm_limits().ok_or_else(invalid_request)?;
@@ -206,7 +270,7 @@ impl ModelSettingsManager {
                         .map_err(|_| invalid_request())?,
                     settings,
                 );
-                match ProbeModelProfile::new(&provider)
+                match ProbeModelProfile::new(llm_prober)
                     .execute(&probe_request, timeout, control)
                     .await
                 {
@@ -238,7 +302,7 @@ impl ModelSettingsManager {
                     EmbeddingBatchSize::new(limits.max_batch_size())
                         .map_err(|_| invalid_request())?,
                 );
-                match ProbeEmbeddingModelProfile::new(&provider)
+                match ProbeEmbeddingModelProfile::new(embedding_prober)
                     .execute(&probe_request, timeout, control)
                     .await
                 {
@@ -697,6 +761,33 @@ mod tests {
                 Err(ErrorCodeV1::ModelEndpointInvalid)
             );
             assert!(!manager.probe_is_active());
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn gemini_provider_can_be_configured() -> Result<(), Box<dyn std::error::Error>> {
+        futures::executor::block_on(async {
+            let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
+            let manager = ModelSettingsManager::new(store);
+            let configured = manager
+                .configure_provider(
+                    DesktopSettingsStoreVersion::initial(),
+                    ModelProviderKindV1::Gemini,
+                    Some("https://generativelanguage.googleapis.com"),
+                )
+                .await
+                .map_err(|error| format!("gemini configuration failed: {:?}", error.code()))?;
+            let configured_json = serde_json::to_value(configured)?;
+            assert_eq!(configured_json["settings"]["endpoint"]["scope"], "remote");
+            assert_eq!(
+                configured_json["settings"]["endpoint"]["origin"],
+                "https://generativelanguage.googleapis.com"
+            );
+            assert_eq!(
+                configured_json["settings"]["providerHealth"]["status"],
+                "notChecked"
+            );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }

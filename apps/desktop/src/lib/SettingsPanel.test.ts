@@ -207,4 +207,52 @@ describe('SettingsPanel', () => {
     expect(await screen.findByText('0.1.0')).toBeTruthy();
     expect(healthLoader).toHaveBeenCalledTimes(1);
   });
+
+  it('creates a Google Gemini provider and discovers Gemini models', async () => {
+    const geminiEndpoint = {
+      origin: 'https://generativelanguage.googleapis.com',
+      providerId: 'gemini',
+      scope: 'remote' as const,
+    };
+    const providerConfigurer = vi
+      .fn()
+      .mockResolvedValue(response({ endpoint: geminiEndpoint, revision: '1' }));
+    const modelDiscoverer = vi.fn().mockResolvedValue({
+      modelIds: ['gemini-2.5-flash', 'text-embedding-004'],
+      protocolVersion: 1,
+      providerKind: 'gemini',
+      settingsRevision: '1',
+      truncated: false,
+    });
+
+    render(SettingsPanel, {
+      modelDiscoverer,
+      providerConfigurer,
+      settingsLoader: vi.fn().mockResolvedValue(response()),
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Provider' }));
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Provider hinzufügen' })[0]!);
+    const dialog = screen.getByRole('dialog', { name: 'Provider hinzufügen' });
+
+    await fireEvent.change(within(dialog).getByLabelText('Provider'), {
+      target: { value: 'gemini' },
+    });
+    expect((within(dialog).getByLabelText('Endpoint') as HTMLInputElement).value).toBe(
+      'https://generativelanguage.googleapis.com',
+    );
+    expect(within(dialog).getByText(/GEMINI_API_KEY/)).toBeTruthy();
+
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Provider hinzufügen' }));
+    await waitFor(() => expect(providerConfigurer).toHaveBeenCalledTimes(1));
+    expect(providerConfigurer).toHaveBeenCalledWith(
+      '0',
+      'gemini',
+      'https://generativelanguage.googleapis.com',
+    );
+    expect(await screen.findByText('Google Gemini')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle erkennen' }));
+    await waitFor(() => expect(modelDiscoverer).toHaveBeenCalledWith('1'));
+  });
 });

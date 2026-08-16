@@ -308,6 +308,21 @@ impl ProviderHealthObservation {
         }
     }
 
+    /// Creates the non-networked initial state for a configured endpoint, allowing Gemini.
+    #[must_use]
+    pub fn initial_for_endpoint(endpoint: &ConfiguredModelEndpoint) -> Self {
+        Self {
+            status: if endpoint.scope() == ModelEndpointScope::LocalLoopback
+                || endpoint.provider_id().as_str() == "gemini"
+            {
+                ProviderHealthStatus::NotChecked
+            } else {
+                ProviderHealthStatus::RemoteBlocked
+            },
+            checked_at: None,
+        }
+    }
+
     /// Records one completed explicit local probe.
     pub const fn checked(
         status: ProviderHealthStatus,
@@ -472,7 +487,7 @@ impl DesktopSettings {
             self.provider_health = self
                 .endpoint
                 .as_ref()
-                .map(|configured| ProviderHealthObservation::initial(configured.scope()));
+                .map(ProviderHealthObservation::initial_for_endpoint);
             self.coding_profile = None;
             self.mapping_profile = None;
             self.embedding_profile = None;
@@ -487,7 +502,7 @@ impl DesktopSettings {
         profile: ModelProfile,
         probed_at: SettingsTimestamp,
     ) -> Result<Self, DesktopSettingsUpdateError> {
-        self.require_matching_local_provider(profile.provider_id())?;
+        self.require_matching_provider(profile.provider_id())?;
         let role_profile = LlmRoleProfile::from_probe(profile, probed_at);
         let health = match role_profile.activation() {
             LlmProfileActivation::Executable => ProviderHealthStatus::Healthy,
@@ -510,7 +525,7 @@ impl DesktopSettings {
         profile: EmbeddingModelProfile,
         probed_at: SettingsTimestamp,
     ) -> Result<Self, DesktopSettingsUpdateError> {
-        let endpoint = self.local_endpoint()?;
+        let endpoint = self.active_endpoint()?;
         if endpoint.provider_id().as_str() != profile.provider_id().as_str() {
             return Err(DesktopSettingsUpdateError::ProviderMismatch);
         }
@@ -528,7 +543,7 @@ impl DesktopSettings {
         status: ProviderHealthStatus,
         checked_at: SettingsTimestamp,
     ) -> Result<Self, DesktopSettingsUpdateError> {
-        self.local_endpoint()?;
+        self.active_endpoint()?;
         if !matches!(
             status,
             ProviderHealthStatus::Unreachable | ProviderHealthStatus::Cancelled
@@ -542,23 +557,25 @@ impl DesktopSettings {
         Ok(self)
     }
 
-    fn require_matching_local_provider(
+    fn require_matching_provider(
         &self,
         provider_id: &ModelProviderId,
     ) -> Result<(), DesktopSettingsUpdateError> {
-        let endpoint = self.local_endpoint()?;
+        let endpoint = self.active_endpoint()?;
         if endpoint.provider_id() != provider_id {
             return Err(DesktopSettingsUpdateError::ProviderMismatch);
         }
         Ok(())
     }
 
-    fn local_endpoint(&self) -> Result<&ConfiguredModelEndpoint, DesktopSettingsUpdateError> {
+    fn active_endpoint(&self) -> Result<&ConfiguredModelEndpoint, DesktopSettingsUpdateError> {
         let endpoint = self
             .endpoint
             .as_ref()
             .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
-        if endpoint.scope() != ModelEndpointScope::LocalLoopback {
+        if endpoint.scope() != ModelEndpointScope::LocalLoopback
+            && endpoint.provider_id().as_str() != "gemini"
+        {
             return Err(DesktopSettingsUpdateError::RemoteBlocked);
         }
         Ok(endpoint)
@@ -585,7 +602,9 @@ impl DesktopSettings {
             }
             Some(endpoint) => {
                 let health = provider_health.ok_or(DesktopSettingsUpdateError::InvalidHealth)?;
-                if endpoint.scope() == ModelEndpointScope::Remote {
+                let is_authorized_remote = endpoint.scope() == ModelEndpointScope::Remote
+                    && endpoint.provider_id().as_str() == "gemini";
+                if endpoint.scope() == ModelEndpointScope::Remote && !is_authorized_remote {
                     if health != ProviderHealthObservation::initial(ModelEndpointScope::Remote)
                         || coding_profile.is_some()
                         || mapping_profile.is_some()

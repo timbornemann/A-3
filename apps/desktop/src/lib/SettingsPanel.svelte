@@ -164,11 +164,21 @@
   function openProviderDialog(mode: Exclude<ProviderDialog, 'closed'>): void {
     if (view.kind === 'ready' && view.settings.endpoint !== null) {
       endpointOrigin = view.settings.endpoint.origin;
+      providerKind = view.settings.endpoint.providerId === 'gemini' ? 'gemini' : 'ollama';
     } else {
+      providerKind = 'ollama';
       endpointOrigin = 'http://127.0.0.1:11434';
     }
-    providerKind = 'ollama';
     providerDialog = mode;
+  }
+
+  function handleProviderKindChange(kind: ModelProviderKindV1): void {
+    providerKind = kind;
+    if (kind === 'ollama') {
+      endpointOrigin = 'http://127.0.0.1:11434';
+    } else {
+      endpointOrigin = 'https://generativelanguage.googleapis.com';
+    }
   }
 
   async function saveProvider(endpoint: string | null): Promise<void> {
@@ -187,20 +197,20 @@
   }
 
   async function discoverModels(): Promise<void> {
-    if (view.kind !== 'ready' || !canUseLocalProvider(view.settings)) return;
+    if (view.kind !== 'ready' || !canUseActiveProvider(view.settings)) return;
     action = { kind: 'discovering' };
     try {
       const catalog = await modelDiscoverer(view.settings.revision);
       if (
         catalog.settingsRevision !== view.settings.revision ||
-        catalog.providerKind !== 'ollama'
+        (catalog.providerKind !== 'ollama' && catalog.providerKind !== 'gemini')
       ) {
         throw new Error('Provider model catalog is stale.');
       }
       modelCatalog = catalog;
       action = { kind: 'idle' };
     } catch (error) {
-      action = { kind: 'error', message: discoveryRecoveryMessage(error) };
+      action = { kind: 'error', message: discoveryRecoveryMessage(error, view.settings.endpoint?.providerId) };
     }
   }
 
@@ -288,12 +298,16 @@
     return selected !== '' && !options.includes(selected) ? [selected, ...options] : options;
   }
 
-  function canUseLocalProvider(settings: SettingsV1): boolean {
-    return settings.endpoint?.scope === 'localLoopback' && !operationBusy();
+  function canUseActiveProvider(settings: SettingsV1): boolean {
+    if (settings.endpoint === null) return false;
+    if (settings.endpoint.providerId === 'gemini') {
+      return !operationBusy();
+    }
+    return settings.endpoint.scope === 'localLoopback' && !operationBusy();
   }
 
   function canProbe(settings: SettingsV1): boolean {
-    return canUseLocalProvider(settings) && modelCatalog !== null;
+    return canUseActiveProvider(settings) && modelCatalog !== null;
   }
 
   function operationBusy(): boolean {
@@ -366,16 +380,19 @@
     };
   }
 
-  function discoveryRecoveryMessage(error: unknown): string {
+  function discoveryRecoveryMessage(error: unknown, providerId?: string): string {
     const parsed = parseCommandErrorV1(error);
     if (parsed?.code === 'modelEndpointInvalid') {
-      return 'Die Modellerkennung ist nur für eine lokale, gültige Providerverbindung verfügbar.';
+      return 'Die Modellerkennung ist nur für eine gültige Providerverbindung verfügbar.';
     }
     if (parsed?.code === 'modelProbeAlreadyActive') {
       return 'Eine andere Modelloperation läuft bereits.';
     }
     if (parsed?.code === 'invalidSettingsRequest') {
       return 'Die Providerverbindung hat sich geändert. Lade die Einstellungen neu.';
+    }
+    if (providerId === 'gemini') {
+      return 'Die Gemini-Modelle konnten nicht abgefragt werden. Prüfe deinen API-Key (GEMINI_API_KEY) und deine Internetverbindung.';
     }
     return 'Die lokalen Modelle konnten nicht abgefragt werden. Prüfe, ob Ollama läuft, und versuche es erneut.';
   }
@@ -489,19 +506,21 @@
               <strong>Kein Provider eingerichtet</strong>
               <p>
                 A^3 bleibt als lokaler Indexbrowser voll nutzbar. Für Agentenfunktionen kannst du
-                eine Ollama-Verbindung hinzufügen.
+                eine Ollama- oder Google Gemini-Verbindung hinzufügen.
               </p>
               <button type="button" onclick={() => openProviderDialog('create')}
-                >Ollama verbinden</button
+                >Provider verbinden</button
               >
             </div>
           {:else}
             <div class="provider-list" aria-label="Eingerichtete Provider">
               <article class="provider-row">
-                <div class="provider-logo" aria-hidden="true">O</div>
+                <div class="provider-logo" aria-hidden="true">
+                  {view.settings.endpoint.providerId === 'gemini' ? 'G' : 'O'}
+                </div>
                 <div class="provider-summary">
                   <div>
-                    <strong>Ollama</strong>
+                    <strong>{view.settings.endpoint.providerId === 'gemini' ? 'Google Gemini' : 'Ollama'}</strong>
                     <span class="settings-badge">{healthLabel(view.settings)}</span>
                   </div>
                   <code>{view.settings.endpoint.origin}</code>
@@ -509,7 +528,7 @@
                 <div class="provider-actions">
                   <button
                     type="button"
-                    disabled={!canUseLocalProvider(view.settings)}
+                    disabled={!canUseActiveProvider(view.settings)}
                     onclick={discoverModels}>Modelle erkennen</button
                   >
                   <button type="button" onclick={() => openProviderDialog('edit')}
@@ -523,7 +542,7 @@
                 </div>
               </article>
             </div>
-            {#if view.settings.endpoint.scope === 'remote'}
+            {#if view.settings.endpoint.scope === 'remote' && view.settings.endpoint.providerId !== 'gemini'}
               <div class="remote-warning" role="alert">
                 <strong>Remote-Verbindung blockiert</strong>
                 <p>
@@ -538,9 +557,9 @@
           <header class="settings-page-heading settings-page-heading-action">
             <div>
               <h3 id="model-settings-heading">Modelle</h3>
-              <p>Installierte Modelle erkennen und klaren Aufgaben zuordnen.</p>
+              <p>Verfügbare Modelle erkennen und klaren Aufgaben zuordnen.</p>
             </div>
-            {#if view.settings.endpoint?.scope === 'localLoopback'}
+            {#if view.settings.endpoint?.scope === 'localLoopback' || view.settings.endpoint?.providerId === 'gemini'}
               {#if action.kind === 'discovering' || (action.kind === 'cancelling' && action.role === null)}
                 <button type="button" onclick={() => cancelOperation(null)}>
                   {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Erkennung abbrechen'}
@@ -556,12 +575,12 @@
           {#if view.settings.endpoint === null}
             <div class="settings-empty-state">
               <strong>Zuerst einen Provider verbinden</strong>
-              <p>Danach kann A^3 die lokal installierten Modelle direkt abfragen.</p>
+              <p>Danach kann A^3 die verfügbaren Modelle direkt abfragen.</p>
               <button type="button" onclick={() => selectSettingsView('provider')}
                 >Zu Provider</button
               >
             </div>
-          {:else if view.settings.endpoint.scope === 'remote'}
+          {:else if view.settings.endpoint.scope === 'remote' && view.settings.endpoint.providerId !== 'gemini'}
             <div class="remote-warning" role="alert">
               <strong>Lokale Modellerkennung nicht verfügbar</strong>
               <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
@@ -571,7 +590,7 @@
               <strong>Noch keine Modellliste geladen</strong>
               <p>
                 Die Abfrage startet nur durch deinen Klick. Sie liest ausschließlich Modellnamen vom
-                lokalen Ollama-Endpoint.
+                konfigurierten Provider-Endpoint.
               </p>
               <button type="button" onclick={discoverModels}>Modelle erkennen</button>
             </div>
@@ -692,8 +711,14 @@
       <div class="settings-dialog-body">
         <label for="provider-kind">
           Provider
-          <select id="provider-kind" bind:value={providerKind} disabled={operationBusy()}>
+          <select
+            id="provider-kind"
+            value={providerKind}
+            disabled={operationBusy()}
+            onchange={(event) => handleProviderKindChange(event.currentTarget.value as ModelProviderKindV1)}
+          >
             <option value="ollama">Ollama</option>
+            <option value="gemini">Google Gemini</option>
           </select>
         </label>
         <label for="model-endpoint">
@@ -709,7 +734,14 @@
             disabled={operationBusy()}
           />
         </label>
-        <p>Standard: <code>http://127.0.0.1:11434</code></p>
+        {#if providerKind === 'gemini'}
+          <p>Standard: <code>https://generativelanguage.googleapis.com</code></p>
+          <p class="probe-explanation">
+            Authentifizierung über Umgebungsvariable <code>GEMINI_API_KEY</code> oder <code>GOOGLE_API_KEY</code>.
+          </p>
+        {:else}
+          <p>Standard: <code>http://127.0.0.1:11434</code></p>
+        {/if}
       </div>
       <div class="modal-actions">
         <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
@@ -742,7 +774,7 @@
         onclick={() => (providerDialog = 'closed')}>×</button
       >
     </div>
-    <p>Der lokale Ollama-Dienst und seine Modelle werden nicht gelöscht.</p>
+    <p>Der Provider-Endpunkt und seine API-Verbindung werden aus den Einstellungen entfernt.</p>
     <div class="modal-actions">
       <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
       <button class="risk-action" type="button" onclick={() => saveProvider(null)}

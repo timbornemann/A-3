@@ -23,6 +23,8 @@ impl QuerySettingsRequestV1 {
 pub enum ModelProviderKindV1 {
     /// Local Ollama-compatible API using its native provider contracts.
     Ollama,
+    /// Google Gemini API using its native REST/SSE contracts.
+    Gemini,
 }
 
 /// Optimistic active-provider replacement; omission explicitly returns to model-free mode.
@@ -611,5 +613,28 @@ mod tests {
             value[forbidden] = serde_json::json!("forbidden");
             assert!(serde_json::from_value::<DiscoverProviderModelsRequestV1>(value).is_err());
         }
+    }
+
+    #[test]
+    fn model_provider_kind_serializes_and_deserializes() -> Result<(), serde_json::Error> {
+        use super::ModelProviderKindV1;
+        assert_eq!(
+            serde_json::to_string(&ModelProviderKindV1::Ollama)?,
+            "\"ollama\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModelProviderKindV1::Gemini)?,
+            "\"gemini\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelProviderKindV1>("\"ollama\"")?,
+            ModelProviderKindV1::Ollama
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelProviderKindV1>("\"gemini\"")?,
+            ModelProviderKindV1::Gemini
+        );
+        assert!(serde_json::from_str::<ModelProviderKindV1>("\"other\"").is_err());
+        Ok(())
     }
 }
