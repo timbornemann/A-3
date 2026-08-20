@@ -1,11 +1,15 @@
 use a3_application::{
-    ConfigureDesktopModelEndpoint, ConfigureDesktopModelEndpointError, DesktopSettingsStore,
-    DesktopSettingsStoreFailure, DesktopSettingsStoreVersion, DiscoverProviderModels,
-    EmbeddingCapabilityProbeRequest, GetDesktopSettings, LlmModelRole, LlmProfileActivation,
-    ModelCancellationFuture, ModelEndpointScope, ModelOperationControl, ModelProviderFailure,
-    ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
-    ProviderHealthStatus, RecordDesktopModelProbe, RecordDesktopModelProbeError, SettingsTimestamp,
-    StoredDesktopSettings,
+    ConfigureDesktopModelEndpoint, ConfigureDesktopModelEndpointError,
+    DeleteDesktopProviderCredential, DesktopSettingsStore, DesktopSettingsStoreFailure,
+    DesktopSettingsStoreVersion, DiscoverProviderModels, EmbeddingCapabilityProbeRequest,
+    GetDesktopSettings, LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential,
+    ManageDesktopProviderCredentialError, ModelCancellationFuture, ModelEndpointAccess,
+    ModelEndpointScope, ModelOperationControl, ModelProviderFailure, ModelRequestTimeout,
+    ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure, ProviderApiKey,
+    ProviderCredentialAccessError, ProviderCredentialLifecycle, ProviderCredentialRequirement,
+    ProviderCredentialStore, ProviderCredentialStoreFailure, ProviderHealthStatus,
+    RecordDesktopModelProbe, RecordDesktopModelProbeError, SetDesktopProviderCredential,
+    SettingsTimestamp, StoredDesktopSettings,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingModelId, ModelContextLimit, ModelId, ModelOutputLimit,
@@ -15,13 +19,14 @@ use a3_domain::{
 };
 use a3_protocol::{
     CancelModelProbeResponseV1, CommandErrorV1, DataPrivacySettingsV1, EmbeddingRoleProfileV1,
-    ErrorCodeV1, LlmRoleProfileV1, ModelEndpointScopeV1, ModelEndpointV1, ModelProfileActivationV1,
-    ModelProviderKindV1, ModelRoleV1, ModelToolCallModeV1, ProbeModelRoleRequestV1,
+    ErrorCodeV1, LlmRoleProfileV1, ModelEndpointAccessV1, ModelEndpointScopeV1, ModelEndpointV1,
+    ModelProfileActivationV1, ModelProviderKindV1, ModelRoleV1, ModelToolCallModeV1,
+    ProbeModelRoleRequestV1, ProviderCredentialStatusV1, ProviderCredentialV1,
     ProviderHealthStatusV1, ProviderHealthV1, ProviderModelsResponseV1, SettingsResponseV1,
     SettingsV1, StructuredOutputCapabilityV1,
 };
 use a3_provider::{
-    GeminiEndpoint, GeminiModelProvider, GeminiSettingsEndpointValidator,
+    GeminiEndpoint, GeminiEndpointPolicy, GeminiModelProvider, GeminiSettingsEndpointValidator,
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider,
     OllamaSettingsEndpointValidator, StandardGeminiEndpointPolicy,
 };
@@ -38,15 +43,22 @@ const MODEL_DISCOVERY_TIMEOUT_MILLIS: u64 = 15_000;
 /// Owns the single explicit local model operation and durable Settings use cases.
 pub struct ModelSettingsManager {
     store: Arc<dyn DesktopSettingsStore>,
+    credential_store: Arc<dyn ProviderCredentialStore>,
+    operation_active: AtomicBool,
     active_probe: Mutex<Option<Arc<ProbeCancellation>>>,
 }
 
 impl ModelSettingsManager {
     /// Wires local settings persistence and credential-free endpoint validation.
     #[must_use]
-    pub fn new(store: Arc<dyn DesktopSettingsStore>) -> Self {
+    pub fn new(
+        store: Arc<dyn DesktopSettingsStore>,
+        credential_store: Arc<dyn ProviderCredentialStore>,
+    ) -> Self {
         Self {
             store,
+            credential_store,
+            operation_active: AtomicBool::new(false),
             active_probe: Mutex::new(None),
         }
     }
@@ -57,7 +69,7 @@ impl ModelSettingsManager {
             .execute()
             .await
             .map_err(map_store_error)?;
-        Ok(map_settings(&stored, self.probe_is_active()))
+        Ok(self.map_settings(&stored, self.probe_is_active()).await)
     }
 
     /// Replaces or clears the credential-free active provider without performing a request.
@@ -67,11 +79,30 @@ impl ModelSettingsManager {
         provider_kind: ModelProviderKindV1,
         endpoint: Option<&str>,
     ) -> Result<SettingsResponseV1, CommandErrorV1> {
-        if self.probe_is_active() {
-            return Err(CommandErrorV1::settings(
-                ErrorCodeV1::ModelProbeAlreadyActive,
-            ));
+        let _operation = self.acquire_operation()?;
+        let current = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        if current.version() != expected {
+            return Err(invalid_request());
         }
+        let switching_away_from_credential = current.settings().endpoint().is_some_and(|current| {
+            current.credential_requirement() == ProviderCredentialRequirement::ApiKey
+                && (endpoint.is_none() || provider_kind != ModelProviderKindV1::Gemini)
+        });
+        let expected = if switching_away_from_credential {
+            DeleteDesktopProviderCredential::new(
+                Arc::clone(&self.store),
+                Arc::clone(&self.credential_store),
+            )
+            .execute(expected)
+            .await
+            .map_err(map_credential_mutation_error)?
+            .version()
+        } else {
+            expected
+        };
         let validator: Arc<dyn a3_application::ModelEndpointValidator> = match provider_kind {
             ModelProviderKindV1::Ollama => Arc::new(OllamaSettingsEndpointValidator),
             ModelProviderKindV1::Gemini => Arc::new(GeminiSettingsEndpointValidator),
@@ -80,7 +111,41 @@ impl ModelSettingsManager {
             .execute(expected, endpoint)
             .await
             .map_err(map_configure_error)?;
-        Ok(map_settings(&stored, false))
+        Ok(self.map_settings(&stored, false).await)
+    }
+
+    /// Stores a bounded API key for the Core-owned active provider without network access.
+    pub async fn set_credential(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        secret: ProviderApiKey,
+    ) -> Result<SettingsResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        self.validate_credential_endpoint(expected).await?;
+        let stored = SetDesktopProviderCredential::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.credential_store),
+        )
+        .execute(expected, secret)
+        .await
+        .map_err(map_credential_mutation_error)?;
+        Ok(self.map_settings(&stored, false).await)
+    }
+
+    /// Deletes the current provider credential without contacting the provider.
+    pub async fn delete_credential(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<SettingsResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let stored = DeleteDesktopProviderCredential::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.credential_store),
+        )
+        .execute(expected)
+        .await
+        .map_err(map_credential_mutation_error)?;
+        Ok(self.map_settings(&stored, false).await)
     }
 
     /// Reads one bounded local model catalog after an explicit user action.
@@ -88,6 +153,7 @@ impl ModelSettingsManager {
         &self,
         expected: DesktopSettingsStoreVersion,
     ) -> Result<ProviderModelsResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
         let cancellation = self.acquire_probe()?;
         let result = self
             .discover_models_owned(expected, cancellation.as_ref())
@@ -102,6 +168,7 @@ impl ModelSettingsManager {
         expected: DesktopSettingsStoreVersion,
         request: &ProbeModelRoleRequestV1,
     ) -> Result<SettingsResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
         validate_probe_shape(request)?;
         let cancellation = self.acquire_probe()?;
         let result = self
@@ -169,8 +236,12 @@ impl ModelSettingsManager {
             "gemini" => {
                 let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
                     .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                StandardGeminiEndpointPolicy
+                    .authorize(&endpoint)
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let key = self.load_provider_api_key(current.settings()).await?;
                 let provider =
-                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy))
+                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
                         .map_err(|_| {
                             CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
                         })?;
@@ -236,8 +307,12 @@ impl ModelSettingsManager {
             "gemini" => {
                 let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
                     .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                StandardGeminiEndpointPolicy
+                    .authorize(&endpoint)
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let key = self.load_provider_api_key(current.settings()).await?;
                 let provider =
-                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy))
+                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
                         .map_err(|_| {
                             CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
                         })?;
@@ -320,7 +395,7 @@ impl ModelSettingsManager {
             }
         }
         .map_err(map_record_error)?;
-        Ok(map_settings(&result, false))
+        Ok(self.map_settings(&result, false).await)
     }
 
     async fn record_probe_failure(
@@ -339,7 +414,7 @@ impl ModelSettingsManager {
             .record_failure(expected, status, at)
             .await
             .map_err(map_record_error)?;
-        Ok(map_settings(&stored, false))
+        Ok(self.map_settings(&stored, false).await)
     }
 
     fn acquire_probe(&self) -> Result<Arc<ProbeCancellation>, CommandErrorV1> {
@@ -352,6 +427,42 @@ impl ModelSettingsManager {
         let cancellation = Arc::new(ProbeCancellation::new());
         *active = Some(Arc::clone(&cancellation));
         Ok(cancellation)
+    }
+
+    fn acquire_operation(&self) -> Result<ModelSettingsOperationPermit<'_>, CommandErrorV1> {
+        self.operation_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ModelSettingsOperationPermit {
+                active: &self.operation_active,
+            })
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelProbeAlreadyActive))
+    }
+
+    async fn validate_credential_endpoint(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<(), CommandErrorV1> {
+        let current = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        if current.version() != expected {
+            return Err(invalid_request());
+        }
+        let endpoint = current
+            .settings()
+            .endpoint()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        if endpoint.provider_id().as_str() != "gemini"
+            || endpoint.access() != ModelEndpointAccess::ExplicitUserInitiatedRemote
+        {
+            return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+        }
+        let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        StandardGeminiEndpointPolicy
+            .authorize(&endpoint)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))
     }
 
     fn release_probe(&self, completed: &Arc<ProbeCancellation>) {
@@ -367,6 +478,26 @@ impl ModelSettingsManager {
     fn probe_is_active(&self) -> bool {
         lock_recovering_poison(&self.active_probe).is_some()
     }
+
+    async fn load_provider_api_key(
+        &self,
+        settings: &a3_application::DesktopSettings,
+    ) -> Result<ProviderApiKey, CommandErrorV1> {
+        LoadDesktopProviderCredential::new(Arc::clone(&self.credential_store))
+            .execute(settings)
+            .await
+            .map_err(map_credential_access_error)?
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialMissing))
+    }
+
+    async fn map_settings(
+        &self,
+        stored: &StoredDesktopSettings,
+        probe_active: bool,
+    ) -> SettingsResponseV1 {
+        let credential = credential_projection(stored, &self.credential_store).await;
+        map_settings(stored, probe_active, credential)
+    }
 }
 
 impl fmt::Debug for ModelSettingsManager {
@@ -375,6 +506,16 @@ impl fmt::Debug for ModelSettingsManager {
             .debug_struct("ModelSettingsManager")
             .field("probe_active", &self.probe_is_active())
             .finish_non_exhaustive()
+    }
+}
+
+struct ModelSettingsOperationPermit<'a> {
+    active: &'a AtomicBool,
+}
+
+impl Drop for ModelSettingsOperationPermit<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
     }
 }
 
@@ -485,7 +626,57 @@ fn settings_now() -> Result<SettingsTimestamp, CommandErrorV1> {
         .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))
 }
 
-fn map_settings(stored: &StoredDesktopSettings, probe_active: bool) -> SettingsResponseV1 {
+async fn credential_projection(
+    stored: &StoredDesktopSettings,
+    credential_store: &Arc<dyn ProviderCredentialStore>,
+) -> Option<ProviderCredentialV1> {
+    let endpoint = stored.settings().endpoint()?;
+    if endpoint.credential_requirement() == ProviderCredentialRequirement::None {
+        return None;
+    }
+    let authorized_origin = endpoint.provider_id().as_str() == "gemini"
+        && GeminiEndpoint::parse(endpoint.canonical_origin())
+            .ok()
+            .is_some_and(|candidate| StandardGeminiEndpointPolicy.authorize(&candidate).is_ok());
+    if !authorized_origin {
+        return Some(ProviderCredentialV1::api_key(
+            ProviderCredentialStatusV1::RecoveryRequired,
+        ));
+    }
+    let status = match stored.settings().credential().lifecycle() {
+        ProviderCredentialLifecycle::Missing => ProviderCredentialStatusV1::Missing,
+        ProviderCredentialLifecycle::Storing | ProviderCredentialLifecycle::Deleting => {
+            ProviderCredentialStatusV1::RecoveryRequired
+        }
+        ProviderCredentialLifecycle::NotRequired => ProviderCredentialStatusV1::RecoveryRequired,
+        ProviderCredentialLifecycle::Configured => {
+            match LoadDesktopProviderCredential::new(Arc::clone(credential_store))
+                .execute(stored.settings())
+                .await
+            {
+                Ok(Some(_)) => ProviderCredentialStatusV1::Configured,
+                Ok(None) | Err(ProviderCredentialAccessError::Missing) => {
+                    ProviderCredentialStatusV1::RecoveryRequired
+                }
+                Err(ProviderCredentialAccessError::RecoveryRequired)
+                | Err(ProviderCredentialAccessError::Store(
+                    ProviderCredentialStoreFailure::Corrupt,
+                )) => ProviderCredentialStatusV1::RecoveryRequired,
+                Err(ProviderCredentialAccessError::Store(
+                    ProviderCredentialStoreFailure::Unavailable
+                    | ProviderCredentialStoreFailure::ResourceLimit,
+                )) => ProviderCredentialStatusV1::Unavailable,
+            }
+        }
+    };
+    Some(ProviderCredentialV1::api_key(status))
+}
+
+fn map_settings(
+    stored: &StoredDesktopSettings,
+    probe_active: bool,
+    credential: Option<ProviderCredentialV1>,
+) -> SettingsResponseV1 {
     let settings = stored.settings();
     let endpoint = settings.endpoint().map(|endpoint| {
         ModelEndpointV1::new(
@@ -494,6 +685,13 @@ fn map_settings(stored: &StoredDesktopSettings, probe_active: bool) -> SettingsR
             match endpoint.scope() {
                 ModelEndpointScope::LocalLoopback => ModelEndpointScopeV1::LocalLoopback,
                 ModelEndpointScope::Remote => ModelEndpointScopeV1::Remote,
+            },
+            match endpoint.access() {
+                ModelEndpointAccess::Local => ModelEndpointAccessV1::Local,
+                ModelEndpointAccess::RemoteBlocked => ModelEndpointAccessV1::RemoteBlocked,
+                ModelEndpointAccess::ExplicitUserInitiatedRemote => {
+                    ModelEndpointAccessV1::ExplicitUserInitiatedRemote
+                }
             },
         )
     });
@@ -509,6 +707,7 @@ fn map_settings(stored: &StoredDesktopSettings, probe_active: bool) -> SettingsR
     SettingsResponseV1::new(SettingsV1::new(
         stored.version().get().to_string(),
         endpoint,
+        credential,
         health,
         settings
             .llm_profile(LlmModelRole::Coding)
@@ -626,6 +825,43 @@ fn map_model_operation_error(error: ModelProviderFailure) -> CommandErrorV1 {
     }
 }
 
+fn map_credential_access_error(error: ProviderCredentialAccessError) -> CommandErrorV1 {
+    let code = match error {
+        ProviderCredentialAccessError::Missing => ErrorCodeV1::ProviderCredentialMissing,
+        ProviderCredentialAccessError::RecoveryRequired => {
+            ErrorCodeV1::ProviderCredentialRecoveryRequired
+        }
+        ProviderCredentialAccessError::Store(ProviderCredentialStoreFailure::Corrupt) => {
+            ErrorCodeV1::ProviderCredentialRecoveryRequired
+        }
+        ProviderCredentialAccessError::Store(
+            ProviderCredentialStoreFailure::Unavailable
+            | ProviderCredentialStoreFailure::ResourceLimit,
+        ) => ErrorCodeV1::ProviderCredentialStoreUnavailable,
+    };
+    CommandErrorV1::settings(code)
+}
+
+fn map_credential_mutation_error(error: ManageDesktopProviderCredentialError) -> CommandErrorV1 {
+    match error {
+        ManageDesktopProviderCredentialError::SettingsStore(error) => map_store_error(error),
+        ManageDesktopProviderCredentialError::CredentialStore(
+            ProviderCredentialStoreFailure::Corrupt,
+        ) => CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired),
+        ManageDesktopProviderCredentialError::CredentialStore(
+            ProviderCredentialStoreFailure::Unavailable
+            | ProviderCredentialStoreFailure::ResourceLimit,
+        ) => CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialStoreUnavailable),
+        ManageDesktopProviderCredentialError::InvalidState(
+            a3_application::DesktopSettingsUpdateError::CredentialUnavailable
+            | a3_application::DesktopSettingsUpdateError::InvalidCredentialState,
+        ) => CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired),
+        ManageDesktopProviderCredentialError::InvalidState(_) => {
+            CommandErrorV1::settings(ErrorCodeV1::InvalidSettingsRequest)
+        }
+    }
+}
+
 fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -638,8 +874,10 @@ mod tests {
     use super::{ModelSettingsManager, settings_version_from_v1};
     use a3_application::{
         DesktopSettings, DesktopSettingsStore, DesktopSettingsStoreFailure,
-        DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, StoredDesktopSettings,
+        DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, ProviderCredential,
+        ProviderCredentialStore, ProviderCredentialStoreFuture, StoredDesktopSettings,
     };
+    use a3_domain::ModelProviderId;
     use a3_protocol::{ErrorCodeV1, ModelProviderKindV1};
     use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -682,11 +920,43 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct EmptyCredentialStore;
+
+    impl ProviderCredentialStore for EmptyCredentialStore {
+        fn load<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+        ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn store<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+            _credential: &'a ProviderCredential,
+        ) -> ProviderCredentialStoreFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+        ) -> ProviderCredentialStoreFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn manager(store: Arc<dyn DesktopSettingsStore>) -> ModelSettingsManager {
+        let credentials: Arc<dyn ProviderCredentialStore> = Arc::new(EmptyCredentialStore);
+        ModelSettingsManager::new(store, credentials)
+    }
+
     #[test]
     fn empty_manager_projects_model_free_settings() -> Result<(), Box<dyn std::error::Error>> {
         futures::executor::block_on(async {
             let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
-            let manager = ModelSettingsManager::new(store);
+            let manager = manager(store);
             let response = manager
                 .query()
                 .await
@@ -718,7 +988,7 @@ mod tests {
     fn remote_endpoint_is_visible_but_cannot_be_probed() -> Result<(), Box<dyn std::error::Error>> {
         futures::executor::block_on(async {
             let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
-            let manager = ModelSettingsManager::new(store);
+            let manager = manager(store);
             let configured = manager
                 .configure_provider(
                     DesktopSettingsStoreVersion::initial(),
@@ -769,7 +1039,7 @@ mod tests {
     fn gemini_provider_can_be_configured() -> Result<(), Box<dyn std::error::Error>> {
         futures::executor::block_on(async {
             let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
-            let manager = ModelSettingsManager::new(store);
+            let manager = manager(store);
             let configured = manager
                 .configure_provider(
                     DesktopSettingsStoreVersion::initial(),
@@ -787,6 +1057,10 @@ mod tests {
             assert_eq!(
                 configured_json["settings"]["providerHealth"]["status"],
                 "notChecked"
+            );
+            assert_eq!(
+                configured_json["settings"]["credential"]["status"],
+                "missing"
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

@@ -233,6 +233,150 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             SELECT RAISE(ABORT, 'desktop embedding profiles are append-only');\n\
           END;",
     },
+    Migration {
+        version: 5,
+        name: "provider_credential_metadata",
+        sql: "DROP TRIGGER desktop_settings_revisions_update_guard;
+          DROP TRIGGER desktop_settings_revisions_delete_guard;
+          DROP TRIGGER desktop_llm_profiles_update_guard;
+          DROP TRIGGER desktop_llm_profiles_delete_guard;
+          DROP TRIGGER desktop_embedding_profiles_update_guard;
+          DROP TRIGGER desktop_embedding_profiles_delete_guard;
+          ALTER TABLE desktop_llm_profiles RENAME TO desktop_llm_profiles_v4;
+          ALTER TABLE desktop_embedding_profiles RENAME TO desktop_embedding_profiles_v4;
+          ALTER TABLE desktop_settings_revisions RENAME TO desktop_settings_revisions_v4;
+          CREATE TABLE desktop_settings_revisions (
+          revision INTEGER PRIMARY KEY NOT NULL CHECK (revision > 0),
+          endpoint_provider_id TEXT
+            CHECK (endpoint_provider_id IS NULL OR length(CAST(endpoint_provider_id AS BLOB)) BETWEEN 1 AND 128),
+          endpoint_origin TEXT
+            CHECK (endpoint_origin IS NULL OR length(CAST(endpoint_origin AS BLOB)) BETWEEN 1 AND 2048),
+          endpoint_scope TEXT CHECK (endpoint_scope IS NULL OR endpoint_scope IN ('local_loopback', 'remote')),
+          endpoint_access TEXT CHECK (endpoint_access IS NULL OR endpoint_access IN
+            ('local', 'remote_blocked', 'explicit_user_initiated_remote')),
+          credential_requirement TEXT NOT NULL CHECK (credential_requirement IN ('none', 'api_key')),
+          credential_state TEXT NOT NULL CHECK (credential_state IN
+            ('not_required', 'missing', 'storing', 'configured', 'deleting')),
+          credential_generation INTEGER NOT NULL CHECK (credential_generation >= 0),
+          health_status TEXT CHECK (health_status IS NULL OR health_status IN
+            ('not_checked', 'healthy', 'capability_limited', 'unreachable', 'cancelled', 'remote_blocked')),
+          health_checked_at_unix_millis INTEGER
+            CHECK (health_checked_at_unix_millis IS NULL OR health_checked_at_unix_millis >= 0),
+          CHECK (
+            (endpoint_provider_id IS NULL AND endpoint_origin IS NULL AND endpoint_scope IS NULL
+              AND endpoint_access IS NULL AND credential_requirement = 'none'
+              AND credential_state = 'not_required' AND credential_generation = 0
+              AND health_status IS NULL AND health_checked_at_unix_millis IS NULL) OR
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL
+              AND endpoint_scope = 'local_loopback' AND endpoint_access = 'local'
+              AND credential_requirement = 'none' AND credential_state = 'not_required'
+              AND credential_generation = 0) OR
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL
+              AND endpoint_scope = 'remote' AND endpoint_access = 'remote_blocked'
+              AND credential_requirement = 'none' AND credential_state = 'not_required'
+              AND credential_generation = 0) OR
+            (endpoint_provider_id IS NOT NULL AND endpoint_origin IS NOT NULL
+              AND endpoint_scope = 'remote' AND endpoint_access = 'explicit_user_initiated_remote'
+              AND credential_requirement = 'api_key' AND credential_state IN
+                ('missing', 'storing', 'configured', 'deleting')
+              AND ((credential_state = 'missing' AND credential_generation >= 0)
+                OR (credential_state <> 'missing' AND credential_generation > 0))))
+          CHECK (
+            (endpoint_provider_id IS NULL AND health_status IS NULL) OR
+            (endpoint_access = 'remote_blocked' AND health_status = 'remote_blocked'
+              AND health_checked_at_unix_millis IS NULL) OR
+            (endpoint_access IN ('local', 'explicit_user_initiated_remote')
+              AND health_status = 'not_checked' AND health_checked_at_unix_millis IS NULL) OR
+            (endpoint_access IN ('local', 'explicit_user_initiated_remote')
+              AND health_status IN ('healthy', 'capability_limited', 'unreachable', 'cancelled')
+              AND health_checked_at_unix_millis IS NOT NULL))
+          ) STRICT;
+          CREATE TABLE desktop_llm_profiles (
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          role TEXT NOT NULL CHECK (role IN ('coding', 'mapping')),
+          provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),
+          model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),
+          context_tokens INTEGER NOT NULL CHECK (context_tokens BETWEEN 1024 AND 1048576),
+          output_tokens INTEGER NOT NULL CHECK (output_tokens BETWEEN 1 AND 262144
+            AND output_tokens <= context_tokens),
+          parallelism INTEGER NOT NULL CHECK (parallelism BETWEEN 1 AND 64),
+          temperature_milli INTEGER NOT NULL CHECK (temperature_milli BETWEEN 0 AND 2000),
+          top_p_milli INTEGER NOT NULL CHECK (top_p_milli BETWEEN 1 AND 1000),
+          schema_grounding TEXT NOT NULL CHECK (schema_grounding IN ('format_only', 'repeat_in_prompt')),
+          structured_output TEXT NOT NULL CHECK (structured_output IN ('verified', 'unavailable')),
+          tool_call_mode TEXT NOT NULL CHECK (tool_call_mode IN ('disabled', 'native_reported')),
+          probed_at_unix_millis INTEGER NOT NULL CHECK (probed_at_unix_millis >= 0),
+          PRIMARY KEY (revision, role),
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+          ) STRICT;
+          CREATE TABLE desktop_embedding_profiles (
+          revision INTEGER PRIMARY KEY NOT NULL CHECK (revision > 0),
+          provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),
+          model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),
+          dimension INTEGER NOT NULL CHECK (dimension BETWEEN 1 AND 8192),
+          max_batch_size INTEGER NOT NULL CHECK (max_batch_size BETWEEN 1 AND 64),
+          probed_at_unix_millis INTEGER NOT NULL CHECK (probed_at_unix_millis >= 0),
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+          ) STRICT;
+          INSERT INTO desktop_settings_revisions (
+            revision, endpoint_provider_id, endpoint_origin, endpoint_scope, endpoint_access,
+            credential_requirement, credential_state, credential_generation,
+            health_status, health_checked_at_unix_millis
+          ) SELECT revision, endpoint_provider_id, endpoint_origin, endpoint_scope,
+            CASE
+              WHEN endpoint_scope = 'local_loopback' THEN 'local'
+              WHEN endpoint_provider_id = 'gemini' AND endpoint_scope = 'remote'
+                AND endpoint_origin = 'https://generativelanguage.googleapis.com'
+                THEN 'explicit_user_initiated_remote'
+              WHEN endpoint_scope = 'remote' THEN 'remote_blocked'
+              ELSE NULL
+            END,
+            CASE WHEN endpoint_provider_id = 'gemini' AND endpoint_scope = 'remote'
+              AND endpoint_origin = 'https://generativelanguage.googleapis.com'
+              THEN 'api_key' ELSE 'none' END,
+            CASE WHEN endpoint_provider_id = 'gemini' AND endpoint_scope = 'remote'
+              AND endpoint_origin = 'https://generativelanguage.googleapis.com'
+              THEN 'missing' ELSE 'not_required' END,
+            0,
+            CASE WHEN endpoint_provider_id = 'gemini' AND endpoint_scope = 'remote'
+              AND endpoint_origin = 'https://generativelanguage.googleapis.com'
+              THEN 'not_checked' ELSE health_status END,
+            CASE WHEN endpoint_provider_id = 'gemini' AND endpoint_scope = 'remote'
+              AND endpoint_origin = 'https://generativelanguage.googleapis.com'
+              THEN NULL ELSE health_checked_at_unix_millis END
+            FROM desktop_settings_revisions_v4;
+          INSERT INTO desktop_llm_profiles SELECT * FROM desktop_llm_profiles_v4;
+          INSERT INTO desktop_embedding_profiles SELECT * FROM desktop_embedding_profiles_v4;
+          DROP TABLE desktop_llm_profiles_v4;
+          DROP TABLE desktop_embedding_profiles_v4;
+          DROP TABLE desktop_settings_revisions_v4;
+          CREATE TRIGGER desktop_settings_revisions_update_guard
+          BEFORE UPDATE ON desktop_settings_revisions BEGIN
+            SELECT RAISE(ABORT, 'desktop settings revisions are immutable');
+          END;
+          CREATE TRIGGER desktop_settings_revisions_delete_guard
+          BEFORE DELETE ON desktop_settings_revisions BEGIN
+            SELECT RAISE(ABORT, 'desktop settings revisions are append-only');
+          END;
+          CREATE TRIGGER desktop_llm_profiles_update_guard
+          BEFORE UPDATE ON desktop_llm_profiles BEGIN
+            SELECT RAISE(ABORT, 'desktop llm profiles are immutable');
+          END;
+          CREATE TRIGGER desktop_llm_profiles_delete_guard
+          BEFORE DELETE ON desktop_llm_profiles BEGIN
+            SELECT RAISE(ABORT, 'desktop llm profiles are append-only');
+          END;
+          CREATE TRIGGER desktop_embedding_profiles_update_guard
+          BEFORE UPDATE ON desktop_embedding_profiles BEGIN
+            SELECT RAISE(ABORT, 'desktop embedding profiles are immutable');
+          END;
+          CREATE TRIGGER desktop_embedding_profiles_delete_guard
+          BEFORE DELETE ON desktop_embedding_profiles BEGIN
+            SELECT RAISE(ABORT, 'desktop embedding profiles are append-only');
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -2295,7 +2439,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(4);
+    pub const CURRENT: Self = Self::new(5);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2671,7 +2815,7 @@ mod tests {
     use super::{
         CATALOG_MIGRATION_CHECKSUM_DOMAIN, CATALOG_MIGRATIONS, CatalogSchemaVersion,
         KNOWLEDGE_MIGRATIONS, KnowledgeSchemaVersion, Migration, MigrationError, migrate,
-        query_i64,
+        query_i64, query_string,
     };
     use libsql::params;
     use std::collections::HashSet;
@@ -3954,6 +4098,85 @@ mod tests {
                     0
                 );
             }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn catalog_v5_preserves_ollama_profiles_and_classifies_only_the_canonical_gemini_origin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            migrate(
+                &connection,
+                &CATALOG_MIGRATIONS[..4],
+                4,
+                CATALOG_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute_batch(
+                    "INSERT INTO desktop_settings_revisions VALUES
+                       (1, 'ollama', 'http://127.0.0.1:11434', 'local_loopback', 'not_checked', NULL),
+                       (2, 'gemini', 'https://generativelanguage.googleapis.com', 'remote', 'remote_blocked', NULL),
+                       (3, 'gemini', 'https://gateway.example.test', 'remote', 'remote_blocked', NULL);
+                     INSERT INTO desktop_llm_profiles VALUES
+                       (1, 'coding', 'ollama', 'coder', 16384, 2048, 1, 0, 1000,
+                        'repeat_in_prompt', 'verified', 'disabled', 100);
+                     INSERT INTO desktop_embedding_profiles VALUES
+                       (1, 'ollama', 'embedder', 768, 8, 101);",
+                )
+                .await?;
+
+            let version = super::migrate_catalog(&connection).await?;
+            assert_eq!(version, CatalogSchemaVersion::CURRENT);
+            assert_eq!(
+                query_string(
+                    &connection,
+                    "SELECT endpoint_access || '|' || credential_requirement || '|' ||
+                       credential_state || '|' || health_status
+                     FROM desktop_settings_revisions WHERE revision = 1",
+                )
+                .await?,
+                "local|none|not_required|not_checked"
+            );
+            assert_eq!(
+                query_string(
+                    &connection,
+                    "SELECT endpoint_access || '|' || credential_requirement || '|' ||
+                       credential_state || '|' || health_status
+                     FROM desktop_settings_revisions WHERE revision = 2",
+                )
+                .await?,
+                "explicit_user_initiated_remote|api_key|missing|not_checked"
+            );
+            assert_eq!(
+                query_string(
+                    &connection,
+                    "SELECT endpoint_access || '|' || credential_requirement || '|' ||
+                       credential_state || '|' || health_status
+                     FROM desktop_settings_revisions WHERE revision = 3",
+                )
+                .await?,
+                "remote_blocked|none|not_required|remote_blocked"
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM desktop_llm_profiles").await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM desktop_embedding_profiles"
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                0
+            );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }

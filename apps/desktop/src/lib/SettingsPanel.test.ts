@@ -8,6 +8,7 @@ function response(overrides: Partial<SettingsResponseV1['settings']> = {}): Sett
     protocolVersion: 1,
     settings: {
       codingProfile: null,
+      credential: null,
       embeddingProfile: null,
       endpoint: null,
       mappingProfile: null,
@@ -27,6 +28,7 @@ function response(overrides: Partial<SettingsResponseV1['settings']> = {}): Sett
 }
 
 const localEndpoint = {
+  access: 'local' as const,
   origin: 'http://127.0.0.1:11434',
   providerId: 'ollama',
   scope: 'localLoopback' as const,
@@ -86,6 +88,7 @@ describe('SettingsPanel', () => {
       settingsLoader: vi.fn().mockResolvedValue(
         response({
           endpoint: {
+            access: 'remoteBlocked',
             origin: 'https://models.example.test',
             providerId: 'ollama',
             scope: 'remote',
@@ -210,25 +213,53 @@ describe('SettingsPanel', () => {
 
   it('creates a Google Gemini provider and discovers Gemini models', async () => {
     const geminiEndpoint = {
+      access: 'explicitUserInitiatedRemote' as const,
       origin: 'https://generativelanguage.googleapis.com',
       providerId: 'gemini',
       scope: 'remote' as const,
     };
-    const providerConfigurer = vi
-      .fn()
-      .mockResolvedValue(response({ endpoint: geminiEndpoint, revision: '1' }));
+    const providerConfigurer = vi.fn().mockResolvedValue(
+      response({
+        credential: { requirement: 'apiKey', status: 'missing' },
+        endpoint: geminiEndpoint,
+        revision: '1',
+      }),
+    );
+    let capturedCredentialBytes: number[] = [];
+    let credentialAttempt = 0;
+    const credentialSetter = vi.fn(async (_revision: string, bytes: Uint8Array) => {
+      capturedCredentialBytes = Array.from(bytes);
+      credentialAttempt += 1;
+      if (credentialAttempt === 1) throw new Error('credential store unavailable');
+      return response({
+        credential: { requirement: 'apiKey', status: 'configured' },
+        endpoint: geminiEndpoint,
+        revision: '3',
+      });
+    });
     const modelDiscoverer = vi.fn().mockResolvedValue({
-      modelIds: ['gemini-2.5-flash', 'text-embedding-004'],
+      modelIds: ['gemini-2.5-flash', 'gemini-embedding-001'],
       protocolVersion: 1,
       providerKind: 'gemini',
-      settingsRevision: '1',
+      settingsRevision: '3',
       truncated: false,
     });
 
-    render(SettingsPanel, {
+    const settingsLoader = vi
+      .fn()
+      .mockResolvedValueOnce(response())
+      .mockResolvedValue(
+        response({
+          credential: { requirement: 'apiKey', status: 'missing' },
+          endpoint: geminiEndpoint,
+          revision: '1',
+        }),
+      );
+    const rendered = render(SettingsPanel, {
       modelDiscoverer,
       providerConfigurer,
-      settingsLoader: vi.fn().mockResolvedValue(response()),
+      credentialSetter,
+      settingsLoader,
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Provider' }));
@@ -241,7 +272,7 @@ describe('SettingsPanel', () => {
     expect((within(dialog).getByLabelText('Endpoint') as HTMLInputElement).value).toBe(
       'https://generativelanguage.googleapis.com',
     );
-    expect(within(dialog).getByText(/GEMINI_API_KEY/)).toBeTruthy();
+    expect(within(dialog).getByText(/Betriebssystem-Schlüsselspeicher/)).toBeTruthy();
 
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Provider hinzufügen' }));
     await waitFor(() => expect(providerConfigurer).toHaveBeenCalledTimes(1));
@@ -252,7 +283,42 @@ describe('SettingsPanel', () => {
     );
     expect(await screen.findByText('Google Gemini')).toBeTruthy();
 
+    const discoveryButton = screen.getByRole('button', { name: 'Modelle erkennen' });
+    expect((discoveryButton as HTMLButtonElement).disabled).toBe(true);
+    const credentialInput = screen.getByLabelText('Neuer API-Key') as HTMLInputElement;
+    await fireEvent.input(credentialInput, { target: { value: 'test-gemini-key' } });
+    await fireEvent.submit(credentialInput.closest('form')!);
+    expect(credentialInput.value).toBe('');
+    await waitFor(() => expect(credentialSetter).toHaveBeenCalledTimes(1));
+    expect((screen.getByLabelText('Neuer API-Key') as HTMLInputElement).value).toBe('');
+
+    const retryCredentialInput = screen.getByLabelText('Neuer API-Key') as HTMLInputElement;
+    await fireEvent.input(retryCredentialInput, { target: { value: 'test-gemini-key' } });
+    await fireEvent.submit(retryCredentialInput.closest('form')!);
+    expect(retryCredentialInput.value).toBe('');
+    await waitFor(() => expect(credentialSetter).toHaveBeenCalledTimes(2));
+    expect(credentialSetter.mock.calls[0]?.[0]).toBe('1');
+    expect(capturedCredentialBytes).toEqual(
+      Array.from(new TextEncoder().encode('test-gemini-key')),
+    );
+    expect(
+      (screen.getByRole('button', { name: 'Modelle erkennen' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    const configuredCredentialInput = screen.getByLabelText('Neuer API-Key') as HTMLInputElement;
+    await fireEvent.input(configuredCredentialInput, { target: { value: 'discard-on-close' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Modelle' }));
+    expect(configuredCredentialInput.value).toBe('');
+    await fireEvent.click(screen.getByRole('button', { name: 'Provider' }));
+    expect((screen.getByLabelText('Neuer API-Key') as HTMLInputElement).value).toBe('');
+
     await fireEvent.click(screen.getByRole('button', { name: 'Modelle erkennen' }));
-    await waitFor(() => expect(modelDiscoverer).toHaveBeenCalledWith('1'));
+    await waitFor(() => expect(modelDiscoverer).toHaveBeenCalledWith('3'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Provider' }));
+    const unmountedCredentialInput = screen.getByLabelText('Neuer API-Key') as HTMLInputElement;
+    await fireEvent.input(unmountedCredentialInput, { target: { value: 'discard-on-unmount' } });
+    rendered.unmount();
+    expect(unmountedCredentialInput.value).toBe('');
   });
 });

@@ -130,7 +130,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential \
+            dbus-x11 \
             file \
+            gnome-keyring \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libssl-dev \
@@ -151,6 +153,18 @@ jobs:
 
       - name: Test native workspace
         run: cargo test --workspace --all-features --locked
+
+      - name: Smoke native provider credential store
+        if: runner.os != 'Linux'
+        run: cargo test -p a3-credentials tests::native_keyring_roundtrip_uses_a_versioned_generation_envelope -- --ignored --exact
+
+      - name: Smoke isolated Linux Secret Service credential store
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- sh -c '
+            printf "%s" "a3-ci-keyring" | gnome-keyring-daemon --unlock >/dev/null &&
+            cargo test -p a3-credentials tests::native_keyring_roundtrip_uses_a_versioned_generation_envelope -- --ignored --exact
+          '
 
       - name: Build native desktop application
         run: pnpm --filter @a3/desktop tauri build --no-bundle

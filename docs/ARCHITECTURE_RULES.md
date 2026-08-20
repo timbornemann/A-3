@@ -105,7 +105,9 @@ Stand: 2026-08-03
 4. IPC-Nachrichten sind versioniert und validiert.
 5. Große Datenmengen werden paginiert oder gestreamt.
 6. Jeder Eventtyp besitzt eine dokumentierte Reihenfolge- und Wiederverbindungssemantik.
-7. Secrets gelangen nie in die WebView.
+7. Der Core gibt Secrets niemals an die WebView zurück. Eine explizite Credential-Eingabe darf
+   nur kurzzeitig in einem unkontrollierten Passwortfeld und einem dedizierten one-way IPC-Request
+   existieren; sie wird sofort geleert und besitzt keine lesbare Responseprojektion.
 8. Die Agent-Activity-Projektion MUSS ihren Run aus einem durable Ledger-Versuch ableiten. Die
    WebView DARF keine Run- oder Snapshot-ID wählen. Es werden höchstens die letzten 64
    zusammenhängenden, inhaltsfreien Journalereignisse ausgeliefert; Modellantwort beziehungsweise

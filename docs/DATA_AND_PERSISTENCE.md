@@ -264,15 +264,20 @@ außerhalb des ausgewählten Worktrees wird nicht automatisch gelesen.
 | Audit | Run Events, Tooldigests | teilweise | aus |
 | Secrets | Provider-Tokens | nein | verboten in DB |
 
-Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet.
+Secrets werden über den jeweiligen OS-Schlüsselspeicher verwaltet. Für Provider-Credentials ist
+dies die einzige autoritative Ablage; ein Datei-, Datenbank- oder Environment-Fallback ist
+verboten. Der Katalog enthält nur `credential_requirement`, den internen Lifecycle
+`not_required | missing | storing | configured | deleting` und eine monotone Generation. Der
+öffentliche Status wird daraus und aus einem generationsgebundenen Keyring-Leseversuch abgeleitet.
 
 ## Logisches Schema
 
 ### Katalog
 
 - schema_migrations
-- app_settings
-- model_profiles
+- desktop_settings_revisions (append-only, Katalogschema v5)
+- desktop_llm_profiles
+- desktop_embedding_profiles
 - projects
 - repository_observations
 - recent_worktrees

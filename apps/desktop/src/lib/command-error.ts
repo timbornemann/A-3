@@ -52,6 +52,10 @@ export type ErrorCodeV1 =
   | 'modelEndpointInvalid'
   | 'modelProbeAlreadyActive'
   | 'modelSettingsUnavailable'
+  | 'providerCredentialInvalid'
+  | 'providerCredentialMissing'
+  | 'providerCredentialRecoveryRequired'
+  | 'providerCredentialStoreUnavailable'
   | 'invalidProjectSettingsRequest'
   | 'projectSettingsUnavailable';
 
@@ -111,6 +115,10 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'modelEndpointInvalid',
   'modelProbeAlreadyActive',
   'modelSettingsUnavailable',
+  'providerCredentialInvalid',
+  'providerCredentialMissing',
+  'providerCredentialRecoveryRequired',
+  'providerCredentialStoreUnavailable',
   'invalidProjectSettingsRequest',
   'projectSettingsUnavailable',
 ]);

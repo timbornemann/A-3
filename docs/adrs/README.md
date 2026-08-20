@@ -51,6 +51,8 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0024](0024-semantic-design-tokens-and-accessible-themes.md) | Semantische Designtokens und zugängliche Themes            |
 | [0025](0025-bounded-desktop-rendering-and-lifecycle.md)      | Begrenztes Desktop-Rendering und UI-Lebenszyklus           |
 | [0026](0026-explicit-local-provider-model-discovery.md)      | Explizite Providerverwaltung und lokale Modellerkennung    |
+| [0027](0027-google-gemini-model-provider.md)                 | Google Gemini Model-Provider Adapter                       |
+| [0028](0028-provider-credentials-and-explicit-gemini-remote-access.md) | OS-Credentials und expliziter Gemini-Remotezugriff |
 
 ## Neue ADRs
 

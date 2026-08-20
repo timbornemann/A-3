@@ -478,6 +478,7 @@ mod tests {
                 "allow-cancel-deep-map",
                 "allow-compile-task-lens",
                 "allow-configure-model-provider",
+                "allow-delete-model-provider-credential",
                 "allow-confirm-project-command-allowlist",
                 "allow-control-agent-approval",
                 "allow-control-agent-task-run",
@@ -514,7 +515,8 @@ mod tests {
                 "allow-probe-model-role",
                 "allow-revise-agent-goal",
                 "allow-resume-deep-map",
-                "allow-start-deep-map"
+                "allow-start-deep-map",
+                "allow-set-model-provider-credential"
             ]))
         );
         Ok(())

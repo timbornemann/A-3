@@ -22,25 +22,27 @@ use a3_protocol::{
     CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-    DeepMapControlResponseV1, DeepMapStatusResponseV1, DiscoverProviderModelsRequestV1,
-    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProbeModelRoleRequestV1, ProjectMapSearchResponseV1, ProjectSettingsResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
-    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
-    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
-    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSearchRequestV1, QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1,
-    QueryRepositoryTreeRequestV1, QuerySettingsRequestV1, QueryTaskLensTaskRequestV1,
-    QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1,
-    RecentProjectsResponseV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
-    RepositoryTreeResponseV1, ReviseAgentGoalRequestV1, SettingsResponseV1, StartDeepMapRequestV1,
-    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    DeepMapControlResponseV1, DeepMapStatusResponseV1, DeleteModelProviderCredentialRequestV1,
+    DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
+    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
+    ProjectMapSearchResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
+    ProtocolVersion, ProviderModelsResponseV1, QueryAgentActivityRequestV1,
+    QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
+    QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
+    QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
+    QuerySettingsRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
+    RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
+    RemoveProjectRequestV1, RemoveProjectResponseV1, RepositoryTreeResponseV1,
+    ReviseAgentGoalRequestV1, SetModelProviderCredentialRequestV1, SettingsResponseV1,
+    StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
+    TaskLensTasksResponseV1,
 };
 use tauri::State;
 
@@ -378,6 +380,24 @@ pub async fn configure_model_provider(
 }
 
 #[tauri::command]
+/// Stores a one-way API key for the current Core-owned provider without network access.
+pub async fn set_model_provider_credential(
+    request: SetModelProviderCredentialRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    execute_set_model_provider_credential(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Deletes the credential belonging to the current Core-owned provider.
+pub async fn delete_model_provider_credential(
+    request: DeleteModelProviderCredentialRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    execute_delete_model_provider_credential(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Explicitly lists bounded local models from the current Core-owned provider.
 pub async fn discover_provider_models(
     request: DiscoverProviderModelsRequestV1,
@@ -453,6 +473,33 @@ async fn execute_configure_model_provider(
     let expected = settings_version_from_v1(request.expected_settings_revision())?;
     root.configure_model_provider(expected, request.provider_kind(), request.endpoint_origin())
         .await
+}
+
+async fn execute_set_model_provider_credential(
+    request: SetModelProviderCredentialRequestV1,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    let (protocol_version, expected_revision, secret_bytes) = request.into_parts();
+    let parsed_secret = a3_application::ProviderApiKey::from_bytes(secret_bytes);
+    if protocol_version != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(&expected_revision)?;
+    let secret = parsed_secret.map_err(|_| {
+        CommandErrorV1::settings(a3_protocol::ErrorCodeV1::ProviderCredentialInvalid)
+    })?;
+    root.set_model_provider_credential(expected, secret).await
+}
+
+async fn execute_delete_model_provider_credential(
+    request: DeleteModelProviderCredentialRequestV1,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.delete_model_provider_credential(expected).await
 }
 
 async fn execute_discover_provider_models(

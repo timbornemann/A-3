@@ -6,7 +6,7 @@ use a3_application::{
     ModelCapabilityProbeRequest, ModelFinishReason, ModelMessage, ModelMessageRole,
     ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderRequest,
     ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
-    ProviderEvent, StructuredOutputSchema,
+    ProviderApiKey, ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
@@ -87,26 +87,33 @@ async fn gemini_adapter_discovers_a_bounded_canonical_model_catalog() -> Result<
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = endpoint_for(&listener)?;
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await?;
-        let request = read_http_request(&mut stream).await?;
+        let (mut first_stream, _) = listener.accept().await?;
+        let first_request = read_http_request(&mut first_stream).await?;
         write_json_response(
-            &mut stream,
+            &mut first_stream,
             "200 OK",
             br#"{"models":[
                 {"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent","streamGenerateContent"]},
-                {"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]},
+                {"name":"models/count-only","supportedGenerationMethods":["countTokens"]}
+            ],"nextPageToken":"page 2"}"#,
+        )
+        .await?;
+
+        let (mut second_stream, _) = listener.accept().await?;
+        let second_request = read_http_request(&mut second_stream).await?;
+        write_json_response(
+            &mut second_stream,
+            "200 OK",
+            br#"{"models":[
+                {"name":"models/gemini-embedding-001","supportedGenerationMethods":["embedContent"]},
                 {"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]}
             ]}"#,
         )
         .await?;
-        Ok::<StubHttpRequest, TestError>(request)
+        Ok::<(StubHttpRequest, StubHttpRequest), TestError>((first_request, second_request))
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let control = TestControl::default();
     let catalog = DiscoverProviderModels::new(&provider)
         .execute(
@@ -116,18 +123,61 @@ async fn gemini_adapter_discovers_a_bounded_canonical_model_catalog() -> Result<
         .await
         .map_err(map_app_error)?;
 
-    let request = server.await??;
-    assert_eq!(request.path, "/v1beta/models");
-    assert_eq!(request.header("x-goog-api-key"), Some("test-gemini-key"));
+    let (first_request, second_request) = server.await??;
+    assert_eq!(first_request.path, "/v1beta/models?pageSize=100");
+    assert_eq!(
+        second_request.path,
+        "/v1beta/models?pageSize=100&pageToken=page+2"
+    );
+    assert_eq!(
+        first_request.header("x-goog-api-key"),
+        Some("test-gemini-key")
+    );
+    assert_eq!(first_request.header("x-goog-api-client"), Some("a3/0.1.0"));
+    assert_eq!(
+        second_request.header("x-goog-api-key"),
+        Some("test-gemini-key")
+    );
     assert_eq!(
         catalog
             .model_ids()
             .iter()
             .map(|model| model.as_str())
             .collect::<Vec<_>>(),
-        vec!["gemini-2.5-flash", "text-embedding-004"]
+        vec!["gemini-2.5-flash", "gemini-embedding-001"]
     );
     assert!(!catalog.truncated());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_discovery_rejects_a_repeated_pagination_token() -> Result<(), TestError> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await?;
+            let _ = read_http_request(&mut stream).await?;
+            write_json_response(
+                &mut stream,
+                "200 OK",
+                br#"{"models":[],"nextPageToken":"repeated"}"#,
+            )
+            .await?;
+        }
+        Ok::<(), TestError>(())
+    });
+
+    let provider = test_provider(endpoint)?;
+    let control = TestControl::default();
+    let result = DiscoverProviderModels::new(&provider)
+        .execute(
+            ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?,
+            &control,
+        )
+        .await;
+    assert_eq!(result, Err(ModelProviderFailure::InvalidResponse));
+    server.await??;
     Ok(())
 }
 
@@ -142,12 +192,12 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
         write_event_stream_head(&mut stream).await?;
         write_http_chunk(
             &mut stream,
-            b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello \"}]}}]}\n\n",
+            b"data: {\"candidates\":[{\"index\":1,\"content\":{\"parts\":[{\"text\":\"ignore\"}]}},{\"index\":0,\"content\":{\"parts\":[{\"thought\":true,\"text\":\"secret\"},{\"text\":\"Hel",
         )
         .await?;
         write_http_chunk(
             &mut stream,
-            b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"world!\"}]}}]}\n\n",
+            b"lo \"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"world!\"}]}}]}\n\n",
         )
         .await?;
         write_http_chunk(
@@ -159,11 +209,7 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
         Ok::<StubHttpRequest, TestError>(request)
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let request = sample_request("gemini-2.5-flash", false)?;
     let control = TestControl::default();
     let expected = vec![
@@ -238,6 +284,46 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stream_rejects_safety_finish_and_data_after_a_terminal_candidate() -> Result<(), TestError>
+{
+    for payload in [
+        b"data: {\"candidates\":[{\"index\":0,\"finishReason\":\"SAFETY\"}]}\n\n".as_slice(),
+        b"data: {\"candidates\":[{\"index\":0,\"finishReason\":\"STOP\"}]}\n\ndata: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"late\"}]}}]}\n\n".as_slice(),
+        b"data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"unsafe\",\"args\":{}}}]},\"finishReason\":\"STOP\"}]}\n\n".as_slice(),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = endpoint_for(&listener)?;
+        let body = payload.to_vec();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let _ = read_http_request(&mut stream).await?;
+            write_event_stream_head(&mut stream).await?;
+            write_http_chunk(&mut stream, &body).await?;
+            finish_http_chunks(&mut stream).await?;
+            Ok::<(), TestError>(())
+        });
+
+        let provider = test_provider(endpoint)?;
+        let request = sample_request("gemini-2.5-flash", false)?;
+        let control = TestControl::default();
+        let mut stream = provider
+            .stream(
+                &request,
+                ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?,
+                &control,
+            )
+            .await
+            .map_err(map_app_error)?;
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ModelProviderFailure::Rejected | ModelProviderFailure::InvalidResponse))
+        ));
+        server.await??;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
 -> Result<(), TestError> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -264,11 +350,7 @@ async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
         Ok::<(StubHttpRequest, StubHttpRequest), TestError>((show_request, chat_request))
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let probe_request = ModelCapabilityProbeRequest::new(
         ModelId::try_from_string("gemini-2.5-flash".to_owned()).map_err(map_app_error)?,
         sample_settings()?,
@@ -294,6 +376,12 @@ async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
         chat_body["generationConfig"]["responseMimeType"],
         "application/json"
     );
+    assert!(chat_body["generationConfig"]["responseJsonSchema"].is_object());
+    assert!(
+        chat_body["generationConfig"]
+            .get("responseSchema")
+            .is_none()
+    );
 
     assert_eq!(
         profile.capabilities().structured_output(),
@@ -301,7 +389,7 @@ async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
     );
     assert_eq!(
         profile.capabilities().tool_call_mode(),
-        ModelToolCallMode::NativeProviderReported
+        ModelToolCallMode::Disabled
     );
     assert_eq!(profile.settings().context_limit().get(), 4096);
     Ok(())
@@ -334,11 +422,7 @@ async fn invalid_structured_probe_output_creates_a_non_executable_profile() -> R
         Ok::<(), TestError>(())
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let probe_request = ModelCapabilityProbeRequest::new(
         ModelId::try_from_string("gemini-2.5-flash".to_owned()).map_err(map_app_error)?,
         sample_settings()?,
@@ -378,13 +462,9 @@ async fn embedding_probe_observes_real_dimension_without_accepting_a_ui_dimensio
         Ok::<StubHttpRequest, TestError>(request)
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let probe_request = EmbeddingCapabilityProbeRequest::new(
-        EmbeddingModelId::new("text-embedding-004".to_owned()).map_err(map_app_error)?,
+        EmbeddingModelId::new("gemini-embedding-001".to_owned()).map_err(map_app_error)?,
         EmbeddingBatchSize::new(16).map_err(map_app_error)?,
     );
     let control = TestControl::default();
@@ -400,7 +480,7 @@ async fn embedding_probe_observes_real_dimension_without_accepting_a_ui_dimensio
     let request = server.await??;
     assert_eq!(
         request.path,
-        "/v1beta/models/text-embedding-004:embedContent"
+        "/v1beta/models/gemini-embedding-001:embedContent"
     );
     assert_eq!(profile.dimension().get(), 8);
     assert_eq!(profile.max_batch_size().get(), 16);
@@ -426,14 +506,10 @@ async fn embedding_adapter_encodes_bounded_canonical_card_bodies() -> Result<(),
         Ok::<StubHttpRequest, TestError>(request)
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let profile = EmbeddingModelProfile::v1(
         EmbeddingProviderId::new("gemini".to_owned()).map_err(map_app_error)?,
-        EmbeddingModelId::new("text-embedding-004".to_owned()).map_err(map_app_error)?,
+        EmbeddingModelId::new("gemini-embedding-001".to_owned()).map_err(map_app_error)?,
         EmbeddingDimension::new(4).map_err(map_app_error)?,
         EmbeddingBatchSize::new(16).map_err(map_app_error)?,
     );
@@ -466,16 +542,43 @@ async fn embedding_adapter_encodes_bounded_canonical_card_bodies() -> Result<(),
     let request = server.await??;
     assert_eq!(
         request.path,
-        "/v1beta/models/text-embedding-004:batchEmbedContents"
+        "/v1beta/models/gemini-embedding-001:batchEmbedContents"
     );
-    assert_eq!(batch.len(), 2);
+    assert_eq!(
+        batch.into_vectors(),
+        vec![vec![0.1, 0.2, 0.3, 0.4], vec![0.5, 0.6, 0.7, 0.8]]
+    );
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn denied_remote_endpoint_fails_before_any_network_attempt() -> Result<(), TestError> {
     let endpoint = GeminiEndpoint::default_origin()?;
-    let provider = GeminiModelProvider::new(endpoint, Arc::new(LocalOnlyGeminiEndpointPolicy))?;
+    let provider = GeminiModelProvider::new(
+        endpoint,
+        Arc::new(LocalOnlyGeminiEndpointPolicy),
+        test_api_key()?,
+    )?;
+    let control = TestControl::default();
+    let result = DiscoverProviderModels::new(&provider)
+        .execute(
+            ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?,
+            &control,
+        )
+        .await;
+    assert_eq!(result, Err(ModelProviderFailure::EndpointDenied));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_policy_rejects_an_arbitrary_https_origin_before_network()
+-> Result<(), TestError> {
+    let endpoint = GeminiEndpoint::parse("https://example.invalid")?;
+    let provider = GeminiModelProvider::new(
+        endpoint,
+        Arc::new(StandardGeminiEndpointPolicy),
+        test_api_key()?,
+    )?;
     let control = TestControl::default();
     let result = DiscoverProviderModels::new(&provider)
         .execute(
@@ -507,11 +610,7 @@ async fn stream_cancellation_drops_the_in_flight_response() -> Result<(), TestEr
         Ok::<(), TestError>(())
     });
 
-    let provider = GeminiModelProvider::with_api_key(
-        endpoint,
-        Arc::new(StandardGeminiEndpointPolicy),
-        Some("test-gemini-key".to_owned()),
-    )?;
+    let provider = test_provider(endpoint)?;
     let control = TestControl::default();
     let request = sample_request("gemini-2.5-flash", false)?;
     let stream = provider.stream(
@@ -535,6 +634,19 @@ fn endpoint_for(listener: &TcpListener) -> Result<GeminiEndpoint, TestError> {
         "http://127.0.0.1:{}",
         listener.local_addr()?.port()
     ))?)
+}
+
+fn test_api_key() -> Result<ProviderApiKey, TestError> {
+    ProviderApiKey::from_bytes(b"test-gemini-key".to_vec()).map_err(map_app_error)
+}
+
+fn test_provider(endpoint: GeminiEndpoint) -> Result<GeminiModelProvider, TestError> {
+    GeminiModelProvider::new(
+        endpoint,
+        Arc::new(LocalOnlyGeminiEndpointPolicy),
+        test_api_key()?,
+    )
+    .map_err(Into::into)
 }
 
 struct StubHttpRequest {
@@ -678,7 +790,7 @@ fn sample_request(model_id: &str, structured: bool) -> Result<ModelProviderReque
         sample_settings()?,
         ModelCapabilities::new(
             ModelStructuredOutputCapability::Verified,
-            ModelToolCallMode::NativeProviderReported,
+            ModelToolCallMode::Disabled,
         ),
     );
     let messages = vec![

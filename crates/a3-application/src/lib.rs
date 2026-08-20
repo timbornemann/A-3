@@ -59,6 +59,7 @@ mod project_removal;
 mod project_settings;
 mod project_status;
 mod project_storage;
+mod provider_credentials;
 mod recent_projects;
 mod repository_discovery;
 mod repository_index;
@@ -338,6 +339,7 @@ pub use project_storage::{
     ProjectStorageControlError, ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore,
     ProjectStorageUsage,
 };
+pub use provider_credentials::*;
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
 pub use repository_discovery::{
     RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,

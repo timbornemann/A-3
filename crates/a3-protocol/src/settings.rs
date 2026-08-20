@@ -1,6 +1,10 @@
 use crate::ProtocolVersion;
-use serde::{Deserialize, Serialize};
+use serde::de::{SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
+use zeroize::{Zeroize, Zeroizing};
+
+const MAX_PROVIDER_API_KEY_BYTES: usize = 4_096;
 
 /// Read-only request for the current global settings snapshot.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -75,6 +79,97 @@ impl fmt::Debug for ConfigureModelProviderRequestV1 {
             .field("provider_kind", &self.provider_kind)
             .field("has_endpoint", &self.endpoint_origin.is_some())
             .finish()
+    }
+}
+
+/// One-way provider credential write bound to the visible Settings revision.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SetModelProviderCredentialRequestV1 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    #[serde(deserialize_with = "deserialize_provider_api_key_bytes")]
+    api_key_bytes: Vec<u8>,
+}
+
+impl SetModelProviderCredentialRequestV1 {
+    /// Consumes the request so secret bytes cannot be borrowed by unrelated command code.
+    #[must_use]
+    pub fn into_parts(mut self) -> (ProtocolVersion, String, Vec<u8>) {
+        (
+            self.protocol_version,
+            std::mem::take(&mut self.expected_settings_revision),
+            std::mem::take(&mut self.api_key_bytes),
+        )
+    }
+}
+
+impl Drop for SetModelProviderCredentialRequestV1 {
+    fn drop(&mut self) {
+        self.api_key_bytes.zeroize();
+    }
+}
+
+fn deserialize_provider_api_key_bytes<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ApiKeyBytesVisitor;
+
+    impl<'de> Visitor<'de> for ApiKeyBytesVisitor {
+        type Value = Vec<u8>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "an API-key byte sequence of at most {MAX_PROVIDER_API_KEY_BYTES} bytes"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let capacity = sequence
+                .size_hint()
+                .unwrap_or_default()
+                .min(MAX_PROVIDER_API_KEY_BYTES);
+            let mut bytes = Zeroizing::new(Vec::with_capacity(capacity));
+            while let Some(byte) = sequence.next_element::<u8>()? {
+                if bytes.len() == MAX_PROVIDER_API_KEY_BYTES {
+                    return Err(serde::de::Error::invalid_length(
+                        bytes.len().saturating_add(1),
+                        &self,
+                    ));
+                }
+                bytes.push(byte);
+            }
+            Ok(std::mem::take(&mut *bytes))
+        }
+    }
+
+    deserializer.deserialize_seq(ApiKeyBytesVisitor)
+}
+
+/// Credential deletion bound only to the current Core-owned provider and Settings revision.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeleteModelProviderCredentialRequestV1 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+}
+
+impl DeleteModelProviderCredentialRequestV1 {
+    /// Returns the protocol version checked before credential access.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    /// Returns the visible decimal Settings revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
     }
 }
 
@@ -248,6 +343,18 @@ pub enum ModelEndpointScopeV1 {
     Remote,
 }
 
+/// Provider-neutral authorization class for the configured endpoint.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelEndpointAccessV1 {
+    /// Literal loopback provider.
+    Local,
+    /// Remote endpoint retained but unavailable to Settings operations.
+    RemoteBlocked,
+    /// Fixed remote endpoint available only to explicit user-initiated Settings operations.
+    ExplicitUserInitiatedRemote,
+}
+
 /// Safe configured endpoint projection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -255,18 +362,66 @@ pub struct ModelEndpointV1 {
     provider_id: String,
     origin: String,
     scope: ModelEndpointScopeV1,
+    access: ModelEndpointAccessV1,
 }
 
 impl ModelEndpointV1 {
     /// Creates an adapter-validated safe endpoint projection.
     #[must_use]
-    pub const fn new(provider_id: String, origin: String, scope: ModelEndpointScopeV1) -> Self {
+    pub const fn new(
+        provider_id: String,
+        origin: String,
+        scope: ModelEndpointScopeV1,
+        access: ModelEndpointAccessV1,
+    ) -> Self {
         Self {
             provider_id,
             origin,
             scope,
+            access,
         }
     }
+}
+
+/// Public content-free status of the active provider credential.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderCredentialStatusV1 {
+    /// An API key is required but absent.
+    Missing,
+    /// Settings metadata and the native entry have the same generation.
+    Configured,
+    /// A partial or inconsistent cross-store transition requires replacement or deletion.
+    RecoveryRequired,
+    /// The native credential service is unavailable or locked.
+    Unavailable,
+}
+
+/// Content-free credential projection; the secret is never serializable here.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProviderCredentialV1 {
+    requirement: ProviderCredentialRequirementV1,
+    status: ProviderCredentialStatusV1,
+}
+
+impl ProviderCredentialV1 {
+    /// Creates the safe Core-derived credential projection.
+    #[must_use]
+    pub const fn api_key(status: ProviderCredentialStatusV1) -> Self {
+        Self {
+            requirement: ProviderCredentialRequirementV1::ApiKey,
+            status,
+        }
+    }
+}
+
+/// Closed credential shape exposed by Settings V1.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderCredentialRequirementV1 {
+    /// One provider API key stored by the operating system.
+    ApiKey,
 }
 
 /// Explicit provider health state; no background liveness claim is implied.
@@ -451,6 +606,7 @@ impl DataPrivacySettingsV1 {
 pub struct SettingsV1 {
     revision: String,
     endpoint: Option<ModelEndpointV1>,
+    credential: Option<ProviderCredentialV1>,
     provider_health: Option<ProviderHealthV1>,
     coding_profile: Option<LlmRoleProfileV1>,
     mapping_profile: Option<LlmRoleProfileV1>,
@@ -466,6 +622,7 @@ impl SettingsV1 {
     pub const fn new(
         revision: String,
         endpoint: Option<ModelEndpointV1>,
+        credential: Option<ProviderCredentialV1>,
         provider_health: Option<ProviderHealthV1>,
         coding_profile: Option<LlmRoleProfileV1>,
         mapping_profile: Option<LlmRoleProfileV1>,
@@ -476,6 +633,7 @@ impl SettingsV1 {
         Self {
             revision,
             endpoint,
+            credential,
             provider_health,
             coding_profile,
             mapping_profile,
@@ -556,7 +714,10 @@ impl CancelModelProbeResponseV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiscoverProviderModelsRequestV1, ProbeModelRoleRequestV1, QuerySettingsRequestV1};
+    use super::{
+        DiscoverProviderModelsRequestV1, ProbeModelRoleRequestV1, QuerySettingsRequestV1,
+        SetModelProviderCredentialRequestV1,
+    };
     use crate::ProtocolVersion;
 
     #[test]
@@ -613,6 +774,39 @@ mod tests {
             value[forbidden] = serde_json::json!("forbidden");
             assert!(serde_json::from_value::<DiscoverProviderModelsRequestV1>(value).is_err());
         }
+    }
+
+    #[test]
+    fn credential_write_accepts_only_revision_version_and_bytes() -> Result<(), serde_json::Error> {
+        let request: SetModelProviderCredentialRequestV1 =
+            serde_json::from_value(serde_json::json!({
+                "protocolVersion": 1,
+                "expectedSettingsRevision": "7",
+                "apiKeyBytes": [115, 101, 99, 114, 101, 116]
+            }))?;
+        let (version, revision, bytes) = request.into_parts();
+        assert_eq!(version, ProtocolVersion::V1);
+        assert_eq!(revision, "7");
+        assert_eq!(bytes, b"secret");
+
+        for forbidden in ["providerId", "providerKind", "endpointOrigin", "generation"] {
+            let mut value = serde_json::json!({
+                "protocolVersion": 1,
+                "expectedSettingsRevision": "7",
+                "apiKeyBytes": [1]
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(serde_json::from_value::<SetModelProviderCredentialRequestV1>(value).is_err());
+        }
+        assert!(
+            serde_json::from_value::<SetModelProviderCredentialRequestV1>(serde_json::json!({
+                "protocolVersion": 1,
+                "expectedSettingsRevision": "7",
+                "apiKeyBytes": vec![1; 4_097]
+            }))
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]

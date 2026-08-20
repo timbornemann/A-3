@@ -3,12 +3,13 @@ use a3_application::{
     EmbeddingCapabilityProbeRequest, EmbeddingOperationControl, EmbeddingProvider,
     EmbeddingProviderFailure, EmbeddingProviderFuture, EmbeddingRequestTimeout,
     ModelCapabilityObservation, ModelCapabilityProbe, ModelCapabilityProbeFuture,
-    ModelCapabilityProbeRequest, ModelCatalogFuture, ModelCatalogProvider, ModelEndpointScope,
-    ModelEndpointValidationFailure, ModelEndpointValidator, ModelFinishReason, ModelMessageRole,
-    ModelOperationControl, ModelOutputChunk, ModelProvider, ModelProviderCompletion,
-    ModelProviderFailure, ModelProviderFuture, ModelProviderRequest, ModelProviderUsage,
-    ModelRequestTimeout, ProviderEvent, ProviderEventStream, ProviderModelCatalog,
-    RawEmbeddingBatch, ReportedModelContextLimit,
+    ModelCapabilityProbeRequest, ModelCatalogFuture, ModelCatalogProvider, ModelEndpointAccess,
+    ModelEndpointScope, ModelEndpointValidationFailure, ModelEndpointValidator, ModelFinishReason,
+    ModelMessageRole, ModelOperationControl, ModelOutputChunk, ModelProvider,
+    ModelProviderCompletion, ModelProviderFailure, ModelProviderFuture, ModelProviderRequest,
+    ModelProviderUsage, ModelRequestTimeout, ProviderApiKey, ProviderCredentialRequirement,
+    ProviderEvent, ProviderEventStream, ProviderModelCatalog, RawEmbeddingBatch,
+    ReportedModelContextLimit,
 };
 use a3_domain::{
     EmbeddingDimension, EmbeddingProviderId, ModelCapabilities, ModelId, ModelProviderId,
@@ -19,7 +20,7 @@ use futures::stream::{BoxStream, StreamExt};
 use futures::{FutureExt, pin_mut};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::net::IpAddr;
@@ -36,11 +37,17 @@ const MAX_GEMINI_BUFFER_BYTES: usize = 256 * 1024;
 const MAX_GEMINI_LINE_BYTES: usize = 128 * 1024;
 const MAX_GEMINI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GEMINI_MODELS_BYTES: usize = 512 * 1024;
+const MAX_GEMINI_MODELS_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 const MAX_GEMINI_SHOW_BYTES: usize = 512 * 1024;
 const MAX_GEMINI_PROBE_BYTES: usize = 128 * 1024;
 const MAX_GEMINI_EMBED_BYTES: usize = 8 * 1024 * 1024;
 const MAX_GEMINI_EMBED_PROBE_BYTES: usize = 256 * 1024;
 const MAX_GEMINI_MODELS_COUNT: usize = 256;
+const MAX_GEMINI_MODEL_PAGES: usize = 10;
+const MAX_GEMINI_MODELS_OBSERVED: usize = 1_000;
+const MAX_GEMINI_PAGE_TOKEN_BYTES: usize = 4_096;
+const MAX_GEMINI_SCHEMA_DEPTH: usize = 64;
+const MAX_GEMINI_SCHEMA_NODES: usize = 4_096;
 
 const GEMINI_PROBE_OUTPUT_TOKENS: u32 = 32;
 const GEMINI_PROBE_PROMPT: &str =
@@ -108,9 +115,16 @@ impl GeminiEndpoint {
         self.url.as_str().trim_end_matches('/').to_owned()
     }
 
-    pub(crate) fn models_url(&self) -> reqwest::Url {
+    pub(crate) fn models_url(&self, page_token: Option<&str>) -> reqwest::Url {
         let mut url = self.url.clone();
         url.set_path("/v1beta/models");
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("pageSize", "100");
+            if let Some(token) = page_token {
+                query.append_pair("pageToken", token);
+            }
+        }
         url
     }
 
@@ -219,16 +233,21 @@ impl ModelEndpointValidator for GeminiSettingsEndpointValidator {
     ) -> Result<ConfiguredModelEndpoint, ModelEndpointValidationFailure> {
         let endpoint =
             GeminiEndpoint::parse(input).map_err(|_| ModelEndpointValidationFailure::Invalid)?;
+        if endpoint.canonical_origin() != DEFAULT_GEMINI_ORIGIN {
+            return Err(ModelEndpointValidationFailure::Invalid);
+        }
         let provider_id = ModelProviderId::try_from_string(GEMINI_PROVIDER_ID.to_owned())
             .map_err(|_| ModelEndpointValidationFailure::ProviderUnavailable)?;
         let scope = match endpoint.scope() {
             GeminiEndpointScope::LocalLoopback => ModelEndpointScope::LocalLoopback,
             GeminiEndpointScope::Remote => ModelEndpointScope::Remote,
         };
-        ConfiguredModelEndpoint::from_validated_adapter(
+        ConfiguredModelEndpoint::from_validated_adapter_with_security(
             provider_id,
             endpoint.canonical_origin(),
             scope,
+            ModelEndpointAccess::ExplicitUserInitiatedRemote,
+            ProviderCredentialRequirement::ApiKey,
         )
         .map_err(|_| ModelEndpointValidationFailure::Invalid)
     }
@@ -240,16 +259,13 @@ pub trait GeminiEndpointPolicy: fmt::Debug + Send + Sync {
     fn authorize(&self, endpoint: &GeminiEndpoint) -> Result<(), GeminiEndpointPolicyError>;
 }
 
-/// Standard policy allowing local loopback and the canonical Google Gemini HTTPS origin.
+/// Production policy allowing only the canonical Google Gemini HTTPS origin.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StandardGeminiEndpointPolicy;
 
 impl GeminiEndpointPolicy for StandardGeminiEndpointPolicy {
     fn authorize(&self, endpoint: &GeminiEndpoint) -> Result<(), GeminiEndpointPolicyError> {
-        if endpoint.scope() == GeminiEndpointScope::LocalLoopback
-            || endpoint.canonical_origin() == DEFAULT_GEMINI_ORIGIN
-            || (endpoint.scope() == GeminiEndpointScope::Remote && endpoint.url.scheme() == "https")
-        {
+        if endpoint.canonical_origin() == DEFAULT_GEMINI_ORIGIN {
             Ok(())
         } else {
             Err(GeminiEndpointPolicyError::Denied)
@@ -293,27 +309,15 @@ pub struct GeminiModelProvider {
     endpoint: GeminiEndpoint,
     endpoint_policy: Arc<dyn GeminiEndpointPolicy>,
     client: reqwest::Client,
-    api_key: Option<String>,
+    api_key: ProviderApiKey,
 }
 
 impl GeminiModelProvider {
-    /// Creates a Gemini provider for one validated endpoint, loading API key from ambient environment.
+    /// Creates a Gemini provider for one validated endpoint and explicit short-lived API key.
     pub fn new(
         endpoint: GeminiEndpoint,
         endpoint_policy: Arc<dyn GeminiEndpointPolicy>,
-    ) -> Result<Self, GeminiProviderCreateError> {
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-            .ok()
-            .filter(|key| !key.trim().is_empty());
-        Self::with_api_key(endpoint, endpoint_policy, api_key)
-    }
-
-    /// Creates a Gemini provider with an explicit API key (or None).
-    pub fn with_api_key(
-        endpoint: GeminiEndpoint,
-        endpoint_policy: Arc<dyn GeminiEndpointPolicy>,
-        api_key: Option<String>,
+        api_key: ProviderApiKey,
     ) -> Result<Self, GeminiProviderCreateError> {
         let provider_id = ModelProviderId::try_from_string(GEMINI_PROVIDER_ID.to_owned())
             .map_err(|_| GeminiProviderCreateError::InvalidProviderIdentity)?;
@@ -347,11 +351,10 @@ impl GeminiModelProvider {
         Ok(())
     }
 
-    fn attach_auth(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        if let Some(key) = &self.api_key {
-            request = request.header(API_KEY_HEADER, key.as_str());
-        }
+    fn attach_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request
+            .header(API_KEY_HEADER, self.api_key.as_bytes())
+            .header("x-goog-api-client", "a3/0.1.0")
     }
 }
 
@@ -363,7 +366,7 @@ impl fmt::Debug for GeminiModelProvider {
             .field("embedding_provider_id", &self.embedding_provider_id)
             .field("endpoint", &self.endpoint)
             .field("endpoint_policy", &self.endpoint_policy)
-            .field("has_api_key", &self.api_key.is_some())
+            .field("has_api_key", &true)
             .finish()
     }
 }
@@ -404,7 +407,7 @@ impl ModelProvider for GeminiModelProvider {
             if request.profile().provider_id() != &self.provider_id {
                 return Err(ModelProviderFailure::Rejected);
             }
-            let wire_request = GeminiGenerateContentRequest::from_request(request);
+            let wire_request = GeminiGenerateContentRequest::from_request(request)?;
             let target_url = self
                 .endpoint
                 .stream_generate_content_url(request.model_id().as_str());
@@ -448,11 +451,68 @@ impl ModelCatalogProvider for GeminiModelProvider {
             let deadline = Instant::now()
                 .checked_add(timeout.duration())
                 .ok_or(ModelProviderFailure::TimedOut)?;
-            let request = self.attach_auth(self.client.get(self.endpoint.models_url()));
-            let response = send_before_deadline(request, deadline, control).await?;
-            validate_json_response_head(&response)?;
-            let body = read_bounded_response(response, MAX_GEMINI_MODELS_BYTES, control).await?;
-            parse_gemini_models(&body, self.provider_id.clone())
+            let mut models = BTreeSet::new();
+            let mut page_token: Option<String> = None;
+            let mut seen_tokens = HashSet::new();
+            let mut observed = 0usize;
+            let mut total_bytes = 0usize;
+            let mut truncated = false;
+            for page_index in 0..MAX_GEMINI_MODEL_PAGES {
+                let request = self.attach_auth(
+                    self.client
+                        .get(self.endpoint.models_url(page_token.as_deref())),
+                );
+                let response = send_before_deadline(request, deadline, control).await?;
+                validate_json_response_head(&response)?;
+                let body =
+                    read_bounded_response(response, MAX_GEMINI_MODELS_BYTES, control).await?;
+                total_bytes = total_bytes.saturating_add(body.len());
+                if total_bytes > MAX_GEMINI_MODELS_TOTAL_BYTES {
+                    return Err(ModelProviderFailure::InvalidResponse);
+                }
+                let page = parse_gemini_models_page(&body)?;
+                for item in page.models {
+                    observed = observed.saturating_add(1);
+                    if observed > MAX_GEMINI_MODELS_OBSERVED {
+                        truncated = true;
+                        break;
+                    }
+                    if model_supports_a3_role(&item) {
+                        let name = normalize_model_path(&item.name);
+                        if let Ok(model_id) = ModelId::try_from_string(name.to_owned()) {
+                            models.insert(model_id);
+                            if models.len() > MAX_GEMINI_MODELS_COUNT {
+                                truncated = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if truncated {
+                    break;
+                }
+                let Some(next) = page.next_page_token else {
+                    break;
+                };
+                validate_page_token(&next)?;
+                if !seen_tokens.insert(next.clone()) {
+                    return Err(ModelProviderFailure::InvalidResponse);
+                }
+                page_token = Some(next);
+                if page_index + 1 == MAX_GEMINI_MODEL_PAGES {
+                    truncated = true;
+                }
+            }
+            let mut models = models.into_iter().collect::<Vec<_>>();
+            if models.len() > MAX_GEMINI_MODELS_COUNT {
+                models.truncate(MAX_GEMINI_MODELS_COUNT);
+                truncated = true;
+            }
+            Ok(ProviderModelCatalog::from_observation(
+                self.provider_id.clone(),
+                models,
+                truncated,
+            ))
         })
     }
 }
@@ -477,11 +537,7 @@ impl ModelCapabilityProbe for GeminiModelProvider {
             let structured_output = self
                 .probe_structured_output(request, deadline, control)
                 .await?;
-            let tool_call_mode = if show.generate_content_supported {
-                ModelToolCallMode::NativeProviderReported
-            } else {
-                ModelToolCallMode::Disabled
-            };
+            let tool_call_mode = ModelToolCallMode::Disabled;
             Ok(ModelCapabilityObservation::new(
                 show.context_limit,
                 ModelCapabilities::new(structured_output, tool_call_mode),
@@ -583,10 +639,18 @@ impl EmbeddingProvider for GeminiModelProvider {
             let body =
                 read_bounded_embedding_response(response, MAX_GEMINI_EMBED_BYTES, control).await?;
             let batch = parse_gemini_batch_embedding_response(&body)?;
-            if batch.len() != cards.len() {
+            let vectors = batch.into_vectors();
+            let expected_dimension = usize::from(profile.dimension().get());
+            if vectors.len() != cards.len()
+                || vectors.iter().any(|vector| {
+                    vector.len() != expected_dimension
+                        || vector.iter().any(|component| !component.is_finite())
+                        || vector.iter().all(|component| *component == 0.0)
+                })
+            {
                 return Err(EmbeddingProviderFailure::InvalidResponse);
             }
-            Ok(batch)
+            RawEmbeddingBatch::new(vectors).map_err(|_| EmbeddingProviderFailure::InvalidResponse)
         })
     }
 }
@@ -613,13 +677,15 @@ impl GeminiModelProvider {
         control: &dyn ModelOperationControl,
     ) -> Result<ModelStructuredOutputCapability, ModelProviderFailure> {
         let probe_schema = serde_json::json!({
-            "type": "OBJECT",
+            "type": "object",
             "properties": {
                 "a3_probe": {
-                    "type": "STRING"
+                    "type": "string",
+                    "enum": ["ok"]
                 }
             },
-            "required": ["a3_probe"]
+            "required": ["a3_probe"],
+            "additionalProperties": false
         });
         let wire_request = GeminiGenerateContentRequest {
             contents: Some(vec![GeminiContent {
@@ -635,7 +701,7 @@ impl GeminiModelProvider {
                 max_output_tokens: Some(GEMINI_PROBE_OUTPUT_TOKENS),
                 stop_sequences: None,
                 response_mime_type: Some("application/json"),
-                response_schema: Some(&probe_schema),
+                response_json_schema: Some(probe_schema),
             }),
         };
         let target_url = self
@@ -679,7 +745,7 @@ struct GeminiGenerateContentRequest<'a> {
 }
 
 impl<'a> GeminiGenerateContentRequest<'a> {
-    fn from_request(request: &'a ModelProviderRequest) -> Self {
+    fn from_request(request: &'a ModelProviderRequest) -> Result<Self, ModelProviderFailure> {
         let mut system_parts = Vec::new();
         let mut user_contents = Vec::new();
 
@@ -722,8 +788,11 @@ impl<'a> GeminiGenerateContentRequest<'a> {
         let stop_sequences =
             (!stops.is_empty()).then(|| stops.iter().map(|stop| stop.as_str()).collect());
 
-        let (response_mime_type, response_schema) = match request.structured_output() {
-            Some(schema) => (Some("application/json"), Some(schema.value())),
+        let (response_mime_type, response_json_schema) = match request.structured_output() {
+            Some(schema) => (
+                Some("application/json"),
+                Some(translate_response_json_schema(schema.value())?),
+            ),
             None => (None, None),
         };
 
@@ -733,14 +802,14 @@ impl<'a> GeminiGenerateContentRequest<'a> {
             max_output_tokens: Some(settings.output_limit().get()),
             stop_sequences,
             response_mime_type,
-            response_schema,
+            response_json_schema,
         });
 
-        Self {
+        Ok(Self {
             contents: Some(user_contents),
             system_instruction,
             generation_config,
-        }
+        })
     }
 }
 
@@ -773,8 +842,70 @@ struct GeminiGenerationConfig<'a> {
     stop_sequences: Option<Vec<&'a str>>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "responseMimeType")]
     response_mime_type: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "responseSchema")]
-    response_schema: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "responseJsonSchema")]
+    response_json_schema: Option<Value>,
+}
+
+fn translate_response_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
+    let mut nodes = 0usize;
+    translate_schema_node(schema, 0, &mut nodes)
+}
+
+fn translate_schema_node(
+    schema: &Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<Value, ModelProviderFailure> {
+    if depth > MAX_GEMINI_SCHEMA_DEPTH || *nodes >= MAX_GEMINI_SCHEMA_NODES {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    *nodes += 1;
+    let object = schema.as_object().ok_or(ModelProviderFailure::Rejected)?;
+    let mut translated = serde_json::Map::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "$schema" | "pattern" | "minLength" | "maxLength" => {}
+            "const" => {
+                if object.contains_key("enum") {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert("enum".to_owned(), Value::Array(vec![value.clone()]));
+            }
+            "$id" | "$ref" | "$anchor" | "type" | "format" | "title" | "description" | "enum"
+            | "minItems" | "maxItems" | "minimum" | "maximum" | "required" | "propertyOrdering" => {
+                translated.insert(key.clone(), value.clone());
+            }
+            "items" | "additionalProperties" => {
+                let value = if value.is_boolean() {
+                    value.clone()
+                } else {
+                    translate_schema_node(value, depth + 1, nodes)?
+                };
+                translated.insert(key.clone(), value);
+            }
+            "prefixItems" | "anyOf" | "oneOf" => {
+                let items = value.as_array().ok_or(ModelProviderFailure::Rejected)?;
+                let translated_items = items
+                    .iter()
+                    .map(|item| translate_schema_node(item, depth + 1, nodes))
+                    .collect::<Result<Vec<_>, _>>()?;
+                translated.insert(key.clone(), Value::Array(translated_items));
+            }
+            "properties" | "$defs" => {
+                let entries = value.as_object().ok_or(ModelProviderFailure::Rejected)?;
+                let mut translated_entries = serde_json::Map::new();
+                for (name, child) in entries {
+                    translated_entries.insert(
+                        name.clone(),
+                        translate_schema_node(child, depth + 1, nodes)?,
+                    );
+                }
+                translated.insert(key.clone(), Value::Object(translated_entries));
+            }
+            _ => return Err(ModelProviderFailure::Rejected),
+        }
+    }
+    Ok(Value::Object(translated))
 }
 
 #[derive(Deserialize)]
@@ -783,10 +914,13 @@ struct GeminiResponse {
     #[serde(rename = "usageMetadata")]
     usage_metadata: Option<GeminiUsageMetadata>,
     error: Option<GeminiErrorObject>,
+    #[serde(rename = "promptFeedback")]
+    prompt_feedback: Option<GeminiPromptFeedback>,
 }
 
 #[derive(Deserialize)]
 struct GeminiCandidate {
+    index: Option<u32>,
     content: Option<GeminiResponseContent>,
     #[serde(rename = "finishReason")]
     finish_reason: Option<String>,
@@ -800,6 +934,25 @@ struct GeminiResponseContent {
 #[derive(Deserialize)]
 struct GeminiResponsePart {
     text: Option<String>,
+    thought: Option<bool>,
+    #[serde(rename = "thoughtSignature")]
+    _thought_signature: Option<String>,
+    #[serde(rename = "functionCall")]
+    function_call: Option<Value>,
+    #[serde(rename = "functionResponse")]
+    function_response: Option<Value>,
+    #[serde(rename = "executableCode")]
+    executable_code: Option<Value>,
+    #[serde(rename = "codeExecutionResult")]
+    code_execution_result: Option<Value>,
+    #[serde(flatten)]
+    unknown: serde_json::Map<String, Value>,
+}
+
+#[derive(Deserialize)]
+struct GeminiPromptFeedback {
+    #[serde(rename = "blockReason")]
+    block_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -821,6 +974,8 @@ struct GeminiErrorObject {
 #[derive(Deserialize)]
 struct GeminiListModelsResponse {
     models: Option<Vec<GeminiModelMetadata>>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -865,7 +1020,6 @@ struct GeminiEmbeddingValues {
 
 struct GeminiShowObservation {
     context_limit: Option<ReportedModelContextLimit>,
-    generate_content_supported: bool,
 }
 
 type GeminiByteStream = BoxStream<'static, Result<Vec<u8>, reqwest::Error>>;
@@ -879,6 +1033,7 @@ struct GeminiStreamState<'a> {
     prompt_tokens: Option<u64>,
     candidates_tokens: Option<u64>,
     finish_reason: Option<ModelFinishReason>,
+    terminal_seen: bool,
     body_ended: bool,
 }
 
@@ -893,6 +1048,7 @@ impl<'a> GeminiStreamState<'a> {
             prompt_tokens: None,
             candidates_tokens: None,
             finish_reason: None,
+            terminal_seen: false,
             body_ended: false,
         }
     }
@@ -979,6 +1135,9 @@ fn parse_gemini_sse_line(
     } else {
         return Ok(());
     };
+    if state.terminal_seen {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
     if json_data == "[DONE]" {
         return Ok(());
     }
@@ -986,6 +1145,13 @@ fn parse_gemini_sse_line(
         serde_json::from_str(json_data).map_err(|_| ModelProviderFailure::InvalidResponse)?;
 
     if response.error.is_some() {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    if response
+        .prompt_feedback
+        .and_then(|feedback| feedback.block_reason)
+        .is_some()
+    {
         return Err(ModelProviderFailure::Rejected);
     }
 
@@ -999,13 +1165,16 @@ fn parse_gemini_sse_line(
     }
 
     if let Some(candidates) = response.candidates {
-        for candidate in candidates {
-            if let Some(reason) = candidate.finish_reason {
-                state.finish_reason = Some(map_finish_reason(&reason));
+        for (position, candidate) in candidates.into_iter().enumerate() {
+            if candidate.index.unwrap_or(position as u32) != 0 {
+                continue;
+            }
+            if state.terminal_seen {
+                return Err(ModelProviderFailure::InvalidResponse);
             }
             if let Some(parts) = candidate.content.and_then(|content| content.parts) {
                 for part in parts {
-                    if let Some(text) = part.text.filter(|t| !t.is_empty()) {
+                    if let Some(text) = validated_response_part_text(part)? {
                         state.output_bytes = state.output_bytes.saturating_add(text.len());
                         if state.output_bytes > MAX_GEMINI_OUTPUT_BYTES {
                             return Err(ModelProviderFailure::InvalidResponse);
@@ -1015,6 +1184,13 @@ fn parse_gemini_sse_line(
                         state.queued.push_back(ProviderEvent::OutputText(chunk));
                     }
                 }
+            }
+            if let Some(reason) = candidate.finish_reason {
+                if state.terminal_seen {
+                    return Err(ModelProviderFailure::InvalidResponse);
+                }
+                state.finish_reason = Some(map_finish_reason(&reason)?);
+                state.terminal_seen = true;
             }
         }
     }
@@ -1029,19 +1205,44 @@ fn finish_gemini_body(state: &mut GeminiStreamState<'_>) -> Result<(), ModelProv
         let line = std::mem::take(&mut state.buffer);
         parse_gemini_sse_line(state, &line)?;
     }
+    if !state.terminal_seen {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
     let usage = ModelProviderUsage::new(state.prompt_tokens, state.candidates_tokens);
-    let finish_reason = state.finish_reason.unwrap_or(ModelFinishReason::Stop);
+    let finish_reason = state
+        .finish_reason
+        .ok_or(ModelProviderFailure::InvalidResponse)?;
     let completion = ModelProviderCompletion::new(finish_reason, usage);
     state.queued.push_back(ProviderEvent::Completed(completion));
     state.body_ended = true;
     Ok(())
 }
 
-fn map_finish_reason(reason: &str) -> ModelFinishReason {
+fn map_finish_reason(reason: &str) -> Result<ModelFinishReason, ModelProviderFailure> {
     match reason.to_ascii_uppercase().as_str() {
-        "MAX_TOKENS" => ModelFinishReason::OutputLimit,
-        _ => ModelFinishReason::Stop,
+        "STOP" => Ok(ModelFinishReason::Stop),
+        "MAX_TOKENS" => Ok(ModelFinishReason::OutputLimit),
+        _ => Err(ModelProviderFailure::Rejected),
     }
+}
+
+fn validated_response_part_text(
+    part: GeminiResponsePart,
+) -> Result<Option<String>, ModelProviderFailure> {
+    if part.function_call.is_some()
+        || part.function_response.is_some()
+        || part.executable_code.is_some()
+        || part.code_execution_result.is_some()
+    {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    if !part.unknown.is_empty() {
+        return Err(ModelProviderFailure::InvalidResponse);
+    }
+    if part.thought.unwrap_or(false) {
+        return Ok(None);
+    }
+    Ok(part.text.filter(|text| !text.is_empty()))
 }
 
 fn validate_json_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
@@ -1196,30 +1397,47 @@ async fn read_bounded_embedding_response(
     Ok(bytes)
 }
 
-fn parse_gemini_models(
-    body: &[u8],
-    provider_id: ModelProviderId,
-) -> Result<ProviderModelCatalog, ModelProviderFailure> {
+fn parse_gemini_models_page(body: &[u8]) -> Result<GeminiModelsPage, ModelProviderFailure> {
     let response = serde_json::from_slice::<GeminiListModelsResponse>(body)
         .map_err(|_| ModelProviderFailure::InvalidResponse)?;
-    let mut models = Vec::new();
-    if let Some(list) = response.models {
-        for item in list {
-            let name = normalize_model_path(&item.name);
-            if let Ok(model_id) = ModelId::try_from_string(name.to_owned()) {
-                models.push(model_id);
-            }
-        }
+    Ok(GeminiModelsPage {
+        models: response.models.unwrap_or_default(),
+        next_page_token: response.next_page_token,
+    })
+}
+
+struct GeminiModelsPage {
+    models: Vec<GeminiModelMetadata>,
+    next_page_token: Option<String>,
+}
+
+fn model_supports_a3_role(model: &GeminiModelMetadata) -> bool {
+    model
+        .supported_generation_methods
+        .as_ref()
+        .is_some_and(|methods| {
+            methods.iter().any(|method| {
+                matches!(
+                    method.as_str(),
+                    "generateContent"
+                        | "streamGenerateContent"
+                        | "embedContent"
+                        | "batchEmbedContents"
+                )
+            })
+        })
+}
+
+fn validate_page_token(token: &str) -> Result<(), ModelProviderFailure> {
+    if token.is_empty()
+        || token.len() > MAX_GEMINI_PAGE_TOKEN_BYTES
+        || !token.is_ascii()
+        || token.bytes().any(|byte| byte.is_ascii_control())
+    {
+        Err(ModelProviderFailure::InvalidResponse)
+    } else {
+        Ok(())
     }
-    models.sort();
-    models.dedup();
-    let truncated = models.len() > MAX_GEMINI_MODELS_COUNT;
-    models.truncate(MAX_GEMINI_MODELS_COUNT);
-    Ok(ProviderModelCatalog::from_observation(
-        provider_id,
-        models,
-        truncated,
-    ))
 }
 
 fn parse_gemini_show_observation(
@@ -1231,19 +1449,7 @@ fn parse_gemini_show_observation(
         .input_token_limit
         .and_then(|tokens| u32::try_from(tokens).ok())
         .and_then(|tokens| ReportedModelContextLimit::new(tokens).ok());
-    let generate_content_supported =
-        metadata
-            .supported_generation_methods
-            .as_ref()
-            .is_none_or(|methods| {
-                methods
-                    .iter()
-                    .any(|method| method == "generateContent" || method == "streamGenerateContent")
-            });
-    Ok(GeminiShowObservation {
-        context_limit,
-        generate_content_supported,
-    })
+    Ok(GeminiShowObservation { context_limit })
 }
 
 fn parse_gemini_probe_response(body: &[u8]) -> Result<bool, ModelProviderFailure> {
@@ -1255,7 +1461,7 @@ fn parse_gemini_probe_response(body: &[u8]) -> Result<bool, ModelProviderFailure
     for candidate in candidates {
         if let Some(parts) = candidate.content.and_then(|content| content.parts) {
             for part in parts {
-                if let Some(text) = part.text {
+                if let Some(text) = validated_response_part_text(part)? {
                     let probe_ok = serde_json::from_str::<Value>(&text)
                         .ok()
                         .and_then(|value| {
@@ -1314,15 +1520,18 @@ fn parse_gemini_batch_embedding_response(
 mod tests {
     use super::{
         GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy, GeminiEndpointScope,
-        LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy,
+        LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy, map_finish_reason,
+        translate_response_json_schema,
     };
+    use a3_application::{AgentActionJsonSchema, ModelFinishReason, ModelProviderFailure};
+    use serde_json::json;
 
     #[test]
     fn localhost_normalizes_and_remote_requires_https() -> Result<(), Box<dyn std::error::Error>> {
         let local = GeminiEndpoint::parse("http://localhost:8080")?;
         assert_eq!(local.scope(), GeminiEndpointScope::LocalLoopback);
         assert_eq!(local.canonical_origin(), "http://127.0.0.1:8080");
-        assert!(StandardGeminiEndpointPolicy.authorize(&local).is_ok());
+        assert!(StandardGeminiEndpointPolicy.authorize(&local).is_err());
         assert!(LocalOnlyGeminiEndpointPolicy.authorize(&local).is_ok());
 
         assert_eq!(
@@ -1342,5 +1551,60 @@ mod tests {
         assert!(GeminiEndpoint::parse("http://user:secret@127.0.0.1:8080").is_err());
         assert!(GeminiEndpoint::parse("http://127.0.0.1:8080/v1beta").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn response_schema_translation_is_bounded_explicit_and_preserves_core_invariants()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let translated = translate_response_json_schema(&json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "result",
+                    "pattern": "^result$",
+                    "minLength": 6,
+                    "maxLength": 6
+                }
+            },
+            "required": ["kind"],
+            "additionalProperties": false
+        }))?;
+        assert_eq!(translated["properties"]["kind"]["enum"], json!(["result"]));
+        assert!(translated.get("$schema").is_none());
+        assert!(translated["properties"]["kind"].get("pattern").is_none());
+        assert_eq!(
+            translate_response_json_schema(&json!({"type": "string", "default": "secret"})),
+            Err(ModelProviderFailure::Rejected)
+        );
+        for schema in [
+            AgentActionJsonSchema::version_one(),
+            AgentActionJsonSchema::version_two(),
+        ] {
+            translate_response_json_schema(&schema.as_json()?)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_explicit_success_finish_reasons_are_accepted() {
+        assert_eq!(map_finish_reason("STOP"), Ok(ModelFinishReason::Stop));
+        assert_eq!(
+            map_finish_reason("MAX_TOKENS"),
+            Ok(ModelFinishReason::OutputLimit)
+        );
+        for rejected in [
+            "SAFETY",
+            "RECITATION",
+            "MALFORMED_FUNCTION_CALL",
+            "OTHER",
+            "",
+        ] {
+            assert_eq!(
+                map_finish_reason(rejected),
+                Err(ModelProviderFailure::Rejected)
+            );
+        }
     }
 }

@@ -73,6 +73,7 @@ use a3_application::{
     TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
     TraceModuleRuntimeFlow, VerificationEvidenceStore,
 };
+use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
     AgentControllerState, AgentTurnActionClass, AgentTurnRepairUsage, ApplicationVersion,
@@ -286,6 +287,31 @@ impl CompositionRoot {
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
             .configure_provider(expected, provider_kind, endpoint)
+            .await
+    }
+
+    /// Stores one bounded credential for the Core-owned provider without network access.
+    pub async fn set_model_provider_credential(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        secret: a3_application::ProviderApiKey,
+    ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .set_credential(expected, secret)
+            .await
+    }
+
+    /// Deletes the current provider credential without contacting the provider.
+    pub async fn delete_model_provider_credential(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+    ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .delete_credential(expected)
             .await
     }
 
@@ -2057,6 +2083,7 @@ struct CompositionBase {
 #[derive(Default)]
 struct OptionalCompositionPorts {
     settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
+    credential_store: Option<Arc<dyn a3_application::ProviderCredentialStore>>,
     command_allowlist_store: Option<Arc<dyn a3_application::CommandAllowlistStore>>,
     project_ignore_settings_source: Option<Arc<dyn a3_application::ProjectIgnoreSettingsSource>>,
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
@@ -2086,6 +2113,7 @@ struct OptionalCompositionPorts {
 
 struct IndexingCompositionPorts {
     settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
+    credential_store: Arc<dyn a3_application::ProviderCredentialStore>,
     command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore>,
     project_ignore_settings_source: Arc<dyn a3_application::ProjectIgnoreSettingsSource>,
     index_store: Arc<dyn KnowledgeIndexStore>,
@@ -2162,6 +2190,7 @@ impl CompositionBase {
             store,
             OptionalCompositionPorts {
                 settings_store: Some(ports.settings_store),
+                credential_store: Some(ports.credential_store),
                 command_allowlist_store: Some(ports.command_allowlist_store),
                 project_ignore_settings_source: Some(ports.project_ignore_settings_source),
                 index_store: Some(ports.index_store),
@@ -2398,7 +2427,12 @@ impl CompositionBase {
         };
         Ok(CompositionRoot {
             health_query: self.health_query,
-            model_settings: ports.settings_store.map(ModelSettingsManager::new),
+            model_settings: match (ports.settings_store, ports.credential_store) {
+                (Some(settings), Some(credentials)) => {
+                    Some(ModelSettingsManager::new(settings, credentials))
+                }
+                _ => None,
+            },
             project_settings,
             open_project: OpenProject::new(
                 project_directory_picker,
@@ -2466,6 +2500,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     .map_err(CompositionRootError::Catalog)?,
             );
             let settings_store: Arc<dyn a3_application::DesktopSettingsStore> = store.clone();
+            let credential_store: Arc<dyn a3_application::ProviderCredentialStore> =
+                Arc::new(NativeProviderCredentialStore::new());
             let command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore> =
                 store.clone();
             let project_ignore_settings_source: Arc<
@@ -2501,6 +2537,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                 catalog_store,
                 IndexingCompositionPorts {
                     settings_store,
+                    credential_store,
                     command_allowlist_store,
                     project_ignore_settings_source,
                     index_store,
@@ -2533,6 +2570,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::cancel_deep_map,
             commands::compile_task_lens,
             commands::configure_model_provider,
+            commands::delete_model_provider_credential,
             commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
             commands::control_agent_task_run,
@@ -2570,6 +2608,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::revise_agent_goal,
             commands::remove_project,
             commands::probe_model_role,
+            commands::set_model_provider_credential,
             commands::start_deep_map
         ])
         .run(tauri::generate_context!())

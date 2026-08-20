@@ -7,9 +7,11 @@
   import {
     cancelModelProbe,
     configureModelProvider,
+    deleteModelProviderCredential,
     discoverProviderModels,
     probeModelRole,
     querySettings,
+    setModelProviderCredential,
     type CancelModelProbeResponseV1,
     type EmbeddingRoleProfileV1,
     type LlmRoleProfileV1,
@@ -30,6 +32,11 @@
       providerKind: ModelProviderKindV1,
       endpointOrigin: string | null,
     ) => Promise<SettingsResponseV1>;
+    credentialSetter?: (
+      expectedRevision: string,
+      apiKeyBytes: Uint8Array,
+    ) => Promise<SettingsResponseV1>;
+    credentialDeleter?: (expectedRevision: string) => Promise<SettingsResponseV1>;
     roleProber?: (
       expectedRevision: string,
       input: ModelProbeInputV1,
@@ -45,6 +52,7 @@
   type Action =
     | { kind: 'idle' }
     | { kind: 'configuring' }
+    | { kind: 'credential'; operation: 'storing' | 'deleting' }
     | { kind: 'discovering' }
     | { kind: 'probing'; role: ModelRoleV1 }
     | { kind: 'cancelling'; role: ModelRoleV1 | null }
@@ -54,7 +62,7 @@
     | { kind: 'loading' }
     | { kind: 'ready'; health: HealthResponseV1 }
     | { kind: 'error' };
-  type ProviderDialog = 'closed' | 'create' | 'edit' | 'remove';
+  type ProviderDialog = 'closed' | 'create' | 'edit' | 'remove' | 'deleteCredential';
 
   const settingsSections: { id: SettingsSection; label: string }[] = [
     { id: 'general', label: 'Allgemein' },
@@ -71,6 +79,8 @@
     modelDiscoverer = discoverProviderModels,
     operationCanceller = cancelModelProbe,
     providerConfigurer = configureModelProvider,
+    credentialSetter = setModelProviderCredential,
+    credentialDeleter = deleteModelProviderCredential,
     roleProber = probeModelRole,
     settingsLoader = querySettings,
   }: Props = $props();
@@ -94,9 +104,11 @@
   let mappingParallelism = $state(1);
   let embeddingModelId = $state('');
   let embeddingBatchSize = $state(8);
+  let apiKeyInput = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
     void loadSettings();
+    return clearCredentialInput;
   });
 
   async function loadSettings(): Promise<void> {
@@ -120,6 +132,7 @@
   }
 
   function selectSettingsView(section: SettingsSection): void {
+    clearCredentialInput();
     settingsView = section;
     if (section === 'about') void loadAppInfo();
   }
@@ -162,6 +175,7 @@
   }
 
   function openProviderDialog(mode: Exclude<ProviderDialog, 'closed'>): void {
+    clearCredentialInput();
     if (view.kind === 'ready' && view.settings.endpoint !== null) {
       endpointOrigin = view.settings.endpoint.origin;
       providerKind = view.settings.endpoint.providerId === 'gemini' ? 'gemini' : 'ollama';
@@ -196,6 +210,39 @@
     }
   }
 
+  function clearCredentialInput(): void {
+    if (apiKeyInput !== null) apiKeyInput.value = '';
+  }
+
+  async function saveCredential(): Promise<void> {
+    if (view.kind !== 'ready' || apiKeyInput === null) return;
+    const encoded = new TextEncoder().encode(apiKeyInput.value);
+    clearCredentialInput();
+    action = { kind: 'credential', operation: 'storing' };
+    try {
+      applyResponse(await credentialSetter(view.settings.revision, encoded), false);
+    } catch (error) {
+      action = { kind: 'error', message: recoveryMessage(error) };
+      await refreshAfterAction();
+    } finally {
+      encoded.fill(0);
+      clearCredentialInput();
+    }
+  }
+
+  async function deleteCredential(): Promise<void> {
+    if (view.kind !== 'ready') return;
+    clearCredentialInput();
+    action = { kind: 'credential', operation: 'deleting' };
+    try {
+      applyResponse(await credentialDeleter(view.settings.revision), false);
+      providerDialog = 'closed';
+    } catch (error) {
+      action = { kind: 'error', message: recoveryMessage(error) };
+      await refreshAfterAction();
+    }
+  }
+
   async function discoverModels(): Promise<void> {
     if (view.kind !== 'ready' || !canUseActiveProvider(view.settings)) return;
     action = { kind: 'discovering' };
@@ -210,7 +257,10 @@
       modelCatalog = catalog;
       action = { kind: 'idle' };
     } catch (error) {
-      action = { kind: 'error', message: discoveryRecoveryMessage(error, view.settings.endpoint?.providerId) };
+      action = {
+        kind: 'error',
+        message: discoveryRecoveryMessage(error, view.settings.endpoint?.providerId),
+      };
     }
   }
 
@@ -300,8 +350,8 @@
 
   function canUseActiveProvider(settings: SettingsV1): boolean {
     if (settings.endpoint === null) return false;
-    if (settings.endpoint.providerId === 'gemini') {
-      return !operationBusy();
+    if (settings.endpoint.access === 'explicitUserInitiatedRemote') {
+      return settings.credential?.status === 'configured' && !operationBusy();
     }
     return settings.endpoint.scope === 'localLoopback' && !operationBusy();
   }
@@ -313,6 +363,7 @@
   function operationBusy(): boolean {
     return (
       action.kind === 'configuring' ||
+      action.kind === 'credential' ||
       action.kind === 'discovering' ||
       action.kind === 'probing' ||
       action.kind === 'cancelling'
@@ -370,6 +421,14 @@
     return labels[status];
   }
 
+  function credentialLabel(settings: SettingsV1): string {
+    const status = settings.credential?.status;
+    if (status === 'configured') return 'API-Key sicher gespeichert';
+    if (status === 'recoveryRequired') return 'API-Key muss repariert werden';
+    if (status === 'unavailable') return 'OS-Schlüsselspeicher nicht verfügbar';
+    return 'API-Key fehlt';
+  }
+
   function presentModal(node: HTMLDialogElement): { destroy: () => void } {
     if (typeof node.showModal === 'function') node.showModal();
     else node.setAttribute('open', '');
@@ -392,7 +451,7 @@
       return 'Die Providerverbindung hat sich geändert. Lade die Einstellungen neu.';
     }
     if (providerId === 'gemini') {
-      return 'Die Gemini-Modelle konnten nicht abgefragt werden. Prüfe deinen API-Key (GEMINI_API_KEY) und deine Internetverbindung.';
+      return 'Die Gemini-Modelle konnten nicht abgefragt werden. Prüfe den gespeicherten API-Key und deine Internetverbindung.';
     }
     return 'Die lokalen Modelle konnten nicht abgefragt werden. Prüfe, ob Ollama läuft, und versuche es erneut.';
   }
@@ -407,6 +466,18 @@
     }
     if (parsed?.code === 'modelProbeAlreadyActive') {
       return 'Eine andere Modelloperation läuft bereits.';
+    }
+    if (parsed?.code === 'providerCredentialInvalid') {
+      return 'Der API-Key ist leer, zu lang oder enthält ungültige Zeichen.';
+    }
+    if (parsed?.code === 'providerCredentialMissing') {
+      return 'Hinterlege zuerst einen Gemini API-Key.';
+    }
+    if (parsed?.code === 'providerCredentialRecoveryRequired') {
+      return 'Der API-Key-Zustand ist unvollständig. Ersetze oder lösche den Schlüssel.';
+    }
+    if (parsed?.code === 'providerCredentialStoreUnavailable') {
+      return 'Der Betriebssystem-Schlüsselspeicher ist gesperrt oder nicht verfügbar.';
     }
     return parsed?.message ?? 'Die Modell-Einstellungen konnten nicht sicher verarbeitet werden.';
   }
@@ -490,7 +561,7 @@
           <header class="settings-page-heading settings-page-heading-action">
             <div>
               <h3 id="provider-settings-heading">Provider</h3>
-              <p>Lokale Modellverbindungen anlegen und verwalten.</p>
+              <p>Lokale und freigegebene Cloud-Modellverbindungen anlegen und verwalten.</p>
             </div>
             {#if view.settings.endpoint === null}
               <button
@@ -520,7 +591,11 @@
                 </div>
                 <div class="provider-summary">
                   <div>
-                    <strong>{view.settings.endpoint.providerId === 'gemini' ? 'Google Gemini' : 'Ollama'}</strong>
+                    <strong
+                      >{view.settings.endpoint.providerId === 'gemini'
+                        ? 'Google Gemini'
+                        : 'Ollama'}</strong
+                    >
                     <span class="settings-badge">{healthLabel(view.settings)}</span>
                   </div>
                   <code>{view.settings.endpoint.origin}</code>
@@ -542,13 +617,79 @@
                 </div>
               </article>
             </div>
-            {#if view.settings.endpoint.scope === 'remote' && view.settings.endpoint.providerId !== 'gemini'}
+            {#if view.settings.endpoint.access === 'remoteBlocked'}
               <div class="remote-warning" role="alert">
                 <strong>Remote-Verbindung blockiert</strong>
                 <p>
                   A^3 führt ohne exakte Freigabe weder Modellerkennung noch Capability-Prüfung aus.
                 </p>
               </div>
+            {/if}
+            {#if view.settings.endpoint.providerId === 'gemini' && view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
+              <div class="remote-warning" role="note">
+                <strong>Google Gemini Cloud</strong>
+                <p>
+                  Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
+                  <code>generativelanguage.googleapis.com</code>. Spätere Agentenläufe können
+                  Prompts und ausgewählten Quelltext nur mit einer eigenen laufgebundenen
+                  Netzwerkfreigabe an Google senden. Das Speichern des Keys erzeugt keinen
+                  Netzwerkzugriff.
+                </p>
+              </div>
+              <form
+                class="credential-form"
+                onsubmit={(event) => {
+                  event.preventDefault();
+                  void saveCredential();
+                }}
+              >
+                <div>
+                  <strong>Gemini API-Key</strong>
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    class:credential-warning={view.settings.credential?.status !== 'configured'}
+                  >
+                    {credentialLabel(view.settings)}
+                  </span>
+                </div>
+                <label for="gemini-api-key">
+                  Neuer API-Key
+                  <input
+                    id="gemini-api-key"
+                    bind:this={apiKeyInput}
+                    type="password"
+                    maxlength="4096"
+                    required
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    autocapitalize="none"
+                    disabled={operationBusy()}
+                  />
+                </label>
+                <p>
+                  Der vorhandene Key wird nie angezeigt. A^3 speichert ihn ausschließlich im
+                  Betriebssystem-Schlüsselspeicher.
+                </p>
+                <div class="provider-actions">
+                  <button class="primary-action" type="submit" disabled={operationBusy()}>
+                    {view.settings.credential?.status === 'configured'
+                      ? 'Key ersetzen'
+                      : 'Key speichern'}
+                  </button>
+                  {#if view.settings.credential?.status !== 'missing'}
+                    <button
+                      class="subtle-danger-action"
+                      type="button"
+                      disabled={operationBusy()}
+                      onclick={() => {
+                        clearCredentialInput();
+                        providerDialog = 'deleteCredential';
+                      }}>Key löschen</button
+                    >
+                  {/if}
+                </div>
+              </form>
             {/if}
           {/if}
         </section>
@@ -580,10 +721,15 @@
                 >Zu Provider</button
               >
             </div>
-          {:else if view.settings.endpoint.scope === 'remote' && view.settings.endpoint.providerId !== 'gemini'}
+          {:else if view.settings.endpoint.access === 'remoteBlocked'}
             <div class="remote-warning" role="alert">
               <strong>Lokale Modellerkennung nicht verfügbar</strong>
               <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
+            </div>
+          {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
+            <div class="remote-warning" role="alert">
+              <strong>Gemini API-Key erforderlich</strong>
+              <p>Speichere oder repariere den API-Key zuerst im Bereich Provider.</p>
             </div>
           {:else if modelCatalog === null}
             <div class="settings-empty-state">
@@ -592,7 +738,11 @@
                 Die Abfrage startet nur durch deinen Klick. Sie liest ausschließlich Modellnamen vom
                 konfigurierten Provider-Endpoint.
               </p>
-              <button type="button" onclick={discoverModels}>Modelle erkennen</button>
+              <button
+                type="button"
+                disabled={!canUseActiveProvider(view.settings)}
+                onclick={discoverModels}>Modelle erkennen</button
+              >
             </div>
           {:else}
             <div class="model-catalog-summary" role="status">
@@ -666,6 +816,12 @@
         <p class="settings-status" role="status" aria-live="polite">
           Provider wird lokal validiert …
         </p>
+      {:else if action.kind === 'credential'}
+        <p class="settings-status" role="status" aria-live="polite">
+          {action.operation === 'storing'
+            ? 'API-Key wird sicher gespeichert …'
+            : 'API-Key wird aus dem Betriebssystem-Schlüsselspeicher gelöscht …'}
+        </p>
       {:else if action.kind === 'discovering'}
         <p class="settings-status" role="status" aria-live="polite">
           Installierte Ollama-Modelle werden abgefragt …
@@ -715,7 +871,8 @@
             id="provider-kind"
             value={providerKind}
             disabled={operationBusy()}
-            onchange={(event) => handleProviderKindChange(event.currentTarget.value as ModelProviderKindV1)}
+            onchange={(event) =>
+              handleProviderKindChange(event.currentTarget.value as ModelProviderKindV1)}
           >
             <option value="ollama">Ollama</option>
             <option value="gemini">Google Gemini</option>
@@ -731,13 +888,15 @@
             spellcheck="false"
             autocomplete="off"
             bind:value={endpointOrigin}
+            readonly={providerKind === 'gemini'}
             disabled={operationBusy()}
           />
         </label>
         {#if providerKind === 'gemini'}
           <p>Standard: <code>https://generativelanguage.googleapis.com</code></p>
           <p class="probe-explanation">
-            Authentifizierung über Umgebungsvariable <code>GEMINI_API_KEY</code> oder <code>GOOGLE_API_KEY</code>.
+            Nach dem Speichern der Verbindung hinterlegst du den API-Key im geschützten
+            Betriebssystem-Schlüsselspeicher.
           </p>
         {:else}
           <p>Standard: <code>http://127.0.0.1:11434</code></p>
@@ -775,11 +934,46 @@
       >
     </div>
     <p>Der Provider-Endpunkt und seine API-Verbindung werden aus den Einstellungen entfernt.</p>
+    {#if view.kind === 'ready' && view.settings.endpoint?.providerId === 'gemini'}
+      <p>Der gespeicherte Gemini API-Key wird zuerst aus dem OS-Schlüsselspeicher gelöscht.</p>
+    {/if}
     <div class="modal-actions">
       <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
       <button class="risk-action" type="button" onclick={() => saveProvider(null)}
         >Provider entfernen</button
       >
+    </div>
+  </dialog>
+{/if}
+
+{#if providerDialog === 'deleteCredential'}
+  <dialog
+    class="modal-dialog settings-dialog"
+    aria-labelledby="delete-credential-heading"
+    use:presentModal
+    oncancel={(event) => {
+      event.preventDefault();
+      clearCredentialInput();
+      providerDialog = 'closed';
+    }}
+  >
+    <div class="modal-heading">
+      <div>
+        <h3 id="delete-credential-heading">Gemini API-Key löschen?</h3>
+        <p>Gemini-Modellerkennung und Capability-Prüfungen werden danach deaktiviert.</p>
+      </div>
+      <button
+        type="button"
+        aria-label="Dialog schließen"
+        onclick={() => (providerDialog = 'closed')}>×</button
+      >
+    </div>
+    <p>
+      Der Key wird aus dem Betriebssystem-Schlüsselspeicher entfernt und nicht wieder angezeigt.
+    </p>
+    <div class="modal-actions">
+      <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
+      <button class="risk-action" type="button" onclick={deleteCredential}>Key löschen</button>
     </div>
   </dialog>
 {/if}

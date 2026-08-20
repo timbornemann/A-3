@@ -352,12 +352,14 @@ Destruktive Git-Aktionen sind nie implizit durch „implementiere dies“ autori
 ## Secrets
 
 - bekannte Secret-Dateien und Credential-Muster werden nicht indexiert;
-- Provider-Tokens liegen im OS-Schlüsselspeicher;
+- Provider-Tokens liegen ausschließlich im OS-Schlüsselspeicher; es gibt keinen Datei-, libSQL-
+  oder Umgebungsvariablen-Fallback;
 - Logs verwenden Redaction vor Persistenz;
 - persistierte RunEvents besitzen keinen Freitext: Modell-, Tool-, User- und externe Fehlerausgaben
   werden vor der Adaptergrenze auf Quellkategorie, Bytezahl und Trunkierungsstatus reduziert; auch
   der JSONL-Export enthält nur diese content-freien Metadaten und den Digest der sicheren Struktur;
-- UI erhält nur SecretExists, niemals den Secretwert;
+- UI erhält ausschließlich `Missing`, `Configured`, `RecoveryRequired` oder `Unavailable`, niemals
+  den Secretwert, einen Key-Ausschnitt oder eine abgeleitete Kennung;
 - Context Packs enthalten keine vollständigen Environment Dumps;
 - der Context Compiler prüft Anchor, jede gepackte Retrieval-/Claim-Einheit und jede begrenzte
   Toolvorschau sowie jede tatsächlich reinjizierte Run-Memory-Einheit auf bekannte Private-Key-,
@@ -551,6 +553,29 @@ V1 ist offline-first:
 
 Quellcode, Embeddings, Projektkarten, Prompts und Logs werden nie ohne ausdrückliche Aktivierung übertragen.
 
+Google Gemini verwendet ausschließlich den festen Origin
+`https://generativelanguage.googleapis.com`. Der Adapter setzt `x-goog-api-key` erst nach der
+exakten Produktionspolicy-Prüfung, deaktiviert Redirects und Umgebungsproxies und sendet zusätzlich
+`x-goog-api-client: a3/0.1.0`. Benutzerdefinierte Gemini-Gateways sind nicht zulässig. Speichern
+oder Löschen eines API-Keys erzeugt keinen Netzwerkzugriff; Modelldiscovery und Capability-Probe
+benötigen jeweils einen ausdrücklichen Klick. Eine spätere Agentenlaufzeit muss unabhängig davon
+ihre laufgebundene Netzwerkfreigabe erhalten.
+
+Der Gemini-Key ist auf 1 bis 4.096 ASCII-Bytes begrenzt, wird außen um ASCII-Whitespace bereinigt
+und darf keine eingebetteten Steuerzeichen enthalten. Das Passwortfeld ist nicht vorausgefüllt;
+DOM-Wert und temporärer `Uint8Array` werden nach Submit, Fehler, Schließen und Unmount geleert. Der
+one-way Set-Request ist weder serialisierbar noch clonebar oder secret-offenlegend debuggbar. Der
+Core speichert im nativen Keyring unter Service `dev.timbornemann.a3.provider-api-key` und Account
+`gemini` eine versionierte Hülle aus Generation und Key. Verwaltete Rust-Puffer werden beim Drop
+überschrieben.
+
+libSQL speichert nur Credential-Anforderung, Lifecycle und monotone Generation. Schreiben und
+Löschen verwenden `storing`/Keyring/`configured` beziehungsweise
+`deleting`/Keyring/`missing`. Jede Unterbrechung oder Generationsabweichung wird
+`RecoveryRequired`; Providerzugriffe bleiben dann gesperrt und nur Ersetzen oder Löschen ist
+zulässig. Providerwechsel und Entfernung löschen den Gemini-Eintrag zuerst, und ein Löschfehler
+blockiert den Wechsel sichtbar.
+
 Der Ollama-kompatible Adapter akzeptiert nur credentialfreie HTTP-/HTTPS-Origins ohne Pfad, Query
 oder Fragment. `localhost` wird vor der Policyprüfung auf die IPv4-Loopbackadresse normalisiert;
 nur literale Loopbackadressen gelten als lokal. Jeder nicht lokale Endpoint benötigt HTTPS und
@@ -564,6 +589,14 @@ Discovery-IPC-Request enthält weder URL, Provider-ID, Modellname noch Timeout. 
 autorisiert `GET /api/tags` erneut, begrenzt die JSON-Antwort auf 512 KiB und projiziert höchstens
 256 eindeutige Modell-IDs. Das Ergebnis bleibt flüchtig und setzt weder Health noch Capability.
 Discovery und Capability-Probe teilen einen besessenen, kooperativ abbrechbaren Operations-Slot.
+
+Gemini-Discovery verwendet `models.list` mit `pageSize=100`, maximal zehn Seiten, 1.000 gelesenen
+Einträgen, 256 eindeutigen Ergebnissen, 512 KiB pro Seite und 2 MiB insgesamt. Tokenschleifen und
+ungültige Tokens sind Fehler. Streaming akzeptiert ausschließlich Candidate 0, unterdrückt
+`thought:true`, behandelt nur `STOP` und `MAX_TOKENS` als Terminalzustände und lehnt Block-,
+Safety-, Tool- und unbekannte Finish-Gründe sowie Daten nach Abschluss ab. Strukturierte Ausgabe
+verwendet `responseJsonSchema`; nicht unterstützte Schemachlüssel werden vor dem Netzwerkzugriff
+abgelehnt. Native Gemini-Tool-Calls bleiben bis zu einem eigenen Live-Probe deaktiviert.
 
 Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
 Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,

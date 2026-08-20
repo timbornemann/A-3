@@ -410,8 +410,17 @@ Die UI lädt diese Projektion beim Start und nach einem erfolgreichen Open erneu
 
 `query_settings` akzeptiert nur `protocolVersion`. `configure_model_provider` akzeptiert
 zusätzlich ausschließlich die erwartete dezimale Settingsrevision, die geschlossene
-`providerKind`-Auswahl (`ollama`) und einen optionalen credential-freien Endpoint-Origin. Ein
+`providerKind`-Auswahl (`ollama | gemini`) und einen optionalen credential-freien Endpoint-Origin. Ein
 fehlender Endpoint entfernt die aktive Verbindung und invalidiert Rollenprofile atomar.
+
+`set_model_provider_credential` akzeptiert ausschließlich `protocolVersion`,
+`expectedSettingsRevision` und 1 bis 4.096 uninterpretierte `apiKeyBytes`.
+`delete_model_provider_credential` akzeptiert nur Version und Revision. Provider, Endpoint,
+Credential-Anforderung und Generation stammen in beiden Fällen aus der exakt aktuellen
+Core-Settingsrevision. Der Set-Request ist eine reine Deserialisierungsgrenze; keine Response,
+Debugausgabe oder serialisierbare DTO enthält Schlüsselmaterial. `SettingsV1` liefert nur
+Endpoint-Access (`local | remoteBlocked | explicitUserInitiatedRemote`) und den optionalen
+Credential-Status (`missing | configured | recoveryRequired | unavailable`).
 
 `discover_provider_models` akzeptiert neben `protocolVersion` nur `expectedSettingsRevision`.
 Endpoint, Provider-ID, Modellname, Capabilitystatus und Timeout stammen nicht aus der WebView. Die
@@ -433,6 +442,9 @@ Ein syntaktisch gültiger Requestfehler erhält einen sicheren, serialisierbaren
 Neben den Projektinspektionsfehlern unterscheidet V1 lokale Storage-Nichtverfügbarkeit, Korruption,
 eine neuere nicht unterstützte Schemaversion, ungültige persistierte Daten und einen
 Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefehler oder Rohpfade.
+Provider-Credentials verwenden zusätzlich die stabilen Codes `providerCredentialInvalid`,
+`providerCredentialMissing`, `providerCredentialRecoveryRequired` und
+`providerCredentialStoreUnavailable`; ihre Meldungen enthalten nie Credential-Material.
 
 ## Tauri-Capability
 

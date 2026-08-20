@@ -32,9 +32,11 @@ Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint
 NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, konservative
 Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
-Aktionen freischalten. Die Desktop-Settings verwalten die aktive Ollama-Verbindung als typisierten
-Provider und fragen installierte Modelle nur nach expliziter Nutzeraktion als begrenzten,
-flüchtigen Auswahlkatalog ab; Modellnamen bleiben ohne Capability-Probe nicht ausführbar. Der
+Aktionen freischalten. Die Desktop-Settings verwalten Ollama und den kanonischen Google-Gemini-
+Endpoint als typisierte Provider. Gemini-Schlüssel liegen ausschließlich im nativen
+Betriebssystem-Schlüsselspeicher; libSQL und IPC führen nur inhaltsfreien Status und monotone
+Generation. Modellkataloge werden nur nach expliziter Nutzeraktion begrenzt und flüchtig
+abgefragt; Modellnamen bleiben ohne Capability-Probe nicht ausführbar. Der
 statische Promptvertrag und die allgemeine versionierte AgentAction-
 Union sind nun als kompakter budgetierter Systemvertrag, eingebettetes striktes JSON-Schema,
 unabhängiger Runtime-Decoder und verbrauchbarer einzelner Repair-Versuch umgesetzt. Der

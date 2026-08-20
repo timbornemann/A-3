@@ -2,9 +2,10 @@ use crate::catalog::is_corruption;
 use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStoreFailure,
-    DesktopSettingsStoreVersion, LlmModelRole, LlmRoleProfile, ModelEndpointScope,
-    ProviderHealthObservation, ProviderHealthStatus, SettingsTimestamp, StoredDesktopSettings,
-    VerifiedEmbeddingProfile,
+    DesktopSettingsStoreVersion, LlmModelRole, LlmRoleProfile, ModelEndpointAccess,
+    ModelEndpointScope, ProviderCredentialGeneration, ProviderCredentialLifecycle,
+    ProviderCredentialMetadata, ProviderCredentialRequirement, ProviderHealthObservation,
+    ProviderHealthStatus, SettingsTimestamp, StoredDesktopSettings, VerifiedEmbeddingProfile,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
@@ -53,6 +54,7 @@ async fn load_from_connection(
     let mut rows = connection
         .query(
             "SELECT revision, endpoint_provider_id, endpoint_origin, endpoint_scope,
+             endpoint_access, credential_requirement, credential_state, credential_generation,
              health_status, health_checked_at_unix_millis
              FROM desktop_settings_revisions ORDER BY revision DESC LIMIT 1",
             (),
@@ -66,8 +68,12 @@ async fn load_from_connection(
     let provider_id = read_optional_string(&row, 1)?;
     let origin = read_optional_string(&row, 2)?;
     let scope = read_optional_string(&row, 3)?;
-    let health_status = read_optional_string(&row, 4)?;
-    let health_checked_at = read_optional_i64(&row, 5)?;
+    let access = read_optional_string(&row, 4)?;
+    let credential_requirement = read_string(&row, 5)?;
+    let credential_state = read_string(&row, 6)?;
+    let credential_generation = read_u64(&row, 7)?;
+    let health_status = read_optional_string(&row, 8)?;
+    let health_checked_at = read_optional_i64(&row, 9)?;
     if rows
         .next()
         .await
@@ -77,12 +83,15 @@ async fn load_from_connection(
         return Err(SettingsRepositoryError::InvalidStoredData);
     }
 
-    let endpoint = decode_endpoint(provider_id, origin, scope)?;
+    let endpoint = decode_endpoint(provider_id, origin, scope, access, &credential_requirement)?;
+    let credential = decode_credential(&credential_state, credential_generation)?;
     let health = decode_health(endpoint.as_ref(), health_status, health_checked_at)?;
     let (coding, mapping) = load_llm_profiles(connection, version).await?;
     let embedding = load_embedding_profile(connection, version).await?;
-    let settings = DesktopSettings::from_stored_parts(endpoint, health, coding, mapping, embedding)
-        .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    let settings = DesktopSettings::from_stored_parts(
+        endpoint, credential, health, coding, mapping, embedding,
+    )
+    .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
     Ok(StoredDesktopSettings::new(version, settings))
 }
 
@@ -110,6 +119,13 @@ async fn append_in_transaction(
     let endpoint_scope = settings
         .endpoint()
         .map(|endpoint| encode_scope(endpoint.scope()));
+    let endpoint_access = settings
+        .endpoint()
+        .map(|endpoint| encode_access(endpoint.access()));
+    let credential_requirement = settings.endpoint().map_or("none", |endpoint| {
+        encode_credential_requirement(endpoint.credential_requirement())
+    });
+    let credential = settings.credential();
     let health_status = settings
         .provider_health()
         .map(|health| encode_health_status(health.status()));
@@ -121,14 +137,19 @@ async fn append_in_transaction(
     transaction
         .execute(
             "INSERT INTO desktop_settings_revisions (
-             revision, endpoint_provider_id, endpoint_origin, endpoint_scope,
+             revision, endpoint_provider_id, endpoint_origin, endpoint_scope, endpoint_access,
+             credential_requirement, credential_state, credential_generation,
              health_status, health_checked_at_unix_millis
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 u64_to_i64(next.get())?,
                 endpoint_provider_id,
                 endpoint_origin,
                 endpoint_scope,
+                endpoint_access,
+                credential_requirement,
+                encode_credential_lifecycle(credential.lifecycle()),
+                u64_to_i64(credential.generation().get())?,
                 health_status,
                 health_checked_at
             ],
@@ -343,19 +364,40 @@ fn decode_endpoint(
     provider_id: Option<String>,
     origin: Option<String>,
     scope: Option<String>,
+    access: Option<String>,
+    credential_requirement: &str,
 ) -> Result<Option<ConfiguredModelEndpoint>, SettingsRepositoryError> {
-    match (provider_id, origin, scope) {
-        (None, None, None) => Ok(None),
-        (Some(provider_id), Some(origin), Some(scope)) => {
+    match (provider_id, origin, scope, access) {
+        (None, None, None, None) if credential_requirement == "none" => Ok(None),
+        (Some(provider_id), Some(origin), Some(scope), Some(access)) => {
             let provider_id = ModelProviderId::try_from_string(provider_id)
                 .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
             let scope = decode_scope(&scope)?;
-            ConfiguredModelEndpoint::from_validated_adapter(provider_id, origin, scope)
-                .map(Some)
-                .map_err(|_| SettingsRepositoryError::InvalidStoredData)
+            ConfiguredModelEndpoint::from_validated_adapter_with_security(
+                provider_id,
+                origin,
+                scope,
+                decode_access(&access)?,
+                decode_credential_requirement(credential_requirement)?,
+            )
+            .map(Some)
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)
         }
         _ => Err(SettingsRepositoryError::InvalidStoredData),
     }
+}
+
+fn decode_credential(
+    lifecycle: &str,
+    generation: u64,
+) -> Result<ProviderCredentialMetadata, SettingsRepositoryError> {
+    let generation = ProviderCredentialGeneration::new(generation)
+        .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    ProviderCredentialMetadata::from_stored_parts(
+        decode_credential_lifecycle(lifecycle)?,
+        generation,
+    )
+    .map_err(|_| SettingsRepositoryError::InvalidStoredData)
 }
 
 fn decode_health(
@@ -367,7 +409,7 @@ fn decode_health(
         (None, None, None) => Ok(None),
         (Some(endpoint), Some(status), None) => {
             let decoded = decode_health_status(&status)?;
-            let expected = ProviderHealthObservation::initial(endpoint.scope());
+            let expected = ProviderHealthObservation::initial_for_endpoint(endpoint);
             (decoded == expected.status())
                 .then_some(Some(expected))
                 .ok_or(SettingsRepositoryError::InvalidStoredData)
@@ -415,6 +457,63 @@ fn decode_scope(value: &str) -> Result<ModelEndpointScope, SettingsRepositoryErr
     match value {
         "local_loopback" => Ok(ModelEndpointScope::LocalLoopback),
         "remote" => Ok(ModelEndpointScope::Remote),
+        _ => Err(SettingsRepositoryError::InvalidStoredData),
+    }
+}
+
+fn encode_access(access: ModelEndpointAccess) -> &'static str {
+    match access {
+        ModelEndpointAccess::Local => "local",
+        ModelEndpointAccess::RemoteBlocked => "remote_blocked",
+        ModelEndpointAccess::ExplicitUserInitiatedRemote => "explicit_user_initiated_remote",
+    }
+}
+
+fn decode_access(value: &str) -> Result<ModelEndpointAccess, SettingsRepositoryError> {
+    match value {
+        "local" => Ok(ModelEndpointAccess::Local),
+        "remote_blocked" => Ok(ModelEndpointAccess::RemoteBlocked),
+        "explicit_user_initiated_remote" => Ok(ModelEndpointAccess::ExplicitUserInitiatedRemote),
+        _ => Err(SettingsRepositoryError::InvalidStoredData),
+    }
+}
+
+fn encode_credential_requirement(requirement: ProviderCredentialRequirement) -> &'static str {
+    match requirement {
+        ProviderCredentialRequirement::None => "none",
+        ProviderCredentialRequirement::ApiKey => "api_key",
+    }
+}
+
+fn decode_credential_requirement(
+    value: &str,
+) -> Result<ProviderCredentialRequirement, SettingsRepositoryError> {
+    match value {
+        "none" => Ok(ProviderCredentialRequirement::None),
+        "api_key" => Ok(ProviderCredentialRequirement::ApiKey),
+        _ => Err(SettingsRepositoryError::InvalidStoredData),
+    }
+}
+
+fn encode_credential_lifecycle(lifecycle: ProviderCredentialLifecycle) -> &'static str {
+    match lifecycle {
+        ProviderCredentialLifecycle::NotRequired => "not_required",
+        ProviderCredentialLifecycle::Missing => "missing",
+        ProviderCredentialLifecycle::Storing => "storing",
+        ProviderCredentialLifecycle::Configured => "configured",
+        ProviderCredentialLifecycle::Deleting => "deleting",
+    }
+}
+
+fn decode_credential_lifecycle(
+    value: &str,
+) -> Result<ProviderCredentialLifecycle, SettingsRepositoryError> {
+    match value {
+        "not_required" => Ok(ProviderCredentialLifecycle::NotRequired),
+        "missing" => Ok(ProviderCredentialLifecycle::Missing),
+        "storing" => Ok(ProviderCredentialLifecycle::Storing),
+        "configured" => Ok(ProviderCredentialLifecycle::Configured),
+        "deleting" => Ok(ProviderCredentialLifecycle::Deleting),
         _ => Err(SettingsRepositoryError::InvalidStoredData),
     }
 }
@@ -570,6 +669,11 @@ fn read_u32(row: &libsql::Row, index: i32) -> Result<u32, SettingsRepositoryErro
 fn read_u16(row: &libsql::Row, index: i32) -> Result<u16, SettingsRepositoryError> {
     let value: i64 = row.get(index).map_err(SettingsRepositoryError::Read)?;
     u16::try_from(value).map_err(|_| SettingsRepositoryError::InvalidStoredData)
+}
+
+fn read_u64(row: &libsql::Row, index: i32) -> Result<u64, SettingsRepositoryError> {
+    let value: i64 = row.get(index).map_err(SettingsRepositoryError::Read)?;
+    u64::try_from(value).map_err(|_| SettingsRepositoryError::InvalidStoredData)
 }
 
 fn u64_to_i64(value: u64) -> Result<i64, SettingsRepositoryError> {

@@ -103,6 +103,14 @@ pub enum ErrorCodeV1 {
     ModelProbeAlreadyActive,
     /// Model settings or explicit probe could not be completed safely.
     ModelSettingsUnavailable,
+    /// The supplied provider credential violated its strict secret envelope.
+    ProviderCredentialInvalid,
+    /// The active provider requires a credential before network operations are available.
+    ProviderCredentialMissing,
+    /// A partial credential transition must be repaired by replacing or deleting the key.
+    ProviderCredentialRecoveryRequired,
+    /// The native operating-system credential service is unavailable or locked.
+    ProviderCredentialStoreUnavailable,
     /// Project Settings input was malformed, stale, or outside fixed bounds.
     InvalidProjectSettingsRequest,
     /// Dedicated project configuration, index, or allowlist storage was unavailable.
@@ -263,6 +271,18 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::ModelSettingsUnavailable => {
                 "Local model settings could not be read, stored, or probed safely."
+            }
+            ErrorCodeV1::ProviderCredentialInvalid => {
+                "The provider credential does not satisfy the supported bounds."
+            }
+            ErrorCodeV1::ProviderCredentialMissing => {
+                "The active provider requires an API key before this operation."
+            }
+            ErrorCodeV1::ProviderCredentialRecoveryRequired => {
+                "The provider credential must be replaced or deleted before use."
+            }
+            ErrorCodeV1::ProviderCredentialStoreUnavailable => {
+                "The operating-system credential store is unavailable or locked."
             }
             ErrorCodeV1::InvalidProjectSettingsRequest => {
                 "The project Settings request is invalid or no longer current."

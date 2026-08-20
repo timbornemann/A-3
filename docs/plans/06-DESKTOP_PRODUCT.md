@@ -634,6 +634,16 @@ den begrenzten lokalen Modellkatalog und stellt Coding-, Mapping- und Embeddingm
 Dropdown bereit. Der Katalog bleibt flüchtig und die bestehende Capability-Probe bleibt die
 einzige Aktivierungsgrenze; Appstart und Settings-Read erzeugen weiterhin keinen Netzwerkzugriff.
 
+Erweiterung vom 2026-08-20: ADR-0028 ergänzt Google Gemini über den ausschließlich zulässigen
+Google-Origin. API-Keys werden über eine one-way Settings-Capability angenommen und nur im nativen
+OS-Keyring gespeichert; Katalogschema v5 enthält ausschließlich Lifecycle und monotone Generation.
+Die dreiphasigen Store-/Delete-Übergänge sperren inkonsistente Zustände als `RecoveryRequired`, und
+Providerwechsel löschen einen Gemini-Key vor der neuen Konfiguration. Gemini-Discovery ist
+paginiert und begrenzt, Streaming wertet Candidate, Thought-, Block- und Finish-Zustände streng aus,
+strukturierte Ausgabe verwendet `responseJsonSchema`, und abgekündigte Embedding-IDs sind nicht
+fest codiert. Discovery und Probe bleiben explizite Nutzeraktionen; Speichern allein kontaktiert
+Google nicht.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

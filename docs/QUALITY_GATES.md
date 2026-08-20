@@ -243,6 +243,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Erfolg verifiziert sein; Embedding zusätzlich nur nach einem endlichen, nicht leeren Vektor mit
   beobachteter gültiger Dimension. Fehler, Abbruch, stale Revision und Remote bleiben nicht
   ausführbar.
+- Credential-Contracts prüfen Set/Load/Delete, CAS, Generation-Mismatch, Keyring-Ausfall,
+  unterbrochene Store-/Delete-Phasen, wiederholbare Recovery, Profilinvalidierung und redigierte
+  Fehler. Ein Rohscan des v5-Katalogs und seiner Begleitdateien darf den Test-Key nirgends finden.
+  Ein ignorierter nativer Smoke verwendet pro Lauf einen isolierten Account und löscht ihn über
+  einen Drop-Guard; CI führt ihn auf Windows, macOS und unter einer isolierten Linux-Secret-Service-
+  Session aus.
 - Der ADR-0026-Discovery-Contract prüft `GET /api/tags` vollständig offline: keine WebView-URL,
   erneute Local-only-Policy, ein Gesamttimeout, wakebare Cancellation, begrenztes JSON sowie
   validierte, deduplizierte und kanonisch sortierte Modell-IDs. Die flüchtige Auswahl darf kein
@@ -403,6 +409,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   erfolgreiche und schemawidrige Probeantworten, Cancellation vor Netzwerk und ein gemeinsames
   Gesamttimeout über beide Requests. Metadaten mit mehreren abweichenden Kontextgrenzen werden
   abgelehnt; nur die exakte Capability `tools` setzt den nicht ausführbaren nativen Toolmodus.
+- Der Gemini-Stubserver prüft den kanonischen Auth-Host, Ablehnung fremder HTTPS-Origins vor
+  Netzwerk, `x-goog-api-key` und `x-goog-api-client`, begrenzte Pagination samt Token-Schleifen,
+  Methodfilter, `responseJsonSchema`, SSE-Fragmentierung, Candidate-0-/Thought-Filter sowie strikte
+  Finish- und Blockgründe. Embedding-Tests verwenden nur entdeckbare, nicht abgekündigte Modell-IDs;
+  Gemini-Tool-Calls bleiben ohne eigenen Function-Calling-Probe `Disabled`.
+- Der ignorierte Test `stored_user_key_lists_streams_structures_and_embeds_against_google` ist der
+  einzige Live-Smoke: Er lädt den bereits von A^3 gespeicherten Benutzer-Key aus dem OS-Keyring und
+  prüft nach separater Netzwerkfreigabe Modellliste, SSE, produktives Schema und Embedding
+  ausschließlich am kanonischen Google-Origin. CI und normale Testläufe führen ihn nie aus.
 
 ### AgentAction und Prompt
 

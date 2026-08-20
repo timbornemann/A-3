@@ -7,6 +7,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::{
+    ProviderApiKey, ProviderCredential, ProviderCredentialGeneration, ProviderCredentialStore,
+    ProviderCredentialStoreFailure,
+};
+
 const MAX_ENDPOINT_ORIGIN_BYTES: usize = 2_048;
 const MAX_SETTINGS_STORE_VERSION: u64 = i64::MAX as u64;
 const MAX_SETTINGS_TIMESTAMP_MILLIS: u64 = i64::MAX as u64;
@@ -20,12 +25,110 @@ pub enum ModelEndpointScope {
     Remote,
 }
 
+/// Provider-neutral authorization class attached by the concrete endpoint validator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ModelEndpointAccess {
+    /// Requests stay on a literal loopback origin.
+    Local,
+    /// The remote origin is retained for display but no settings operation may contact it.
+    RemoteBlocked,
+    /// Only an explicit user-initiated settings operation may contact the fixed remote origin.
+    ExplicitUserInitiatedRemote,
+}
+
+/// Credential shape required by a validated provider connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ProviderCredentialRequirement {
+    /// The provider connection does not use a stored credential.
+    None,
+    /// The provider connection requires one OS-stored API key.
+    ApiKey,
+}
+
+/// Durable content-free phase of the cross-store credential lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ProviderCredentialLifecycle {
+    /// No credential belongs to the configured provider.
+    NotRequired,
+    /// A credential is required but no usable generation is configured.
+    Missing,
+    /// Settings were committed before writing the external credential.
+    Storing,
+    /// Settings and the external credential must contain the same generation.
+    Configured,
+    /// Settings were committed before deleting the external credential.
+    Deleting,
+}
+
+/// Persistable credential metadata that never contains secret-derived material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCredentialMetadata {
+    lifecycle: ProviderCredentialLifecycle,
+    generation: ProviderCredentialGeneration,
+}
+
+impl ProviderCredentialMetadata {
+    /// Returns metadata for a connection that cannot own a credential.
+    #[must_use]
+    pub const fn not_required() -> Self {
+        Self {
+            lifecycle: ProviderCredentialLifecycle::NotRequired,
+            generation: ProviderCredentialGeneration::initial(),
+        }
+    }
+
+    /// Returns initial metadata for a provider requiring an API key.
+    #[must_use]
+    pub const fn missing() -> Self {
+        Self {
+            lifecycle: ProviderCredentialLifecycle::Missing,
+            generation: ProviderCredentialGeneration::initial(),
+        }
+    }
+
+    /// Reconstructs validated content-free metadata from persistence.
+    pub const fn from_stored_parts(
+        lifecycle: ProviderCredentialLifecycle,
+        generation: ProviderCredentialGeneration,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let valid = match lifecycle {
+            ProviderCredentialLifecycle::NotRequired => generation.get() == 0,
+            ProviderCredentialLifecycle::Missing => true,
+            ProviderCredentialLifecycle::Storing
+            | ProviderCredentialLifecycle::Configured
+            | ProviderCredentialLifecycle::Deleting => generation.get() > 0,
+        };
+        if valid {
+            Ok(Self {
+                lifecycle,
+                generation,
+            })
+        } else {
+            Err(DesktopSettingsUpdateError::InvalidCredentialState)
+        }
+    }
+
+    /// Returns the durable lifecycle phase.
+    #[must_use]
+    pub const fn lifecycle(self) -> ProviderCredentialLifecycle {
+        self.lifecycle
+    }
+
+    /// Returns the monotone content-free generation.
+    #[must_use]
+    pub const fn generation(self) -> ProviderCredentialGeneration {
+        self.generation
+    }
+}
+
 /// Credential-free canonical origin produced by a concrete provider adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConfiguredModelEndpoint {
     provider_id: ModelProviderId,
     canonical_origin: String,
     scope: ModelEndpointScope,
+    access: ModelEndpointAccess,
+    credential_requirement: ProviderCredentialRequirement,
 }
 
 impl ConfiguredModelEndpoint {
@@ -34,6 +137,27 @@ impl ConfiguredModelEndpoint {
         provider_id: ModelProviderId,
         canonical_origin: String,
         scope: ModelEndpointScope,
+    ) -> Result<Self, ConfiguredModelEndpointError> {
+        let access = match scope {
+            ModelEndpointScope::LocalLoopback => ModelEndpointAccess::Local,
+            ModelEndpointScope::Remote => ModelEndpointAccess::RemoteBlocked,
+        };
+        Self::from_validated_adapter_with_security(
+            provider_id,
+            canonical_origin,
+            scope,
+            access,
+            ProviderCredentialRequirement::None,
+        )
+    }
+
+    /// Revalidates an adapter origin together with its provider-neutral access and credential policy.
+    pub fn from_validated_adapter_with_security(
+        provider_id: ModelProviderId,
+        canonical_origin: String,
+        scope: ModelEndpointScope,
+        access: ModelEndpointAccess,
+        credential_requirement: ProviderCredentialRequirement,
     ) -> Result<Self, ConfiguredModelEndpointError> {
         if canonical_origin.is_empty() || canonical_origin.len() > MAX_ENDPOINT_ORIGIN_BYTES {
             return Err(ConfiguredModelEndpointError::InvalidLength {
@@ -53,10 +177,31 @@ impl ConfiguredModelEndpoint {
         {
             return Err(ConfiguredModelEndpointError::InvalidOrigin);
         }
+        let policy_is_valid = matches!(
+            (scope, access, credential_requirement),
+            (
+                ModelEndpointScope::LocalLoopback,
+                ModelEndpointAccess::Local,
+                ProviderCredentialRequirement::None
+            ) | (
+                ModelEndpointScope::Remote,
+                ModelEndpointAccess::RemoteBlocked,
+                ProviderCredentialRequirement::None
+            ) | (
+                ModelEndpointScope::Remote,
+                ModelEndpointAccess::ExplicitUserInitiatedRemote,
+                ProviderCredentialRequirement::ApiKey
+            )
+        );
+        if !policy_is_valid {
+            return Err(ConfiguredModelEndpointError::InvalidSecurityPolicy);
+        }
         Ok(Self {
             provider_id,
             canonical_origin,
             scope,
+            access,
+            credential_requirement,
         })
     }
 
@@ -77,6 +222,18 @@ impl ConfiguredModelEndpoint {
     pub const fn scope(&self) -> ModelEndpointScope {
         self.scope
     }
+
+    /// Returns the provider-neutral request authorization class.
+    #[must_use]
+    pub const fn access(&self) -> ModelEndpointAccess {
+        self.access
+    }
+
+    /// Returns whether the connection requires an OS-stored API key.
+    #[must_use]
+    pub const fn credential_requirement(&self) -> ProviderCredentialRequirement {
+        self.credential_requirement
+    }
 }
 
 impl fmt::Debug for ConfiguredModelEndpoint {
@@ -85,6 +242,8 @@ impl fmt::Debug for ConfiguredModelEndpoint {
             .debug_struct("ConfiguredModelEndpoint")
             .field("provider_id", &self.provider_id)
             .field("scope", &self.scope)
+            .field("access", &self.access)
+            .field("credential_requirement", &self.credential_requirement)
             .finish_non_exhaustive()
     }
 }
@@ -101,6 +260,8 @@ pub enum ConfiguredModelEndpointError {
     UnsafeCharacter,
     /// The value was not a pathless HTTP(S) origin or a remote origin was not HTTPS.
     InvalidOrigin,
+    /// Locality, access, and credential policy formed an unsupported combination.
+    InvalidSecurityPolicy,
 }
 
 impl fmt::Display for ConfiguredModelEndpointError {
@@ -109,6 +270,7 @@ impl fmt::Display for ConfiguredModelEndpointError {
             Self::InvalidLength { .. } => "model endpoint origin length is invalid",
             Self::UnsafeCharacter => "model endpoint origin contains an unsafe character",
             Self::InvalidOrigin => "model endpoint is not a credential-free canonical origin",
+            Self::InvalidSecurityPolicy => "model endpoint security policy is inconsistent",
         })
     }
 }
@@ -312,12 +474,11 @@ impl ProviderHealthObservation {
     #[must_use]
     pub fn initial_for_endpoint(endpoint: &ConfiguredModelEndpoint) -> Self {
         Self {
-            status: if endpoint.scope() == ModelEndpointScope::LocalLoopback
-                || endpoint.provider_id().as_str() == "gemini"
-            {
-                ProviderHealthStatus::NotChecked
-            } else {
-                ProviderHealthStatus::RemoteBlocked
+            status: match endpoint.access() {
+                ModelEndpointAccess::Local | ModelEndpointAccess::ExplicitUserInitiatedRemote => {
+                    ProviderHealthStatus::NotChecked
+                }
+                ModelEndpointAccess::RemoteBlocked => ProviderHealthStatus::RemoteBlocked,
             },
             checked_at: None,
         }
@@ -425,6 +586,7 @@ impl DataPrivacySettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSettings {
     endpoint: Option<ConfiguredModelEndpoint>,
+    credential: ProviderCredentialMetadata,
     provider_health: Option<ProviderHealthObservation>,
     coding_profile: Option<LlmRoleProfile>,
     mapping_profile: Option<LlmRoleProfile>,
@@ -438,6 +600,7 @@ impl DesktopSettings {
     pub const fn unconfigured() -> Self {
         Self {
             endpoint: None,
+            credential: ProviderCredentialMetadata::not_required(),
             provider_health: None,
             coding_profile: None,
             mapping_profile: None,
@@ -450,6 +613,12 @@ impl DesktopSettings {
     #[must_use]
     pub const fn endpoint(&self) -> Option<&ConfiguredModelEndpoint> {
         self.endpoint.as_ref()
+    }
+
+    /// Returns content-free metadata for the current provider credential.
+    #[must_use]
+    pub const fn credential(&self) -> ProviderCredentialMetadata {
+        self.credential
     }
 
     /// Returns the health state belonging to the current endpoint.
@@ -484,6 +653,15 @@ impl DesktopSettings {
     pub fn with_endpoint(mut self, endpoint: Option<ConfiguredModelEndpoint>) -> Self {
         if self.endpoint != endpoint {
             self.endpoint = endpoint;
+            self.credential = self.endpoint.as_ref().map_or_else(
+                ProviderCredentialMetadata::not_required,
+                |configured| match configured.credential_requirement() {
+                    ProviderCredentialRequirement::None => {
+                        ProviderCredentialMetadata::not_required()
+                    }
+                    ProviderCredentialRequirement::ApiKey => ProviderCredentialMetadata::missing(),
+                },
+            );
             self.provider_health = self
                 .endpoint
                 .as_ref()
@@ -493,6 +671,98 @@ impl DesktopSettings {
             self.embedding_profile = None;
         }
         self
+    }
+
+    /// Begins a credential write and invalidates all provider-derived evidence.
+    pub fn begin_credential_store(
+        mut self,
+    ) -> Result<(Self, ProviderCredentialGeneration), DesktopSettingsUpdateError> {
+        let endpoint = self
+            .endpoint
+            .as_ref()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.credential_requirement() != ProviderCredentialRequirement::ApiKey {
+            return Err(DesktopSettingsUpdateError::CredentialNotRequired);
+        }
+        let generation = self
+            .credential
+            .generation()
+            .next()
+            .map_err(|_| DesktopSettingsUpdateError::InvalidCredentialState)?;
+        self.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Storing,
+            generation,
+        )?;
+        self.invalidate_provider_evidence();
+        Ok((self, generation))
+    }
+
+    /// Marks the exact externally stored generation usable.
+    pub fn complete_credential_store(
+        mut self,
+        generation: ProviderCredentialGeneration,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        if self.credential.lifecycle() != ProviderCredentialLifecycle::Storing
+            || self.credential.generation() != generation
+        {
+            return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+        }
+        self.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Configured,
+            generation,
+        )?;
+        Ok(self)
+    }
+
+    /// Begins deletion of the current provider credential and invalidates its evidence.
+    pub fn begin_credential_delete(
+        mut self,
+    ) -> Result<(Self, ProviderCredentialGeneration), DesktopSettingsUpdateError> {
+        let endpoint = self
+            .endpoint
+            .as_ref()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.credential_requirement() != ProviderCredentialRequirement::ApiKey {
+            return Err(DesktopSettingsUpdateError::CredentialNotRequired);
+        }
+        let generation = self
+            .credential
+            .generation()
+            .next()
+            .map_err(|_| DesktopSettingsUpdateError::InvalidCredentialState)?;
+        self.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Deleting,
+            generation,
+        )?;
+        self.invalidate_provider_evidence();
+        Ok((self, generation))
+    }
+
+    /// Completes deletion without removing the provider connection itself.
+    pub fn complete_credential_delete(
+        mut self,
+        generation: ProviderCredentialGeneration,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        if self.credential.lifecycle() != ProviderCredentialLifecycle::Deleting
+            || self.credential.generation() != generation
+        {
+            return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+        }
+        self.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Missing,
+            generation,
+        )?;
+        Ok(self)
+    }
+
+    fn invalidate_provider_evidence(&mut self) {
+        self.provider_health = self
+            .endpoint
+            .as_ref()
+            .map(ProviderHealthObservation::initial_for_endpoint);
+        self.coding_profile = None;
+        self.mapping_profile = None;
+        self.embedding_profile = None;
     }
 
     /// Records one profile only when it belongs to the current local provider endpoint.
@@ -573,10 +843,13 @@ impl DesktopSettings {
             .endpoint
             .as_ref()
             .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
-        if endpoint.scope() != ModelEndpointScope::LocalLoopback
-            && endpoint.provider_id().as_str() != "gemini"
-        {
+        if endpoint.access() == ModelEndpointAccess::RemoteBlocked {
             return Err(DesktopSettingsUpdateError::RemoteBlocked);
+        }
+        if endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+            && self.credential.lifecycle() != ProviderCredentialLifecycle::Configured
+        {
+            return Err(DesktopSettingsUpdateError::CredentialUnavailable);
         }
         Ok(endpoint)
     }
@@ -584,6 +857,7 @@ impl DesktopSettings {
     /// Reconstructs one fully validated durable snapshot.
     pub fn from_stored_parts(
         endpoint: Option<ConfiguredModelEndpoint>,
+        credential: ProviderCredentialMetadata,
         provider_health: Option<ProviderHealthObservation>,
         coding_profile: Option<LlmRoleProfile>,
         mapping_profile: Option<LlmRoleProfile>,
@@ -592,7 +866,8 @@ impl DesktopSettings {
         let mut settings = Self::unconfigured().with_endpoint(endpoint);
         match settings.endpoint.as_ref() {
             None => {
-                if provider_health.is_some()
+                if credential != ProviderCredentialMetadata::not_required()
+                    || provider_health.is_some()
                     || coding_profile.is_some()
                     || mapping_profile.is_some()
                     || embedding_profile.is_some()
@@ -601,10 +876,19 @@ impl DesktopSettings {
                 }
             }
             Some(endpoint) => {
+                let credential_is_valid = match endpoint.credential_requirement() {
+                    ProviderCredentialRequirement::None => {
+                        credential == ProviderCredentialMetadata::not_required()
+                    }
+                    ProviderCredentialRequirement::ApiKey => {
+                        credential.lifecycle() != ProviderCredentialLifecycle::NotRequired
+                    }
+                };
+                if !credential_is_valid {
+                    return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+                }
                 let health = provider_health.ok_or(DesktopSettingsUpdateError::InvalidHealth)?;
-                let is_authorized_remote = endpoint.scope() == ModelEndpointScope::Remote
-                    && endpoint.provider_id().as_str() == "gemini";
-                if endpoint.scope() == ModelEndpointScope::Remote && !is_authorized_remote {
+                if endpoint.access() == ModelEndpointAccess::RemoteBlocked {
                     if health != ProviderHealthObservation::initial(ModelEndpointScope::Remote)
                         || coding_profile.is_some()
                         || mapping_profile.is_some()
@@ -613,6 +897,14 @@ impl DesktopSettings {
                         return Err(DesktopSettingsUpdateError::RemoteBlocked);
                     }
                 } else {
+                    if endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+                        && credential.lifecycle() != ProviderCredentialLifecycle::Configured
+                        && (coding_profile.is_some()
+                            || mapping_profile.is_some()
+                            || embedding_profile.is_some())
+                    {
+                        return Err(DesktopSettingsUpdateError::CredentialUnavailable);
+                    }
                     for profile in [&coding_profile, &mapping_profile].into_iter().flatten() {
                         if profile.profile().provider_id() != endpoint.provider_id()
                             || (profile.profile().capabilities().structured_output()
@@ -629,6 +921,7 @@ impl DesktopSettings {
                     }
                 }
                 settings.provider_health = Some(health);
+                settings.credential = credential;
                 settings.coding_profile = coding_profile;
                 settings.mapping_profile = mapping_profile;
                 settings.embedding_profile = embedding_profile;
@@ -651,6 +944,12 @@ pub enum DesktopSettingsUpdateError {
     EndpointUnavailable,
     /// A non-local endpoint cannot be probed without exact network approval.
     RemoteBlocked,
+    /// The configured provider cannot use a credential in this build.
+    CredentialNotRequired,
+    /// A required credential is missing, in recovery, or inconsistent.
+    CredentialUnavailable,
+    /// Persisted credential lifecycle metadata contradicted its generation or endpoint.
+    InvalidCredentialState,
     /// Profile provider identity did not match the configured endpoint.
     ProviderMismatch,
     /// Health state contradicted the endpoint or probe result.
@@ -662,6 +961,9 @@ impl fmt::Display for DesktopSettingsUpdateError {
         formatter.write_str(match self {
             Self::EndpointUnavailable => "model endpoint is not configured",
             Self::RemoteBlocked => "remote model endpoint is blocked pending exact approval",
+            Self::CredentialNotRequired => "model provider does not require a credential",
+            Self::CredentialUnavailable => "model provider credential is not available",
+            Self::InvalidCredentialState => "model provider credential state is inconsistent",
             Self::ProviderMismatch => "model profile belongs to another provider",
             Self::InvalidHealth => "provider health evidence is inconsistent",
         })
@@ -891,6 +1193,250 @@ impl Error for ConfigureDesktopModelEndpointError {
     }
 }
 
+/// Coordinates durable metadata with the external OS credential boundary.
+#[derive(Debug, Clone)]
+pub struct SetDesktopProviderCredential {
+    settings_store: Arc<dyn DesktopSettingsStore>,
+    credential_store: Arc<dyn ProviderCredentialStore>,
+}
+
+impl SetDesktopProviderCredential {
+    /// Binds both stores required by the fail-closed cross-store transition.
+    #[must_use]
+    pub fn new(
+        settings_store: Arc<dyn DesktopSettingsStore>,
+        credential_store: Arc<dyn ProviderCredentialStore>,
+    ) -> Self {
+        Self {
+            settings_store,
+            credential_store,
+        }
+    }
+
+    /// Stores one new API key without contacting the provider.
+    pub async fn execute(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        secret: ProviderApiKey,
+    ) -> Result<StoredDesktopSettings, ManageDesktopProviderCredentialError> {
+        let current = self
+            .settings_store
+            .load()
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)?;
+        if current.version() != expected {
+            return Err(ManageDesktopProviderCredentialError::SettingsStore(
+                DesktopSettingsStoreFailure::VersionConflict,
+            ));
+        }
+        let provider_id = current
+            .settings()
+            .endpoint()
+            .ok_or(ManageDesktopProviderCredentialError::InvalidState(
+                DesktopSettingsUpdateError::EndpointUnavailable,
+            ))?
+            .provider_id()
+            .clone();
+        let (storing_settings, generation) = current
+            .settings()
+            .clone()
+            .begin_credential_store()
+            .map_err(ManageDesktopProviderCredentialError::InvalidState)?;
+        let storing = self
+            .settings_store
+            .append(expected, &storing_settings)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)?;
+        let credential = ProviderCredential::new(generation, secret);
+        self.credential_store
+            .store(&provider_id, &credential)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::CredentialStore)?;
+        let configured = storing
+            .settings()
+            .clone()
+            .complete_credential_store(generation)
+            .map_err(ManageDesktopProviderCredentialError::InvalidState)?;
+        self.settings_store
+            .append(storing.version(), &configured)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)
+    }
+}
+
+/// Coordinates deletion of a provider credential before provider removal or replacement.
+#[derive(Debug, Clone)]
+pub struct DeleteDesktopProviderCredential {
+    settings_store: Arc<dyn DesktopSettingsStore>,
+    credential_store: Arc<dyn ProviderCredentialStore>,
+}
+
+impl DeleteDesktopProviderCredential {
+    /// Binds both stores required by the fail-closed delete transition.
+    #[must_use]
+    pub fn new(
+        settings_store: Arc<dyn DesktopSettingsStore>,
+        credential_store: Arc<dyn ProviderCredentialStore>,
+    ) -> Self {
+        Self {
+            settings_store,
+            credential_store,
+        }
+    }
+
+    /// Deletes the current provider credential without contacting the provider.
+    pub async fn execute(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<StoredDesktopSettings, ManageDesktopProviderCredentialError> {
+        let current = self
+            .settings_store
+            .load()
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)?;
+        if current.version() != expected {
+            return Err(ManageDesktopProviderCredentialError::SettingsStore(
+                DesktopSettingsStoreFailure::VersionConflict,
+            ));
+        }
+        let provider_id = current
+            .settings()
+            .endpoint()
+            .ok_or(ManageDesktopProviderCredentialError::InvalidState(
+                DesktopSettingsUpdateError::EndpointUnavailable,
+            ))?
+            .provider_id()
+            .clone();
+        let (deleting_settings, generation) = current
+            .settings()
+            .clone()
+            .begin_credential_delete()
+            .map_err(ManageDesktopProviderCredentialError::InvalidState)?;
+        let deleting = self
+            .settings_store
+            .append(expected, &deleting_settings)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)?;
+        self.credential_store
+            .delete(&provider_id)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::CredentialStore)?;
+        let missing = deleting
+            .settings()
+            .clone()
+            .complete_credential_delete(generation)
+            .map_err(ManageDesktopProviderCredentialError::InvalidState)?;
+        self.settings_store
+            .append(deleting.version(), &missing)
+            .await
+            .map_err(ManageDesktopProviderCredentialError::SettingsStore)
+    }
+}
+
+/// Loads a provider credential only when durable metadata and native generation agree.
+#[derive(Debug, Clone)]
+pub struct LoadDesktopProviderCredential {
+    credential_store: Arc<dyn ProviderCredentialStore>,
+}
+
+impl LoadDesktopProviderCredential {
+    /// Binds the native credential capability.
+    #[must_use]
+    pub fn new(credential_store: Arc<dyn ProviderCredentialStore>) -> Self {
+        Self { credential_store }
+    }
+
+    /// Returns `None` for credential-free providers and a key only for a consistent generation.
+    pub async fn execute(
+        &self,
+        settings: &DesktopSettings,
+    ) -> Result<Option<ProviderApiKey>, ProviderCredentialAccessError> {
+        let endpoint = settings
+            .endpoint()
+            .ok_or(ProviderCredentialAccessError::Missing)?;
+        if endpoint.credential_requirement() == ProviderCredentialRequirement::None {
+            return Ok(None);
+        }
+        let metadata = settings.credential();
+        match metadata.lifecycle() {
+            ProviderCredentialLifecycle::Missing => {
+                return Err(ProviderCredentialAccessError::Missing);
+            }
+            ProviderCredentialLifecycle::Storing | ProviderCredentialLifecycle::Deleting => {
+                return Err(ProviderCredentialAccessError::RecoveryRequired);
+            }
+            ProviderCredentialLifecycle::NotRequired => {
+                return Err(ProviderCredentialAccessError::RecoveryRequired);
+            }
+            ProviderCredentialLifecycle::Configured => {}
+        }
+        let stored = self
+            .credential_store
+            .load(endpoint.provider_id())
+            .await
+            .map_err(ProviderCredentialAccessError::Store)?
+            .ok_or(ProviderCredentialAccessError::RecoveryRequired)?;
+        if stored.generation() != metadata.generation() {
+            return Err(ProviderCredentialAccessError::RecoveryRequired);
+        }
+        Ok(Some(stored.into_secret()))
+    }
+}
+
+/// Cross-store credential mutation failed without exposing the credential.
+#[derive(Debug)]
+pub enum ManageDesktopProviderCredentialError {
+    /// Durable Settings could not advance its append-only transition.
+    SettingsStore(DesktopSettingsStoreFailure),
+    /// The native credential backend rejected the operation.
+    CredentialStore(ProviderCredentialStoreFailure),
+    /// The current endpoint or lifecycle does not permit this transition.
+    InvalidState(DesktopSettingsUpdateError),
+}
+
+impl fmt::Display for ManageDesktopProviderCredentialError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SettingsStore(error) => error.fmt(formatter),
+            Self::CredentialStore(error) => error.fmt(formatter),
+            Self::InvalidState(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ManageDesktopProviderCredentialError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SettingsStore(error) => Some(error),
+            Self::CredentialStore(error) => Some(error),
+            Self::InvalidState(error) => Some(error),
+        }
+    }
+}
+
+/// A configured provider credential could not be loaded safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderCredentialAccessError {
+    /// The provider requires a credential but none was configured.
+    Missing,
+    /// Settings and the native backend require explicit repair.
+    RecoveryRequired,
+    /// The native credential backend is unavailable or contains invalid data.
+    Store(ProviderCredentialStoreFailure),
+}
+
+impl fmt::Display for ProviderCredentialAccessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Missing => "provider credential is missing",
+            Self::RecoveryRequired => "provider credential requires recovery",
+            Self::Store(_) => "provider credential storage is unavailable",
+        })
+    }
+}
+
+impl Error for ProviderCredentialAccessError {}
+
 /// Atomically persists Core-validated provider probe evidence.
 #[derive(Debug, Clone)]
 pub struct RecordDesktopModelProbe {
@@ -998,12 +1544,17 @@ impl Error for RecordDesktopModelProbeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigureDesktopModelEndpoint, ConfiguredModelEndpoint, DesktopSettings,
-        DesktopSettingsStore, DesktopSettingsStoreFailure, DesktopSettingsStoreFuture,
-        DesktopSettingsStoreVersion, LlmModelRole, LlmProfileActivation, ModelEndpointScope,
-        ModelEndpointValidationFailure, ModelEndpointValidator, ProviderHealthStatus,
-        RecordDesktopModelProbe, SettingsTimestamp, StoredDesktopSettings,
+        ConfigureDesktopModelEndpoint, ConfiguredModelEndpoint, DeleteDesktopProviderCredential,
+        DesktopSettings, DesktopSettingsStore, DesktopSettingsStoreFailure,
+        DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, LlmModelRole,
+        LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointAccess,
+        ModelEndpointScope, ModelEndpointValidationFailure, ModelEndpointValidator, ProviderApiKey,
+        ProviderCredential, ProviderCredentialAccessError, ProviderCredentialLifecycle,
+        ProviderCredentialRequirement, ProviderCredentialStore, ProviderCredentialStoreFailure,
+        ProviderHealthStatus, RecordDesktopModelProbe, SetDesktopProviderCredential,
+        SettingsTimestamp, StoredDesktopSettings,
     };
+    use crate::ProviderCredentialStoreFuture;
     use a3_domain::{
         ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
         ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId,
@@ -1011,6 +1562,7 @@ mod tests {
         ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
     };
     use std::error::Error;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard};
 
     #[derive(Debug)]
@@ -1055,6 +1607,98 @@ mod tests {
                 *value = StoredDesktopSettings::new(next, settings.clone());
                 Ok(value.clone())
             })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct MemoryCredentialStore {
+        value: Mutex<Option<(u64, Vec<u8>)>>,
+        fail_store: AtomicBool,
+        fail_delete: AtomicBool,
+        store_calls: AtomicUsize,
+    }
+
+    impl MemoryCredentialStore {
+        fn lock(&self) -> MutexGuard<'_, Option<(u64, Vec<u8>)>> {
+            match self.value.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            }
+        }
+    }
+
+    impl ProviderCredentialStore for MemoryCredentialStore {
+        fn load<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+        ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+            Box::pin(async move {
+                self.lock()
+                    .as_ref()
+                    .map(|(generation, bytes)| {
+                        Ok(ProviderCredential::new(
+                            super::ProviderCredentialGeneration::new(*generation)
+                                .map_err(|_| ProviderCredentialStoreFailure::Corrupt)?,
+                            ProviderApiKey::from_bytes(bytes.clone())
+                                .map_err(|_| ProviderCredentialStoreFailure::Corrupt)?,
+                        ))
+                    })
+                    .transpose()
+            })
+        }
+
+        fn store<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+            credential: &'a ProviderCredential,
+        ) -> ProviderCredentialStoreFuture<'a, ()> {
+            Box::pin(async move {
+                self.store_calls.fetch_add(1, Ordering::AcqRel);
+                if self.fail_store.swap(false, Ordering::AcqRel) {
+                    return Err(ProviderCredentialStoreFailure::Unavailable);
+                }
+                *self.lock() = Some((
+                    credential.generation().get(),
+                    credential.secret().as_bytes().to_vec(),
+                ));
+                Ok(())
+            })
+        }
+
+        fn delete<'a>(
+            &'a self,
+            _provider_id: &'a ModelProviderId,
+        ) -> ProviderCredentialStoreFuture<'a, ()> {
+            Box::pin(async move {
+                if self.fail_delete.swap(false, Ordering::AcqRel) {
+                    return Err(ProviderCredentialStoreFailure::Unavailable);
+                }
+                *self.lock() = None;
+                Ok(())
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct RemoteApiKeyValidator;
+
+    impl ModelEndpointValidator for RemoteApiKeyValidator {
+        fn validate(
+            &self,
+            input: &str,
+        ) -> Result<ConfiguredModelEndpoint, ModelEndpointValidationFailure> {
+            if input != "https://generativelanguage.googleapis.com" {
+                return Err(ModelEndpointValidationFailure::Invalid);
+            }
+            ConfiguredModelEndpoint::from_validated_adapter_with_security(
+                ModelProviderId::try_from_string("gemini".to_owned())
+                    .map_err(|_| ModelEndpointValidationFailure::Invalid)?,
+                input.to_owned(),
+                ModelEndpointScope::Remote,
+                ModelEndpointAccess::ExplicitUserInitiatedRemote,
+                ProviderCredentialRequirement::ApiKey,
+            )
+            .map_err(|_| ModelEndpointValidationFailure::Invalid)
         }
     }
 
@@ -1211,6 +1855,177 @@ mod tests {
                     .await
                     .is_err()
             );
+            Ok::<(), Box<dyn Error>>(())
+        })
+    }
+
+    #[test]
+    fn credential_set_load_delete_is_generation_bound_and_revision_safe()
+    -> Result<(), Box<dyn Error>> {
+        futures::executor::block_on(async {
+            let settings = Arc::new(MemoryStore::default());
+            let settings_port: Arc<dyn DesktopSettingsStore> = settings.clone();
+            let credentials = Arc::new(MemoryCredentialStore::default());
+            let credential_port: Arc<dyn ProviderCredentialStore> = credentials.clone();
+            let configured = ConfigureDesktopModelEndpoint::new(
+                Arc::clone(&settings_port),
+                Arc::new(RemoteApiKeyValidator),
+            )
+            .execute(
+                DesktopSettingsStoreVersion::initial(),
+                Some("https://generativelanguage.googleapis.com"),
+            )
+            .await?;
+
+            let set = SetDesktopProviderCredential::new(
+                Arc::clone(&settings_port),
+                Arc::clone(&credential_port),
+            );
+            let stored = set
+                .execute(
+                    configured.version(),
+                    ProviderApiKey::from_bytes(b"first-key".to_vec())?,
+                )
+                .await?;
+            assert_eq!(stored.version().get(), 3);
+            assert_eq!(
+                stored.settings().credential().lifecycle(),
+                ProviderCredentialLifecycle::Configured
+            );
+            assert_eq!(stored.settings().credential().generation().get(), 1);
+            let loaded = LoadDesktopProviderCredential::new(Arc::clone(&credential_port))
+                .execute(stored.settings())
+                .await?
+                .ok_or("configured credential was absent")?;
+            assert_eq!(loaded.as_bytes(), b"first-key");
+
+            let stale = set
+                .execute(
+                    configured.version(),
+                    ProviderApiKey::from_bytes(b"must-not-store".to_vec())?,
+                )
+                .await;
+            assert!(stale.is_err());
+            assert_eq!(credentials.store_calls.load(Ordering::Acquire), 1);
+
+            let deleted = DeleteDesktopProviderCredential::new(
+                Arc::clone(&settings_port),
+                Arc::clone(&credential_port),
+            )
+            .execute(stored.version())
+            .await?;
+            assert_eq!(deleted.version().get(), 5);
+            assert_eq!(
+                deleted.settings().credential().lifecycle(),
+                ProviderCredentialLifecycle::Missing
+            );
+            assert!(matches!(
+                LoadDesktopProviderCredential::new(credential_port)
+                    .execute(deleted.settings())
+                    .await,
+                Err(ProviderCredentialAccessError::Missing)
+            ));
+            Ok::<(), Box<dyn Error>>(())
+        })
+    }
+
+    #[test]
+    fn interrupted_credential_phases_fail_closed_and_are_retryable() -> Result<(), Box<dyn Error>> {
+        futures::executor::block_on(async {
+            let settings = Arc::new(MemoryStore::default());
+            let settings_port: Arc<dyn DesktopSettingsStore> = settings.clone();
+            let credentials = Arc::new(MemoryCredentialStore::default());
+            let credential_port: Arc<dyn ProviderCredentialStore> = credentials.clone();
+            let configured = ConfigureDesktopModelEndpoint::new(
+                Arc::clone(&settings_port),
+                Arc::new(RemoteApiKeyValidator),
+            )
+            .execute(
+                DesktopSettingsStoreVersion::initial(),
+                Some("https://generativelanguage.googleapis.com"),
+            )
+            .await?;
+
+            credentials.fail_store.store(true, Ordering::Release);
+            let set = SetDesktopProviderCredential::new(
+                Arc::clone(&settings_port),
+                Arc::clone(&credential_port),
+            );
+            let error = match set
+                .execute(
+                    configured.version(),
+                    ProviderApiKey::from_bytes(b"never-log-this".to_vec())?,
+                )
+                .await
+            {
+                Err(error) => error,
+                Ok(_) => return Err("injected native-store failure was accepted".into()),
+            };
+            assert!(!format!("{error:?}").contains("never-log-this"));
+            let interrupted = settings_port.load().await?;
+            assert_eq!(interrupted.version().get(), 2);
+            assert_eq!(
+                interrupted.settings().credential().lifecycle(),
+                ProviderCredentialLifecycle::Storing
+            );
+            assert!(matches!(
+                LoadDesktopProviderCredential::new(Arc::clone(&credential_port))
+                    .execute(interrupted.settings())
+                    .await,
+                Err(ProviderCredentialAccessError::RecoveryRequired)
+            ));
+
+            let recovered = set
+                .execute(
+                    interrupted.version(),
+                    ProviderApiKey::from_bytes(b"replacement-key".to_vec())?,
+                )
+                .await?;
+            assert_eq!(recovered.settings().credential().generation().get(), 2);
+            credentials.fail_delete.store(true, Ordering::Release);
+            let deletion = DeleteDesktopProviderCredential::new(
+                Arc::clone(&settings_port),
+                Arc::clone(&credential_port),
+            );
+            assert!(deletion.execute(recovered.version()).await.is_err());
+            let deleting = settings_port.load().await?;
+            assert_eq!(
+                deleting.settings().credential().lifecycle(),
+                ProviderCredentialLifecycle::Deleting
+            );
+            assert!(matches!(
+                LoadDesktopProviderCredential::new(Arc::clone(&credential_port))
+                    .execute(deleting.settings())
+                    .await,
+                Err(ProviderCredentialAccessError::RecoveryRequired)
+            ));
+            let repaired = deletion.execute(deleting.version()).await?;
+            assert_eq!(
+                repaired.settings().credential().lifecycle(),
+                ProviderCredentialLifecycle::Missing
+            );
+            Ok::<(), Box<dyn Error>>(())
+        })
+    }
+
+    #[test]
+    fn generation_mismatch_never_releases_the_native_key() -> Result<(), Box<dyn Error>> {
+        futures::executor::block_on(async {
+            let endpoint =
+                RemoteApiKeyValidator.validate("https://generativelanguage.googleapis.com")?;
+            let (storing, generation) = DesktopSettings::unconfigured()
+                .with_endpoint(Some(endpoint))
+                .begin_credential_store()?;
+            let configured = storing.complete_credential_store(generation)?;
+            let credentials = Arc::new(MemoryCredentialStore::default());
+            *credentials.lock() = Some((generation.next()?.get(), b"wrong-generation".to_vec()));
+            let credential_port: Arc<dyn ProviderCredentialStore> = credentials;
+            assert!(matches!(
+                LoadDesktopProviderCredential::new(credential_port)
+                    .execute(&configured)
+                    .await,
+                Err(ProviderCredentialAccessError::RecoveryRequired)
+            ));
             Ok::<(), Box<dyn Error>>(())
         })
     }

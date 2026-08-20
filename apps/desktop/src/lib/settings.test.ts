@@ -3,11 +3,13 @@ import { CURRENT_PROTOCOL_VERSION } from './health';
 import {
   cancelModelProbe,
   configureModelProvider,
+  deleteModelProviderCredential,
   discoverProviderModels,
   parseProviderModelsResponseV1,
   parseSettingsResponseV1,
   probeModelRole,
   querySettings,
+  setModelProviderCredential,
   type SettingsResponseV1,
 } from './settings';
 
@@ -15,6 +17,7 @@ const emptyResponse: SettingsResponseV1 = {
   protocolVersion: CURRENT_PROTOCOL_VERSION,
   settings: {
     codingProfile: null,
+    credential: null,
     embeddingProfile: null,
     endpoint: null,
     mappingProfile: null,
@@ -152,6 +155,7 @@ describe('settings IPC client', () => {
       settings: {
         ...emptyResponse.settings,
         endpoint: {
+          access: 'local',
           origin: 'http://127.0.0.1:11434',
           providerId: 'ollama',
           scope: 'localLoopback',
@@ -176,6 +180,64 @@ describe('settings IPC client', () => {
     await expect(cancelModelProbe(cancelInvoke)).resolves.toEqual({
       cancellationRequested: true,
       protocolVersion: CURRENT_PROTOCOL_VERSION,
+    });
+  });
+
+  it('sends credential bytes only through one-way CAS commands', async () => {
+    const configuredResponse: SettingsResponseV1 = {
+      ...emptyResponse,
+      settings: {
+        ...emptyResponse.settings,
+        credential: { requirement: 'apiKey', status: 'configured' },
+        endpoint: {
+          access: 'explicitUserInitiatedRemote',
+          origin: 'https://generativelanguage.googleapis.com',
+          providerId: 'gemini',
+          scope: 'remote',
+        },
+        revision: '3',
+      },
+    };
+    let serializedCredentialSnapshot: unknown;
+    const setInvoke = vi.fn(async (_command: string, arguments_: Record<string, unknown>) => {
+      serializedCredentialSnapshot = JSON.parse(JSON.stringify(arguments_));
+      return configuredResponse;
+    });
+    const key = new TextEncoder().encode('test-secret');
+
+    await expect(setModelProviderCredential('1', key, setInvoke)).resolves.toEqual(
+      configuredResponse,
+    );
+    expect(serializedCredentialSnapshot).toEqual({
+      request: {
+        apiKeyBytes: Array.from(key),
+        expectedSettingsRevision: '1',
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+      },
+    });
+    expect(setInvoke).toHaveBeenCalledWith('set_model_provider_credential', {
+      request: {
+        apiKeyBytes: Array(key.byteLength).fill(0),
+        expectedSettingsRevision: '1',
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+      },
+    });
+    expect(JSON.stringify(configuredResponse)).not.toContain('test-secret');
+
+    const deletedResponse: SettingsResponseV1 = {
+      ...configuredResponse,
+      settings: {
+        ...configuredResponse.settings,
+        credential: { requirement: 'apiKey', status: 'missing' },
+        revision: '5',
+      },
+    };
+    const deleteInvoke = vi.fn(async () => deletedResponse);
+    await expect(deleteModelProviderCredential('3', deleteInvoke)).resolves.toEqual(
+      deletedResponse,
+    );
+    expect(deleteInvoke).toHaveBeenCalledWith('delete_model_provider_credential', {
+      request: { expectedSettingsRevision: '3', protocolVersion: CURRENT_PROTOCOL_VERSION },
     });
   });
 

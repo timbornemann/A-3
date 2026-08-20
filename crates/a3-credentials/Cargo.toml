@@ -1,18 +1,19 @@
 [package]
-name = "a3-application"
-description = "Use cases and ports for A^3"
+name = "a3-credentials"
+description = "Native provider-credential adapters for A^3"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+a3-application.workspace = true
 a3-domain.workspace = true
-blake3.workspace = true
-crossbeam-channel.workspace = true
-futures.workspace = true
-serde_json.workspace = true
+keyring.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
 
 [lints]
 workspace = true

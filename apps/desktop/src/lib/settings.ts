@@ -8,6 +8,7 @@ const MODEL_ID_PATTERN = /^[A-Za-z0-9._+/@:-]{1,512}$/;
 const MAX_PERSISTED_INTEGER = 9_223_372_036_854_775_807n;
 
 export type ModelEndpointScopeV1 = 'localLoopback' | 'remote';
+export type ModelEndpointAccessV1 = 'local' | 'remoteBlocked' | 'explicitUserInitiatedRemote';
 export type ModelProviderKindV1 = 'ollama' | 'gemini';
 export type ProviderHealthStatusV1 =
   'notChecked' | 'healthy' | 'capabilityLimited' | 'unreachable' | 'cancelled' | 'remoteBlocked';
@@ -18,6 +19,15 @@ export interface ModelEndpointV1 {
   origin: string;
   providerId: string;
   scope: ModelEndpointScopeV1;
+  access: ModelEndpointAccessV1;
+}
+
+export type ProviderCredentialStatusV1 =
+  'missing' | 'configured' | 'recoveryRequired' | 'unavailable';
+
+export interface ProviderCredentialV1 {
+  requirement: 'apiKey';
+  status: ProviderCredentialStatusV1;
 }
 
 export interface ProviderHealthV1 {
@@ -57,6 +67,7 @@ export interface SettingsV1 {
   codingProfile: LlmRoleProfileV1 | null;
   embeddingProfile: EmbeddingRoleProfileV1 | null;
   endpoint: ModelEndpointV1 | null;
+  credential: ProviderCredentialV1 | null;
   mappingProfile: LlmRoleProfileV1 | null;
   privacy: DataPrivacySettingsV1;
   probeActive: boolean;
@@ -122,6 +133,44 @@ export async function configureModelProvider(
       endpointOrigin,
       expectedSettingsRevision,
       providerKind,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+    },
+  });
+  return parseSettingsResponseV1(payload);
+}
+
+export async function setModelProviderCredential(
+  expectedSettingsRevision: string,
+  apiKeyBytes: Uint8Array,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV1> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  if (apiKeyBytes.byteLength < 1 || apiKeyBytes.byteLength > 4_096) {
+    throw new Error('Provider credential is outside the supported bounds.');
+  }
+  const serializedBytes = Array.from(apiKeyBytes);
+  try {
+    const payload = await invokeCommand('set_model_provider_credential', {
+      request: {
+        apiKeyBytes: serializedBytes,
+        expectedSettingsRevision,
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+      },
+    });
+    return parseSettingsResponseV1(payload);
+  } finally {
+    serializedBytes.fill(0);
+  }
+}
+
+export async function deleteModelProviderCredential(
+  expectedSettingsRevision: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV1> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('delete_model_provider_credential', {
+    request: {
+      expectedSettingsRevision,
       protocolVersion: CURRENT_PROTOCOL_VERSION,
     },
   });
@@ -247,6 +296,7 @@ export function parseProviderModelsResponseV1(payload: unknown): ProviderModelsR
 function parseSettings(value: unknown): SettingsV1 {
   const keys = [
     'codingProfile',
+    'credential',
     'embeddingProfile',
     'endpoint',
     'mappingProfile',
@@ -259,10 +309,20 @@ function parseSettings(value: unknown): SettingsV1 {
     throw new Error('Settings response contains an invalid settings snapshot.');
   }
   assertCanonicalDecimal(value.revision, 'Settings revision');
+  const endpoint = parseNullable(value.endpoint, parseEndpoint);
+  const credential = parseNullable(value.credential, parseCredential);
+  if (
+    (endpoint === null && credential !== null) ||
+    (endpoint?.access === 'explicitUserInitiatedRemote' && credential === null) ||
+    (endpoint !== null && endpoint.access !== 'explicitUserInitiatedRemote' && credential !== null)
+  ) {
+    throw new Error('Settings response contains inconsistent provider credential metadata.');
+  }
   return {
     codingProfile: parseNullable(value.codingProfile, parseLlmProfile),
+    credential,
     embeddingProfile: parseNullable(value.embeddingProfile, parseEmbeddingProfile),
-    endpoint: parseNullable(value.endpoint, parseEndpoint),
+    endpoint,
     mappingProfile: parseNullable(value.mappingProfile, parseLlmProfile),
     privacy: parsePrivacy(value.privacy),
     probeActive: value.probeActive,
@@ -274,12 +334,17 @@ function parseSettings(value: unknown): SettingsV1 {
 function parseEndpoint(value: unknown): ModelEndpointV1 {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['origin', 'providerId', 'scope']) ||
+    !hasExactKeys(value, ['access', 'origin', 'providerId', 'scope']) ||
     typeof value.origin !== 'string' ||
     value.origin.length > 2_048 ||
     typeof value.providerId !== 'string' ||
     !PROVIDER_ID_PATTERN.test(value.providerId) ||
-    (value.scope !== 'localLoopback' && value.scope !== 'remote')
+    (value.scope !== 'localLoopback' && value.scope !== 'remote') ||
+    (value.access !== 'local' &&
+      value.access !== 'remoteBlocked' &&
+      value.access !== 'explicitUserInitiatedRemote') ||
+    (value.scope === 'localLoopback' && value.access !== 'local') ||
+    (value.scope === 'remote' && value.access === 'local')
   ) {
     throw new Error('Settings response contains an invalid endpoint.');
   }
@@ -301,7 +366,27 @@ function parseEndpoint(value: unknown): ModelEndpointV1 {
   ) {
     throw new Error('Settings response contains an invalid endpoint.');
   }
-  return { origin: value.origin, providerId: value.providerId, scope: value.scope };
+  return {
+    access: value.access,
+    origin: value.origin,
+    providerId: value.providerId,
+    scope: value.scope,
+  };
+}
+
+function parseCredential(value: unknown): ProviderCredentialV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['requirement', 'status']) ||
+    value.requirement !== 'apiKey' ||
+    (value.status !== 'missing' &&
+      value.status !== 'configured' &&
+      value.status !== 'recoveryRequired' &&
+      value.status !== 'unavailable')
+  ) {
+    throw new Error('Settings response contains invalid provider credential metadata.');
+  }
+  return value as unknown as ProviderCredentialV1;
 }
 
 function parseProviderHealth(value: unknown): ProviderHealthV1 {

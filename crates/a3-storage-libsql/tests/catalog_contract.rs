@@ -2,10 +2,64 @@
 
 mod support;
 
-use a3_storage_libsql::{CatalogDatabase, CatalogOpenError, CatalogSchemaVersion, StorageLayout};
+use a3_application::{
+    ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore, ModelEndpointAccess,
+    ModelEndpointScope, ProviderApiKey, ProviderCredential, ProviderCredentialRequirement,
+    ProviderCredentialStore, ProviderCredentialStoreFuture, SetDesktopProviderCredential,
+};
+use a3_domain::ModelProviderId;
+use a3_storage_libsql::{
+    CatalogDatabase, CatalogOpenError, CatalogSchemaVersion, LibsqlKnowledgeStore, StorageLayout,
+};
 use futures::executor::block_on;
 use std::fs;
+use std::sync::{Arc, Mutex, MutexGuard};
 use support::TempDirectory;
+
+#[derive(Debug, Default)]
+struct MemoryCredentialStore(Mutex<Option<(u64, Vec<u8>)>>);
+
+impl MemoryCredentialStore {
+    fn lock(&self) -> MutexGuard<'_, Option<(u64, Vec<u8>)>> {
+        match self.0.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}
+
+impl ProviderCredentialStore for MemoryCredentialStore {
+    fn load<'a>(
+        &'a self,
+        _provider_id: &'a ModelProviderId,
+    ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn store<'a>(
+        &'a self,
+        _provider_id: &'a ModelProviderId,
+        credential: &'a ProviderCredential,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        Box::pin(async move {
+            *self.lock() = Some((
+                credential.generation().get(),
+                credential.secret().as_bytes().to_vec(),
+            ));
+            Ok(())
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        _provider_id: &'a ModelProviderId,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        Box::pin(async move {
+            *self.lock() = None;
+            Ok(())
+        })
+    }
+}
 
 #[test]
 fn empty_catalog_migrates_and_reopens_at_current_version() -> Result<(), Box<dyn std::error::Error>>
@@ -26,6 +80,52 @@ fn empty_catalog_migrates_and_reopens_at_current_version() -> Result<(), Box<dyn
         let reopened = CatalogDatabase::open(&layout).await?;
         assert_eq!(reopened.schema_version(), CatalogSchemaVersion::CURRENT);
         reopened.verify().await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn provider_api_key_never_appears_in_catalog_files() -> Result<(), Box<dyn std::error::Error>> {
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let app_data = temporary.path().join("app-data");
+        let layout = StorageLayout::prepare(&app_data)?;
+        let store: Arc<dyn DesktopSettingsStore> =
+            Arc::new(LibsqlKnowledgeStore::open(&layout).await?);
+        let credentials: Arc<dyn ProviderCredentialStore> =
+            Arc::new(MemoryCredentialStore::default());
+        let endpoint = ConfiguredModelEndpoint::from_validated_adapter_with_security(
+            ModelProviderId::try_from_string("gemini".to_owned())?,
+            "https://generativelanguage.googleapis.com".to_owned(),
+            ModelEndpointScope::Remote,
+            ModelEndpointAccess::ExplicitUserInitiatedRemote,
+            ProviderCredentialRequirement::ApiKey,
+        )?;
+        let configured = store
+            .append(
+                a3_application::DesktopSettingsStoreVersion::initial(),
+                &DesktopSettings::unconfigured().with_endpoint(Some(endpoint)),
+            )
+            .await?;
+        let secret = b"a3-test-key-that-must-never-enter-libsql";
+        SetDesktopProviderCredential::new(Arc::clone(&store), credentials)
+            .execute(
+                configured.version(),
+                ProviderApiKey::from_bytes(secret.to_vec())?,
+            )
+            .await?;
+        drop(store);
+
+        for entry in fs::read_dir(&app_data)? {
+            let path = entry?.path();
+            if path.is_file() {
+                let bytes = fs::read(&path)?;
+                assert!(
+                    !bytes.windows(secret.len()).any(|window| window == secret),
+                    "provider key leaked into a catalog file"
+                );
+            }
+        }
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
