@@ -913,7 +913,7 @@ describe('A^3 desktop shell', () => {
       expect(toolbar?.textContent).toContain('Settings');
       await waitFor(() => {
         expect(globalStatus.textContent).toContain('C:\\worktree');
-        expect(globalStatus.textContent).toContain('Beziehungen verknüpfen · 4/6');
+        expect(globalStatus.textContent).toContain('Zusammenhänge erkennen · 4/6');
         expect(globalStatus.textContent).toContain('Mapping bereit · mapper:latest');
         expect(globalStatus.textContent).toContain('Kein Run ausgewählt');
       });
@@ -943,7 +943,7 @@ describe('A^3 desktop shell', () => {
     }
   });
 
-  it('shows live Fast-Index phase progress while keeping the published snapshot readable', async () => {
+  it('explains live code-analysis progress without exposing parser internals by default', async () => {
     render(App, {
       props: {
         healthLoader: async () => health,
@@ -954,21 +954,23 @@ describe('A^3 desktop shell', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Projekt verwalten' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Index' }));
-    expect(await screen.findByText('Phase 4 von 6: Beziehungen verknüpfen')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Code-Analyse' }));
+    expect(await screen.findByText('Schritt 4 von 6: Zusammenhänge erkennen')).toBeTruthy();
     expect(
-      screen.getByText(
-        'Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs vollständig lesbar.',
-      ),
+      screen.getByText('Die zuletzt fertige Analyse bleibt währenddessen nutzbar.'),
     ).toBeTruthy();
-    expect(screen.getByRole('progressbar', { name: 'Fast-Index-Fortschritt' })).toHaveProperty(
-      'value',
-      3,
-    );
-    expect(screen.getByRole('heading', { name: 'Veröffentlichter Fast Index' })).toBeTruthy();
-    expect(screen.getAllByText(/80,00\s%/)).toHaveLength(2);
+    expect(
+      screen.getByRole('progressbar', { name: 'Fortschritt der Code-Analyse' }),
+    ).toHaveProperty('value', 3);
+    expect(screen.getByRole('heading', { name: 'Wie gut A^3 dein Projekt kennt' })).toBeTruthy();
+    expect(screen.getAllByText(/80,00\s%/)).toHaveLength(1);
+    const issues = screen.getByText('Hinweise zu 1 Dateien').closest('details');
+    expect(issues?.open).toBe(false);
+    await fireEvent.click(screen.getByText('Hinweise zu 1 Dateien'));
     expect(screen.getByText('src/lib.rs')).toBeTruthy();
-    expect(screen.getByText(/Syntaxfehler · syntax error/)).toBeTruthy();
+    const diagnostic = screen.getByText('syntax error', { exact: false });
+    expect(diagnostic.textContent).toContain('Fehler:');
+    expect(screen.queryByText(/Bytes 8/)).toBeNull();
   });
 
   it('shows authoritative Stale and NeedsReview Module Card counts with causes', async () => {
@@ -1636,19 +1638,22 @@ describe('A^3 desktop shell', () => {
     expect(projectOpener).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByText('Projekt verwalten'));
-    const dialog = screen.getByRole('dialog', { name: 'Projekt verwalten' });
+    const dialog = screen.getByRole('dialog', { name: 'worktree' });
+    expect(within(dialog).getByRole('heading', { name: 'Analyse ist bereit' })).toBeTruthy();
+    expect(within(dialog).queryByText('Wartung')).toBeNull();
+    const technicalDetails = within(dialog).getByText('Technische Details').closest('details');
+    expect(technicalDetails?.open).toBe(false);
+    await fireEvent.click(within(dialog).getByText('Technische Details'));
     expect(within(dialog).getByText(/Generation 2/)).toBeTruthy();
-    expect(within(dialog).getByText('4.096 Bytes')).toBeTruthy();
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Wartung' }));
+    expect(within(dialog).getByText('4 KB')).toBeTruthy();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Optionen' }));
     expect(
       within(dialog).getByText(
-        /Quellcode, Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben/,
+        /wenn Suche oder Projektkarte veraltet wirken.*Projektdaten bleiben unverändert/s,
       ),
     ).toBeTruthy();
-    await fireEvent.click(
-      within(dialog).getByRole('button', { name: 'Regenerierbaren Index neu aufbauen' }),
-    );
-    await waitFor(() => expect(screen.getByText('Rebuild wartet')).toBeTruthy());
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Analyse neu erstellen' }));
+    await waitFor(() => expect(screen.getByText('Die neue Analyse startet gleich')).toBeTruthy());
     expect(projectRebuilder).toHaveBeenCalledTimes(1);
   });
 
@@ -1872,17 +1877,17 @@ describe('A^3 desktop shell', () => {
     });
 
     await fireEvent.click(await screen.findByText('Projekt verwalten'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Wartung' }));
-    const removeButton = await screen.findByRole('button', { name: 'Nur aus A^3 entfernen' });
-    expect(
-      screen.getByText(/Repository und private Projektdaten.*vollständig erhalten/s),
-    ).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Optionen' }));
+    const removeButton = await screen.findByRole('button', { name: 'Aus A^3 entfernen' });
+    expect(screen.getByText(/Der Ordner und alle Dateien.*bleiben unverändert/s)).toBeTruthy();
     await fireEvent.click(removeButton);
     expect(projectRemover).not.toHaveBeenCalled();
-    expect(screen.getByText(/lokale Worktree bleiben vollständig bestehen/i)).toBeTruthy();
-    expect(screen.getByRole('dialog', { name: 'Worktree aus A^3 entfernen?' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Projekt aus A^3 entfernen?' })).toBeTruthy();
+    expect(screen.getByText('Der Projektordner und alle Dateien bleiben erhalten.')).toBeTruthy();
+    expect(screen.getByText('Lokale A^3-Projektdaten werden nicht gelöscht.')).toBeTruthy();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Entfernen bestätigen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Aus A^3 entfernen' }));
 
     await waitFor(() => {
       expect(screen.getByText(/Worktree aus der A\^3-Projektliste entfernt/)).toBeTruthy();

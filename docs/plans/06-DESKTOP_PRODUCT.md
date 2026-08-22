@@ -64,8 +64,8 @@ benannter nativer Modal-Dialog angezeigt.
 Vereinfachungsrunde vom 2026-08-14: Die dauerhaft sichtbare zweite Kontextspalte und die redundante
 Fußleiste entfallen. Projects ist bei aktivem Worktree ein kompakter Launcher: Pfad und Branch
 stehen neben direkten Einstiegen in Project Map und Agent sowie den Aktionen `Projekt verwalten`
-und `Anderen Worktree auswählen`. Technische Projekt-, Index- und Wartungsdaten liegen in einem
-einzigen scrollbaren Modal mit den drei eindeutigen Tabs `Übersicht`, `Index` und `Wartung`; die
+und `Anderen Worktree auswählen`. Technische Projekt- und Analysedaten liegen in einem
+einzigen scrollbaren Modal mit den drei eindeutigen Tabs `Übersicht`, `Code-Analyse` und `Optionen`; die
 Hauptfläche enthält keine aufklappbaren Detailsektionen mehr. Map rendert jeweils nur
 `Recherche`, `Explorer`, `Modul` oder `Mapping` und innerhalb von Modul genau eine Detailansicht.
 Agent startet mit dem Plan und trennt Aktivität, Review und Vertragsdetails in ausdrückliche Tabs.
@@ -117,6 +117,23 @@ Storagegröße. Der dauerhafte Katalog speichert unbegrenzt viele Einträge, lie
 25er-Seiten mit opaken Cursorn und optionaler FTS-Suche über die sichere Root-Anzeige. Der
 besitzende Indexmanager serialisiert Refresh und einen cancellable Rebuild, der nur regenerierbare
 Projektionen entfernt und anschließend einen vollständigen Rescan anfordert.
+
+UX-Verfeinerung vom 2026-08-22: `Projekt verwalten` priorisiert Projektname, Branch und einen
+verständlichen Zustand der lokalen Code-Analyse. Worktree-, Snapshot- und Speicherangaben bleiben
+für Supportfälle in geschlossenen technischen Details erreichbar. Die Seite `Code-Analyse`
+erklärt Zweck und Fortschritt in Alltagssprache, fasst Dateien, Symbole, Abdeckung und Hinweise
+zusammen und zeigt einzelne Dateihinweise erst auf Wunsch; Parsercodes und Bytebereiche werden
+nicht als Endnutzerinformation dargestellt. `Optionen` trennt den sicher regenerierbaren
+Analyse-Neuaufbau sichtbar vom nicht destruktiven Entfernen. Dessen zweite Bestätigung erfolgt als
+klarer Schritt im selben Dialog und nennt vor der Ausführung ausdrücklich, welche Ordner, Dateien
+und lokalen A^3-Projektdaten erhalten bleiben.
+
+Component- und Accessibility-Regressionen prüfen die drei Ansichten, laufenden Fortschritt,
+standardmäßig geschlossene Technik- und Dateihinweise, den Analyse-Neuaufbau sowie die eingebettete
+Bestätigung ohne zweiten Dialog. Der native Windows-Tauri-Smoke bestätigte Übersicht,
+Code-Analyse, Optionen und Bestätigung mit einem realen aktiven Projekt. Formatter, ESLint,
+Svelte-Typecheck, alle 220 Frontendtests, fünf Tooltests, Produktionsbuild und Markdown-Linkprüfung
+sind grün.
 
 `activate_catalog_project` und `remove_catalog_project` nehmen ausschließlich eine zuvor gelistete
 `worktreeId`, aber nie einen Pfad an. Aktivierung revalidiert Root, Repository- und Worktree-

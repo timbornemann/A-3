@@ -3403,44 +3403,484 @@ body {
 }
 
 .project-dialog {
-  width: min(52rem, calc(100vw - 2rem));
-  max-height: min(46rem, calc(100vh - 2rem));
+  width: min(46rem, calc(100vw - 2rem));
+  max-height: min(43rem, calc(100dvh - 2rem));
   grid-template-rows: auto auto minmax(0, 1fr);
   padding: 0;
+}
+
+.project-dialog-heading > div {
+  min-width: 0;
+}
+
+.project-dialog-heading h3 {
+  margin-top: var(--space-1);
+  color: var(--color-heading);
+  font-size: var(--font-size-title);
+}
+
+.project-dialog-heading .project-dialog-context {
+  margin-top: var(--space-1);
+  overflow: hidden;
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-eyebrow {
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .project-dialog > .surface-tabs {
   margin: 0;
   padding: var(--space-2) var(--space-4) 0;
+  background: var(--color-surface-subtle);
 }
 
 .project-dialog-content {
   min-height: 0;
-  padding: var(--space-4);
+  padding: var(--space-5);
   overflow-y: auto;
 }
 
-.project-dialog .project-grid,
-.project-dialog .index-overview {
-  margin: 0;
-}
-
-.project-dialog .project-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.project-dialog-maintenance {
+.project-overview-page,
+.project-analysis-page,
+.project-options-page {
   display: grid;
-  gap: 1px;
-  border: 1px solid var(--color-border-soft);
-  background: var(--color-border-soft);
+  gap: var(--space-4);
 }
 
-.project-dialog-maintenance .project-maintenance {
-  margin: 0;
-  border: 0;
-  border-radius: 0;
+.project-identity-card,
+.project-analysis-summary,
+.analysis-progress-card,
+.analysis-results,
+.project-option-card,
+.project-removal-confirmation,
+.project-removal-error {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
   background: var(--color-surface-subtle);
+}
+
+.project-identity-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  padding: var(--space-5);
+  gap: var(--space-4);
+}
+
+.project-folder-mark,
+.option-card-mark {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: var(--radius-control);
+  color: var(--color-accent-text);
+  background: var(--color-accent-surface);
+}
+
+.project-folder-mark svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.project-identity-card h4,
+.project-identity-card p,
+.project-analysis-summary h4,
+.project-analysis-summary p,
+.dialog-page-heading h4,
+.dialog-page-heading p,
+.analysis-progress-heading h5,
+.analysis-progress-heading p,
+.analysis-results h5,
+.project-option-card h5,
+.project-option-card p,
+.project-removal-confirmation h5,
+.project-removal-confirmation p,
+.project-removal-error p {
+  margin: 0;
+}
+
+.project-identity-card h4,
+.project-analysis-summary h4,
+.dialog-page-heading h4 {
+  color: var(--color-heading);
+  font-size: var(--font-size-title);
+}
+
+.project-identity-card > div:last-child > p:last-child,
+.project-analysis-summary > div > p:last-child,
+.dialog-page-heading > p:last-child,
+.analysis-progress-heading p,
+.analysis-coverage-note,
+.analysis-supporting-copy,
+.project-option-card p,
+.project-removal-confirmation > p,
+.project-removal-error p {
+  color: var(--color-muted);
+  line-height: 1.55;
+}
+
+.project-identity-card > div:last-child > p:last-child {
+  margin-top: var(--space-2);
+}
+
+.project-identity-card strong {
+  margin-inline-start: var(--space-1);
+  color: var(--color-text);
+}
+
+.project-analysis-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.analysis-status-mark {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--color-subtle);
+  box-shadow: 0 0 0 0.25rem var(--color-border-soft);
+}
+
+[data-tone='attention'] .analysis-status-mark {
+  background: var(--color-warning-strong);
+  box-shadow: 0 0 0 0.25rem var(--color-status-pending-ring);
+}
+
+[data-tone='ready'] .analysis-status-mark {
+  background: var(--color-status-ready);
+  box-shadow: 0 0 0 0.25rem var(--color-status-ready-ring);
+}
+
+[data-tone='running'] .analysis-status-mark {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0.25rem var(--color-accent-surface);
+}
+
+.project-analysis-summary button,
+.analysis-load-error button,
+.project-option-card > button,
+.project-removal-confirmation button,
+.project-removal-error button {
+  min-height: var(--control-min-size);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  cursor: pointer;
+}
+
+.project-analysis-summary button:hover,
+.analysis-load-error button:hover,
+.project-option-card > button:hover,
+.project-removal-confirmation button:hover,
+.project-removal-error button:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.project-analysis-summary button:focus-visible,
+.analysis-load-error button:focus-visible,
+.project-option-card > button:focus-visible,
+.project-removal-confirmation button:focus-visible,
+.project-removal-error button:focus-visible,
+.project-technical-details summary:focus-visible,
+.analysis-issues summary:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.project-option-card > button:disabled,
+.project-removal-confirmation button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.project-technical-details,
+.analysis-issues {
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+
+.project-technical-details summary,
+.analysis-issues summary {
+  display: flex;
+  min-height: var(--control-min-size);
+  align-items: center;
+  padding: 0 var(--space-3);
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.project-technical-details dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3);
+  gap: var(--space-3);
+}
+
+.project-technical-details dl > div {
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.project-technical-details dt {
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+}
+
+.project-technical-details dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.dialog-page-heading {
+  max-width: 38rem;
+}
+
+.dialog-page-heading h4 {
+  margin-top: var(--space-1);
+}
+
+.dialog-page-heading > p:last-child {
+  margin-top: var(--space-2);
+}
+
+.analysis-progress-card,
+.analysis-results,
+.project-option-card,
+.project-removal-confirmation,
+.project-removal-error {
+  padding: var(--space-4);
+}
+
+.analysis-progress-heading,
+.option-card-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.analysis-progress-heading .analysis-status-mark {
+  margin-top: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.analysis-step {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.analysis-progress-card progress {
+  width: 100%;
+  height: 0.55rem;
+  accent-color: var(--color-accent);
+}
+
+.analysis-supporting-copy {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+}
+
+.analysis-results > h5,
+.project-option-card h5,
+.project-removal-confirmation h5 {
+  color: var(--color-heading);
+  font-size: var(--font-size-body);
+}
+
+.analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: var(--space-4) 0 0;
+  gap: var(--space-2);
+}
+
+.analysis-metrics > div {
+  min-width: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.analysis-metrics dt {
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.analysis-metrics dd {
+  margin: var(--space-2) 0 0;
+  color: var(--color-heading);
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.analysis-coverage-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
+}
+
+.analysis-ready-label {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-status-ready);
+  background: var(--color-status-ready-ring);
+  font-size: var(--font-size-sm);
+}
+
+.analysis-issues,
+.analysis-technical-details {
+  margin-top: var(--space-3);
+}
+
+.analysis-issues > p,
+.analysis-issues > ul {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.analysis-issues > p {
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.analysis-issues ul {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.analysis-issues > ul > li {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-subtle);
+}
+
+.analysis-issues li ul {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.analysis-issues li > p {
+  margin: var(--space-2) 0 0;
+  color: var(--color-subtle);
+  font-size: var(--font-size-xs);
+}
+
+.analysis-load-error,
+.project-removal-error {
+  display: grid;
+  justify-items: start;
+  margin-top: var(--space-3);
+  gap: var(--space-3);
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+
+.option-card-heading h5 + p,
+.project-danger-zone > h5 + p {
+  margin-top: var(--space-2);
+}
+
+.option-card-mark {
+  font-size: 1.35rem;
+}
+
+.option-status {
+  margin: var(--space-4) 0 var(--space-3) !important;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  font-size: var(--font-size-sm);
+}
+
+.project-danger-zone {
+  border-color: var(--color-status-failed-ring);
+  background: var(--color-danger-surface);
+}
+
+.project-danger-zone > p:not(.section-kicker) {
+  max-width: 38rem;
+}
+
+.project-danger-zone > button {
+  margin-top: var(--space-4);
+}
+
+.project-danger-zone .risk-action,
+.project-removal-confirmation .risk-action {
+  border-color: var(--color-danger-strong);
+  color: var(--color-danger);
+}
+
+.project-danger-zone .risk-action:hover,
+.project-removal-confirmation .risk-action:hover {
+  border-color: var(--color-danger-strong);
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+
+.project-removal-confirmation {
+  border-color: var(--color-danger-strong);
+  background: var(--color-danger-surface);
+}
+
+.project-removal-confirmation h5 {
+  margin-top: var(--space-1);
+}
+
+.project-removal-confirmation > p:not(.section-kicker) {
+  margin-top: var(--space-2);
+}
+
+.removal-effects {
+  display: grid;
+  margin: var(--space-4) 0;
+  padding-inline-start: 1.25rem;
+  gap: var(--space-2);
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 .surface-tabs,
@@ -3640,8 +4080,32 @@ body {
     justify-content: flex-end;
   }
 
-  .project-dialog .project-grid {
+  .project-technical-details dl,
+  .analysis-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .project-dialog-content {
+    padding: var(--space-3);
+  }
+
+  .project-analysis-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .project-analysis-summary button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .confirmation-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .confirmation-actions button,
+  .project-option-card > button {
+    width: 100%;
   }
 }
 

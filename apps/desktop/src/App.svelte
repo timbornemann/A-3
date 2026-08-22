@@ -59,7 +59,6 @@
   } from './lib/index-activity';
   import {
     queryIndexOverview,
-    type IndexDiagnosticCodeV1,
     type IndexDiagnosticSeverityV1,
     type IndexLanguageV1,
     type IndexOverviewResponseV1,
@@ -1673,18 +1672,6 @@
     }
   }
 
-  async function refreshProjectDetails(): Promise<void> {
-    await Promise.all([
-      loadProjectStatus(),
-      loadIndexOverview(),
-      loadModuleCardFreshness(),
-      reloadModuleCardDetail(),
-      loadModuleTreeRoot(),
-      loadRepositoryTreeRoot(),
-      loadDeepMap(),
-    ]);
-  }
-
   async function chooseProject(): Promise<void> {
     projectDialogOpen = false;
     projectView = { kind: 'opening' };
@@ -1919,56 +1906,97 @@
     return parts.at(-1) ?? path;
   }
 
-  function indexStateLabel(state: IndexStateV1): string {
-    const labels: Record<IndexStateV1, string> = {
-      notStarted: 'Noch nicht gestartet',
-      building: 'Index wird aufgebaut',
-      published: 'Veröffentlicht',
-      failed: 'Letzter Lauf fehlgeschlagen',
-      cancelled: 'Letzter Lauf abgebrochen',
-    };
-    return labels[state];
+  function projectAnalysisSummary(state: IndexStateV1): {
+    copy: string;
+    title: string;
+    tone: 'attention' | 'idle' | 'ready' | 'running';
+  } {
+    const summaries = {
+      notStarted: {
+        copy: 'A^3 beginnt automatisch, sobald das Projekt bereit ist.',
+        title: 'Analyse wird vorbereitet',
+        tone: 'idle',
+      },
+      building: {
+        copy: 'A^3 liest deinen Code lokal ein. Du kannst währenddessen weiterarbeiten.',
+        title: 'Code wird analysiert',
+        tone: 'running',
+      },
+      published: {
+        copy: 'Project Map und Agent können den aktuellen Projektstand verwenden.',
+        title: 'Analyse ist bereit',
+        tone: 'ready',
+      },
+      failed: {
+        copy: 'Die letzte Analyse konnte nicht abgeschlossen werden. Dein Projekt bleibt nutzbar.',
+        title: 'Analyse braucht Aufmerksamkeit',
+        tone: 'attention',
+      },
+      cancelled: {
+        copy: 'Die letzte Analyse wurde beendet. Du kannst sie in den Optionen neu erstellen.',
+        title: 'Analyse wurde angehalten',
+        tone: 'attention',
+      },
+    } as const;
+    return summaries[state];
   }
 
   function storageSizeLabel(bytes: string | null): string {
-    return bytes === null
-      ? 'Nicht verfügbar'
-      : `${new Intl.NumberFormat('de-DE').format(BigInt(bytes))} Bytes`;
+    if (bytes === null) return 'Nicht verfügbar';
+    const value = BigInt(bytes);
+    const kibibyte = BigInt(1024);
+    const units = [
+      { divisor: kibibyte ** BigInt(4), label: 'TB' },
+      { divisor: kibibyte ** BigInt(3), label: 'GB' },
+      { divisor: kibibyte ** BigInt(2), label: 'MB' },
+      { divisor: kibibyte, label: 'KB' },
+    ];
+    const unit = units.find(({ divisor }) => value >= divisor);
+    if (unit === undefined) {
+      return `${new Intl.NumberFormat('de-DE').format(value)} Bytes`;
+    }
+    return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(
+      Number(value) / Number(unit.divisor),
+    )} ${unit.label}`;
   }
 
   function rebuildStateLabel(state: RebuildStateV1): string {
     const labels = {
-      idle: 'Bereit',
-      queued: 'Rebuild wartet',
-      running: 'Regenerierbare Daten werden entfernt',
-      succeeded: 'Rebuild abgeschlossen; Neuindexierung angefordert',
-      failed: 'Rebuild fehlgeschlagen',
-      cancelled: 'Rebuild abgebrochen',
+      idle: 'Bereit für einen Neuaufbau',
+      queued: 'Die neue Analyse startet gleich',
+      running: 'Die Analyse wird neu erstellt',
+      succeeded: 'Neuaufbau wurde gestartet',
+      failed: 'Die Analyse konnte nicht neu erstellt werden',
+      cancelled: 'Der Neuaufbau wurde beendet',
     } as const;
     return labels[state];
   }
 
   function indexActivityStateLabel(state: IndexActivityStateV1): string {
     const labels: Record<IndexActivityStateV1, string> = {
-      idle: 'Noch kein Lauf in dieser Sitzung',
-      queued: 'Indexlauf wartet auf einen Worker',
-      running: 'Fast Index läuft',
-      cancelling: 'Indexlauf wird kontrolliert beendet',
-      succeeded: 'Fast Index abgeschlossen',
-      failed: 'Indexlauf fehlgeschlagen; veröffentlichter Snapshot bleibt lesbar',
-      cancelled: 'Indexlauf abgebrochen; veröffentlichter Snapshot bleibt lesbar',
+      idle: 'Noch nicht gestartet',
+      queued: 'Startet in Kürze',
+      running: 'Wird gerade analysiert',
+      cancelling: 'Wird beendet',
+      succeeded: 'Aktuell',
+      failed: 'Konnte nicht abgeschlossen werden',
+      cancelled: 'Wurde angehalten',
     };
     return labels[state];
   }
 
+  function indexActivityIsInProgress(state: IndexActivityStateV1): boolean {
+    return state === 'queued' || state === 'running' || state === 'cancelling';
+  }
+
   function indexPhaseLabel(phase: IndexPhaseV1): string {
     const labels: Record<IndexPhaseV1, string> = {
-      discover: 'Dateien ermitteln',
-      hash: 'Inhalte hashen',
-      parse: 'Quellcode parsen',
-      link: 'Beziehungen verknüpfen',
-      rank: 'Symbole und Module gewichten',
-      publish: 'Snapshot atomar veröffentlichen',
+      discover: 'Dateien suchen',
+      hash: 'Dateien vorbereiten',
+      parse: 'Quellcode lesen',
+      link: 'Zusammenhänge erkennen',
+      rank: 'Wichtige Bereiche ordnen',
+      publish: 'Ergebnisse bereitstellen',
     };
     return labels[phase];
   }
@@ -2237,17 +2265,6 @@
     return labels[language];
   }
 
-  function diagnosticCodeLabel(code: IndexDiagnosticCodeV1): string {
-    const labels: Record<IndexDiagnosticCodeV1, string> = {
-      invalidEncoding: 'Ungültige Zeichenkodierung',
-      missingSyntax: 'Fehlende Syntax',
-      outputTruncated: 'Begrenzte Parserausgabe',
-      syntaxError: 'Syntaxfehler',
-      unsupportedSyntax: 'Nicht unterstützte Syntax',
-    };
-    return labels[code];
-  }
-
   function diagnosticSeverityLabel(severity: IndexDiagnosticSeverityV1): string {
     const labels: Record<IndexDiagnosticSeverityV1, string> = {
       error: 'Fehler',
@@ -2399,8 +2416,16 @@
                       closeProjectDialog();
                     }}
                   >
-                    <div class="modal-heading">
-                      <h3 id="project-dialog-heading">Projekt verwalten</h3>
+                    <div class="modal-heading project-dialog-heading">
+                      <div>
+                        <p class="modal-eyebrow">Projektverwaltung</p>
+                        <h3 id="project-dialog-heading">
+                          {projectDisplayName(projectStatusView.result.project.worktreeRootDisplay)}
+                        </h3>
+                        <p class="project-dialog-context">
+                          Lokales Projekt · {branchLabel(projectStatusView.result.project.head)}
+                        </p>
+                      </div>
                       <button
                         type="button"
                         aria-label="Dialog schließen"
@@ -2416,301 +2441,388 @@
                       <button
                         type="button"
                         aria-pressed={projectDialogView === 'index'}
-                        onclick={() => (projectDialogView = 'index')}>Index</button
+                        onclick={() => (projectDialogView = 'index')}>Code-Analyse</button
                       >
                       <button
                         type="button"
                         aria-pressed={projectDialogView === 'maintenance'}
-                        onclick={() => (projectDialogView = 'maintenance')}>Wartung</button
+                        onclick={() => (projectDialogView = 'maintenance')}>Optionen</button
                       >
                     </nav>
 
                     <div class="project-dialog-content">
                       {#if projectDialogView === 'overview'}
-                        <dl class="project-grid">
-                          <div>
-                            <dt>Root</dt>
-                            <dd>{projectStatusView.result.project.worktreeRootDisplay}</dd>
-                          </div>
-                          <div>
-                            <dt>Branch</dt>
-                            <dd>{branchLabel(projectStatusView.result.project.head)}</dd>
-                          </div>
-                          <div>
-                            <dt>Worktree-ID</dt>
-                            <dd>{projectStatusView.result.project.worktreeId}</dd>
-                          </div>
-                          <div>
-                            <dt>Indexstatus</dt>
-                            <dd>{indexStateLabel(projectStatusView.result.index.state)}</dd>
-                          </div>
-                          <div>
-                            <dt>Aktueller Indexlauf</dt>
-                            {#if indexActivityView.kind === 'active'}
-                              <dd>
-                                {indexActivityStateLabel(indexActivityView.result.activity.state)}
-                              </dd>
-                            {:else if indexActivityView.kind === 'loading'}
-                              <dd>Wird geladen …</dd>
-                            {:else}
-                              <dd>Nicht verfügbar</dd>
-                            {/if}
-                          </div>
-                          <div>
-                            <dt>A^3-Speicher</dt>
-                            <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
-                          </div>
-                          <div>
-                            <dt>Letzter Snapshot</dt>
-                            {#if projectStatusView.result.index.latestSnapshot === null}
-                              <dd>Noch kein Snapshot</dd>
-                            {:else}
-                              <dd>
-                                Generation {projectStatusView.result.index.latestSnapshot
-                                  .generation}<br />
-                                {projectStatusView.result.index.latestSnapshot.snapshotId}
-                              </dd>
-                            {/if}
-                          </div>
-                        </dl>
-                      {:else if projectDialogView === 'index'}
-                        {#if indexActivityView.kind === 'active' && indexActivityView.result.activity.phase !== null}
-                          <div class="index-progress" aria-labelledby="index-progress-heading">
-                            <h4 id="index-progress-heading">Fast-Index-Fortschritt</h4>
-                            <p role="status" aria-live="polite">
-                              {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
-                                Alle {indexActivityView.result.activity.totalPhases} Phasen abgeschlossen:
-                                {indexPhaseLabel(indexActivityView.result.activity.phase)}
-                              {:else}
-                                Phase {indexActivityView.result.activity.completedPhases + 1} von
-                                {indexActivityView.result.activity.totalPhases}:
-                                {indexPhaseLabel(indexActivityView.result.activity.phase)}
-                              {/if}
-                            </p>
-                            <progress
-                              aria-label="Fast-Index-Fortschritt"
-                              max={indexActivityView.result.activity.totalPhases}
-                              value={indexActivityView.result.activity.completedPhases}
-                            ></progress>
-                            {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
+                        {@const analysis = projectAnalysisSummary(
+                          projectStatusView.result.index.state,
+                        )}
+                        <div class="project-overview-page">
+                          <section
+                            class="project-identity-card"
+                            aria-labelledby="project-identity-heading"
+                          >
+                            <div class="project-folder-mark" aria-hidden="true">
+                              <svg viewBox="0 0 24 24">
+                                <path d="M3 6.5h7l2 2h9v9H3z"></path>
+                              </svg>
+                            </div>
+                            <div>
+                              <p class="section-kicker">Aktives Projekt</p>
+                              <h4 id="project-identity-heading">
+                                {projectDisplayName(
+                                  projectStatusView.result.project.worktreeRootDisplay,
+                                )}
+                              </h4>
                               <p>
-                                Der zuletzt veröffentlichte Snapshot bleibt während dieses Laufs
-                                vollständig lesbar.
+                                Branch
+                                <strong>{branchLabel(projectStatusView.result.project.head)}</strong
+                                >
                               </p>
-                            {/if}
-                          </div>
-                        {/if}
-                        <div class="index-overview" aria-labelledby="index-overview-heading">
-                          <h4 id="index-overview-heading">Veröffentlichter Fast Index</h4>
-                          {#if indexOverviewView.kind === 'loading'}
-                            <p class="project-status" role="status" aria-live="polite">
-                              Veröffentlichter Index wird gelesen …
-                            </p>
-                          {:else if indexOverviewView.kind === 'noPublishedIndex'}
-                            <p class="project-status">
-                              Noch kein vollständiger Snapshot veröffentlicht. Ein laufender Aufbau
-                              bleibt davon getrennt.
-                            </p>
-                          {:else if indexOverviewView.kind === 'published'}
-                            <p class="index-snapshot">
-                              Snapshot <code>{indexOverviewView.result.overview.snapshotId}</code>
-                            </p>
-                            <dl class="index-metrics">
+                            </div>
+                          </section>
+
+                          <section
+                            class="project-analysis-summary"
+                            data-tone={analysis.tone}
+                            aria-labelledby="project-analysis-summary-heading"
+                          >
+                            <span class="analysis-status-mark" aria-hidden="true"></span>
+                            <div>
+                              <p class="section-kicker">Code-Analyse</p>
+                              <h4 id="project-analysis-summary-heading">{analysis.title}</h4>
+                              <p>{analysis.copy}</p>
+                            </div>
+                            <button type="button" onclick={() => (projectDialogView = 'index')}
+                              >Analyse ansehen</button
+                            >
+                          </section>
+
+                          <details class="project-technical-details">
+                            <summary>Technische Details</summary>
+                            <dl>
                               <div>
-                                <dt>Dateien</dt>
-                                <dd>
-                                  {countLabel(indexOverviewView.result.overview.counts.fileCount)}
-                                </dd>
+                                <dt>Lokaler A^3-Speicher</dt>
+                                <dd>{storageSizeLabel(projectStatusView.result.storageBytes)}</dd>
                               </div>
                               <div>
-                                <dt>Symbole</dt>
-                                <dd>
-                                  {countLabel(indexOverviewView.result.overview.counts.symbolCount)}
-                                </dd>
+                                <dt>Worktree-ID</dt>
+                                <dd><code>{projectStatusView.result.project.worktreeId}</code></dd>
                               </div>
                               <div>
-                                <dt>Diagnostics</dt>
+                                <dt>Letzte Analyse</dt>
                                 <dd>
-                                  {countLabel(
-                                    indexOverviewView.result.overview.counts.diagnosticCount,
-                                  )}
+                                  {projectStatusView.result.index.latestSnapshot === null
+                                    ? 'Noch keine Analyse vorhanden'
+                                    : `Generation ${projectStatusView.result.index.latestSnapshot.generation}`}
                                 </dd>
                               </div>
-                              <div>
-                                <dt>Parse Coverage</dt>
-                                <dd>
-                                  {percentageLabel(
-                                    indexOverviewView.result.overview.coverageBasisPoints,
-                                  )}
-                                </dd>
-                              </div>
+                              {#if projectStatusView.result.index.latestSnapshot !== null}
+                                <div>
+                                  <dt>Snapshot-ID</dt>
+                                  <dd>
+                                    <code
+                                      >{projectStatusView.result.index.latestSnapshot
+                                        .snapshotId}</code
+                                    >
+                                  </dd>
+                                </div>
+                              {/if}
                             </dl>
-                            <p class="index-coverage-note">
-                              {countLabel(indexOverviewView.result.overview.counts.parsedFileCount)} von
-                              {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien
-                              strukturell geparst.
+                          </details>
+                        </div>
+                      {:else if projectDialogView === 'index'}
+                        {@const analysis = projectAnalysisSummary(
+                          projectStatusView.result.index.state,
+                        )}
+                        <div class="project-analysis-page">
+                          <header class="dialog-page-heading">
+                            <p class="section-kicker">Lokale Code-Analyse</p>
+                            <h4>Wie gut A^3 dein Projekt kennt</h4>
+                            <p>
+                              A^3 liest deinen Code lokal, damit Suche, Projektkarte und Agent
+                              verlässliche Zusammenhänge finden können.
                             </p>
-                            {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
-                              <p class="ready-label">
-                                Keine Parser-Diagnostics im veröffentlichten Snapshot.
-                              </p>
-                            {:else}
-                              <div
-                                class="file-diagnostics"
-                                aria-labelledby="file-diagnostics-heading"
-                              >
-                                <h5 id="file-diagnostics-heading">Indexfehler pro Datei</h5>
-                                <ul>
-                                  {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
-                                    <li>
-                                      <div class="diagnostic-file-heading">
-                                        <code
-                                          >{file.pathDisplay}{file.pathDisplayTruncated
-                                            ? '…'
-                                            : ''}</code
-                                        >
-                                        <span>{indexLanguageLabel(file.language)}</span>
-                                      </div>
-                                      <p>
-                                        {countLabel(file.diagnosticCount)} Diagnostics · Coverage
-                                        {percentageLabel(file.coverageBasisPoints)}
-                                      </p>
-                                      <ul>
-                                        {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
-                                          <li>
-                                            <strong
-                                              >{diagnosticSeverityLabel(
-                                                diagnostic.severity,
-                                              )}:</strong
-                                            >
-                                            {diagnosticCodeLabel(diagnostic.code)} · {diagnostic.message}
-                                            <span
-                                              >Bytes {diagnostic.startByte}–{diagnostic.endByte}</span
-                                            >
-                                          </li>
-                                        {/each}
-                                      </ul>
-                                      {#if file.diagnosticsTruncated}
-                                        <p>
-                                          Weitere Diagnostics dieser Datei sind in dieser begrenzten
-                                          Ansicht verborgen.
-                                        </p>
-                                      {/if}
-                                    </li>
-                                  {/each}
-                                </ul>
-                                {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
+                          </header>
+
+                          <section
+                            class="analysis-progress-card"
+                            data-tone={analysis.tone}
+                            aria-labelledby="analysis-progress-heading"
+                          >
+                            <div class="analysis-progress-heading">
+                              <span class="analysis-status-mark" aria-hidden="true"></span>
+                              <div>
+                                <h5 id="analysis-progress-heading">{analysis.title}</h5>
+                                {#if indexActivityView.kind === 'active' && indexActivityIsInProgress(indexActivityView.result.activity.state)}
                                   <p>
-                                    Weitere fehlerhafte Dateien sind in dieser auf 64 Dateien
-                                    begrenzten Ansicht verborgen.
+                                    {indexActivityStateLabel(
+                                      indexActivityView.result.activity.state,
+                                    )}
                                   </p>
+                                {:else}
+                                  <p>{analysis.copy}</p>
                                 {/if}
                               </div>
-                            {/if}
-                          {:else if indexOverviewView.kind === 'error'}
-                            <div class="recent-projects-error" role="alert">
-                              <p>Der veröffentlichte Index konnte nicht sicher gelesen werden.</p>
-                              <button type="button" onclick={() => void loadIndexOverview()}
-                                >Indexübersicht erneut laden</button
-                              >
                             </div>
-                          {/if}
+
+                            {#if indexActivityView.kind === 'active' && indexActivityIsInProgress(indexActivityView.result.activity.state) && indexActivityView.result.activity.phase !== null}
+                              <p class="analysis-step" role="status" aria-live="polite">
+                                {#if indexActivityView.result.activity.completedPhases === indexActivityView.result.activity.totalPhases}
+                                  Abgeschlossen: {indexPhaseLabel(
+                                    indexActivityView.result.activity.phase,
+                                  )}
+                                {:else}
+                                  Schritt {indexActivityView.result.activity.completedPhases + 1} von
+                                  {indexActivityView.result.activity.totalPhases}: {indexPhaseLabel(
+                                    indexActivityView.result.activity.phase,
+                                  )}
+                                {/if}
+                              </p>
+                              <progress
+                                aria-label="Fortschritt der Code-Analyse"
+                                max={indexActivityView.result.activity.totalPhases}
+                                value={indexActivityView.result.activity.completedPhases}
+                              ></progress>
+                              {#if (indexActivityView.result.activity.state === 'queued' || indexActivityView.result.activity.state === 'running' || indexActivityView.result.activity.state === 'cancelling') && projectStatusView.result.index.publishedSnapshotId !== null}
+                                <p class="analysis-supporting-copy">
+                                  Die zuletzt fertige Analyse bleibt währenddessen nutzbar.
+                                </p>
+                              {/if}
+                            {/if}
+                          </section>
+
+                          <section
+                            class="analysis-results"
+                            aria-labelledby="analysis-results-heading"
+                          >
+                            <h5 id="analysis-results-heading">Erkannter Projektstand</h5>
+                            {#if indexOverviewView.kind === 'loading'}
+                              <p class="project-status" role="status" aria-live="polite">
+                                Analyseergebnisse werden geladen …
+                              </p>
+                            {:else if indexOverviewView.kind === 'noPublishedIndex'}
+                              <p class="project-status">
+                                Noch keine fertige Analyse vorhanden. Sobald sie bereit ist,
+                                erscheinen hier Dateien, Symbole und Abdeckung.
+                              </p>
+                            {:else if indexOverviewView.kind === 'published'}
+                              <dl class="analysis-metrics">
+                                <div>
+                                  <dt>Erfasste Dateien</dt>
+                                  <dd>
+                                    {countLabel(indexOverviewView.result.overview.counts.fileCount)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Gefundene Symbole</dt>
+                                  <dd>
+                                    {countLabel(
+                                      indexOverviewView.result.overview.counts.symbolCount,
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Analyseabdeckung</dt>
+                                  <dd>
+                                    {percentageLabel(
+                                      indexOverviewView.result.overview.coverageBasisPoints,
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Hinweise</dt>
+                                  <dd>
+                                    {countLabel(
+                                      indexOverviewView.result.overview.counts.diagnosticCount,
+                                    )}
+                                  </dd>
+                                </div>
+                              </dl>
+                              <p class="analysis-coverage-note">
+                                {countLabel(
+                                  indexOverviewView.result.overview.counts.parsedFileCount,
+                                )} von
+                                {countLabel(indexOverviewView.result.overview.counts.fileCount)} Dateien
+                                hat A^3 vollständig strukturell ausgewertet.
+                              </p>
+
+                              {#if indexOverviewView.result.overview.diagnosticFiles.length === 0}
+                                <p class="analysis-ready-label">
+                                  Keine zusätzlichen Analysehinweise gefunden.
+                                </p>
+                              {:else}
+                                <details class="analysis-issues">
+                                  <summary>
+                                    Hinweise zu {countLabel(
+                                      indexOverviewView.result.overview.counts.diagnosticFileCount,
+                                    )} Dateien
+                                  </summary>
+                                  <p>
+                                    A^3 konnte Teile dieser Dateien nicht vollständig verstehen. Der
+                                    restliche Projektstand bleibt nutzbar.
+                                  </p>
+                                  <ul>
+                                    {#each indexOverviewView.result.overview.diagnosticFiles as file, fileIndex (fileIndex)}
+                                      <li>
+                                        <div class="diagnostic-file-heading">
+                                          <code
+                                            >{file.pathDisplay}{file.pathDisplayTruncated
+                                              ? '…'
+                                              : ''}</code
+                                          >
+                                          <span>{indexLanguageLabel(file.language)}</span>
+                                        </div>
+                                        <ul>
+                                          {#each file.diagnostics as diagnostic, diagnosticIndex (diagnosticIndex)}
+                                            <li>
+                                              <strong
+                                                >{diagnosticSeverityLabel(
+                                                  diagnostic.severity,
+                                                )}:</strong
+                                              >
+                                              {diagnostic.message}
+                                            </li>
+                                          {/each}
+                                        </ul>
+                                        {#if file.diagnosticsTruncated}
+                                          <p>Weitere Hinweise zu dieser Datei sind ausgeblendet.</p>
+                                        {/if}
+                                      </li>
+                                    {/each}
+                                  </ul>
+                                  {#if indexOverviewView.result.overview.diagnosticFilesTruncated}
+                                    <p>Weitere betroffene Dateien sind ausgeblendet.</p>
+                                  {/if}
+                                </details>
+                              {/if}
+
+                              <details class="project-technical-details analysis-technical-details">
+                                <summary>Technische Analyse-Details</summary>
+                                <dl>
+                                  <div>
+                                    <dt>Snapshot-ID</dt>
+                                    <dd>
+                                      <code>{indexOverviewView.result.overview.snapshotId}</code>
+                                    </dd>
+                                  </div>
+                                </dl>
+                              </details>
+                            {:else if indexOverviewView.kind === 'error'}
+                              <div class="analysis-load-error" role="alert">
+                                <p>Die Analyseergebnisse konnten nicht geladen werden.</p>
+                                <button type="button" onclick={() => void loadIndexOverview()}
+                                  >Erneut versuchen</button
+                                >
+                              </div>
+                            {/if}
+                          </section>
                         </div>
                       {:else}
-                        <div class="project-dialog-maintenance">
-                          <section class="project-maintenance" aria-labelledby="rebuild-heading">
-                            <h4 id="rebuild-heading">Index neu aufbauen</h4>
+                        <div class="project-options-page">
+                          <header class="dialog-page-heading">
+                            <p class="section-kicker">Projektoptionen</p>
+                            <h4>Weitere Projektoptionen</h4>
                             <p>
-                              Entfernt ausschließlich regenerierbare Indexprojektionen. Quellcode,
-                              Snapshots, Aufgaben, Entscheidungen und User-Evidence bleiben
-                              erhalten.
+                              Hier kannst du die Code-Analyse erneuern oder das Projekt aus deiner
+                              A^3-Projektliste entfernen.
                             </p>
-                            <p class="project-status" role="status" aria-live="polite">
+                          </header>
+
+                          <section class="project-option-card" aria-labelledby="rebuild-heading">
+                            <div class="option-card-heading">
+                              <span class="option-card-mark" aria-hidden="true">↻</span>
+                              <div>
+                                <h5 id="rebuild-heading">Code-Analyse neu erstellen</h5>
+                                <p>
+                                  Nutze diese Option, wenn Suche oder Projektkarte veraltet wirken.
+                                  Dein Code und deine Projektdaten bleiben unverändert.
+                                </p>
+                              </div>
+                            </div>
+                            <p class="option-status" role="status" aria-live="polite">
                               {rebuildStateLabel(projectStatusView.result.rebuildState)}
                             </p>
-                            <div class="project-actions">
-                              <button
-                                type="button"
-                                disabled={rebuildView.kind === 'submitting' ||
-                                  projectStatusView.result.rebuildState === 'queued' ||
-                                  projectStatusView.result.rebuildState === 'running'}
-                                onclick={requestIndexRebuild}
-                              >
-                                {rebuildView.kind === 'submitting'
-                                  ? 'Rebuild wird angefordert …'
-                                  : 'Regenerierbaren Index neu aufbauen'}
-                              </button>
-                              <button type="button" onclick={refreshProjectDetails}
-                                >Status aktualisieren</button
-                              >
-                            </div>
+                            <button
+                              type="button"
+                              disabled={rebuildView.kind === 'submitting' ||
+                                projectStatusView.result.rebuildState === 'queued' ||
+                                projectStatusView.result.rebuildState === 'running'}
+                              onclick={requestIndexRebuild}
+                            >
+                              {rebuildView.kind === 'submitting'
+                                ? 'Wird vorbereitet …'
+                                : 'Analyse neu erstellen'}
+                            </button>
                             {#if rebuildView.kind === 'error'}
                               <p class="project-error" role="alert">{rebuildView.message}</p>
                             {/if}
                           </section>
-                          <section
-                            class="project-maintenance project-removal"
-                            aria-labelledby="removal-heading"
-                          >
-                            <h4 id="removal-heading">Projekt aus A^3 entfernen</h4>
-                            <p>
-                              Entfernt nur den Eintrag aus A^3. Repository und private Projektdaten
-                              bleiben vollständig erhalten.
-                            </p>
-                            {#if removalView.kind === 'confirming'}
-                              <dialog
-                                class="removal-confirmation modal-dialog"
-                                aria-labelledby="removal-confirmation-heading"
-                                aria-describedby="removal-confirmation-copy"
-                                use:presentModal
-                                oncancel={(event) => {
-                                  event.preventDefault();
-                                  cancelRemoval();
-                                }}
-                              >
-                                <div class="modal-heading">
-                                  <h3 id="removal-confirmation-heading">
-                                    Worktree aus A^3 entfernen?
-                                  </h3>
-                                  <button
-                                    type="button"
-                                    aria-label="Dialog schließen"
-                                    onclick={cancelRemoval}>×</button
-                                  >
-                                </div>
-                                <p id="removal-confirmation-copy">
-                                  Nur der Eintrag wird entfernt. Repository, private A^3-Daten und
-                                  der lokale Worktree bleiben vollständig bestehen.
-                                </p>
-                                <div class="modal-actions">
-                                  <button type="button" onclick={cancelRemoval}>Abbrechen</button>
-                                  <button
-                                    class="risk-action"
-                                    type="button"
-                                    onclick={confirmProjectRemoval}>Entfernen bestätigen</button
-                                  >
-                                </div>
-                              </dialog>
-                            {:else}
-                              <div class="project-actions">
+
+                          {#if removalView.kind === 'confirming' || removalView.kind === 'submitting'}
+                            <section
+                              class="project-removal-confirmation"
+                              aria-labelledby="removal-confirmation-heading"
+                            >
+                              <p class="section-kicker">Bestätigung</p>
+                              <h5 id="removal-confirmation-heading">Projekt aus A^3 entfernen?</h5>
+                              <p>
+                                <strong
+                                  >{projectDisplayName(
+                                    projectStatusView.result.project.worktreeRootDisplay,
+                                  )}</strong
+                                >
+                                verschwindet aus deiner Projektliste.
+                              </p>
+                              <ul class="removal-effects">
+                                <li>Der Projektordner und alle Dateien bleiben erhalten.</li>
+                                <li>Lokale A^3-Projektdaten werden nicht gelöscht.</li>
+                                <li>Nur der Eintrag in der A^3-Projektliste wird entfernt.</li>
+                              </ul>
+                              <div class="confirmation-actions">
+                                <button
+                                  type="button"
+                                  disabled={removalView.kind === 'submitting'}
+                                  onclick={cancelRemoval}>Zurück</button
+                                >
                                 <button
                                   class="risk-action"
                                   type="button"
                                   disabled={removalView.kind === 'submitting'}
-                                  onclick={requestRemovalConfirmation}
+                                  onclick={confirmProjectRemoval}
                                 >
                                   {removalView.kind === 'submitting'
-                                    ? 'Worktree wird entfernt …'
-                                    : 'Nur aus A^3 entfernen'}
+                                    ? 'Wird entfernt …'
+                                    : 'Aus A^3 entfernen'}
                                 </button>
                               </div>
-                            {/if}
-                            {#if removalView.kind === 'error'}
-                              <p class="project-error" role="alert">
-                                {removalView.message} Repository und private A^3-Daten wurden nicht gelöscht.
+                            </section>
+                          {:else}
+                            <section
+                              class="project-option-card project-danger-zone"
+                              aria-labelledby="removal-heading"
+                            >
+                              <p class="section-kicker">Projektliste</p>
+                              <h5 id="removal-heading">Projekt aus A^3 entfernen</h5>
+                              <p>
+                                Entfernt dieses Projekt aus deiner A^3-Projektliste. Der Ordner und
+                                alle Dateien auf deinem Computer bleiben unverändert.
                               </p>
-                            {/if}
-                          </section>
+                              <button
+                                class="risk-action"
+                                type="button"
+                                onclick={requestRemovalConfirmation}>Aus A^3 entfernen</button
+                              >
+                            </section>
+                          {/if}
+
+                          {#if removalView.kind === 'error'}
+                            <div class="project-removal-error" role="alert">
+                              <p>{removalView.message}</p>
+                              <p>Dein Projektordner und deine Dateien wurden nicht gelöscht.</p>
+                              <button type="button" onclick={requestRemovalConfirmation}
+                                >Erneut versuchen</button
+                              >
+                            </div>
+                          {/if}
                         </div>
                       {/if}
                     </div>
