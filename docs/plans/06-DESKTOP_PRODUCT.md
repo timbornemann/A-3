@@ -644,6 +644,22 @@ strukturierte Ausgabe verwendet `responseJsonSchema`, und abgekündigte Embeddin
 fest codiert. Discovery und Probe bleiben explizite Nutzeraktionen; Speichern allein kontaktiert
 Google nicht.
 
+UX-Korrektur vom 2026-08-22: Die zweite vertikale Settings-Sidebar wird durch eine kompakte
+horizontale Bereichsnavigation ersetzt. Provider und Modelle bilden nun den gemeinsamen Bereich
+`KI & Modelle` mit dem sichtbaren Ablauf Provider verbinden und dabei die Modellliste einmal
+ausdrücklich laden, danach Rollen einzeln zuordnen. Direkte Startpunkte für Ollama und Google
+Gemini verkürzen die Ersteinrichtung; der Button `Verbinden und Modelle laden` macht die einmalige
+Katalogabfrage als Teil desselben bewussten Nutzerklicks sichtbar. Settings-Reads und das spätere
+Bearbeiten ohne `Modelle aktualisieren` erzeugen weiterhin keinen Providerzugriff. Gespeicherte
+Rollenprofile bleiben nach Reload sichtbar, auch wenn der begrenzte Katalog absichtlich flüchtig
+ist; nur `Modelle aktualisieren` fragt spätere neue Auswahlwerte ab. Der Gemini-Dialog nimmt den
+API-Key gleichzeitig mit der Verbindung über den bestehenden one-way Command entgegen; eine spätere
+Bearbeitung zeigt ausschließlich einen festen Sternchen-Platzhalter als content-freien
+Konfigurationsstatus. Rollen- und Providerstatus besitzen eine kleine zugängliche Statushilfe: Sie
+erklärt insbesondere, dass `Capability fehlt` eine fehlende Live-Verifikation der strukturierten
+JSON-Antwort bedeutet, und nennt sichere nächste Schritte, ohne rohe Providerfehler oder Secrets
+sichtbar zu machen.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

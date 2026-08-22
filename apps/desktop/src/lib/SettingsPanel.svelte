@@ -44,7 +44,7 @@
     settingsLoader?: () => Promise<SettingsResponseV1>;
   }
 
-  type SettingsSection = 'general' | 'provider' | 'models' | 'project' | 'privacy' | 'about';
+  type SettingsSection = 'general' | 'models' | 'project' | 'privacy' | 'about';
   type View =
     | { kind: 'loading' }
     | { kind: 'ready'; settings: SettingsV1 }
@@ -63,11 +63,11 @@
     | { kind: 'ready'; health: HealthResponseV1 }
     | { kind: 'error' };
   type ProviderDialog = 'closed' | 'create' | 'edit' | 'remove' | 'deleteCredential';
+  type StatusExplanation = { title: string; detail: string; nextStep: string };
 
   const settingsSections: { id: SettingsSection; label: string }[] = [
     { id: 'general', label: 'Allgemein' },
-    { id: 'provider', label: 'Provider' },
-    { id: 'models', label: 'Modelle' },
+    { id: 'models', label: 'KI & Modelle' },
     { id: 'project', label: 'Projekt' },
     { id: 'privacy', label: 'Datenschutz' },
     { id: 'about', label: 'Info' },
@@ -174,14 +174,16 @@
       : `${settings.endpoint.providerId}\u0000${settings.endpoint.origin}`;
   }
 
-  function openProviderDialog(mode: Exclude<ProviderDialog, 'closed'>): void {
+  function openProviderDialog(
+    mode: Exclude<ProviderDialog, 'closed'>,
+    preferredKind?: ModelProviderKindV1,
+  ): void {
     clearCredentialInput();
     if (view.kind === 'ready' && view.settings.endpoint !== null) {
       endpointOrigin = view.settings.endpoint.origin;
       providerKind = view.settings.endpoint.providerId === 'gemini' ? 'gemini' : 'ollama';
     } else {
-      providerKind = 'ollama';
-      endpointOrigin = 'http://127.0.0.1:11434';
+      handleProviderKindChange(preferredKind ?? 'ollama');
     }
     providerDialog = mode;
   }
@@ -195,18 +197,50 @@
     }
   }
 
+  function providerLabel(providerId: string): string {
+    return providerId === 'gemini' ? 'Google Gemini' : 'Ollama';
+  }
+
   async function saveProvider(endpoint: string | null): Promise<void> {
     if (view.kind !== 'ready') return;
-    action = { kind: 'configuring' };
+    const initialConnection = providerDialog === 'create';
+    const needsCatalogAfterCredential = view.settings.credential?.status !== 'configured';
+    const credentialBytes = captureCredentialInput();
+    let providerConfigured = false;
+    let credentialAttempted = false;
     try {
-      applyResponse(
-        await providerConfigurer(view.settings.revision, providerKind, endpoint),
-        false,
-      );
+      if (endpoint !== null && activeProviderMatches(providerKind, endpoint)) {
+        if (credentialBytes !== null) {
+          credentialAttempted = true;
+          action = { kind: 'credential', operation: 'storing' };
+          applyResponse(await credentialSetter(view.settings.revision, credentialBytes), false);
+        }
+        providerDialog = 'closed';
+        if (credentialBytes !== null && needsCatalogAfterCredential) {
+          await refreshModelCatalogAfterConnection();
+        }
+        return;
+      }
+
+      action = { kind: 'configuring' };
+      const response = await providerConfigurer(view.settings.revision, providerKind, endpoint);
+      providerConfigured = true;
+      applyResponse(response, false);
+      if (credentialBytes !== null) {
+        credentialAttempted = true;
+        action = { kind: 'credential', operation: 'storing' };
+        applyResponse(await credentialSetter(response.settings.revision, credentialBytes), false);
+      }
       providerDialog = 'closed';
       if (endpoint === null) endpointOrigin = 'http://127.0.0.1:11434';
+      if (endpoint !== null && initialConnection) await refreshModelCatalogAfterConnection();
     } catch (error) {
       action = { kind: 'error', message: recoveryMessage(error) };
+      if (credentialAttempted) await refreshAfterAction();
+      if (providerConfigured && endpoint !== null) providerDialog = 'edit';
+    } finally {
+      credentialBytes?.fill(0);
+      clearCredentialInput();
     }
   }
 
@@ -214,20 +248,26 @@
     if (apiKeyInput !== null) apiKeyInput.value = '';
   }
 
-  async function saveCredential(): Promise<void> {
-    if (view.kind !== 'ready' || apiKeyInput === null) return;
+  function closeProviderDialog(): void {
+    clearCredentialInput();
+    providerDialog = 'closed';
+  }
+
+  function captureCredentialInput(): Uint8Array | null {
+    if (providerKind !== 'gemini' || apiKeyInput === null || apiKeyInput.value.length === 0) {
+      return null;
+    }
     const encoded = new TextEncoder().encode(apiKeyInput.value);
     clearCredentialInput();
-    action = { kind: 'credential', operation: 'storing' };
-    try {
-      applyResponse(await credentialSetter(view.settings.revision, encoded), false);
-    } catch (error) {
-      action = { kind: 'error', message: recoveryMessage(error) };
-      await refreshAfterAction();
-    } finally {
-      encoded.fill(0);
-      clearCredentialInput();
-    }
+    return encoded;
+  }
+
+  function activeProviderMatches(provider: ModelProviderKindV1, endpoint: string): boolean {
+    return (
+      view.kind === 'ready' &&
+      view.settings.endpoint?.providerId === provider &&
+      view.settings.endpoint.origin === endpoint
+    );
   }
 
   async function deleteCredential(): Promise<void> {
@@ -264,10 +304,15 @@
     }
   }
 
+  async function refreshModelCatalogAfterConnection(): Promise<void> {
+    if (view.kind === 'ready' && canUseActiveProvider(view.settings)) await discoverModels();
+  }
+
   function openRoleDialog(role: ModelRoleV1): void {
-    if (modelCatalog === null || modelCatalog.modelIds.length === 0) return;
     const currentModel = roleModelId(view.kind === 'ready' ? view.settings : null, role);
-    setSelectedModel(role, currentModel ?? modelCatalog.modelIds[0]!);
+    const firstDiscoveredModel = modelCatalog?.modelIds[0] ?? null;
+    if (currentModel === null && firstDiscoveredModel === null) return;
+    setSelectedModel(role, currentModel ?? firstDiscoveredModel!);
     roleDialog = role;
   }
 
@@ -348,6 +393,14 @@
     return selected !== '' && !options.includes(selected) ? [selected, ...options] : options;
   }
 
+  function hasRoleAssignments(settings: SettingsV1): boolean {
+    return modelRoles.some((role) => roleModelId(settings, role) !== null);
+  }
+
+  function canOpenRoleDialog(settings: SettingsV1, role: ModelRoleV1): boolean {
+    return roleModelId(settings, role) !== null || (modelCatalog?.modelIds.length ?? 0) > 0;
+  }
+
   function canUseActiveProvider(settings: SettingsV1): boolean {
     if (settings.endpoint === null) return false;
     if (settings.endpoint.access === 'explicitUserInitiatedRemote') {
@@ -397,6 +450,101 @@
     if (role === 'embedding') return embeddingState(settings.embeddingProfile);
     const profile = role === 'coding' ? settings.codingProfile : settings.mappingProfile;
     return llmState(profile);
+  }
+
+  function roleStatusExplanation(settings: SettingsV1, role: ModelRoleV1): StatusExplanation {
+    if (role === 'embedding') {
+      if (settings.embeddingProfile !== null) {
+        return {
+          title: 'Embedding-Fähigkeit verifiziert',
+          detail:
+            'A^3 hat eine echte Vektorantwort mit einer gültigen Dimension erhalten. Diese Prüfung ist unabhängig von Coding und Deep Map.',
+          nextStep:
+            'Die semantische Suche kann dieses Modell verwenden, solange Provider und Modell unverändert bleiben.',
+        };
+      }
+      return {
+        title: 'Noch nicht eingerichtet',
+        detail:
+          'Für diese Aufgabe wurde noch kein Modell live geprüft. Ein Modellname allein schaltet keine Funktion frei.',
+        nextStep: 'Wähle ein Modell aus der geladenen Liste und starte die Prüfung.',
+      };
+    }
+    const profile = role === 'coding' ? settings.codingProfile : settings.mappingProfile;
+    if (profile === null) {
+      return {
+        title: 'Noch nicht eingerichtet',
+        detail:
+          'Für diese Aufgabe wurde noch kein Modell live geprüft. Ein Modellname allein schaltet keine Funktion frei.',
+        nextStep: 'Wähle ein Modell aus der geladenen Liste und starte die Prüfung.',
+      };
+    }
+    if (profile.activation === 'capabilityLimited') {
+      return {
+        title: 'Strukturiertes JSON konnte nicht verifiziert werden',
+        detail:
+          'A^3 hat für dieses Modell eine minimale Antwort nach einem festen JSON-Schema angefordert. Die Antwort war nicht schema-konform oder diese API-Funktion war für das Modell nicht verfügbar. Chatten kann ein Modell trotzdem – Agentenaktionen und Deep Map bleiben aber sicher gesperrt.',
+        nextStep:
+          'Wähle ein anderes Modell aus der geladenen Liste und prüfe es erneut. Bleibt der Status bei allen Modellen gleich, prüfe API-Key und Gemini-Zugriff und versuche die Prüfung später erneut.',
+      };
+    }
+    return {
+      title: 'Capability verifiziert',
+      detail:
+        'Das Modell hat die erforderliche strukturierte JSON-Antwort live geliefert. Nur dadurch darf A^3 diese Rolle für kontrollierte Ausgaben verwenden.',
+      nextStep:
+        'Änderungen an Provider oder Modell machen die Prüfung ungültig; führe sie danach erneut aus.',
+    };
+  }
+
+  function providerHealthExplanation(settings: SettingsV1): StatusExplanation {
+    switch (settings.providerHealth?.status ?? 'notChecked') {
+      case 'healthy':
+        return {
+          title: 'Letzte Prüfung erfolgreich',
+          detail: 'Die letzte explizite Modellprüfung beim aktiven Provider war erfolgreich.',
+          nextStep: 'Die einzelnen Rollen behalten trotzdem ihren eigenen Verifikationsstatus.',
+        };
+      case 'capabilityLimited':
+        return {
+          title: 'Mindestens eine Modellprüfung war eingeschränkt',
+          detail:
+            'Der Provider ist erreichbar, aber eine Rollenprüfung konnte die nötige Capability nicht bestätigen.',
+          nextStep:
+            'Öffne die betroffene Rolle über „Ändern“, lies die Statushilfe und prüfe ein anderes Modell.',
+        };
+      case 'unreachable':
+        return {
+          title: 'Provider nicht erreichbar',
+          detail:
+            'Die letzte bewusste Modelloperation konnte den aktiven Provider nicht erreichen.',
+          nextStep:
+            'Prüfe die lokale Provider-App beziehungsweise Internetverbindung und lade die Modelle erneut.',
+        };
+      case 'cancelled':
+        return {
+          title: 'Prüfung abgebrochen',
+          detail:
+            'Die letzte bewusste Modelloperation wurde beendet, bevor sie eine Capability bestätigen konnte.',
+          nextStep: 'Starte die gewünschte Modellprüfung erneut, wenn der Provider bereit ist.',
+        };
+      case 'remoteBlocked':
+        return {
+          title: 'Remote-Verbindung blockiert',
+          detail:
+            'Dieser Endpoint gehört nicht zu einer für diese Aktion erlaubten Providerverbindung.',
+          nextStep:
+            'Verwende einen unterstützten Provider-Endpunkt; eine allgemeine Remote-Freigabe gibt es nicht.',
+        };
+      default:
+        return {
+          title: 'Noch nicht geprüft',
+          detail:
+            'A^3 prüft Provider nicht automatisch. Einstellungen lesen und speichern erzeugt keinen Netzwerkzugriff.',
+          nextStep:
+            'Lade die Modelle oder prüfe eine Rolle bewusst, wenn du die Verbindung verwenden möchtest.',
+        };
+    }
   }
 
   function llmState(profile: LlmRoleProfileV1 | null): string {
@@ -484,18 +632,15 @@
 </script>
 
 <section class="settings-shell" aria-label="Einstellungen">
-  <aside class="settings-navigation">
-    <p>Einstellungen</p>
-    <nav aria-label="Einstellungsbereiche">
-      {#each settingsSections as section (section.id)}
-        <button
-          type="button"
-          aria-current={settingsView === section.id ? 'page' : undefined}
-          onclick={() => selectSettingsView(section.id)}>{section.label}</button
-        >
-      {/each}
-    </nav>
-  </aside>
+  <nav class="settings-tabs" aria-label="Einstellungsbereiche">
+    {#each settingsSections as section (section.id)}
+      <button
+        type="button"
+        aria-current={settingsView === section.id ? 'page' : undefined}
+        onclick={() => selectSettingsView(section.id)}>{section.label}</button
+      >
+    {/each}
+  </nav>
 
   <div class="settings-content">
     {#if settingsView === 'about'}
@@ -556,205 +701,167 @@
             </div>
           </div>
         </section>
-      {:else if settingsView === 'provider'}
-        <section class="settings-page" aria-labelledby="provider-settings-heading">
-          <header class="settings-page-heading settings-page-heading-action">
+      {:else if settingsView === 'models'}
+        <section class="settings-page model-setup-page" aria-labelledby="model-settings-heading">
+          <header class="settings-page-heading">
             <div>
-              <h3 id="provider-settings-heading">Provider</h3>
-              <p>Lokale und freigegebene Cloud-Modellverbindungen anlegen und verwalten.</p>
+              <h3 id="model-settings-heading">KI &amp; Modelle</h3>
+              <p>
+                Verbinde einen Provider, lade dessen Modelle und ordne sie den Funktionen von A^3
+                zu. Jeder Schritt bleibt bewusst und kontrolliert.
+              </p>
             </div>
-            {#if view.settings.endpoint === null}
-              <button
-                class="primary-action"
-                type="button"
-                onclick={() => openProviderDialog('create')}>Provider hinzufügen</button
-              >
-            {/if}
           </header>
 
-          {#if view.settings.endpoint === null}
-            <div class="settings-empty-state">
-              <strong>Kein Provider eingerichtet</strong>
-              <p>
-                A^3 bleibt als lokaler Indexbrowser voll nutzbar. Für Agentenfunktionen kannst du
-                eine Ollama- oder Google Gemini-Verbindung hinzufügen.
-              </p>
-              <button type="button" onclick={() => openProviderDialog('create')}
-                >Provider verbinden</button
-              >
-            </div>
-          {:else}
-            <div class="provider-list" aria-label="Eingerichtete Provider">
-              <article class="provider-row">
-                <div class="provider-logo" aria-hidden="true">
-                  {view.settings.endpoint.providerId === 'gemini' ? 'G' : 'O'}
-                </div>
-                <div class="provider-summary">
-                  <div>
-                    <strong
-                      >{view.settings.endpoint.providerId === 'gemini'
-                        ? 'Google Gemini'
-                        : 'Ollama'}</strong
-                    >
-                    <span class="settings-badge">{healthLabel(view.settings)}</span>
-                  </div>
-                  <code>{view.settings.endpoint.origin}</code>
-                </div>
-                <div class="provider-actions">
-                  <button
-                    type="button"
-                    disabled={!canUseActiveProvider(view.settings)}
-                    onclick={discoverModels}>Modelle erkennen</button
-                  >
-                  <button type="button" onclick={() => openProviderDialog('edit')}
-                    >Bearbeiten</button
-                  >
-                  <button
-                    class="subtle-danger-action"
-                    type="button"
-                    onclick={() => openProviderDialog('remove')}>Entfernen</button
-                  >
-                </div>
-              </article>
-            </div>
-            {#if view.settings.endpoint.access === 'remoteBlocked'}
-              <div class="remote-warning" role="alert">
-                <strong>Remote-Verbindung blockiert</strong>
-                <p>
-                  A^3 führt ohne exakte Freigabe weder Modellerkennung noch Capability-Prüfung aus.
-                </p>
-              </div>
-            {/if}
-            {#if view.settings.endpoint.providerId === 'gemini' && view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
-              <div class="remote-warning" role="note">
-                <strong>Google Gemini Cloud</strong>
-                <p>
-                  Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
-                  <code>generativelanguage.googleapis.com</code>. Spätere Agentenläufe können
-                  Prompts und ausgewählten Quelltext nur mit einer eigenen laufgebundenen
-                  Netzwerkfreigabe an Google senden. Das Speichern des Keys erzeugt keinen
-                  Netzwerkzugriff.
-                </p>
-              </div>
-              <form
-                class="credential-form"
-                onsubmit={(event) => {
-                  event.preventDefault();
-                  void saveCredential();
-                }}
-              >
+          <section class="model-setup-section" aria-labelledby="provider-setup-heading">
+            <header class="setup-section-heading">
+              <div>
+                <span class="setup-step" aria-hidden="true">1</span>
                 <div>
-                  <strong>Gemini API-Key</strong>
-                  <span
-                    role="status"
-                    aria-live="polite"
-                    class:credential-warning={view.settings.credential?.status !== 'configured'}
-                  >
-                    {credentialLabel(view.settings)}
-                  </span>
+                  <h4 id="provider-setup-heading">Provider verbinden</h4>
+                  <p>
+                    Wähle, wo A^3 Modelle findet. Es ist immer nur eine Verbindung gleichzeitig
+                    aktiv.
+                  </p>
                 </div>
-                <label for="gemini-api-key">
-                  Neuer API-Key
-                  <input
-                    id="gemini-api-key"
-                    bind:this={apiKeyInput}
-                    type="password"
-                    maxlength="4096"
-                    required
-                    autocomplete="new-password"
-                    spellcheck="false"
-                    autocapitalize="none"
-                    disabled={operationBusy()}
-                  />
-                </label>
-                <p>
-                  Der vorhandene Key wird nie angezeigt. A^3 speichert ihn ausschließlich im
-                  Betriebssystem-Schlüsselspeicher.
-                </p>
-                <div class="provider-actions">
-                  <button class="primary-action" type="submit" disabled={operationBusy()}>
-                    {view.settings.credential?.status === 'configured'
-                      ? 'Key ersetzen'
-                      : 'Key speichern'}
-                  </button>
-                  {#if view.settings.credential?.status !== 'missing'}
+              </div>
+            </header>
+
+            {#if view.settings.endpoint === null}
+              <div class="setup-empty-state">
+                <div>
+                  <strong>Bereit für deine Modellverbindung</strong>
+                  <p>
+                    Der Indexbrowser funktioniert weiterhin ohne Modell. Wähle einen Provider, um
+                    KI-Funktionen einzurichten.
+                  </p>
+                </div>
+                <div class="provider-choice-grid" aria-label="Provider auswählen">
+                  <button
+                    class="primary-action"
+                    type="button"
+                    onclick={() => openProviderDialog('create', 'ollama')}>Ollama verbinden</button
+                  >
+                  <button type="button" onclick={() => openProviderDialog('create', 'gemini')}
+                    >Google Gemini verwenden</button
+                  >
+                </div>
+              </div>
+            {:else}
+              <div class="provider-list" aria-label="Aktive Providerverbindung">
+                <article class="provider-row">
+                  <div class="provider-logo" aria-hidden="true">
+                    {view.settings.endpoint.providerId === 'gemini' ? 'G' : 'O'}
+                  </div>
+                  <div class="provider-summary">
+                    <div>
+                      <strong>{providerLabel(view.settings.endpoint.providerId)}</strong>
+                      <span class="settings-badge">{healthLabel(view.settings)}</span>
+                      <details class="status-help">
+                        <summary aria-label="Providerstatus erklären"
+                          ><span aria-hidden="true">i</span></summary
+                        >
+                        <div class="status-help-popover" role="note">
+                          <strong>{providerHealthExplanation(view.settings).title}</strong>
+                          <p>{providerHealthExplanation(view.settings).detail}</p>
+                          <p>{providerHealthExplanation(view.settings).nextStep}</p>
+                        </div>
+                      </details>
+                    </div>
+                    <code>{view.settings.endpoint.origin}</code>
+                  </div>
+                  <div class="provider-actions">
+                    <button type="button" onclick={() => openProviderDialog('edit')}
+                      >Bearbeiten</button
+                    >
                     <button
                       class="subtle-danger-action"
                       type="button"
-                      disabled={operationBusy()}
-                      onclick={() => {
-                        clearCredentialInput();
-                        providerDialog = 'deleteCredential';
-                      }}>Key löschen</button
+                      onclick={() => openProviderDialog('remove')}>Entfernen</button
                     >
-                  {/if}
+                  </div>
+                </article>
+              </div>
+              {#if view.settings.endpoint.access === 'remoteBlocked'}
+                <div class="remote-warning" role="alert">
+                  <strong>Remote-Verbindung blockiert</strong>
+                  <p>
+                    A^3 führt ohne exakte Freigabe weder Modellerkennung noch Capability-Prüfung
+                    aus.
+                  </p>
                 </div>
-              </form>
-            {/if}
-          {/if}
-        </section>
-      {:else if settingsView === 'models'}
-        <section class="settings-page" aria-labelledby="model-settings-heading">
-          <header class="settings-page-heading settings-page-heading-action">
-            <div>
-              <h3 id="model-settings-heading">Modelle</h3>
-              <p>Verfügbare Modelle erkennen und klaren Aufgaben zuordnen.</p>
-            </div>
-            {#if view.settings.endpoint?.scope === 'localLoopback' || view.settings.endpoint?.providerId === 'gemini'}
-              {#if action.kind === 'discovering' || (action.kind === 'cancelling' && action.role === null)}
-                <button type="button" onclick={() => cancelOperation(null)}>
-                  {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Erkennung abbrechen'}
-                </button>
-              {:else}
-                <button type="button" disabled={operationBusy()} onclick={discoverModels}
-                  >{modelCatalog === null ? 'Modelle erkennen' : 'Liste aktualisieren'}</button
-                >
+              {/if}
+              {#if view.settings.endpoint.providerId === 'gemini' && view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
+                <div class="remote-warning" role="note">
+                  <strong>Google Gemini Cloud</strong>
+                  <p>
+                    Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
+                    <code>generativelanguage.googleapis.com</code>. Spätere Agentenläufe können
+                    Prompts und ausgewählten Quelltext nur mit einer eigenen laufgebundenen
+                    Netzwerkfreigabe an Google senden. Das Speichern des Keys erzeugt keinen
+                    Netzwerkzugriff.
+                  </p>
+                </div>
               {/if}
             {/if}
-          </header>
+          </section>
 
-          {#if view.settings.endpoint === null}
-            <div class="settings-empty-state">
-              <strong>Zuerst einen Provider verbinden</strong>
-              <p>Danach kann A^3 die verfügbaren Modelle direkt abfragen.</p>
-              <button type="button" onclick={() => selectSettingsView('provider')}
-                >Zu Provider</button
-              >
-            </div>
-          {:else if view.settings.endpoint.access === 'remoteBlocked'}
-            <div class="remote-warning" role="alert">
-              <strong>Lokale Modellerkennung nicht verfügbar</strong>
-              <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
-            </div>
-          {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
-            <div class="remote-warning" role="alert">
-              <strong>Gemini API-Key erforderlich</strong>
-              <p>Speichere oder repariere den API-Key zuerst im Bereich Provider.</p>
-            </div>
-          {:else if modelCatalog === null}
-            <div class="settings-empty-state">
-              <strong>Noch keine Modellliste geladen</strong>
-              <p>
-                Die Abfrage startet nur durch deinen Klick. Sie liest ausschließlich Modellnamen vom
-                konfigurierten Provider-Endpoint.
-              </p>
-              <button
-                type="button"
-                disabled={!canUseActiveProvider(view.settings)}
-                onclick={discoverModels}>Modelle erkennen</button
-              >
-            </div>
-          {:else}
-            <div class="model-catalog-summary" role="status">
-              <span>{modelCatalog.modelIds.length} Modelle gefunden</span>
-              {#if modelCatalog.truncated}<span>Liste begrenzt</span>{/if}
-            </div>
-            {#if modelCatalog.modelIds.length === 0}
-              <div class="settings-empty-state">
-                <strong>Keine installierten Modelle gefunden</strong>
-                <p>Installiere zuerst ein Modell in Ollama und aktualisiere danach die Liste.</p>
+          <section class="model-setup-section" aria-labelledby="role-setup-heading">
+            <header class="setup-section-heading setup-section-heading-action">
+              <div>
+                <span class="setup-step" aria-hidden="true">2</span>
+                <div>
+                  <h4 id="role-setup-heading">Aufgaben zuordnen</h4>
+                  <p>
+                    Jede Zuordnung wird separat geprüft. Ein Modellname allein aktiviert keine
+                    Funktion.
+                  </p>
+                </div>
               </div>
-            {:else}
+              {#if view.settings.endpoint !== null}
+                {#if action.kind === 'discovering' || (action.kind === 'cancelling' && action.role === null)}
+                  <button type="button" onclick={() => cancelOperation(null)}>
+                    {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Erkennung abbrechen'}
+                  </button>
+                {:else}
+                  <button
+                    type="button"
+                    disabled={!canUseActiveProvider(view.settings)}
+                    onclick={discoverModels}>Modelle aktualisieren</button
+                  >
+                {/if}
+              {/if}
+            </header>
+
+            {#if view.settings.endpoint === null}
+              <div class="setup-pending-state">
+                <strong>Provider erforderlich</strong>
+                <p>Verbinde zuerst einen Provider. Die aktuelle Modellliste wird danach geladen.</p>
+              </div>
+            {:else if view.settings.endpoint.access === 'remoteBlocked'}
+              <div class="remote-warning" role="note">
+                <strong>Modellzuordnung nicht verfügbar</strong>
+                <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
+              </div>
+            {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
+              <div class="setup-pending-state">
+                <strong>Gemini API-Key erforderlich</strong>
+                <p>Speichere oder repariere den API-Key im vorherigen Schritt.</p>
+              </div>
+            {:else if modelCatalog !== null}
+              <div class="model-catalog-summary" role="status">
+                <span>{modelCatalog.modelIds.length} Modelle gefunden</span>
+                {#if modelCatalog.truncated}<span>Liste begrenzt</span>{/if}
+              </div>
+              {#if modelCatalog.modelIds.length === 0}
+                <div class="setup-pending-state">
+                  <strong>Keine Modelle gefunden</strong>
+                  <p>Prüfe den Provider und aktualisiere anschließend die Modellliste.</p>
+                </div>
+              {/if}
+            {/if}
+
+            {#if (modelCatalog !== null && modelCatalog.modelIds.length > 0) || hasRoleAssignments(view.settings)}
               <div class="model-role-list" aria-label="Modellzuordnungen">
                 {#each modelRoles as role (role)}
                   <article class="model-role-row">
@@ -764,19 +871,42 @@
                     </div>
                     <div class="model-role-selection">
                       <code>{roleModelId(view.settings, role) ?? 'Nicht zugeordnet'}</code>
-                      <span
-                        class:capability-limited={roleStatus(view.settings, role) ===
-                          'Capability fehlt'}>{roleStatus(view.settings, role)}</span
-                      >
+                      <div class="model-role-status">
+                        <span
+                          class:capability-limited={roleStatus(view.settings, role) ===
+                            'Capability fehlt'}>{roleStatus(view.settings, role)}</span
+                        >
+                        <details class="status-help">
+                          <summary aria-label={`Status für ${roleLabel(role)} erklären`}
+                            ><span aria-hidden="true">i</span></summary
+                          >
+                          <div class="status-help-popover" role="note">
+                            <strong>{roleStatusExplanation(view.settings, role).title}</strong>
+                            <p>{roleStatusExplanation(view.settings, role).detail}</p>
+                            <p>{roleStatusExplanation(view.settings, role).nextStep}</p>
+                          </div>
+                        </details>
+                      </div>
                     </div>
-                    <button type="button" onclick={() => openRoleDialog(role)}>
-                      {roleModelId(view.settings, role) === null ? 'Einrichten' : 'Ändern'}
-                    </button>
+                    <button
+                      type="button"
+                      disabled={!canOpenRoleDialog(view.settings, role)}
+                      onclick={() => openRoleDialog(role)}
+                      >{roleModelId(view.settings, role) === null ? 'Einrichten' : 'Ändern'}</button
+                    >
                   </article>
                 {/each}
               </div>
+            {:else}
+              <div class="setup-pending-state">
+                <strong>Modellliste wird benötigt</strong>
+                <p>
+                  Nach dem Verbinden lädt A^3 die aktuelle Modellliste. Falls sie nicht verfügbar
+                  ist, aktualisiere sie über die Schaltfläche oben.
+                </p>
+              </div>
             {/if}
-          {/if}
+          </section>
         </section>
       {:else if settingsView === 'project'}
         <section class="settings-page" aria-labelledby="project-page-heading">
@@ -824,7 +954,7 @@
         </p>
       {:else if action.kind === 'discovering'}
         <p class="settings-status" role="status" aria-live="polite">
-          Installierte Ollama-Modelle werden abgefragt …
+          Modellliste wird aktualisiert …
         </p>
       {:else if action.kind === 'probing'}
         <p class="settings-status" role="status" aria-live="polite">
@@ -842,7 +972,7 @@
     use:presentModal
     oncancel={(event) => {
       event.preventDefault();
-      providerDialog = 'closed';
+      closeProviderDialog();
     }}
   >
     <form
@@ -854,15 +984,17 @@
       <div class="modal-heading">
         <div>
           <h3 id="provider-dialog-heading">
-            {providerDialog === 'create' ? 'Provider hinzufügen' : 'Provider bearbeiten'}
+            {providerDialog === 'create'
+              ? `${providerLabel(providerKind)} verbinden`
+              : `${providerLabel(providerKind)} bearbeiten`}
           </h3>
-          <p>Verbindung wird erst bei einer bewussten Aktion verwendet.</p>
+          <p>
+            {providerDialog === 'create'
+              ? 'Mit „Verbinden und Modelle laden“ bestätigst du die Verbindung und die einmalige Modellerkennung.'
+              : 'Speichern erzeugt keinen Netzwerkzugriff. Aktualisiere die Modellliste anschließend bei Bedarf.'}
+          </p>
         </div>
-        <button
-          type="button"
-          aria-label="Dialog schließen"
-          onclick={() => (providerDialog = 'closed')}>×</button
-        >
+        <button type="button" aria-label="Dialog schließen" onclick={closeProviderDialog}>×</button>
       </div>
       <div class="settings-dialog-body">
         <label for="provider-kind">
@@ -895,9 +1027,58 @@
         {#if providerKind === 'gemini'}
           <p>Standard: <code>https://generativelanguage.googleapis.com</code></p>
           <p class="probe-explanation">
-            Nach dem Speichern der Verbindung hinterlegst du den API-Key im geschützten
-            Betriebssystem-Schlüsselspeicher.
+            Der API-Key wird beim Speichern direkt in den geschützten
+            Betriebssystem-Schlüsselspeicher übernommen.
           </p>
+          <div class="dialog-credential">
+            <div>
+              <strong>Gemini API-Key</strong>
+              <span
+                role="status"
+                aria-live="polite"
+                class:credential-warning={view.kind === 'ready' &&
+                  view.settings.credential?.status !== 'configured'}
+              >
+                {view.kind === 'ready'
+                  ? credentialLabel(view.settings)
+                  : 'API-Key wird beim Speichern geschützt abgelegt'}
+              </span>
+            </div>
+            <label for="gemini-api-key">
+              API-Key
+              <input
+                id="gemini-api-key"
+                bind:this={apiKeyInput}
+                type="password"
+                maxlength="4096"
+                autocomplete="new-password"
+                spellcheck="false"
+                autocapitalize="none"
+                required={view.kind !== 'ready' ||
+                  view.settings.credential?.status !== 'configured'}
+                placeholder={view.kind === 'ready' &&
+                view.settings.credential?.status === 'configured'
+                  ? '********'
+                  : undefined}
+                disabled={operationBusy()}
+              />
+            </label>
+            <p>
+              Der gespeicherte Key wird nie angezeigt. Die Sternchen sind ein fester Platzhalter und
+              geben weder Wert noch Länge preis.
+            </p>
+            {#if providerDialog === 'edit' && view.kind === 'ready' && view.settings.credential?.status !== 'missing'}
+              <button
+                class="subtle-danger-action"
+                type="button"
+                disabled={operationBusy()}
+                onclick={() => {
+                  clearCredentialInput();
+                  providerDialog = 'deleteCredential';
+                }}>Key löschen</button
+              >
+            {/if}
+          </div>
         {:else}
           <p>Standard: <code>http://127.0.0.1:11434</code></p>
         {/if}
@@ -905,7 +1086,7 @@
       <div class="modal-actions">
         <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
         <button class="primary-action" type="submit" disabled={operationBusy()}>
-          {providerDialog === 'create' ? 'Provider hinzufügen' : 'Änderungen speichern'}
+          {providerDialog === 'create' ? 'Verbinden und Modelle laden' : 'Änderungen speichern'}
         </button>
       </div>
     </form>

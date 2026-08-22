@@ -264,8 +264,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   annehmen. Component-Tests zeigen den weiter nutzbaren modellfreien Indexbrowser, eine nicht nur
   farbliche Remote-Warnung, explizite Probe-/Abbruchaktionen, validierte Limits, fail-closed
   Privacy, read-only Indexignore und die evidence-gebundene Commandauswahl.
-  Settings-Component-Tests prüfen zusätzlich die schmale Bereichsnavigation, Provider-CRUD über
-  Modale, explizite Modellerkennung und die rollenbezogene Dropdown-Auswahl ohne freie Modell-ID.
+  Settings-Component-Tests prüfen zusätzlich die horizontale Bereichsnavigation ohne zweite
+  Sidebar, den zusammenhängenden Ablauf Provider verbinden und die dabei ausdrücklich ausgelöste
+  erste Modellerkennung → rollenbezogene Dropdown-Auswahl, Provider-CRUD über Modale, die one-way
+  Gemini-Key-Eingabe mit ausschließlich content-freiem Sternchen-Platzhalter nach erfolgreichem
+  Speichern und die Abwesenheit freier Modell-IDs. Nach einem Reload müssen gespeicherte
+  Rollenprofile unabhängig vom flüchtigen Katalog sichtbar bleiben; `Modelle aktualisieren` lädt
+  nur auf einen späteren ausdrücklichen Klick neue Auswahlwerte. Jeder sichtbare Rollen- und
+  Providerstatus führt außerdem über eine zugängliche Statushilfe zu einer content-freien
+  Erklärung und einem konkreten nächsten Schritt; insbesondere erläutert `Capability fehlt` die
+  fehlende Live-Verifikation von strukturiertem JSON, ohne rohe Providerantworten preiszugeben.
 - Der U9-Designsystemvertrag extrahiert globale und sämtliche scoped Svelte-Styles. Außerhalb der
   zentralen Tokenquelle sind Hex-, RGB- und benannte Rohfarben verboten. Light und Dark müssen
   dieselben semantischen Rollen für Text, Flächen, Status, Fokus, Info, Erfolg, Warnung, Gefahr,
