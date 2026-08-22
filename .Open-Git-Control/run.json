@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "actions": {
+    "run": {
+      "steps": [
+        {
+          "id": "desktop-dev",
+          "label": "Run A^3 desktop app",
+          "parser": "none",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm tauri dev"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm tauri dev"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm tauri dev"
+          }
+        }
+      ]
+    },
+    "test": {
+      "steps": [
+        {
+          "id": "rust-workspace-tests",
+          "label": "Test Rust workspace",
+          "parser": "diagnostic",
+          "windows": {
+            "shell": "powershell",
+            "command": "cargo test --workspace --all-features --locked"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "cargo test --workspace --all-features --locked"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "cargo test --workspace --all-features --locked"
+          }
+        },
+        {
+          "id": "desktop-vitest",
+          "label": "Run desktop frontend tests",
+          "parser": "vitest-jest",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm --filter @a3/desktop test"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm --filter @a3/desktop test"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm --filter @a3/desktop test"
+          }
+        },
+        {
+          "id": "tooling-node-tests",
+          "label": "Run repository tooling tests",
+          "parser": "none",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm test:tools"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm test:tools"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm test:tools"
+          }
+        }
+      ]
+    },
+    "format": {
+      "steps": [
+        {
+          "id": "rust-format-check",
+          "label": "Check Rust formatting",
+          "parser": "none",
+          "windows": {
+            "shell": "powershell",
+            "command": "cargo fmt --all -- --check"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "cargo fmt --all -- --check"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "cargo fmt --all -- --check"
+          }
+        },
+        {
+          "id": "frontend-format-check",
+          "label": "Check frontend and repository formatting",
+          "parser": "prettier",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm format:check"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm format:check"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm format:check"
+          }
+        }
+      ]
+    },
+    "start": {
+      "steps": [
+        {
+          "id": "frontend-dev-server",
+          "label": "Start desktop frontend dev server",
+          "parser": "none",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm --filter @a3/desktop dev"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm --filter @a3/desktop dev"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm --filter @a3/desktop dev"
+          }
+        }
+      ]
+    },
+    "build": {
+      "steps": [
+        {
+          "id": "desktop-native-build",
+          "label": "Build native desktop application",
+          "parser": "diagnostic",
+          "windows": {
+            "shell": "powershell",
+            "command": "pnpm --filter @a3/desktop tauri build --no-bundle"
+          },
+          "macos": {
+            "shell": "zsh",
+            "command": "pnpm --filter @a3/desktop tauri build --no-bundle"
+          },
+          "linux": {
+            "shell": "bash",
+            "command": "pnpm --filter @a3/desktop tauri build --no-bundle"
+          }
+        }
+      ]
+    }
+  }
+}
