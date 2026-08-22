@@ -3,6 +3,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "activate_catalog_project",
             "cancel_model_probe",
             "list_recent_projects",
             "cancel_deep_map",
@@ -16,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "open_project",
             "pause_deep_map",
             "query_deep_map",
+            "query_project_catalog",
             "query_index_activity",
             "query_index_overview",
             "query_agent_activity",
@@ -38,7 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "query_settings",
             "rebuild_project_index",
             "resume_deep_map",
+            "restore_last_project",
             "remove_project",
+            "remove_catalog_project",
             "probe_model_role",
             "set_model_provider_credential",
             "revise_agent_goal",

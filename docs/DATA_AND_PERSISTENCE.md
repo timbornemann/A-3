@@ -38,11 +38,17 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   `prepared` oder `completed`, sodass ein Abbruch zwischen Dateisystem- und DB-Schritt sicher
   fortgesetzt wird. Eine normale Projekterkennung oder ein Reconciliation-Abschluss aktualisiert
   Katalog und Öffnungsreihenfolge in genau einer `IMMEDIATE`-Transaktion.
+- Katalogschema V6 ergänzt einen Index für die unbegrenzte Aktivierungsreihenfolge und eine
+  externe FTS5-Projektion mit Trigram-Tokenizer ausschließlich über die sichere Root-Anzeige.
+  Insert-, Update- und Delete-Trigger halten die Suche synchron; die Vorwärtsmigration baut sie
+  aus vorhandenen `recent_worktrees` neu auf. Katalogreads bleiben auf feste 25er-Seiten begrenzt
+  und geben nur opake Cursor aus. Autoritative Pfadbytes werden ausschließlich für einen
+  Core-intern aufgelösten Aktivierungstarget dekodiert und nie als IPC-Autorität projiziert.
 - `ProjectId`, `RepositoryId`, `WorktreeId`, `WorktreeAnchorId` und Remote-Fingerprints werden als
   32-Byte-Werte gespeichert. Autoritative Pfade werden auf Windows als UTF-16LE und auf Unix als rohe
   OS-Bytes gespeichert. Die separat gespeicherte Anzeigeprojektion ist kontrollzeichenfrei und auf
   32.768 Zeichen begrenzt.
-- Der aus den konkreten Open- und Recent-Project-Use-Cases abgeleitete `KnowledgeStore`-Port nimmt nur
+- Der aus den konkreten Open- und Project-Catalog-Use-Cases abgeleitete `KnowledgeStore`-Port nimmt nur
   Domain-/Application-Typen an. Der zusammengesetzte libSQL-Adapter öffnet und prüft zuerst die
   identitätsgebundene `knowledge.db` und aktualisiert erst danach den globalen Katalog atomar. Ein
   Knowledge-Fehler erzeugt deshalb weder ein erfolgreiches Open-Ergebnis noch einen neuen
@@ -177,7 +183,7 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   App-Data-Roots; engine-spezifische Migration-, Crash-, Korruptions- und Schema-Negativtests
   bleiben getrennt. Jeder weitere Storageadapter muss dieselbe Suite ausführen.
 - Der Desktop-Composition-Root öffnet `catalog.db` im privaten Tauri-App-Data-Verzeichnis und injiziert
-  denselben Store in Open-, Recent- und Index-Use-Case. Nach einem erfolgreichen Project Open besitzt
+  denselben Store in Open-, Project-Catalog- und Index-Use-Case. Nach einem erfolgreichen Project Open besitzt
   ein begrenzter Koordinator den Worktree-Watcher, reicht serialisierte Refresh-Jobs an den
   Scheduler weiter und leert dessen begrenzten Ereigniskanal. Beim Project Open wird die zugehörige
   `knowledge.db` innerhalb dieses privaten Roots geöffnet. Die WebView erhält keine DB-Verbindung und

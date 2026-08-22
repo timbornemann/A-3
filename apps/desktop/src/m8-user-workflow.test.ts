@@ -272,7 +272,7 @@ describe('M8 desktop user workflow', () => {
 
     expect((await screen.findAllByText('Kein Projekt geöffnet')).length).toBeGreaterThan(0);
     expect(tasksLoader).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
     expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('link', { name: 'Agent' }));

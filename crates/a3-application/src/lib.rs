@@ -53,6 +53,7 @@ mod open_project;
 mod policy;
 mod policy_store;
 mod process_runner;
+mod project_catalog;
 mod project_map_search;
 mod project_reconciliation;
 mod project_removal;
@@ -203,6 +204,7 @@ pub use knowledge_search_store::{
 pub use knowledge_store::{
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ProjectPathDisplay,
     ProjectPathDisplayError, RecentProject, RecentProjectLimit, RecentProjectLimitError,
+    StoredProjectTarget,
 };
 pub use language_adapter::{
     LanguageAdapter, LanguageParseControl, LanguageParseControlError, LanguageParseFailure,
@@ -314,6 +316,11 @@ pub use policy_store::{
 pub use process_runner::{
     AuthorizedProcessSpec, ProcessAuthorizationError, ProcessEventSink, ProcessEventSinkError,
     ProcessRunControl, ProcessRunFailure, ProcessRunFuture, ProcessRunner,
+};
+pub use project_catalog::{
+    ActivateCatalogProject, ActivateCatalogProjectError, PROJECT_CATALOG_PAGE_SIZE,
+    ProjectCatalogCursor, ProjectCatalogDirection, ProjectCatalogPage, ProjectCatalogQuery,
+    ProjectCatalogQueryError,
 };
 pub use project_map_search::{
     ProjectMapSearchQuery, ProjectMapSearchQueryError, SearchProjectMap, SearchProjectMapFailure,

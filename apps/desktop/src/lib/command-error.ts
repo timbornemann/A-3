@@ -41,6 +41,7 @@ export type ErrorCodeV1 =
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
+  | 'invalidProjectCatalogRequest'
   | 'projectNotInList'
   | 'projectRemovalUnavailable'
   | 'deepMapUnavailable'
@@ -104,6 +105,7 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',
+  'invalidProjectCatalogRequest',
   'projectNotInList',
   'projectRemovalUnavailable',
   'deepMapUnavailable',

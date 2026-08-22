@@ -90,9 +90,11 @@ typisierte Verifikation allein darf Schritte abschließen, und ein wiederholter 
 erzwingt deterministisch Replan beziehungsweise Stop. M7/E8 ergänzt zustandsgenaue Recovery für
 Patchkonflikte, partielle Wirkung, Prozessfehler und unbekannte Mutationsergebnisse; M7/E9 belegt
 den vollständigen Codingpfad mit reproduzierbaren lokalen E2E-Aufgaben, Replan, Useränderung und
-Context Compaction. Die Desktop-Projects-Fläche öffnet validierte Worktrees, zeigt Recent Projects,
-Branch, Index, Snapshot und private Storagegröße, baut ausschließlich regenerierbare Indexdaten neu
-auf und entfernt Projekte aus der Liste, ohne Repository oder privates Wissen zu löschen. U3 zeigt
+Context Compaction. Die Desktop-Projects-Fläche öffnet validierte Worktrees, verwaltet einen
+unbegrenzten durchsuchbaren Projektkatalog in 25er-Seiten, stellt den zuletzt aktiven Worktree nach
+erneuter Core-Validierung wieder her und zeigt Branch, Index, Snapshot und private Storagegröße. Sie
+baut ausschließlich regenerierbare Indexdaten neu auf und entfernt Projekte aus der Liste, ohne
+Repository oder privates Wissen zu löschen. U3 zeigt
 inzwischen live die sechs Fast-Index-Phasen, den weiterhin lesbaren veröffentlichten Snapshot,
 Dateien, Symbole, Coverage und file-lokale Diagnostics. Der explizite Deep-Map-Lifecycle zeigt ein
 verifiziertes Modell und harte Budgets vor dem Start, kann checkpoint-sicher pausieren,
@@ -207,8 +209,10 @@ Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Eviden
 Project-Map-Search-, Task-Lens-, Agent-Goal- und Agent-Activity-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
-Öffnen oder Abbrechen an. `list_recent_projects` liefert höchstens zehn validierte
-Anzeigeprojektionen aus dem lokalen Katalog. `query_repository_tree` akzeptiert nur relative
+Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte
+Anzeigeprojektionen mit opaken Cursorn. Aktivieren und Entfernen akzeptieren nur eine gelistete
+`worktreeId`; `restore_last_project` hat keine Pfad- oder Identitätsparameter und versucht niemals
+ein anderes Projekt als Fallback. `query_repository_tree` akzeptiert nur relative
 verlustfreie Indextokens, einen exklusiven Kind-Cursor und ein Limit von 1 bis 100; Projekt und
 Worktree stammen aus dem Core. `query_module_tree` akzeptiert entsprechend nur stabile Modul-IDs,
 einen exklusiven Cursor und dieselbe Seitengrenze; Graph-Communities verleihen keine

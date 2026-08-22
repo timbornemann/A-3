@@ -26,9 +26,9 @@ WebView-Rand verwenden `camelCase`. Eingaben lehnen unbekannte Felder ab.
 ## Gemeinsamer V1-Request
 
 Die pfadlosen Status- und Control-Commands erhalten genau ein Argument `request`. Das gilt neben
-`query_health`, `open_project` und `list_recent_projects` auch für Projekt-, Index- und
-Deep-Map-Status sowie für `pause_deep_map`, `resume_deep_map` und `cancel_deep_map`. Ihr gemeinsamer
-V1-Request enthält ausschließlich:
+`query_health`, `open_project`, `list_recent_projects` und `restore_last_project` auch für Projekt-,
+Index- und Deep-Map-Status sowie für `pause_deep_map`, `resume_deep_map` und `cancel_deep_map`. Ihr
+gemeinsamer V1-Request enthält ausschließlich:
 
 | JSON-Feld | Typ | Invariante |
 | --- | --- | --- |
@@ -396,15 +396,32 @@ Der bestehende V1-Vertrag enthält absichtlich keine `ProjectId`; seine JSON-For
 Katalogregistrierung und Reconciliation unverändert. Kandidat, Evidence, Katalogrevision und
 Bestätigungsentscheidung sind interne Application-/Adaptertypen und keine IPC-Felder oder Commands.
 
-## Recent Projects Response V1
+## Projektkatalog V1
 
-`list_recent_projects` liefert most-recent-first höchstens zehn Einträge. Jeder Eintrag enthält eine
-64-stellige kleingeschriebene `projectId` und unter `project` dieselbe sichere
-`ProjectSummaryV1`-Projektion wie `open_project`. Autoritative gespeicherte Pfadbytes, Git Common
-Directory, Remote-URLs, Datenbankzeilen und Adapterfehler werden nicht übertragen.
+`list_recent_projects` bleibt als begrenzter Legacy-Read kompatibel. Die Projects-Fläche verwendet
+`query_project_catalog`. Dessen Request enthält exakt `protocolVersion`, optionales `search`,
+optionales `cursor` und `direction` (`initial | next | previous`). `initial` verbietet einen Cursor;
+die beiden Navigationsrichtungen verlangen einen 16-stelligen kleingeschriebenen Hex-Cursor. Die
+kontrollzeichenfreie Suche ist getrimmt und auf 128 Zeichen begrenzt.
 
-Die UI lädt diese Projektion beim Start und nach einem erfolgreichen Open erneut. Auswahl, erneutes
-Öffnen oder Entfernen eines Katalogeintrags sind nicht Teil dieses V1-Teilschnitts.
+Die Antwort enthält immer exakt `protocolVersion`, höchstens 25 `projects` sowie optionale
+`previousCursor` und `nextCursor`. Jeder Eintrag enthält eine 64-stellige kleingeschriebene
+`projectId` und unter `project` dieselbe sichere `ProjectSummaryV1`-Projektion wie `open_project`.
+Autoritative gespeicherte Pfadbytes, Git Common Directory, Remote-URLs, Datenbankzeilen und
+Adapterfehler werden nicht übertragen. Die Sortierung ist „zuletzt erfolgreich aktiviert zuerst“;
+Suche filtert nur die sichere Root-Anzeige.
+
+`activate_catalog_project` und `remove_catalog_project` akzeptieren neben `protocolVersion`
+ausschließlich eine kanonische 64-stellige kleingeschriebene `worktreeId`. Der Core löst sie gegen
+den Katalog auf; Pfad, `projectId` und `repositoryId` können nicht geliefert werden.
+`restore_last_project` verwendet nur den gemeinsamen pfadlosen Request und liefert entweder
+`noSavedProject` oder `activated` mit `projectId` und sicherer `project`-Projektion. Es versucht nur
+den jüngsten Eintrag und enthält keine Fallback-Liste. Aktivierung und Wiederherstellung
+revalidieren den gespeicherten Root und beide Git-Identitäten vor dem Runtime-Wechsel.
+
+`remove_catalog_project` verwendet die bestehende `RemoveProjectResponseV1`-Bestätigung `removed`.
+Die feste Semantik entfernt nur den Katalogeintrag und offene Reconciliation-Absichten; Repository,
+Worktree, Quellcode und private `knowledge.db` bleiben außerhalb des Commands.
 
 ## Settings und Provider Model Catalog V1
 
@@ -441,7 +458,9 @@ Ein syntaktisch gültiger Requestfehler erhält einen sicheren, serialisierbaren
 
 Neben den Projektinspektionsfehlern unterscheidet V1 lokale Storage-Nichtverfügbarkeit, Korruption,
 eine neuere nicht unterstützte Schemaversion, ungültige persistierte Daten und einen
-Projektidentitätskonflikt. Die Fehlermeldung enthält keine SQL-Texte, Enginefehler oder Rohpfade.
+Projektidentitätskonflikt. Ungültige Katalogsuchen, Cursor oder IDs verwenden
+`invalidProjectCatalogRequest`. Die Fehlermeldung enthält keine SQL-Texte, Enginefehler oder
+Rohpfade.
 Provider-Credentials verwenden zusätzlich die stabilen Codes `providerCredentialInvalid`,
 `providerCredentialMissing`, `providerCredentialRecoveryRequired` und
 `providerCredentialStoreUnavailable`; ihre Meldungen enthalten nie Credential-Material.
@@ -462,3 +481,6 @@ eine stabile Modul-ID. Für Deep Map sind das
 `allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.
+Der Projektkatalog besitzt ausschließlich `allow-query-project-catalog`,
+`allow-activate-catalog-project`, `allow-restore-last-project` und
+`allow-remove-catalog-project`; keine dieser Capabilities akzeptiert einen Pfad.

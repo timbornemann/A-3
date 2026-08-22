@@ -10,16 +10,17 @@ use crate::{
     map_create_agent_goal_from_v1, map_module_card_detail_query_from_v1,
     map_module_card_evidence_query_from_v1, map_module_dependency_graph_query_from_v1,
     map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
-    map_module_tree_query_from_v1, map_project_map_search_query_from_v1,
-    map_repository_tree_query_from_v1, map_revise_agent_goal_from_v1,
-    map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
+    map_module_tree_query_from_v1, map_project_catalog_query_from_v1,
+    map_project_map_search_query_from_v1, map_repository_tree_query_from_v1,
+    map_revise_agent_goal_from_v1, map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
+    map_worktree_id_from_v1,
 };
 use a3_protocol::{
-    AgentActivityResponseV1, AgentApprovalControlResponseV1, AgentApprovalResponseV1,
-    AgentGoalMutationResponseV1, AgentGoalResponseV1, AgentInspectionLogResponseV1,
-    AgentInspectionResponseV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
-    CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
-    CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
+    ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
+    AgentApprovalResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentTaskControlResponseV1,
+    AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1, CancelModelProbeResponseV1,
+    CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
     DeepMapControlResponseV1, DeepMapStatusResponseV1, DeleteModelProviderCredentialRequestV1,
@@ -28,20 +29,21 @@ use a3_protocol::{
     ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
     ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
     OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectMapSearchResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
-    ProtocolVersion, ProviderModelsResponseV1, QueryAgentActivityRequestV1,
-    QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
-    QueryAgentInspectionRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
-    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-    QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-    QuerySettingsRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
-    RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
+    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSearchResponseV1,
+    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
+    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectCatalogRequestV1, QueryProjectMapSearchRequestV1, QueryProjectSettingsRequestV1,
+    QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
+    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
+    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveCatalogProjectRequestV1,
     RemoveProjectRequestV1, RemoveProjectResponseV1, RepositoryTreeResponseV1,
-    ReviseAgentGoalRequestV1, SetModelProviderCredentialRequestV1, SettingsResponseV1,
-    StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
+    RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1, SetModelProviderCredentialRequestV1,
+    SettingsResponseV1, StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
     TaskLensTasksResponseV1,
 };
 use tauri::State;
@@ -62,6 +64,33 @@ pub async fn list_recent_projects(
     root: State<'_, CompositionRoot>,
 ) -> Result<RecentProjectsResponseV1, CommandErrorV1> {
     execute_list_recent_projects(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns one fixed-size, searchable catalog page without accepting a path.
+pub async fn query_project_catalog(
+    request: QueryProjectCatalogRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectCatalogResponseV1, CommandErrorV1> {
+    execute_query_project_catalog(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Revalidates and activates one worktree ID from the durable catalog.
+pub async fn activate_catalog_project(
+    request: ActivateCatalogProjectRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+    execute_activate_catalog_project(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Restores only the most recently activated catalog entry.
+pub async fn restore_last_project(
+    request: RestoreLastProjectRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+    execute_restore_last_project(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -353,6 +382,15 @@ pub async fn remove_project(
 }
 
 #[tauri::command]
+/// Non-destructively removes one exact worktree ID from the durable catalog.
+pub async fn remove_catalog_project(
+    request: RemoveCatalogProjectRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+    execute_remove_catalog_project(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Returns process health metadata when the request uses the current protocol version.
 pub fn query_health(
     request: HealthRequestV1,
@@ -578,6 +616,38 @@ async fn execute_list_recent_projects(
     }
 
     root.list_recent_projects().await
+}
+
+async fn execute_query_project_catalog(
+    request: QueryProjectCatalogRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectCatalogResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_project_catalog_query_from_v1(&request)?;
+    root.query_project_catalog(&query).await
+}
+
+async fn execute_activate_catalog_project(
+    request: ActivateCatalogProjectRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let worktree_id = map_worktree_id_from_v1(request.worktree_id())?;
+    root.activate_catalog_project(worktree_id).await
+}
+
+async fn execute_restore_last_project(
+    request: RestoreLastProjectRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.restore_last_project().await
 }
 
 async fn execute_query_project_status(
@@ -920,23 +990,35 @@ async fn execute_remove_project(
     root.remove_project().await
 }
 
+async fn execute_remove_catalog_project(
+    request: RemoveCatalogProjectRequestV1,
+    root: &CompositionRoot,
+) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let worktree_id = map_worktree_id_from_v1(request.worktree_id())?;
+    root.remove_catalog_project(worktree_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_compile_task_lens, execute_control_agent_approval, execute_control_agent_task_run,
-        execute_control_deep_map, execute_create_agent_goal, execute_list_recent_projects,
-        execute_open_project, execute_query_agent_activity, execute_query_agent_approval,
-        execute_query_agent_goal, execute_query_agent_inspection,
-        execute_query_agent_inspection_log, execute_query_agent_task_recovery,
-        execute_query_deep_map, execute_query_health, execute_query_index_activity,
-        execute_query_index_overview, execute_query_module_card_detail,
-        execute_query_module_card_evidence, execute_query_module_card_freshness,
-        execute_query_module_dependency_graph, execute_query_module_runtime_flow,
-        execute_query_module_runtime_map, execute_query_module_tree,
-        execute_query_project_map_search, execute_query_project_settings,
-        execute_query_project_status, execute_query_repository_tree, execute_query_task_lens_task,
-        execute_query_task_lens_tasks, execute_rebuild_project_index, execute_remove_project,
-        execute_revise_agent_goal, execute_start_deep_map,
+        execute_activate_catalog_project, execute_compile_task_lens,
+        execute_control_agent_approval, execute_control_agent_task_run, execute_control_deep_map,
+        execute_create_agent_goal, execute_list_recent_projects, execute_open_project,
+        execute_query_agent_activity, execute_query_agent_approval, execute_query_agent_goal,
+        execute_query_agent_inspection, execute_query_agent_inspection_log,
+        execute_query_agent_task_recovery, execute_query_deep_map, execute_query_health,
+        execute_query_index_activity, execute_query_index_overview,
+        execute_query_module_card_detail, execute_query_module_card_evidence,
+        execute_query_module_card_freshness, execute_query_module_dependency_graph,
+        execute_query_module_runtime_flow, execute_query_module_runtime_map,
+        execute_query_module_tree, execute_query_project_catalog, execute_query_project_map_search,
+        execute_query_project_settings, execute_query_project_status,
+        execute_query_repository_tree, execute_query_task_lens_task, execute_query_task_lens_tasks,
+        execute_rebuild_project_index, execute_remove_catalog_project, execute_remove_project,
+        execute_restore_last_project, execute_revise_agent_goal, execute_start_deep_map,
     };
     use crate::CompositionRoot;
     use a3_application::{
@@ -944,36 +1026,41 @@ mod tests {
         ProjectDirectorySelectionError, ProjectOpenPreparation, ProjectPathDisplay,
         ProjectReconciliationChoice, ProjectReconciliationConfirmationError,
         ProjectReconciliationConfirmer, ProjectReconciliationProposal, RecentProject,
-        RecentProjectLimit,
+        RecentProjectLimit, StoredProjectTarget,
     };
-    use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
+    use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity, WorktreeId};
     use a3_protocol::{
-        AgentActivityResultV1, AgentApprovalControlResultV1, AgentApprovalResultV1,
-        AgentGoalResultV1, AgentInspectionLogResultV1, AgentInspectionResultV1,
-        AgentInspectionStreamV1, AgentTaskControlResultV1, AgentTaskRecoveryResultV1,
-        CompileTaskLensRequestV1, ControlAgentApprovalRequestV1, ControlAgentTaskRunRequestV1,
-        ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapBudgetV1, DeepMapStatusResultV1,
-        ErrorCodeV1, HealthRequestV1, IndexActivityResultV1, IndexOverviewResultV1,
-        ListRecentProjectsRequestV1, ModuleCardDetailResultV1, ModuleCardEvidenceResultV1,
-        ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1,
-        ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1, ModuleTreeResultV1,
-        OpenProjectRequestV1, ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
-        QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
-        QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+        ActivateCatalogProjectRequestV1, AgentActivityResultV1, AgentApprovalControlResultV1,
+        AgentApprovalResultV1, AgentGoalResultV1, AgentInspectionLogResultV1,
+        AgentInspectionResultV1, AgentInspectionStreamV1, AgentTaskControlResultV1,
+        AgentTaskRecoveryResultV1, CompileTaskLensRequestV1, ControlAgentApprovalRequestV1,
+        ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
+        DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1, HealthRequestV1,
+        IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
+        ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
+        ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
+        ModuleRuntimeMapResultV1, ModuleTreeResultV1, OpenProjectRequestV1,
+        ProjectCatalogDirectionV1, ProjectMapSearchResultV1, ProjectStatusResultV1,
+        ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1,
+        QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
         QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
         QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
         QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
         QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-        QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1,
-        QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-        RemoveProjectRequestV1, RepositoryTreeResultV1, ReviseAgentGoalRequestV1,
+        QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectCatalogRequestV1,
+        QueryProjectMapSearchRequestV1, QueryProjectSettingsRequestV1, QueryProjectStatusRequestV1,
+        QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
+        RebuildProjectIndexRequestV1, RemoveCatalogProjectRequestV1, RemoveProjectRequestV1,
+        RepositoryTreeResultV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
         StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
         TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
+    use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Debug)]
     struct CancelledPicker;
@@ -983,6 +1070,17 @@ mod tests {
             &self,
         ) -> Result<Option<PathBuf>, ProjectDirectorySelectionError> {
             Ok(None)
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixedPicker(PathBuf);
+
+    impl ProjectDirectoryPicker for FixedPicker {
+        fn pick_project_directory(
+            &self,
+        ) -> Result<Option<PathBuf>, ProjectDirectorySelectionError> {
+            Ok(Some(self.0.clone()))
         }
     }
 
@@ -1017,6 +1115,58 @@ mod tests {
             _limit: RecentProjectLimit,
         ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
             Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingSwitchStore {
+        initial_worktree_id: WorktreeId,
+        target: StoredProjectTarget,
+        record_calls: Arc<AtomicUsize>,
+    }
+
+    impl KnowledgeStore for FailingSwitchStore {
+        fn prepare_project_open<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectOpenPreparation> {
+            Box::pin(async { Ok(ProjectOpenPreparation::Ready) })
+        }
+
+        fn record_opened_project<'a>(
+            &'a self,
+            project: &'a ProjectIdentity,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            self.record_calls.fetch_add(1, Ordering::SeqCst);
+            let result = if project.worktree().id() == self.initial_worktree_id {
+                Ok(ProjectId::from_bytes([1; 32]))
+            } else {
+                Err(KnowledgeStoreFailure::Unavailable)
+            };
+            Box::pin(async move { result })
+        }
+
+        fn reconcile_project<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _proposal: &'a ProjectReconciliationProposal,
+        ) -> KnowledgeStoreFuture<'a, ProjectId> {
+            Box::pin(async { Err(KnowledgeStoreFailure::IdentityConflict) })
+        }
+
+        fn list_recent_projects(
+            &self,
+            _limit: RecentProjectLimit,
+        ) -> KnowledgeStoreFuture<'_, Vec<RecentProject>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn resolve_project_catalog_entry(
+            &self,
+            worktree_id: WorktreeId,
+        ) -> KnowledgeStoreFuture<'_, Option<StoredProjectTarget>> {
+            let target = (self.target.worktree_id() == worktree_id).then(|| self.target.clone());
+            Box::pin(async move { Ok(target) })
         }
     }
 
@@ -2162,5 +2312,175 @@ mod tests {
             Err(ErrorCodeV1::NoActiveProject)
         );
         Ok(())
+    }
+
+    #[test]
+    fn project_catalog_commands_are_pathless_bounded_and_version_first()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = root()?;
+        let initial = QueryProjectCatalogRequestV1::new(
+            ProtocolVersion::CURRENT,
+            None,
+            None,
+            ProjectCatalogDirectionV1::Initial,
+        );
+        let page = block_on(execute_query_project_catalog(initial, &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(serde_json::to_value(page)?.get("projects").is_some());
+
+        let invalid_search = QueryProjectCatalogRequestV1::new(
+            ProtocolVersion::CURRENT,
+            Some("bad\nsearch".to_owned()),
+            None,
+            ProjectCatalogDirectionV1::Initial,
+        );
+        assert_eq!(
+            block_on(execute_query_project_catalog(invalid_search, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidProjectCatalogRequest)
+        );
+
+        let invalid_cursor = QueryProjectCatalogRequestV1::new(
+            ProtocolVersion::CURRENT,
+            None,
+            Some("0000000000000000".to_owned()),
+            ProjectCatalogDirectionV1::Next,
+        );
+        assert_eq!(
+            block_on(execute_query_project_catalog(invalid_cursor, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidProjectCatalogRequest)
+        );
+
+        let invalid_id =
+            ActivateCatalogProjectRequestV1::new(ProtocolVersion::CURRENT, "not-an-id".to_owned());
+        assert_eq!(
+            block_on(execute_activate_catalog_project(invalid_id, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidProjectCatalogRequest)
+        );
+
+        let invalid_remove =
+            RemoveCatalogProjectRequestV1::new(ProtocolVersion::CURRENT, "AA".repeat(32));
+        assert_eq!(
+            block_on(execute_remove_catalog_project(invalid_remove, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::InvalidProjectCatalogRequest)
+        );
+
+        let unsupported =
+            ActivateCatalogProjectRequestV1::new(ProtocolVersion::new(999), "not-an-id".to_owned());
+        assert_eq!(
+            block_on(execute_activate_catalog_project(unsupported, &root))
+                .map_err(|error| error.code()),
+            Err(ErrorCodeV1::UnsupportedProtocolVersion)
+        );
+
+        let restore = block_on(execute_restore_last_project(
+            RestoreLastProjectRequestV1::current(),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert_eq!(
+            serde_json::to_value(restore)?["result"]["status"],
+            "noSavedProject"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_catalog_commit_restores_the_previously_active_project()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = TestDirectory::new()?;
+        let first_root = fixture.path().join("first");
+        let second_root = fixture.path().join("second");
+        initialize_repository(&first_root)?;
+        initialize_repository(&second_root)?;
+        let inspector = a3_workspace::RepositoryInspector::new();
+        let first = inspector.inspect(&first_root)?;
+        let second = inspector.inspect(&second_root)?;
+        let record_calls = Arc::new(AtomicUsize::new(0));
+        let store = Arc::new(FailingSwitchStore {
+            initial_worktree_id: first.worktree().id(),
+            target: StoredProjectTarget::new(
+                ProjectId::from_bytes([2; 32]),
+                second.repository().id(),
+                second.worktree().id(),
+                second_root,
+            ),
+            record_calls: Arc::clone(&record_calls),
+        });
+        let root = CompositionRoot::new(
+            ApplicationVersion::try_from("0.1.0")?,
+            Platform::Windows,
+            Arc::new(FixedPicker(first_root)),
+            Arc::new(CancelledConfirmer),
+            store,
+        )?;
+
+        block_on(execute_open_project(OpenProjectRequestV1::current(), &root))
+            .map_err(|error| std::io::Error::other(error.message()))?;
+        let switch = block_on(execute_activate_catalog_project(
+            ActivateCatalogProjectRequestV1::new(
+                ProtocolVersion::CURRENT,
+                second.worktree().id().to_string(),
+            ),
+            &root,
+        ));
+        assert_eq!(
+            switch.map_err(|error| error.code()),
+            Err(ErrorCodeV1::LocalStorageUnavailable)
+        );
+
+        let status = block_on(execute_query_project_status(
+            QueryProjectStatusRequestV1::current(),
+            &root,
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert_eq!(
+            serde_json::to_value(status)?["result"]["project"]["worktreeId"],
+            first.worktree().id().to_string()
+        );
+        assert_eq!(record_calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> std::io::Result<Self> {
+            static NEXT: AtomicUsize = AtomicUsize::new(1);
+            let path = std::env::temp_dir().join(format!(
+                "a3-project-catalog-command-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ignored = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn initialize_repository(path: &std::path::Path) -> std::io::Result<()> {
+        fs::create_dir(path)?;
+        let output = Command::new("git")
+            .current_dir(path)
+            .args(["-c", "init.defaultBranch=main", "init"])
+            .output()?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("Git fixture initialization failed"))
+        }
     }
 }

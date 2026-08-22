@@ -377,6 +377,34 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             SELECT RAISE(ABORT, 'desktop embedding profiles are append-only');
           END;",
     },
+    Migration {
+        version: 6,
+        name: "project_catalog_search",
+        sql: "CREATE INDEX recent_worktrees_activation_order_idx
+          ON recent_worktrees (last_open_sequence DESC);
+          CREATE VIRTUAL TABLE project_catalog_fts USING fts5(
+            worktree_root_display,
+            content='recent_worktrees',
+            content_rowid='rowid',
+            tokenize='trigram'
+          );
+          INSERT INTO project_catalog_fts(project_catalog_fts) VALUES('rebuild');
+          CREATE TRIGGER recent_worktrees_catalog_ai AFTER INSERT ON recent_worktrees BEGIN
+            INSERT INTO project_catalog_fts(rowid, worktree_root_display)
+              VALUES (new.rowid, new.worktree_root_display);
+          END;
+          CREATE TRIGGER recent_worktrees_catalog_ad AFTER DELETE ON recent_worktrees BEGIN
+            INSERT INTO project_catalog_fts(project_catalog_fts, rowid, worktree_root_display)
+              VALUES ('delete', old.rowid, old.worktree_root_display);
+          END;
+          CREATE TRIGGER recent_worktrees_catalog_au AFTER UPDATE OF worktree_root_display
+            ON recent_worktrees BEGIN
+            INSERT INTO project_catalog_fts(project_catalog_fts, rowid, worktree_root_display)
+              VALUES ('delete', old.rowid, old.worktree_root_display);
+            INSERT INTO project_catalog_fts(rowid, worktree_root_display)
+              VALUES (new.rowid, new.worktree_root_display);
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -2439,7 +2467,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(5);
+    pub const CURRENT: Self = Self::new(6);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -4176,6 +4204,54 @@ mod tests {
             assert_eq!(
                 query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
                 0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn catalog_v6_indexes_existing_safe_project_displays() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            migrate(
+                &connection,
+                &CATALOG_MIGRATIONS[..5],
+                5,
+                CATALOG_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute_batch(
+                    "INSERT INTO projects VALUES (x'0101010101010101010101010101010101010101010101010101010101010101', 1, 1);
+                     INSERT INTO repository_observations VALUES (
+                       x'0202020202020202020202020202020202020202020202020202020202020202',
+                       x'0101010101010101010101010101010101010101010101010101010101010101',
+                       x'2f7265706f', 'utf8-lossy-v1', NULL, 1, 1
+                     );
+                     INSERT INTO recent_worktrees VALUES (
+                       x'0303030303030303030303030303030303030303030303030303030303030303',
+                       x'0101010101010101010101010101010101010101010101010101010101010101',
+                       x'0202020202020202020202020202020202020202020202020202020202020202',
+                       NULL, x'2f6c6567616379', 'utf8-lossy-v1', '/legacy-dashboard', 'unborn',
+                       NULL, 'refs/heads/main', 1
+                     );",
+                )
+                .await?;
+
+            assert_eq!(
+                super::migrate_catalog(&connection).await?,
+                CatalogSchemaVersion::CURRENT
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM project_catalog_fts
+                     WHERE project_catalog_fts MATCH 'legacy'",
+                )
+                .await?,
+                1
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

@@ -473,6 +473,7 @@ mod tests {
         assert_eq!(
             capability.get("permissions"),
             Some(&json!([
+                "allow-activate-catalog-project",
                 "allow-cancel-model-probe",
                 "allow-list-recent-projects",
                 "allow-cancel-deep-map",
@@ -503,6 +504,7 @@ mod tests {
                 "allow-query-module-runtime-map",
                 "allow-query-module-tree",
                 "allow-query-project-map-search",
+                "allow-query-project-catalog",
                 "allow-query-repository-tree",
                 "allow-query-task-lens-task",
                 "allow-query-task-lens-tasks",
@@ -512,9 +514,11 @@ mod tests {
                 "allow-query-settings",
                 "allow-rebuild-project-index",
                 "allow-remove-project",
+                "allow-remove-catalog-project",
                 "allow-probe-model-role",
                 "allow-revise-agent-goal",
                 "allow-resume-deep-map",
+                "allow-restore-last-project",
                 "allow-start-deep-map",
                 "allow-set-model-provider-credential"
             ]))

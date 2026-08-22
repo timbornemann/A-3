@@ -1,4 +1,4 @@
-use a3_domain::{ProjectId, ProjectIdentity};
+use a3_domain::{ProjectId, ProjectIdentity, WorktreeId};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -19,6 +19,14 @@ pub trait ProjectCatalogAdmin: fmt::Debug + Send + Sync {
         project: &'a ProjectIdentity,
         project_id: ProjectId,
     ) -> ProjectCatalogAdminFuture<'a, ()>;
+
+    /// Removes exactly one previously listed worktree by its opaque catalog identity.
+    fn remove_catalog_worktree(
+        &self,
+        _worktree_id: WorktreeId,
+    ) -> ProjectCatalogAdminFuture<'_, ()> {
+        Box::pin(async { Err(ProjectCatalogAdminFailure::NotFound) })
+    }
 }
 
 /// Application use case for safely hiding one worktree from the A^3 project list.
@@ -42,6 +50,18 @@ impl RemoveProjectFromList {
     ) -> Result<RemovedProject, RemoveProjectFromListError> {
         self.store
             .remove_recent_worktree(project, project_id)
+            .await
+            .map_err(RemoveProjectFromListError::Storage)?;
+        Ok(RemovedProject)
+    }
+
+    /// Removes one exact catalog row selected by a previously listed worktree ID.
+    pub async fn execute_catalog(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<RemovedProject, RemoveProjectFromListError> {
+        self.store
+            .remove_catalog_worktree(worktree_id)
             .await
             .map_err(RemoveProjectFromListError::Storage)?;
         Ok(RemovedProject)

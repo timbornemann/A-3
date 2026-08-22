@@ -20,7 +20,7 @@ describe('U9 accessibility contract', () => {
     });
 
     await waitFor(() =>
-      expect(screen.getByRole('heading', { level: 2, name: 'Projekt öffnen' })).toBeTruthy(),
+      expect(screen.getByRole('heading', { level: 2, name: 'Deine Projekte' })).toBeTruthy(),
     );
 
     expect(container.querySelectorAll('main')).toHaveLength(1);

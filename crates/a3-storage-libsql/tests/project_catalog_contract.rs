@@ -4,8 +4,8 @@ mod support;
 
 use a3_application::{
     KnowledgeStore, KnowledgeStoreFailure, ProjectCatalogAdmin, ProjectCatalogAdminFailure,
-    ProjectOpenPreparation, ProjectReconciliationEvidence, ProjectReconciliationProposal,
-    RecentProjectLimit,
+    ProjectCatalogDirection, ProjectCatalogQuery, ProjectOpenPreparation,
+    ProjectReconciliationEvidence, ProjectReconciliationProposal, RecentProjectLimit,
 };
 use a3_domain::{
     CanonicalDirectory, GitHead, GitObjectId, GitReferenceName, ProjectId, ProjectIdentity,
@@ -24,6 +24,136 @@ use support::TempDirectory;
 // libSQL's Windows native test runtime is not safe when separate local database
 // fixtures are opened and torn down concurrently inside one process.
 static PROJECT_CATALOG_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn catalog_is_unlimited_searchable_and_cursor_paged_without_deleting_private_data()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_project_catalog_test()?;
+    run_project_catalog_test(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let mut projects = Vec::new();
+        for index in 1_u8..=30 {
+            let common =
+                create_directory(temporary.path().join(format!("repository-{index:02}-git")))?;
+            let name = if index == 7 {
+                "client-dashboard".to_owned()
+            } else {
+                format!("worktree-{index:02}")
+            };
+            let root = create_directory(temporary.path().join(name))?;
+            projects.push(project_fixture(
+                [index; 32],
+                [index.saturating_add(100); 32],
+                &common,
+                &root,
+                None,
+                unborn_head()?,
+            )?);
+        }
+
+        let catalog = LibsqlKnowledgeStore::open(&layout).await?;
+        for project in &projects {
+            catalog.record_opened_project(project).await?;
+        }
+        let first = catalog
+            .list_project_catalog(&ProjectCatalogQuery::new(
+                None,
+                None,
+                ProjectCatalogDirection::Initial,
+            )?)
+            .await?;
+        assert_eq!(first.projects().len(), 25);
+        assert!(first.previous_cursor().is_none());
+        let next_cursor = first
+            .next_cursor()
+            .ok_or_else(|| io::Error::other("first catalog page has no next cursor"))?;
+        assert_eq!(
+            first.projects()[0].worktree_id(),
+            projects[29].worktree().id()
+        );
+
+        let second = catalog
+            .list_project_catalog(&ProjectCatalogQuery::new(
+                None,
+                Some(next_cursor),
+                ProjectCatalogDirection::Next,
+            )?)
+            .await?;
+        assert_eq!(second.projects().len(), 5);
+        let previous_cursor = second
+            .previous_cursor()
+            .ok_or_else(|| io::Error::other("second catalog page has no previous cursor"))?;
+        assert!(second.next_cursor().is_none());
+
+        let previous = catalog
+            .list_project_catalog(&ProjectCatalogQuery::new(
+                None,
+                Some(previous_cursor),
+                ProjectCatalogDirection::Previous,
+            )?)
+            .await?;
+        assert_eq!(previous.projects(), first.projects());
+        assert!(previous.previous_cursor().is_none());
+        assert!(previous.next_cursor().is_some());
+
+        let search = catalog
+            .list_project_catalog(&ProjectCatalogQuery::new(
+                Some("client".to_owned()),
+                None,
+                ProjectCatalogDirection::Initial,
+            )?)
+            .await?;
+        assert_eq!(search.projects().len(), 1);
+        assert_eq!(
+            search.projects()[0].worktree_id(),
+            projects[6].worktree().id()
+        );
+
+        let short_search = catalog
+            .list_project_catalog(&ProjectCatalogQuery::new(
+                Some("17".to_owned()),
+                None,
+                ProjectCatalogDirection::Initial,
+            )?)
+            .await?;
+        assert_eq!(short_search.projects().len(), 1);
+        assert_eq!(
+            short_search.projects()[0].worktree_id(),
+            projects[16].worktree().id()
+        );
+
+        let stored = catalog
+            .resolve_last_project_catalog_entry()
+            .await?
+            .ok_or_else(|| io::Error::other("last catalog target is missing"))?;
+        assert_eq!(stored.worktree_id(), projects[29].worktree().id());
+        assert_eq!(
+            stored.worktree_root(),
+            projects[29].worktree().root().as_path()
+        );
+
+        let retained = layout.prepare_project(projects[6].worktree())?;
+        assert!(retained.knowledge_path().is_file());
+        catalog
+            .remove_catalog_worktree(projects[6].worktree().id())
+            .await?;
+        assert!(retained.knowledge_path().is_file());
+        assert!(
+            catalog
+                .resolve_project_catalog_entry(projects[6].worktree().id())
+                .await?
+                .is_none()
+        );
+        assert!(
+            catalog
+                .resolve_project_catalog_entry(projects[5].worktree().id())
+                .await?
+                .is_some()
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
 
 #[test]
 fn project_records_survive_reopen_and_follow_open_order() -> Result<(), Box<dyn std::error::Error>>

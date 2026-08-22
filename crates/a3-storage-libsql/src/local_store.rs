@@ -35,21 +35,22 @@ use a3_application::{
     ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture, ModuleRuntimeMapLoadResult,
     ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
     ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
-    PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectOpenPreparation,
-    ProjectReconciliationProposal, ProjectStorageControl, ProjectStorageFailure,
-    ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
-    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
-    RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
-    RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
-    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredDesktopSettings,
-    StoredProjectCommandAllowlist, TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreFuture,
-    TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimStore,
-    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore,
-    TaskLensIndexStoreFuture, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
-    TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore,
-    TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit, VerificationEvidenceStore,
-    VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectCatalogPage,
+    ProjectCatalogQuery, ProjectOpenPreparation, ProjectReconciliationProposal,
+    ProjectStorageControl, ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore,
+    ProjectStorageUsage, RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl,
+    RemapQueueLimit, RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture,
+    RepositoryTreeQuery, RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore,
+    RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
+    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    StoredDesktopSettings, StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
+    TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceFuture,
+    TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore, TaskLensWorkspaceTask,
+    TaskLensWorkspaceTaskLimit, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
+    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
     VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
@@ -295,6 +296,41 @@ impl KnowledgeStore for LibsqlKnowledgeStore {
                 .map_err(ProjectCatalogError::classify)
         })
     }
+
+    fn list_project_catalog<'a>(
+        &'a self,
+        query: &'a ProjectCatalogQuery,
+    ) -> KnowledgeStoreFuture<'a, ProjectCatalogPage> {
+        Box::pin(async move {
+            self.catalog
+                .read_project_catalog(query)
+                .await
+                .map_err(ProjectCatalogError::classify)
+        })
+    }
+
+    fn resolve_project_catalog_entry(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> KnowledgeStoreFuture<'_, Option<StoredProjectTarget>> {
+        Box::pin(async move {
+            self.catalog
+                .resolve_project_catalog_entry(Some(worktree_id))
+                .await
+                .map_err(ProjectCatalogError::classify)
+        })
+    }
+
+    fn resolve_last_project_catalog_entry(
+        &self,
+    ) -> KnowledgeStoreFuture<'_, Option<StoredProjectTarget>> {
+        Box::pin(async move {
+            self.catalog
+                .resolve_project_catalog_entry(None)
+                .await
+                .map_err(ProjectCatalogError::classify)
+        })
+    }
 }
 
 impl ProjectCatalogAdmin for LibsqlKnowledgeStore {
@@ -306,6 +342,18 @@ impl ProjectCatalogAdmin for LibsqlKnowledgeStore {
         Box::pin(async move {
             self.catalog
                 .remove_recent_worktree(project, project_id)
+                .await
+                .map_err(ProjectCatalogError::classify_admin)
+        })
+    }
+
+    fn remove_catalog_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> ProjectCatalogAdminFuture<'_, ()> {
+        Box::pin(async move {
+            self.catalog
+                .remove_catalog_worktree(worktree_id)
                 .await
                 .map_err(ProjectCatalogError::classify_admin)
         })

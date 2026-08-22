@@ -18,6 +18,7 @@ mod module_dependency_graph;
 mod module_runtime;
 mod module_tree;
 mod project;
+mod project_catalog;
 mod project_map_search;
 mod project_rebuild;
 mod project_removal;
@@ -106,6 +107,7 @@ pub use module_tree::{
 pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };
+pub use project_catalog::*;
 pub use project_map_search::{
     ProjectMapExactExplanationV1, ProjectMapLexicalExplanationV1, ProjectMapSearchChannelV1,
     ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1, ProjectMapSearchPriorityV1,

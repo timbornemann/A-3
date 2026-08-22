@@ -210,15 +210,21 @@ Refresh serialisiert Snapshot-Append und Publish für den Worktree. Projektwechs
 Job kooperativ ab und wartet vor einem neuen Refresh auf dessen terminalen Zustand. Manager,
 Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 
-### Zuletzt verwendete Projekte
+### Projektkatalog, Wechsel und Startwiederherstellung
 
-1. Die UI sendet über `list_recent_projects` ausschließlich die aktuelle Protokollversion.
-2. Der Application-Use-Case setzt das feste V1-Limit von zehn Einträgen; die WebView kann weder einen
-   Rohpfad noch ein unbeschränktes Limit vorgeben.
-3. Der libSQL-Adapter liest most-recent-first und rekonstruiert IDs sowie HEAD in typisierte Werte.
-4. Ungültige persistierte Werte werden am Adapterrand als stabiler Storagefehler abgelehnt.
-5. Der Composition-Root mappt nur `ProjectId`, `RepositoryId`, `WorktreeId`, HEAD und den begrenzten,
-   nicht-autoritativen Anzeigepfad auf V1-DTOs.
+1. Die UI liest über `query_project_catalog` nur feste 25er-Seiten aus sicheren Anzeigen und opaken
+   Vor-/Zurück-Cursorn. Der Legacy-Read `list_recent_projects` bleibt kompatibel, ist aber keine
+   Auswahlgrenze.
+2. Ein bewusster Wechsel liefert ausschließlich die zuvor gelistete `WorktreeId`;
+   Startwiederherstellung liefert gar keine Identität und löst Core-intern nur den jüngsten Eintrag
+   auf. Pfade, Projekt- und Repository-IDs sind keine WebView-Autorität.
+3. Der Storage-Adapter dekodiert den gespeicherten Root ausschließlich intern. Der vorhandene
+   `ProjectInspector` kanonisiert ihn erneut und verlangt dieselbe Repository- und Worktree-ID.
+4. Index-, Deep-Map- und Agent-Manager wechseln unter demselben exklusiven Project-Lifecycle. Erst
+   nach ihrem Erfolg wird die Aktivierungsreihenfolge persistiert und der Core-Zustand ersetzt.
+5. Scheitern Inspektion, Identitätsprüfung, ein Manager oder der abschließende Katalogcommit,
+   reaktiviert der Composition-Root das bisherige Projekt. Beim Start gibt es kein bisheriges
+   Projekt und keinen Fallback; die UI zeigt stattdessen sichere Recovery.
 
 ### Aktiver Projektstatus
 
@@ -513,15 +519,15 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 
 ### Worktree aus der Projektliste entfernen
 
-1. `remove_project` akzeptiert ausschließlich die Protokollversion. Die WebView kann weder Pfad noch
-   Projekt-, Repository- oder Worktree-ID vorgeben; der Composition-Root verwendet den aktiven,
-   bereits validierten Zustand.
+1. `remove_catalog_project` akzeptiert ausschließlich Protokollversion und eine kanonische,
+   bereits gelistete Worktree-ID. Die WebView kann weder Pfad noch Projekt- oder Repository-ID
+   vorgeben. Der ältere `remove_project`-Pfad bleibt auf den Core-eigenen aktiven Zustand begrenzt.
 2. Ein Core-eigener Lifecycle-Permit serialisiert Öffnen, Rebuild-Anforderung und Entfernen. Der
    `RepositoryIndexManager` beendet den Watcher, fordert für einen laufenden Job Cancellation an und
    behält dessen Ownership bis zum terminalen Schedulerzustand.
 3. `RemoveProjectFromList` löscht über den schmalen `ProjectCatalogAdmin`-Port atomar nur die exakt
-   passende Zeile in `recent_worktrees` und zugehörige offene Reconciliation-Absichten. Andere
-   Linked Worktrees desselben Projekts bleiben sichtbar.
+   zur Worktree-ID passende Zeile in `recent_worktrees` und zugehörige offene
+   Reconciliation-Absichten. Andere Linked Worktrees desselben Projekts bleiben sichtbar.
 4. `projects`, `repository_observations` und `projects/<WorktreeId>/knowledge.db` bleiben erhalten.
    Dadurch behält derselbe Worktree beim Wiederöffnen seine stabile `ProjectId` und sein privates
    Wissen. Repositoryinhalte werden von diesem Ablauf nie geöffnet oder verändert.

@@ -81,6 +81,8 @@ pub enum ErrorCodeV1 {
     IndexRebuildUnavailable,
     /// Another Core-owned project lifecycle operation is still in progress.
     ProjectOperationBusy,
+    /// Project-catalog search, cursor, direction, or worktree identity was invalid.
+    InvalidProjectCatalogRequest,
     /// The exact active worktree was no longer present in the project list.
     ProjectNotInList,
     /// The active project could not be safely removed from the project list.
@@ -241,6 +243,9 @@ impl CommandErrorV1 {
                 "The local index coordinator could not accept the rebuild request."
             }
             ErrorCodeV1::ProjectOperationBusy => "Another project operation is still in progress.",
+            ErrorCodeV1::InvalidProjectCatalogRequest => {
+                "The project catalog request is outside the supported bounds."
+            }
             ErrorCodeV1::ProjectNotInList => {
                 "The active worktree is no longer in the A^3 project list."
             }

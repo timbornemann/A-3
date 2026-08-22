@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-last-project"
+description = "Enables the restore_last_project command without any pre-configured scope."
+commands.allow = ["restore_last_project"]
+
+[[permission]]
+identifier = "deny-restore-last-project"
+description = "Denies the restore_last_project command without any pre-configured scope."
+commands.deny = ["restore_last_project"]

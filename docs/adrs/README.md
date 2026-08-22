@@ -53,6 +53,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0026](0026-explicit-local-provider-model-discovery.md)      | Explizite Providerverwaltung und lokale Modellerkennung    |
 | [0027](0027-google-gemini-model-provider.md)                 | Google Gemini Model-Provider Adapter                       |
 | [0028](0028-provider-credentials-and-explicit-gemini-remote-access.md) | OS-Credentials und expliziter Gemini-Remotezugriff |
+| [0029](0029-core-owned-project-catalog-and-restoration.md)    | Core-Projektkatalog und sichere Wiederherstellung          |
 
 ## Neue ADRs
 

@@ -2,7 +2,7 @@
 
 Ziel: Die technischen Fähigkeiten werden zu einer schnellen, verständlichen und zugänglichen A^3-Desktopanwendung.
 
-Relevante ADRs: 0001, 0002, 0012, 0014
+Relevante ADRs: 0001, 0002, 0012, 0014, 0029
 
 ## U1 Information Architecture
 
@@ -85,6 +85,14 @@ Formatter, ESLint, Svelte-Typecheck ohne Warnung, 208 Frontendtests, fünf Toolt
 Produktionsbuild bestehen. Der reale Chromium-Smoke bestätigt die kompakte Dark-Theme-Shell bei
 1.280 × 720 ohne horizontale Dokumentüberbreite.
 
+Projektkatalog-Erweiterung vom 2026-08-22: ADR-0029 ersetzt die passive Recent-Projektion in der
+Projects-Fläche durch einen interaktiven, Core-eigenen Katalog. Das aktive Projekt bleibt als
+Launcher oben; darunter stehen Suche, feste 25er-Seiten, Vor-/Zurücknavigation, ID-gebundener
+Wechsel, natives Hinzufügen und bestätigtes nicht destruktives Entfernen. Beim Prozessstart wird
+ausschließlich der zuletzt erfolgreich aktivierte Eintrag ohne WebView-Parameter wiederhergestellt.
+Fehlende oder identitätsveränderte Roots bleiben als Recovery sichtbar und lösen keinen Fallback
+auf ein anderes Projekt aus.
+
 ## U2 Projects
 
 Abhängigkeiten: Project Open
@@ -102,23 +110,29 @@ Akzeptanz:
 - Rebuild erklärt, welche Daten regenerierbar sind;
 - ungültiger Pfad erhält konkrete Recovery.
 
-Verifiziert am 2026-08-11: Der native Ordnerdialog öffnet ausschließlich einen validierten
-Git-Worktree-Root; der Core hält die aktive Identität über WebView-Reloads und projiziert Branch,
-Worktree, bounded Index-/Snapshotstatus sowie die verlustfreie private Storagegröße. Recent Projects
-sind auf zehn validierte Einträge begrenzt. Der besitzende Indexmanager serialisiert Refresh und
-einen cancellable Rebuild, der nur regenerierbare Projektionen entfernt und anschließend einen
-vollständigen Rescan anfordert.
+Verifiziert am 2026-08-22: Der native Ordnerdialog öffnet ausschließlich einen validierten
+Git-Worktree-Root; der Core hält die aktive Identität über WebView-Reloads und Prozessneustarts und
+projiziert Branch, Worktree, bounded Index-/Snapshotstatus sowie die verlustfreie private
+Storagegröße. Der dauerhafte Katalog speichert unbegrenzt viele Einträge, liest aber nur feste
+25er-Seiten mit opaken Cursorn und optionaler FTS-Suche über die sichere Root-Anzeige. Der
+besitzende Indexmanager serialisiert Refresh und einen cancellable Rebuild, der nur regenerierbare
+Projektionen entfernt und anschließend einen vollständigen Rescan anfordert.
 
-`remove_project` nimmt keine Identität und keinen Pfad aus der WebView an. Der zweistufig bestätigte
-Use Case beendet Watcher und laufende Indexarbeit, entfernt atomar nur den exakten Recent-Eintrag
-sowie offene Reconciliation-Absichten und behält Repository, Linked Worktrees, stabile `ProjectId`
-und `projects/<WorktreeId>/knowledge.db`. Adapter-Contracts belegen Erhalt und Wiederöffnung. Die UI
-validiert `CommandErrorV1` streng und ordnet nur stabile Codes konkreten Recovery-Schritten zu;
-rohe Pfade und Adapterdetails bleiben unsichtbar.
+`activate_catalog_project` und `remove_catalog_project` nehmen ausschließlich eine zuvor gelistete
+`worktreeId`, aber nie einen Pfad an. Aktivierung revalidiert Root, Repository- und Worktree-
+Identität und schreibt die neue Reihenfolge erst nach erfolgreichem Runtime-Wechsel. Der
+bestätigte Removal-Use-Case beendet beim aktiven Eintrag Watcher und laufende Indexarbeit, entfernt
+atomar nur den exakten Katalogeintrag sowie offene Reconciliation-Absichten und behält Repository,
+Linked Worktrees, stabile `ProjectId` und `projects/<WorktreeId>/knowledge.db`. Adapter-Contracts
+belegen Erhalt und Wiederöffnung. Die UI validiert `CommandErrorV1` streng und ordnet nur stabile
+Codes konkreten Recovery-Schritten zu; rohe Pfade und Adapterdetails bleiben unsichtbar.
 
 Rustfmt, Workspace-Tests mit allen Features, Workspace-Clippy über alle Targets/Features mit
-`-D warnings`, Rustdoc, 38 Frontendtests, Formatter, ESLint, Svelte-Typecheck, Produktionsbuild,
-Tooltests, 47 Markdown-Dateien mit 74 lokalen Links und der Dependency-/Lizenzbericht sind grün.
+`-D warnings`, Rustdoc, 44 Frontend-Testdateien mit 220 Tests, Formatter, ESLint,
+Svelte-Typecheck, Produktionsbuild, fünf Tooltests, 57 Markdown-Dateien mit 159 lokalen Links und
+der Dependency-/Lizenzbericht sind grün. Der native Windows-Tauri-Release-Build und UX-Smoke
+bestätigen das reale A^3-Fenster; Browser-QA bei 1.280 × 720 und 680 × 760 bestätigt die responsive
+Projects-Fläche ohne horizontale Überbreite.
 Der vollständige Linux-`quality`-Job bestand lokal über
 `act -j quality --pull=false -P ubuntu-22.04=a3-act-medium-rust:latest`. Der Windows-libSQL-Harness
 isoliert nun auch Project-Catalog- und Knowledge-Contracts pro Test, wiederholt ausschließlich

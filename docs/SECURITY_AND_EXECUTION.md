@@ -49,8 +49,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Der Dialog zeigt ausschließlich begrenzte, kontrollzeichenfreie Pfadanzeigen und bietet
   „reconciliieren“, „separat öffnen“ und „abbrechen“. Die WebView kann weder einen Kandidaten noch die
   Entscheidung liefern und erhält keine zusätzliche Command- oder Dialog-Capability.
-- Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_status`,
-  `query_index_activity`, `query_index_overview`, `rebuild_project_index`, `remove_project` und
+- Die Main-Capability erlaubt `open_project`, `list_recent_projects`, `query_project_catalog`,
+  `activate_catalog_project`, `restore_last_project`, `remove_catalog_project`,
+  `query_project_status`, `query_index_activity`, `query_index_overview`,
+  `rebuild_project_index`, `remove_project` und
   `query_module_card_freshness`, `query_module_card_detail`, `query_module_card_evidence`,
   `query_repository_tree`, `query_module_tree`, `query_module_dependency_graph`,
   `query_module_runtime_map`, `query_module_runtime_flow`, `query_project_map_search`,
@@ -64,6 +66,13 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
   Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
   redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.
+- `query_project_catalog` liefert höchstens 25 sichere Anzeigen pro Seite und akzeptiert nur eine
+  begrenzte Suche sowie opake Vor-/Zurück-Cursor. `activate_catalog_project` und
+  `remove_catalog_project` akzeptieren ausschließlich eine kanonische `worktreeId` aus dieser
+  Projektion; `restore_last_project` nur die Protokollversion. Keiner dieser Commands nimmt einen
+  Pfad an. Der Storage-Adapter rekonstruiert den nativen Root intern, und der Core verlangt vor
+  Aktivierung erneut dieselbe Repository- und Worktree-Identität. Start-Recovery versucht genau
+  den zuletzt aktivierten Eintrag und niemals einen Fallback.
 - Die WebView zeigt keine vom Adapter oder von Tauri gelieferte Fehlermeldung direkt an. Sie
   akzeptiert nur das exakte `CommandErrorV1`-Schema mit bekanntem V1-Code und mappt den Code auf eine
   feste Recovery-Anweisung. Unbekannte Felder, Codes, Kontrollzeichen und überlange Meldungen führen
@@ -193,6 +202,11 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Reconciliation-Absichten. Der Command erhält keine Löschpfade. Repositorydateien, stabile
   Identitätsanker und das private `projects/<WorktreeId>`-Verzeichnis bleiben erhalten; ein
   zweistufiger UI-Dialog erklärt diese feste Semantik vor der Ausführung.
+- `remove_catalog_project` erweitert dieselbe nicht destruktive Semantik auf einen explizit
+  gelisteten inaktiven oder aktiven Worktree. Beim aktiven Worktree werden Runtime-Besitzer zuerst
+  geordnet deaktiviert und anschließend bleibt kein Projekt aktiv; bei einem Storagefehler wird
+  der vorherige Runtime-Zustand wiederhergestellt. Inaktive Einträge lösen weder Watcher- noch
+  Indexarbeit aus.
 - Worktree-Laufzeitdaten liegen ausschließlich unter dem kanonischen App-Data-Root in
   `projects/<WorktreeId>`. Die `WorktreeId` stammt aus der privilegierten Repository-Inspektion und
   nicht aus der WebView. App-Data innerhalb des ausgewählten Worktrees, Symlinks sowie falsche

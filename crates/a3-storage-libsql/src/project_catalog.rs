@@ -1,8 +1,10 @@
 use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
-    KnowledgeStoreFailure, ProjectCatalogAdminFailure, ProjectCatalogRevision,
-    ProjectOpenPreparation, ProjectPathDisplay, ProjectReconciliationEvidence,
-    ProjectReconciliationProposal, RecentProject, RecentProjectLimit,
+    KnowledgeStoreFailure, PROJECT_CATALOG_PAGE_SIZE, ProjectCatalogAdminFailure,
+    ProjectCatalogCursor, ProjectCatalogDirection, ProjectCatalogPage, ProjectCatalogQuery,
+    ProjectCatalogRevision, ProjectOpenPreparation, ProjectPathDisplay,
+    ProjectReconciliationEvidence, ProjectReconciliationProposal, RecentProject,
+    RecentProjectLimit, StoredProjectTarget,
 };
 use a3_domain::{
     GitHead, GitObjectId, GitReferenceName, ProjectId, ProjectIdentity, RemoteIdentity,
@@ -11,8 +13,9 @@ use a3_domain::{
 use blake3::Hasher;
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const PROJECT_ID_VERSION: &[u8] = b"a3.catalog-project-id.v1";
 const RECONCILIATION_CANDIDATE_LIMIT: i64 = 2;
@@ -113,6 +116,176 @@ impl CatalogDatabase {
         Ok(projects)
     }
 
+    pub(crate) async fn read_project_catalog(
+        &self,
+        query: &ProjectCatalogQuery,
+    ) -> Result<ProjectCatalogPage, ProjectCatalogError> {
+        let connection = self
+            .connection_for_operation()
+            .await
+            .map_err(ProjectCatalogError::Open)?;
+        let cursor = query
+            .cursor()
+            .map(|cursor| i64::try_from(cursor.get()))
+            .transpose()
+            .map_err(|_| ProjectCatalogError::InvalidStoredData)?;
+        let limit = i64::try_from(PROJECT_CATALOG_PAGE_SIZE + 1)
+            .map_err(|_| ProjectCatalogError::InvalidStoredData)?;
+        let search = query.search().map(|value| {
+            if value.chars().count() < 3 {
+                (project_catalog_like_expression(value), false)
+            } else {
+                (project_catalog_fts_expression(value), true)
+            }
+        });
+        let base_projection = "SELECT recent.project_id, recent.repository_id, recent.worktree_id,\n\
+            recent.worktree_root_display, recent.head_kind, recent.head_object_id,\n\
+            recent.head_reference, observations.project_id, recent.last_open_sequence\n\
+            FROM recent_worktrees AS recent\n\
+            LEFT JOIN repository_observations AS observations\n\
+              ON observations.repository_id = recent.repository_id";
+        let search_join = if search.as_ref().is_some_and(|(_, uses_fts)| *uses_fts) {
+            " JOIN project_catalog_fts AS catalog_search\n\
+               ON catalog_search.rowid = recent.rowid"
+        } else {
+            ""
+        };
+        let search_predicate = if search.as_ref().is_some_and(|(_, uses_fts)| *uses_fts) {
+            "project_catalog_fts MATCH ?1"
+        } else {
+            "recent.worktree_root_display LIKE ?1 ESCAPE '\\'"
+        };
+        let order = if query.direction() == ProjectCatalogDirection::Previous {
+            "ASC"
+        } else {
+            "DESC"
+        };
+        let comparator = if query.direction() == ProjectCatalogDirection::Previous {
+            ">"
+        } else {
+            "<"
+        };
+        let sql = match (search.is_some(), cursor.is_some()) {
+            (false, false) => {
+                format!("{base_projection} ORDER BY recent.last_open_sequence {order} LIMIT ?1")
+            }
+            (false, true) => format!(
+                "{base_projection} WHERE recent.last_open_sequence {comparator} ?1\n\
+                 ORDER BY recent.last_open_sequence {order} LIMIT ?2"
+            ),
+            (true, false) => format!(
+                "{base_projection}{search_join}\n\
+                 WHERE {search_predicate}\n\
+                 ORDER BY recent.last_open_sequence {order} LIMIT ?2"
+            ),
+            (true, true) => format!(
+                "{base_projection}{search_join}\n\
+                 WHERE {search_predicate}\n\
+                   AND recent.last_open_sequence {comparator} ?2\n\
+                 ORDER BY recent.last_open_sequence {order} LIMIT ?3"
+            ),
+        };
+        let mut rows = match (search.as_ref().map(|(value, _)| value.as_str()), cursor) {
+            (None, None) => connection.query(&sql, [limit]).await,
+            (None, Some(cursor)) => connection.query(&sql, params![cursor, limit]).await,
+            (Some(search), None) => connection.query(&sql, params![search, limit]).await,
+            (Some(search), Some(cursor)) => {
+                connection.query(&sql, params![search, cursor, limit]).await
+            }
+        }
+        .map_err(ProjectCatalogError::Read)?;
+        let mut entries = Vec::with_capacity(PROJECT_CATALOG_PAGE_SIZE + 1);
+        while let Some(row) = rows.next().await.map_err(ProjectCatalogError::Read)? {
+            let sequence: i64 = row.get(8).map_err(ProjectCatalogError::Read)?;
+            let sequence =
+                u64::try_from(sequence).map_err(|_| ProjectCatalogError::InvalidStoredData)?;
+            entries.push((recent_project_from_row(&row)?, sequence));
+        }
+        let has_extra = entries.len() > PROJECT_CATALOG_PAGE_SIZE;
+        if has_extra {
+            entries.pop();
+        }
+        if query.direction() == ProjectCatalogDirection::Previous {
+            entries.reverse();
+        }
+        let first_cursor = entries
+            .first()
+            .map(|(_, sequence)| ProjectCatalogCursor::new(*sequence))
+            .transpose()
+            .map_err(|_| ProjectCatalogError::InvalidStoredData)?;
+        let last_cursor = entries
+            .last()
+            .map(|(_, sequence)| ProjectCatalogCursor::new(*sequence))
+            .transpose()
+            .map_err(|_| ProjectCatalogError::InvalidStoredData)?;
+        let previous_cursor = match query.direction() {
+            ProjectCatalogDirection::Initial => None,
+            ProjectCatalogDirection::Next => first_cursor,
+            ProjectCatalogDirection::Previous if has_extra => first_cursor,
+            ProjectCatalogDirection::Previous => None,
+        };
+        let next_cursor = match query.direction() {
+            ProjectCatalogDirection::Initial | ProjectCatalogDirection::Next if has_extra => {
+                last_cursor
+            }
+            ProjectCatalogDirection::Previous => last_cursor,
+            _ => None,
+        };
+        Ok(ProjectCatalogPage::new(
+            entries.into_iter().map(|(project, _)| project).collect(),
+            previous_cursor,
+            next_cursor,
+        ))
+    }
+
+    pub(crate) async fn resolve_project_catalog_entry(
+        &self,
+        worktree_id: Option<WorktreeId>,
+    ) -> Result<Option<StoredProjectTarget>, ProjectCatalogError> {
+        let connection = self
+            .connection_for_operation()
+            .await
+            .map_err(ProjectCatalogError::Open)?;
+        let (sql, parameter) = match worktree_id {
+            Some(worktree_id) => (
+                "SELECT project_id, repository_id, worktree_id, worktree_root,\n\
+                 worktree_path_encoding FROM recent_worktrees WHERE worktree_id = ?1",
+                Some(worktree_id.as_bytes().to_vec()),
+            ),
+            None => (
+                "SELECT project_id, repository_id, worktree_id, worktree_root,\n\
+                 worktree_path_encoding FROM recent_worktrees\n\
+                 ORDER BY last_open_sequence DESC LIMIT 1",
+                None,
+            ),
+        };
+        let mut rows = match parameter {
+            Some(parameter) => connection.query(sql, [parameter]).await,
+            None => connection.query(sql, ()).await,
+        }
+        .map_err(ProjectCatalogError::Read)?;
+        let Some(row) = rows.next().await.map_err(ProjectCatalogError::Read)? else {
+            return Ok(None);
+        };
+        let bytes: Vec<u8> = row.get(3).map_err(ProjectCatalogError::Read)?;
+        let encoding: String = row.get(4).map_err(ProjectCatalogError::Read)?;
+        let target = StoredProjectTarget::new(
+            ProjectId::from_bytes(read_stable_id(&row, 0)?),
+            RepositoryId::from_bytes(read_stable_id(&row, 1)?),
+            WorktreeId::from_bytes(read_stable_id(&row, 2)?),
+            decode_path(&encoding, bytes)?,
+        );
+        if rows
+            .next()
+            .await
+            .map_err(ProjectCatalogError::Read)?
+            .is_some()
+        {
+            return Err(ProjectCatalogError::InvalidStoredData);
+        }
+        Ok(Some(target))
+    }
+
     pub(crate) async fn remove_recent_worktree(
         &self,
         project: &ProjectIdentity,
@@ -129,6 +302,54 @@ impl CatalogDatabase {
         let result = remove_recent_worktree_in_transaction(&transaction, project, project_id).await;
         rollback_on_error(transaction, result).await
     }
+
+    pub(crate) async fn remove_catalog_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<(), ProjectCatalogError> {
+        let connection = self
+            .connection_for_operation()
+            .await
+            .map_err(ProjectCatalogError::Open)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .map_err(ProjectCatalogError::Begin)?;
+        let key = worktree_id.as_bytes().to_vec();
+        transaction
+            .execute(
+                "DELETE FROM worktree_reconciliations\n\
+                 WHERE source_worktree_id = ?1 OR target_worktree_id = ?1",
+                [key.clone()],
+            )
+            .await
+            .map_err(ProjectCatalogError::Write)?;
+        let deleted = transaction
+            .execute("DELETE FROM recent_worktrees WHERE worktree_id = ?1", [key])
+            .await
+            .map_err(ProjectCatalogError::Write)?;
+        if deleted != 1 {
+            return rollback_on_error(transaction, Err(ProjectCatalogError::NotFound)).await;
+        }
+        rollback_on_error(transaction, Ok(())).await
+    }
+}
+
+fn project_catalog_fts_expression(search: &str) -> String {
+    format!("\"{}\"", search.replace('"', "\"\""))
+}
+
+fn project_catalog_like_expression(search: &str) -> String {
+    let mut expression = String::with_capacity(search.len().saturating_add(2));
+    expression.push('%');
+    for character in search.chars() {
+        if matches!(character, '%' | '_' | '\\') {
+            expression.push('\\');
+        }
+        expression.push(character);
+    }
+    expression.push('%');
+    expression
 }
 
 async fn remove_recent_worktree_in_transaction(
@@ -1120,6 +1341,40 @@ fn derive_project_id(repository_id: RepositoryId) -> ProjectId {
 struct EncodedPath {
     encoding: &'static str,
     bytes: Vec<u8>,
+}
+
+#[cfg(unix)]
+fn decode_path(encoding: &str, bytes: Vec<u8>) -> Result<PathBuf, ProjectCatalogError> {
+    use std::os::unix::ffi::OsStringExt;
+
+    if encoding != "unix-bytes-v1" || bytes.is_empty() {
+        return Err(ProjectCatalogError::InvalidStoredData);
+    }
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
+}
+
+#[cfg(windows)]
+fn decode_path(encoding: &str, bytes: Vec<u8>) -> Result<PathBuf, ProjectCatalogError> {
+    use std::os::windows::ffi::OsStringExt;
+
+    if encoding != "windows-utf16le-v1" || bytes.is_empty() || !bytes.len().is_multiple_of(2) {
+        return Err(ProjectCatalogError::InvalidStoredData);
+    }
+    let wide = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    Ok(PathBuf::from(OsString::from_wide(&wide)))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn decode_path(encoding: &str, bytes: Vec<u8>) -> Result<PathBuf, ProjectCatalogError> {
+    if encoding != "utf8-lossy-v1" || bytes.is_empty() {
+        return Err(ProjectCatalogError::InvalidStoredData);
+    }
+    String::from_utf8(bytes)
+        .map(PathBuf::from)
+        .map_err(|_| ProjectCatalogError::InvalidStoredData)
 }
 
 #[cfg(unix)]

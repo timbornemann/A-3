@@ -20,23 +20,24 @@ mod project_settings_manager;
 mod repository_index_manager;
 
 use a3_application::{
-    AgentActionStore, AgentActivity, AgentActivityLoadResult, AgentApprovalBuffer,
-    AgentApprovalControlAction, AgentApprovalControlOutcome, AgentApprovalControlResult,
-    AgentApprovalLoadResult, AgentApprovalRevision, AgentControllerControl,
-    AgentGoalCriterionDraft, AgentGoalDraft, AgentGoalMetadataSource, AgentInspectionBuffer,
-    AgentInspectionContext, AgentInspectionId, AgentInspectionOverview, AgentInspectionQueryError,
-    AgentInspectionRevision, AgentLogPageLimit, AgentLogPageOffset, AgentRecoveryChoice,
-    AgentRecoveryError, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRunExecutionRequest,
-    AgentRunExecutor, AgentTaskControlFailure, AgentTaskControlResult, AgentTaskRecovery,
-    AgentTaskRecoveryLoadResult, CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure,
-    CompileWorkspaceTaskLensResult, ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal,
-    CreateAgentGoalFailure, DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure,
-    GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence,
-    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
-    GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
-    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
-    GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
-    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    ActivateCatalogProject, ActivateCatalogProjectError, AgentActionStore, AgentActivity,
+    AgentActivityLoadResult, AgentApprovalBuffer, AgentApprovalControlAction,
+    AgentApprovalControlOutcome, AgentApprovalControlResult, AgentApprovalLoadResult,
+    AgentApprovalRevision, AgentControllerControl, AgentGoalCriterionDraft, AgentGoalDraft,
+    AgentGoalMetadataSource, AgentInspectionBuffer, AgentInspectionContext, AgentInspectionId,
+    AgentInspectionOverview, AgentInspectionQueryError, AgentInspectionRevision, AgentLogPageLimit,
+    AgentLogPageOffset, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryOutcomeKind,
+    AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor, AgentTaskControlFailure,
+    AgentTaskControlResult, AgentTaskRecovery, AgentTaskRecoveryLoadResult,
+    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
+    ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
+    DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure, GetAgentApprovalCenter,
+    GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
+    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus,
+    GetProjectIndexStatusError, GetProjectStorageUsage, GetProjectStorageUsageError,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
+    GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
     JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
     JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
@@ -59,19 +60,20 @@ use a3_application::{
     ModuleTreeControl, ModuleTreeControlError, ModuleTreeEntry, ModuleTreeEntryKind,
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
     ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, PolicyStore,
-    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectDirectoryPicker, ProjectIndexStatus,
-    ProjectInspectionFailure, ProjectMapSearchQuery, ProjectReconciliationConfirmer,
-    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
-    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
-    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
-    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
-    RepositoryTreeQuery, RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure,
-    RunJournalStore, RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure,
-    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore,
-    TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
-    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
-    TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
-    TraceModuleRuntimeFlow, VerificationEvidenceStore,
+    ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectCatalogPage, ProjectCatalogQuery,
+    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure, ProjectMapSearchQuery,
+    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
+    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
+    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
+    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
+    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore, TaskLensCompilation,
+    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult,
+    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceStore,
+    TaskVerificationInspection, TaskVerificationInspectionLoadResult, TraceModuleRuntimeFlow,
+    VerificationEvidenceStore,
 };
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
@@ -88,7 +90,7 @@ use a3_domain::{
     RunEvent, RunEventCode, RunEventKind, RunEventOutcome, SnapshotId, SourceChannel,
     SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
     TaskLedgerRevision, TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus,
-    TraversalResultLimit, UserDecision, VerifiedClaimKind, VerifiedClaimStatus,
+    TraversalResultLimit, UserDecision, VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
 };
 use a3_protocol::{
     AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
@@ -127,23 +129,23 @@ use a3_protocol::{
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
-    OpenProjectResponseV1, PlatformV1, ProjectIndexStatusV1, ProjectMapExactExplanationV1,
-    ProjectMapLexicalExplanationV1, ProjectMapSearchChannelV1, ProjectMapSearchEvidenceV1,
-    ProjectMapSearchHitV1, ProjectMapSearchPriorityV1, ProjectMapSearchResponseV1,
-    ProjectMapSearchSourceV1, ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1,
-    ProjectMapSearchV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
-    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSearchRequestV1,
-    QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1,
-    RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
-    RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
-    RepositoryTreeResponseV1, TaskLensClaimEvidenceV1, TaskLensClaimKindV1,
-    TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1,
-    TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
-    TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
-    TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
-    TaskLensTasksResponseV1, TaskLensV1,
+    OpenProjectResponseV1, PlatformV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
+    ProjectIndexStatusV1, ProjectMapExactExplanationV1, ProjectMapLexicalExplanationV1,
+    ProjectMapSearchChannelV1, ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1,
+    ProjectMapSearchPriorityV1, ProjectMapSearchResponseV1, ProjectMapSearchSourceV1,
+    ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1, ProjectMapSearchV1, ProjectSnapshotV1,
+    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectMapSearchRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
+    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
+    RecentProjectsResponseV1, RemoveProjectResponseV1, RepositoryTreeEntryKindV1,
+    RepositoryTreeEntryV1, RepositoryTreePageV1, RepositoryTreeResponseV1, TaskLensClaimEvidenceV1,
+    TaskLensClaimKindV1, TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1,
+    TaskLensCompileResponseV1, TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1,
+    TaskLensModuleKindV1, TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1,
+    TaskLensRetrievalSourceV1, TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1,
+    TaskLensTaskSummaryV1, TaskLensTasksResponseV1, TaskLensV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -188,6 +190,8 @@ pub struct CompositionRoot {
     model_settings: Option<ModelSettingsManager>,
     project_settings: Option<ProjectSettingsManager>,
     open_project: OpenProject,
+    activate_catalog_project: ActivateCatalogProject,
+    project_catalog_store: Arc<dyn KnowledgeStore>,
     recent_projects: ListRecentProjects,
     project_status: Option<GetProjectIndexStatus>,
     index_overview: Option<GetPublishedIndexOverview>,
@@ -401,51 +405,76 @@ impl CompositionRoot {
             .execute()
             .await
             .map_err(map_open_project_error_to_v1)?;
-        if let OpenProjectOutcome::Opened { project, .. } = &outcome
-            && let Some(manager) = &self.index_manager
-        {
-            manager
-                .activate_project(project.as_ref().clone())
-                .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::LocalStorageUnavailable))?;
-        }
-        if let OpenProjectOutcome::Opened { project, .. } = &outcome
-            && let Some(manager) = &self.deep_map_manager
-            && manager.activate_project(project.as_ref().clone()).is_err()
-        {
-            if let Some(index_manager) = &self.index_manager {
-                let _deactivated = index_manager.deactivate_project();
-            }
-            return Err(CommandErrorV1::project_open(
-                ErrorCodeV1::DeepMapUnavailable,
-            ));
-        }
-        if let OpenProjectOutcome::Opened { project, .. } = &outcome
-            && let Some(manager) = &self.agent_run_manager
-            && manager.activate_project(project.as_ref().clone()).is_err()
-        {
-            if let Some(deep_map_manager) = &self.deep_map_manager {
-                let _deactivated = deep_map_manager.deactivate_project();
-            }
-            if let Some(index_manager) = &self.index_manager {
-                let _deactivated = index_manager.deactivate_project();
-            }
-            return Err(CommandErrorV1::project_open(
-                ErrorCodeV1::AgentTaskControlUnavailable,
-            ));
-        }
         if let OpenProjectOutcome::Opened {
             project,
             project_id,
         } = &outcome
         {
-            self.agent_inspection.activate_project(project);
-            self.agent_approval.activate_project(project);
-            *lock_recovering_poison(&self.active_project) = Some(ActiveProject {
-                project_id: *project_id,
-                project: project.as_ref().clone(),
-            });
+            self.activate_project_runtime(
+                project.as_ref().clone(),
+                *project_id,
+                CommandErrorV1::project_open,
+            )?;
         }
         Ok(map_open_project_to_v1(outcome))
+    }
+
+    /// Reads one fixed 25-entry catalog page from safe display projections.
+    pub async fn query_project_catalog(
+        &self,
+        query: &ProjectCatalogQuery,
+    ) -> Result<ProjectCatalogResponseV1, CommandErrorV1> {
+        self.project_catalog_store
+            .list_project_catalog(query)
+            .await
+            .map(map_project_catalog_to_v1)
+            .map_err(|error| CommandErrorV1::project_open(map_storage_error_to_v1(error)))
+    }
+
+    /// Revalidates and activates one previously listed worktree ID.
+    pub async fn activate_catalog_project(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_open)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::ProjectOperationBusy))?;
+        let (project, project_id) = self
+            .activate_catalog_project
+            .execute(worktree_id)
+            .await
+            .map_err(map_catalog_activation_error_to_v1)?;
+        self.activate_validated_catalog_project(&project, project_id)
+            .await?;
+        Ok(ProjectActivationResponseV1::activated(
+            project_id.to_string(),
+            map_project_summary_to_v1(&project),
+        ))
+    }
+
+    /// Restores only the most recently activated catalog entry, without fallback.
+    pub async fn restore_last_project(
+        &self,
+    ) -> Result<ProjectActivationResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_open)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_open(ErrorCodeV1::ProjectOperationBusy))?;
+        let Some((project, project_id)) = self
+            .activate_catalog_project
+            .restore_last()
+            .await
+            .map_err(map_catalog_activation_error_to_v1)?
+        else {
+            return Ok(ProjectActivationResponseV1::no_saved_project());
+        };
+        self.activate_validated_catalog_project(&project, project_id)
+            .await?;
+        Ok(ProjectActivationResponseV1::activated(
+            project_id.to_string(),
+            map_project_summary_to_v1(&project),
+        ))
     }
 
     /// Queries the bounded recent-project list and maps it to IPC V1.
@@ -1769,6 +1798,174 @@ impl CompositionRoot {
         Ok(RemoveProjectResponseV1::removed())
     }
 
+    /// Removes one exact catalog row; active removal first performs the owned shutdown path.
+    pub async fn remove_catalog_project(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<RemoveProjectResponseV1, CommandErrorV1> {
+        let _operation = self.acquire_project_operation(CommandErrorV1::project_removal)?;
+        let _agent_operation = self
+            .try_acquire_agent_task_operation()
+            .ok_or_else(|| CommandErrorV1::project_removal(ErrorCodeV1::ProjectOperationBusy))?;
+        let remove = self.remove_project.as_ref().ok_or_else(|| {
+            CommandErrorV1::project_removal(ErrorCodeV1::ProjectRemovalUnavailable)
+        })?;
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let removing_active = active
+            .as_ref()
+            .is_some_and(|active| active.project.worktree().id() == worktree_id);
+        if removing_active {
+            let active = active.as_ref().ok_or_else(|| {
+                CommandErrorV1::project_removal(ErrorCodeV1::ProjectRemovalUnavailable)
+            })?;
+            self.deactivate_active_runtime(active)?;
+        }
+        if let Err(error) = remove.execute_catalog(worktree_id).await {
+            if removing_active && let Some(active) = &active {
+                self.restore_active_runtime(active);
+            }
+            return Err(map_project_removal_error_to_v1(error));
+        }
+        if removing_active {
+            *lock_recovering_poison(&self.active_project) = None;
+            self.agent_inspection.deactivate_project();
+            self.agent_approval.deactivate_project();
+        }
+        Ok(RemoveProjectResponseV1::removed())
+    }
+
+    fn activate_project_runtime(
+        &self,
+        project: ProjectIdentity,
+        project_id: ProjectId,
+        error: fn(ErrorCodeV1) -> CommandErrorV1,
+    ) -> Result<(), CommandErrorV1> {
+        let previous = lock_recovering_poison(&self.active_project).clone();
+        if let Some(manager) = &self.index_manager
+            && manager.activate_project(project.clone()).is_err()
+        {
+            self.restore_runtime_after_failed_activation(previous.as_ref());
+            return Err(error(ErrorCodeV1::LocalStorageUnavailable));
+        }
+        if let Some(manager) = &self.deep_map_manager
+            && manager.activate_project(project.clone()).is_err()
+        {
+            self.restore_runtime_after_failed_activation(previous.as_ref());
+            return Err(error(ErrorCodeV1::DeepMapUnavailable));
+        }
+        if let Some(manager) = &self.agent_run_manager
+            && manager.activate_project(project.clone()).is_err()
+        {
+            self.restore_runtime_after_failed_activation(previous.as_ref());
+            return Err(error(ErrorCodeV1::AgentTaskControlUnavailable));
+        }
+        self.agent_inspection.activate_project(&project);
+        self.agent_approval.activate_project(&project);
+        *lock_recovering_poison(&self.active_project) = Some(ActiveProject {
+            project_id,
+            project,
+        });
+        Ok(())
+    }
+
+    async fn activate_validated_catalog_project(
+        &self,
+        project: &ProjectIdentity,
+        project_id: ProjectId,
+    ) -> Result<(), CommandErrorV1> {
+        let previous = lock_recovering_poison(&self.active_project).clone();
+        self.activate_project_runtime(project.clone(), project_id, CommandErrorV1::project_open)?;
+        let recorded_project_id = match self
+            .project_catalog_store
+            .record_opened_project(project)
+            .await
+        {
+            Ok(recorded_project_id) => recorded_project_id,
+            Err(error) => {
+                self.rollback_catalog_activation(previous.as_ref());
+                return Err(CommandErrorV1::project_open(map_storage_error_to_v1(error)));
+            }
+        };
+        if recorded_project_id != project_id {
+            self.rollback_catalog_activation(previous.as_ref());
+            return Err(CommandErrorV1::project_open(
+                ErrorCodeV1::ProjectIdentityConflict,
+            ));
+        }
+        Ok(())
+    }
+
+    fn rollback_catalog_activation(&self, previous: Option<&ActiveProject>) {
+        self.restore_runtime_after_failed_activation(previous);
+        match previous {
+            Some(previous) => {
+                self.agent_inspection.activate_project(&previous.project);
+                self.agent_approval.activate_project(&previous.project);
+                *lock_recovering_poison(&self.active_project) = Some(previous.clone());
+            }
+            None => {
+                self.agent_inspection.deactivate_project();
+                self.agent_approval.deactivate_project();
+                *lock_recovering_poison(&self.active_project) = None;
+            }
+        }
+    }
+
+    fn restore_runtime_after_failed_activation(&self, previous: Option<&ActiveProject>) {
+        match previous {
+            Some(previous) => self.restore_active_runtime(previous),
+            None => {
+                if let Some(manager) = &self.agent_run_manager {
+                    let _deactivated = manager.deactivate_project();
+                }
+                if let Some(manager) = &self.deep_map_manager {
+                    let _deactivated = manager.deactivate_project();
+                }
+                if let Some(manager) = &self.index_manager {
+                    let _deactivated = manager.deactivate_project();
+                }
+            }
+        }
+    }
+
+    fn restore_active_runtime(&self, active: &ActiveProject) {
+        if let Some(manager) = &self.index_manager {
+            let _restored = manager.activate_project(active.project.clone());
+        }
+        if let Some(manager) = &self.deep_map_manager {
+            let _restored = manager.activate_project(active.project.clone());
+        }
+        if let Some(manager) = &self.agent_run_manager {
+            let _restored = manager.activate_project(active.project.clone());
+        }
+    }
+
+    fn deactivate_active_runtime(&self, active: &ActiveProject) -> Result<(), CommandErrorV1> {
+        if let Some(manager) = &self.index_manager
+            && let Err(error) = manager.deactivate_project()
+        {
+            self.restore_active_runtime(active);
+            return Err(map_deactivation_error_to_v1(error));
+        }
+        if let Some(manager) = &self.deep_map_manager
+            && manager.deactivate_project().is_err()
+        {
+            self.restore_active_runtime(active);
+            return Err(CommandErrorV1::project_removal(
+                ErrorCodeV1::ProjectRemovalUnavailable,
+            ));
+        }
+        if let Some(manager) = &self.agent_run_manager
+            && manager.deactivate_project().is_err()
+        {
+            self.restore_active_runtime(active);
+            return Err(CommandErrorV1::project_removal(
+                ErrorCodeV1::ProjectRemovalUnavailable,
+            ));
+        }
+        Ok(())
+    }
+
     fn acquire_project_operation(
         &self,
         error: fn(ErrorCodeV1) -> CommandErrorV1,
@@ -2228,6 +2425,8 @@ impl CompositionBase {
         ports: OptionalCompositionPorts,
     ) -> Result<CompositionRoot, CompositionRootError> {
         let job_ids = Arc::new(DesktopJobIds::new());
+        let project_inspector: Arc<dyn a3_application::ProjectInspector> =
+            Arc::new(RepositoryInspector::new());
         let project_settings = match (
             ports.project_ignore_settings_source.as_ref(),
             ports.index_store.as_ref(),
@@ -2436,10 +2635,15 @@ impl CompositionBase {
             project_settings,
             open_project: OpenProject::new(
                 project_directory_picker,
-                Arc::new(RepositoryInspector::new()),
+                Arc::clone(&project_inspector),
                 project_reconciliation_confirmer,
                 Arc::clone(&store),
             ),
+            activate_catalog_project: ActivateCatalogProject::new(
+                project_inspector,
+                Arc::clone(&store),
+            ),
+            project_catalog_store: Arc::clone(&store),
             recent_projects: ListRecentProjects::new(store),
             project_status,
             index_overview,
@@ -2566,6 +2770,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::activate_catalog_project,
             commands::cancel_model_probe,
             commands::cancel_deep_map,
             commands::compile_task_lens,
@@ -2580,6 +2785,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::open_project,
             commands::pause_deep_map,
             commands::query_deep_map,
+            commands::query_project_catalog,
             commands::query_project_status,
             commands::query_project_settings,
             commands::query_index_activity,
@@ -2605,8 +2811,10 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_settings,
             commands::rebuild_project_index,
             commands::resume_deep_map,
+            commands::restore_last_project,
             commands::revise_agent_goal,
             commands::remove_project,
+            commands::remove_catalog_project,
             commands::probe_model_role,
             commands::set_model_provider_credential,
             commands::start_deep_map
@@ -2690,6 +2898,29 @@ fn map_recent_projects_to_v1(projects: Vec<RecentProject>) -> RecentProjectsResp
                 )
             })
             .collect(),
+    )
+}
+
+fn map_project_catalog_to_v1(page: ProjectCatalogPage) -> ProjectCatalogResponseV1 {
+    ProjectCatalogResponseV1::new(
+        page.projects()
+            .iter()
+            .map(|project| {
+                RecentProjectSummaryV1::new(
+                    project.project_id().to_string(),
+                    ProjectSummaryV1::new(
+                        project.repository_id().to_string(),
+                        project.worktree_id().to_string(),
+                        project.worktree_root_display().as_str().to_owned(),
+                        map_git_head_to_v1(project.head()),
+                    ),
+                )
+            })
+            .collect(),
+        page.previous_cursor()
+            .map(|cursor| format!("{:016x}", cursor.get())),
+        page.next_cursor()
+            .map(|cursor| format!("{:016x}", cursor.get())),
     )
 }
 
@@ -4887,6 +5118,54 @@ const fn decode_hex_nibble(value: u8) -> Option<u8> {
     }
 }
 
+fn map_worktree_id_from_v1(value: &str) -> Result<WorktreeId, CommandErrorV1> {
+    let bytes: [u8; 32] = decode_hex(value, 32)
+        .and_then(|bytes| bytes.try_into().map_err(|_| ()))
+        .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectCatalogRequest))?;
+    Ok(WorktreeId::from_bytes(bytes))
+}
+
+fn map_project_catalog_query_from_v1(
+    request: &a3_protocol::QueryProjectCatalogRequestV1,
+) -> Result<ProjectCatalogQuery, CommandErrorV1> {
+    let cursor = request
+        .cursor()
+        .map(|value| {
+            if value.len() != 16
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(CommandErrorV1::project_open(
+                    ErrorCodeV1::InvalidProjectCatalogRequest,
+                ));
+            }
+            u64::from_str_radix(value, 16)
+                .map_err(|_| {
+                    CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectCatalogRequest)
+                })
+                .and_then(|value| {
+                    a3_application::ProjectCatalogCursor::new(value).map_err(|_| {
+                        CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectCatalogRequest)
+                    })
+                })
+        })
+        .transpose()?;
+    let direction = match request.direction() {
+        a3_protocol::ProjectCatalogDirectionV1::Initial => {
+            a3_application::ProjectCatalogDirection::Initial
+        }
+        a3_protocol::ProjectCatalogDirectionV1::Next => {
+            a3_application::ProjectCatalogDirection::Next
+        }
+        a3_protocol::ProjectCatalogDirectionV1::Previous => {
+            a3_application::ProjectCatalogDirection::Previous
+        }
+    };
+    ProjectCatalogQuery::new(request.search().map(str::to_owned), cursor, direction)
+        .map_err(|_| CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectCatalogRequest))
+}
+
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
@@ -5032,6 +5311,30 @@ fn map_open_project_error_to_v1(error: OpenProjectError) -> CommandErrorV1 {
         }
         OpenProjectError::ReconciliationConfirmation(_) => ErrorCodeV1::ProjectSelectionFailed,
         OpenProjectError::Storage(error) => map_storage_error_to_v1(error),
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_catalog_activation_error_to_v1(error: ActivateCatalogProjectError) -> CommandErrorV1 {
+    let code = match error {
+        ActivateCatalogProjectError::Storage(error) => map_storage_error_to_v1(error),
+        ActivateCatalogProjectError::Inspection(ProjectInspectionFailure::SelectionUnavailable) => {
+            ErrorCodeV1::ProjectSelectionUnavailable
+        }
+        ActivateCatalogProjectError::Inspection(ProjectInspectionFailure::NotRepository) => {
+            ErrorCodeV1::NotGitRepository
+        }
+        ActivateCatalogProjectError::Inspection(ProjectInspectionFailure::NotWorktreeRoot) => {
+            ErrorCodeV1::ProjectRootRequired
+        }
+        ActivateCatalogProjectError::Inspection(
+            ProjectInspectionFailure::UnsupportedRepository,
+        ) => ErrorCodeV1::UnsupportedRepository,
+        ActivateCatalogProjectError::Inspection(
+            ProjectInspectionFailure::InvalidRepositoryMetadata,
+        )
+        | ActivateCatalogProjectError::IdentityConflict => ErrorCodeV1::ProjectIdentityConflict,
+        ActivateCatalogProjectError::NotFound => ErrorCodeV1::ProjectNotInList,
     };
     CommandErrorV1::project_open(code)
 }

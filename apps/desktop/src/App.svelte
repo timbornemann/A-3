@@ -107,6 +107,16 @@
   } from './lib/module-runtime';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import {
+    activateCatalogProject,
+    queryProjectCatalog,
+    removeCatalogProject,
+    restoreLastProject,
+    type ProjectActivationResponseV1,
+    type ProjectCatalogEntryV1,
+    type ProjectCatalogQueryV1,
+    type ProjectCatalogResponseV1,
+  } from './lib/project-catalog';
+  import {
     queryProjectMapSearch,
     type ProjectMapExactExplanationV1,
     type ProjectMapLexicalExplanationV1,
@@ -204,6 +214,10 @@
     ) => Promise<ModuleRuntimeFlowResponseV1>;
     moduleTreeLoader?: (query: ModuleTreeQueryV1) => Promise<ModuleTreeResponseV1>;
     projectOpener?: () => Promise<OpenProjectResponseV1>;
+    projectCatalogActivator?: (worktreeId: string) => Promise<ProjectActivationResponseV1>;
+    projectCatalogLoader?: (query: ProjectCatalogQueryV1) => Promise<ProjectCatalogResponseV1>;
+    projectCatalogRemover?: (worktreeId: string) => Promise<RemoveProjectResponseV1>;
+    projectRestorer?: () => Promise<ProjectActivationResponseV1>;
     projectMapSearchLoader?: (
       query: ProjectMapSearchQueryV1,
     ) => Promise<ProjectMapSearchResponseV1>;
@@ -424,6 +438,10 @@
     | { kind: 'removed' }
     | { kind: 'error'; message: string };
   type ProjectDialogView = 'index' | 'overview' | 'maintenance';
+  type ProjectCatalogView =
+    | { kind: 'loading' }
+    | { kind: 'available'; page: ProjectCatalogResponseV1 }
+    | { kind: 'error'; message: string };
 
   let {
     agentActivityLoader,
@@ -453,6 +471,10 @@
     moduleRuntimeFlowLoader = queryModuleRuntimeFlow,
     moduleTreeLoader = queryModuleTree,
     projectOpener = openProject,
+    projectCatalogActivator = activateCatalogProject,
+    projectCatalogLoader = queryProjectCatalog,
+    projectCatalogRemover = removeCatalogProject,
+    projectRestorer = restoreLastProject,
     projectMapSearchLoader = queryProjectMapSearch,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
@@ -464,6 +486,14 @@
   }: Props = $props();
   let projectView = $state<ProjectView>({ kind: 'idle' });
   let projectStatusView = $state<ProjectStatusView>({ kind: 'loading' });
+  let projectCatalogView = $state<ProjectCatalogView>({ kind: 'loading' });
+  let projectCatalogSearchInput = $state('');
+  let projectCatalogSearch = $state<string | null>(null);
+  let projectCatalogPageNumber = $state(1);
+  let projectCatalogActivatingId = $state<string | null>(null);
+  let projectCatalogRemovalTarget = $state<ProjectCatalogEntryV1 | null>(null);
+  let projectCatalogRemoving = $state(false);
+  let projectRestoreMessage = $state<string | null>(null);
   let indexActivityView = $state<IndexActivityView>({ kind: 'loading' });
   let indexOverviewView = $state<IndexOverviewView>({ kind: 'loading' });
   let moduleCardFreshnessView = $state<ModuleCardFreshnessView>({ kind: 'loading' });
@@ -859,7 +889,14 @@
   });
 
   async function initializeProjectViews(): Promise<void> {
+    try {
+      await projectRestorer();
+      projectRestoreMessage = null;
+    } catch (error) {
+      projectRestoreMessage = projectOpenRecoveryMessage(error);
+    }
     await loadProjectStatus();
+    await loadProjectCatalog('initial', null, projectCatalogSearch);
     pollProjectActivity();
     await Promise.all([
       loadIndexOverview(),
@@ -1662,6 +1699,7 @@
         await loadProjectStatus();
         pollProjectActivity();
         await Promise.all([
+          loadProjectCatalog('initial', null, projectCatalogSearch),
           loadIndexOverview(),
           loadModuleCardFreshness(),
           loadModuleTreeRoot(),
@@ -1672,6 +1710,112 @@
       }
     } catch (error) {
       projectView = { kind: 'error', message: projectOpenRecoveryMessage(error) };
+    }
+  }
+
+  async function loadProjectCatalog(
+    direction: ProjectCatalogQueryV1['direction'],
+    cursor: string | null,
+    search: string | null,
+  ): Promise<void> {
+    projectCatalogView = { kind: 'loading' };
+    try {
+      const page = await projectCatalogLoader({ cursor, direction, search });
+      projectCatalogView = { kind: 'available', page };
+    } catch (error) {
+      projectCatalogView = {
+        kind: 'error',
+        message: projectActionRecoveryMessage(error, 'remove'),
+      };
+    }
+  }
+
+  async function submitProjectCatalogSearch(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    const search = projectCatalogSearchInput.trim();
+    projectCatalogSearch = search.length === 0 ? null : search;
+    projectCatalogPageNumber = 1;
+    await loadProjectCatalog('initial', null, projectCatalogSearch);
+  }
+
+  async function clearProjectCatalogSearch(): Promise<void> {
+    projectCatalogSearchInput = '';
+    projectCatalogSearch = null;
+    projectCatalogPageNumber = 1;
+    await loadProjectCatalog('initial', null, null);
+  }
+
+  async function navigateProjectCatalog(direction: 'next' | 'previous'): Promise<void> {
+    if (projectCatalogView.kind !== 'available') return;
+    const cursor =
+      direction === 'next'
+        ? projectCatalogView.page.nextCursor
+        : projectCatalogView.page.previousCursor;
+    if (cursor === null) return;
+    await loadProjectCatalog(direction, cursor, projectCatalogSearch);
+    if (projectCatalogView.kind === 'available') {
+      projectCatalogPageNumber += direction === 'next' ? 1 : -1;
+    }
+  }
+
+  async function activateProjectFromCatalog(entry: ProjectCatalogEntryV1): Promise<void> {
+    projectCatalogActivatingId = entry.project.worktreeId;
+    projectRestoreMessage = null;
+    try {
+      const response = await projectCatalogActivator(entry.project.worktreeId);
+      if (response.result.status !== 'activated') return;
+      if (uiScheduler?.beginProject(response.result.project.worktreeId) ?? false) {
+        resetProjectOwnedUi('idle');
+      }
+      await loadProjectStatus();
+      pollProjectActivity();
+      await Promise.all([
+        loadProjectCatalog('initial', null, projectCatalogSearch),
+        loadIndexOverview(),
+        loadModuleCardFreshness(),
+        loadModuleTreeRoot(),
+        loadRepositoryTreeRoot(),
+      ]);
+      projectCatalogPageNumber = 1;
+    } catch (error) {
+      projectRestoreMessage = projectOpenRecoveryMessage(error);
+    } finally {
+      projectCatalogActivatingId = null;
+    }
+  }
+
+  function requestCatalogRemoval(entry: ProjectCatalogEntryV1): void {
+    projectCatalogRemovalTarget = entry;
+  }
+
+  function cancelCatalogRemoval(): void {
+    if (!projectCatalogRemoving) projectCatalogRemovalTarget = null;
+  }
+
+  async function confirmCatalogRemoval(): Promise<void> {
+    const target = projectCatalogRemovalTarget;
+    if (target === null) return;
+    projectCatalogRemoving = true;
+    try {
+      await projectCatalogRemover(target.project.worktreeId);
+      if (
+        projectStatusView.kind === 'active' &&
+        projectStatusView.result.project.worktreeId === target.project.worktreeId
+      ) {
+        projectStatusView = { kind: 'noProject' };
+        projectView = { kind: 'idle' };
+        projectDialogOpen = false;
+        uiScheduler?.beginProject(null);
+        resetProjectOwnedUi('noProject');
+      }
+      projectCatalogRemovalTarget = null;
+      projectCatalogPageNumber = 1;
+      await loadProjectCatalog('initial', null, projectCatalogSearch);
+    } catch (error) {
+      projectRestoreMessage = projectActionRecoveryMessage(error, 'remove');
+      projectCatalogRemovalTarget = null;
+    } finally {
+      projectCatalogRemoving = false;
     }
   }
 
@@ -1768,6 +1912,11 @@
         : head.reference.replace(/^refs\/heads\//, '');
     }
     return `${head.reference.replace(/^refs\/heads\//, '')} (unborn)`;
+  }
+
+  function projectDisplayName(path: string): string {
+    const parts = path.split(/[\\/]/).filter((part) => part.length > 0);
+    return parts.at(-1) ?? path;
   }
 
   function indexStateLabel(state: IndexStateV1): string {
@@ -2181,13 +2330,13 @@
           {#if projectStatusView.kind !== 'active'}
             <div class="section-heading">
               <div>
-                <h2 id="project-heading">Projekt öffnen</h2>
+                <h2 id="project-heading">Deine Projekte</h2>
               </div>
             </div>
 
             <p class="project-copy">
-              Wähle den Root eines Git-Worktrees. A^3 erhält nur Zugriff auf diesen ausdrücklich
-              gewählten Ordner.
+              Füge einen lokalen Git-Worktree hinzu oder aktiviere ein bereits gespeichertes Projekt
+              aus deinem Katalog.
             </p>
             <button
               class="primary-action"
@@ -2195,9 +2344,7 @@
               disabled={projectView.kind === 'opening'}
               onclick={chooseProject}
             >
-              {projectView.kind === 'opening'
-                ? 'Ordnerdialog geöffnet …'
-                : 'Projektordner auswählen'}
+              {projectView.kind === 'opening' ? 'Ordnerdialog geöffnet …' : 'Projekt hinzufügen'}
             </button>
           {/if}
 
@@ -2240,15 +2387,6 @@
                   <button type="button" onclick={() => openProjectDialog()}
                     >Projekt verwalten</button
                   >
-                  <button
-                    type="button"
-                    disabled={projectView.kind === 'opening'}
-                    onclick={chooseProject}
-                  >
-                    {projectView.kind === 'opening'
-                      ? 'Ordnerdialog geöffnet …'
-                      : 'Anderen Worktree auswählen'}
-                  </button>
                 </div>
 
                 {#if projectDialogOpen}
@@ -4635,6 +4773,187 @@
               <p>Der aktive Projektstatus konnte nicht sicher geladen werden.</p>
               <button type="button" onclick={loadProjectStatus}>Status erneut laden</button>
             </div>
+          {/if}
+
+          {#if currentWorkspaceArea === 'projects'}
+            <section class="project-catalog" aria-labelledby="project-catalog-heading">
+              <div class="project-catalog-heading">
+                <div>
+                  <p class="section-kicker">Projektkatalog</p>
+                  <h3 id="project-catalog-heading">Gespeicherte Worktrees</h3>
+                  <p>Zuletzt aktiviert zuerst · 25 Projekte pro Seite</p>
+                </div>
+                {#if projectStatusView.kind === 'active'}
+                  <button
+                    class="primary-action"
+                    type="button"
+                    disabled={projectView.kind === 'opening'}
+                    onclick={chooseProject}>Projekt hinzufügen</button
+                  >
+                {/if}
+              </div>
+
+              <form
+                class="project-catalog-search"
+                role="search"
+                onsubmit={submitProjectCatalogSearch}
+              >
+                <label for="project-catalog-search">Projekte durchsuchen</label>
+                <div>
+                  <input
+                    id="project-catalog-search"
+                    type="search"
+                    maxlength="128"
+                    placeholder="Name oder sicherer Root-Anzeigename"
+                    bind:value={projectCatalogSearchInput}
+                  />
+                  <button type="submit">Projekte suchen</button>
+                  {#if projectCatalogSearch !== null}
+                    <button type="button" onclick={clearProjectCatalogSearch}>Zurücksetzen</button>
+                  {/if}
+                </div>
+              </form>
+
+              {#if projectRestoreMessage !== null}
+                <div class="project-catalog-recovery" role="alert">
+                  <strong>Projekt konnte nicht automatisch geöffnet werden.</strong>
+                  <p>{projectRestoreMessage}</p>
+                  <p>
+                    Ist der Worktree verschoben, füge seinen neuen Root erneut hinzu. Ist er nicht
+                    mehr relevant, entferne nur den Katalogeintrag.
+                  </p>
+                </div>
+              {/if}
+
+              {#if projectCatalogView.kind === 'loading'}
+                <p class="project-status" role="status" aria-live="polite">
+                  Projektkatalog wird geladen …
+                </p>
+              {:else if projectCatalogView.kind === 'error'}
+                <div class="recent-projects-error" role="alert">
+                  <p>Der Projektkatalog konnte nicht sicher gelesen werden.</p>
+                  <button
+                    type="button"
+                    onclick={() => void loadProjectCatalog('initial', null, projectCatalogSearch)}
+                    >Erneut laden</button
+                  >
+                </div>
+              {:else if projectCatalogView.page.projects.length === 0}
+                <div class="project-catalog-empty">
+                  <strong
+                    >{projectCatalogSearch === null
+                      ? 'Noch keine Projekte gespeichert'
+                      : 'Keine Projekte gefunden'}</strong
+                  >
+                  <p>
+                    {projectCatalogSearch === null
+                      ? 'Füge deinen ersten lokalen Git-Worktree über den nativen Ordnerdialog hinzu.'
+                      : 'Passe den Suchbegriff an oder setze die Suche zurück.'}
+                  </p>
+                </div>
+              {:else}
+                <ul class="project-catalog-list" aria-label="Gespeicherte Projekte">
+                  {#each projectCatalogView.page.projects as entry (entry.project.worktreeId)}
+                    {@const isActive =
+                      projectStatusView.kind === 'active' &&
+                      projectStatusView.result.project.worktreeId === entry.project.worktreeId}
+                    <li class:catalog-project-active={isActive}>
+                      <div class="catalog-project-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M3 6.5h7l2 2h9v9H3z"></path></svg>
+                      </div>
+                      <div class="catalog-project-main">
+                        <div class="catalog-project-title">
+                          <strong>{projectDisplayName(entry.project.worktreeRootDisplay)}</strong>
+                          {#if isActive}<span>Aktiv</span>{/if}
+                        </div>
+                        <p title={entry.project.worktreeRootDisplay}>
+                          {entry.project.worktreeRootDisplay}
+                        </p>
+                        <small>Branch: {branchLabel(entry.project.head)}</small>
+                      </div>
+                      <div class="catalog-project-actions">
+                        <button
+                          type="button"
+                          disabled={isActive || projectCatalogActivatingId !== null}
+                          onclick={() => activateProjectFromCatalog(entry)}
+                          >{projectCatalogActivatingId === entry.project.worktreeId
+                            ? 'Wird aktiviert …'
+                            : isActive
+                              ? 'Aktiv'
+                              : 'Aktivieren'}</button
+                        >
+                        <button
+                          class="risk-action"
+                          type="button"
+                          disabled={projectCatalogActivatingId !== null}
+                          onclick={() => requestCatalogRemoval(entry)}>Nur aus A^3 entfernen</button
+                        >
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+
+                <nav class="project-catalog-pagination" aria-label="Projektkatalog Seiten">
+                  <button
+                    type="button"
+                    disabled={projectCatalogView.page.previousCursor === null}
+                    onclick={() => navigateProjectCatalog('previous')}>Zurück</button
+                  >
+                  <span>Seite {projectCatalogPageNumber}</span>
+                  <button
+                    type="button"
+                    disabled={projectCatalogView.page.nextCursor === null}
+                    onclick={() => navigateProjectCatalog('next')}>Weiter</button
+                  >
+                </nav>
+              {/if}
+            </section>
+
+            {#if projectCatalogRemovalTarget !== null}
+              <dialog
+                class="modal-dialog removal-confirmation"
+                aria-labelledby="catalog-removal-heading"
+                aria-describedby="catalog-removal-copy"
+                use:presentModal
+                oncancel={(event) => {
+                  event.preventDefault();
+                  cancelCatalogRemoval();
+                }}
+              >
+                <div class="modal-heading">
+                  <h3 id="catalog-removal-heading">Projekt nur aus A^3 entfernen?</h3>
+                  <button
+                    type="button"
+                    aria-label="Dialog schließen"
+                    disabled={projectCatalogRemoving}
+                    onclick={cancelCatalogRemoval}>×</button
+                  >
+                </div>
+                <p id="catalog-removal-copy">
+                  <strong
+                    >{projectDisplayName(
+                      projectCatalogRemovalTarget.project.worktreeRootDisplay,
+                    )}</strong
+                  >
+                  wird aus dem Projektkatalog entfernt. Repository, Worktree, Quellcode und private
+                  <code>knowledge.db</code>-Daten bleiben erhalten.
+                </p>
+                <div class="modal-actions">
+                  <button
+                    type="button"
+                    disabled={projectCatalogRemoving}
+                    onclick={cancelCatalogRemoval}>Abbrechen</button
+                  >
+                  <button
+                    class="risk-action"
+                    type="button"
+                    disabled={projectCatalogRemoving}
+                    onclick={confirmCatalogRemoval}
+                    >{projectCatalogRemoving ? 'Wird entfernt …' : 'Entfernen bestätigen'}</button
+                  >
+                </div>
+              </dialog>
+            {/if}
           {/if}
 
           {#if removalView.kind === 'removed'}

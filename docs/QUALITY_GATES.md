@@ -24,12 +24,18 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - TypeScript Typecheck
 - Unit- und Component-Tests der Änderung
 - Accessibility-Prüfung für neue Interaktionen
-- U2-Projects-Contracts prüfen strikt versionierte pfadlose Commands für Status, Rebuild und
-  Entfernen, den über Reload erhaltenen Core-Zustand, Branch-/Worktree-/Snapshot-/Storageanzeige,
-  bounded Recent Projects, explizite Rebuild-Retention und zweistufige Removal-Bestätigung. Die
-  Removal-Adaptertests müssen Linked Worktrees, private `knowledge.db`, stabile `ProjectId` und
-  Repositoryinhalte erhalten. Fehler-Components dürfen nur bekannte `CommandErrorV1`-Codes auf
-  feste Recovery-Schritte abbilden und niemals rohe Adapterdetails darstellen.
+- U2-Projects-Contracts prüfen strikt versionierte Commands für Status, Rebuild, den 25er-
+  Projektkatalog, Aktivierung, Startwiederherstellung und Entfernen. Katalogreads übertragen nur
+  sichere Anzeigen und opake Cursor; Aktivieren und Entfernen akzeptieren ausschließlich eine
+  kanonische zuvor gelistete `worktreeId`, niemals Pfade. Storage-Tests müssen mehr als 25 Einträge,
+  FTS-Suche, Vor-/Zurück-Paging, Bestandsmigration und Linked-Worktree-Trennung beweisen.
+  Lifecycle-Tests verlangen: nur der jüngste Eintrag wird wiederhergestellt, kein Fallback bei
+  fehlendem Root oder Identitätskonflikt und ein fehlgeschlagener Wechsel erhält aktives Projekt
+  sowie Aktivierungsreihenfolge. Removal-Adaptertests erhalten private `knowledge.db`, stabile
+  `ProjectId` und Repositoryinhalte. Component-Tests decken Startreihenfolge, Suche, Navigation,
+  Hinzufügen, Wechsel und Bestätigung ab; Fehler-Components dürfen nur bekannte
+  `CommandErrorV1`-Codes auf feste Recovery-Schritte abbilden und niemals rohe Adapterdetails
+  darstellen.
 - Der U3-Fast-Index-Fortschrittscontract prüft die exakte monotone Reihenfolge Discover, Hash,
   Parse, Link, Rank und Publish mit festem Total sechs. Der pfadlose
   `query_index_activity`-Contract darf nur das in-memory Manager-Read-Model liefern; TypeScript

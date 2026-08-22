@@ -12,6 +12,11 @@ import type { ModuleDependencyGraphResponseV1 } from './lib/module-dependency-gr
 import type { ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1 } from './lib/module-runtime';
 import type { ModuleTreeResponseV1 } from './lib/module-tree';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
+import type {
+  ProjectActivationResponseV1,
+  ProjectCatalogQueryV1,
+  ProjectCatalogResponseV1,
+} from './lib/project-catalog';
 import type { ProjectMapSearchResponseV1 } from './lib/project-map-search';
 import type { RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
 import type { RemoveProjectResponseV1 } from './lib/project-removal';
@@ -22,6 +27,23 @@ import type {
   TaskLensTaskResponseV1,
   TaskLensTasksResponseV1,
 } from './lib/task-lens';
+
+vi.mock('./lib/project-catalog', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./lib/project-catalog')>();
+  return {
+    ...original,
+    queryProjectCatalog: vi.fn(async () => ({
+      nextCursor: null,
+      previousCursor: null,
+      projects: [],
+      protocolVersion: 1 as const,
+    })),
+    restoreLastProject: vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'noSavedProject' as const },
+    })),
+  };
+});
 
 const health: HealthResponseV1 = {
   applicationVersion: '0.1.0',
@@ -811,7 +833,7 @@ describe('A^3 desktop shell', () => {
       },
     });
     try {
-      await screen.findByRole('heading', { name: 'Projekt öffnen' });
+      await screen.findByRole('heading', { name: 'Deine Projekte' });
       const activityTimer = setInterval.mock.results[0]?.value;
       expect(activityTimer).toBeDefined();
       view.unmount();
@@ -1317,7 +1339,7 @@ describe('A^3 desktop shell', () => {
     );
     expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Anderen Worktree auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
     expect((await screen.findAllByText('D:\\next-worktree')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
     expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
@@ -1605,7 +1627,7 @@ describe('A^3 desktop shell', () => {
     });
 
     expect(projectOpener).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
@@ -1642,7 +1664,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
     const alert = await screen.findByRole('alert');
 
     expect(alert.textContent).toContain('erreichbarer Git-Worktree-Root');
@@ -1663,7 +1685,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Projektordner auswählen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
     const alert = await screen.findByRole('alert');
 
     expect(alert.textContent).toContain('Prüfe Laufwerk und Zugriffsrechte');
@@ -1671,7 +1693,7 @@ describe('A^3 desktop shell', () => {
     expect(alert.textContent).not.toContain('secret');
   });
 
-  it('keeps Projects focused on actions and omits the passive recent-project list', async () => {
+  it('presents Projects as the searchable project catalog', async () => {
     render(App, {
       props: {
         healthLoader: async () => health,
@@ -1679,9 +1701,164 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    expect(await screen.findByRole('heading', { name: 'Projekt öffnen' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Projektordner auswählen' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Zuletzt verwendet' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Deine Projekte' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Projekt hinzufügen' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Gespeicherte Worktrees' })).toBeTruthy();
+    expect(screen.getByRole('search')).toBeTruthy();
+  });
+
+  it('restores the last project before reading active status', async () => {
+    const order: string[] = [];
+    const projectRestorer = vi.fn(async (): Promise<ProjectActivationResponseV1> => {
+      order.push('restore');
+      return {
+        protocolVersion: 1,
+        result: { project: projectSummary, projectId: '3'.repeat(64), status: 'activated' },
+      };
+    });
+    const projectStatusLoader = vi.fn(async () => {
+      order.push('status');
+      return activeProjectStatus;
+    });
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectRestorer,
+        projectStatusLoader,
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
+    expect(order.slice(0, 2)).toEqual(['restore', 'status']);
+    expect(projectRestorer).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the catalog usable and redacts details when startup restoration fails', async () => {
+    const projectRestorer = vi.fn<() => Promise<ProjectActivationResponseV1>>().mockRejectedValue({
+      code: 'projectSelectionUnavailable',
+      message: 'C:\\secret\\missing-worktree disappeared',
+      protocolVersion: 1,
+    });
+    const projectCatalogLoader = vi.fn(async (): Promise<ProjectCatalogResponseV1> => ({
+      nextCursor: null,
+      previousCursor: null,
+      projects: [{ project: projectSummary, projectId: '3'.repeat(64) }],
+      protocolVersion: 1,
+    }));
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectCatalogLoader,
+        projectRestorer,
+        projectStatusLoader: async () => noProjectStatus,
+      },
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Projekt konnte nicht automatisch geöffnet werden');
+    expect(alert.textContent).toContain('Prüfe Laufwerk und Zugriffsrechte');
+    expect(alert.textContent).toContain('füge seinen neuen Root erneut hinzu');
+    expect(alert.textContent).not.toContain('secret');
+    expect(await screen.findByText('worktree')).toBeTruthy();
+    expect(projectCatalogLoader).toHaveBeenCalled();
+  });
+
+  it('searches, pages, activates, and confirms catalog removal', async () => {
+    const nextProject: ProjectSummaryV1 = {
+      ...projectSummary,
+      repositoryId: '8'.repeat(64),
+      worktreeId: '9'.repeat(64),
+      worktreeRootDisplay: 'D:\\clients\\next-worktree',
+    };
+    const initialPage: ProjectCatalogResponseV1 = {
+      nextCursor: '0000000000000019',
+      previousCursor: null,
+      projects: [
+        { project: projectSummary, projectId: '3'.repeat(64) },
+        { project: nextProject, projectId: '7'.repeat(64) },
+      ],
+      protocolVersion: 1,
+    };
+    const projectCatalogLoader = vi.fn(
+      async (query: ProjectCatalogQueryV1): Promise<ProjectCatalogResponseV1> => {
+        if (query.direction === 'next') {
+          return {
+            nextCursor: null,
+            previousCursor: '0000000000000020',
+            projects: [{ project: nextProject, projectId: '7'.repeat(64) }],
+            protocolVersion: 1,
+          };
+        }
+        if (query.search === 'next') {
+          return { ...initialPage, nextCursor: null, projects: [initialPage.projects[1]!] };
+        }
+        return initialPage;
+      },
+    );
+    const switchedStatus: ProjectStatusResponseV1 = {
+      ...activeProjectStatus,
+      result: { ...activeProjectResult, project: nextProject, projectId: '7'.repeat(64) },
+    };
+    const projectStatusLoader = vi
+      .fn<() => Promise<ProjectStatusResponseV1>>()
+      .mockResolvedValueOnce(activeProjectStatus)
+      .mockResolvedValue(switchedStatus);
+    const projectCatalogActivator = vi.fn(async (): Promise<ProjectActivationResponseV1> => ({
+      protocolVersion: 1,
+      result: { project: nextProject, projectId: '7'.repeat(64), status: 'activated' },
+    }));
+    const projectCatalogRemover = vi.fn(async () => removedProject);
+    render(App, {
+      props: {
+        healthLoader: async () => health,
+        projectCatalogActivator,
+        projectCatalogLoader,
+        projectCatalogRemover,
+        projectStatusLoader,
+      },
+    });
+
+    await screen.findByText('next-worktree');
+    await fireEvent.click(screen.getByRole('button', { name: 'Weiter' }));
+    await waitFor(() =>
+      expect(projectCatalogLoader).toHaveBeenCalledWith({
+        cursor: '0000000000000019',
+        direction: 'next',
+        search: null,
+      }),
+    );
+    expect(screen.getByText('Seite 2')).toBeTruthy();
+
+    await fireEvent.input(screen.getByLabelText('Projekte durchsuchen'), {
+      target: { value: 'next' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekte suchen' }));
+    await waitFor(() =>
+      expect(projectCatalogLoader).toHaveBeenCalledWith({
+        cursor: null,
+        direction: 'initial',
+        search: 'next',
+      }),
+    );
+
+    const projectRow = screen.getByText('next-worktree').closest('li');
+    expect(projectRow).not.toBeNull();
+    await fireEvent.click(within(projectRow!).getByRole('button', { name: 'Aktivieren' }));
+    await waitFor(() =>
+      expect(projectCatalogActivator).toHaveBeenCalledWith(nextProject.worktreeId),
+    );
+    expect((await screen.findAllByText('D:\\clients\\next-worktree')).length).toBeGreaterThan(0);
+
+    const refreshedRow = screen.getByText('next-worktree').closest('li');
+    expect(refreshedRow).not.toBeNull();
+    await fireEvent.click(
+      within(refreshedRow!).getByRole('button', { name: 'Nur aus A^3 entfernen' }),
+    );
+    expect(projectCatalogRemover).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: 'Projekt nur aus A^3 entfernen?' });
+    expect(dialog.textContent).toContain('knowledge.db');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Entfernen bestätigen' }));
+    await waitFor(() => expect(projectCatalogRemover).toHaveBeenCalledWith(nextProject.worktreeId));
   });
 
   it('requires explicit confirmation and explains non-destructive project removal', async () => {
