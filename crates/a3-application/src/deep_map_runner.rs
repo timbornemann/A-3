@@ -32,10 +32,10 @@ impl RunDeepMap {
         publisher: Arc<dyn VerifiedModuleCardPublisher>,
     ) -> Result<Self, DeepMapExecutionFailure> {
         if provider.provider_id() != profile.provider_id() {
-            return Err(DeepMapExecutionFailure::Model);
+            return Err(DeepMapExecutionFailure::ModelRejected);
         }
         let model = DeepMapModelDescriptor::from_verified_profile(&profile)
-            .map_err(|_| DeepMapExecutionFailure::Model)?;
+            .map_err(|_| DeepMapExecutionFailure::ModelRejected)?;
         Ok(Self {
             model,
             profile,
@@ -95,7 +95,7 @@ impl RunDeepMap {
 
         let provider =
             ModelBackedExplorerProvider::new(self.provider.as_ref(), self.profile.clone())
-                .map_err(|_| DeepMapExecutionFailure::Model)?;
+                .map_err(map_explorer_model_failure)?;
         let tools = PublishedIndexDeepMapReadTools::new(Arc::clone(&self.index));
         let explored = ExploreDeepMap::version_one(&provider, &tools)
             .execute(project, &plan, checkpoint, control)
@@ -189,13 +189,20 @@ const fn map_index_failure(failure: KnowledgeIndexFailure) -> DeepMapExecutionFa
 const fn map_explorer_failure(failure: DeepMapExplorerFailure) -> DeepMapExecutionFailure {
     match failure {
         DeepMapExplorerFailure::Checkpoint(_) => DeepMapExecutionFailure::InvalidCheckpoint,
-        DeepMapExplorerFailure::Model(ExplorerModelFailure::Cancelled) => {
-            DeepMapExecutionFailure::Model
-        }
-        DeepMapExplorerFailure::Model(_) | DeepMapExplorerFailure::InvalidModelOutput => {
-            DeepMapExecutionFailure::Model
-        }
+        DeepMapExplorerFailure::Model(failure) => map_explorer_model_failure(failure),
+        DeepMapExplorerFailure::InvalidModelOutput => DeepMapExecutionFailure::InvalidModelResponse,
         DeepMapExplorerFailure::Read(_) => DeepMapExecutionFailure::Read,
+    }
+}
+
+const fn map_explorer_model_failure(failure: ExplorerModelFailure) -> DeepMapExecutionFailure {
+    match failure {
+        ExplorerModelFailure::Unavailable | ExplorerModelFailure::Cancelled => {
+            DeepMapExecutionFailure::ModelUnavailable
+        }
+        ExplorerModelFailure::Rejected => DeepMapExecutionFailure::ModelRejected,
+        ExplorerModelFailure::InvalidResponse => DeepMapExecutionFailure::InvalidModelResponse,
+        ExplorerModelFailure::TimedOut => DeepMapExecutionFailure::ModelTimedOut,
     }
 }
 
@@ -210,11 +217,27 @@ fn map_verification_failure(failure: VerifyModuleCardsFailure) -> DeepMapExecuti
 
 fn map_claim_failure(failure: ProposeModuleCardClaimsFailure) -> DeepMapExecutionFailure {
     match failure {
-        ProposeModuleCardClaimsFailure::Model | ProposeModuleCardClaimsFailure::Cancelled => {
-            DeepMapExecutionFailure::Model
-        }
+        ProposeModuleCardClaimsFailure::Model(failure) => map_model_provider_failure(failure),
+        ProposeModuleCardClaimsFailure::Cancelled => DeepMapExecutionFailure::ModelUnavailable,
         ProposeModuleCardClaimsFailure::InvalidRequest
-        | ProposeModuleCardClaimsFailure::InvalidOutput(_) => DeepMapExecutionFailure::Verification,
+        | ProposeModuleCardClaimsFailure::InvalidOutput(_) => {
+            DeepMapExecutionFailure::InvalidModelResponse
+        }
+    }
+}
+
+const fn map_model_provider_failure(
+    failure: crate::ModelProviderFailure,
+) -> DeepMapExecutionFailure {
+    match failure {
+        crate::ModelProviderFailure::Unavailable
+        | crate::ModelProviderFailure::EndpointDenied
+        | crate::ModelProviderFailure::Cancelled => DeepMapExecutionFailure::ModelUnavailable,
+        crate::ModelProviderFailure::Rejected => DeepMapExecutionFailure::ModelRejected,
+        crate::ModelProviderFailure::InvalidResponse => {
+            DeepMapExecutionFailure::InvalidModelResponse
+        }
+        crate::ModelProviderFailure::TimedOut => DeepMapExecutionFailure::ModelTimedOut,
     }
 }
 

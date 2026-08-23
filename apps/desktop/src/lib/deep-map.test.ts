@@ -35,6 +35,7 @@ function availableResponse(): unknown {
         state: 'idle',
         budget: null,
         progress: null,
+        failure: null,
         confirmedSteps: '0',
         totalSteps: '0',
       },
@@ -88,9 +89,30 @@ describe('Deep Map protocol', () => {
       state: 'paused',
       budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
       progress: null,
+      failure: null,
       confirmedSteps: '4',
       totalSteps: '4',
     };
     expect(() => parseDeepMapStatusResponseV1(paused)).toThrow();
+  });
+
+  it('accepts only a known content-free failure on failed activity', () => {
+    const failed = availableResponse() as {
+      result: { activity: Record<string, unknown> };
+    };
+    failed.result.activity = {
+      state: 'failed',
+      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      progress: null,
+      failure: 'modelTimedOut',
+      confirmedSteps: '0',
+      totalSteps: '0',
+    };
+    expect(parseDeepMapStatusResponseV1(failed).result).toMatchObject({
+      activity: { failure: 'modelTimedOut', state: 'failed' },
+    });
+
+    failed.result.activity.failure = 'rawProviderError';
+    expect(() => parseDeepMapStatusResponseV1(failed)).toThrow();
   });
 });

@@ -477,15 +477,15 @@ fn refresh_attempt(
                 ),
             );
         }
+        (_, _, Some(Err(failure))) => {
+            state.resume = None;
+            set_activity(activity, DeepMapActivity::failed(budget, failure));
+        }
         _ => {
             state.resume = None;
             set_activity(
                 activity,
-                DeepMapActivity::terminal(
-                    DeepMapActivityState::Failed,
-                    budget,
-                    StepCounts::default(),
-                ),
+                DeepMapActivity::failed(budget, DeepMapExecutionFailure::InvalidCheckpoint),
             );
         }
     }
@@ -569,6 +569,7 @@ pub(crate) struct DeepMapActivity {
     state: DeepMapActivityState,
     budget: Option<ExploreBudget>,
     progress: Option<Progress>,
+    failure: Option<DeepMapExecutionFailure>,
     completed_steps: u64,
     total_steps: u64,
 }
@@ -579,6 +580,7 @@ impl DeepMapActivity {
             state: DeepMapActivityState::Idle,
             budget: None,
             progress: None,
+            failure: None,
             completed_steps: 0,
             total_steps: 0,
         }
@@ -589,6 +591,7 @@ impl DeepMapActivity {
             state: DeepMapActivityState::Queued,
             budget: Some(budget),
             progress: None,
+            failure: None,
             completed_steps: 0,
             total_steps: 0,
         }
@@ -603,8 +606,20 @@ impl DeepMapActivity {
             state,
             budget,
             progress: None,
+            failure: None,
             completed_steps: counts.completed,
             total_steps: counts.total,
+        }
+    }
+
+    const fn failed(budget: Option<ExploreBudget>, failure: DeepMapExecutionFailure) -> Self {
+        Self {
+            state: DeepMapActivityState::Failed,
+            budget,
+            progress: None,
+            failure: Some(failure),
+            completed_steps: 0,
+            total_steps: 0,
         }
     }
 
@@ -618,6 +633,10 @@ impl DeepMapActivity {
 
     pub(crate) const fn progress(self) -> Option<Progress> {
         self.progress
+    }
+
+    pub(crate) const fn failure(self) -> Option<DeepMapExecutionFailure> {
+        self.failure
     }
 
     pub(crate) const fn completed_steps(self) -> u64 {
@@ -750,6 +769,27 @@ mod tests {
         attempts: AtomicUsize,
     }
 
+    #[derive(Debug)]
+    struct FailingExecutor {
+        model: DeepMapModelDescriptor,
+        failure: DeepMapExecutionFailure,
+    }
+
+    impl DeepMapExecutor for FailingExecutor {
+        fn model(&self) -> &DeepMapModelDescriptor {
+            &self.model
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _request: DeepMapExecutionRequest,
+            _control: &'a a3_application::JobContext,
+        ) -> DeepMapExecutionFuture<'a> {
+            Box::pin(async move { Err(self.failure) })
+        }
+    }
+
     impl DeepMapExecutor for PausingExecutor {
         fn model(&self) -> &DeepMapModelDescriptor {
             &self.model
@@ -862,6 +902,34 @@ mod tests {
         assert_eq!(first_executor.attempts.load(Ordering::SeqCst), 0);
         manager.cancel()?;
         wait_for_state(&manager, DeepMapActivityState::Cancelled)?;
+        drop(manager);
+        drop(scheduler);
+        Ok(())
+    }
+
+    #[test]
+    fn executor_failure_is_retained_for_the_safe_status_projection() -> Result<(), Box<dyn Error>> {
+        let config = JobSchedulerConfig::new(1, 4, 64)?;
+        let (scheduler, events) =
+            JobScheduler::new(config, Arc::new(TestClock(AtomicU64::new(1))))?;
+        let executor = Arc::new(FailingExecutor {
+            model: DeepMapModelDescriptor::from_verified_profile(&model_profile()?)?,
+            failure: DeepMapExecutionFailure::ModelTimedOut,
+        });
+        let manager = DeepMapManager::start(
+            scheduler.submitter()?,
+            events,
+            Some(executor),
+            Arc::new(DesktopJobIds::new()),
+        )?;
+        manager.activate_project(project_fixture()?)?;
+        manager.start_mapping(ExploreBudget::DEFAULT)?;
+        wait_for_state(&manager, DeepMapActivityState::Failed)?;
+
+        assert_eq!(
+            manager.activity().failure(),
+            Some(DeepMapExecutionFailure::ModelTimedOut)
+        );
         drop(manager);
         drop(scheduler);
         Ok(())

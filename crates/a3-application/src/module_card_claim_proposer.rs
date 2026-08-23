@@ -4,16 +4,17 @@ use crate::{
     ModelRequestTimeout, ModuleCardClaimDecodeError, ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{
-    ModelProfile, ModuleCardField, ModuleCardProposal, ModuleCardVerificationCandidate,
+    ModelProfile, ModuleCardClaimId, ModuleCardField, ModuleCardProposal,
+    ModuleCardVerificationCandidate,
 };
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::fmt;
 
-const CLAIM_REQUEST_TIMEOUT_MILLIS: u64 = 30_000;
+const CLAIM_REQUEST_TIMEOUT_MILLIS: u64 = 120_000;
 const MAX_CLAIM_OUTPUT_BYTES: usize = 65_536;
-const CLAIM_SYSTEM_PROMPT: &str = "You are the bounded A^3 Module Card claim proposer. Return exactly one JSON object matching the supplied schema and no prose. For every zero-based values index of every supplied field, produce exactly one claim with that field, value_index, confidence_basis_points and polarity affirms. Copy the supplied card, module, snapshot and evidence IDs exactly; create only each new claim_id as a unique lowercase 64-character hexadecimal value. Use observed with statement exactly equal to the indexed field value and at most 16 of that field's supplied evidence IDs. Use architectural_intent only for explicitly uncertain intent. Do not use structural path, symbol or relation predicates because resolved evidence objects are not supplied at this boundary. Never invent evidence or executable actions.";
+const CLAIM_SYSTEM_PROMPT: &str = "You are the bounded A^3 Module Card claim proposer. Return exactly one JSON object matching the supplied schema and no prose. For every zero-based values index of every supplied field, produce exactly one claim with that field, value_index, confidence_basis_points and polarity affirms. Copy the supplied card, module, snapshot, evidence and corresponding claim IDs exactly. Use observed with statement exactly equal to the indexed field value and at most 16 of that field's supplied evidence IDs. Use architectural_intent only for explicitly uncertain intent. Do not use structural path, symbol or relation predicates because resolved evidence objects are not supplied at this boundary. Never invent identifiers, evidence or executable actions.";
 
 /// Produces a complete typed claim candidate with one bounded repair before deterministic verify.
 pub struct ProposeModuleCardClaims<'a> {
@@ -29,7 +30,9 @@ impl<'a> ProposeModuleCardClaims<'a> {
     ) -> Result<Self, ProposeModuleCardClaimsFailure> {
         if provider.provider_id() != profile.provider_id() || !profile.executable_actions_enabled()
         {
-            return Err(ProposeModuleCardClaimsFailure::Model);
+            return Err(ProposeModuleCardClaimsFailure::Model(
+                ModelProviderFailure::Rejected,
+            ));
         }
         Ok(Self { provider, profile })
     }
@@ -41,14 +44,13 @@ impl<'a> ProposeModuleCardClaims<'a> {
         control: &JobContext,
     ) -> Result<ModuleCardVerificationCandidate, ProposeModuleCardClaimsFailure> {
         let primary = self.complete(&proposal, None, control).await?;
-        match DecodeModuleCardClaims::version_one().decode(proposal.clone(), &primary) {
+        match decode_and_bind_claim_ids(proposal.clone(), &primary) {
             Ok(candidate) => Ok(candidate),
             Err(error) => {
                 let repaired = self
                     .complete(&proposal, Some(error.repair_code()), control)
                     .await?;
-                DecodeModuleCardClaims::version_one()
-                    .decode(proposal, &repaired)
+                decode_and_bind_claim_ids(proposal, &repaired)
                     .map_err(ProposeModuleCardClaimsFailure::InvalidOutput)
             }
         }
@@ -115,14 +117,18 @@ impl<'a> ProposeModuleCardClaims<'a> {
                     completion = Some(value);
                 }
                 ProviderEvent::OutputText(_) | ProviderEvent::Completed(_) => {
-                    return Err(ProposeModuleCardClaimsFailure::Model);
+                    return Err(ProposeModuleCardClaimsFailure::Model(
+                        ModelProviderFailure::InvalidResponse,
+                    ));
                 }
             }
         }
         if control.is_cancelled() {
             return Err(ProposeModuleCardClaimsFailure::Cancelled);
         }
-        let completion = completion.ok_or(ProposeModuleCardClaimsFailure::Model)?;
+        let completion = completion.ok_or(ProposeModuleCardClaimsFailure::Model(
+            ModelProviderFailure::InvalidResponse,
+        ))?;
         if completion.reason() == ModelFinishReason::OutputLimit {
             return Err(ProposeModuleCardClaimsFailure::InvalidOutput(
                 ModuleCardClaimDecodeError::OutputTooLarge(output.len()),
@@ -150,17 +156,35 @@ fn encode_proposal(
         .fields()
         .iter()
         .map(|field| {
-            json!({
+            let claim_ids = field
+                .values()
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    u16::try_from(index)
+                        .map(|index| {
+                            hex(ModuleCardClaimId::for_card_value_v1(
+                                proposal.id(),
+                                field.field(),
+                                index,
+                            )
+                            .as_bytes())
+                        })
+                        .map_err(|_| ProposeModuleCardClaimsFailure::InvalidRequest)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, ProposeModuleCardClaimsFailure>(json!({
                 "field": field_name(field.field()),
                 "values": field.values(),
+                "claim_ids": claim_ids,
                 "evidence_ids": field
                     .evidence_ids()
                     .iter()
                     .map(|id| hex(id.as_bytes()))
                     .collect::<Vec<_>>(),
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     serde_json::to_string(&json!({
         "card_id": hex(proposal.id().as_bytes()),
         "module_id": proposal.module_id().to_string(),
@@ -172,6 +196,24 @@ fn encode_proposal(
         "repair_reason": repair,
     }))
     .map_err(|_| ProposeModuleCardClaimsFailure::InvalidRequest)
+}
+
+fn decode_and_bind_claim_ids(
+    proposal: ModuleCardProposal,
+    raw: &str,
+) -> Result<ModuleCardVerificationCandidate, ModuleCardClaimDecodeError> {
+    let candidate = DecodeModuleCardClaims::version_one().decode(proposal, raw)?;
+    if candidate.claims().iter().any(|claim| {
+        claim.id()
+            != ModuleCardClaimId::for_card_value_v1(
+                candidate.proposal().id(),
+                claim.field(),
+                claim.value_index(),
+            )
+    }) {
+        return Err(ModuleCardClaimDecodeError::InvalidValue);
+    }
+    Ok(candidate)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -198,11 +240,7 @@ const fn field_name(field: ModuleCardField) -> &'static str {
 const fn map_provider_failure(failure: ModelProviderFailure) -> ProposeModuleCardClaimsFailure {
     match failure {
         ModelProviderFailure::Cancelled => ProposeModuleCardClaimsFailure::Cancelled,
-        ModelProviderFailure::Unavailable
-        | ModelProviderFailure::Rejected
-        | ModelProviderFailure::InvalidResponse
-        | ModelProviderFailure::TimedOut
-        | ModelProviderFailure::EndpointDenied => ProposeModuleCardClaimsFailure::Model,
+        failure => ProposeModuleCardClaimsFailure::Model(failure),
     }
 }
 
@@ -210,7 +248,7 @@ const fn map_provider_failure(failure: ModelProviderFailure) -> ProposeModuleCar
 #[derive(Debug)]
 pub enum ProposeModuleCardClaimsFailure {
     /// The verified profile or provider operation failed.
-    Model,
+    Model(ModelProviderFailure),
     /// The request could not satisfy the bounded structured contract.
     InvalidRequest,
     /// Output remained structurally invalid after the sole repair.
@@ -222,7 +260,7 @@ pub enum ProposeModuleCardClaimsFailure {
 impl fmt::Display for ProposeModuleCardClaimsFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Model => "Module Card claim model failed",
+            Self::Model(_) => "Module Card claim model failed",
             Self::InvalidRequest => "Module Card claim request is invalid",
             Self::InvalidOutput(_) => "Module Card claim output remained invalid",
             Self::Cancelled => "Module Card claim generation was cancelled",
@@ -233,8 +271,77 @@ impl fmt::Display for ProposeModuleCardClaimsFailure {
 impl Error for ProposeModuleCardClaimsFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Model(source) => Some(source),
             Self::InvalidOutput(source) => Some(source),
-            Self::Model | Self::InvalidRequest | Self::Cancelled => None,
+            Self::InvalidRequest | Self::Cancelled => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_and_bind_claim_ids, encode_proposal, hex};
+    use crate::ModuleCardClaimDecodeError;
+    use a3_domain::{
+        Confidence, MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField,
+        ModuleCardId, ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
+        ModuleId, ProposedModuleCardField, SnapshotId,
+    };
+    use serde_json::{Value, json};
+    use std::error::Error;
+
+    #[test]
+    fn request_supplies_core_owned_claim_ids_and_rejects_model_invented_identity()
+    -> Result<(), Box<dyn Error>> {
+        let proposal = proposal()?;
+        let encoded = encode_proposal(&proposal, None)?;
+        let request = serde_json::from_str::<Value>(&encoded)?;
+        let expected =
+            ModuleCardClaimId::for_card_value_v1(proposal.id(), ModuleCardField::Title, 0);
+        assert_eq!(
+            request["fields"][0]["claim_ids"][0],
+            hex(expected.as_bytes())
+        );
+
+        let raw = json!({
+            "schema_version": 1,
+            "card_id": hex(proposal.id().as_bytes()),
+            "module_id": proposal.module_id().to_string(),
+            "snapshot_id": proposal.snapshot_id().to_string(),
+            "claims": [{
+                "claim_id": hex(&[8; 32]),
+                "field": "title",
+                "value_index": 0,
+                "confidence_basis_points": 7000,
+                "polarity": "affirms",
+                "predicate": {"kind": "observed", "statement": "Core"},
+                "evidence_ids": [hex(&[4; 32])]
+            }]
+        })
+        .to_string();
+        assert_eq!(
+            decode_and_bind_claim_ids(proposal, &raw),
+            Err(ModuleCardClaimDecodeError::InvalidValue)
+        );
+        Ok(())
+    }
+
+    fn proposal() -> Result<ModuleCardProposal, Box<dyn Error>> {
+        Ok(ModuleCardProposal::new(
+            ModuleCardProposalEnvelope::new(
+                ModuleCardId::from_bytes([1; 32]),
+                ModuleId::from_bytes([2; 32]),
+                SnapshotId::from_bytes([3; 32]),
+                ModuleCardSchemaVersion::V1,
+                MapperProfileVersion::V1,
+                Confidence::certain(),
+            ),
+            vec![ProposedModuleCardField::new(
+                ModuleCardField::Title,
+                vec!["Core".to_owned()],
+                vec![ModuleCardEvidenceId::from_bytes([4; 32])],
+            )?],
+            512,
+        )?)
     }
 }

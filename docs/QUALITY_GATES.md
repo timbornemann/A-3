@@ -60,7 +60,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   bestätigter Schritte starten und Cancel den Checkpoint verwerfen. Queued Work darf nicht fälschlich
   als checkpoint-sicher pausiert gelten; Projektwechsel und Shutdown dürfen keinen Worker ablösen.
   Rust-/TypeScript-Contracts lehnen unbekannte Felder, widersprüchliche Zustände, nicht kanonische
-  Zähler und unbekannte Fehlercodes ab. Der Component-Test muss außerdem zeigen, dass weder Mount
+  Zähler und unbekannte Fehlercodes ab. Ein Executorfehler muss seine geschlossene content-freie
+  Ursache bis zur UI behalten; der Component-Test zeigt dafür eine konkrete Recovery-Hilfe ohne
+  Adapterdetails. Ollama-Regressionen prüfen, dass ein kurzer Request eines großen Profils nicht
+  das gesamte konfigurierte Kontextfenster reserviert und Claim-IDs Core-eigen, wertgebunden und
+  nach der Modellantwort erneut validiert sind. Der Component-Test muss außerdem zeigen, dass weder Mount
   noch Polling Modellarbeit startet und der Start exakt das zuvor sichtbare Budget übergibt.
 - Der pfadlose U3-Module-Card-Freshness-Contract zählt ausschließlich die jeweils neueste Card pro
   Modul gegen den aktuellen veröffentlichten Run. Storage-Regressionsprüfungen verlangen direkte

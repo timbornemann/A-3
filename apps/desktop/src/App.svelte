@@ -42,6 +42,7 @@
     type DeepMapActivityStateV1,
     type DeepMapBudgetV1,
     type DeepMapControlResponseV1,
+    type DeepMapFailureV1,
     type DeepMapStatusResponseV1,
   } from './lib/deep-map';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
@@ -2287,6 +2288,91 @@
       cancelled: 'Deep Map abgebrochen',
     };
     return labels[state];
+  }
+
+  function deepMapFailureGuidance(failure: DeepMapFailureV1): {
+    title: string;
+    detail: string;
+    action: string;
+  } {
+    const guidance: Record<DeepMapFailureV1, { title: string; detail: string; action: string }> = {
+      noPublishedIndex: {
+        title: 'Noch keine fertige Projektanalyse',
+        detail: 'Deep Map benötigt zuerst einen vollständig veröffentlichten Fast Index.',
+        action:
+          'Erstelle die Analyse unter „Projekt verwalten“ neu und starte Deep Map danach erneut.',
+      },
+      staleSnapshot: {
+        title: 'Die Projektanalyse hat sich geändert',
+        detail:
+          'Der Lauf gehört zu einer älteren Version des Projekts und wurde deshalb sicher beendet.',
+        action: 'Aktualisiere den Status und starte Deep Map für die aktuelle Analyse neu.',
+      },
+      planning: {
+        title: 'Der Mapping-Lauf konnte nicht geplant werden',
+        detail: 'Analyse, Coverage oder gewähltes Budget ergeben keinen sicheren Deep-Map-Plan.',
+        action:
+          'Nutze zunächst die Standardbudgets und erstelle die Projektanalyse bei Bedarf neu.',
+      },
+      modelUnavailable: {
+        title: 'Das Mapping-Modell ist nicht erreichbar',
+        detail:
+          'Die konfigurierte Provider-Verbindung wurde unterbrochen oder unvollständig beendet.',
+        action:
+          'Prüfe, ob Ollama läuft, und verifiziere das Mapping-Modell in den Einstellungen erneut.',
+      },
+      modelRejected: {
+        title: 'Das Modell hat die Mapping-Anfrage abgelehnt',
+        detail:
+          'Das verifizierte Profil akzeptiert den benötigten strukturierten Request aktuell nicht.',
+        action:
+          'Verifiziere das Mapping-Modell erneut oder wähle ein anderes Structured-Output-Modell.',
+      },
+      modelTimedOut: {
+        title: 'Die Modellantwort hat zu lange gedauert',
+        detail: 'A^3 hat den Lauf beendet, bevor eine vollständige strukturierte Antwort vorlag.',
+        action:
+          'Versuche es erneut oder wähle für Deep Map ein kleineres beziehungsweise schnelleres Modell.',
+      },
+      invalidModelResponse: {
+        title: 'Die Modellantwort war nicht verwendbar',
+        detail:
+          'Die Antwort war unvollständig oder entsprach nach der Korrektur nicht dem sicheren Deep-Map-Format.',
+        action:
+          'Verifiziere das Modell erneut; tritt es wieder auf, verwende ein zuverlässigeres Mapping-Modell.',
+      },
+      read: {
+        title: 'Die Projektanalyse konnte nicht gelesen werden',
+        detail:
+          'Ein begrenzter Read-only-Zugriff auf den veröffentlichten Index ist fehlgeschlagen.',
+        action:
+          'Erstelle die Analyse unter „Projekt verwalten“ neu und versuche es anschließend erneut.',
+      },
+      verification: {
+        title: 'Das Mapping konnte nicht sicher belegt werden',
+        detail:
+          'Mindestens eine Aussage ließ sich nicht gegen die aktuelle Projektanalyse verifizieren.',
+        action:
+          'Aktualisiere die Analyse und starte Deep Map erneut; wähle bei Wiederholung ein anderes Modell.',
+      },
+      publication: {
+        title: 'Die Module Cards konnten nicht gespeichert werden',
+        detail:
+          'Die geprüften Ergebnisse konnten nicht vollständig und atomar veröffentlicht werden.',
+        action: 'Prüfe freien Speicherplatz und App-Daten-Zugriffsrechte und versuche es erneut.',
+      },
+      invalidCheckpoint: {
+        title: 'Der gespeicherte Fortschritt ist nicht mehr gültig',
+        detail: 'Checkpoint, Startbudget oder aktueller Plan passen nicht mehr exakt zusammen.',
+        action: 'Brich den alten Lauf ab und starte Deep Map für die aktuelle Analyse neu.',
+      },
+      progressUnavailable: {
+        title: 'Der Laufstatus ist nicht zuverlässig verfügbar',
+        detail: 'A^3 konnte Scheduler- und Deep-Map-Status nicht sicher zusammenführen.',
+        action: 'Aktualisiere den Status und starte A^3 neu, falls der Zustand bestehen bleibt.',
+      },
+    };
+    return guidance[failure];
   }
 
   function deepMapCanStart(state: DeepMapActivityStateV1): boolean {
@@ -4747,6 +4833,16 @@
                       <p class="deep-map-state" role="status" aria-live="polite">
                         {deepMapStateLabel(deepMapView.result.activity.state)}
                       </p>
+                      {#if deepMapView.result.activity.failure !== null}
+                        {@const guidance = deepMapFailureGuidance(
+                          deepMapView.result.activity.failure,
+                        )}
+                        <div class="deep-map-failure" role="alert">
+                          <strong>{guidance.title}</strong>
+                          <p>{guidance.detail}</p>
+                          <p>{guidance.action}</p>
+                        </div>
+                      {/if}
                       <dl class="deep-map-model">
                         <div>
                           <dt>Mapping-Modell</dt>

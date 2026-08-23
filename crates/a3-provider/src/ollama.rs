@@ -42,6 +42,8 @@ const MAX_OLLAMA_MODEL_INFO_FIELDS: usize = 2_048;
 const MAX_OLLAMA_MODEL_INFO_KEY_BYTES: usize = 256;
 const OLLAMA_PROBE_CONTEXT_TOKENS: u32 = 4_096;
 const OLLAMA_PROBE_OUTPUT_TOKENS: u32 = 32;
+const OLLAMA_OPERATIONAL_CONTEXT_FLOOR_TOKENS: u32 = 16_384;
+const OLLAMA_CHAT_TEMPLATE_OVERHEAD_TOKENS: u32 = 1_024;
 const OLLAMA_PROBE_PROMPT: &str =
     "Return exactly this JSON object and nothing else: {\"a3_probe\":\"ok\"}.";
 const OLLAMA_EMBED_PROBE_INPUT: &str = "A3 embedding capability probe";
@@ -759,7 +761,7 @@ impl<'a> OllamaChatOptions<'a> {
         let settings = request.profile().settings();
         let stops = settings.stop_sequences().as_slice();
         Self {
-            num_ctx: settings.context_limit().get(),
+            num_ctx: operational_context_tokens(request),
             num_predict: settings.output_limit().get(),
             temperature: f64::from(settings.sampling().temperature().milli()) / 1_000.0,
             top_p: f64::from(settings.sampling().top_p().milli()) / 1_000.0,
@@ -796,6 +798,25 @@ impl<'a> OllamaChatOptions<'a> {
             stop: None,
         }
     }
+}
+
+fn operational_context_tokens(request: &ModelProviderRequest) -> u32 {
+    let settings = request.profile().settings();
+    let configured = settings.context_limit().get();
+    let prompt = request.messages().iter().try_fold(0_u32, |total, message| {
+        let tokens = settings
+            .token_counting()
+            .count_text(message.content())
+            .ok()?
+            .get();
+        total.checked_add(tokens)
+    });
+    let required = prompt
+        .and_then(|tokens| tokens.checked_add(settings.output_limit().get()))
+        .and_then(|tokens| tokens.checked_add(OLLAMA_CHAT_TEMPLATE_OVERHEAD_TOKENS))
+        .unwrap_or(configured);
+    let floor = configured.min(OLLAMA_OPERATIONAL_CONTEXT_FLOOR_TOKENS);
+    required.max(floor).min(configured)
 }
 
 #[derive(Serialize)]
@@ -1023,14 +1044,20 @@ impl Error for OllamaProviderCreateError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason, parse_model_catalog,
-        parse_ollama_line, parse_show_observation, take_complete_line,
-        valid_structured_probe_response,
+        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason,
+        operational_context_tokens, parse_model_catalog, parse_ollama_line, parse_show_observation,
+        take_complete_line, valid_structured_probe_response,
     };
     use a3_application::{
-        ModelCancellationFuture, ModelFinishReason, ModelOperationControl, ProviderEvent,
+        ModelCancellationFuture, ModelFinishReason, ModelMessage, ModelMessageRole,
+        ModelOperationControl, ModelProviderRequest, ProviderEvent,
     };
-    use a3_domain::{ModelId, ModelProviderId};
+    use a3_domain::{
+        ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
+        ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId,
+        ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability,
+        ModelTemperature, ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP,
+    };
     use futures::stream::{self, StreamExt};
 
     #[derive(Debug)]
@@ -1044,6 +1071,42 @@ mod tests {
         fn cancelled(&self) -> ModelCancellationFuture<'_> {
             Box::pin(futures::future::pending())
         }
+    }
+
+    #[test]
+    fn ordinary_requests_do_not_allocate_the_entire_advertised_context_window()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let profile = ModelProfile::from_probe(
+            ModelProviderId::try_from_string("ollama".to_owned())?,
+            ModelId::try_from_string("mapper".to_owned())?,
+            ModelProfileSettings::new(
+                ModelContextLimit::new(65_536)?,
+                ModelOutputLimit::new(8_192)?,
+                ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
+                ModelParallelismLimit::new(1)?,
+                ModelSamplingProfile::new(
+                    ModelTemperature::from_milli(0)?,
+                    ModelTopP::from_milli(1_000)?,
+                ),
+                ModelStopSequences::empty(),
+                ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+            )?,
+            ModelCapabilities::new(
+                ModelStructuredOutputCapability::Verified,
+                ModelToolCallMode::Disabled,
+            ),
+        );
+        let request = ModelProviderRequest::new(
+            profile,
+            vec![ModelMessage::try_from_string(
+                ModelMessageRole::User,
+                "bounded mapping request".to_owned(),
+            )?],
+            None,
+        )?;
+
+        assert_eq!(operational_context_tokens(&request), 16_384);
+        Ok(())
     }
 
     #[test]

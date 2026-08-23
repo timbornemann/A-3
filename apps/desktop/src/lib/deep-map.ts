@@ -38,10 +38,25 @@ export interface DeepMapProgressV1 {
   total: string;
 }
 
+export type DeepMapFailureV1 =
+  | 'noPublishedIndex'
+  | 'staleSnapshot'
+  | 'planning'
+  | 'modelUnavailable'
+  | 'modelRejected'
+  | 'modelTimedOut'
+  | 'invalidModelResponse'
+  | 'read'
+  | 'verification'
+  | 'publication'
+  | 'invalidCheckpoint'
+  | 'progressUnavailable';
+
 export interface DeepMapActivityV1 {
   state: DeepMapActivityStateV1;
   budget: DeepMapBudgetV1 | null;
   progress: DeepMapProgressV1 | null;
+  failure: DeepMapFailureV1 | null;
   confirmedSteps: string;
   totalSteps: string;
 }
@@ -199,7 +214,14 @@ function parseModel(value: unknown): DeepMapModelV1 {
 }
 
 function parseActivity(value: unknown): DeepMapActivityV1 {
-  const object = record(value, ['budget', 'confirmedSteps', 'progress', 'state', 'totalSteps']);
+  const object = record(value, [
+    'budget',
+    'confirmedSteps',
+    'failure',
+    'progress',
+    'state',
+    'totalSteps',
+  ]);
   const states = new Set<DeepMapActivityStateV1>([
     'idle',
     'queued',
@@ -217,10 +239,32 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
   const state = object.state as DeepMapActivityStateV1;
   const budget = object.budget === null ? null : parseBudget(object.budget);
   const progress = object.progress === null ? null : parseProgress(object.progress);
+  const failures = new Set<DeepMapFailureV1>([
+    'noPublishedIndex',
+    'staleSnapshot',
+    'planning',
+    'modelUnavailable',
+    'modelRejected',
+    'modelTimedOut',
+    'invalidModelResponse',
+    'read',
+    'verification',
+    'publication',
+    'invalidCheckpoint',
+    'progressUnavailable',
+  ]);
+  const failure =
+    object.failure === null
+      ? null
+      : typeof object.failure === 'string' && failures.has(object.failure as DeepMapFailureV1)
+        ? (object.failure as DeepMapFailureV1)
+        : undefined;
   const confirmedSteps = decimal(object.confirmedSteps);
   const totalSteps = decimal(object.totalSteps);
   if (
     confirmedSteps > totalSteps ||
+    failure === undefined ||
+    (state === 'failed') !== (failure !== null) ||
     (state === 'idle' && (budget !== null || progress !== null || totalSteps !== BigInt(0))) ||
     (['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(state) && budget === null) ||
     (state === 'paused' && (totalSteps === BigInt(0) || confirmedSteps >= totalSteps)) ||
@@ -233,6 +277,7 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
     state,
     budget,
     progress,
+    failure,
     confirmedSteps: object.confirmedSteps as string,
     totalSteps: object.totalSteps as string,
   };

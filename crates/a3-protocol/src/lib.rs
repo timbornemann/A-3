@@ -53,8 +53,9 @@ pub use agent_goal::{
 pub use agent_inspection::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
-    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapModelV1, DeepMapProgressV1,
-    DeepMapStatusResponseV1, DeepMapStatusResultV1, QueryDeepMapRequestV1, StartDeepMapRequestV1,
+    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapFailureV1, DeepMapModelV1,
+    DeepMapProgressV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, QueryDeepMapRequestV1,
+    StartDeepMapRequestV1,
 };
 pub use error::{CommandErrorV1, ErrorCodeV1};
 pub use goal_contract::{AcceptanceCriterionV1, GoalContractDraftV1, GoalContractV1};

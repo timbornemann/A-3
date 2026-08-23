@@ -741,6 +741,18 @@ Provider-, Credential- und Probe-Änderungen. Fehlt Profil, erforderliches Crede
 bleibt Deep Map bewusst unavailable; die Settings-Grenze simuliert keine Ausführbarkeit.
 Agent-Runs bleiben unabhängig davon unavailable, solange kein eigener Agent-Executor komponiert ist.
 
+Für Ollama formt der Adapter den operativen `num_ctx` aus konservativ gezähltem Request,
+Outputlimit und festem Chat-Template-Overhead und begrenzt ihn durch das verifizierte Profil. Das
+verhindert, dass kleine Requests allein wegen eines hohen konfigurierten Maximallimits den ganzen
+KV-Cache reservieren. Deep-Map-Explorer und Claim-Proposer erlauben je Antwort bis zu 120 Sekunden.
+Claim-IDs werden deterministisch im Domain-Harness aus Card, Feld und Werteindex abgeleitet, im
+Prompt nur zum Kopieren bereitgestellt und nach der Ausgabe erneut exakt validiert.
+
+Terminale Deep-Map-Fehler bleiben als geschlossene, content-freie Kategorie im Core-Manager
+erhalten und werden so über das strikte Protokoll projiziert. Die WebView zeigt feste Hilfe für
+Index-, Snapshot-, Provider-, Timeout-, Structured-Output-, Read-, Verify-, Publish- und
+Checkpointfehler, erhält aber niemals Adaptertext, Endpoint, Credential oder Repositoryinhalt.
+
 Projektsettings bleiben von globalen Preferences getrennt. Die read-only Ignore-Projektion lädt
 nur die bereits validierten Git-, Safety- und `.a3/project.toml`-Quellen des aktiven Core-Projekts.
 Der Command-Katalog wird aus dem jüngsten atomar publizierten Index neu aufgebaut. Eine

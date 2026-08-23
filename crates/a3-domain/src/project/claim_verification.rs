@@ -145,6 +145,38 @@ impl ModuleCardClaimId {
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Derives the Core-owned V1 identity for one exact Module Card field value.
+    #[must_use]
+    pub fn for_card_value_v1(
+        card_id: ModuleCardId,
+        field: ModuleCardField,
+        value_index: u16,
+    ) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"a3:module-card-claim:field-value:v1\0");
+        hasher.update(card_id.as_bytes());
+        hasher.update(&[module_card_field_code(field)]);
+        hasher.update(&value_index.to_le_bytes());
+        Self::from_bytes(*hasher.finalize().as_bytes())
+    }
+}
+
+const fn module_card_field_code(field: ModuleCardField) -> u8 {
+    match field {
+        ModuleCardField::Title => 0,
+        ModuleCardField::Paths => 1,
+        ModuleCardField::Purpose => 2,
+        ModuleCardField::Responsibilities => 3,
+        ModuleCardField::PublicSurface => 4,
+        ModuleCardField::Entrypoints => 5,
+        ModuleCardField::Dependencies => 6,
+        ModuleCardField::DataFlows => 7,
+        ModuleCardField::Invariants => 8,
+        ModuleCardField::Tests => 9,
+        ModuleCardField::Risks => 10,
+        ModuleCardField::OpenQuestions => 11,
+    }
 }
 
 impl fmt::Debug for ModuleCardClaimId {
@@ -1141,6 +1173,25 @@ mod tests {
         RepositoryModule, SourcePosition, SourceRange, SymbolKind, SymbolName, SymbolRank,
         SymbolRankSignals, SymbolRole, SymbolVisibility, SyntaxProvider,
     };
+
+    #[test]
+    fn claim_identity_is_core_owned_stable_and_bound_to_the_exact_field_value() {
+        let card = ModuleCardId::from_bytes([9; 32]);
+        let title = ModuleCardClaimId::for_card_value_v1(card, ModuleCardField::Title, 0);
+
+        assert_eq!(
+            title,
+            ModuleCardClaimId::for_card_value_v1(card, ModuleCardField::Title, 0)
+        );
+        assert_ne!(
+            title,
+            ModuleCardClaimId::for_card_value_v1(card, ModuleCardField::Purpose, 0)
+        );
+        assert_ne!(
+            title,
+            ModuleCardClaimId::for_card_value_v1(card, ModuleCardField::Title, 1)
+        );
+    }
 
     #[test]
     fn verifier_assigns_fact_observation_and_hypothesis_without_conflating_confidence()

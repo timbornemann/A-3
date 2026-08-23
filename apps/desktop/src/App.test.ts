@@ -774,6 +774,28 @@ const idleDeepMapStatus: DeepMapStatusResponseV1 = {
       state: 'idle',
       budget: null,
       progress: null,
+      failure: null,
+      confirmedSteps: '0',
+      totalSteps: '0',
+    },
+  },
+};
+
+const timedOutDeepMapStatus: DeepMapStatusResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    status: 'available',
+    configuration: (
+      idleDeepMapStatus.result as Extract<
+        DeepMapStatusResponseV1['result'],
+        { status: 'available' }
+      >
+    ).configuration,
+    activity: {
+      state: 'failed',
+      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      progress: null,
+      failure: 'modelTimedOut',
       confirmedSteps: '0',
       totalSteps: '0',
     },
@@ -1577,6 +1599,37 @@ describe('A^3 desktop shell', () => {
         toolCallLimit: 64,
       });
     });
+  });
+
+  it('explains a failed Deep Map run with a concrete safe recovery step', async () => {
+    render(App, {
+      props: {
+        deepMapStatusLoader: async () => timedOutDeepMapStatus,
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+    const alert = (await screen.findByText('Die Modellantwort hat zu lange gedauert')).closest(
+      '[role="alert"]',
+    );
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('Die Modellantwort hat zu lange gedauert');
+    expect(alert?.textContent).toContain('kleineres beziehungsweise schnelleres Modell');
+    expect(
+      (screen.getByRole('button', { name: 'Deep Map bewusst starten' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect((screen.getByRole('button', { name: 'Pausieren' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole('button', { name: 'Fortsetzen' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole('button', { name: 'Abbrechen' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it('keeps unavailable app information terse in Settings and supports retry', async () => {

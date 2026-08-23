@@ -257,6 +257,7 @@ pub struct DeepMapActivityV1 {
     state: DeepMapActivityStateV1,
     budget: Option<DeepMapBudgetV1>,
     progress: Option<DeepMapProgressV1>,
+    failure: Option<DeepMapFailureV1>,
     confirmed_steps: String,
     total_steps: String,
 }
@@ -268,6 +269,7 @@ impl DeepMapActivityV1 {
         state: DeepMapActivityStateV1,
         budget: Option<DeepMapBudgetV1>,
         progress: Option<DeepMapProgressV1>,
+        failure: Option<DeepMapFailureV1>,
         confirmed_steps: String,
         total_steps: String,
     ) -> Self {
@@ -275,10 +277,41 @@ impl DeepMapActivityV1 {
             state,
             budget,
             progress,
+            failure,
             confirmed_steps,
             total_steps,
         }
     }
+}
+
+/// Stable content-free failure category suitable for user recovery guidance.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeepMapFailureV1 {
+    /// No complete Fast-Index publication exists yet.
+    NoPublishedIndex,
+    /// The source snapshot changed across a retained lifecycle boundary.
+    StaleSnapshot,
+    /// Deterministic planning could not produce a valid bounded run.
+    Planning,
+    /// The configured provider could not be reached or ended unexpectedly.
+    ModelUnavailable,
+    /// The provider rejected the bounded structured request.
+    ModelRejected,
+    /// A complete structured model answer exceeded its deadline.
+    ModelTimedOut,
+    /// The provider stream or structured answer was invalid.
+    InvalidModelResponse,
+    /// A bounded published-index read failed.
+    Read,
+    /// Evidence or claim verification failed closed.
+    Verification,
+    /// Verified Module Cards could not be published atomically.
+    Publication,
+    /// Retained progress contradicted its immutable plan.
+    InvalidCheckpoint,
+    /// Scheduler progress could not be reconciled safely.
+    ProgressUnavailable,
 }
 
 /// User-visible session state; Paused exists above the terminal scheduler state machine.
@@ -344,7 +377,7 @@ impl DeepMapControlResponseV1 {
 mod tests {
     use super::{
         DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1,
-        DeepMapModelV1, DeepMapStatusResponseV1,
+        DeepMapFailureV1, DeepMapModelV1, DeepMapStatusResponseV1,
     };
     use serde_json::json;
 
@@ -369,6 +402,7 @@ mod tests {
                 DeepMapActivityStateV1::Idle,
                 None,
                 None,
+                None,
                 "0".to_owned(),
                 "0".to_owned(),
             ),
@@ -385,6 +419,25 @@ mod tests {
             json!(32_000)
         );
         assert_eq!(value["result"]["activity"]["state"], json!("idle"));
+        assert_eq!(value["result"]["activity"]["failure"], json!(null));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_activity_exposes_only_a_closed_content_free_reason() -> Result<(), serde_json::Error>
+    {
+        let activity = DeepMapActivityV1::new(
+            DeepMapActivityStateV1::Failed,
+            Some(DeepMapBudgetV1::new(32_000, 120_000, 64)),
+            None,
+            Some(DeepMapFailureV1::ModelTimedOut),
+            "0".to_owned(),
+            "0".to_owned(),
+        );
+
+        let value = serde_json::to_value(activity)?;
+        assert_eq!(value["failure"], json!("modelTimedOut"));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(6));
         Ok(())
     }
 }

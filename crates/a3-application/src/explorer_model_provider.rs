@@ -44,7 +44,7 @@ pub struct ExplorerModelTimeout(Duration);
 
 impl ExplorerModelTimeout {
     /// Default local structured-generation deadline.
-    pub const DEFAULT: Self = Self(Duration::from_secs(30));
+    pub const DEFAULT: Self = Self(Duration::from_secs(120));
 
     /// Creates a timeout capped at two minutes.
     pub fn from_millis(value: u64) -> Result<Self, ExplorerModelTimeoutError> {

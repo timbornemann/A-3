@@ -224,8 +224,14 @@ pub enum DeepMapExecutionFailure {
     StaleSnapshot,
     /// The deterministic planner rejected publication, coverage, or budget input.
     Planning,
-    /// The local verified mapping model failed behind its neutral adapter boundary.
-    Model,
+    /// The configured provider could not be reached or ended its response unexpectedly.
+    ModelUnavailable,
+    /// The provider rejected the exact bounded structured request.
+    ModelRejected,
+    /// The complete structured response exceeded its request deadline.
+    ModelTimedOut,
+    /// The provider stream or decoded structured model output was invalid.
+    InvalidModelResponse,
     /// A bounded read-only exploration capability failed.
     Read,
     /// Proposal or claim verification failed.
@@ -244,7 +250,10 @@ impl fmt::Display for DeepMapExecutionFailure {
             Self::NoPublishedIndex => "Deep Map requires a complete published index",
             Self::StaleSnapshot => "Deep Map snapshot is no longer current",
             Self::Planning => "Deep Map planning failed",
-            Self::Model => "Deep Map model execution failed",
+            Self::ModelUnavailable => "Deep Map model provider is unavailable",
+            Self::ModelRejected => "Deep Map model request was rejected",
+            Self::ModelTimedOut => "Deep Map model response timed out",
+            Self::InvalidModelResponse => "Deep Map model response is invalid",
             Self::Read => "Deep Map read-only exploration failed",
             Self::Verification => "Deep Map verification failed",
             Self::Publication => "Deep Map publication failed",
@@ -288,8 +297,8 @@ mod tests {
     #[test]
     fn failure_messages_do_not_expose_boundary_details() {
         assert_eq!(
-            DeepMapExecutionFailure::Model.to_string(),
-            "Deep Map model execution failed"
+            DeepMapExecutionFailure::ModelTimedOut.to_string(),
+            "Deep Map model response timed out"
         );
     }
 

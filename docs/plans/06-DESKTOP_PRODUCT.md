@@ -656,6 +656,15 @@ inkompatible Pause-Checkpoints und aktualisieren dadurch Statusleiste und Startf
 Core-Projektion. Der produktive Lauf verwendet den publizierten Index, bounded read-only Exploration,
 modellgestützte Claim-Proposals, Evidence-Verifikation und die atomare Module-Card-Publikation.
 
+Deep-Map-Laufzeitkorrektur vom 2026-08-23: Ollama erhält pro Request nur noch den konservativ
+benötigten, durch das Profil begrenzten operativen Kontext statt stets des maximal konfigurierten
+Fensters; Explorer und Claim-Proposer besitzen je eine 120-Sekunden-Deadline. Claim-IDs werden im
+Core deterministisch aus Card, Feld und Werteindex erzeugt, dem Modell nur zum Kopieren übergeben
+und nach der Antwort exakt geprüft. Der Manager verwirft terminale Fehlerursachen nicht mehr,
+sondern projiziert ausschließlich geschlossene, content-freie Kategorien. Die Mapping-Oberfläche
+erklärt daraus Ursache und nächsten sicheren Schritt, und deaktivierte Pause-, Resume- und
+Cancel-Controls zeigen keinen falschen Ladecursor mehr.
+
 Rustfmt, der vollständige Rust-Workspace-Test über alle Targets und Features, Workspace-Clippy
 mit Warnings denied sowie Rustdoc mit Warnings denied sind grün. Der Windows-libSQL-Harness
 belegt den zuvor betroffenen Index-Contract mit Abschlussmarker und höchstens zwei ausschließlich

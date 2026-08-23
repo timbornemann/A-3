@@ -420,6 +420,12 @@ startet einen neuen besessenen Versuch ab dem ersten unbestätigten Schritt unte
 Startbudget; Cancel verwirft den Checkpoint. Statuspolling liest nur das begrenzte in-memory
 Read-Model und löst keine Exploration, Storage-Rekonstruktion oder Modellausführung aus.
 
+Ein terminal fehlgeschlagener Lauf behält eine geschlossene, inhaltsfreie Ursache im Core-Read-
+Model. Die Desktopprojektion unterscheidet insbesondere fehlenden Published Index, geänderten
+Snapshot, Provider-Nichterreichbarkeit, Requestablehnung, Modelltimeout, ungültige strukturierte
+Antwort, Read-, Verify-, Publish- und Checkpointfehler. Die UI leitet daraus feste Recovery-Schritte
+ab; Providerpayloads, Endpoints, Credentials und Repositoryinhalt überschreiten diese Grenze nicht.
+
 Phasen:
 
 ~~~text
@@ -548,6 +554,13 @@ dem tatsächlich zurückgegebenen aktuellen Werkzeugresultat stammen. Über den 
 ist höchstens eine Repair-Anfrage mit einer inhaltsfreien Fehlerklasse zulässig. Das ungültige
 Original wird nie ausgeführt; auch eine ungültige Reparatur beendet den Lauf typisiert.
 
+Lokale strukturierte Explorer- und Claim-Antworten besitzen je eine vollständige 120-Sekunden-
+Deadline. Der Ollama-Adapter reicht nicht blind das maximal konfigurierte Kontextfenster als
+`num_ctx` weiter: Er berechnet aus konservativ gezähltem Prompt, Outputlimit und festem
+Template-Overhead den benötigten operativen Kontext, verwendet mindestens 16.384 Tokens sofern das
+Profil dies zulässt und überschreitet nie das live verifizierte Profillimit. Dadurch reserviert ein
+kurzer Mapping-Request eines 65k-Profils nicht unnötig den vollständigen KV-Cache.
+
 Cancellation wird vor und nach jeder Provider- und Werkzeuggrenze geprüft. Das Ergebnis enthält
 auch bei Abbruch den run-, snapshot-, schema- und policygebundenen `ExplorerCheckpoint`. Darin
 stehen ausschließlich lückenlos bestätigte Schritte. Resume startet anhand seiner Länge beim
@@ -581,6 +594,11 @@ ArchitecturalIntent; Endpunkte und Relationstypen sind ebenfalls typisiert. Der 
 Runtime-Decoder akzeptiert genau ein JSON-Dokument, kanonische Lowercase-Hex-IDs, begrenzte Pfade,
 Statements, Confidence und Evidence-Mengen und erzeugt nur bei vollständiger Feldwertabdeckung
 einen `ModuleCardVerificationCandidate`. Das Schema enthält keine Tool- oder Execute-Capability.
+
+Claim-Identitäten sind Harnessverantwortung. A^3 leitet jede `ModuleCardClaimId` versioniert aus
+Card, Feld und Werteindex ab, liefert diese IDs im Modellrequest mit und akzeptiert nur exakt
+zurückkopierte Identitäten. Das Modell darf weder freie Claim-IDs erzeugen noch durch große
+ID-Generierungsaufgaben die Structured-Output-Grammatik destabilisieren.
 
 Affirmative Pfad-, Symbol-, Import-, Export-, Call- und Testclaims werden nur bei exaktem Treffer
 zu Fact. Direkt evidenzgebundene, aber nicht strukturell beweisbare Beschreibung wird Observation;
