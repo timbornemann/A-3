@@ -54,10 +54,48 @@ impl ModuleCardId {
         Self(bytes)
     }
 
+    /// Derives the Core-owned V1 identity for one complete logical module Card.
+    #[must_use]
+    pub fn for_module_v1(module_id: ModuleId) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"a3:module-card:module:v1\0");
+        hasher.update(module_id.as_bytes());
+        Self::from_bytes(*hasher.finalize().as_bytes())
+    }
+
+    /// Derives a Core-owned V1 identity for one bounded exploration fragment.
+    #[must_use]
+    pub fn for_module_fields_v1(module_id: ModuleId, fields: &[ModuleCardField]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"a3:module-card:module-fields:v1\0");
+        hasher.update(module_id.as_bytes());
+        for field in fields {
+            hasher.update(&[module_card_field_identity_code(*field)]);
+        }
+        Self::from_bytes(*hasher.finalize().as_bytes())
+    }
+
     /// Returns the canonical persisted bytes.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+const fn module_card_field_identity_code(field: ModuleCardField) -> u8 {
+    match field {
+        ModuleCardField::Title => 0,
+        ModuleCardField::Paths => 1,
+        ModuleCardField::Purpose => 2,
+        ModuleCardField::Responsibilities => 3,
+        ModuleCardField::PublicSurface => 4,
+        ModuleCardField::Entrypoints => 5,
+        ModuleCardField::Dependencies => 6,
+        ModuleCardField::DataFlows => 7,
+        ModuleCardField::Invariants => 8,
+        ModuleCardField::Tests => 9,
+        ModuleCardField::Risks => 10,
+        ModuleCardField::OpenQuestions => 11,
     }
 }
 
@@ -1634,6 +1672,41 @@ mod tests {
         assert_eq!(
             format!("{:?}", ModuleCardId::from_bytes([7; 32])),
             "ModuleCardId(redacted)"
+        );
+        assert_eq!(
+            ModuleCardId::for_module_v1(ModuleId::from_bytes([7; 32])),
+            ModuleCardId::for_module_v1(ModuleId::from_bytes([7; 32]))
+        );
+        assert_ne!(
+            ModuleCardId::for_module_v1(ModuleId::from_bytes([7; 32])),
+            ModuleCardId::for_module_v1(ModuleId::from_bytes([8; 32]))
+        );
+        assert_eq!(
+            ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([7; 32]),
+                &[ModuleCardField::Title]
+            ),
+            ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([7; 32]),
+                &[ModuleCardField::Title]
+            )
+        );
+        assert_ne!(
+            ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([7; 32]),
+                &[ModuleCardField::Title]
+            ),
+            ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([7; 32]),
+                &[ModuleCardField::Purpose]
+            )
+        );
+        assert_ne!(
+            ModuleCardId::for_module_v1(ModuleId::from_bytes([7; 32])),
+            ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([7; 32]),
+                &[ModuleCardField::Title]
+            )
         );
         assert_eq!(
             format!("{:?}", ModuleCardEvidenceId::from_bytes([8; 32])),

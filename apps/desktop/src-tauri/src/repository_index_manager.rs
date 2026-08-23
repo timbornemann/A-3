@@ -11,12 +11,12 @@ use a3_repo_index::{
     PollingRepositoryWatcher, RepositoryWatcherConfig, RepositoryWatcherStartError,
 };
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
-use futures::executor::block_on;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
 const INDEX_JOB_OWNER: JobOwner = JobOwner::new(1);

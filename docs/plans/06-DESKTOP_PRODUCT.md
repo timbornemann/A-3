@@ -665,6 +665,28 @@ sondern projiziert ausschließlich geschlossene, content-freie Kategorien. Die M
 erklärt daraus Ursache und nächsten sicheren Schritt, und deaktivierte Pause-, Resume- und
 Cancel-Controls zeigen keinen falschen Ladecursor mehr.
 
+Scheduler-eigene Desktop-Jobs betreten für ihre asynchronen Index-, Deep-Map- und Agent-Futures nun
+die Tauri-eigene Tokio-Laufzeit. Dadurch besitzt insbesondere der produktive Ollama-Request im
+Deep-Map-Worker den erforderlichen Reactor-Kontext und endet nicht mehr als abgefangener Panic mit
+einem widersprüchlichen Schedulerzustand. Nur ein tatsächlich plan- oder budgetfremder Checkpoint
+wird als `invalidCheckpoint` projiziert; sonstige Lifecycle-Widersprüche bleiben als
+`progressUnavailable` getrennt sichtbar.
+
+Explorer- und Claim-Structured-Output-Schemas sind außerdem phasengenau an die Core-Autorität des
+aktuellen Requests gebunden. Inspect und Proposal sind nicht mehr gleichzeitig auswählbar;
+Proposal- und Claim-IDs, Feldreihenfolge, Aussagen und beobachtete Evidence-Mengen sind geschlossen.
+Ein V1-Proposal bleibt auf einen kompakten zusammengefassten Wert und einen relevanten Beleg je
+Feld begrenzt. Die bis zu 100 erlaubten Observation-IDs werden einmalig per Schema-Definition
+geteilt, sodass auch der Maximalfall unter der 64-KiB-Providergrenze bleibt und kleine lokale
+Modelle keine hunderte IDs umfassende Ausgabe erzeugen müssen.
+
+Budgetierte Feldfragmente desselben Moduls werden vor Claim-Erzeugung deterministisch zu einer
+vollständigen, Core-identifizierten Module Card zusammengeführt. Verifikation lässt höchstens eine
+publizierbare Card je Modul zu und entspricht damit dem atomaren Storagevertrag. Die internen
+Fortschrittszähler des anfänglichen und des Verifier-Indexreads werden nicht als globale
+Scheduler-Totals weitergereicht; dadurch kann der anschließende Publisher seine eigene monotone
+Progressreihe beginnen, ohne fälschlich als Storagefehler abgewiesen zu werden.
+
 Rustfmt, der vollständige Rust-Workspace-Test über alle Targets und Features, Workspace-Clippy
 mit Warnings denied sowie Rustdoc mit Warnings denied sind grün. Der Windows-libSQL-Harness
 belegt den zuvor betroffenen Index-Contract mit Abschlussmarker und höchstens zwei ausschließlich

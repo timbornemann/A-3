@@ -6,12 +6,12 @@ use a3_application::{
 };
 use a3_domain::{ExploreBudget, JobId, JobOwner, JobStatus, Progress, ProjectIdentity};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use futures::executor::block_on;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
 const DEEP_MAP_JOB_OWNER: JobOwner = JobOwner::new(2);
@@ -481,11 +481,27 @@ fn refresh_attempt(
             state.resume = None;
             set_activity(activity, DeepMapActivity::failed(budget, failure));
         }
-        _ => {
+        (
+            JobStatus::Succeeded,
+            TerminationIntent::None,
+            Some(Ok(DeepMapExecutionOutcome::Completed(_))),
+        )
+        | (
+            JobStatus::Cancelled,
+            TerminationIntent::Pause,
+            Some(Ok(DeepMapExecutionOutcome::Cancelled(_))),
+        ) => {
             state.resume = None;
             set_activity(
                 activity,
                 DeepMapActivity::failed(budget, DeepMapExecutionFailure::InvalidCheckpoint),
+            );
+        }
+        _ => {
+            state.resume = None;
+            set_activity(
+                activity,
+                DeepMapActivity::failed(budget, DeepMapExecutionFailure::ProgressUnavailable),
             );
         }
     }
@@ -775,6 +791,12 @@ mod tests {
         failure: DeepMapExecutionFailure,
     }
 
+    #[derive(Debug)]
+    struct RuntimeRequiredExecutor {
+        model: DeepMapModelDescriptor,
+        failure: DeepMapExecutionFailure,
+    }
+
     impl DeepMapExecutor for FailingExecutor {
         fn model(&self) -> &DeepMapModelDescriptor {
             &self.model
@@ -787,6 +809,24 @@ mod tests {
             _control: &'a a3_application::JobContext,
         ) -> DeepMapExecutionFuture<'a> {
             Box::pin(async move { Err(self.failure) })
+        }
+    }
+
+    impl DeepMapExecutor for RuntimeRequiredExecutor {
+        fn model(&self) -> &DeepMapModelDescriptor {
+            &self.model
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _request: DeepMapExecutionRequest,
+            _control: &'a a3_application::JobContext,
+        ) -> DeepMapExecutionFuture<'a> {
+            Box::pin(async move {
+                let _runtime = tauri::async_runtime::TokioHandle::current();
+                Err(self.failure)
+            })
         }
     }
 
@@ -936,6 +976,68 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_attempt_enters_the_desktop_async_runtime() -> Result<(), Box<dyn Error>> {
+        let config = JobSchedulerConfig::new(1, 4, 64)?;
+        let (scheduler, events) =
+            JobScheduler::new(config, Arc::new(TestClock(AtomicU64::new(1))))?;
+        let executor = Arc::new(RuntimeRequiredExecutor {
+            model: DeepMapModelDescriptor::from_verified_profile(&model_profile()?)?,
+            failure: DeepMapExecutionFailure::NoPublishedIndex,
+        });
+        let manager = DeepMapManager::start(
+            scheduler.submitter()?,
+            events,
+            Some(executor),
+            Arc::new(DesktopJobIds::new()),
+        )?;
+        manager.activate_project(project_fixture()?)?;
+        manager.start_mapping(ExploreBudget::DEFAULT)?;
+        wait_for_state(&manager, DeepMapActivityState::Failed)?;
+
+        assert_eq!(
+            manager.activity().failure(),
+            Some(DeepMapExecutionFailure::NoPublishedIndex)
+        );
+        drop(manager);
+        drop(scheduler);
+        Ok(())
+    }
+
+    #[test]
+    fn cancellation_without_a_manager_intent_is_not_reported_as_a_checkpoint_failure()
+    -> Result<(), Box<dyn Error>> {
+        let config = JobSchedulerConfig::new(1, 4, 64)?;
+        let (scheduler, events) =
+            JobScheduler::new(config, Arc::new(TestClock(AtomicU64::new(1))))?;
+        let submitter = scheduler.submitter()?;
+        let executor = Arc::new(PausingExecutor {
+            model: DeepMapModelDescriptor::from_verified_profile(&model_profile()?)?,
+            initial: resume_fixture()?,
+            attempts: AtomicUsize::new(0),
+        });
+        let manager = DeepMapManager::start(
+            submitter.clone(),
+            events,
+            Some(executor.clone()),
+            Arc::new(DesktopJobIds::new()),
+        )?;
+        manager.activate_project(project_fixture()?)?;
+        manager.start_mapping(ExploreBudget::DEFAULT)?;
+        wait_for_state(&manager, DeepMapActivityState::Running)?;
+        wait_for_attempts(&executor, 1)?;
+
+        submitter.cancel(JobId::new(1))?;
+        wait_for_state(&manager, DeepMapActivityState::Failed)?;
+        assert_eq!(
+            manager.activity().failure(),
+            Some(DeepMapExecutionFailure::ProgressUnavailable)
+        );
+        drop(manager);
+        drop(scheduler);
+        Ok(())
+    }
+
+    #[test]
     fn queued_attempt_cannot_claim_a_checkpoint_safe_pause() -> Result<(), Box<dyn Error>> {
         let config = JobSchedulerConfig::new(1, 4, 64)?;
         let (scheduler, events) =
@@ -1030,6 +1132,10 @@ mod tests {
         wait_for_attempts(&executor, 1)?;
         manager.pause()?;
         wait_for_state(&manager, DeepMapActivityState::Failed)?;
+        assert_eq!(
+            manager.activity().failure(),
+            Some(DeepMapExecutionFailure::InvalidCheckpoint)
+        );
         drop(manager);
         drop(scheduler);
         Ok(())

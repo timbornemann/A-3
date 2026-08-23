@@ -554,6 +554,19 @@ dem tatsächlich zurückgegebenen aktuellen Werkzeugresultat stammen. Über den 
 ist höchstens eine Repair-Anfrage mit einer inhaltsfreien Fehlerklasse zulässig. Das ungültige
 Original wird nie ausgeführt; auch eine ungültige Reparatur beendet den Lauf typisiert.
 
+Das an den Provider übergebene Structured-Output-Schema wird zusätzlich pro Request geschlossen:
+vor einem Read ist ausschließlich die geplante Inspect-Aktion zulässig, danach ausschließlich ein
+Proposal für exakt Modul, Snapshot und Feldreihenfolge des aktuellen Schritts. Pro Feld ist in V1
+genau ein kompakter zusammengefasster Wert mit genau einer Evidence ID erlaubt. Die bis zu 100 tatsächlich
+beobachteten Evidence IDs liegen einmal in einer gemeinsamen Schema-Definition und werden von den
+Feldschemas referenziert; sie werden nicht zwölffach in die Providergrammatik kopiert. So bleibt
+auch die größte erlaubte Observation innerhalb der 64-KiB-Providergrenze, während fremde IDs schon
+beim strukturierten Decoding ausgeschlossen bleiben. Auch die stabile `ModuleCardId` ist
+Harnessverantwortung: Der Core leitet sie versioniert aus dem logischen `ModuleId` zusammen mit dem
+kanonischen, disjunkten Feldbündel des Plans ab, bindet sie als Requestkonstante und prüft sie erneut
+bei Autorisierung und Checkpointaufnahme. So bleiben mehrere geplante Teil-Cards desselben Moduls
+unterscheidbar. Das Modell darf keine Card-Identität erzeugen.
+
 Lokale strukturierte Explorer- und Claim-Antworten besitzen je eine vollständige 120-Sekunden-
 Deadline. Der Ollama-Adapter reicht nicht blind das maximal konfigurierte Kontextfenster als
 `num_ctx` weiter: Er berechnet aus konservativ gezähltem Prompt, Outputlimit und festem
@@ -587,6 +600,12 @@ Resolver lädt den letzten atomar publizierten Index, verlangt exakt passende Ru
 und gibt ausschließlich die angeforderten Evidence-Objekte zurück. Der model-freie Verifier prüft
 die Objekte danach erneut gegen denselben `PublishedIndex`.
 
+Interne Fortschrittswerte des anfänglichen Indexloads und des erneuten Verifier-Indexreads werden
+wie bei den Explorer-Reads nur zur Deadline- und Cancellation-Prüfung verwendet. Sie werden nicht
+als neue Job-Gesamtfortschritte an den Scheduler weitergereicht und können daher weder die spätere
+atomare Publikation noch einen bereits fortgeschrittenen Deep-Map-Lauf durch einen lokalen
+Zähler-Reset fälschlich scheitern lassen.
+
 Das strukturierte Dokument `module-card-claims-v1` ist auf 64 KiB begrenzt, bindet sich explizit an
 Card, Modul und Snapshot und verwendet auf jeder Objektebene `additionalProperties: false`. Seine
 geschlossene Prädikat-Union kennt nur Path, Symbol, Relation, Observation und
@@ -599,6 +618,19 @@ Claim-Identitäten sind Harnessverantwortung. A^3 leitet jede `ModuleCardClaimId
 Card, Feld und Werteindex ab, liefert diese IDs im Modellrequest mit und akzeptiert nur exakt
 zurückkopierte Identitäten. Das Modell darf weder freie Claim-IDs erzeugen noch durch große
 ID-Generierungsaufgaben die Structured-Output-Grammatik destabilisieren.
+
+Auch das Claim-Schema wird aus dem bereits validierten Proposal spezialisiert: Card, Modul,
+Snapshot, Feld, Werteindex, Claim-ID, Aussage und die je Feld erlaubten Evidence IDs sind
+requestgebundene Konstanten beziehungsweise geschlossene Mengen. Der Claim-Proposer kann dadurch
+weder zusätzliche Claims erzeugen noch vorhandene Proposalwerte umdeuten und muss pro Wert
+genau einen relevanten Beleg auswählen.
+
+Mehrere budgetierte Explorer-Schritte desselben Moduls bleiben während Exploration und Resume als
+einzeln bestätigte Fragmente unterscheidbar. Vor der Claim-Phase führt der Core ihre disjunkten
+Feldmengen deterministisch zu genau einer logischen Module Card zusammen, verwendet die niedrigste
+Fragment-Confidence und leitet die dauerhafte Card-ID ausschließlich aus der Module-ID ab. Erst
+diese vollständige, erneut größenvalidierte Card erreicht Claim-Verifikation und Publish; ein
+Verified-Batch mit mehreren Cards desselben Moduls ist nicht darstellbar.
 
 Affirmative Pfad-, Symbol-, Import-, Export-, Call- und Testclaims werden nur bei exaktem Treffer
 zu Fact. Direkt evidenzgebundene, aber nicht strukturell beweisbare Beschreibung wird Observation;

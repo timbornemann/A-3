@@ -330,6 +330,11 @@ fn authorize_proposal(
     observation: Option<&ExplorerObservation>,
 ) -> Result<(), ActionRejection> {
     if proposal.module_id() != step.module_id()
+        || proposal.id()
+            != a3_domain::ModuleCardId::for_module_fields_v1(
+                step.module_id(),
+                step.coverage_fields(),
+            )
         || proposal.snapshot_id() != plan.snapshot_id()
         || proposal.schema_version() != plan.schema_version()
         || step

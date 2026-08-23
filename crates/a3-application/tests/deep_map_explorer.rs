@@ -34,6 +34,7 @@ enum ProviderBehavior {
     Valid,
     InvalidOnce,
     AlwaysInvalid,
+    WrongCardId,
 }
 
 #[derive(Debug)]
@@ -102,12 +103,21 @@ impl ExplorerModelProvider for ScriptedProvider {
                 })
                 .collect::<Vec<_>>();
             let module_id = request.module_id().to_string();
+            let card_id = if matches!(self.behavior, ProviderBehavior::WrongCardId) {
+                "00".repeat(32)
+            } else {
+                hex(ModuleCardId::for_module_fields_v1(
+                    request.module_id(),
+                    request.expected_fields(),
+                )
+                .as_bytes())
+            };
             let proposal = json!({
                 "schema_version": 1,
                 "action": {
                     "kind": "propose",
                     "proposal": {
-                        "card_id": module_id,
+                        "card_id": card_id,
                         "module_id": module_id,
                         "snapshot_id": request.snapshot_id().to_string(),
                         "schema_version": 1,
@@ -313,6 +323,28 @@ fn invalid_original_and_repair_are_never_executed_as_tools() -> Result<(), Box<d
 }
 
 #[test]
+fn model_generated_card_identity_is_rejected_after_one_repair() -> Result<(), Box<dyn Error>> {
+    let plan = plan_fixture()?;
+    let project = project_fixture()?;
+    let control = TestControl {
+        cancelled: Arc::new(AtomicBool::new(false)),
+    };
+    let provider = ScriptedProvider::new(ProviderBehavior::WrongCardId);
+    let tools = RecordingReadTools::default();
+    let result = block_on(ExploreDeepMap::version_one(&provider, &tools).execute(
+        &project,
+        &plan,
+        ExplorerCheckpoint::new(&plan),
+        &control,
+    ));
+
+    assert_eq!(result, Err(DeepMapExplorerFailure::InvalidModelOutput));
+    assert_eq!(tools.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.calls()?.len(), 3);
+    Ok(())
+}
+
+#[test]
 fn valid_run_uses_exactly_one_read_per_planned_step() -> Result<(), Box<dyn Error>> {
     let plan = plan_fixture()?;
     let project = project_fixture()?;
@@ -378,7 +410,7 @@ fn proposal_for_step(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ModuleCardProposal::new(
         ModuleCardProposalEnvelope::new(
-            ModuleCardId::from_bytes(*step.module_id().as_bytes()),
+            ModuleCardId::for_module_fields_v1(step.module_id(), step.coverage_fields()),
             step.module_id(),
             plan.snapshot_id(),
             ModuleCardSchemaVersion::V1,

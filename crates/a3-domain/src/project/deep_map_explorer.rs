@@ -725,7 +725,9 @@ fn validate_proposal_for_step(
     coverage_fields: &[ModuleCardField],
     proposal: &ModuleCardProposal,
 ) -> Result<(), ExplorerCheckpointError> {
-    if proposal.module_id() != module_id {
+    if proposal.module_id() != module_id
+        || proposal.id() != ModuleCardId::for_module_fields_v1(module_id, coverage_fields)
+    {
         return Err(ExplorerCheckpointError::ModuleMismatch);
     }
     if proposal.snapshot_id() != plan.snapshot_id() {

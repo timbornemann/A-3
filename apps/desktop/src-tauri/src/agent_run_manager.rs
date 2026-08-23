@@ -8,7 +8,6 @@ use a3_domain::{
     AgentControllerState, JobId, JobOwner, JobStatus, ProjectIdentity, TaskId, TaskLedgerRevision,
 };
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use futures::executor::block_on;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -16,6 +15,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(6);

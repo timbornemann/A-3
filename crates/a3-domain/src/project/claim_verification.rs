@@ -829,6 +829,14 @@ impl ModuleCardVerifier {
                 ModuleCardContradictionReport { contradictions },
             ));
         }
+        let module_count = candidates
+            .iter()
+            .map(|candidate| candidate.proposal().module_id())
+            .collect::<BTreeSet<_>>()
+            .len();
+        if module_count != candidates.len() {
+            return Err(ModuleCardVerificationError::DuplicateModule);
+        }
 
         let mut cards = Vec::with_capacity(candidates.len());
         for candidate in candidates {
@@ -1109,6 +1117,8 @@ pub enum ModuleCardVerificationError {
     UnknownModule,
     /// More than one candidate used the same logical Card identity.
     DuplicateCard,
+    /// More than one non-contradictory Card targeted the same module.
+    DuplicateModule,
     /// Claim count did not exactly cover every field value.
     IncompleteClaimCoverage,
     /// Claim identity or field-item location was repeated.
@@ -1142,6 +1152,7 @@ impl fmt::Display for ModuleCardVerificationError {
             Self::SnapshotMismatch => "verification input belongs to another snapshot",
             Self::UnknownModule => "verification proposal references an unknown module",
             Self::DuplicateCard => "verification batch repeats a Module Card identity",
+            Self::DuplicateModule => "verification batch repeats a Module Card module",
             Self::IncompleteClaimCoverage => "claims do not cover every proposed field value",
             Self::DuplicateClaim => "verification candidate repeats a claim or field item",
             Self::ClaimEnvelopeMismatch => "claim envelope does not match its Module Card",
@@ -1304,6 +1315,42 @@ mod tests {
         assert_ne!(
             report.contradictions()[0].first_card_id(),
             report.contradictions()[0].second_card_id()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_contradictory_cards_for_one_module_cannot_cross_the_verified_batch_boundary()
+    -> Result<(), Box<dyn Error>> {
+        let fixture = verification_fixture()?;
+        let symbol = fixture.published.publication().graph().symbols()[0].clone();
+        let first = single_symbol_candidate(
+            83,
+            fixture.module_id,
+            fixture.published.run().snapshot_id(),
+            fixture.symbol_evidence,
+            symbol.id(),
+            ModuleClaimPolarity::Affirms,
+        )?;
+        let second = single_symbol_candidate(
+            84,
+            fixture.module_id,
+            fixture.published.run().snapshot_id(),
+            fixture.symbol_evidence,
+            symbol.id(),
+            ModuleClaimPolarity::Affirms,
+        )?;
+        let evidence = ResolvedModuleCardEvidenceSet::new(
+            fixture.published.run().snapshot_id(),
+            vec![ResolvedModuleCardEvidence::Symbol {
+                id: fixture.symbol_evidence,
+                symbol,
+            }],
+        )?;
+
+        assert_eq!(
+            ModuleCardVerifier::verify(&fixture.published, vec![first, second], &evidence),
+            Err(ModuleCardVerificationError::DuplicateModule)
         );
         Ok(())
     }

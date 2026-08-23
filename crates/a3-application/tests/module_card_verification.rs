@@ -121,6 +121,11 @@ impl KnowledgeIndexStore for FixedIndexStore {
             if control.is_cancelled() {
                 Err(KnowledgeIndexFailure::Cancelled)
             } else {
+                let progress = Progress::determinate(1, 1)
+                    .map_err(|_| KnowledgeIndexFailure::ProgressUnavailable)?;
+                control
+                    .report_progress(progress)
+                    .map_err(|_| KnowledgeIndexFailure::ProgressUnavailable)?;
                 Ok(Some(published))
             }
         })
@@ -154,6 +159,22 @@ impl ModuleCardVerificationControl for TestControl {
         _progress: Progress,
     ) -> Result<(), a3_application::ModuleCardVerificationControlError> {
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct RejectingProgressControl;
+
+impl ModuleCardVerificationControl for RejectingProgressControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: Progress,
+    ) -> Result<(), a3_application::ModuleCardVerificationControlError> {
+        Err(a3_application::ModuleCardVerificationControlError::Unavailable)
     }
 }
 
@@ -256,6 +277,19 @@ fn resolver_returns_only_exact_current_evidence_and_honors_cancellation()
         expected.into_iter().collect()
     );
     assert_eq!(store.reads(), 1);
+
+    let scheduler_progress_isolation = block_on(resolver.resolve(
+        &project,
+        published.run().id(),
+        published.run().snapshot_id(),
+        &expected,
+        a3_application::ModuleCardEvidenceResolutionTimeout::DEFAULT,
+        &RejectingProgressControl,
+    ))?;
+    assert_eq!(
+        scheduler_progress_isolation.evidence().len(),
+        expected.len()
+    );
 
     let cancelled_store = FixedIndexStore::new(published.clone());
     let cancelled_resolver = PublishedIndexEvidenceResolver::new(&cancelled_store);

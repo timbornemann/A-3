@@ -81,7 +81,7 @@ Worker und committed anschließend H11 gegen die zuvor sichtbaren Ledgeranker. P
 Entfernung und Composition-Root-Shutdown quieszen die besessene Arbeit; ohne verifizierte
 Agent-Executor-Capability wird kein Manager und keine Modellarbeit erzeugt.
 
-Der Scheduler besitzt jeden Worker-Thread und akzeptiert nach Beginn des Shutdowns keine Arbeit mehr. `Drain` beendet die Queue kontrolliert und wartet anschließend auf alle Worker. `CancelAndWait` fordert zusätzlich für alle aktiven Jobs Cancellation an und wartet ebenfalls auf alle Worker. Der Destruktor verwendet als Sicherheitsnetz `CancelAndWait`; es gibt keinen detached Worker-Pfad.
+Der Scheduler besitzt jeden Worker-Thread und akzeptiert nach Beginn des Shutdowns keine Arbeit mehr. `Drain` beendet die Queue kontrolliert und wartet anschließend auf alle Worker. `CancelAndWait` fordert zusätzlich für alle aktiven Jobs Cancellation an und wartet ebenfalls auf alle Worker. Der Destruktor verwendet als Sicherheitsnetz `CancelAndWait`; es gibt keinen detached Worker-Pfad. Der Desktop führt die asynchronen Futures seiner Index-, Deep-Map- und Agent-Jobs innerhalb der Tauri-eigenen Tokio-Laufzeit aus. Damit besitzen auch scheduler-eigene Worker den Reactor-Kontext, den HTTP-Provider benötigen; ein allgemeiner Future-Executor ohne diesen Kontext ist an dieser Composition-Root-Grenze unzulässig.
 
 Der Shutdown-Report enthält die Anzahl gejointer Worker, geordnete finale Job-Snapshots und noch nicht konsumierte Ereignisse. Ein Panic innerhalb einer Aufgabe wird an einer Laufzeitgrenze abgefangen und als `Failed` abgeschlossen; ein Panic außerhalb dieser Grenze wird als Shutdown-Fehler gemeldet.
 

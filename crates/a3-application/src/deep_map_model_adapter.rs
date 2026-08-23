@@ -6,13 +6,19 @@ use crate::{
     ModelProviderRequest, ModelRequestTimeout, ProviderEvent, RawExplorerModelOutput,
     StructuredOutputSchema,
 };
-use a3_domain::{ExploreTarget, ModelProfile, ModuleCardField};
+use a3_domain::{
+    ExploreTarget, ModelProfile, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleId,
+    SnapshotId,
+};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::fmt;
 
 const MAX_EXPLORER_OUTPUT_BYTES: usize = 65_536;
-const EXPLORER_SYSTEM_PROMPT: &str = "You are the bounded A^3 Deep Map explorer. Return exactly one JSON object matching the supplied schema and no prose. When observation is absent, request inspect for the exact planned target with expected_gain_basis_points set to 100. When observation is present, propose every expected field using only evidence_ids supplied in that observation. Copy module, snapshot and evidence IDs exactly; create only the proposal's new card_id as lowercase 64-character hexadecimal. Never invent a path, symbol, command, tool, evidence ID or fact. Keep values concise and explicitly describe uncertainty.";
+const MAX_PROPOSAL_VALUES_PER_FIELD: usize = 1;
+const MAX_PROPOSAL_EVIDENCE_PER_FIELD: usize = 1;
+const MAX_PROPOSAL_VALUE_BYTES: usize = 384;
+const EXPLORER_SYSTEM_PROMPT: &str = "You are the bounded A^3 Deep Map explorer. Return exactly one JSON object matching the supplied schema and no prose. When observation is absent, request inspect for the exact planned target with expected_gain_basis_points set to 100. When observation is present, propose every expected field in the supplied order, using exactly one concise synthesized value and exactly one relevant supplied evidence_id per field. Copy the supplied card, module, snapshot and evidence IDs exactly. Never invent an identifier, path, symbol, command, tool, evidence ID or fact. Explicitly describe uncertainty.";
 
 /// Adapts the general streaming model boundary to the narrower Deep-Map explorer port.
 pub struct ModelBackedExplorerProvider<'a> {
@@ -55,8 +61,7 @@ impl ExplorerModelProvider for ModelBackedExplorerProvider<'_> {
             if control.is_cancelled() {
                 return Err(ExplorerModelFailure::Cancelled);
             }
-            let schema = serde_json::from_str::<Value>(request.action_json_schema().as_str())
-                .map_err(|_| ExplorerModelFailure::InvalidResponse)?;
+            let schema = request_schema(request)?;
             let request = ModelProviderRequest::new(
                 self.profile.clone(),
                 vec![
@@ -116,6 +121,129 @@ impl ExplorerModelProvider for ModelBackedExplorerProvider<'_> {
             RawExplorerModelOutput::new(output).map_err(|_| ExplorerModelFailure::InvalidResponse)
         })
     }
+}
+
+fn request_schema(request: &ExplorerModelRequest) -> Result<Value, ExplorerModelFailure> {
+    let schema = serde_json::from_str::<Value>(request.action_json_schema().as_str())
+        .map_err(|_| ExplorerModelFailure::InvalidResponse)?;
+    match request.observation() {
+        Some(observation) => specialize_proposal_schema(
+            schema,
+            request.module_id(),
+            request.snapshot_id(),
+            request.expected_fields(),
+            observation.evidence_ids(),
+        ),
+        None => restrict_action(schema, "#/$defs/inspect"),
+    }
+}
+
+fn restrict_action(mut schema: Value, reference: &str) -> Result<Value, ExplorerModelFailure> {
+    let action = schema
+        .pointer_mut("/properties/action")
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    *action = json!({"$ref": reference});
+    Ok(schema)
+}
+
+fn specialize_proposal_schema(
+    mut schema: Value,
+    module_id: ModuleId,
+    snapshot_id: SnapshotId,
+    expected_fields: &[ModuleCardField],
+    evidence_ids: &[ModuleCardEvidenceId],
+) -> Result<Value, ExplorerModelFailure> {
+    if expected_fields.is_empty() || evidence_ids.is_empty() {
+        return Err(ExplorerModelFailure::InvalidResponse);
+    }
+    let field_template = schema
+        .pointer("/$defs/proposalField")
+        .cloned()
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    let allowed_evidence = evidence_ids
+        .iter()
+        .map(|id| hex(id.as_bytes()))
+        .collect::<Vec<_>>();
+    let definitions = schema
+        .pointer_mut("/$defs")
+        .and_then(Value::as_object_mut)
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    definitions.insert(
+        "allowedEvidenceId".to_owned(),
+        json!({"enum": allowed_evidence}),
+    );
+    let field_schemas = expected_fields
+        .iter()
+        .map(|field| specialize_field_schema(field_template.clone(), *field, evidence_ids.len()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let action = schema
+        .pointer_mut("/properties/action")
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    *action = json!({"$ref": "#/$defs/propose"});
+    let proposal = schema
+        .pointer_mut("/$defs/proposal/properties")
+        .and_then(Value::as_object_mut)
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    proposal.insert(
+        "card_id".to_owned(),
+        json!({"const": hex(ModuleCardId::for_module_fields_v1(module_id, expected_fields).as_bytes())}),
+    );
+    proposal.insert(
+        "module_id".to_owned(),
+        json!({"const": module_id.to_string()}),
+    );
+    proposal.insert(
+        "snapshot_id".to_owned(),
+        json!({"const": snapshot_id.to_string()}),
+    );
+    proposal.insert(
+        "fields".to_owned(),
+        json!({
+            "type": "array",
+            "minItems": field_schemas.len(),
+            "maxItems": field_schemas.len(),
+            "prefixItems": field_schemas,
+        }),
+    );
+    Ok(schema)
+}
+
+fn specialize_field_schema(
+    mut schema: Value,
+    field: ModuleCardField,
+    allowed_evidence_count: usize,
+) -> Result<Value, ExplorerModelFailure> {
+    let properties = schema
+        .pointer_mut("/properties")
+        .and_then(Value::as_object_mut)
+        .ok_or(ExplorerModelFailure::InvalidResponse)?;
+    properties.insert("field".to_owned(), json!({"const": field_name(field)}));
+    properties.insert(
+        "values".to_owned(),
+        json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_PROPOSAL_VALUES_PER_FIELD,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_PROPOSAL_VALUE_BYTES,
+            },
+        }),
+    );
+    properties.insert(
+        "evidence_ids".to_owned(),
+        json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_PROPOSAL_EVIDENCE_PER_FIELD.min(allowed_evidence_count),
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/allowedEvidenceId"},
+        }),
+    );
+    Ok(schema)
 }
 
 #[derive(Debug)]
@@ -222,5 +350,131 @@ const fn map_provider_failure(failure: ModelProviderFailure) -> ExplorerModelFai
         ModelProviderFailure::InvalidResponse => ExplorerModelFailure::InvalidResponse,
         ModelProviderFailure::TimedOut => ExplorerModelFailure::TimedOut,
         ModelProviderFailure::Cancelled => ExplorerModelFailure::Cancelled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hex, restrict_action, specialize_proposal_schema};
+    use crate::{DecodeExplorerAction, ExplorerModelFailure, StructuredOutputSchema};
+    use a3_domain::{ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleId, SnapshotId};
+    use serde_json::Value;
+    use std::error::Error;
+
+    #[test]
+    fn inspect_request_exposes_only_the_authorized_action() -> Result<(), Box<dyn Error>> {
+        let schema = serde_json::from_str::<Value>(
+            DecodeExplorerAction::version_one().json_schema().as_str(),
+        )?;
+        let schema = restrict_action(schema, "#/$defs/inspect")?;
+        assert_eq!(
+            schema.pointer("/properties/action/$ref"),
+            Some(&Value::String("#/$defs/inspect".to_owned()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn proposal_schema_binds_ids_fields_and_evidence() -> Result<(), ExplorerModelFailure> {
+        let schema = serde_json::from_str::<Value>(
+            DecodeExplorerAction::version_one().json_schema().as_str(),
+        )
+        .map_err(|_| ExplorerModelFailure::InvalidResponse)?;
+        let schema = specialize_proposal_schema(
+            schema,
+            ModuleId::from_bytes([1; 32]),
+            SnapshotId::from_bytes([2; 32]),
+            &[ModuleCardField::Title, ModuleCardField::Purpose],
+            &[
+                ModuleCardEvidenceId::from_bytes([3; 32]),
+                ModuleCardEvidenceId::from_bytes([4; 32]),
+            ],
+        )?;
+
+        assert_eq!(
+            schema.pointer("/properties/action/$ref"),
+            Some(&Value::String("#/$defs/propose".to_owned()))
+        );
+        assert_eq!(
+            schema.pointer("/$defs/proposal/properties/card_id/const"),
+            Some(&Value::String(hex(ModuleCardId::for_module_fields_v1(
+                ModuleId::from_bytes([1; 32]),
+                &[ModuleCardField::Title, ModuleCardField::Purpose]
+            )
+            .as_bytes())))
+        );
+        assert_eq!(
+            schema.pointer("/$defs/proposal/properties/fields/maxItems"),
+            Some(&Value::from(2))
+        );
+        assert_eq!(
+            schema
+                .pointer("/$defs/proposal/properties/fields/prefixItems/0/properties/field/const"),
+            Some(&Value::String("title".to_owned()))
+        );
+        assert_eq!(
+            schema.pointer(
+                "/$defs/proposal/properties/fields/prefixItems/0/properties/values/maxItems"
+            ),
+            Some(&Value::from(1))
+        );
+        assert_eq!(
+            schema.pointer(
+                "/$defs/proposal/properties/fields/prefixItems/1/properties/evidence_ids/maxItems"
+            ),
+            Some(&Value::from(1))
+        );
+        assert_eq!(
+            schema.pointer(
+                "/$defs/proposal/properties/fields/prefixItems/1/properties/evidence_ids/items/$ref"
+            ),
+            Some(&Value::String("#/$defs/allowedEvidenceId".to_owned()))
+        );
+        assert_eq!(
+            schema.pointer("/$defs/allowedEvidenceId/enum/0"),
+            Some(&Value::String("03".repeat(32)))
+        );
+        assert!(
+            schema
+                .pointer("/$defs/proposal/properties/fields/items")
+                .is_none(),
+            "Ollama streaming rejects boolean tuple-array schemas"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn largest_observation_schema_stays_within_the_provider_boundary()
+    -> Result<(), ExplorerModelFailure> {
+        let schema = serde_json::from_str::<Value>(
+            DecodeExplorerAction::version_one().json_schema().as_str(),
+        )
+        .map_err(|_| ExplorerModelFailure::InvalidResponse)?;
+        let fields = [
+            ModuleCardField::Title,
+            ModuleCardField::Paths,
+            ModuleCardField::Purpose,
+            ModuleCardField::Responsibilities,
+            ModuleCardField::PublicSurface,
+            ModuleCardField::Entrypoints,
+            ModuleCardField::Dependencies,
+            ModuleCardField::DataFlows,
+            ModuleCardField::Invariants,
+            ModuleCardField::Tests,
+            ModuleCardField::Risks,
+            ModuleCardField::OpenQuestions,
+        ];
+        let evidence_ids = (0_u8..100)
+            .map(|value| ModuleCardEvidenceId::from_bytes([value; 32]))
+            .collect::<Vec<_>>();
+        let schema = specialize_proposal_schema(
+            schema,
+            ModuleId::from_bytes([1; 32]),
+            SnapshotId::from_bytes([2; 32]),
+            &fields,
+            &evidence_ids,
+        )?;
+        StructuredOutputSchema::new(schema).map_err(|_| ExplorerModelFailure::InvalidResponse)?;
+        Ok(())
     }
 }

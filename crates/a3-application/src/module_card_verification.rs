@@ -298,14 +298,9 @@ impl IndexPersistenceControl for ResolverIndexReadControl<'_> {
         self.control.is_cancelled() || self.started.elapsed() >= self.timeout
     }
 
-    fn report_progress(&self, progress: Progress) -> Result<(), IndexPersistenceControlError> {
-        if self.is_cancelled() {
-            Err(IndexPersistenceControlError::Unavailable)
-        } else {
-            self.control
-                .report_progress(progress)
-                .map_err(|_| IndexPersistenceControlError::Unavailable)
-        }
+    fn report_progress(&self, _progress: Progress) -> Result<(), IndexPersistenceControlError> {
+        self.ensure_active()
+            .map_err(|_| IndexPersistenceControlError::Unavailable)
     }
 }
 
