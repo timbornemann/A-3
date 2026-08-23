@@ -11,6 +11,7 @@ mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
 mod deep_map_manager;
+mod deep_map_runtime;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
@@ -164,6 +165,7 @@ use clock::SystemJobClock;
 use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
 };
+use deep_map_runtime::DeepMapRuntime;
 use job_ids::DesktopJobIds;
 use model_settings_manager::ModelSettingsManager;
 use platform::SystemPlatform;
@@ -227,6 +229,7 @@ pub struct CompositionRoot {
     agent_task_operation_active: AtomicBool,
     index_manager: Option<RepositoryIndexManager>,
     deep_map_manager: Option<DeepMapManager>,
+    deep_map_runtime: Option<DeepMapRuntime>,
     agent_run_manager: Option<AgentRunManager>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
@@ -287,11 +290,14 @@ impl CompositionRoot {
         provider_kind: a3_protocol::ModelProviderKindV1,
         endpoint: Option<&str>,
     ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
-        self.model_settings
+        let response = self
+            .model_settings
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
             .configure_provider(expected, provider_kind, endpoint)
-            .await
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
     }
 
     /// Stores one bounded credential for the Core-owned provider without network access.
@@ -300,11 +306,14 @@ impl CompositionRoot {
         expected: a3_application::DesktopSettingsStoreVersion,
         secret: a3_application::ProviderApiKey,
     ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
-        self.model_settings
+        let response = self
+            .model_settings
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
             .set_credential(expected, secret)
-            .await
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
     }
 
     /// Deletes the current provider credential without contacting the provider.
@@ -312,11 +321,14 @@ impl CompositionRoot {
         &self,
         expected: a3_application::DesktopSettingsStoreVersion,
     ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
-        self.model_settings
+        let response = self
+            .model_settings
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
             .delete_credential(expected)
-            .await
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
     }
 
     /// Explicitly discovers a bounded model list from the current local provider.
@@ -337,11 +349,14 @@ impl CompositionRoot {
         expected: a3_application::DesktopSettingsStoreVersion,
         request: &a3_protocol::ProbeModelRoleRequestV1,
     ) -> Result<a3_protocol::SettingsResponseV1, CommandErrorV1> {
-        self.model_settings
+        let response = self
+            .model_settings
             .as_ref()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
             .probe(expected, request)
-            .await
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
     }
 
     /// Requests cooperative cancellation of the single explicit model operation.
@@ -350,6 +365,18 @@ impl CompositionRoot {
             || a3_protocol::CancelModelProbeResponseV1::new(false),
             ModelSettingsManager::cancel_probe,
         )
+    }
+
+    async fn synchronize_deep_map_runtime(&self) -> Result<(), CommandErrorV1> {
+        let Some(runtime) = &self.deep_map_runtime else {
+            return Ok(());
+        };
+        let executor = runtime.resolve().await;
+        self.deep_map_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .configure_executor(executor)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))
     }
 
     /// Reads active-project ignore and manifest-evidenced command Settings.
@@ -1636,7 +1663,9 @@ impl CompositionRoot {
         let Some(manager) = &self.deep_map_manager else {
             return DeepMapStatusResponseV1::unavailable();
         };
-        let model = manager.model();
+        let Some(model) = manager.model() else {
+            return DeepMapStatusResponseV1::unavailable();
+        };
         DeepMapStatusResponseV1::available(
             DeepMapConfigurationV1::new(
                 DeepMapModelV1::new(
@@ -2305,6 +2334,7 @@ struct OptionalCompositionPorts {
     project_storage: Option<Arc<dyn ProjectStorageStore>>,
     project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
+    deep_map_runtime: Option<DeepMapRuntime>,
     agent_run_executor: Option<Arc<dyn AgentRunExecutor>>,
 }
 
@@ -2334,6 +2364,8 @@ struct IndexingCompositionPorts {
     repository_tree_store: Arc<dyn RepositoryTreeStore>,
     project_storage: Arc<dyn ProjectStorageStore>,
     project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
+    deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
+    deep_map_runtime: DeepMapRuntime,
 }
 
 impl CompositionBase {
@@ -2411,7 +2443,8 @@ impl CompositionBase {
                 repository_tree_store: Some(ports.repository_tree_store),
                 project_storage: Some(ports.project_storage),
                 project_catalog_admin: Some(ports.project_catalog_admin),
-                deep_map_executor: None,
+                deep_map_executor: ports.deep_map_executor,
+                deep_map_runtime: Some(ports.deep_map_runtime),
                 agent_run_executor: None,
             },
         )
@@ -2585,9 +2618,10 @@ impl CompositionBase {
                 .map_err(|_| CompositionRootError::IndexManager)
             })
             .transpose()?;
-        let deep_map_manager = ports
-            .deep_map_executor
-            .map(|executor| {
+        let deep_map_runtime = ports.deep_map_runtime;
+        let deep_map_enabled = deep_map_runtime.is_some() || ports.deep_map_executor.is_some();
+        let deep_map_manager = if deep_map_enabled {
+            Some({
                 let submitter = self
                     .job_scheduler
                     .submitter()
@@ -2595,12 +2629,14 @@ impl CompositionBase {
                 DeepMapManager::start(
                     submitter,
                     self.job_events.clone(),
-                    executor,
+                    ports.deep_map_executor,
                     Arc::clone(&job_ids),
                 )
                 .map_err(|_| CompositionRootError::DeepMapManager)
-            })
-            .transpose()?;
+            }?)
+        } else {
+            None
+        };
         let agent_run_manager = match (
             ports.agent_run_executor,
             agent_task_recovery.clone(),
@@ -2679,6 +2715,7 @@ impl CompositionBase {
             agent_task_operation_active: AtomicBool::new(false),
             index_manager,
             deep_map_manager,
+            deep_map_runtime,
             agent_run_manager,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
@@ -2732,7 +2769,15 @@ pub fn run() -> Result<(), DesktopRunError> {
             let module_tree_store: Arc<dyn ModuleTreeStore> = store.clone();
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
-            let index_store: Arc<dyn KnowledgeIndexStore> = store;
+            let index_store: Arc<dyn KnowledgeIndexStore> = store.clone();
+            let module_card_publisher: Arc<dyn a3_application::VerifiedModuleCardPublisher> = store;
+            let deep_map_runtime = DeepMapRuntime::new(
+                Arc::clone(&settings_store),
+                Arc::clone(&credential_store),
+                Arc::clone(&index_store),
+                module_card_publisher,
+            );
+            let deep_map_executor = tauri::async_runtime::block_on(deep_map_runtime.resolve());
             app.manage(base.finish_with_indexing(
                 Arc::new(NativeProjectDirectoryPicker::new(app.handle().clone())),
                 Arc::new(NativeProjectReconciliationConfirmer::new(
@@ -2765,6 +2810,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     repository_tree_store,
                     project_storage,
                     project_catalog_admin,
+                    deep_map_executor,
+                    deep_map_runtime,
                 },
             )?);
             Ok(())
@@ -5242,7 +5289,8 @@ fn map_deep_map_control_error(error: DeepMapManagerControlError) -> CommandError
         DeepMapManagerControlError::NotRunning => ErrorCodeV1::DeepMapNotRunning,
         DeepMapManagerControlError::NotPaused => ErrorCodeV1::DeepMapNotPaused,
         DeepMapManagerControlError::AlreadyPending => ErrorCodeV1::DeepMapAlreadyPending,
-        DeepMapManagerControlError::QueueFull
+        DeepMapManagerControlError::Unavailable
+        | DeepMapManagerControlError::QueueFull
         | DeepMapManagerControlError::JobIdsExhausted
         | DeepMapManagerControlError::CoordinatorStopped => ErrorCodeV1::DeepMapUnavailable,
     };

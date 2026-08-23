@@ -1,4 +1,7 @@
-use crate::{DecodeExplorerAction, ExplorerActionJsonSchema, ExplorerObservation, JobContext};
+use crate::{
+    DecodeExplorerAction, ExplorerActionJsonSchema, ExplorerObservation, JobContext,
+    ModelCancellationFuture,
+};
 use a3_domain::{
     ExplorePlan, ExploreStep, ExploreTarget, ExplorerActionSchemaVersion, IndexRunId,
     ModuleCardField, ModuleCardSchemaVersion, ModuleId, SnapshotId,
@@ -20,11 +23,18 @@ pub type ExplorerModelFuture<'a> =
 pub trait ExplorerModelControl: fmt::Debug + Send + Sync {
     /// Returns whether the owning operation requested cancellation.
     fn is_cancelled(&self) -> bool;
+
+    /// Returns a wakeable future for cancellation during a stalled provider request.
+    fn cancelled(&self) -> ModelCancellationFuture<'_>;
 }
 
 impl ExplorerModelControl for JobContext {
     fn is_cancelled(&self) -> bool {
         self.cancellation_token().is_cancelled()
+    }
+
+    fn cancelled(&self) -> ModelCancellationFuture<'_> {
+        Box::pin(self.cancellation_token().cancelled())
     }
 }
 

@@ -20,7 +20,7 @@ const DEEP_MAP_JOB_OWNER: JobOwner = JobOwner::new(2);
 pub(crate) struct DeepMapManager {
     commands: Sender<ManagerCommand>,
     activity: Arc<Mutex<DeepMapActivity>>,
-    model: DeepMapModelDescriptor,
+    model: Arc<Mutex<Option<DeepMapModelDescriptor>>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -28,13 +28,16 @@ impl DeepMapManager {
     pub(crate) fn start(
         submitter: JobSubmitter,
         events: JobEventStream,
-        executor: Arc<dyn DeepMapExecutor>,
+        executor: Option<Arc<dyn DeepMapExecutor>>,
         job_ids: Arc<DesktopJobIds>,
     ) -> Result<Self, DeepMapManagerStartError> {
         let (commands, receiver) = bounded(8);
-        let model = executor.model().clone();
+        let model = Arc::new(Mutex::new(
+            executor.as_ref().map(|executor| executor.model().clone()),
+        ));
         let activity = Arc::new(Mutex::new(DeepMapActivity::idle()));
         let worker_activity = Arc::clone(&activity);
+        let worker_model = Arc::clone(&model);
         let worker = thread::Builder::new()
             .name("a3-deep-map-coordinator".to_owned())
             .spawn(move || {
@@ -45,6 +48,7 @@ impl DeepMapManager {
                     job_ids,
                     receiver,
                     worker_activity,
+                    worker_model,
                 );
             })
             .map_err(DeepMapManagerStartError::WorkerSpawn)?;
@@ -74,6 +78,13 @@ impl DeepMapManager {
         self.request(|response| ManagerCommand::Start(budget, response))
     }
 
+    pub(crate) fn configure_executor(
+        &self,
+        executor: Option<Arc<dyn DeepMapExecutor>>,
+    ) -> Result<(), DeepMapManagerControlError> {
+        self.request(|response| ManagerCommand::Configure(executor, response))
+    }
+
     pub(crate) fn pause(&self) -> Result<(), DeepMapManagerControlError> {
         self.request(ManagerCommand::Pause)
     }
@@ -90,8 +101,8 @@ impl DeepMapManager {
         *lock_recovering_poison(&self.activity)
     }
 
-    pub(crate) const fn model(&self) -> &DeepMapModelDescriptor {
-        &self.model
+    pub(crate) fn model(&self) -> Option<DeepMapModelDescriptor> {
+        lock_recovering_poison(&self.model).clone()
     }
 
     fn request(
@@ -130,7 +141,7 @@ impl fmt::Debug for DeepMapManager {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DeepMapManager")
-            .field("model", &self.model)
+            .field("model", &*lock_recovering_poison(&self.model))
             .field("active", &self.worker.is_some())
             .finish()
     }
@@ -149,6 +160,10 @@ enum ManagerCommand {
         Sender<Result<(), DeepMapManagerControlError>>,
     ),
     Deactivate(Sender<Result<(), DeepMapManagerControlError>>),
+    Configure(
+        Option<Arc<dyn DeepMapExecutor>>,
+        Sender<Result<(), DeepMapManagerControlError>>,
+    ),
     Start(
         ExploreBudget,
         Sender<Result<(), DeepMapManagerControlError>>,
@@ -161,6 +176,7 @@ enum ManagerCommand {
 
 struct CoordinatorState {
     project: Option<ProjectIdentity>,
+    executor: Option<Arc<dyn DeepMapExecutor>>,
     active: Option<ManagedAttempt>,
     resume: Option<DeepMapResumeState>,
 }
@@ -185,13 +201,15 @@ type SharedAttemptResult =
 fn coordinator_loop(
     submitter: JobSubmitter,
     events: JobEventStream,
-    executor: Arc<dyn DeepMapExecutor>,
+    executor: Option<Arc<dyn DeepMapExecutor>>,
     job_ids: Arc<DesktopJobIds>,
     commands: Receiver<ManagerCommand>,
     activity: Arc<Mutex<DeepMapActivity>>,
+    model: Arc<Mutex<Option<DeepMapModelDescriptor>>>,
 ) {
     let mut state = CoordinatorState {
         project: None,
+        executor,
         active: None,
         resume: None,
     };
@@ -208,9 +226,9 @@ fn coordinator_loop(
                 }
                 return;
             }
-            Ok(command) => handle_command(
-                command, &submitter, &executor, &job_ids, &mut state, &activity,
-            ),
+            Ok(command) => {
+                handle_command(command, &submitter, &job_ids, &mut state, &activity, &model)
+            }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
         }
@@ -220,10 +238,10 @@ fn coordinator_loop(
 fn handle_command(
     command: ManagerCommand,
     submitter: &JobSubmitter,
-    executor: &Arc<dyn DeepMapExecutor>,
     job_ids: &DesktopJobIds,
     state: &mut CoordinatorState,
     activity: &Mutex<DeepMapActivity>,
+    model: &Mutex<Option<DeepMapModelDescriptor>>,
 ) {
     match command {
         ManagerCommand::Activate(project, response) => {
@@ -248,10 +266,22 @@ fn handle_command(
             }
             let _sent = response.send(Ok(()));
         }
+        ManagerCommand::Configure(executor, response) => {
+            let resetting = cancel_active(submitter, state, TerminationIntent::Reset);
+            let next = executor.as_ref().map(|executor| executor.model().clone());
+            state.executor = executor;
+            state.resume = None;
+            if resetting {
+                set_activity_state(activity, DeepMapActivityState::Cancelling);
+            } else {
+                set_activity(activity, DeepMapActivity::idle());
+            }
+            *lock_recovering_poison(model) = next;
+            let _sent = response.send(Ok(()));
+        }
         ManagerCommand::Start(budget, response) => {
             let result = submit_attempt(
                 submitter,
-                executor,
                 job_ids,
                 state,
                 DeepMapExecutionRequest::Start { budget },
@@ -265,7 +295,6 @@ fn handle_command(
                     let fallback = resume.clone();
                     let result = submit_attempt(
                         submitter,
-                        executor,
                         job_ids,
                         state,
                         DeepMapExecutionRequest::Resume(Box::new(resume)),
@@ -328,7 +357,6 @@ fn handle_command(
 
 fn submit_attempt(
     submitter: &JobSubmitter,
-    executor: &Arc<dyn DeepMapExecutor>,
     job_ids: &DesktopJobIds,
     state: &mut CoordinatorState,
     request: DeepMapExecutionRequest,
@@ -341,11 +369,15 @@ fn submit_attempt(
         .project
         .clone()
         .ok_or(DeepMapManagerControlError::NoActiveProject)?;
+    let executor = state
+        .executor
+        .clone()
+        .ok_or(DeepMapManagerControlError::Unavailable)?;
     let budget = request.budget();
     let id = job_ids
         .allocate()
         .map_err(|_| DeepMapManagerControlError::JobIdsExhausted)?;
-    let task_executor = Arc::clone(executor);
+    let task_executor = executor;
     let result: SharedAttemptResult = Arc::new(Mutex::new(None));
     let task_result = Arc::clone(&result);
     submitter
@@ -434,7 +466,7 @@ fn refresh_attempt(
                 DeepMapActivity::terminal(DeepMapActivityState::Paused, budget, counts),
             );
         }
-        (JobStatus::Cancelled, TerminationIntent::Cancel, _) => {
+        (_, TerminationIntent::Cancel, _) => {
             state.resume = None;
             set_activity(
                 activity,
@@ -612,6 +644,7 @@ fn step_counts(state: &DeepMapResumeState) -> StepCounts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeepMapManagerControlError {
+    Unavailable,
     NoActiveProject,
     NotRunning,
     NotPaused,
@@ -624,6 +657,7 @@ pub(crate) enum DeepMapManagerControlError {
 impl fmt::Display for DeepMapManagerControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Unavailable => "Deep Map has no verified mapping executor",
             Self::NoActiveProject => "Deep Map requires an active project",
             Self::NotRunning => "Deep Map is not running",
             Self::NotPaused => "Deep Map has no paused checkpoint",
@@ -755,7 +789,7 @@ mod tests {
         let manager = DeepMapManager::start(
             scheduler.submitter()?,
             events,
-            executor.clone(),
+            Some(executor.clone()),
             Arc::new(DesktopJobIds::new()),
         )?;
         manager.activate_project(project_fixture()?)?;
@@ -788,6 +822,52 @@ mod tests {
     }
 
     #[test]
+    fn verified_mapping_executor_can_be_bound_after_startup() -> Result<(), Box<dyn Error>> {
+        let config = JobSchedulerConfig::new(1, 4, 64)?;
+        let (scheduler, events) =
+            JobScheduler::new(config, Arc::new(TestClock(AtomicU64::new(1))))?;
+        let descriptor = DeepMapModelDescriptor::from_verified_profile(&model_profile()?)?;
+        let first_executor = Arc::new(PausingExecutor {
+            model: descriptor.clone(),
+            initial: resume_fixture()?,
+            attempts: AtomicUsize::new(0),
+        });
+        let rebound_executor = Arc::new(PausingExecutor {
+            model: descriptor,
+            initial: resume_fixture()?,
+            attempts: AtomicUsize::new(0),
+        });
+        let manager = DeepMapManager::start(
+            scheduler.submitter()?,
+            events,
+            None,
+            Arc::new(DesktopJobIds::new()),
+        )?;
+        manager.activate_project(project_fixture()?)?;
+        assert!(manager.model().is_none());
+        assert_eq!(
+            manager.start_mapping(ExploreBudget::DEFAULT),
+            Err(DeepMapManagerControlError::Unavailable)
+        );
+
+        manager.configure_executor(Some(first_executor.clone()))?;
+        assert_eq!(
+            manager.model().map(|model| model.profile()),
+            Some(first_executor.model().profile())
+        );
+        manager.configure_executor(Some(rebound_executor.clone()))?;
+        manager.start_mapping(ExploreBudget::DEFAULT)?;
+        wait_for_state(&manager, DeepMapActivityState::Running)?;
+        wait_for_attempts(&rebound_executor, 1)?;
+        assert_eq!(first_executor.attempts.load(Ordering::SeqCst), 0);
+        manager.cancel()?;
+        wait_for_state(&manager, DeepMapActivityState::Cancelled)?;
+        drop(manager);
+        drop(scheduler);
+        Ok(())
+    }
+
+    #[test]
     fn queued_attempt_cannot_claim_a_checkpoint_safe_pause() -> Result<(), Box<dyn Error>> {
         let config = JobSchedulerConfig::new(1, 4, 64)?;
         let (scheduler, events) =
@@ -811,7 +891,7 @@ mod tests {
         let manager = DeepMapManager::start(
             submitter,
             events,
-            executor.clone(),
+            Some(executor.clone()),
             Arc::new(DesktopJobIds::new()),
         )?;
         manager.activate_project(project_fixture()?)?;
@@ -844,7 +924,7 @@ mod tests {
         let manager = DeepMapManager::start(
             scheduler.submitter()?,
             events,
-            executor.clone(),
+            Some(executor.clone()),
             Arc::new(DesktopJobIds::new()),
         )?;
         manager.activate_project(project_fixture()?)?;
@@ -873,7 +953,7 @@ mod tests {
         let manager = DeepMapManager::start(
             scheduler.submitter()?,
             events,
-            executor.clone(),
+            Some(executor.clone()),
             Arc::new(DesktopJobIds::new()),
         )?;
         manager.activate_project(project_fixture()?)?;

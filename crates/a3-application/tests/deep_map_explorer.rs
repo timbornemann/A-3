@@ -196,6 +196,14 @@ impl ExplorerModelControl for TestControl {
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
+
+    fn cancelled(&self) -> a3_application::ModelCancellationFuture<'_> {
+        if ExplorerModelControl::is_cancelled(self) {
+            Box::pin(futures::future::ready(()))
+        } else {
+            Box::pin(futures::future::pending())
+        }
+    }
 }
 
 #[test]

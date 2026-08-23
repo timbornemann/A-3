@@ -179,7 +179,7 @@ bytegewichtete Coverage sowie sichere file-lokale Diagnostics statt eines global
 
 Deep Map besitzt nun einen expliziten, ebenfalls pfadlosen Produkt-Lifecycle. Vor dem Start zeigt
 die UI ausschließlich ein durch Capability Probe verifiziertes Mapping-Profil samt Context- und
-Outputlimit sowie Token-, Zeit- und Read-only-Toolbudget. Ohne später in U8 konfigurierten Executor
+Outputlimit sowie Token-, Zeit- und Read-only-Toolbudget. Ohne vollständig komponierten Executor
 bleibt die Funktion sichtbar `unavailable` und startet keine Modell- oder GPU-Arbeit. Start,
 Pause, Resume und Cancel laufen über den besessenen Scheduler; `Paused` wird erst nach terminaler
 kooperativer Cancellation und einem plan-, snapshot- und budgetgebundenen Checkpoint sichtbar.
@@ -644,8 +644,17 @@ fail-closed Privacygrenzen. Projektbezogenes Indexignore bleibt read-only und ve
 bereits autorisierten Git-, Safety- und `.a3/project.toml`-Quellen. Die sichere Command-Allowlist
 wird aus dem jüngsten Published Index rekonstruiert und kann nur mit sichtbarer Katalogrevision,
 Store-CAS und bekannten IDs bestätigt werden; die WebView liefert weder Pfade noch argv. Ohne
-einen separat vollständig komponierten Agent- oder Deep-Map-Executor bleibt die Laufzeit
-unavailable und behauptet keine nur durch Settings vorgetäuschte Ausführbarkeit.
+einen separat vollständig komponierten Laufzeit-Executor bleibt die jeweilige Funktion
+unavailable und behauptet keine nur durch Settings vorgetäuschte Ausführbarkeit. Der Desktop bindet
+ein ausführbares Mapping-Profil inzwischen an den produktiven Deep-Map-Executor; der Agent bleibt
+bis zur Komposition seines eigenen Executors davon unabhängig unavailable.
+
+Bugfix-Abnahme vom 2026-08-23: Ein persistiertes, durch Structured Output verifiziertes
+Mapping-Profil wird beim Start ohne WebView-Parameter aus Settings und Credential Store wieder an
+Deep Map gebunden. Provider-, Credential- und Probe-Änderungen erneuern diese Bindung, verwerfen
+inkompatible Pause-Checkpoints und aktualisieren dadurch Statusleiste und Startfreigabe aus derselben
+Core-Projektion. Der produktive Lauf verwendet den publizierten Index, bounded read-only Exploration,
+modellgestützte Claim-Proposals, Evidence-Verifikation und die atomare Module-Card-Publikation.
 
 Rustfmt, der vollständige Rust-Workspace-Test über alle Targets und Features, Workspace-Clippy
 mit Warnings denied sowie Rustdoc mit Warnings denied sind grün. Der Windows-libSQL-Harness

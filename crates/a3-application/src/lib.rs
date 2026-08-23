@@ -19,8 +19,10 @@ mod context_compiler;
 mod deep_map_action_codec;
 mod deep_map_execution;
 mod deep_map_explorer;
+mod deep_map_model_adapter;
 mod deep_map_planner;
 mod deep_map_read_tools;
+mod deep_map_runner;
 mod embedding_provider;
 mod exact_search;
 mod explorer_model_provider;
@@ -38,6 +40,7 @@ mod model_capability;
 mod model_catalog;
 mod model_provider;
 mod module_card_claim_codec;
+mod module_card_claim_proposer;
 mod module_card_detail;
 mod module_card_evidence;
 mod module_card_freshness;
@@ -61,6 +64,7 @@ mod project_settings;
 mod project_status;
 mod project_storage;
 mod provider_credentials;
+mod published_deep_map_tools;
 mod recent_projects;
 mod repository_discovery;
 mod repository_index;
@@ -159,11 +163,13 @@ pub use deep_map_explorer::{
     DeepMapExplorerFailure, DeepMapExplorerFuture, DeepMapExplorerOutcome, DeepMapExplorerStatus,
     ExploreDeepMap,
 };
+pub use deep_map_model_adapter::ModelBackedExplorerProvider;
 pub use deep_map_planner::PlanDeepMap;
 pub use deep_map_read_tools::{
     DeepMapReadControl, DeepMapReadFailure, DeepMapReadFuture, DeepMapReadTimeout,
     DeepMapReadTools, ExplorerObservation, ExplorerObservationError, ExplorerObservationStatus,
 };
+pub use deep_map_runner::RunDeepMap;
 pub use embedding_provider::{
     EmbeddingCapabilityProbe, EmbeddingCapabilityProbeFuture, EmbeddingCapabilityProbeRequest,
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
@@ -229,6 +235,7 @@ pub use model_provider::{
 pub use module_card_claim_codec::{
     DecodeModuleCardClaims, ModuleCardClaimDecodeError, ModuleCardClaimJsonSchema,
 };
+pub use module_card_claim_proposer::{ProposeModuleCardClaims, ProposeModuleCardClaimsFailure};
 pub use module_card_detail::{
     GetModuleCardDetail, ModuleCardClaimPresentation, ModuleCardClaimPresentationError,
     ModuleCardClaimState, ModuleCardCoverage, ModuleCardCoverageBand, ModuleCardDetail,
@@ -347,6 +354,7 @@ pub use project_storage::{
     ProjectStorageUsage,
 };
 pub use provider_credentials::*;
+pub use published_deep_map_tools::PublishedIndexDeepMapReadTools;
 pub use recent_projects::{ListRecentProjects, ListRecentProjectsError};
 pub use repository_discovery::{
     RepositoryDiscoverer, RepositoryDiscoveryControl, RepositoryDiscoveryControlError,

@@ -407,8 +407,12 @@ Die Desktop-Grenze startet eine Deep Map ausschließlich nach der ausdrückliche
 Profilidentität, Context- und Outputlimit sowie das gewählte Token-, Zeit- und Read-only-Toolbudget.
 Die WebView wählt weder Projekt, Profil noch Job-ID. Ohne ein durch Capability Probe verifiziertes
 Mapping-Profil bleibt die Funktion sichtbar `unavailable`; A^3 bleibt als Indexbrowser nutzbar und
-startet weder Provider- noch GPU-Arbeit. Die spätere U8-Konfiguration liefert den optionalen
-Executor an den Composition Root, ohne diesen U3-Startvertrag zu verändern.
+startet weder Provider- noch GPU-Arbeit. Der Desktop rekonstruiert den optionalen Executor aus dem
+persistierten, ausführbaren Mapping-Profil, dem Core-eigenen Credential Store und dem neuesten
+publizierten Index. Nach Provider-, Credential- oder Probe-Änderungen wird diese Bindung koordiniert
+erneuert; die WebView erhält weder Credential- noch Pfadautorität. Eine erfolgreiche Ausführung
+verwendet dasselbe Profil für bounded Exploration und Claim-Proposals, verifiziert alle Claims
+gegen Snapshot-Evidence und publiziert ausschließlich verifizierte Module Cards.
 
 Pause verwendet kooperative Scheduler-Cancellation. Nur ein vollständiger, plan- und
 snapshotgebundener `ExplorerCheckpoint` darf den Core-eigenen Zustand `Paused` erzeugen. Resume

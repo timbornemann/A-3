@@ -735,9 +735,11 @@ eigenen Snapshot, setzt Core-Zeit und verwirft ein spätes Ergebnis bei CAS-Konf
 beobachtetes Structured Output beziehungsweise ein endlicher, nicht leerer Embeddingvektor mit
 gültiger Dimension kann ein Profil verifizieren; Name, WebView-Feld oder Healthstatus sind keine
 Capability-Evidence. Die Settings-Projektion enthält validierte Kontext-, Output-,
-Parallelitäts- und Batchlimits sowie fail-closed Privacyzustände. Ohne einen im Composition Root
-zusätzlich vollständig komponierten Agent- oder Deep-Map-Executor bleiben ausführbare Runs trotz
-gültiger Settings bewusst unavailable; die Settings-Grenze simuliert keinen Executor.
+Parallelitäts- und Batchlimits sowie fail-closed Privacyzustände. Der Composition Root bindet ein
+ausführbares Mapping-Profil an den produktiven Deep-Map-Executor und erneuert diese Bindung nach
+Provider-, Credential- und Probe-Änderungen. Fehlt Profil, erforderliches Credential oder Executor,
+bleibt Deep Map bewusst unavailable; die Settings-Grenze simuliert keine Ausführbarkeit.
+Agent-Runs bleiben unabhängig davon unavailable, solange kein eigener Agent-Executor komponiert ist.
 
 Projektsettings bleiben von globalen Preferences getrennt. Die read-only Ignore-Projektion lädt
 nur die bereits validierten Git-, Safety- und `.a3/project.toml`-Quellen des aktiven Core-Projekts.
