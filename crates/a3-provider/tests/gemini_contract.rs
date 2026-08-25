@@ -377,6 +377,10 @@ async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
         "application/json"
     );
     assert!(chat_body["generationConfig"]["responseJsonSchema"].is_object());
+    assert_eq!(
+        chat_body["generationConfig"]["maxOutputTokens"], 256,
+        "thinking-capable Gemini models need enough bounded output budget to emit the probe JSON"
+    );
     assert!(
         chat_body["generationConfig"]
             .get("responseSchema")

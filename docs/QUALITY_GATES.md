@@ -430,11 +430,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Der Gemini-Stubserver prüft den kanonischen Auth-Host, Ablehnung fremder HTTPS-Origins vor
   Netzwerk, `x-goog-api-key` und `x-goog-api-client`, begrenzte Pagination samt Token-Schleifen,
   Methodfilter, `responseJsonSchema`, SSE-Fragmentierung, Candidate-0-/Thought-Filter sowie strikte
-  Finish- und Blockgründe. Embedding-Tests verwenden nur entdeckbare, nicht abgekündigte Modell-IDs;
-  Gemini-Tool-Calls bleiben ohne eigenen Function-Calling-Probe `Disabled`.
+  Finish- und Blockgründe. Die echte Structured-Output-Probe bleibt synthetisch und begrenzt,
+  reserviert aber 256 Outputtokens, damit standardmäßig denkende Gemini-2.5-/3.x-Modelle das
+  sichtbare Probeergebnis zuverlässig ausgeben können. Embedding-Tests verwenden nur entdeckbare,
+  nicht abgekündigte Modell-IDs; Gemini-Tool-Calls bleiben ohne eigenen Function-Calling-Probe
+  `Disabled`.
 - Der ignorierte Test `stored_user_key_lists_streams_structures_and_embeds_against_google` ist der
   einzige Live-Smoke: Er lädt den bereits von A^3 gespeicherten Benutzer-Key aus dem OS-Keyring und
-  prüft nach separater Netzwerkfreigabe Modellliste, SSE, produktives Schema und Embedding
+  prüft nach separater Netzwerkfreigabe Modellliste, `gemini-3.7-flash` und den vorhandenen
+  `gemini-pro-latest`-Alias über Capability-Probe, SSE und produktives Schema sowie Embedding
   ausschließlich am kanonischen Google-Origin. CI und normale Testläufe führen ihn nie aus.
 
 ### AgentAction und Prompt

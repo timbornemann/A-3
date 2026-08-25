@@ -49,7 +49,10 @@ const MAX_GEMINI_PAGE_TOKEN_BYTES: usize = 4_096;
 const MAX_GEMINI_SCHEMA_DEPTH: usize = 64;
 const MAX_GEMINI_SCHEMA_NODES: usize = 4_096;
 
-const GEMINI_PROBE_OUTPUT_TOKENS: u32 = 32;
+// Gemini 2.5 and 3.x account for internal thinking inside the output budget. A 32-token
+// probe can therefore end before the tiny visible JSON value is emitted. Keep the probe
+// bounded, but leave enough room for the provider's default thinking behavior.
+const GEMINI_PROBE_OUTPUT_TOKENS: u32 = 256;
 const GEMINI_PROBE_PROMPT: &str =
     "Return exactly this JSON object and nothing else: {\"a3_probe\":\"ok\"}.";
 const GEMINI_EMBED_PROBE_INPUT: &str = "A3 embedding capability probe";

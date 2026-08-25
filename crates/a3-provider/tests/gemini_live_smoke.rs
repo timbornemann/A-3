@@ -62,41 +62,50 @@ async fn stored_user_key_lists_streams_structures_and_embeds_against_google()
     let catalog = DiscoverProviderModels::new(&provider)
         .execute(timeout, &control)
         .await?;
-    let generation_model = select_generation_model(catalog.model_ids())
-        .ok_or_else(|| std::io::Error::other("Gemini advertised no suitable text model"))?;
+    let generation_models = select_current_generation_models(catalog.model_ids());
+    if generation_models.is_empty() {
+        return Err(std::io::Error::other(
+            "Gemini advertised neither gemini-3.7-flash nor gemini-pro-latest",
+        )
+        .into());
+    }
     let embedding_model = select_embedding_model(catalog.model_ids())
         .ok_or_else(|| std::io::Error::other("Gemini advertised no embedding model"))?;
 
-    let profile = ProbeModelProfile::new(&provider)
-        .execute(
-            &ModelCapabilityProbeRequest::new(generation_model, live_settings()?),
+    for generation_model in generation_models {
+        let profile = ProbeModelProfile::new(&provider)
+            .execute(
+                &ModelCapabilityProbeRequest::new(generation_model, live_settings()?),
+                timeout,
+                &control,
+            )
+            .await?;
+        let text = collect_stream(
+            &provider,
+            ModelProviderRequest::new(
+                profile.clone(),
+                vec![ModelMessage::try_from_string(
+                    ModelMessageRole::User,
+                    "Reply with the single word OK.".to_owned(),
+                )?],
+                None,
+            )?,
             timeout,
             &control,
         )
         .await?;
-    let text = collect_stream(
-        &provider,
-        ModelProviderRequest::new(
-            profile.clone(),
-            vec![ModelMessage::try_from_string(
-                ModelMessageRole::User,
-                "Reply with the single word OK.".to_owned(),
-            )?],
-            None,
-        )?,
-        timeout,
-        &control,
-    )
-    .await?;
-    if text.trim().is_empty() {
-        return Err(std::io::Error::other("Gemini returned empty streamed text").into());
-    }
+        if text.trim().is_empty() {
+            return Err(std::io::Error::other("Gemini returned empty streamed text").into());
+        }
 
-    let structured =
-        collect_stream(&provider, structured_request(profile)?, timeout, &control).await?;
-    let value: serde_json::Value = serde_json::from_str(structured.trim())?;
-    if value != json!({"result": "ok"}) {
-        return Err(std::io::Error::other("Gemini returned unexpected structured output").into());
+        let structured =
+            collect_stream(&provider, structured_request(profile)?, timeout, &control).await?;
+        let value: serde_json::Value = serde_json::from_str(structured.trim())?;
+        if value != json!({"result": "ok"}) {
+            return Err(
+                std::io::Error::other("Gemini returned unexpected structured output").into(),
+            );
+        }
     }
 
     let embedding_profile = ProbeEmbeddingModelProfile::new(&provider)
@@ -129,34 +138,12 @@ async fn stored_user_key_lists_streams_structures_and_embeds_against_google()
     Ok(())
 }
 
-fn select_generation_model(models: &[ModelId]) -> Option<ModelId> {
-    let suitable = |model: &&ModelId| {
-        let id = model.as_str().to_ascii_lowercase();
-        id.starts_with("gemini-")
-            && !id.contains("embed")
-            && !id.contains("image")
-            && !id.contains("audio")
-            && !id.contains("tts")
-            && !id.contains("live")
-            && !id.contains("veo")
-            && !id.contains("imagen")
-    };
-    models
-        .iter()
-        .rev()
-        .find(|model| {
-            suitable(model)
-                && model.as_str().contains("flash")
-                && !model.as_str().contains("preview")
-        })
-        .or_else(|| {
-            models
-                .iter()
-                .rev()
-                .find(|model| suitable(model) && model.as_str().contains("flash"))
-        })
-        .or_else(|| models.iter().rev().find(suitable))
+fn select_current_generation_models(models: &[ModelId]) -> Vec<ModelId> {
+    ["gemini-3.7-flash", "gemini-pro-latest"]
+        .into_iter()
+        .filter_map(|target| models.iter().find(|model| model.as_str() == target))
         .cloned()
+        .collect()
 }
 
 fn select_embedding_model(models: &[ModelId]) -> Option<ModelId> {
@@ -170,7 +157,7 @@ fn select_embedding_model(models: &[ModelId]) -> Option<ModelId> {
 fn live_settings() -> Result<ModelProfileSettings, LiveTestError> {
     Ok(ModelProfileSettings::new(
         ModelContextLimit::new(4_096)?,
-        ModelOutputLimit::new(256)?,
+        ModelOutputLimit::new(2_048)?,
         ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
         ModelParallelismLimit::new(1)?,
         ModelSamplingProfile::new(

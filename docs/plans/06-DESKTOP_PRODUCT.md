@@ -731,6 +731,15 @@ erklärt insbesondere, dass `Capability fehlt` eine fehlende Live-Verifikation d
 JSON-Antwort bedeutet, und nennt sichere nächste Schritte, ohne rohe Providerfehler oder Secrets
 sichtbar zu machen.
 
+Gemini-Kompatibilitätskorrektur vom 2026-08-25: Die echte Structured-Output-Probe reserviert nun
+256 statt 32 Outputtokens. Aktuelle Gemini-2.5-/3.x-Modelle verwenden standardmäßig internes
+Thinking; das frühere Budget konnte deshalb enden, bevor selbst das kleine sichtbare JSON-Ergebnis
+ausgegeben wurde, und markierte ein tatsächlich schemafähiges Modell fälschlich als nicht
+verifiziert. Der weiterhin ignorierte, ausdrücklich netzwerkgebundene Live-Smoke bevorzugt
+`gemini-3.7-flash`, prüft zusätzlich einen vorhandenen `gemini-pro-latest`-Alias und führt für
+beide Capability-Probe, Streaming und ein produktives Schema aus, ohne Key oder Providerantwort zu
+persistieren oder auszugeben.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

@@ -610,7 +610,10 @@ ungültige Tokens sind Fehler. Streaming akzeptiert ausschließlich Candidate 0,
 `thought:true`, behandelt nur `STOP` und `MAX_TOKENS` als Terminalzustände und lehnt Block-,
 Safety-, Tool- und unbekannte Finish-Gründe sowie Daten nach Abschluss ab. Strukturierte Ausgabe
 verwendet `responseJsonSchema`; nicht unterstützte Schemachlüssel werden vor dem Netzwerkzugriff
-abgelehnt. Native Gemini-Tool-Calls bleiben bis zu einem eigenen Live-Probe deaktiviert.
+abgelehnt. Die synthetische Capability-Probe bleibt auf 256 Outputtokens begrenzt, damit das
+standardmäßig aktive interne Thinking aktueller Gemini-Modelle die sichtbare JSON-Probe nicht vor
+der Ausgabe abschneidet. Native Gemini-Tool-Calls bleiben bis zu einem eigenen Live-Probe
+deaktiviert.
 
 Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
 Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,
