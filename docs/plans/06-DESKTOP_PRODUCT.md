@@ -763,6 +763,18 @@ validierten Core-Projektion und enthält keine fest verdrahtete Ollama-Hilfe meh
 Workspace vorhandene Tokio-Timer genügt für den nicht blockierenden Backoff; es kam kein neues
 externes Paket hinzu.
 
+Gemini-Produktionsschema-Korrektur vom 2026-08-25: Die kleine Capability-Probe deckte weiterhin
+nicht Geminis dokumentiertes Komplexitätslimit für reale Deep-Map-Schemas ab. Bereits spezialisierte
+Explorer- und Claim-Requests übertrugen unbenutzte `$defs` sowie viele positionsgebundene,
+strukturell gleiche `prefixItems`; Google kann solche großen oder tiefen Schemas als
+`INVALID_ARGUMENT` ablehnen. Der Gemini-Dialektadapter behält nun nur transitiv erreichbare
+Definitionen und verdichtet gleichförmige Tuple-Items zu einem gemeinsamen `items`-Schema mit
+vereinigten Enums und unveränderten exakten Arraygrenzen. Die positionsgenaue ID-, Feld- und
+Evidence-Bindung bleibt durch den unveränderten strikten Decoder autoritativ. Zusätzlich werden
+Gemini-Fehlerobjekte innerhalb eines HTTP-200-SSE-Streams nach ihrem numerischen Status
+klassifiziert: 408, 429 und retry-fähige 5xx erreichen den gemeinsamen begrenzten Retry, dauerhafte
+4xx bleiben Ablehnungen und Providertexte verlassen den Adapter nicht.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

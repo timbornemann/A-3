@@ -302,10 +302,12 @@ async fn deep_map_schema_is_translated_to_geminis_supported_wire_dialect() -> Re
     });
 
     let provider = test_provider(endpoint)?;
-    let request = structured_request_with_schema(
-        "gemini-flash-latest",
-        serde_json::from_str(DecodeExplorerAction::version_one().json_schema().as_str())?,
-    )?;
+    let mut deep_map_schema =
+        serde_json::from_str::<Value>(DecodeExplorerAction::version_one().json_schema().as_str())?;
+    *deep_map_schema
+        .pointer_mut("/properties/action")
+        .ok_or("Deep Map schema has no action property")? = json!({"$ref": "#/$defs/inspect"});
+    let request = structured_request_with_schema("gemini-flash-latest", deep_map_schema)?;
     let control = TestControl::default();
     let mut events = provider
         .stream(
@@ -334,8 +336,14 @@ async fn deep_map_schema_is_translated_to_geminis_supported_wire_dialect() -> Re
     ] {
         assert!(!contains_key_recursive(schema, unsupported));
     }
-    assert!(contains_key_recursive(schema, "anyOf"));
-    assert!(contains_key_recursive(schema, "$defs"));
+    let definitions = schema["$defs"]
+        .as_object()
+        .ok_or("translated Deep Map schema has no definitions")?;
+    assert_eq!(
+        definitions.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["gain", "inspect", "rationale"]
+    );
+    assert!(!contains_key_recursive(schema, "prefixItems"));
     Ok(())
 }
 
@@ -374,6 +382,52 @@ async fn stream_rejects_safety_finish_and_data_after_a_terminal_candidate() -> R
             stream.next().await,
             Some(Err(ModelProviderFailure::Rejected | ModelProviderFailure::InvalidResponse))
         ));
+        server.await??;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stream_error_envelopes_keep_transient_failures_retryable() -> Result<(), TestError> {
+    for (code, expected) in [
+        (503, ModelProviderFailure::Unavailable),
+        (400, ModelProviderFailure::Rejected),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = endpoint_for(&listener)?;
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let _ = read_http_request(&mut stream).await?;
+            write_event_stream_head(&mut stream).await?;
+            let body = format!(
+                "data: {{\"error\":{{\"code\":{code},\"message\":\"sensitive provider detail\"}}}}\n\n"
+            );
+            write_http_chunk(&mut stream, body.as_bytes()).await?;
+            finish_http_chunks(&mut stream).await?;
+            Ok::<(), TestError>(())
+        });
+
+        let provider = test_provider(endpoint)?;
+        let request = sample_request("gemini-2.5-flash", false)?;
+        let control = TestControl::default();
+        let mut stream = provider
+            .stream(
+                &request,
+                ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?,
+                &control,
+            )
+            .await
+            .map_err(map_app_error)?;
+        let event = stream
+            .next()
+            .await
+            .ok_or("Gemini stream ended before its error envelope")?;
+        let failure = match event {
+            Err(failure) => failure,
+            Ok(_) => return Err("Gemini error envelope became output".into()),
+        };
+        assert_eq!(failure, expected);
+        assert!(!failure.to_string().contains("sensitive provider detail"));
         server.await??;
     }
     Ok(())

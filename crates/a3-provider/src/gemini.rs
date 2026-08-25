@@ -851,7 +851,10 @@ struct GeminiGenerationConfig<'a> {
 
 fn translate_response_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
     let mut nodes = 0usize;
-    translate_schema_node(schema, 0, &mut nodes)
+    let mut translated = translate_schema_node(schema, 0, &mut nodes)?;
+    compact_equivalent_prefix_items(&mut translated);
+    prune_unused_definitions(&mut translated)?;
+    Ok(translated)
 }
 
 fn translate_schema_node(
@@ -916,6 +919,160 @@ fn translate_schema_node(
     Ok(Value::Object(translated))
 }
 
+fn compact_equivalent_prefix_items(schema: &mut Value) {
+    match schema {
+        Value::Object(object) => {
+            for value in object.values_mut() {
+                compact_equivalent_prefix_items(value);
+            }
+            let merged = object
+                .get("prefixItems")
+                .and_then(Value::as_array)
+                .filter(|items| {
+                    !items.is_empty()
+                        && !object.contains_key("items")
+                        && exact_array_length(object, items.len())
+                })
+                .and_then(|items| {
+                    let mut merged = items[0].clone();
+                    for item in &items[1..] {
+                        let mut candidate = merged.clone();
+                        if !merge_schema_shape(&mut candidate, item, None) {
+                            return None;
+                        }
+                        merged = candidate;
+                    }
+                    Some(merged)
+                });
+            if let Some(merged) = merged {
+                object.remove("prefixItems");
+                object.insert("items".to_owned(), merged);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                compact_equivalent_prefix_items(item);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn exact_array_length(object: &serde_json::Map<String, Value>, length: usize) -> bool {
+    let Ok(length) = u64::try_from(length) else {
+        return false;
+    };
+    object.get("minItems").and_then(Value::as_u64) == Some(length)
+        && object.get("maxItems").and_then(Value::as_u64) == Some(length)
+}
+
+fn merge_schema_shape(left: &mut Value, right: &Value, key: Option<&str>) -> bool {
+    if key == Some("enum") {
+        let (Some(left), Some(right)) = (left.as_array_mut(), right.as_array()) else {
+            return false;
+        };
+        for value in right {
+            if !left.contains(value) {
+                left.push(value.clone());
+            }
+        }
+        return true;
+    }
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) if left.len() == right.len() => {
+            for (name, right_value) in right {
+                let Some(left_value) = left.get_mut(name) else {
+                    return false;
+                };
+                if !merge_schema_shape(left_value, right_value, Some(name)) {
+                    return false;
+                }
+            }
+            true
+        }
+        (Value::Array(left), Value::Array(right)) if left.len() == right.len() => left
+            .iter_mut()
+            .zip(right)
+            .all(|(left, right)| merge_schema_shape(left, right, None)),
+        (left, right) => left == right,
+    }
+}
+
+fn prune_unused_definitions(schema: &mut Value) -> Result<(), ModelProviderFailure> {
+    let Some(root) = schema.as_object() else {
+        return Err(ModelProviderFailure::Rejected);
+    };
+    let Some(definitions) = root.get("$defs") else {
+        return Ok(());
+    };
+    let definitions = definitions
+        .as_object()
+        .ok_or(ModelProviderFailure::Rejected)?
+        .clone();
+    let mut referenced = BTreeSet::new();
+    for (name, value) in root {
+        if name != "$defs" {
+            collect_local_definition_references(value, &mut referenced)?;
+        }
+    }
+    let mut pending = referenced.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(name) = pending.pop_front() {
+        let definition = definitions
+            .get(&name)
+            .ok_or(ModelProviderFailure::Rejected)?;
+        let mut nested = BTreeSet::new();
+        collect_local_definition_references(definition, &mut nested)?;
+        for nested_name in nested {
+            if referenced.insert(nested_name.clone()) {
+                pending.push_back(nested_name);
+            }
+        }
+    }
+    let retained = definitions
+        .into_iter()
+        .filter(|(name, _)| referenced.contains(name))
+        .collect::<serde_json::Map<_, _>>();
+    let root = schema
+        .as_object_mut()
+        .ok_or(ModelProviderFailure::Rejected)?;
+    if retained.is_empty() {
+        root.remove("$defs");
+    } else {
+        root.insert("$defs".to_owned(), Value::Object(retained));
+    }
+    Ok(())
+}
+
+fn collect_local_definition_references(
+    schema: &Value,
+    referenced: &mut BTreeSet<String>,
+) -> Result<(), ModelProviderFailure> {
+    match schema {
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref") {
+                let reference = reference.as_str().ok_or(ModelProviderFailure::Rejected)?;
+                if let Some(name) = reference.strip_prefix("#/$defs/") {
+                    let name = name.split('/').next().unwrap_or_default();
+                    if name.is_empty() {
+                        return Err(ModelProviderFailure::Rejected);
+                    }
+                    referenced.insert(name.to_owned());
+                }
+            }
+            for value in object.values() {
+                collect_local_definition_references(value, referenced)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_local_definition_references(item, referenced)?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct GeminiResponse {
     candidates: Option<Vec<GeminiCandidate>>,
@@ -974,7 +1131,7 @@ struct GeminiUsageMetadata {
 #[derive(Deserialize)]
 struct GeminiErrorObject {
     #[serde(rename = "code")]
-    _code: Option<i64>,
+    code: Option<i64>,
     #[serde(rename = "message")]
     _message: Option<String>,
 }
@@ -1152,8 +1309,8 @@ fn parse_gemini_sse_line(
     let response: GeminiResponse =
         serde_json::from_str(json_data).map_err(|_| ModelProviderFailure::InvalidResponse)?;
 
-    if response.error.is_some() {
-        return Err(ModelProviderFailure::Rejected);
+    if let Some(error) = response.error {
+        return Err(classify_gemini_error(&error));
     }
     if response
         .prompt_feedback
@@ -1301,6 +1458,15 @@ fn classify_http_status(status: reqwest::StatusCode) -> Option<ModelProviderFail
     } else {
         Some(ModelProviderFailure::Rejected)
     }
+}
+
+fn classify_gemini_error(error: &GeminiErrorObject) -> ModelProviderFailure {
+    error
+        .code
+        .and_then(|code| u16::try_from(code).ok())
+        .and_then(|code| reqwest::StatusCode::from_u16(code).ok())
+        .and_then(classify_http_status)
+        .unwrap_or(ModelProviderFailure::InvalidResponse)
 }
 
 fn classify_reqwest_error(error: reqwest::Error) -> ModelProviderFailure {
@@ -1532,8 +1698,9 @@ fn parse_gemini_batch_embedding_response(
 mod tests {
     use super::{
         GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy, GeminiEndpointScope,
-        LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy, classify_http_status,
-        map_finish_reason, translate_response_json_schema,
+        GeminiErrorObject, LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy,
+        classify_gemini_error, classify_http_status, map_finish_reason,
+        translate_response_json_schema,
     };
     use a3_application::{
         AgentActionJsonSchema, DecodeExplorerAction, DecodeModuleCardClaims, ModelFinishReason,
@@ -1636,6 +1803,87 @@ mod tests {
     }
 
     #[test]
+    fn response_schema_translation_prunes_unreachable_definitions_and_compacts_uniform_tuples()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let translated = translate_response_json_schema(&json!({
+            "type": "object",
+            "properties": {
+                "action": {"$ref": "#/$defs/inspect"}
+            },
+            "required": ["action"],
+            "$defs": {
+                "inspect": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "inspect"},
+                        "gain": {"$ref": "#/$defs/gain"}
+                    },
+                    "required": ["kind", "gain"],
+                    "additionalProperties": false
+                },
+                "gain": {"type": "integer", "minimum": 0, "maximum": 10000},
+                "unused": {"type": "string"}
+            }
+        }))?;
+        let definitions = translated["$defs"]
+            .as_object()
+            .ok_or("translated schema has no definitions")?;
+        assert_eq!(
+            definitions.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["gain", "inspect"]
+        );
+
+        let translated = translate_response_json_schema(&json!({
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "claim"},
+                        "claim_id": {"const": "first"}
+                    },
+                    "required": ["kind", "claim_id"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "claim"},
+                        "claim_id": {"const": "second"}
+                    },
+                    "required": ["kind", "claim_id"],
+                    "additionalProperties": false
+                }
+            ],
+            "$defs": {
+                "unused": {"type": "string"}
+            }
+        }))?;
+        assert!(translated.get("prefixItems").is_none());
+        assert!(translated.get("$defs").is_none());
+        assert_eq!(
+            translated["items"]["properties"]["kind"]["enum"],
+            json!(["claim"])
+        );
+        assert_eq!(
+            translated["items"]["properties"]["claim_id"]["enum"],
+            json!(["first", "second"])
+        );
+
+        let translated = translate_response_json_schema(&json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "prefixItems": [{"type": "string"}]
+        }))?;
+        assert!(translated.get("prefixItems").is_some());
+        assert!(translated.get("items").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn only_explicit_success_finish_reasons_are_accepted() {
         assert_eq!(map_finish_reason("STOP"), Ok(ModelFinishReason::Stop));
         assert_eq!(
@@ -1686,5 +1934,34 @@ mod tests {
             );
         }
         assert_eq!(classify_http_status(StatusCode::OK), None);
+    }
+
+    #[test]
+    fn streamed_error_envelopes_preserve_transient_status_without_exposing_the_message() {
+        for code in [408, 429, 500, 502, 503, 504] {
+            assert_eq!(
+                classify_gemini_error(&GeminiErrorObject {
+                    code: Some(code),
+                    _message: Some("sensitive provider detail".to_owned()),
+                }),
+                ModelProviderFailure::Unavailable
+            );
+        }
+        for code in [400, 401, 403, 404, 501] {
+            assert_eq!(
+                classify_gemini_error(&GeminiErrorObject {
+                    code: Some(code),
+                    _message: Some("sensitive provider detail".to_owned()),
+                }),
+                ModelProviderFailure::Rejected
+            );
+        }
+        assert_eq!(
+            classify_gemini_error(&GeminiErrorObject {
+                code: None,
+                _message: Some("sensitive provider detail".to_owned()),
+            }),
+            ModelProviderFailure::InvalidResponse
+        );
     }
 }

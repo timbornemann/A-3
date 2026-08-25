@@ -429,7 +429,10 @@ Credentials und Repositoryinhalt überschreiten diese Grenze nicht. Vor einer te
 Provider-Nichterreichbarkeit wiederholt der gemeinsame Explorer-/Claim-Collector genau einmal nach
 einer cancellation-fähigen Sekunde. Nur die normalisierte transiente Klasse `Unavailable` ist
 retry-fähig, Teiloutput wird nicht übernommen und die ursprüngliche Requestdeadline wird nicht
-verlängert.
+verlängert. Der Gemini-Adapter zählt dazu auch numerisch transiente Fehlerobjekte in einem bereits
+geöffneten SSE-Stream und verdichtet produktive Structured-Output-Schemas durch Entfernen
+unerreichbarer Definitionen sowie Zusammenführen gleichförmiger Tuple-Items; die positionsgenaue
+Antwortprüfung bleibt unverändert im Core.
 
 Phasen:
 

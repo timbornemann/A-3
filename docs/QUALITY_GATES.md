@@ -443,7 +443,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   sichtbare Probeergebnis zuverlässig ausgeben können. Ein produktionsnaher Deep-Map-Contract
   prüft, dass der Adapter lokale Schema-Metadaten und die vom Google-Subset nicht unterstützten,
   später erneut validierten Schlüssel entfernt, `oneOf` kollisionssicher nach `anyOf` übersetzt
-  und `$defs`/`$ref` erhält. Die Unit-Regression übersetzt zusätzlich die vollständigen Explorer-
+  und nur erreichbare `$defs`/`$ref` erhält. Eine weitere Regression verdichtet strukturell
+  identische Tuple-Items unter Beibehaltung ihrer vereinigten Enums und exakten Arraygrenzen. Der
+  SSE-Contract unterscheidet transiente Fehlerobjekte wie 503 von dauerhaften 400-Fehlern, ohne den
+  Providertext freizugeben. Die Unit-Regression übersetzt zusätzlich die vollständigen Explorer-
   und Claim-Schemas; unbekannte Schlüssel bleiben abgelehnt. Embedding-Tests verwenden nur
   entdeckbare, nicht abgekündigte Modell-IDs; Gemini-Tool-Calls bleiben ohne eigenen
   Function-Calling-Probe `Disabled`.

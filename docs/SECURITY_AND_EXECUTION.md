@@ -623,10 +623,14 @@ Safety-, Tool- und unbekannte Finish-Gründe sowie Daten nach Abschluss ab. Stru
 verwendet `responseJsonSchema`. Der begrenzte Gemini-Dialektadapter entfernt ausschließlich
 bekannte, vom Google-Subset nicht unterstützte und vom strikten Runtime-Decoder erneut geprüfte
 Hinweise (`pattern`, Stringlängen und `uniqueItems`), hält lokale Schema-Metadaten zurück und
-übersetzt diskriminierte `oneOf`-Varianten in `anyOf`; alle anderen unbekannten Schemachlüssel
-werden vor dem Netzwerkzugriff abgelehnt. Doppelte Proposal-Werte und Evidence-IDs, ungültige
-Längen, Muster, Varianten und zusätzliche Felder bleiben dadurch im Domain-/Application-Core
-fail-closed. Die synthetische Capability-Probe bleibt auf 256 Outputtokens begrenzt, damit das
+übersetzt diskriminierte `oneOf`-Varianten in `anyOf`. Vor dem Netzwerkzugriff entfernt er außerdem
+nicht erreichbare `$defs`; strukturell gleiche `prefixItems` werden zu einem `items`-Schema
+zusammengeführt, dessen Enums die erlaubten Werte vereinigen, während die exakten Arraygrenzen
+erhalten bleiben. Positionsbindung und exakte ID-/Wertzuordnung bleiben anschließend Aufgabe des
+strikten Domain-/Application-Decoders; alle anderen unbekannten Schemachlüssel werden vor dem
+Netzwerkzugriff abgelehnt. Doppelte Proposal-Werte und Evidence-IDs, ungültige Längen, Muster,
+Varianten und zusätzliche Felder bleiben dadurch fail-closed. Die synthetische Capability-Probe
+bleibt auf 256 Outputtokens begrenzt, damit das
 standardmäßig aktive interne Thinking aktueller Gemini-Modelle die sichtbare JSON-Probe nicht vor
 der Ausgabe abschneidet. Native Gemini-Tool-Calls bleiben bis zu einem eigenen Live-Probe
 deaktiviert.
@@ -634,7 +638,12 @@ deaktiviert.
 Connect und jeder gestreamte Body-Read konkurrieren mit der wakebaren Cancellation; ein einziges
 Gesamttimeout gilt bis zum vollständigen Body-Ende. Requests, JSON Schema, NDJSON-Zeilen, Puffer,
 Textfragmente und Gesamtausgabe sind fest begrenzt. HTTP-Fehlerbodies und Providerfehler werden
-weder gelesen noch in normalisierte Fehler oder Debugausgaben übernommen.
+weder gelesen noch in normalisierte Fehler oder Debugausgaben übernommen. Geminis Fehlerobjekte
+innerhalb eines bereits geöffneten SSE-Streams werden ausschließlich anhand ihres numerischen
+Status eingeordnet: 408, 429 und retry-fähige 5xx werden `Unavailable`, dauerhafte Clientfehler
+bleiben `Rejected`, fehlende oder ungültige Codes werden `InvalidResponse`. Dadurch erreicht ein
+in-stream `429` oder `503` den gemeinsamen begrenzten Retry, ohne dass der Providerfehlertext den
+Adapter verlässt.
 
 Die H5-Capability-Probe autorisiert `/api/show` und `/api/chat` jeweils erneut, teilt für beide
 Requests ein Gesamttimeout und begrenzt ihre JSON-Bodies auf 512 beziehungsweise 128 KiB. Die
