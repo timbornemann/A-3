@@ -418,6 +418,17 @@ Capability-Port bietet keine Write-, Shell-, Prozess- oder Git-Methode. Raw Mode
 KiB, normalisierter Toolpreview auf 16 KiB und Tool-Evidenz auf 100 IDs begrenzt; Debugausgaben
 enthalten weder Proposalwerte noch Preview- oder Rohoutput.
 
+Explorer und Claim-Proposer sammeln Providerstreams über dieselbe providerneutrale Grenze. Nur
+`ModelProviderFailure::Unavailable` darf nach einer cancellation-fähigen Sekunde exakt einen
+zweiten Versuch mit derselben validierten Anfrage erzeugen; eine bereits empfangene Teilantwort
+wird vorher vollständig verworfen. Beide Versuche teilen die ursprüngliche Requestdeadline.
+`Rejected`, `InvalidResponse`, `TimedOut`, `Cancelled` und `EndpointDenied` werden nie automatisch
+wiederholt. Konkrete HTTP-Adapter dürfen deshalb nur 408, 429 und retry-fähige 5xx-Zustände sowie
+echte Transportabbrüche als `Unavailable` normalisieren; andere Clientfehler bleiben fail-closed.
+Der bereits im Workspace verwendete Tokio-Timer wird direkt genutzt, weil die Standardbibliothek
+keinen nicht blockierenden, cancellation-fähigen Async-Timer bereitstellt; es wurde kein neues
+externes Paket ergänzt.
+
 Das H10-Agent-Toolset besitzt nur Search und die typisierten Inspect-Ziele File, Symbol, Graph,
 Claim und Test. Sein Workspace-Adapter kann ausschließlich content-adressierte, nach
 Symlinkauflösung innerhalb des kanonischen Worktree-Roots liegende reguläre Dateien lesen; er
@@ -609,8 +620,13 @@ Einträgen, 256 eindeutigen Ergebnissen, 512 KiB pro Seite und 2 MiB insgesamt. 
 ungültige Tokens sind Fehler. Streaming akzeptiert ausschließlich Candidate 0, unterdrückt
 `thought:true`, behandelt nur `STOP` und `MAX_TOKENS` als Terminalzustände und lehnt Block-,
 Safety-, Tool- und unbekannte Finish-Gründe sowie Daten nach Abschluss ab. Strukturierte Ausgabe
-verwendet `responseJsonSchema`; nicht unterstützte Schemachlüssel werden vor dem Netzwerkzugriff
-abgelehnt. Die synthetische Capability-Probe bleibt auf 256 Outputtokens begrenzt, damit das
+verwendet `responseJsonSchema`. Der begrenzte Gemini-Dialektadapter entfernt ausschließlich
+bekannte, vom Google-Subset nicht unterstützte und vom strikten Runtime-Decoder erneut geprüfte
+Hinweise (`pattern`, Stringlängen und `uniqueItems`), hält lokale Schema-Metadaten zurück und
+übersetzt diskriminierte `oneOf`-Varianten in `anyOf`; alle anderen unbekannten Schemachlüssel
+werden vor dem Netzwerkzugriff abgelehnt. Doppelte Proposal-Werte und Evidence-IDs, ungültige
+Längen, Muster, Varianten und zusätzliche Felder bleiben dadurch im Domain-/Application-Core
+fail-closed. Die synthetische Capability-Probe bleibt auf 256 Outputtokens begrenzt, damit das
 standardmäßig aktive interne Thinking aktueller Gemini-Modelle die sichtbare JSON-Probe nicht vor
 der Ausgabe abschneidet. Native Gemini-Tool-Calls bleiben bis zu einem eigenen Live-Probe
 deaktiviert.

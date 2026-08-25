@@ -26,6 +26,7 @@ dependencies = [
  "crossbeam-channel",
  "futures",
  "serde_json",
+ "tokio",
  "zeroize",
 ]
 

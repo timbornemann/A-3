@@ -1,16 +1,15 @@
+use crate::model_stream_collector::{ModelStreamCollectionFailure, collect_model_stream};
 use crate::{
     ExplorerModelControl, ExplorerModelFailure, ExplorerModelFuture, ExplorerModelProvider,
     ExplorerModelRequest, ExplorerModelRequestPhase, ExplorerModelTimeout,
     ExplorerObservationStatus, ExplorerRepairReason, ModelCancellationFuture, ModelFinishReason,
     ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider, ModelProviderFailure,
-    ModelProviderRequest, ModelRequestTimeout, ProviderEvent, RawExplorerModelOutput,
-    StructuredOutputSchema,
+    ModelProviderRequest, ModelRequestTimeout, RawExplorerModelOutput, StructuredOutputSchema,
 };
 use a3_domain::{
     ExploreTarget, ModelProfile, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleId,
     SnapshotId,
 };
-use futures::StreamExt;
 use serde_json::{Value, json};
 use std::fmt;
 
@@ -84,37 +83,19 @@ impl ExplorerModelProvider for ModelBackedExplorerProvider<'_> {
                 .and_then(|millis| ModelRequestTimeout::from_millis(millis).ok())
                 .ok_or(ExplorerModelFailure::TimedOut)?;
             let bridge = ExplorerOperationControl(control);
-            let mut stream = self
-                .provider
-                .stream(&request, timeout, &bridge)
-                .await
-                .map_err(map_provider_failure)?;
-            let mut output = String::new();
-            let mut completion = None;
-            while let Some(event) = stream.next().await {
-                match event.map_err(map_provider_failure)? {
-                    ProviderEvent::OutputText(chunk) if completion.is_none() => {
-                        let next = output
-                            .len()
-                            .checked_add(chunk.as_str().len())
-                            .ok_or(ExplorerModelFailure::InvalidResponse)?;
-                        if next > MAX_EXPLORER_OUTPUT_BYTES {
-                            return Err(ExplorerModelFailure::InvalidResponse);
-                        }
-                        output.push_str(chunk.as_str());
-                    }
-                    ProviderEvent::Completed(value) if completion.is_none() => {
-                        completion = Some(value);
-                    }
-                    ProviderEvent::OutputText(_) | ProviderEvent::Completed(_) => {
-                        return Err(ExplorerModelFailure::InvalidResponse);
-                    }
-                }
-            }
+            let collected = collect_model_stream(
+                self.provider,
+                &request,
+                timeout,
+                &bridge,
+                MAX_EXPLORER_OUTPUT_BYTES,
+            )
+            .await
+            .map_err(map_collection_failure)?;
+            let (output, completion) = collected.into_parts();
             if control.is_cancelled() {
                 return Err(ExplorerModelFailure::Cancelled);
             }
-            let completion = completion.ok_or(ExplorerModelFailure::InvalidResponse)?;
             if completion.reason() == ModelFinishReason::OutputLimit {
                 return Err(ExplorerModelFailure::InvalidResponse);
             }
@@ -350,6 +331,13 @@ const fn map_provider_failure(failure: ModelProviderFailure) -> ExplorerModelFai
         ModelProviderFailure::InvalidResponse => ExplorerModelFailure::InvalidResponse,
         ModelProviderFailure::TimedOut => ExplorerModelFailure::TimedOut,
         ModelProviderFailure::Cancelled => ExplorerModelFailure::Cancelled,
+    }
+}
+
+const fn map_collection_failure(failure: ModelStreamCollectionFailure) -> ExplorerModelFailure {
+    match failure {
+        ModelStreamCollectionFailure::Provider(failure) => map_provider_failure(failure),
+        ModelStreamCollectionFailure::OutputTooLarge(_) => ExplorerModelFailure::InvalidResponse,
     }
 }
 

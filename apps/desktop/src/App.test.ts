@@ -802,6 +802,39 @@ const timedOutDeepMapStatus: DeepMapStatusResponseV1 = {
   },
 };
 
+const unavailableGeminiDeepMapStatus: DeepMapStatusResponseV1 = {
+  protocolVersion: 1,
+  result: {
+    status: 'available',
+    configuration: {
+      ...(
+        idleDeepMapStatus.result as Extract<
+          DeepMapStatusResponseV1['result'],
+          { status: 'available' }
+        >
+      ).configuration,
+      model: {
+        ...(
+          idleDeepMapStatus.result as Extract<
+            DeepMapStatusResponseV1['result'],
+            { status: 'available' }
+          >
+        ).configuration.model,
+        providerId: 'gemini',
+        modelId: 'gemini-flash-latest',
+      },
+    },
+    activity: {
+      state: 'failed',
+      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      progress: null,
+      failure: 'modelUnavailable',
+      confirmedSteps: '0',
+      totalSteps: '0',
+    },
+  },
+};
+
 const removedProject: RemoveProjectResponseV1 = {
   protocolVersion: 1,
   result: { retainedPrivateStorage: true, status: 'removed' },
@@ -1630,6 +1663,24 @@ describe('A^3 desktop shell', () => {
     expect((screen.getByRole('button', { name: 'Abbrechen' }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+  });
+
+  it('uses the configured provider in Deep Map connection recovery guidance', async () => {
+    render(App, {
+      props: {
+        deepMapStatusLoader: async () => unavailableGeminiDeepMapStatus,
+        healthLoader: async () => health,
+        projectStatusLoader: async () => activeProjectStatus,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+    const alert = (await screen.findByText('Das Mapping-Modell ist nicht erreichbar')).closest(
+      '[role="alert"]',
+    );
+    expect(alert?.textContent).toContain('automatische zweite Verbindungsversuch');
+    expect(alert?.textContent).toContain('Google-Gemini-Verbindung');
+    expect(alert?.textContent).not.toContain('Ollama');
   });
 
   it('keeps unavailable app information terse in Settings and supports retry', async () => {

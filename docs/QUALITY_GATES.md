@@ -62,9 +62,13 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Rust-/TypeScript-Contracts lehnen unbekannte Felder, widersprüchliche Zustände, nicht kanonische
   Zähler und unbekannte Fehlercodes ab. Ein Executorfehler muss seine geschlossene content-freie
   Ursache bis zur UI behalten; der Component-Test zeigt dafür eine konkrete Recovery-Hilfe ohne
-  Adapterdetails. Ollama-Regressionen prüfen, dass ein kurzer Request eines großen Profils nicht
-  das gesamte konfigurierte Kontextfenster reserviert und Claim-IDs Core-eigen, wertgebunden und
-  nach der Modellantwort erneut validiert sind. Der Component-Test muss außerdem zeigen, dass weder Mount
+  Adapterdetails und nennt ausschließlich den tatsächlich konfigurierten Provider. Der gemeinsame
+  Explorer-/Claim-Collector verwirft eine abgebrochene Teilantwort, wartet cancellation-fähig eine
+  Sekunde und wiederholt exakt einmal ausschließlich `Unavailable`; Deadlineerschöpfung,
+  Cancellation und alle nicht transienten Fehler öffnen keinen weiteren Versuch. Ollama-
+  Regressionen prüfen, dass ein kurzer Request eines großen Profils nicht das gesamte
+  konfigurierte Kontextfenster reserviert und Claim-IDs Core-eigen, wertgebunden und nach der
+  Modellantwort erneut validiert sind. Der Component-Test muss außerdem zeigen, dass weder Mount
   noch Polling Modellarbeit startet und der Start exakt das zuvor sichtbare Budget übergibt.
 - Der pfadlose U3-Module-Card-Freshness-Contract zählt ausschließlich die jeweils neueste Card pro
   Modul gegen den aktuellen veröffentlichten Run. Storage-Regressionsprüfungen verlangen direkte
@@ -417,6 +421,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Parser-Negativtests lehnen Modell-/Rollenabweichung, Tool Calls, zu große oder ungültige NDJSON-
   Daten, fehlenden Abschluss und Daten nach `done` ab. Prompt, Output, Endpoint und Provider-
   Fehlerbody dürfen nicht in Debug- oder normalisierte Fehlertexte gelangen.
+- Gemini und Ollama normalisieren nur HTTP 408, 429 sowie retry-fähige 5xx-Status als
+  `Unavailable`; 4xx, Redirects und 501 bleiben `Rejected`. Unit-Contracts halten diese
+  Klassifikation fest, damit der providerneutrale Deep-Map-Retry keine dauerhaft ungültige Anfrage
+  wiederholt.
 - ModelProfile-Tests prüfen alle V1-Limits, deterministische ID-Ableitung, konservative UTF-8-
   Bytezählung, kanonische redigierte Stopbedingungen und Overrides, die Capability-Evidenz nicht
   verändern können. Jeder neue Run behält Profil-ID und Schemaversion nach Reopen.
@@ -432,14 +440,19 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Methodfilter, `responseJsonSchema`, SSE-Fragmentierung, Candidate-0-/Thought-Filter sowie strikte
   Finish- und Blockgründe. Die echte Structured-Output-Probe bleibt synthetisch und begrenzt,
   reserviert aber 256 Outputtokens, damit standardmäßig denkende Gemini-2.5-/3.x-Modelle das
-  sichtbare Probeergebnis zuverlässig ausgeben können. Embedding-Tests verwenden nur entdeckbare,
-  nicht abgekündigte Modell-IDs; Gemini-Tool-Calls bleiben ohne eigenen Function-Calling-Probe
-  `Disabled`.
+  sichtbare Probeergebnis zuverlässig ausgeben können. Ein produktionsnaher Deep-Map-Contract
+  prüft, dass der Adapter lokale Schema-Metadaten und die vom Google-Subset nicht unterstützten,
+  später erneut validierten Schlüssel entfernt, `oneOf` kollisionssicher nach `anyOf` übersetzt
+  und `$defs`/`$ref` erhält. Die Unit-Regression übersetzt zusätzlich die vollständigen Explorer-
+  und Claim-Schemas; unbekannte Schlüssel bleiben abgelehnt. Embedding-Tests verwenden nur
+  entdeckbare, nicht abgekündigte Modell-IDs; Gemini-Tool-Calls bleiben ohne eigenen
+  Function-Calling-Probe `Disabled`.
 - Der ignorierte Test `stored_user_key_lists_streams_structures_and_embeds_against_google` ist der
   einzige Live-Smoke: Er lädt den bereits von A^3 gespeicherten Benutzer-Key aus dem OS-Keyring und
-  prüft nach separater Netzwerkfreigabe Modellliste, `gemini-3.7-flash` und den vorhandenen
-  `gemini-pro-latest`-Alias über Capability-Probe, SSE und produktives Schema sowie Embedding
-  ausschließlich am kanonischen Google-Origin. CI und normale Testläufe führen ihn nie aus.
+  prüft nach separater Netzwerkfreigabe `gemini-flash-latest`, `gemini-3.7-flash` und den
+  vorhandenen `gemini-pro-latest`-Alias über Capability-Probe, SSE, ein kleines Schema und die
+  produktionsnahe erste Deep-Map-Anfrage sowie Embedding ausschließlich am kanonischen
+  Google-Origin. CI und normale Testläufe führen ihn nie aus.
 
 ### AgentAction und Prompt
 

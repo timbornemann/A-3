@@ -575,11 +575,8 @@ struct OllamaProbeChatResponse {
 
 fn validate_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
     let status = response.status();
-    if status.is_client_error() || status.is_redirection() {
-        return Err(ModelProviderFailure::Rejected);
-    }
-    if !status.is_success() {
-        return Err(ModelProviderFailure::Unavailable);
+    if let Some(failure) = classify_http_status(status) {
+        return Err(failure);
     }
     let content_type = response
         .headers()
@@ -595,11 +592,8 @@ fn validate_response_head(response: &reqwest::Response) -> Result<(), ModelProvi
 
 fn validate_json_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
     let status = response.status();
-    if status.is_client_error() || status.is_redirection() {
-        return Err(ModelProviderFailure::Rejected);
-    }
-    if !status.is_success() {
-        return Err(ModelProviderFailure::Unavailable);
+    if let Some(failure) = classify_http_status(status) {
+        return Err(failure);
     }
     let content_type = response
         .headers()
@@ -612,6 +606,20 @@ fn validate_json_response_head(response: &reqwest::Response) -> Result<(), Model
         return Err(ModelProviderFailure::InvalidResponse);
     }
     Ok(())
+}
+
+fn classify_http_status(status: reqwest::StatusCode) -> Option<ModelProviderFailure> {
+    if status.is_success() {
+        return None;
+    }
+    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status.is_server_error() && status != reqwest::StatusCode::NOT_IMPLEMENTED)
+    {
+        Some(ModelProviderFailure::Unavailable)
+    } else {
+        Some(ModelProviderFailure::Rejected)
+    }
 }
 
 fn classify_reqwest_error(error: reqwest::Error) -> ModelProviderFailure {
@@ -1044,7 +1052,7 @@ impl Error for OllamaProviderCreateError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, finish_body, finish_reason,
+        MAX_OLLAMA_LINE_BYTES, OllamaStreamState, classify_http_status, finish_body, finish_reason,
         operational_context_tokens, parse_model_catalog, parse_ollama_line, parse_show_observation,
         take_complete_line, valid_structured_probe_response,
     };
@@ -1107,6 +1115,38 @@ mod tests {
 
         assert_eq!(operational_context_tokens(&request), 16_384);
         Ok(())
+    }
+
+    #[test]
+    fn only_transient_http_statuses_are_retryable() {
+        use reqwest::StatusCode;
+
+        for status in [
+            StatusCode::REQUEST_TIMEOUT,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert_eq!(
+                classify_http_status(status),
+                Some(a3_application::ModelProviderFailure::Unavailable)
+            );
+        }
+        for status in [
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_IMPLEMENTED,
+        ] {
+            assert_eq!(
+                classify_http_status(status),
+                Some(a3_application::ModelProviderFailure::Rejected)
+            );
+        }
+        assert_eq!(classify_http_status(StatusCode::OK), None);
     }
 
     #[test]

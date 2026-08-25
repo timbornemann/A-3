@@ -424,7 +424,12 @@ Ein terminal fehlgeschlagener Lauf behält eine geschlossene, inhaltsfreie Ursac
 Model. Die Desktopprojektion unterscheidet insbesondere fehlenden Published Index, geänderten
 Snapshot, Provider-Nichterreichbarkeit, Requestablehnung, Modelltimeout, ungültige strukturierte
 Antwort, Read-, Verify-, Publish- und Checkpointfehler. Die UI leitet daraus feste Recovery-Schritte
-ab; Providerpayloads, Endpoints, Credentials und Repositoryinhalt überschreiten diese Grenze nicht.
+ab und benennt dafür den tatsächlich konfigurierten Provider; Providerpayloads, Endpoints,
+Credentials und Repositoryinhalt überschreiten diese Grenze nicht. Vor einer terminalen
+Provider-Nichterreichbarkeit wiederholt der gemeinsame Explorer-/Claim-Collector genau einmal nach
+einer cancellation-fähigen Sekunde. Nur die normalisierte transiente Klasse `Unavailable` ist
+retry-fähig, Teiloutput wird nicht übernommen und die ursprüngliche Requestdeadline wird nicht
+verlängert.
 
 Phasen:
 

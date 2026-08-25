@@ -39,6 +39,7 @@ mod lexical_search;
 mod model_capability;
 mod model_catalog;
 mod model_provider;
+mod model_stream_collector;
 mod module_card_claim_codec;
 mod module_card_claim_proposer;
 mod module_card_detail;

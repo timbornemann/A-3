@@ -1,13 +1,13 @@
+use crate::model_stream_collector::{ModelStreamCollectionFailure, collect_model_stream};
 use crate::{
     DecodeModuleCardClaims, JobContext, ModelFinishReason, ModelMessage, ModelMessageRole,
     ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderRequest,
-    ModelRequestTimeout, ModuleCardClaimDecodeError, ProviderEvent, StructuredOutputSchema,
+    ModelRequestTimeout, ModuleCardClaimDecodeError, StructuredOutputSchema,
 };
 use a3_domain::{
     ModelProfile, ModuleCardClaimId, ModuleCardField, ModuleCardProposal,
     ModuleCardVerificationCandidate,
 };
-use futures::StreamExt;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::fmt;
@@ -89,44 +89,19 @@ impl<'a> ProposeModuleCardClaims<'a> {
         .map_err(|_| ProposeModuleCardClaimsFailure::InvalidRequest)?;
         let timeout = ModelRequestTimeout::from_millis(CLAIM_REQUEST_TIMEOUT_MILLIS)
             .map_err(|_| ProposeModuleCardClaimsFailure::InvalidRequest)?;
-        let mut stream = self
-            .provider
-            .stream(&request, timeout, control)
-            .await
-            .map_err(map_provider_failure)?;
-        let mut output = String::new();
-        let mut completion = None;
-        while let Some(event) = stream.next().await {
-            match event.map_err(map_provider_failure)? {
-                ProviderEvent::OutputText(chunk) if completion.is_none() => {
-                    let next = output.len().checked_add(chunk.as_str().len()).ok_or(
-                        ProposeModuleCardClaimsFailure::InvalidOutput(
-                            ModuleCardClaimDecodeError::OutputTooLarge(usize::MAX),
-                        ),
-                    )?;
-                    if next > MAX_CLAIM_OUTPUT_BYTES {
-                        return Err(ProposeModuleCardClaimsFailure::InvalidOutput(
-                            ModuleCardClaimDecodeError::OutputTooLarge(next),
-                        ));
-                    }
-                    output.push_str(chunk.as_str());
-                }
-                ProviderEvent::Completed(value) if completion.is_none() => {
-                    completion = Some(value);
-                }
-                ProviderEvent::OutputText(_) | ProviderEvent::Completed(_) => {
-                    return Err(ProposeModuleCardClaimsFailure::Model(
-                        ModelProviderFailure::InvalidResponse,
-                    ));
-                }
-            }
-        }
+        let collected = collect_model_stream(
+            self.provider,
+            &request,
+            timeout,
+            control,
+            MAX_CLAIM_OUTPUT_BYTES,
+        )
+        .await
+        .map_err(map_collection_failure)?;
+        let (output, completion) = collected.into_parts();
         if control.is_cancelled() {
             return Err(ProposeModuleCardClaimsFailure::Cancelled);
         }
-        let completion = completion.ok_or(ProposeModuleCardClaimsFailure::Model(
-            ModelProviderFailure::InvalidResponse,
-        ))?;
         if completion.reason() == ModelFinishReason::OutputLimit {
             return Err(ProposeModuleCardClaimsFailure::InvalidOutput(
                 ModuleCardClaimDecodeError::OutputTooLarge(output.len()),
@@ -367,6 +342,19 @@ const fn map_provider_failure(failure: ModelProviderFailure) -> ProposeModuleCar
     match failure {
         ModelProviderFailure::Cancelled => ProposeModuleCardClaimsFailure::Cancelled,
         failure => ProposeModuleCardClaimsFailure::Model(failure),
+    }
+}
+
+const fn map_collection_failure(
+    failure: ModelStreamCollectionFailure,
+) -> ProposeModuleCardClaimsFailure {
+    match failure {
+        ModelStreamCollectionFailure::Provider(failure) => map_provider_failure(failure),
+        ModelStreamCollectionFailure::OutputTooLarge(actual) => {
+            ProposeModuleCardClaimsFailure::InvalidOutput(
+                ModuleCardClaimDecodeError::OutputTooLarge(actual),
+            )
+        }
     }
 }
 

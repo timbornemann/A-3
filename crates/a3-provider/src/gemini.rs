@@ -867,15 +867,16 @@ fn translate_schema_node(
     let mut translated = serde_json::Map::new();
     for (key, value) in object {
         match key.as_str() {
-            "$schema" | "pattern" | "minLength" | "maxLength" => {}
+            "$schema" | "$id" | "$anchor" | "pattern" | "minLength" | "maxLength"
+            | "uniqueItems" => {}
             "const" => {
                 if object.contains_key("enum") {
                     return Err(ModelProviderFailure::Rejected);
                 }
                 translated.insert("enum".to_owned(), Value::Array(vec![value.clone()]));
             }
-            "$id" | "$ref" | "$anchor" | "type" | "format" | "title" | "description" | "enum"
-            | "minItems" | "maxItems" | "minimum" | "maximum" | "required" | "propertyOrdering" => {
+            "$ref" | "type" | "format" | "title" | "description" | "enum" | "minItems"
+            | "maxItems" | "minimum" | "maximum" | "required" | "propertyOrdering" => {
                 translated.insert(key.clone(), value.clone());
             }
             "items" | "additionalProperties" => {
@@ -892,7 +893,11 @@ fn translate_schema_node(
                     .iter()
                     .map(|item| translate_schema_node(item, depth + 1, nodes))
                     .collect::<Result<Vec<_>, _>>()?;
-                translated.insert(key.clone(), Value::Array(translated_items));
+                let translated_key = if key == "oneOf" { "anyOf" } else { key };
+                if translated.contains_key(translated_key) {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(translated_key.to_owned(), Value::Array(translated_items));
             }
             "properties" | "$defs" => {
                 let entries = value.as_object().ok_or(ModelProviderFailure::Rejected)?;
@@ -1249,13 +1254,8 @@ fn validated_response_part_text(
 }
 
 fn validate_json_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::FORBIDDEN
-            || response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            return Err(ModelProviderFailure::Rejected);
-        }
-        return Err(ModelProviderFailure::Unavailable);
+    if let Some(failure) = classify_http_status(response.status()) {
+        return Err(failure);
     }
     let content_type = response
         .headers()
@@ -1270,13 +1270,8 @@ fn validate_json_response_head(response: &reqwest::Response) -> Result<(), Model
 }
 
 fn validate_stream_response_head(response: &reqwest::Response) -> Result<(), ModelProviderFailure> {
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::FORBIDDEN
-            || response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            return Err(ModelProviderFailure::Rejected);
-        }
-        return Err(ModelProviderFailure::Unavailable);
+    if let Some(failure) = classify_http_status(response.status()) {
+        return Err(failure);
     }
     let content_type = response
         .headers()
@@ -1292,6 +1287,20 @@ fn validate_stream_response_head(response: &reqwest::Response) -> Result<(), Mod
         return Err(ModelProviderFailure::InvalidResponse);
     }
     Ok(())
+}
+
+fn classify_http_status(status: reqwest::StatusCode) -> Option<ModelProviderFailure> {
+    if status.is_success() {
+        return None;
+    }
+    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status.is_server_error() && status != reqwest::StatusCode::NOT_IMPLEMENTED)
+    {
+        Some(ModelProviderFailure::Unavailable)
+    } else {
+        Some(ModelProviderFailure::Rejected)
+    }
 }
 
 fn classify_reqwest_error(error: reqwest::Error) -> ModelProviderFailure {
@@ -1523,10 +1532,13 @@ fn parse_gemini_batch_embedding_response(
 mod tests {
     use super::{
         GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy, GeminiEndpointScope,
-        LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy, map_finish_reason,
-        translate_response_json_schema,
+        LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy, classify_http_status,
+        map_finish_reason, translate_response_json_schema,
     };
-    use a3_application::{AgentActionJsonSchema, ModelFinishReason, ModelProviderFailure};
+    use a3_application::{
+        AgentActionJsonSchema, DecodeExplorerAction, DecodeModuleCardClaims, ModelFinishReason,
+        ModelProviderFailure,
+    };
     use serde_json::json;
 
     #[test]
@@ -1577,6 +1589,33 @@ mod tests {
         assert_eq!(translated["properties"]["kind"]["enum"], json!(["result"]));
         assert!(translated.get("$schema").is_none());
         assert!(translated["properties"]["kind"].get("pattern").is_none());
+        let translated = translate_response_json_schema(&json!({
+            "$id": "https://a3.local/schema.json",
+            "$anchor": "result",
+            "oneOf": [
+                {"type": "string", "const": "a"},
+                {"type": "string", "const": "b"}
+            ],
+            "uniqueItems": true
+        }))?;
+        assert!(translated.get("$id").is_none());
+        assert!(translated.get("$anchor").is_none());
+        assert!(translated.get("oneOf").is_none());
+        assert!(translated.get("uniqueItems").is_none());
+        assert_eq!(
+            translated["anyOf"],
+            json!([
+                {"type": "string", "enum": ["a"]},
+                {"type": "string", "enum": ["b"]}
+            ])
+        );
+        assert_eq!(
+            translate_response_json_schema(&json!({
+                "anyOf": [{"type": "string"}],
+                "oneOf": [{"type": "number"}]
+            })),
+            Err(ModelProviderFailure::Rejected)
+        );
         assert_eq!(
             translate_response_json_schema(&json!({"type": "string", "default": "secret"})),
             Err(ModelProviderFailure::Rejected)
@@ -1586,6 +1625,12 @@ mod tests {
             AgentActionJsonSchema::version_two(),
         ] {
             translate_response_json_schema(&schema.as_json()?)?;
+        }
+        for schema in [
+            DecodeExplorerAction::version_one().json_schema().as_str(),
+            DecodeModuleCardClaims::version_one().json_schema().as_str(),
+        ] {
+            translate_response_json_schema(&serde_json::from_str(schema)?)?;
         }
         Ok(())
     }
@@ -1609,5 +1654,37 @@ mod tests {
                 Err(ModelProviderFailure::Rejected)
             );
         }
+    }
+
+    #[test]
+    fn only_transient_http_statuses_are_retryable() {
+        use reqwest::StatusCode;
+
+        for status in [
+            StatusCode::REQUEST_TIMEOUT,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert_eq!(
+                classify_http_status(status),
+                Some(ModelProviderFailure::Unavailable)
+            );
+        }
+        for status in [
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_IMPLEMENTED,
+        ] {
+            assert_eq!(
+                classify_http_status(status),
+                Some(ModelProviderFailure::Rejected)
+            );
+        }
+        assert_eq!(classify_http_status(StatusCode::OK), None);
     }
 }

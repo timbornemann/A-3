@@ -2290,7 +2290,26 @@
     return labels[state];
   }
 
-  function deepMapFailureGuidance(failure: DeepMapFailureV1): {
+  function deepMapProviderLabel(providerId: string): string {
+    if (providerId === 'gemini') return 'Google Gemini';
+    if (providerId === 'ollama') return 'Ollama';
+    return `Provider „${providerId}“`;
+  }
+
+  function deepMapProviderRecovery(providerId: string): string {
+    if (providerId === 'gemini') {
+      return 'Prüfe die Internetverbindung und die Google-Gemini-Verbindung. Bleibt der Fehler bestehen, verifiziere das Mapping-Modell in den Einstellungen erneut.';
+    }
+    if (providerId === 'ollama') {
+      return 'Prüfe, ob Ollama läuft und erreichbar ist. Bleibt der Fehler bestehen, verifiziere das Mapping-Modell in den Einstellungen erneut.';
+    }
+    return `Prüfe, ob ${deepMapProviderLabel(providerId)} erreichbar ist. Bleibt der Fehler bestehen, verifiziere das Mapping-Modell in den Einstellungen erneut.`;
+  }
+
+  function deepMapFailureGuidance(
+    failure: DeepMapFailureV1,
+    providerId: string,
+  ): {
     title: string;
     detail: string;
     action: string;
@@ -2317,9 +2336,8 @@
       modelUnavailable: {
         title: 'Das Mapping-Modell ist nicht erreichbar',
         detail:
-          'Die konfigurierte Provider-Verbindung wurde unterbrochen oder unvollständig beendet.',
-        action:
-          'Prüfe, ob Ollama läuft, und verifiziere das Mapping-Modell in den Einstellungen erneut.',
+          'Auch der automatische zweite Verbindungsversuch wurde unterbrochen oder unvollständig beendet.',
+        action: deepMapProviderRecovery(providerId),
       },
       modelRejected: {
         title: 'Das Modell hat die Mapping-Anfrage abgelehnt',
@@ -4823,9 +4841,8 @@
                       <div class="deep-map-unavailable" role="status">
                         <strong>Keine Modellarbeit aktiv</strong>
                         <p>
-                          Es ist noch kein live verifiziertes lokales Mapping-Modell konfiguriert.
-                          Fast Index und veröffentlichte Daten bleiben ohne Modell vollständig
-                          nutzbar.
+                          Es ist noch kein live verifiziertes Mapping-Modell konfiguriert. Fast
+                          Index und veröffentlichte Daten bleiben ohne Modell vollständig nutzbar.
                         </p>
                         <button type="button" disabled>Deep Map bewusst starten</button>
                       </div>
@@ -4836,6 +4853,7 @@
                       {#if deepMapView.result.activity.failure !== null}
                         {@const guidance = deepMapFailureGuidance(
                           deepMapView.result.activity.failure,
+                          deepMapView.result.configuration.model.providerId,
                         )}
                         <div class="deep-map-failure" role="alert">
                           <strong>{guidance.title}</strong>

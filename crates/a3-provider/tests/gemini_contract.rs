@@ -1,8 +1,8 @@
 //! Offline HTTP contract for the Google Gemini streaming adapter.
 
 use a3_application::{
-    DiscoverProviderModels, EmbeddingCapabilityProbeRequest, EmbeddingOperationControl,
-    EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,
+    DecodeExplorerAction, DiscoverProviderModels, EmbeddingCapabilityProbeRequest,
+    EmbeddingOperationControl, EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,
     ModelCapabilityProbeRequest, ModelFinishReason, ModelMessage, ModelMessageRole,
     ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderRequest,
     ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
@@ -280,6 +280,62 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
     assert_eq!(completed.reason(), ModelFinishReason::Stop);
     assert_eq!(completed.usage().prompt_tokens(), Some(12));
     assert_eq!(completed.usage().output_tokens(), Some(4));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deep_map_schema_is_translated_to_geminis_supported_wire_dialect() -> Result<(), TestError>
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        write_event_stream_head(&mut stream).await?;
+        write_http_chunk(
+            &mut stream,
+            b"data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"{\\\"schema_version\\\":1,\\\"action\\\":{\\\"kind\\\":\\\"inspect\\\",\\\"expected_gain_basis_points\\\":100,\\\"gain_rationale\\\":\\\"Inspect the planned target.\\\"}}\"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"finishReason\":\"STOP\"}]}\n\n",
+        )
+        .await?;
+        finish_http_chunks(&mut stream).await?;
+        Ok::<StubHttpRequest, TestError>(request)
+    });
+
+    let provider = test_provider(endpoint)?;
+    let request = structured_request_with_schema(
+        "gemini-flash-latest",
+        serde_json::from_str(DecodeExplorerAction::version_one().json_schema().as_str())?,
+    )?;
+    let control = TestControl::default();
+    let mut events = provider
+        .stream(
+            &request,
+            ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?,
+            &control,
+        )
+        .await
+        .map_err(map_app_error)?;
+    while let Some(event) = events.next().await {
+        event.map_err(map_app_error)?;
+    }
+
+    let wire_request = server.await??;
+    let payload: Value = serde_json::from_slice(&wire_request.body)?;
+    let schema = &payload["generationConfig"]["responseJsonSchema"];
+    for unsupported in [
+        "$schema",
+        "$id",
+        "$anchor",
+        "oneOf",
+        "pattern",
+        "minLength",
+        "maxLength",
+        "uniqueItems",
+    ] {
+        assert!(!contains_key_recursive(schema, unsupported));
+    }
+    assert!(contains_key_recursive(schema, "anyOf"));
+    assert!(contains_key_recursive(schema, "$defs"));
     Ok(())
 }
 
@@ -804,6 +860,48 @@ fn sample_request(model_id: &str, structured: bool) -> Result<ModelProviderReque
             .map_err(map_app_error)?,
     ];
     ModelProviderRequest::new(profile, messages, schema).map_err(map_app_error)
+}
+
+fn structured_request_with_schema(
+    model_id: &str,
+    schema: Value,
+) -> Result<ModelProviderRequest, TestError> {
+    let profile = ModelProfile::from_probe(
+        ModelProviderId::try_from_string("gemini".to_owned()).map_err(map_app_error)?,
+        ModelId::try_from_string(model_id.to_owned()).map_err(map_app_error)?,
+        sample_settings()?,
+        ModelCapabilities::new(
+            ModelStructuredOutputCapability::Verified,
+            ModelToolCallMode::Disabled,
+        ),
+    );
+    ModelProviderRequest::new(
+        profile,
+        vec![
+            ModelMessage::try_from_string(
+                ModelMessageRole::User,
+                "Return an inspect action.".to_owned(),
+            )
+            .map_err(map_app_error)?,
+        ],
+        Some(StructuredOutputSchema::new(schema).map_err(map_app_error)?),
+    )
+    .map_err(map_app_error)
+}
+
+fn contains_key_recursive(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.contains_key(expected)
+                || object
+                    .values()
+                    .any(|child| contains_key_recursive(child, expected))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|child| contains_key_recursive(child, expected)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
 }
 
 fn map_app_error<E: std::fmt::Debug>(err: E) -> TestError {

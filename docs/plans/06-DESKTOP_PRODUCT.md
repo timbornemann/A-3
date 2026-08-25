@@ -740,6 +740,29 @@ verifiziert. Der weiterhin ignorierte, ausdrücklich netzwerkgebundene Live-Smok
 beide Capability-Probe, Streaming und ein produktives Schema aus, ohne Key oder Providerantwort zu
 persistieren oder auszugeben.
 
+Deep-Map-Gemini-Korrektur vom 2026-08-25: Der produktive Explorer-Request enthält strengere
+JSON-Schema-Eigenschaften als die kleine Capability-Probe. Insbesondere `uniqueItems` wurde vom
+A^3-Gemini-Adapter noch vor dem Netzwerkzugriff als unbekannt abgelehnt; deshalb konnte ein korrekt
+verifiziertes `gemini-flash-latest` beim bewussten Deep-Map-Start sofort als `modelRejected`
+scheitern. Der begrenzte Dialektadapter entfernt nun ausschließlich lokal erneut geprüfte,
+Google-seitig nicht unterstützte Hinweise und Schema-Metadaten und übersetzt die diskriminierten
+`oneOf`-Varianten nach `anyOf`. Der strikte Explorer-/Claim-Decoder und die Domain-Invarianten
+bleiben nach jeder Antwort autoritativ. Offline-Contracts decken beide vollständigen
+Produktionsschemas und den exakten Wire-Dialekt ab; der opt-in Live-Smoke sendet zusätzlich die
+erste produktionsnahe Deep-Map-Anfrage mit synthetischen Inhalten über `gemini-flash-latest`.
+
+Deep-Map-Verfügbarkeitskorrektur vom 2026-08-25: Explorer und Claim-Proposer verwenden nun einen
+gemeinsamen providerneutralen Stream-Collector. Ein echter Connect-/Body-Abbruch oder ein vom
+Adapter korrekt als transient normalisierter HTTP-Status wartet cancellation-fähig eine Sekunde
+und wiederholt dieselbe sichere Structured-Output-Anfrage exakt einmal; Teiloutput wird verworfen
+und beide Versuche bleiben innerhalb der ursprünglichen Requestdeadline. Ablehnung, ungültige
+Antwort, Timeout, Cancellation und Endpoint-Deny werden nicht wiederholt. Gemini und Ollama
+klassifizieren dafür 408, 429 und retry-fähige 5xx getrennt von dauerhaften 4xx-/501-Fehlern. Die
+Fehlerkarte nennt bei erschöpftem Retry Google Gemini, Ollama oder eine spätere Provider-ID aus der
+validierten Core-Projektion und enthält keine fest verdrahtete Ollama-Hilfe mehr. Der bereits im
+Workspace vorhandene Tokio-Timer genügt für den nicht blockierenden Backoff; es kam kein neues
+externes Paket hinzu.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

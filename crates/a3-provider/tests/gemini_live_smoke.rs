@@ -1,8 +1,8 @@
 //! Explicit opt-in live contract for a user credential already stored by A^3.
 
 use a3_application::{
-    DiscoverProviderModels, EmbeddingCapabilityProbeRequest, EmbeddingOperationControl,
-    EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,
+    DecodeExplorerAction, DiscoverProviderModels, EmbeddingCapabilityProbeRequest,
+    EmbeddingOperationControl, EmbeddingProvider, EmbeddingRequestTimeout, ModelCancellationFuture,
     ModelCapabilityProbeRequest, ModelFinishReason, ModelMessage, ModelMessageRole,
     ModelOperationControl, ModelProvider, ModelProviderRequest, ModelRequestTimeout,
     ProbeEmbeddingModelProfile, ProbeModelProfile, ProviderCredentialStore, ProviderEvent,
@@ -10,10 +10,11 @@ use a3_application::{
 };
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
-    EmbeddingBatchSize, EmbeddingModelId, ModelContextLimit, ModelId, ModelOutputLimit,
-    ModelParallelismLimit, ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding,
-    ModelProviderId, ModelSamplingProfile, ModelStopSequences, ModelTemperature,
-    ModelTokenCountingStrategy, ModelTopP, NormalizedSemanticCard, SemanticCardId, SnapshotId,
+    EmbeddingBatchSize, EmbeddingModelId, ExplorerAction, ModelContextLimit, ModelId,
+    ModelOutputLimit, ModelParallelismLimit, ModelProfile, ModelProfileSettings,
+    ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
+    ModelTemperature, ModelTokenCountingStrategy, ModelTopP, NormalizedSemanticCard,
+    SemanticCardId, SnapshotId,
 };
 use a3_provider::{GeminiEndpoint, GeminiModelProvider, StandardGeminiEndpointPolicy};
 use futures::StreamExt;
@@ -63,9 +64,12 @@ async fn stored_user_key_lists_streams_structures_and_embeds_against_google()
         .execute(timeout, &control)
         .await?;
     let generation_models = select_current_generation_models(catalog.model_ids());
-    if generation_models.is_empty() {
+    if !generation_models
+        .iter()
+        .any(|model| model.as_str() == "gemini-flash-latest")
+    {
         return Err(std::io::Error::other(
-            "Gemini advertised neither gemini-3.7-flash nor gemini-pro-latest",
+            "Gemini did not advertise the required gemini-flash-latest alias",
         )
         .into());
     }
@@ -98,12 +102,33 @@ async fn stored_user_key_lists_streams_structures_and_embeds_against_google()
             return Err(std::io::Error::other("Gemini returned empty streamed text").into());
         }
 
-        let structured =
-            collect_stream(&provider, structured_request(profile)?, timeout, &control).await?;
+        let structured = collect_stream(
+            &provider,
+            structured_request(profile.clone())?,
+            timeout,
+            &control,
+        )
+        .await?;
         let value: serde_json::Value = serde_json::from_str(structured.trim())?;
         if value != json!({"result": "ok"}) {
             return Err(
                 std::io::Error::other("Gemini returned unexpected structured output").into(),
+            );
+        }
+
+        let deep_map = collect_stream(
+            &provider,
+            deep_map_inspect_request(profile)?,
+            timeout,
+            &control,
+        )
+        .await?;
+        if !matches!(
+            DecodeExplorerAction::version_one().decode(deep_map.trim())?,
+            ExplorerAction::Inspect(_)
+        ) {
+            return Err(
+                std::io::Error::other("Gemini returned a non-inspect Deep Map action").into(),
             );
         }
     }
@@ -139,11 +164,15 @@ async fn stored_user_key_lists_streams_structures_and_embeds_against_google()
 }
 
 fn select_current_generation_models(models: &[ModelId]) -> Vec<ModelId> {
-    ["gemini-3.7-flash", "gemini-pro-latest"]
-        .into_iter()
-        .filter_map(|target| models.iter().find(|model| model.as_str() == target))
-        .cloned()
-        .collect()
+    [
+        "gemini-flash-latest",
+        "gemini-3.7-flash",
+        "gemini-pro-latest",
+    ]
+    .into_iter()
+    .filter_map(|target| models.iter().find(|model| model.as_str() == target))
+    .cloned()
+    .collect()
 }
 
 fn select_embedding_model(models: &[ModelId]) -> Option<ModelId> {
@@ -184,6 +213,31 @@ fn structured_request(profile: ModelProfile) -> Result<ModelProviderRequest, Liv
             "required": ["result"],
             "additionalProperties": false
         }))?),
+    )?)
+}
+
+fn deep_map_inspect_request(profile: ModelProfile) -> Result<ModelProviderRequest, LiveTestError> {
+    let decoder = DecodeExplorerAction::version_one();
+    let mut schema = serde_json::from_str::<serde_json::Value>(decoder.json_schema().as_str())?;
+    *schema
+        .pointer_mut("/properties/action")
+        .ok_or_else(|| std::io::Error::other("Deep Map schema has no action property"))? =
+        json!({"$ref": "#/$defs/inspect"});
+    Ok(ModelProviderRequest::new(
+        profile,
+        vec![
+            ModelMessage::try_from_string(
+                ModelMessageRole::System,
+                "Return exactly one JSON object matching the supplied schema and no prose."
+                    .to_owned(),
+            )?,
+            ModelMessage::try_from_string(
+                ModelMessageRole::User,
+                "Return schema_version 1 and an inspect action with expected_gain_basis_points 100 and a short non-empty gain_rationale."
+                    .to_owned(),
+            )?,
+        ],
+        Some(StructuredOutputSchema::new(schema)?),
     )?)
 }
 
