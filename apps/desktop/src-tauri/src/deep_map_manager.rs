@@ -1,11 +1,13 @@
 use crate::job_ids::DesktopJobIds;
 use a3_application::{
-    DeepMapExecutionFailure, DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor,
-    DeepMapModelDescriptor, DeepMapResumeState, JobCancellationError, JobCompletion,
-    JobEventStream, JobSchedulerSubmitError, JobSubmitter,
+    DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapExecutionFailure,
+    DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor, DeepMapModelDescriptor,
+    DeepMapPhase, DeepMapResumeState, DeepMapSafeAction, DeepMapTargetKind, JobCancellationError,
+    JobCompletion, JobEventStream, JobSchedulerSubmitError, JobSubmitter,
 };
-use a3_domain::{ExploreBudget, JobId, JobOwner, JobStatus, Progress, ProjectIdentity};
+use a3_domain::{ExploreBudget, JobId, JobOwner, JobStatus, ModuleId, Progress, ProjectIdentity};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -15,6 +17,7 @@ use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
 const DEEP_MAP_JOB_OWNER: JobOwner = JobOwner::new(2);
+const MAX_ACTIVITY_EVENTS: usize = 32;
 
 /// Core-owned product lifecycle layered over terminal scheduler cancellation and R8 checkpoints.
 pub(crate) struct DeepMapManager {
@@ -98,7 +101,7 @@ impl DeepMapManager {
     }
 
     pub(crate) fn activity(&self) -> DeepMapActivity {
-        *lock_recovering_poison(&self.activity)
+        lock_recovering_poison(&self.activity).clone()
     }
 
     pub(crate) fn model(&self) -> Option<DeepMapModelDescriptor> {
@@ -240,7 +243,7 @@ fn handle_command(
     submitter: &JobSubmitter,
     job_ids: &DesktopJobIds,
     state: &mut CoordinatorState,
-    activity: &Mutex<DeepMapActivity>,
+    activity: &Arc<Mutex<DeepMapActivity>>,
     model: &Mutex<Option<DeepMapModelDescriptor>>,
 ) {
     match command {
@@ -360,7 +363,7 @@ fn submit_attempt(
     job_ids: &DesktopJobIds,
     state: &mut CoordinatorState,
     request: DeepMapExecutionRequest,
-    activity: &Mutex<DeepMapActivity>,
+    activity: &Arc<Mutex<DeepMapActivity>>,
 ) -> Result<(), DeepMapManagerControlError> {
     if state.active.is_some() || state.resume.is_some() {
         return Err(DeepMapManagerControlError::AlreadyPending);
@@ -374,15 +377,20 @@ fn submit_attempt(
         .clone()
         .ok_or(DeepMapManagerControlError::Unavailable)?;
     let budget = request.budget();
+    let is_resume = matches!(request, DeepMapExecutionRequest::Resume(_));
     let id = job_ids
         .allocate()
         .map_err(|_| DeepMapManagerControlError::JobIdsExhausted)?;
     let task_executor = executor;
+    let observer = ManagerActivityObserver {
+        activity: Arc::clone(activity),
+    };
     let result: SharedAttemptResult = Arc::new(Mutex::new(None));
     let task_result = Arc::clone(&result);
     submitter
         .submit(id, DEEP_MAP_JOB_OWNER, move |context| {
-            let outcome = block_on(task_executor.execute(&project, request, &context));
+            let outcome =
+                block_on(task_executor.execute_observed(&project, request, &context, &observer));
             let completion = match &outcome {
                 Ok(DeepMapExecutionOutcome::Completed(_)) => JobCompletion::Succeeded,
                 Ok(DeepMapExecutionOutcome::Cancelled(_)) => JobCompletion::Cancelled,
@@ -398,7 +406,14 @@ fn submit_attempt(
         result,
     });
     state.resume = None;
-    set_activity(activity, DeepMapActivity::queued(budget));
+    let next_activity = if is_resume {
+        lock_recovering_poison(activity)
+            .clone()
+            .queued_resume(budget)
+    } else {
+        DeepMapActivity::queued(budget)
+    };
+    set_activity(activity, next_activity);
     Ok(())
 }
 
@@ -435,7 +450,8 @@ fn refresh_attempt(
         return;
     };
     let result = lock_recovering_poison(&active.result).take();
-    let budget = lock_recovering_poison(activity).budget;
+    let current_activity = lock_recovering_poison(activity).clone();
+    let budget = current_activity.budget;
     if active.intent == TerminationIntent::Reset {
         state.resume = None;
         set_activity(activity, DeepMapActivity::idle());
@@ -451,7 +467,7 @@ fn refresh_attempt(
             state.resume = None;
             set_activity(
                 activity,
-                DeepMapActivity::terminal(DeepMapActivityState::Succeeded, budget, counts),
+                current_activity.terminal(DeepMapActivityState::Succeeded, counts),
             );
         }
         (
@@ -463,23 +479,19 @@ fn refresh_attempt(
             state.resume = Some(resume);
             set_activity(
                 activity,
-                DeepMapActivity::terminal(DeepMapActivityState::Paused, budget, counts),
+                current_activity.terminal(DeepMapActivityState::Paused, counts),
             );
         }
         (_, TerminationIntent::Cancel, _) => {
             state.resume = None;
             set_activity(
                 activity,
-                DeepMapActivity::terminal(
-                    DeepMapActivityState::Cancelled,
-                    budget,
-                    StepCounts::default(),
-                ),
+                current_activity.terminal(DeepMapActivityState::Cancelled, StepCounts::default()),
             );
         }
         (_, _, Some(Err(failure))) => {
             state.resume = None;
-            set_activity(activity, DeepMapActivity::failed(budget, failure));
+            set_activity(activity, current_activity.failed(failure));
         }
         (
             JobStatus::Succeeded,
@@ -494,14 +506,14 @@ fn refresh_attempt(
             state.resume = None;
             set_activity(
                 activity,
-                DeepMapActivity::failed(budget, DeepMapExecutionFailure::InvalidCheckpoint),
+                current_activity.failed(DeepMapExecutionFailure::InvalidCheckpoint),
             );
         }
         _ => {
             state.resume = None;
             set_activity(
                 activity,
-                DeepMapActivity::failed(budget, DeepMapExecutionFailure::ProgressUnavailable),
+                current_activity.failed(DeepMapExecutionFailure::ProgressUnavailable),
             );
         }
     }
@@ -580,7 +592,7 @@ pub(crate) enum DeepMapActivityState {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeepMapActivity {
     state: DeepMapActivityState,
     budget: Option<ExploreBudget>,
@@ -588,6 +600,14 @@ pub(crate) struct DeepMapActivity {
     failure: Option<DeepMapExecutionFailure>,
     completed_steps: u64,
     total_steps: u64,
+    phase: Option<DeepMapPhase>,
+    current_module_id: Option<ModuleId>,
+    target_kind: Option<DeepMapTargetKind>,
+    safe_action: Option<DeepMapSafeAction>,
+    step_position: Option<u64>,
+    events: VecDeque<DeepMapActivityEvent>,
+    next_event_sequence: u64,
+    publication_succeeded: bool,
 }
 
 impl DeepMapActivity {
@@ -599,6 +619,14 @@ impl DeepMapActivity {
             failure: None,
             completed_steps: 0,
             total_steps: 0,
+            phase: None,
+            current_module_id: None,
+            target_kind: None,
+            safe_action: None,
+            step_position: None,
+            events: VecDeque::new(),
+            next_event_sequence: 1,
+            publication_succeeded: false,
         }
     }
 
@@ -610,57 +638,141 @@ impl DeepMapActivity {
             failure: None,
             completed_steps: 0,
             total_steps: 0,
+            phase: None,
+            current_module_id: None,
+            target_kind: None,
+            safe_action: None,
+            step_position: None,
+            events: VecDeque::new(),
+            next_event_sequence: 1,
+            publication_succeeded: false,
         }
     }
 
-    const fn terminal(
-        state: DeepMapActivityState,
-        budget: Option<ExploreBudget>,
-        counts: StepCounts,
-    ) -> Self {
-        Self {
-            state,
-            budget,
-            progress: None,
-            failure: None,
-            completed_steps: counts.completed,
-            total_steps: counts.total,
-        }
+    fn queued_resume(mut self, budget: ExploreBudget) -> Self {
+        self.state = DeepMapActivityState::Queued;
+        self.budget = Some(budget);
+        self.progress = None;
+        self.failure = None;
+        self
     }
 
-    const fn failed(budget: Option<ExploreBudget>, failure: DeepMapExecutionFailure) -> Self {
-        Self {
-            state: DeepMapActivityState::Failed,
-            budget,
-            progress: None,
-            failure: Some(failure),
-            completed_steps: 0,
-            total_steps: 0,
-        }
+    fn terminal(mut self, state: DeepMapActivityState, counts: StepCounts) -> Self {
+        self.state = state;
+        self.progress = None;
+        self.failure = None;
+        self.completed_steps = counts.completed;
+        self.total_steps = counts.total;
+        self.publication_succeeded = state == DeepMapActivityState::Succeeded
+            && self.phase == Some(DeepMapPhase::Publishing);
+        self
     }
 
-    pub(crate) const fn state(self) -> DeepMapActivityState {
+    fn failed(mut self, failure: DeepMapExecutionFailure) -> Self {
+        self.state = DeepMapActivityState::Failed;
+        self.progress = None;
+        self.failure = Some(failure);
+        self
+    }
+
+    pub(crate) const fn state(&self) -> DeepMapActivityState {
         self.state
     }
 
-    pub(crate) const fn budget(self) -> Option<ExploreBudget> {
+    pub(crate) const fn budget(&self) -> Option<ExploreBudget> {
         self.budget
     }
 
-    pub(crate) const fn progress(self) -> Option<Progress> {
+    pub(crate) const fn progress(&self) -> Option<Progress> {
         self.progress
     }
 
-    pub(crate) const fn failure(self) -> Option<DeepMapExecutionFailure> {
+    pub(crate) const fn failure(&self) -> Option<DeepMapExecutionFailure> {
         self.failure
     }
 
-    pub(crate) const fn completed_steps(self) -> u64 {
+    pub(crate) const fn completed_steps(&self) -> u64 {
         self.completed_steps
     }
 
-    pub(crate) const fn total_steps(self) -> u64 {
+    pub(crate) const fn total_steps(&self) -> u64 {
         self.total_steps
+    }
+
+    pub(crate) const fn phase(&self) -> Option<DeepMapPhase> {
+        self.phase
+    }
+
+    pub(crate) const fn current_module_id(&self) -> Option<ModuleId> {
+        self.current_module_id
+    }
+
+    pub(crate) const fn target_kind(&self) -> Option<DeepMapTargetKind> {
+        self.target_kind
+    }
+
+    pub(crate) const fn safe_action(&self) -> Option<DeepMapSafeAction> {
+        self.safe_action
+    }
+
+    pub(crate) const fn step_position(&self) -> Option<u64> {
+        self.step_position
+    }
+
+    pub(crate) fn events(&self) -> impl ExactSizeIterator<Item = &DeepMapActivityEvent> {
+        self.events.iter()
+    }
+
+    pub(crate) const fn publication_succeeded(&self) -> bool {
+        self.publication_succeeded
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeepMapActivityEvent {
+    sequence: u64,
+    update: DeepMapActivityUpdate,
+}
+
+impl DeepMapActivityEvent {
+    pub(crate) const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) const fn update(self) -> DeepMapActivityUpdate {
+        self.update
+    }
+}
+
+#[derive(Debug)]
+struct ManagerActivityObserver {
+    activity: Arc<Mutex<DeepMapActivity>>,
+}
+
+impl DeepMapActivityObserver for ManagerActivityObserver {
+    fn observe(&self, update: DeepMapActivityUpdate) {
+        let mut activity = lock_recovering_poison(&self.activity);
+        activity.phase = Some(update.phase());
+        activity.current_module_id = update.module_id();
+        activity.target_kind = Some(update.target_kind());
+        activity.safe_action = Some(update.action());
+        activity.step_position = update.step_position();
+        if let Some(total) = update.total_steps() {
+            activity.total_steps = total;
+        }
+        if update.confirmed()
+            && let Some(position) = update.step_position()
+        {
+            activity.completed_steps = activity.completed_steps.max(position);
+        }
+        let sequence = activity.next_event_sequence;
+        activity.next_event_sequence = activity.next_event_sequence.saturating_add(1);
+        if activity.events.len() == MAX_ACTIVITY_EVENTS {
+            activity.events.pop_front();
+        }
+        activity
+            .events
+            .push_back(DeepMapActivityEvent { sequence, update });
     }
 }
 
@@ -741,12 +853,16 @@ impl Error for DeepMapManagerShutdownError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{DeepMapActivityState, DeepMapManager, DeepMapManagerControlError};
+    use super::{
+        DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
+        MAX_ACTIVITY_EVENTS, ManagerActivityObserver,
+    };
     use crate::job_ids::DesktopJobIds;
     use a3_application::{
-        DeepMapExecutionFailure, DeepMapExecutionFuture, DeepMapExecutionOutcome,
-        DeepMapExecutionRequest, DeepMapExecutor, DeepMapModelDescriptor, DeepMapResumeState,
-        JobClock, JobCompletion, JobScheduler, JobSchedulerConfig, JobTimestamp,
+        DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapExecutionFailure,
+        DeepMapExecutionFuture, DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor,
+        DeepMapModelDescriptor, DeepMapPhase, DeepMapResumeState, DeepMapSafeAction,
+        DeepMapTargetKind, JobClock, JobCompletion, JobScheduler, JobSchedulerConfig, JobTimestamp,
     };
     use a3_domain::{
         CanonicalDirectory, Centrality, ContentHash, ExploreBudget, FileRevision, GitHead,
@@ -764,8 +880,8 @@ mod tests {
         SymbolRankSignals, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
     use std::error::Error;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -776,6 +892,38 @@ mod tests {
         fn now(&self) -> JobTimestamp {
             JobTimestamp::from_millis(self.0.fetch_add(1, Ordering::AcqRel))
         }
+    }
+
+    #[test]
+    fn activity_feed_retains_only_the_latest_monotonic_32_events() {
+        let activity = Arc::new(Mutex::new(DeepMapActivity::idle()));
+        let observer = ManagerActivityObserver {
+            activity: activity.clone(),
+        };
+        for position in 1..=40 {
+            observer.observe(DeepMapActivityUpdate::new(
+                DeepMapPhase::Exploring,
+                Some(ModuleId::from_bytes([position as u8; 32])),
+                DeepMapTargetKind::Module,
+                DeepMapSafeAction::Inspect,
+                Some(position),
+                Some(40),
+                true,
+            ));
+        }
+
+        let activity = activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sequences = activity
+            .events()
+            .map(|event| event.sequence())
+            .collect::<Vec<_>>();
+        assert_eq!(sequences.len(), MAX_ACTIVITY_EVENTS);
+        assert_eq!(sequences.first(), Some(&9));
+        assert_eq!(sequences.last(), Some(&40));
+        assert_eq!(activity.completed_steps(), 40);
+        assert_eq!(activity.total_steps(), 40);
     }
 
     #[derive(Debug)]

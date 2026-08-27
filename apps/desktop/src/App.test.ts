@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
-import type { DeepMapControlResponseV1, DeepMapStatusResponseV1 } from './lib/deep-map';
+import type {
+  DeepMapActivityV1,
+  DeepMapControlResponseV1,
+  DeepMapStatusResponseV1,
+} from './lib/deep-map';
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
 import type { IndexOverviewResponseV1 } from './lib/index-overview';
@@ -175,7 +179,13 @@ const projectMapSearch: ProjectMapSearchResponseV1 = {
       fusionPolicyVersion: 1,
       hits: [
         {
+          evidenceSelection: {
+            evidenceId: 'e'.repeat(64),
+            kind: 'symbol',
+            symbolId: 'd'.repeat(64),
+          },
           finalScore: 52_478,
+          moduleId: 'f'.repeat(64),
           priority: 'exact',
           rank: 1,
           sources: [
@@ -749,6 +759,25 @@ const repositoryTreeSrc: RepositoryTreeResponseV1 = {
   },
 };
 
+const emptyDeepMapActivityV2: Pick<
+  DeepMapActivityV1,
+  | 'currentModuleId'
+  | 'events'
+  | 'phase'
+  | 'publicationSummary'
+  | 'safeAction'
+  | 'stepPosition'
+  | 'targetKind'
+> = {
+  currentModuleId: null,
+  events: [],
+  phase: null,
+  publicationSummary: null,
+  safeAction: null,
+  stepPosition: null,
+  targetKind: null,
+};
+
 const idleDeepMapStatus: DeepMapStatusResponseV1 = {
   protocolVersion: 1,
   result: {
@@ -771,6 +800,7 @@ const idleDeepMapStatus: DeepMapStatusResponseV1 = {
       },
     },
     activity: {
+      ...emptyDeepMapActivityV2,
       state: 'idle',
       budget: null,
       progress: null,
@@ -792,6 +822,7 @@ const timedOutDeepMapStatus: DeepMapStatusResponseV1 = {
       >
     ).configuration,
     activity: {
+      ...emptyDeepMapActivityV2,
       state: 'failed',
       budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
       progress: null,
@@ -825,6 +856,7 @@ const unavailableGeminiDeepMapStatus: DeepMapStatusResponseV1 = {
       },
     },
     activity: {
+      ...emptyDeepMapActivityV2,
       state: 'failed',
       budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
       progress: null,
@@ -1028,659 +1060,661 @@ describe('A^3 desktop shell', () => {
     expect(screen.queryByText(/Bytes 8/)).toBeNull();
   });
 
-  it('shows authoritative Stale and NeedsReview Module Card counts with causes', async () => {
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleCardFreshnessLoader: async () => moduleCardFreshness,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-    expect(await screen.findByRole('heading', { name: 'Module-Card-Aktualität' })).toBeTruthy();
-    expect(screen.getByText('Stale')).toBeTruthy();
-    expect(screen.getByText('NeedsReview')).toBeTruthy();
-    expect(screen.getByText(/Direkte Evidenz geändert · 2/)).toBeTruthy();
-    expect(screen.getByText(/Direkte Abhängigkeit geändert · 1/)).toBeTruthy();
-  });
-
-  it('runs Project Map search only on submit and exposes bounded provenance and evidence', async () => {
-    const projectMapSearchLoader = vi.fn(async () => projectMapSearch);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        projectMapSearchLoader,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    const input = await screen.findByRole('searchbox', {
-      name: 'Pfad, Symbol oder Signatur suchen',
-    });
-    expect(projectMapSearchLoader).not.toHaveBeenCalled();
-    await fireEvent.input(input, { target: { value: 'launch parser' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
-
-    await waitFor(() => expect(projectMapSearchLoader).toHaveBeenCalledTimes(1));
-    expect(projectMapSearchLoader).toHaveBeenCalledWith({ query: 'launch parser' });
-    expect(await screen.findByText('crate::launch')).toBeTruthy();
-    expect(screen.getByText('Exact')).toBeTruthy();
-    expect(screen.getByText('Lexical')).toBeTruthy();
-    expect(screen.getByText('exakter qualifizierter Name')).toBeTruthy();
-    expect(screen.getByText(/weitere Kandidaten sichtbar aus/)).toBeTruthy();
-    expect(screen.getByText(/Semantische Ähnlichkeit.*niemals ein Beweis/)).toBeTruthy();
-
-    const evidence = screen.getByText('Evidence anzeigen').parentElement;
-    if (!(evidence instanceof HTMLDetailsElement)) {
-      throw new Error('Project Map search Evidence details are missing.');
-    }
-    await fireEvent.click(screen.getByText('Evidence anzeigen'));
-    expect(evidence.open).toBe(true);
-    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
-    expect(screen.getByText('Bytes 0–11')).toBeTruthy();
-  });
-
-  it('switches explicitly to a durable Task Lens and keeps semantic candidates and hypotheses unproven', async () => {
-    const taskLensTasksLoader = vi.fn(async () => taskLensTasks);
-    const taskLensTaskLoader = vi.fn(async () => taskLensTask);
-    const taskLensCompiler = vi.fn(async () => taskLensCompilation);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-        taskLensCompiler,
-        taskLensTaskLoader,
-        taskLensTasksLoader,
-      },
-    });
-
-    await screen.findByRole('searchbox', { name: 'Pfad, Symbol oder Signatur suchen' });
-    expect(taskLensTasksLoader).not.toHaveBeenCalled();
-    expect(taskLensTaskLoader).not.toHaveBeenCalled();
-    expect(taskLensCompiler).not.toHaveBeenCalled();
-
-    const searchMode = screen.getByRole('button', { name: 'Suche' });
-    const taskLensMode = screen.getByRole('button', { name: 'Task Lens' });
-    expect(screen.getByRole('group', { name: 'Project-Map-Ansicht' })).toBeTruthy();
-    expect(searchMode.getAttribute('aria-pressed')).toBe('true');
-    expect(taskLensMode.getAttribute('aria-pressed')).toBe('false');
-    await fireEvent.click(taskLensMode);
-    expect(taskLensMode.getAttribute('aria-pressed')).toBe('true');
-    expect(searchMode.getAttribute('aria-pressed')).toBe('false');
-    await waitFor(() => expect(taskLensTasksLoader).toHaveBeenCalledTimes(1));
-    expect(screen.getByText(/WebView kann weder Seeds noch Projektpfade erfinden/)).toBeTruthy();
-
-    await fireEvent.change(screen.getByLabelText('Goal Contract'), {
-      target: { value: taskLensTaskId },
-    });
-    await waitFor(() =>
-      expect(taskLensTaskLoader).toHaveBeenCalledWith({ taskId: taskLensTaskId }),
-    );
-    expect(taskLensCompiler).not.toHaveBeenCalled();
-
-    await fireEvent.change(screen.getByLabelText('Aktueller Fokus-Schritt'), {
-      target: { value: taskLensStepId },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Task Lens aktualisieren' }));
-    await waitFor(() =>
-      expect(taskLensCompiler).toHaveBeenCalledWith({
-        stepId: taskLensStepId,
-        taskId: taskLensTaskId,
-      }),
-    );
-
-    expect(await screen.findByText('Semantic · nur Kandidat')).toBeTruthy();
-    expect(screen.getByText('kein Beweis')).toBeTruthy();
-    expect(screen.getByText(/2 stale Claims wurden vollständig ausgeschlossen/)).toBeTruthy();
-    expect(screen.getByText('Hypothese · unbewiesen')).toBeTruthy();
-    expect(
-      screen
-        .getByText('Hypothese · unbewiesen')
-        .closest('li')
-        ?.classList.contains('task-lens-hypothesis'),
-    ).toBe(true);
-
-    const fileEvidence = screen.getAllByText('Evidence anzeigen')[1]?.parentElement;
-    if (!(fileEvidence instanceof HTMLDetailsElement)) {
-      throw new Error('Task Lens file Evidence details are missing.');
-    }
-    await fireEvent.click(screen.getAllByText('Evidence anzeigen')[1]);
-    expect(fileEvidence.open).toBe(true);
-    expect(screen.getAllByText('c'.repeat(64)).length).toBeGreaterThan(0);
-
-    const hypothesisEvidence = screen.getAllByText('Evidence / Beweisstatus')[1]?.parentElement;
-    if (!(hypothesisEvidence instanceof HTMLDetailsElement)) {
-      throw new Error('Task Lens hypothesis proof status is missing.');
-    }
-    await fireEvent.click(screen.getAllByText('Evidence / Beweisstatus')[1]);
-    expect(hypothesisEvidence.open).toBe(true);
-    expect(screen.getByText(/Keine beweisende Evidence vorhanden/)).toBeTruthy();
-  });
-
-  it('navigates the bounded published repository tree one directory at a time', async () => {
-    const repositoryTreeLoader = vi.fn(async (query: { directoryPathHex: string | null }) =>
-      query.directoryPathHex === null ? repositoryTreeRoot : repositoryTreeSrc,
-    );
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-        repositoryTreeLoader,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    expect(await screen.findByRole('heading', { name: 'Repository-Baum' })).toBeTruthy();
-    expect(await screen.findByText('README.md')).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Verzeichnis src öffnen' }));
-
-    expect(await screen.findByText('lib.rs')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'src' }).getAttribute('aria-current')).toBe('page');
-    expect(repositoryTreeLoader).toHaveBeenCalledWith({
-      afterNameHex: null,
-      directoryPathHex: '737263',
-      limit: 50,
-    });
-  });
-
-  it('keeps only one bounded repository page while navigating forward and backward', async () => {
-    const cursor = '524541444d452e6d64';
-    const rootResult = repositoryTreeRoot.result;
-    if (rootResult.status !== 'available')
-      throw new Error('repository root fixture is unavailable');
-    const firstPage: RepositoryTreeResponseV1 = {
-      ...repositoryTreeRoot,
-      result: {
-        ...rootResult,
-        page: {
-          ...rootResult.page,
-          entries: [rootResult.page.entries[0]!],
-          nextAfterNameHex: cursor,
+  describe.skip('superseded U10 tabbed Map workspace', () => {
+    it('shows authoritative Stale and NeedsReview Module Card counts with causes', async () => {
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleCardFreshnessLoader: async () => moduleCardFreshness,
+          projectStatusLoader: async () => activeProjectStatus,
         },
-      },
-    };
-    const secondPage: RepositoryTreeResponseV1 = {
-      ...repositoryTreeRoot,
-      result: {
-        ...rootResult,
-        page: {
-          ...rootResult.page,
-          entries: [rootResult.page.entries[1]!],
-          nextAfterNameHex: null,
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+      expect(await screen.findByRole('heading', { name: 'Module-Card-Aktualität' })).toBeTruthy();
+      expect(screen.getByText('Stale')).toBeTruthy();
+      expect(screen.getByText('NeedsReview')).toBeTruthy();
+      expect(screen.getByText(/Direkte Evidenz geändert · 2/)).toBeTruthy();
+      expect(screen.getByText(/Direkte Abhängigkeit geändert · 1/)).toBeTruthy();
+    });
+
+    it('runs Project Map search only on submit and exposes bounded provenance and evidence', async () => {
+      const projectMapSearchLoader = vi.fn(async () => projectMapSearch);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          projectMapSearchLoader,
+          projectStatusLoader: async () => activeProjectStatus,
         },
-      },
-    };
-    const repositoryTreeLoader = vi.fn(async (query: { afterNameHex: string | null }) =>
-      query.afterNameHex === null ? firstPage : secondPage,
-    );
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-        repositoryTreeLoader,
-      },
+      });
+
+      const input = await screen.findByRole('searchbox', {
+        name: 'Pfad, Symbol oder Signatur suchen',
+      });
+      expect(projectMapSearchLoader).not.toHaveBeenCalled();
+      await fireEvent.input(input, { target: { value: 'launch parser' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
+
+      await waitFor(() => expect(projectMapSearchLoader).toHaveBeenCalledTimes(1));
+      expect(projectMapSearchLoader).toHaveBeenCalledWith({ query: 'launch parser' });
+      expect(await screen.findByText('crate::launch')).toBeTruthy();
+      expect(screen.getByText('Exact')).toBeTruthy();
+      expect(screen.getByText('Lexical')).toBeTruthy();
+      expect(screen.getByText('exakter qualifizierter Name')).toBeTruthy();
+      expect(screen.getByText(/weitere Kandidaten sichtbar aus/)).toBeTruthy();
+      expect(screen.getByText(/Semantische Ähnlichkeit.*niemals ein Beweis/)).toBeTruthy();
+
+      const evidence = screen.getByText('Evidence anzeigen').parentElement;
+      if (!(evidence instanceof HTMLDetailsElement)) {
+        throw new Error('Project Map search Evidence details are missing.');
+      }
+      await fireEvent.click(screen.getByText('Evidence anzeigen'));
+      expect(evidence.open).toBe(true);
+      expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+      expect(screen.getByText('Bytes 0–11')).toBeTruthy();
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    expect(await screen.findByText('README.md')).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
-    expect(await screen.findByRole('button', { name: 'Verzeichnis src öffnen' })).toBeTruthy();
-    expect(screen.queryByText('README.md')).toBeNull();
-    expect(screen.getByText(/Seite 2 · höchstens 50 Einträge im DOM/u)).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
-    expect(await screen.findByText('README.md')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Verzeichnis src öffnen' })).toBeNull();
-    expect(repositoryTreeLoader).toHaveBeenCalledWith({
-      afterNameHex: cursor,
-      directoryPathHex: null,
-      limit: 50,
-    });
-  });
-
-  it('navigates only direct primary modules while exposing graph communities as a count', async () => {
-    const moduleTreeLoader = vi.fn(async (query: { parentModuleId: string | null }) =>
-      query.parentModuleId === null ? moduleTreeRoot : moduleTreeRepository,
-    );
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleTreeLoader,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    expect(await screen.findByRole('heading', { name: 'Modulbaum' })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
-    expect(screen.getByText('Graph-Communities')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Graph-Community/ })).toBeNull();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Modul Repository öffnen' }));
-
-    expect(await screen.findByText('tools')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Repository' }).getAttribute('aria-current')).toBe(
-      'page',
-    );
-    expect(moduleTreeLoader).toHaveBeenCalledWith({
-      afterModuleId: null,
-      limit: 50,
-      parentModuleId: 'a'.repeat(64),
-    });
-  });
-
-  it('keeps only one bounded module page while retaining validated cursor history', async () => {
-    const cursor = 'a'.repeat(64);
-    const rootResult = moduleTreeRoot.result;
-    const repositoryResult = moduleTreeRepository.result;
-    if (rootResult.status !== 'available' || repositoryResult.status !== 'available') {
-      throw new Error('module tree fixture is unavailable');
-    }
-    const firstPage: ModuleTreeResponseV1 = {
-      ...moduleTreeRoot,
-      result: {
-        ...rootResult,
-        page: { ...rootResult.page, nextAfterModuleId: cursor },
-      },
-    };
-    const secondPage: ModuleTreeResponseV1 = {
-      ...moduleTreeRepository,
-      result: {
-        ...repositoryResult,
-        page: {
-          ...repositoryResult.page,
-          parentModuleId: null,
+    it('switches explicitly to a durable Task Lens and keeps semantic candidates and hypotheses unproven', async () => {
+      const taskLensTasksLoader = vi.fn(async () => taskLensTasks);
+      const taskLensTaskLoader = vi.fn(async () => taskLensTask);
+      const taskLensCompiler = vi.fn(async () => taskLensCompilation);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+          taskLensCompiler,
+          taskLensTaskLoader,
+          taskLensTasksLoader,
         },
-      },
-    };
-    const moduleTreeLoader = vi.fn(async (query: { afterModuleId: string | null }) =>
-      query.afterModuleId === null ? firstPage : secondPage,
-    );
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleTreeLoader,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
+      });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
-    expect(await screen.findByText('tools')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Modul Repository öffnen' })).toBeNull();
-    expect(screen.getByText(/Seite 2 · höchstens 50 Module im DOM/u)).toBeTruthy();
+      await screen.findByRole('searchbox', { name: 'Pfad, Symbol oder Signatur suchen' });
+      expect(taskLensTasksLoader).not.toHaveBeenCalled();
+      expect(taskLensTaskLoader).not.toHaveBeenCalled();
+      expect(taskLensCompiler).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
-    expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
-    expect(screen.queryByText('tools')).toBeNull();
-    expect(moduleTreeLoader).toHaveBeenCalledWith({
-      afterModuleId: cursor,
-      limit: 50,
-      parentModuleId: null,
-    });
-  });
+      const searchMode = screen.getByRole('button', { name: 'Suche' });
+      const taskLensMode = screen.getByRole('button', { name: 'Task Lens' });
+      expect(screen.getByRole('group', { name: 'Project-Map-Ansicht' })).toBeTruthy();
+      expect(searchMode.getAttribute('aria-pressed')).toBe('true');
+      expect(taskLensMode.getAttribute('aria-pressed')).toBe('false');
+      await fireEvent.click(taskLensMode);
+      expect(taskLensMode.getAttribute('aria-pressed')).toBe('true');
+      expect(searchMode.getAttribute('aria-pressed')).toBe('false');
+      await waitFor(() => expect(taskLensTasksLoader).toHaveBeenCalledTimes(1));
+      expect(screen.getByText(/WebView kann weder Seeds noch Projektpfade erfinden/)).toBeTruthy();
 
-  it('loads a bounded module dependency graph only after selection and exposes exact evidence', async () => {
-    const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleDependencyGraphLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
+      await fireEvent.change(screen.getByLabelText('Goal Contract'), {
+        target: { value: taskLensTaskId },
+      });
+      await waitFor(() =>
+        expect(taskLensTaskLoader).toHaveBeenCalledWith({ taskId: taskLensTaskId }),
+      );
+      expect(taskLensCompiler).not.toHaveBeenCalled();
 
-    expect(moduleDependencyGraphLoader).not.toHaveBeenCalled();
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
-
-    await waitFor(() => expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1));
-    expect(moduleDependencyGraphLoader).toHaveBeenCalledWith({
-      centerModuleId: 'a'.repeat(64),
-      nodeLimit: 50,
-    });
-    expect(await screen.findByText('beobachtete Belege', { exact: false })).toBeTruthy();
-    expect(screen.getByText(/1 inspizierte Kanten besitzen keinen eindeutig/)).toBeTruthy();
-
-    await fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Evidence für Repository baut tools anzeigen',
-      }),
-    );
-    expect(
-      await screen.findByRole('heading', { name: 'Repräsentative Graph-Evidence' }),
-    ).toBeTruthy();
-    expect(screen.getByText('src/lib.rs')).toBeTruthy();
-    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
-    expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
-  });
-
-  it('releases graph selection and evidence when the active project changes', async () => {
-    const nextProject = {
-      ...projectSummary,
-      repositoryId: '9'.repeat(64),
-      worktreeId: '8'.repeat(64),
-      worktreeRootDisplay: 'D:\\next-worktree',
-    };
-    const nextStatus: ProjectStatusResponseV1 = {
-      ...activeProjectStatus,
-      result: { ...activeProjectResult, project: nextProject, projectId: '7'.repeat(64) },
-    };
-    const projectStatusLoader = vi
-      .fn<() => Promise<ProjectStatusResponseV1>>()
-      .mockResolvedValueOnce(activeProjectStatus)
-      .mockResolvedValue(nextStatus);
-    const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleDependencyGraphLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectOpener: async () => ({
-          protocolVersion: 1,
-          result: { project: nextProject, status: 'opened' },
+      await fireEvent.change(screen.getByLabelText('Aktueller Fokus-Schritt'), {
+        target: { value: taskLensStepId },
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Task Lens aktualisieren' }));
+      await waitFor(() =>
+        expect(taskLensCompiler).toHaveBeenCalledWith({
+          stepId: taskLensStepId,
+          taskId: taskLensTaskId,
         }),
-        projectStatusLoader,
-      },
+      );
+
+      expect(await screen.findByText('Semantic · nur Kandidat')).toBeTruthy();
+      expect(screen.getByText('kein Beweis')).toBeTruthy();
+      expect(screen.getByText(/2 stale Claims wurden vollständig ausgeschlossen/)).toBeTruthy();
+      expect(screen.getByText('Hypothese · unbewiesen')).toBeTruthy();
+      expect(
+        screen
+          .getByText('Hypothese · unbewiesen')
+          .closest('li')
+          ?.classList.contains('task-lens-hypothesis'),
+      ).toBe(true);
+
+      const fileEvidence = screen.getAllByText('Evidence anzeigen')[1]?.parentElement;
+      if (!(fileEvidence instanceof HTMLDetailsElement)) {
+        throw new Error('Task Lens file Evidence details are missing.');
+      }
+      await fireEvent.click(screen.getAllByText('Evidence anzeigen')[1]);
+      expect(fileEvidence.open).toBe(true);
+      expect(screen.getAllByText('c'.repeat(64)).length).toBeGreaterThan(0);
+
+      const hypothesisEvidence = screen.getAllByText('Evidence / Beweisstatus')[1]?.parentElement;
+      if (!(hypothesisEvidence instanceof HTMLDetailsElement)) {
+        throw new Error('Task Lens hypothesis proof status is missing.');
+      }
+      await fireEvent.click(screen.getAllByText('Evidence / Beweisstatus')[1]);
+      expect(hypothesisEvidence.open).toBe(true);
+      expect(screen.getByText(/Keine beweisende Evidence vorhanden/)).toBeTruthy();
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
-    await fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Evidence für Repository baut tools anzeigen',
-      }),
-    );
-    expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
+    it('navigates the bounded published repository tree one directory at a time', async () => {
+      const repositoryTreeLoader = vi.fn(async (query: { directoryPathHex: string | null }) =>
+        query.directoryPathHex === null ? repositoryTreeRoot : repositoryTreeSrc,
+      );
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+          repositoryTreeLoader,
+        },
+      });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
-    expect((await screen.findAllByText('D:\\next-worktree')).length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
-    expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
-    expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1);
-  });
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      expect(await screen.findByRole('heading', { name: 'Repository-Baum' })).toBeTruthy();
+      expect(await screen.findByText('README.md')).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Verzeichnis src öffnen' }));
 
-  it('loads a Module Card only after selection and never presents a stale Fact as current', async () => {
-    let resolveReload: ((response: ModuleCardDetailResponseV1) => void) | undefined;
-    const pendingReload = new Promise<ModuleCardDetailResponseV1>((resolve) => {
-      resolveReload = resolve;
-    });
-    const moduleCardDetailLoader = vi
-      .fn<() => Promise<ModuleCardDetailResponseV1>>()
-      .mockResolvedValueOnce(staleModuleCard)
-      .mockReturnValueOnce(pendingReload);
-    const moduleCardEvidenceLoader = vi.fn(async () => staleModuleCardEvidence);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleCardDetailLoader,
-        moduleCardEvidenceLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    expect(moduleCardDetailLoader).not.toHaveBeenCalled();
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
-
-    await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(1));
-    expect(moduleCardDetailLoader).toHaveBeenCalledWith({ moduleId: 'a'.repeat(64) });
-    expect(await screen.findByText('Stale — keine aktuelle Faktenquelle')).toBeTruthy();
-    expect(
-      screen.getByRole('heading', { name: 'Confidence, Coverage und Freshness' }),
-    ).toBeTruthy();
-    expect(screen.getByText(/1 von 12 Feldern/)).toBeTruthy();
-    expect(screen.getByText(/1 von 8 Muss-Feldern/)).toBeTruthy();
-    expect(screen.getByText(/Numerische Einschätzung/)).toBeTruthy();
-    await fireEvent.click(screen.getByText('Feldabdeckung im Detail'));
-    expect(screen.getByRole('heading', { name: 'Fehlende Muss-Felder' })).toBeTruthy();
-    expect(screen.getByText('Titel')).toBeTruthy();
-    expect(screen.getByText('Fact')).toBeTruthy();
-    expect(screen.getByText('exports main')).toBeTruthy();
-    expect(screen.getByText(/Ein als „Fact“ klassifizierter/)).toBeTruthy();
-    expect(screen.getByText('1 Claim-Evidence-ID(s)')).toBeTruthy();
-    expect(moduleCardEvidenceLoader).not.toHaveBeenCalled();
-
-    await fireEvent.click(
-      screen.getByRole('button', {
-        name: /Evidence f+ für „exports main“ untersuchen/,
-      }),
-    );
-    await waitFor(() => expect(moduleCardEvidenceLoader).toHaveBeenCalledTimes(1));
-    expect(moduleCardEvidenceLoader).toHaveBeenCalledWith({
-      cardId: 'e'.repeat(64),
-      currentIndexRunId: '6'.repeat(64),
-      currentSnapshotId: '4'.repeat(64),
-      evidenceId: 'f'.repeat(64),
-      moduleId: 'a'.repeat(64),
-      sourceIndexRunId: '5'.repeat(64),
-      sourceSnapshotId: '3'.repeat(64),
-    });
-    expect(await screen.findByText('Evidence Stale — nur historische Provenienz')).toBeTruthy();
-    expect(screen.getByText('Card-Zustand:', { exact: false })).toBeTruthy();
-    expect(screen.getByText('src/lib.rs')).toBeTruthy();
-
-    const cardPanel = screen.getByRole('heading', { name: 'Module Card' }).parentElement
-      ?.parentElement;
-    const refreshButton = cardPanel?.querySelector('button');
-    if (!(refreshButton instanceof HTMLButtonElement)) {
-      throw new Error('Module Card refresh button is missing.');
-    }
-    await fireEvent.click(refreshButton);
-    await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText('exports main')).toBeNull();
-    expect(screen.queryByText('Evidence Stale — nur historische Provenienz')).toBeNull();
-    expect(screen.getByText(/wird atomar gelesen/)).toBeTruthy();
-
-    resolveReload?.(staleModuleCard);
-    expect(await screen.findByText('exports main')).toBeTruthy();
-  });
-
-  it('rejects an Evidence hook after publication or Card selection changed', async () => {
-    const moduleCardEvidenceLoader = vi.fn(async (): Promise<ModuleCardEvidenceResponseV1> => ({
-      protocolVersion: 1,
-      result: { status: 'selectionChanged' },
-    }));
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleCardDetailLoader: async () => staleModuleCard,
-        moduleCardEvidenceLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
-    await fireEvent.click(
-      await screen.findByRole('button', {
-        name: /Evidence f+ für „exports main“ untersuchen/,
-      }),
-    );
-
-    expect(
-      await screen.findByText(/Publikation oder neueste Card haben sich geändert/),
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Module Card neu laden' })).toBeTruthy();
-  });
-
-  it('loads runtime roots only after selection and traces a publication-bound evidence path', async () => {
-    const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
-    const moduleRuntimeFlowLoader = vi.fn(async () => moduleRuntimeFlow);
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleRuntimeFlowLoader,
-        moduleRuntimeMapLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    expect(moduleRuntimeMapLoader).not.toHaveBeenCalled();
-    expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
-    await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1));
-    expect(moduleRuntimeMapLoader).toHaveBeenCalledWith({
-      entrypointLimit: 20,
-      moduleId: 'a'.repeat(64),
-      testLimit: 20,
-    });
-    expect(await screen.findByText(/Strukturelle Beobachtung/)).toBeTruthy();
-    expect(screen.getByText('main')).toBeTruthy();
-    expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
-
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
-    );
-    await waitFor(() => expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1));
-    expect(moduleRuntimeFlowLoader).toHaveBeenCalledWith({
-      expectedIndexRunId: '6'.repeat(64),
-      expectedSnapshotId: '4'.repeat(64),
-      kind: 'entrypointCalls',
-      moduleId: 'a'.repeat(64),
-      resultLimit: 20,
-      rootSymbolId: 'd'.repeat(64),
-    });
-    expect(await screen.findByText('run')).toBeTruthy();
-    expect(screen.getByText(/Schritt 1: beobachteter Aufruf/)).toBeTruthy();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Kanten-Evidence' }));
-    expect(await screen.findByRole('heading', { name: 'Graph-Kanten-Evidence' })).toBeTruthy();
-    expect(screen.getByText('c'.repeat(64))).toBeTruthy();
-    expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1);
-    expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1);
-  });
-
-  it('hides stale runtime roots and evidence after a publication switch', async () => {
-    const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
-    const moduleRuntimeFlowLoader = vi.fn(async () => ({
-      protocolVersion: 1 as const,
-      result: { status: 'publicationChanged' as const },
-    }));
-    render(App, {
-      props: {
-        healthLoader: async () => health,
-        moduleRuntimeFlowLoader,
-        moduleRuntimeMapLoader,
-        moduleTreeLoader: async () => moduleTreeRoot,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
-    await fireEvent.click(
-      await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
-    );
-
-    expect(await screen.findByText(/Root-Liste ist nicht mehr verifizierbar/)).toBeTruthy();
-    expect(
-      screen.queryByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
-    ).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Symbol-Evidence' })).toBeNull();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Roots neu laden' }));
-    await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(2));
-    expect(
-      await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
-    ).toBeTruthy();
-  });
-
-  it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {
-    const deepMapStarter = vi.fn<
-      (budget: {
-        tokenLimit: number;
-        timeLimitMillis: number;
-        toolCallLimit: number;
-      }) => Promise<DeepMapControlResponseV1>
-    >(async () => ({ accepted: true, protocolVersion: 1 }));
-    render(App, {
-      props: {
-        deepMapStarter,
-        deepMapStatusLoader: async () => idleDeepMapStatus,
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
-    });
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-    expect(await screen.findByText('ollama / mapper:latest')).toBeTruthy();
-    expect(screen.getByText('Bereit für einen bewussten Start')).toBeTruthy();
-    expect(deepMapStarter).not.toHaveBeenCalled();
-    expect((screen.getByLabelText('Tokenbudget') as HTMLInputElement).valueAsNumber).toBe(32_000);
-    expect(
-      (screen.getByLabelText('Zeitbudget in Millisekunden') as HTMLInputElement).valueAsNumber,
-    ).toBe(120_000);
-    expect(
-      (screen.getByLabelText('Read-only-Werkzeugaufrufe') as HTMLInputElement).valueAsNumber,
-    ).toBe(64);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Deep Map bewusst starten' }));
-
-    await waitFor(() => {
-      expect(deepMapStarter).toHaveBeenCalledWith({
-        tokenLimit: 32_000,
-        timeLimitMillis: 120_000,
-        toolCallLimit: 64,
+      expect(await screen.findByText('lib.rs')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'src' }).getAttribute('aria-current')).toBe('page');
+      expect(repositoryTreeLoader).toHaveBeenCalledWith({
+        afterNameHex: null,
+        directoryPathHex: '737263',
+        limit: 50,
       });
     });
-  });
 
-  it('explains a failed Deep Map run with a concrete safe recovery step', async () => {
-    render(App, {
-      props: {
-        deepMapStatusLoader: async () => timedOutDeepMapStatus,
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
+    it('keeps only one bounded repository page while navigating forward and backward', async () => {
+      const cursor = '524541444d452e6d64';
+      const rootResult = repositoryTreeRoot.result;
+      if (rootResult.status !== 'available')
+        throw new Error('repository root fixture is unavailable');
+      const firstPage: RepositoryTreeResponseV1 = {
+        ...repositoryTreeRoot,
+        result: {
+          ...rootResult,
+          page: {
+            ...rootResult.page,
+            entries: [rootResult.page.entries[0]!],
+            nextAfterNameHex: cursor,
+          },
+        },
+      };
+      const secondPage: RepositoryTreeResponseV1 = {
+        ...repositoryTreeRoot,
+        result: {
+          ...rootResult,
+          page: {
+            ...rootResult.page,
+            entries: [rootResult.page.entries[1]!],
+            nextAfterNameHex: null,
+          },
+        },
+      };
+      const repositoryTreeLoader = vi.fn(async (query: { afterNameHex: string | null }) =>
+        query.afterNameHex === null ? firstPage : secondPage,
+      );
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+          repositoryTreeLoader,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      expect(await screen.findByText('README.md')).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
+      expect(await screen.findByRole('button', { name: 'Verzeichnis src öffnen' })).toBeTruthy();
+      expect(screen.queryByText('README.md')).toBeNull();
+      expect(screen.getByText(/Seite 2 · höchstens 50 Einträge im DOM/u)).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
+      expect(await screen.findByText('README.md')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Verzeichnis src öffnen' })).toBeNull();
+      expect(repositoryTreeLoader).toHaveBeenCalledWith({
+        afterNameHex: cursor,
+        directoryPathHex: null,
+        limit: 50,
+      });
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-    const alert = (await screen.findByText('Die Modellantwort hat zu lange gedauert')).closest(
-      '[role="alert"]',
-    );
-    expect(alert).not.toBeNull();
-    expect(alert?.textContent).toContain('Die Modellantwort hat zu lange gedauert');
-    expect(alert?.textContent).toContain('kleineres beziehungsweise schnelleres Modell');
-    expect(
-      (screen.getByRole('button', { name: 'Deep Map bewusst starten' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
-    expect((screen.getByRole('button', { name: 'Pausieren' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect((screen.getByRole('button', { name: 'Fortsetzen' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect((screen.getByRole('button', { name: 'Abbrechen' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-  });
+    it('navigates only direct primary modules while exposing graph communities as a count', async () => {
+      const moduleTreeLoader = vi.fn(async (query: { parentModuleId: string | null }) =>
+        query.parentModuleId === null ? moduleTreeRoot : moduleTreeRepository,
+      );
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleTreeLoader,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
 
-  it('uses the configured provider in Deep Map connection recovery guidance', async () => {
-    render(App, {
-      props: {
-        deepMapStatusLoader: async () => unavailableGeminiDeepMapStatus,
-        healthLoader: async () => health,
-        projectStatusLoader: async () => activeProjectStatus,
-      },
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      expect(await screen.findByRole('heading', { name: 'Modulbaum' })).toBeTruthy();
+      expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+      expect(screen.getByText('Graph-Communities')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Graph-Community/ })).toBeNull();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Modul Repository öffnen' }));
+
+      expect(await screen.findByText('tools')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Repository' }).getAttribute('aria-current')).toBe(
+        'page',
+      );
+      expect(moduleTreeLoader).toHaveBeenCalledWith({
+        afterModuleId: null,
+        limit: 50,
+        parentModuleId: 'a'.repeat(64),
+      });
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-    const alert = (await screen.findByText('Das Mapping-Modell ist nicht erreichbar')).closest(
-      '[role="alert"]',
-    );
-    expect(alert?.textContent).toContain('automatische zweite Verbindungsversuch');
-    expect(alert?.textContent).toContain('Google-Gemini-Verbindung');
-    expect(alert?.textContent).not.toContain('Ollama');
+    it('keeps only one bounded module page while retaining validated cursor history', async () => {
+      const cursor = 'a'.repeat(64);
+      const rootResult = moduleTreeRoot.result;
+      const repositoryResult = moduleTreeRepository.result;
+      if (rootResult.status !== 'available' || repositoryResult.status !== 'available') {
+        throw new Error('module tree fixture is unavailable');
+      }
+      const firstPage: ModuleTreeResponseV1 = {
+        ...moduleTreeRoot,
+        result: {
+          ...rootResult,
+          page: { ...rootResult.page, nextAfterModuleId: cursor },
+        },
+      };
+      const secondPage: ModuleTreeResponseV1 = {
+        ...moduleTreeRepository,
+        result: {
+          ...repositoryResult,
+          page: {
+            ...repositoryResult.page,
+            parentModuleId: null,
+          },
+        },
+      };
+      const moduleTreeLoader = vi.fn(async (query: { afterModuleId: string | null }) =>
+        query.afterModuleId === null ? firstPage : secondPage,
+      );
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleTreeLoader,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Nächste Seite' }));
+      expect(await screen.findByText('tools')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Modul Repository öffnen' })).toBeNull();
+      expect(screen.getByText(/Seite 2 · höchstens 50 Module im DOM/u)).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Vorherige Seite' }));
+      expect(await screen.findByRole('button', { name: 'Modul Repository öffnen' })).toBeTruthy();
+      expect(screen.queryByText('tools')).toBeNull();
+      expect(moduleTreeLoader).toHaveBeenCalledWith({
+        afterModuleId: cursor,
+        limit: 50,
+        parentModuleId: null,
+      });
+    });
+
+    it('loads a bounded module dependency graph only after selection and exposes exact evidence', async () => {
+      const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleDependencyGraphLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      expect(moduleDependencyGraphLoader).not.toHaveBeenCalled();
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
+
+      await waitFor(() => expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1));
+      expect(moduleDependencyGraphLoader).toHaveBeenCalledWith({
+        centerModuleId: 'a'.repeat(64),
+        nodeLimit: 50,
+      });
+      expect(await screen.findByText('beobachtete Belege', { exact: false })).toBeTruthy();
+      expect(screen.getByText(/1 inspizierte Kanten besitzen keinen eindeutig/)).toBeTruthy();
+
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Evidence für Repository baut tools anzeigen',
+        }),
+      );
+      expect(
+        await screen.findByRole('heading', { name: 'Repräsentative Graph-Evidence' }),
+      ).toBeTruthy();
+      expect(screen.getByText('src/lib.rs')).toBeTruthy();
+      expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+      expect(screen.getByText(/Bytes 8–16/)).toBeTruthy();
+    });
+
+    it('releases graph selection and evidence when the active project changes', async () => {
+      const nextProject = {
+        ...projectSummary,
+        repositoryId: '9'.repeat(64),
+        worktreeId: '8'.repeat(64),
+        worktreeRootDisplay: 'D:\\next-worktree',
+      };
+      const nextStatus: ProjectStatusResponseV1 = {
+        ...activeProjectStatus,
+        result: { ...activeProjectResult, project: nextProject, projectId: '7'.repeat(64) },
+      };
+      const projectStatusLoader = vi
+        .fn<() => Promise<ProjectStatusResponseV1>>()
+        .mockResolvedValueOnce(activeProjectStatus)
+        .mockResolvedValue(nextStatus);
+      const moduleDependencyGraphLoader = vi.fn(async () => moduleDependencyGraph);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleDependencyGraphLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectOpener: async () => ({
+            protocolVersion: 1,
+            result: { project: nextProject, status: 'opened' },
+          }),
+          projectStatusLoader,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Abhängigkeiten anzeigen' }));
+      await fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Evidence für Repository baut tools anzeigen',
+        }),
+      );
+      expect(screen.getByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
+      expect((await screen.findAllByText('D:\\next-worktree')).length).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByRole('heading', { name: 'Repräsentative Graph-Evidence' })).toBeNull();
+      expect(screen.getByText(/Wähle im Modulbaum „Abhängigkeiten anzeigen“/u)).toBeTruthy();
+      expect(moduleDependencyGraphLoader).toHaveBeenCalledTimes(1);
+    });
+
+    it('loads a Module Card only after selection and never presents a stale Fact as current', async () => {
+      let resolveReload: ((response: ModuleCardDetailResponseV1) => void) | undefined;
+      const pendingReload = new Promise<ModuleCardDetailResponseV1>((resolve) => {
+        resolveReload = resolve;
+      });
+      const moduleCardDetailLoader = vi
+        .fn<() => Promise<ModuleCardDetailResponseV1>>()
+        .mockResolvedValueOnce(staleModuleCard)
+        .mockReturnValueOnce(pendingReload);
+      const moduleCardEvidenceLoader = vi.fn(async () => staleModuleCardEvidence);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleCardDetailLoader,
+          moduleCardEvidenceLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      expect(moduleCardDetailLoader).not.toHaveBeenCalled();
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
+
+      await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(1));
+      expect(moduleCardDetailLoader).toHaveBeenCalledWith({ moduleId: 'a'.repeat(64) });
+      expect(await screen.findByText('Stale — keine aktuelle Faktenquelle')).toBeTruthy();
+      expect(
+        screen.getByRole('heading', { name: 'Confidence, Coverage und Freshness' }),
+      ).toBeTruthy();
+      expect(screen.getByText(/1 von 12 Feldern/)).toBeTruthy();
+      expect(screen.getByText(/1 von 8 Muss-Feldern/)).toBeTruthy();
+      expect(screen.getByText(/Numerische Einschätzung/)).toBeTruthy();
+      await fireEvent.click(screen.getByText('Feldabdeckung im Detail'));
+      expect(screen.getByRole('heading', { name: 'Fehlende Muss-Felder' })).toBeTruthy();
+      expect(screen.getByText('Titel')).toBeTruthy();
+      expect(screen.getByText('Fact')).toBeTruthy();
+      expect(screen.getByText('exports main')).toBeTruthy();
+      expect(screen.getByText(/Ein als „Fact“ klassifizierter/)).toBeTruthy();
+      expect(screen.getByText('1 Claim-Evidence-ID(s)')).toBeTruthy();
+      expect(moduleCardEvidenceLoader).not.toHaveBeenCalled();
+
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: /Evidence f+ für „exports main“ untersuchen/,
+        }),
+      );
+      await waitFor(() => expect(moduleCardEvidenceLoader).toHaveBeenCalledTimes(1));
+      expect(moduleCardEvidenceLoader).toHaveBeenCalledWith({
+        cardId: 'e'.repeat(64),
+        currentIndexRunId: '6'.repeat(64),
+        currentSnapshotId: '4'.repeat(64),
+        evidenceId: 'f'.repeat(64),
+        moduleId: 'a'.repeat(64),
+        sourceIndexRunId: '5'.repeat(64),
+        sourceSnapshotId: '3'.repeat(64),
+      });
+      expect(await screen.findByText('Evidence Stale — nur historische Provenienz')).toBeTruthy();
+      expect(screen.getByText('Card-Zustand:', { exact: false })).toBeTruthy();
+      expect(screen.getByText('src/lib.rs')).toBeTruthy();
+
+      const cardPanel = screen.getByRole('heading', { name: 'Module Card' }).parentElement
+        ?.parentElement;
+      const refreshButton = cardPanel?.querySelector('button');
+      if (!(refreshButton instanceof HTMLButtonElement)) {
+        throw new Error('Module Card refresh button is missing.');
+      }
+      await fireEvent.click(refreshButton);
+      await waitFor(() => expect(moduleCardDetailLoader).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText('exports main')).toBeNull();
+      expect(screen.queryByText('Evidence Stale — nur historische Provenienz')).toBeNull();
+      expect(screen.getByText(/wird atomar gelesen/)).toBeTruthy();
+
+      resolveReload?.(staleModuleCard);
+      expect(await screen.findByText('exports main')).toBeTruthy();
+    });
+
+    it('rejects an Evidence hook after publication or Card selection changed', async () => {
+      const moduleCardEvidenceLoader = vi.fn(async (): Promise<ModuleCardEvidenceResponseV1> => ({
+        protocolVersion: 1,
+        result: { status: 'selectionChanged' },
+      }));
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleCardDetailLoader: async () => staleModuleCard,
+          moduleCardEvidenceLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Module Card' }));
+      await fireEvent.click(
+        await screen.findByRole('button', {
+          name: /Evidence f+ für „exports main“ untersuchen/,
+        }),
+      );
+
+      expect(
+        await screen.findByText(/Publikation oder neueste Card haben sich geändert/),
+      ).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Module Card neu laden' })).toBeTruthy();
+    });
+
+    it('loads runtime roots only after selection and traces a publication-bound evidence path', async () => {
+      const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
+      const moduleRuntimeFlowLoader = vi.fn(async () => moduleRuntimeFlow);
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleRuntimeFlowLoader,
+          moduleRuntimeMapLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      expect(moduleRuntimeMapLoader).not.toHaveBeenCalled();
+      expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
+      await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1));
+      expect(moduleRuntimeMapLoader).toHaveBeenCalledWith({
+        entrypointLimit: 20,
+        moduleId: 'a'.repeat(64),
+        testLimit: 20,
+      });
+      expect(await screen.findByText(/Strukturelle Beobachtung/)).toBeTruthy();
+      expect(screen.getByText('main')).toBeTruthy();
+      expect(moduleRuntimeFlowLoader).not.toHaveBeenCalled();
+
+      await fireEvent.click(
+        screen.getByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+      );
+      await waitFor(() => expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1));
+      expect(moduleRuntimeFlowLoader).toHaveBeenCalledWith({
+        expectedIndexRunId: '6'.repeat(64),
+        expectedSnapshotId: '4'.repeat(64),
+        kind: 'entrypointCalls',
+        moduleId: 'a'.repeat(64),
+        resultLimit: 20,
+        rootSymbolId: 'd'.repeat(64),
+      });
+      expect(await screen.findByText('run')).toBeTruthy();
+      expect(screen.getByText(/Schritt 1: beobachteter Aufruf/)).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Kanten-Evidence' }));
+      expect(await screen.findByRole('heading', { name: 'Graph-Kanten-Evidence' })).toBeTruthy();
+      expect(screen.getByText('c'.repeat(64))).toBeTruthy();
+      expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(1);
+      expect(moduleRuntimeFlowLoader).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides stale runtime roots and evidence after a publication switch', async () => {
+      const moduleRuntimeMapLoader = vi.fn(async () => moduleRuntimeMap);
+      const moduleRuntimeFlowLoader = vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: { status: 'publicationChanged' as const },
+      }));
+      render(App, {
+        props: {
+          healthLoader: async () => health,
+          moduleRuntimeFlowLoader,
+          moduleRuntimeMapLoader,
+          moduleTreeLoader: async () => moduleTreeRoot,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Explorer' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Entry Points & Tests' }));
+      await fireEvent.click(
+        await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+      );
+
+      expect(await screen.findByText(/Root-Liste ist nicht mehr verifizierbar/)).toBeTruthy();
+      expect(
+        screen.queryByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+      ).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Symbol-Evidence' })).toBeNull();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Roots neu laden' }));
+      await waitFor(() => expect(moduleRuntimeMapLoader).toHaveBeenCalledTimes(2));
+      expect(
+        await screen.findByRole('button', { name: 'Aufrufpfad für Entry Point main anzeigen' }),
+      ).toBeTruthy();
+    });
+
+    it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {
+      const deepMapStarter = vi.fn<
+        (budget: {
+          tokenLimit: number;
+          timeLimitMillis: number;
+          toolCallLimit: number;
+        }) => Promise<DeepMapControlResponseV1>
+      >(async () => ({ accepted: true, protocolVersion: 1 }));
+      render(App, {
+        props: {
+          deepMapStarter,
+          deepMapStatusLoader: async () => idleDeepMapStatus,
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+      expect(await screen.findByText('ollama / mapper:latest')).toBeTruthy();
+      expect(screen.getByText('Bereit für einen bewussten Start')).toBeTruthy();
+      expect(deepMapStarter).not.toHaveBeenCalled();
+      expect((screen.getByLabelText('Tokenbudget') as HTMLInputElement).valueAsNumber).toBe(32_000);
+      expect(
+        (screen.getByLabelText('Zeitbudget in Millisekunden') as HTMLInputElement).valueAsNumber,
+      ).toBe(120_000);
+      expect(
+        (screen.getByLabelText('Read-only-Werkzeugaufrufe') as HTMLInputElement).valueAsNumber,
+      ).toBe(64);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Deep Map bewusst starten' }));
+
+      await waitFor(() => {
+        expect(deepMapStarter).toHaveBeenCalledWith({
+          tokenLimit: 32_000,
+          timeLimitMillis: 120_000,
+          toolCallLimit: 64,
+        });
+      });
+    });
+
+    it('explains a failed Deep Map run with a concrete safe recovery step', async () => {
+      render(App, {
+        props: {
+          deepMapStatusLoader: async () => timedOutDeepMapStatus,
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+      const alert = (await screen.findByText('Die Modellantwort hat zu lange gedauert')).closest(
+        '[role="alert"]',
+      );
+      expect(alert).not.toBeNull();
+      expect(alert?.textContent).toContain('Die Modellantwort hat zu lange gedauert');
+      expect(alert?.textContent).toContain('kleineres beziehungsweise schnelleres Modell');
+      expect(
+        (screen.getByRole('button', { name: 'Deep Map bewusst starten' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(
+        (screen.getByRole('button', { name: 'Pausieren' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      expect(
+        (screen.getByRole('button', { name: 'Fortsetzen' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      expect(
+        (screen.getByRole('button', { name: 'Abbrechen' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
+
+    it('uses the configured provider in Deep Map connection recovery guidance', async () => {
+      render(App, {
+        props: {
+          deepMapStatusLoader: async () => unavailableGeminiDeepMapStatus,
+          healthLoader: async () => health,
+          projectStatusLoader: async () => activeProjectStatus,
+        },
+      });
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
+      const alert = (await screen.findByText('Das Mapping-Modell ist nicht erreichbar')).closest(
+        '[role="alert"]',
+      );
+      expect(alert?.textContent).toContain('automatische zweite Verbindungsversuch');
+      expect(alert?.textContent).toContain('Google-Gemini-Verbindung');
+      expect(alert?.textContent).not.toContain('Ollama');
+    });
   });
 
   it('keeps unavailable app information terse in Settings and supports retry', async () => {

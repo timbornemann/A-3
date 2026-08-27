@@ -116,6 +116,19 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   content-adressierte File-, Symbol- oder Graphkanten-Provenienz ohne Source-Inhalt; opake
   Pfadbytes, Symbol- und Evidence-IDs autorisieren keinen weiteren Read. Der Command läuft nur nach
   einem expliziten Evidence-Klick und nicht im Statuspolling.
+- `query_project_map_scene` akzeptiert nur die Protokollversion und optional eine stabile aktuelle
+  `ModuleId`. Übersichtslimits 64/128 und Fokuslimit 32 sind Core-Policy, nicht WebView-Eingaben.
+  Namen sind sichere Anzeigen; Run, Snapshot, Counts, Status, Coverage, Relationen und
+  Trunkierung stammen aus genau einer atomaren Publikation. Projektwechsel und Replacement-Publish
+  invalidieren verspätete Reads über die UI-Generation.
+- Search V2 bindet einen Treffer nur dann an eine Primärregion, wenn die aktuelle
+  Membership-Projektion genau ein Modul beweist. Die opaque File-/Symbol-Evidence-Auswahl gewährt
+  weder Pfad- noch Sourceautorität; `moduleId: null` bleibt ein gültiger nutzbarer Treffer.
+- `query_project_map_source_preview` erweitert die WebView ausschließlich um den ADR-0030-Read:
+  vollständige Core-ausgegebene Card-/Evidence-Anker, keine Pfade, Ranges oder Limits. Der
+  bestehende sichere Source-Reader revalidiert Root, No-Follow, Dateityp, Größe, Binary,
+  Generated, Secret und Hash. Höchstens 64 Zeilen/16 KiB Plain Text werden weder persistiert noch
+  geloggt oder an einen Provider übergeben; stale Evidence bleibt content-frei.
 - `query_repository_tree` akzeptiert ausschließlich Protokollversion, eine optionale relative
   RepositoryPath als kleingeschriebenes Hex-Token, einen optionalen direkten Kind-Cursor und ein
   Limit von 1 bis 100. Projekt und Worktree stammen aus dem Core. Der Adapter liest nur direkte
@@ -163,6 +176,10 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `unavailable`; ein Modellname allein kann keine Ausführung freischalten. Pause wird erst nach
   terminaler kooperativer Cancellation und validiertem plan-/snapshotgebundenem Checkpoint als
   `paused` bestätigt. Resume wiederholt keine bestätigten Schritte, Cancel verwirft den Checkpoint.
+  Der V2-Live-Status zeigt höchstens 32 monotone Ereignisse mit Phase, Modul, Zielart, sicherer
+  Aktionsart und bestätigtem Schedulerfortschritt; Prompts, Suchtext, Modellantworten und interne
+  Begründungen sind keine darstellbaren Felder. Erst verifizierter atomarer Publish erzeugt eine
+  terminale Publikationszusammenfassung.
   Keine dieser IPC-Capabilities gewährt direkten Provider-, Netzwerk-, Datei-, Shell- oder
   Storagezugriff.
 - Die Agent-Inspection-Commands akzeptieren nur die ausgewählte `TaskId` und für eine bewusste

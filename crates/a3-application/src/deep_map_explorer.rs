@@ -1,12 +1,13 @@
 use crate::{
-    DecodeExplorerAction, DeepMapReadControl, DeepMapReadFailure, DeepMapReadTimeout,
-    DeepMapReadTools, ExplorerActionDecodeError, ExplorerModelControl, ExplorerModelFailure,
-    ExplorerModelProvider, ExplorerModelRequest, ExplorerModelRequestPhase, ExplorerModelTimeout,
-    ExplorerObservation, ExplorerRepairReason,
+    DecodeExplorerAction, DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapPhase,
+    DeepMapReadControl, DeepMapReadFailure, DeepMapReadTimeout, DeepMapReadTools,
+    DeepMapSafeAction, DeepMapTargetKind, ExplorerActionDecodeError, ExplorerModelControl,
+    ExplorerModelFailure, ExplorerModelProvider, ExplorerModelRequest, ExplorerModelRequestPhase,
+    ExplorerModelTimeout, ExplorerObservation, ExplorerRepairReason, IgnoreDeepMapActivity,
 };
 use a3_domain::{
-    ExplorePlan, ExploreStep, ExplorerAction, ExplorerCheckpoint, ExplorerCheckpointError,
-    ExplorerSearchAction, ModuleCardProposal, ProjectIdentity,
+    ExplorePlan, ExploreStep, ExploreTarget, ExplorerAction, ExplorerCheckpoint,
+    ExplorerCheckpointError, ExplorerSearchAction, ModuleCardProposal, ProjectIdentity,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -18,6 +19,8 @@ use std::pin::Pin;
 pub type DeepMapExplorerFuture<'a> = Pin<
     Box<dyn Future<Output = Result<DeepMapExplorerOutcome, DeepMapExplorerFailure>> + Send + 'a>,
 >;
+
+static IGNORE_ACTIVITY: IgnoreDeepMapActivity = IgnoreDeepMapActivity;
 
 /// Terminal state of one bounded R8 invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,8 +93,24 @@ impl<'a> ExploreDeepMap<'a> {
         &'b self,
         project: &'b ProjectIdentity,
         plan: &'b ExplorePlan,
+        checkpoint: ExplorerCheckpoint,
+        control: &'b C,
+    ) -> DeepMapExplorerFuture<'b>
+    where
+        C: DeepMapReadControl + ExplorerModelControl,
+        'a: 'b,
+    {
+        self.execute_observed(project, plan, checkpoint, control, &IGNORE_ACTIVITY)
+    }
+
+    /// Explores with content-free phase and confirmed-step activity updates.
+    pub fn execute_observed<'b, C>(
+        &'b self,
+        project: &'b ProjectIdentity,
+        plan: &'b ExplorePlan,
         mut checkpoint: ExplorerCheckpoint,
         control: &'b C,
+        observer: &'b dyn DeepMapActivityObserver,
     ) -> DeepMapExplorerFuture<'b>
     where
         C: DeepMapReadControl + ExplorerModelControl,
@@ -143,6 +162,7 @@ impl<'a> ExploreDeepMap<'a> {
 
                     match action {
                         ExplorerAction::Inspect(_) => {
+                            observe_step(observer, plan, step, DeepMapSafeAction::Inspect, false);
                             let result = self
                                 .tools
                                 .inspect(
@@ -166,6 +186,7 @@ impl<'a> ExploreDeepMap<'a> {
                             tool_used = true;
                         }
                         ExplorerAction::Search(action) => {
+                            observe_step(observer, plan, step, DeepMapSafeAction::Search, false);
                             let result = self
                                 .tools
                                 .search(
@@ -190,6 +211,7 @@ impl<'a> ExploreDeepMap<'a> {
                         }
                         ExplorerAction::Propose(proposal) => {
                             checkpoint.confirm_next(plan, proposal)?;
+                            observe_step(observer, plan, step, DeepMapSafeAction::Propose, true);
                             break;
                         }
                     }
@@ -268,6 +290,28 @@ impl<'a> ExploreDeepMap<'a> {
             Err(_) => Err(DeepMapExplorerFailure::InvalidModelOutput),
         }
     }
+}
+
+fn observe_step(
+    observer: &dyn DeepMapActivityObserver,
+    plan: &ExplorePlan,
+    step: &ExploreStep,
+    action: DeepMapSafeAction,
+    confirmed: bool,
+) {
+    observer.observe(DeepMapActivityUpdate::new(
+        DeepMapPhase::Exploring,
+        Some(step.module_id()),
+        match step.target() {
+            ExploreTarget::Module(_) => DeepMapTargetKind::Module,
+            ExploreTarget::Manifest { .. } => DeepMapTargetKind::Manifest,
+            ExploreTarget::Symbol(_) => DeepMapTargetKind::Symbol,
+        },
+        action,
+        Some(u64::from(step.sequence())),
+        Some(u64::try_from(plan.steps().len()).map_or(u64::MAX, |count| count)),
+        confirmed,
+    ));
 }
 
 fn authorize(

@@ -161,6 +161,8 @@ pub struct ProjectMapSearchHitV1 {
     priority: ProjectMapSearchPriorityV1,
     final_score: u32,
     sources: Vec<ProjectMapSearchSourceV1>,
+    module_id: Option<String>,
+    evidence_selection: ProjectMapSearchEvidenceSelectionV2,
     target: ProjectMapSearchTargetV1,
 }
 
@@ -172,6 +174,8 @@ impl ProjectMapSearchHitV1 {
         priority: ProjectMapSearchPriorityV1,
         final_score: u32,
         sources: Vec<ProjectMapSearchSourceV1>,
+        module_id: Option<String>,
+        evidence_selection: ProjectMapSearchEvidenceSelectionV2,
         target: ProjectMapSearchTargetV1,
     ) -> Self {
         Self {
@@ -179,10 +183,40 @@ impl ProjectMapSearchHitV1 {
             priority,
             final_score,
             sources,
+            module_id,
+            evidence_selection,
             target,
         }
     }
 }
+
+/// Opaque, strictly typed current Evidence selection associated with a search target.
+///
+/// Paths, ranges, and size controls are intentionally absent. The enclosing search projection
+/// supplies the current run and snapshot anchors.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+pub enum ProjectMapSearchEvidenceSelectionV2 {
+    /// Current immutable file Evidence.
+    File {
+        /// Deterministic opaque identity derived from the exact file revision.
+        evidence_id: String,
+    },
+    /// Current structural symbol Evidence.
+    Symbol {
+        /// Deterministic opaque identity derived from the structural symbol.
+        evidence_id: String,
+        /// Current symbol identity used for full Core revalidation.
+        symbol_id: String,
+    },
+}
+
+/// U11 name for the search response carrying module binding and typed Evidence selection.
+pub type ProjectMapSearchResponseV2 = ProjectMapSearchResponseV1;
+/// U11 name for one enriched search hit.
+pub type ProjectMapSearchHitV2 = ProjectMapSearchHitV1;
+/// U11 name for the enriched bounded search projection.
+pub type ProjectMapSearchV2 = ProjectMapSearchV1;
 
 /// Channel-native explanation retained after target deduplication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

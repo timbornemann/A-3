@@ -3,9 +3,9 @@ use a3_domain::{
     CandidateFreshness, CandidateTokenCost, ExactSearchPageSize, ExactSearchQuery,
     ExactSearchTarget, ExactSearchTerm, ExactSearchTextError, FusedRetrievalResult, FusionError,
     FusionPolicy, FusionResultLimit, LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm,
-    LexicalSearchTermError, NormalizedRetrievalSignal, ProjectIdentity, RetrievalCandidateSet,
-    RetrievalCandidateSetError, RetrievalCandidateSets, RetrievalCandidateSetsError,
-    RetrievalCandidateSignals,
+    LexicalSearchTermError, ModuleId, NormalizedRetrievalSignal, ProjectIdentity,
+    RetrievalCandidateSet, RetrievalCandidateSetError, RetrievalCandidateSets,
+    RetrievalCandidateSetsError, RetrievalCandidateSignals,
 };
 use std::error::Error;
 use std::fmt;
@@ -82,6 +82,35 @@ pub struct SearchProjectMap {
     store: Arc<dyn KnowledgeSearchStore>,
 }
 
+/// One fused current search result plus optional evidence-proven primary-module bindings.
+#[derive(Debug)]
+pub struct ProjectMapSearchResult {
+    retrieval: FusedRetrievalResult,
+    module_bindings: Vec<Option<ModuleId>>,
+}
+
+impl ProjectMapSearchResult {
+    /// Returns the fused result used for deterministic ranking and visible provenance.
+    #[must_use]
+    pub const fn retrieval(&self) -> &FusedRetrievalResult {
+        &self.retrieval
+    }
+
+    /// Returns the optional unique primary-module binding for one zero-based ranked hit.
+    #[must_use]
+    pub fn module_binding(&self, index: usize) -> Option<ModuleId> {
+        self.module_bindings.get(index).copied().flatten()
+    }
+}
+
+impl std::ops::Deref for ProjectMapSearchResult {
+    type Target = FusedRetrievalResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.retrieval
+    }
+}
+
 impl SearchProjectMap {
     /// Wires the existing deterministic search port without adding file or database capabilities.
     #[must_use]
@@ -95,7 +124,7 @@ impl SearchProjectMap {
         project: &ProjectIdentity,
         query: &ProjectMapSearchQuery,
         control: &dyn KnowledgeSearchControl,
-    ) -> Result<FusedRetrievalResult, SearchProjectMapFailure> {
+    ) -> Result<ProjectMapSearchResult, SearchProjectMapFailure> {
         if control.is_cancelled() {
             return Err(SearchProjectMapFailure::Cancelled);
         }
@@ -147,9 +176,36 @@ impl SearchProjectMap {
             exact.snapshot_id(),
             vec![exact, lexical],
         )?;
-        FusionPolicy::v1()
+        let retrieval = FusionPolicy::v1()
             .fuse(publication, FusionResultLimit::DEFAULT)
-            .map_err(Into::into)
+            .map_err(SearchProjectMapFailure::Fusion)?;
+        checkpoint(control)?;
+        let targets = retrieval
+            .hits()
+            .iter()
+            .map(|hit| hit.target().clone())
+            .collect::<Vec<_>>();
+        let module_bindings = self
+            .store
+            .bind_modules(project, retrieval.index_run_id(), &targets, control)
+            .await
+            .map_err(SearchProjectMapFailure::Search)?;
+        checkpoint(control)?;
+        if module_bindings.len() != targets.len() {
+            return Err(SearchProjectMapFailure::InvalidModuleBindings);
+        }
+        Ok(ProjectMapSearchResult {
+            retrieval,
+            module_bindings,
+        })
+    }
+}
+
+fn checkpoint(control: &dyn KnowledgeSearchControl) -> Result<(), SearchProjectMapFailure> {
+    if control.is_cancelled() {
+        Err(SearchProjectMapFailure::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
@@ -213,6 +269,8 @@ pub enum SearchProjectMapFailure {
     Fusion(FusionError),
     /// A fixed size or token-cost bound could not be represented.
     ResourceLimit,
+    /// The adapter returned a binding vector that did not match the ranked targets.
+    InvalidModuleBindings,
 }
 
 impl fmt::Display for SearchProjectMapFailure {
@@ -231,6 +289,9 @@ impl fmt::Display for SearchProjectMapFailure {
             }
             Self::Fusion(source) => write!(formatter, "Project Map fusion failed: {source}"),
             Self::ResourceLimit => formatter.write_str("Project Map search exceeded a fixed bound"),
+            Self::InvalidModuleBindings => {
+                formatter.write_str("Project Map module bindings are inconsistent")
+            }
         }
     }
 }
@@ -242,7 +303,7 @@ impl Error for SearchProjectMapFailure {
             Self::InvalidCandidateSet(source) => Some(source),
             Self::InvalidPublication(source) => Some(source),
             Self::Fusion(source) => Some(source),
-            Self::Cancelled | Self::ResourceLimit => None,
+            Self::Cancelled | Self::ResourceLimit | Self::InvalidModuleBindings => None,
         }
     }
 }
@@ -317,7 +378,7 @@ mod tests {
             &Control(true),
         ));
 
-        assert_eq!(result, Err(SearchProjectMapFailure::Cancelled));
+        assert!(matches!(result, Err(SearchProjectMapFailure::Cancelled)));
         assert!(store.calls.lock().map_err(|_| "poisoned")?.is_empty());
         Ok(())
     }

@@ -19,7 +19,9 @@ mod module_runtime;
 mod module_tree;
 mod project;
 mod project_catalog;
+mod project_map_scene;
 mod project_map_search;
+mod project_map_source_preview;
 mod project_rebuild;
 mod project_removal;
 mod project_settings;
@@ -52,10 +54,12 @@ pub use agent_goal::{
 };
 pub use agent_inspection::*;
 pub use deep_map::{
-    ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1,
-    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapFailureV1, DeepMapModelV1,
-    DeepMapProgressV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, QueryDeepMapRequestV1,
-    StartDeepMapRequestV1,
+    ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapActivityV2,
+    DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEventV2,
+    DeepMapFailureV1, DeepMapModelV1, DeepMapPhaseV2, DeepMapProgressV1,
+    DeepMapPublicationSummaryV2, DeepMapSafeActionV2, DeepMapStatusResponseV1,
+    DeepMapStatusResponseV2, DeepMapStatusResultV1, DeepMapStatusResultV2, DeepMapTargetKindV2,
+    QueryDeepMapRequestV1, StartDeepMapRequestV1,
 };
 pub use error::{CommandErrorV1, ErrorCodeV1};
 pub use goal_contract::{AcceptanceCriterionV1, GoalContractDraftV1, GoalContractV1};
@@ -109,12 +113,24 @@ pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };
 pub use project_catalog::*;
+pub use project_map_scene::{
+    ProjectMapMappingStatusV1, ProjectMapSceneCardBindingV1, ProjectMapSceneModuleKindV1,
+    ProjectMapSceneModuleV1, ProjectMapSceneRelationV1, ProjectMapSceneResponseV1,
+    ProjectMapSceneResultV1, ProjectMapSceneV1, QueryProjectMapSceneRequestV1,
+    ScenePolicyVersionV1,
+};
 pub use project_map_search::{
     ProjectMapExactExplanationV1, ProjectMapLexicalExplanationV1, ProjectMapSearchChannelV1,
-    ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1, ProjectMapSearchPriorityV1,
-    ProjectMapSearchResponseV1, ProjectMapSearchResultV1, ProjectMapSearchSourceV1,
-    ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1, ProjectMapSearchV1,
+    ProjectMapSearchEvidenceSelectionV2, ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1,
+    ProjectMapSearchHitV2, ProjectMapSearchPriorityV1, ProjectMapSearchResponseV1,
+    ProjectMapSearchResponseV2, ProjectMapSearchResultV1, ProjectMapSearchSourceV1,
+    ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1, ProjectMapSearchV1, ProjectMapSearchV2,
     QueryProjectMapSearchRequestV1,
+};
+pub use project_map_source_preview::{
+    ProjectMapSourceHighlightV1, ProjectMapSourcePreviewResponseV1,
+    ProjectMapSourcePreviewResultV1, ProjectMapSourcePreviewV1,
+    QueryProjectMapSourcePreviewRequestV1,
 };
 pub use project_rebuild::{RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1};
 pub use project_removal::{RemoveProjectRequestV1, RemoveProjectResponseV1, RemoveProjectResultV1};

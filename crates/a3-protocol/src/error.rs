@@ -49,8 +49,14 @@ pub enum ErrorCodeV1 {
     InvalidModuleCardDetailQuery,
     /// A Card, publication, module, or Evidence anchor violated the Inspector contract.
     InvalidModuleCardEvidenceQuery,
+    /// A source-preview request contained anything except one valid Core-issued Evidence selection.
+    InvalidProjectMapSourcePreviewQuery,
+    /// Current Evidence source could not be safely revalidated for bounded display.
+    ProjectMapSourcePreviewUnavailable,
     /// Search text was empty, oversized, or lacked a searchable token.
     InvalidProjectMapSearchQuery,
+    /// A scene focus identity violated the strict atlas request contract.
+    InvalidProjectMapSceneQuery,
     /// A task or active-plan step identity violated the strict Task Lens selector contract.
     InvalidTaskLensSelection,
     /// Durable anchors or deterministic Task Lens retrieval could not be read safely.
@@ -197,8 +203,17 @@ impl CommandErrorV1 {
             ErrorCodeV1::InvalidModuleCardEvidenceQuery => {
                 "The Module Card Evidence request is outside the supported bounds."
             }
+            ErrorCodeV1::InvalidProjectMapSourcePreviewQuery => {
+                "The source-preview request is outside the supported Evidence bounds."
+            }
+            ErrorCodeV1::ProjectMapSourcePreviewUnavailable => {
+                "The selected source preview could not be read safely."
+            }
             ErrorCodeV1::InvalidProjectMapSearchQuery => {
                 "The Project Map search query is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidProjectMapSceneQuery => {
+                "The Project Map scene request is outside the supported bounds."
             }
             ErrorCodeV1::InvalidTaskLensSelection => {
                 "The Task Lens task or step selection is outside the supported bounds."

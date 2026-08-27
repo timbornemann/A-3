@@ -165,6 +165,26 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   beweist, dass Task-/Lens-Reads erst nach Umschaltung beziehungsweise Auswahl starten, Semantic
   sichtbar „kein Beweis“ bleibt und eine evidencefreie Architekturabsicht als unbewiesene,
   visuell getrennte Hypothese erscheint. Weder Suche noch Task Lens laufen im 500-ms-Statuspolling.
+- Der U11-Atlas-Contract prüft 64/128 Übersichtslimits, 32er Fokus, manifest-first Ranking,
+  deterministisch identische Antworten, vollständige Trunkierungs-/Unmapped-Zähler, Cancellation,
+  Replacement-Publish und Run-/Snapshotbindung. Search V2 prüft optionale eindeutige
+  Modulmembership sowie exakt passende File-/Symbol-Selections; TypeScript lehnt unbekannte
+  Felder, ungültige Enums/IDs, gemischte Publikationen und übergroße Szenen ab.
+- Der ADR-0030-Preview-Contract prüft aktuelle File-, Symbol- und Graph-Evidence, `NeedsReview`,
+  stale Auswahl, Hash-Race, Symlink/Junction, Binary, Secret, Generated, Großdatei, erfundene IDs
+  sowie exakt 64 Zeilen und 16 KiB. Inhalt erscheint nur nach explizitem Evidence-Klick als Plain
+  Text und wird nicht persistiert oder geloggt.
+- Deep Map V2 prüft die Phasenfolge Planning → Exploring → Claiming → Verifying → Publishing,
+  aktuelle Module/Aktionen, 32er-Retention, monotone Sequenzen, Pause/Resume ohne Replay,
+  Cancel/Fehler und eine Publikationszusammenfassung ausschließlich nach erfolgreichem atomarem
+  Publish. Mount und Polling starten weiterhin keine Modellarbeit.
+- U11-Component-, Accessibility- und Browser-Smokes prüfen map-first Start ohne Legacy-Tabs,
+  Kartenfokus, Submit-Suche, Task Lens, progressive Inspector-/Preview-Reads, harte Presets,
+  Live-Feed und Publish-Refresh bei 720 × 520 und 680 × 760, Light/Dark, 3-Pixel-Fokus,
+  44-Pixel-Controls, Reduced Motion, Tastaturbedienung und fehlenden Horizontaloverflow. Das
+  reproduzierbare 64-Knoten-/128-Routen-Profil berichtet Mount, Auswahl, Pan/Zoom, Feed-Bursts,
+  DOM-Obergrenze, Long Tasks sowie initialen und lazy Chunk; Performancegewinne werden nur aus
+  Messdaten behauptet.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

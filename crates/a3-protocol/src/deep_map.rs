@@ -338,6 +338,234 @@ pub enum DeepMapActivityStateV1 {
     Cancelled,
 }
 
+/// Safe phase of the complete Deep-Map pipeline.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeepMapPhaseV2 {
+    /// Deterministic plan construction.
+    Planning,
+    /// Bounded evidence exploration.
+    Exploring,
+    /// Evidence-bound claim generation.
+    Claiming,
+    /// Independent evidence verification.
+    Verifying,
+    /// Atomic publication of verified cards.
+    Publishing,
+}
+
+/// Coarse target category without source content or path data.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeepMapTargetKindV2 {
+    /// The complete current project publication.
+    Project,
+    /// One stable module identity.
+    Module,
+    /// One current manifest revision.
+    Manifest,
+    /// One current symbol identity.
+    Symbol,
+}
+
+/// Safe action category suitable for user-visible activity reporting.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeepMapSafeActionV2 {
+    /// Builds the immutable exploration plan.
+    BuildPlan,
+    /// Reads one exact evidence target.
+    Inspect,
+    /// Runs one bounded published-index search.
+    Search,
+    /// Confirms one evidence-bound module proposal.
+    Propose,
+    /// Generates structured claims for a module proposal.
+    GenerateClaims,
+    /// Revalidates evidence and claims.
+    VerifyEvidence,
+    /// Atomically publishes verified cards.
+    PublishCards,
+}
+
+/// One monotonically sequenced, content-free event from the retained ring buffer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeepMapEventV2 {
+    sequence: String,
+    phase: DeepMapPhaseV2,
+    current_module_id: Option<String>,
+    target_kind: DeepMapTargetKindV2,
+    safe_action: DeepMapSafeActionV2,
+    step_position: Option<String>,
+    total_steps: Option<String>,
+    confirmed: bool,
+}
+
+impl DeepMapEventV2 {
+    /// Creates one already-sanitized activity event.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        sequence: String,
+        phase: DeepMapPhaseV2,
+        current_module_id: Option<String>,
+        target_kind: DeepMapTargetKindV2,
+        safe_action: DeepMapSafeActionV2,
+        step_position: Option<String>,
+        total_steps: Option<String>,
+        confirmed: bool,
+    ) -> Self {
+        Self {
+            sequence,
+            phase,
+            current_module_id,
+            target_kind,
+            safe_action,
+            step_position,
+            total_steps,
+            confirmed,
+        }
+    }
+}
+
+/// Terminal publication summary containing no generated content.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeepMapPublicationSummaryV2 {
+    atomically_published: bool,
+}
+
+impl DeepMapPublicationSummaryV2 {
+    /// Reports that verification completed and the replacement publish committed atomically.
+    #[must_use]
+    pub const fn succeeded() -> Self {
+        Self {
+            atomically_published: true,
+        }
+    }
+}
+
+/// Bounded V2 activity snapshot with live pipeline position and at most 32 events.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeepMapActivityV2 {
+    state: DeepMapActivityStateV1,
+    budget: Option<DeepMapBudgetV1>,
+    progress: Option<DeepMapProgressV1>,
+    failure: Option<DeepMapFailureV1>,
+    confirmed_steps: String,
+    total_steps: String,
+    phase: Option<DeepMapPhaseV2>,
+    current_module_id: Option<String>,
+    target_kind: Option<DeepMapTargetKindV2>,
+    safe_action: Option<DeepMapSafeActionV2>,
+    step_position: Option<String>,
+    events: Vec<DeepMapEventV2>,
+    publication_summary: Option<DeepMapPublicationSummaryV2>,
+}
+
+impl DeepMapActivityV2 {
+    /// Creates one complete bounded activity projection.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        state: DeepMapActivityStateV1,
+        budget: Option<DeepMapBudgetV1>,
+        progress: Option<DeepMapProgressV1>,
+        failure: Option<DeepMapFailureV1>,
+        confirmed_steps: String,
+        total_steps: String,
+        phase: Option<DeepMapPhaseV2>,
+        current_module_id: Option<String>,
+        target_kind: Option<DeepMapTargetKindV2>,
+        safe_action: Option<DeepMapSafeActionV2>,
+        step_position: Option<String>,
+        events: Vec<DeepMapEventV2>,
+        publication_summary: Option<DeepMapPublicationSummaryV2>,
+    ) -> Self {
+        debug_assert!(events.len() <= 32);
+        Self {
+            state,
+            budget,
+            progress,
+            failure,
+            confirmed_steps,
+            total_steps,
+            phase,
+            current_module_id,
+            target_kind,
+            safe_action,
+            step_position,
+            events,
+            publication_summary,
+        }
+    }
+}
+
+/// Complete V2 status response for safe live activity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeepMapStatusResponseV2 {
+    protocol_version: ProtocolVersion,
+    result: DeepMapStatusResultV2,
+}
+
+impl DeepMapStatusResponseV2 {
+    /// Creates the response before a project is active.
+    #[must_use]
+    pub const fn no_project() -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: DeepMapStatusResultV2::NoProject,
+        }
+    }
+
+    /// Creates the response when no verified mapping executor is configured.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: DeepMapStatusResultV2::Unavailable,
+        }
+    }
+
+    /// Creates a configured response with one bounded activity snapshot.
+    #[must_use]
+    pub fn available(configuration: DeepMapConfigurationV1, activity: DeepMapActivityV2) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: DeepMapStatusResultV2::Available {
+                configuration: Box::new(configuration),
+                activity: Box::new(activity),
+            },
+        }
+    }
+
+    /// Returns the mutually exclusive V2 availability result.
+    #[must_use]
+    pub const fn result(&self) -> &DeepMapStatusResultV2 {
+        &self.result
+    }
+}
+
+/// V2 availability result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+pub enum DeepMapStatusResultV2 {
+    /// No project is active.
+    NoProject,
+    /// No live-verified local mapping executor is configured.
+    Unavailable,
+    /// Mapping configuration and current safe activity are available.
+    Available {
+        /// Verified model and validated budget envelope.
+        configuration: Box<DeepMapConfigurationV1>,
+        /// Bounded in-memory live activity.
+        activity: Box<DeepMapActivityV2>,
+    },
+}
+
 /// Monotone scheduler progress, encoded losslessly for the WebView.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

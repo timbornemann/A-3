@@ -1,11 +1,12 @@
 use crate::{
-    DeepMapExecutionFailure, DeepMapExecutionFuture, DeepMapExecutionOutcome,
-    DeepMapExecutionRequest, DeepMapExecutor, DeepMapExplorerFailure, DeepMapExplorerStatus,
-    DeepMapModelDescriptor, DeepMapResumeState, ExploreDeepMap, ExplorerModelFailure,
-    IndexPersistenceControl, IndexPersistenceControlError, JobContext, KnowledgeIndexFailure,
-    KnowledgeIndexStore, ModelBackedExplorerProvider, ModelProvider, PlanDeepMap,
-    ProposeModuleCardClaims, ProposeModuleCardClaimsFailure, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, PublishedIndexDeepMapReadTools,
+    DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapExecutionFailure,
+    DeepMapExecutionFuture, DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor,
+    DeepMapExplorerFailure, DeepMapExplorerStatus, DeepMapModelDescriptor, DeepMapPhase,
+    DeepMapResumeState, DeepMapSafeAction, DeepMapTargetKind, ExploreDeepMap, ExplorerModelFailure,
+    IgnoreDeepMapActivity, IndexPersistenceControl, IndexPersistenceControlError, JobContext,
+    KnowledgeIndexFailure, KnowledgeIndexStore, ModelBackedExplorerProvider, ModelProvider,
+    PlanDeepMap, ProposeModuleCardClaims, ProposeModuleCardClaimsFailure,
+    PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure, PublishedIndexDeepMapReadTools,
     PublishedIndexEvidenceResolver, VerifiedModuleCardPublisher, VerifyModuleCards,
     VerifyModuleCardsFailure,
 };
@@ -21,6 +22,7 @@ use std::sync::Arc;
 const MERGED_PROPOSAL_ENVELOPE_BYTES: usize = 512;
 const MERGED_FIELD_OVERHEAD_BYTES: usize = 64;
 const MERGED_EVIDENCE_ID_BYTES: usize = 67;
+static IGNORE_ACTIVITY: IgnoreDeepMapActivity = IgnoreDeepMapActivity;
 
 #[derive(Debug)]
 struct DeepMapIndexReadControl<'a> {
@@ -90,7 +92,19 @@ impl RunDeepMap {
         project: &ProjectIdentity,
         request: DeepMapExecutionRequest,
         control: &JobContext,
+        observer: &dyn DeepMapActivityObserver,
     ) -> Result<DeepMapExecutionOutcome, DeepMapExecutionFailure> {
+        if matches!(&request, DeepMapExecutionRequest::Start { .. }) {
+            observer.observe(DeepMapActivityUpdate::new(
+                DeepMapPhase::Planning,
+                None,
+                DeepMapTargetKind::Project,
+                DeepMapSafeAction::BuildPlan,
+                None,
+                None,
+                false,
+            ));
+        }
         let published = self.load_published(project, control).await?;
         let budget = request.budget();
         let (plan, checkpoint) = match request {
@@ -126,7 +140,7 @@ impl RunDeepMap {
                 .map_err(map_explorer_model_failure)?;
         let tools = PublishedIndexDeepMapReadTools::new(Arc::clone(&self.index));
         let explored = ExploreDeepMap::version_one(&provider, &tools)
-            .execute(project, &plan, checkpoint, control)
+            .execute_observed(project, &plan, checkpoint, control, observer)
             .await
             .map_err(map_explorer_failure)?;
         let status = explored.status();
@@ -142,6 +156,15 @@ impl RunDeepMap {
         let proposals = merge_module_proposals(state.checkpoint().confirmed_proposals())?;
         let mut candidates = Vec::with_capacity(proposals.len());
         for proposal in proposals {
+            observer.observe(DeepMapActivityUpdate::new(
+                DeepMapPhase::Claiming,
+                Some(proposal.module_id()),
+                DeepMapTargetKind::Module,
+                DeepMapSafeAction::GenerateClaims,
+                None,
+                None,
+                false,
+            ));
             match claim_proposer.execute(proposal, control).await {
                 Ok(candidate) => candidates.push(candidate),
                 Err(ProposeModuleCardClaimsFailure::Cancelled) => {
@@ -151,6 +174,15 @@ impl RunDeepMap {
             }
         }
         let resolver = PublishedIndexEvidenceResolver::new(self.index.as_ref());
+        observer.observe(DeepMapActivityUpdate::new(
+            DeepMapPhase::Verifying,
+            None,
+            DeepMapTargetKind::Project,
+            DeepMapSafeAction::VerifyEvidence,
+            None,
+            None,
+            false,
+        ));
         let verified = match VerifyModuleCards::version_one(&resolver)
             .execute(project, &published, candidates, control)
             .await
@@ -161,6 +193,15 @@ impl RunDeepMap {
             }
             Err(failure) => return Err(map_verification_failure(failure)),
         };
+        observer.observe(DeepMapActivityUpdate::new(
+            DeepMapPhase::Publishing,
+            None,
+            DeepMapTargetKind::Project,
+            DeepMapSafeAction::PublishCards,
+            None,
+            None,
+            false,
+        ));
         match PublishVerifiedModuleCards::new(self.publisher.as_ref())
             .execute(project, &verified, control)
             .await
@@ -171,6 +212,15 @@ impl RunDeepMap {
             }
             Err(failure) => return Err(map_publication_failure(failure)),
         }
+        observer.observe(DeepMapActivityUpdate::new(
+            DeepMapPhase::Publishing,
+            None,
+            DeepMapTargetKind::Project,
+            DeepMapSafeAction::PublishCards,
+            None,
+            None,
+            true,
+        ));
         DeepMapExecutionOutcome::completed(state)
     }
 }
@@ -268,7 +318,17 @@ impl DeepMapExecutor for RunDeepMap {
         request: DeepMapExecutionRequest,
         control: &'a JobContext,
     ) -> DeepMapExecutionFuture<'a> {
-        Box::pin(self.execute_owned(project, request, control))
+        Box::pin(self.execute_owned(project, request, control, &IGNORE_ACTIVITY))
+    }
+
+    fn execute_observed<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        request: DeepMapExecutionRequest,
+        control: &'a JobContext,
+        observer: &'a dyn DeepMapActivityObserver,
+    ) -> DeepMapExecutionFuture<'a> {
+        Box::pin(self.execute_owned(project, request, control, observer))
     }
 }
 

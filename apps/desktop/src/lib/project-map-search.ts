@@ -86,13 +86,20 @@ export type ProjectMapSearchTargetV1 =
       symbolKind: ProjectMapSearchSymbolKindV1;
     };
 
+export type ProjectMapSearchEvidenceSelectionV2 =
+  { evidenceId: string; kind: 'file' } | { evidenceId: string; kind: 'symbol'; symbolId: string };
+
 export interface ProjectMapSearchHitV1 {
+  evidenceSelection: ProjectMapSearchEvidenceSelectionV2;
   finalScore: number;
+  moduleId: string | null;
   priority: ProjectMapSearchPriorityV1;
   rank: number;
   sources: ProjectMapSearchSourceV1[];
   target: ProjectMapSearchTargetV1;
 }
+
+export type ProjectMapSearchHitV2 = ProjectMapSearchHitV1;
 
 export interface ProjectMapSearchV1 {
   fusionPolicyVersion: 1;
@@ -113,6 +120,8 @@ export interface ProjectMapSearchResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
   result: ProjectMapSearchResultV1;
 }
+
+export type ProjectMapSearchResponseV2 = ProjectMapSearchResponseV1;
 
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
   tauriInvoke<unknown>(command, arguments_);
@@ -217,7 +226,16 @@ function parseSearch(value: unknown): ProjectMapSearchV1 {
 function parseHit(value: unknown): ProjectMapSearchHitV1 {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['finalScore', 'priority', 'rank', 'sources', 'target']) ||
+    !hasExactKeys(value, [
+      'evidenceSelection',
+      'finalScore',
+      'moduleId',
+      'priority',
+      'rank',
+      'sources',
+      'target',
+    ]) ||
+    (value.moduleId !== null && !isStableId(value.moduleId)) ||
     !isIntegerBetween(value.rank, 1, MAX_HITS) ||
     !isIntegerBetween(value.finalScore, 0, MAX_SCORE) ||
     (value.priority !== 'exact' && value.priority !== 'evidence') ||
@@ -238,16 +256,40 @@ function parseHit(value: unknown): ProjectMapSearchHitV1 {
     throw new Error('Project Map search response contains inconsistent provenance.');
   }
   const target = parseTarget(value.target);
+  const evidenceSelection = parseEvidenceSelection(value.evidenceSelection, target);
   if (value.finalScore !== expectedFinalScore(sources, target)) {
     throw new Error('Project Map search response contains an inconsistent fusion score.');
   }
   return {
+    evidenceSelection,
     finalScore: value.finalScore,
+    moduleId: value.moduleId,
     priority: value.priority,
     rank: value.rank,
     sources,
     target,
   };
+}
+
+function parseEvidenceSelection(
+  value: unknown,
+  target: ProjectMapSearchTargetV1,
+): ProjectMapSearchEvidenceSelectionV2 {
+  if (!isRecord(value) || !isStableId(value.evidenceId) || value.kind !== target.kind) {
+    throw new Error('Project Map search response contains an invalid Evidence selection.');
+  }
+  if (value.kind === 'file' && hasExactKeys(value, ['evidenceId', 'kind'])) {
+    return { evidenceId: value.evidenceId, kind: 'file' };
+  }
+  if (
+    value.kind === 'symbol' &&
+    target.kind === 'symbol' &&
+    hasExactKeys(value, ['evidenceId', 'kind', 'symbolId']) &&
+    value.symbolId === target.symbolId
+  ) {
+    return { evidenceId: value.evidenceId, kind: 'symbol', symbolId: value.symbolId };
+  }
+  throw new Error('Project Map search response contains an invalid Evidence selection.');
 }
 
 function parseSource(value: unknown): ProjectMapSearchSourceV1 {

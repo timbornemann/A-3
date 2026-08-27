@@ -10,9 +10,10 @@ use crate::{
     module_card_detail_repository, module_card_evidence_repository,
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
-    policy_repository, repository_tree_repository, run_journal_repository,
-    semantic_embedding_repository, settings_repository, task_ledger_repository,
-    task_lens_claim_repository, task_lens_workspace_repository, verification_evidence_repository,
+    policy_repository, project_map_scene_repository, project_map_search_repository,
+    repository_tree_repository, run_journal_repository, semantic_embedding_repository,
+    settings_repository, task_ledger_repository, task_lens_claim_repository,
+    task_lens_workspace_repository, verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
@@ -36,37 +37,38 @@ use a3_application::{
     ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
     ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
     PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectCatalogPage,
-    ProjectCatalogQuery, ProjectOpenPreparation, ProjectReconciliationProposal,
-    ProjectStorageControl, ProjectStorageFailure, ProjectStorageFuture, ProjectStorageStore,
-    ProjectStorageUsage, RecentProject, RecentProjectLimit, RecordedAgentRead, RemapQueueControl,
-    RemapQueueLimit, RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture,
-    RepositoryTreeQuery, RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore,
-    RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
-    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
-    StoredDesktopSettings, StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
-    TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
-    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceFuture,
-    TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore, TaskLensWorkspaceTask,
-    TaskLensWorkspaceTaskLimit, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
-    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
-    VerifiedModuleCardPublisherFuture,
+    ProjectCatalogQuery, ProjectMapSceneControl, ProjectMapSceneFailure, ProjectMapSceneFuture,
+    ProjectMapSceneQuery, ProjectMapSceneStore, ProjectOpenPreparation,
+    ProjectReconciliationProposal, ProjectStorageControl, ProjectStorageFailure,
+    ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
+    RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
+    RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
+    RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
+    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
+    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredDesktopSettings,
+    StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore, TaskLedgerStoreFailure,
+    TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture,
+    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
+    TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensWorkspaceControl,
+    TaskLensWorkspaceFailure, TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage,
+    TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit,
+    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
     AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
     AgentToolEvidence, ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest,
     ApprovalRequestId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, GoalContract,
-    GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, MutationActionFingerprint,
-    PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist, ProjectId, ProjectIdentity,
-    PublishedIndex, RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot,
-    SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery,
-    VectorSearchCapability, VectorSearchLimit, VectorSearchResult, VerificationEvidence,
-    VerifiedModuleCardBatch, WorktreeId,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget,
+    GoalContract, GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId,
+    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
+    MutationActionFingerprint, PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist,
+    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
+    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
+    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -1672,6 +1674,29 @@ impl ModuleDependencyGraphStore for LibsqlKnowledgeStore {
     }
 }
 
+impl ProjectMapSceneStore for LibsqlKnowledgeStore {
+    fn load_project_map_scene<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ProjectMapSceneQuery,
+        control: &'a dyn ProjectMapSceneControl,
+    ) -> ProjectMapSceneFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge_for_project_map_scene(project)
+                .await?;
+            project_map_scene_repository::load(
+                knowledge.connection(),
+                project.worktree().id(),
+                query,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
 impl ModuleRuntimeStore for LibsqlKnowledgeStore {
     fn load_module_runtime_map<'a>(
         &'a self,
@@ -1760,6 +1785,25 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+
+    fn bind_modules<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        index_run_id: IndexRunId,
+        targets: &'a [ExactSearchTarget],
+        control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, Vec<Option<ModuleId>>> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_search(project).await?;
+            project_map_search_repository::bind_modules(
+                knowledge.connection(),
+                index_run_id,
+                targets,
+                control,
+            )
+            .await
         })
     }
 
@@ -2300,6 +2344,29 @@ impl LibsqlKnowledgeStore {
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(ModuleDependencyGraphFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_project_map_scene(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, ProjectMapSceneFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(ProjectMapSceneFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ProjectMapSceneFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
     }

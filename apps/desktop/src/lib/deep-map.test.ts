@@ -9,6 +9,16 @@ import {
   startDeepMap,
 } from './deep-map';
 
+const emptyActivityV2 = {
+  currentModuleId: null,
+  events: [],
+  phase: null,
+  publicationSummary: null,
+  safeAction: null,
+  stepPosition: null,
+  targetKind: null,
+} as const;
+
 function availableResponse(): unknown {
   return {
     protocolVersion: 1,
@@ -32,6 +42,7 @@ function availableResponse(): unknown {
         },
       },
       activity: {
+        ...emptyActivityV2,
         state: 'idle',
         budget: null,
         progress: null,
@@ -86,6 +97,7 @@ describe('Deep Map protocol', () => {
       result: { activity: Record<string, unknown> };
     };
     paused.result.activity = {
+      ...emptyActivityV2,
       state: 'paused',
       budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
       progress: null,
@@ -101,6 +113,7 @@ describe('Deep Map protocol', () => {
       result: { activity: Record<string, unknown> };
     };
     failed.result.activity = {
+      ...emptyActivityV2,
       state: 'failed',
       budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
       progress: null,
@@ -114,5 +127,36 @@ describe('Deep Map protocol', () => {
 
     failed.result.activity.failure = 'rawProviderError';
     expect(() => parseDeepMapStatusResponseV1(failed)).toThrow();
+  });
+
+  it('rejects oversized or non-monotonic live event feeds', () => {
+    const oversized = availableResponse() as {
+      result: { activity: Record<string, unknown> };
+    };
+    oversized.result.activity = {
+      ...emptyActivityV2,
+      state: 'running',
+      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      progress: { completed: '1', total: '40' },
+      failure: null,
+      confirmedSteps: '1',
+      totalSteps: '40',
+      events: Array.from({ length: 33 }, (_, index) => ({
+        confirmed: true,
+        currentModuleId: 'aa'.repeat(32),
+        phase: 'exploring',
+        safeAction: 'inspect',
+        sequence: String(index + 1),
+        stepPosition: String(index + 1),
+        targetKind: 'module',
+        totalSteps: '40',
+      })),
+    };
+    expect(() => parseDeepMapStatusResponseV1(oversized)).toThrow(/activity|event/i);
+
+    const nonMonotonic = structuredClone(oversized);
+    (nonMonotonic.result.activity.events as Array<Record<string, unknown>>).splice(0, 2);
+    (nonMonotonic.result.activity.events as Array<Record<string, unknown>>)[1].sequence = '2';
+    expect(() => parseDeepMapStatusResponseV1(nonMonotonic)).toThrow(/activity|event/i);
   });
 });

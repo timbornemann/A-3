@@ -59,7 +59,42 @@ export interface DeepMapActivityV1 {
   failure: DeepMapFailureV1 | null;
   confirmedSteps: string;
   totalSteps: string;
+  phase: DeepMapPhaseV2 | null;
+  currentModuleId: string | null;
+  targetKind: DeepMapTargetKindV2 | null;
+  safeAction: DeepMapSafeActionV2 | null;
+  stepPosition: string | null;
+  events: DeepMapEventV2[];
+  publicationSummary: DeepMapPublicationSummaryV2 | null;
 }
+
+export type DeepMapPhaseV2 = 'planning' | 'exploring' | 'claiming' | 'verifying' | 'publishing';
+export type DeepMapTargetKindV2 = 'project' | 'module' | 'manifest' | 'symbol';
+export type DeepMapSafeActionV2 =
+  | 'buildPlan'
+  | 'inspect'
+  | 'search'
+  | 'propose'
+  | 'generateClaims'
+  | 'verifyEvidence'
+  | 'publishCards';
+
+export interface DeepMapEventV2 {
+  sequence: string;
+  phase: DeepMapPhaseV2;
+  currentModuleId: string | null;
+  targetKind: DeepMapTargetKindV2;
+  safeAction: DeepMapSafeActionV2;
+  stepPosition: string | null;
+  totalSteps: string | null;
+  confirmed: boolean;
+}
+
+export interface DeepMapPublicationSummaryV2 {
+  atomicallyPublished: true;
+}
+
+export type DeepMapActivityV2 = DeepMapActivityV1;
 
 export interface DeepMapConfigurationV1 {
   model: DeepMapModelV1;
@@ -79,6 +114,8 @@ export type DeepMapStatusResponseV1 = {
         activity: DeepMapActivityV1;
       };
 };
+
+export type DeepMapStatusResponseV2 = DeepMapStatusResponseV1;
 
 export interface DeepMapControlResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
@@ -163,6 +200,8 @@ export function parseDeepMapStatusResponseV1(value: unknown): DeepMapStatusRespo
   };
 }
 
+export const parseDeepMapStatusResponseV2 = parseDeepMapStatusResponseV1;
+
 function parseConfiguration(value: unknown): DeepMapConfigurationV1 {
   const object = record(value, ['defaultBudget', 'maximumBudget', 'minimumBudget', 'model']);
   const minimumBudget = parseBudget(object.minimumBudget);
@@ -217,9 +256,16 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
   const object = record(value, [
     'budget',
     'confirmedSteps',
+    'currentModuleId',
+    'events',
     'failure',
+    'phase',
     'progress',
+    'publicationSummary',
+    'safeAction',
     'state',
+    'stepPosition',
+    'targetKind',
     'totalSteps',
   ]);
   const states = new Set<DeepMapActivityStateV1>([
@@ -261,6 +307,38 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
         : undefined;
   const confirmedSteps = decimal(object.confirmedSteps);
   const totalSteps = decimal(object.totalSteps);
+  const phase = nullableEnum<DeepMapPhaseV2>(object.phase, [
+    'planning',
+    'exploring',
+    'claiming',
+    'verifying',
+    'publishing',
+  ]);
+  const targetKind = nullableEnum<DeepMapTargetKindV2>(object.targetKind, [
+    'project',
+    'module',
+    'manifest',
+    'symbol',
+  ]);
+  const safeAction = nullableEnum<DeepMapSafeActionV2>(object.safeAction, [
+    'buildPlan',
+    'inspect',
+    'search',
+    'propose',
+    'generateClaims',
+    'verifyEvidence',
+    'publishCards',
+  ]);
+  const currentModuleId =
+    object.currentModuleId === null
+      ? null
+      : typeof object.currentModuleId === 'string' && PROFILE_ID.test(object.currentModuleId)
+        ? object.currentModuleId
+        : undefined;
+  const stepPosition = object.stepPosition === null ? null : decimal(object.stepPosition);
+  const events = parseEvents(object.events);
+  const publicationSummary = parsePublicationSummary(object.publicationSummary);
+  const hasCurrentActivity = phase !== null || targetKind !== null || safeAction !== null;
   if (
     confirmedSteps > totalSteps ||
     failure === undefined ||
@@ -269,7 +347,17 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
     (['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(state) && budget === null) ||
     (state === 'paused' && (totalSteps === BigInt(0) || confirmedSteps >= totalSteps)) ||
     (state === 'succeeded' && confirmedSteps !== totalSteps) ||
-    (progress !== null && !['queued', 'running', 'pausing', 'cancelling'].includes(state))
+    (progress !== null && !['queued', 'running', 'pausing', 'cancelling'].includes(state)) ||
+    phase === undefined ||
+    targetKind === undefined ||
+    safeAction === undefined ||
+    currentModuleId === undefined ||
+    stepPosition === undefined ||
+    (hasCurrentActivity && (phase === null || targetKind === null || safeAction === null)) ||
+    (!hasCurrentActivity && currentModuleId !== null) ||
+    (stepPosition !== null && (stepPosition === BigInt(0) || stepPosition > totalSteps)) ||
+    (state === 'idle' && (events.length !== 0 || hasCurrentActivity)) ||
+    (publicationSummary !== null && state !== 'succeeded')
   ) {
     throw new Error('Contradictory Deep Map lifecycle state');
   }
@@ -280,7 +368,119 @@ function parseActivity(value: unknown): DeepMapActivityV1 {
     failure,
     confirmedSteps: object.confirmedSteps as string,
     totalSteps: object.totalSteps as string,
+    phase,
+    currentModuleId,
+    targetKind,
+    safeAction,
+    stepPosition: stepPosition === null ? null : (object.stepPosition as string),
+    events,
+    publicationSummary,
   };
+}
+
+function parseEvents(value: unknown): DeepMapEventV2[] {
+  if (!Array.isArray(value) || value.length > 32) throw new Error('Invalid Deep Map event buffer');
+  let previousSequence = BigInt(0);
+  let previousPhase = 0;
+  return value.map((entry) => {
+    const object = record(entry, [
+      'confirmed',
+      'currentModuleId',
+      'phase',
+      'safeAction',
+      'sequence',
+      'stepPosition',
+      'targetKind',
+      'totalSteps',
+    ]);
+    const sequence = decimal(object.sequence);
+    const phase = nullableEnum<DeepMapPhaseV2>(object.phase, [
+      'planning',
+      'exploring',
+      'claiming',
+      'verifying',
+      'publishing',
+    ]);
+    const targetKind = nullableEnum<DeepMapTargetKindV2>(object.targetKind, [
+      'project',
+      'module',
+      'manifest',
+      'symbol',
+    ]);
+    const safeAction = nullableEnum<DeepMapSafeActionV2>(object.safeAction, [
+      'buildPlan',
+      'inspect',
+      'search',
+      'propose',
+      'generateClaims',
+      'verifyEvidence',
+      'publishCards',
+    ]);
+    const currentModuleId =
+      object.currentModuleId === null
+        ? null
+        : typeof object.currentModuleId === 'string' && PROFILE_ID.test(object.currentModuleId)
+          ? object.currentModuleId
+          : undefined;
+    const stepPosition = object.stepPosition === null ? null : decimal(object.stepPosition);
+    const total = object.totalSteps === null ? null : decimal(object.totalSteps);
+    const phaseRank = phase === null || phase === undefined ? 0 : phaseOrder(phase);
+    if (
+      sequence <= previousSequence ||
+      phase === null ||
+      phase === undefined ||
+      targetKind === null ||
+      targetKind === undefined ||
+      safeAction === null ||
+      safeAction === undefined ||
+      currentModuleId === undefined ||
+      typeof object.confirmed !== 'boolean' ||
+      stepPosition === undefined ||
+      total === undefined ||
+      (stepPosition === null) !== (total === null) ||
+      (stepPosition !== null &&
+        total !== null &&
+        (stepPosition === BigInt(0) || total === BigInt(0) || stepPosition > total)) ||
+      (object.confirmed && stepPosition === null && phase !== 'publishing') ||
+      phaseRank < previousPhase
+    ) {
+      throw new Error('Invalid Deep Map event');
+    }
+    previousSequence = sequence;
+    previousPhase = phaseRank;
+    return {
+      confirmed: object.confirmed,
+      currentModuleId,
+      phase,
+      safeAction,
+      sequence: object.sequence as string,
+      stepPosition: object.stepPosition as string | null,
+      targetKind,
+      totalSteps: object.totalSteps as string | null,
+    };
+  });
+}
+
+function parsePublicationSummary(value: unknown): DeepMapPublicationSummaryV2 | null {
+  if (value === null) return null;
+  const object = record(value, ['atomicallyPublished']);
+  if (object.atomicallyPublished !== true) throw new Error('Invalid Deep Map publication summary');
+  return { atomicallyPublished: true };
+}
+
+function nullableEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+): T | null | undefined {
+  return value === null
+    ? null
+    : typeof value === 'string' && allowed.includes(value as T)
+      ? (value as T)
+      : undefined;
+}
+
+function phaseOrder(phase: DeepMapPhaseV2): number {
+  return ['planning', 'exploring', 'claiming', 'verifying', 'publishing'].indexOf(phase) + 1;
 }
 
 function parseProgress(value: unknown): DeepMapProgressV1 {

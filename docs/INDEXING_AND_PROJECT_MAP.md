@@ -845,14 +845,43 @@ Zwei-Sekunden-Deadline. Eine neu verifizierte Card entfernt ihr Modul im selben 
 Queue. Task-Lens-Claim-Reads wählen nur die neueste `Published`-Card mit `Active`-Claim-Lifecycle,
 lösen deren Evidence erneut gegen den aktuellen Run auf und liefern dadurch keine stale Facts.
 
+## U11 Architektur-Atlas
+
+`ProjectMapSceneV1` ist das einzige Map-Overview-Read-Model. Die Übersicht wählt höchstens 64
+Primärmodule deterministisch nach Manifestgrenze, Entry Points, Tests, Zentralsymbolen und danach
+`ModuleId`; höchstens 128 Relationsgruppen folgen. Ein Fokusread verwendet das vorhandene
+evidencegewichtete Nachbarranking für Zentrum plus höchstens 31 direkte Nachbarn. Vollständige
+Gesamt-, Trunkierungs- und Unmapped-Zähler verhindern, dass ein Ausschnitt als Vollgraph erscheint.
+Das Frontend legt diese stabile Auswahl rechteckig aus; SVG-Routen sind nur Visualisierung, während
+HTML-Buttons und eine textuelle Zusammenfassung die autoritative zugängliche Darstellung bilden.
+
+Moduldetails, maximal 20 Entry Points und 20 Tests, direkte Nachbarn, Claims und Evidence werden
+erst nach Auswahl geladen. Suche und Task Lens verändern denselben Präsentationsfokus; sie erzeugen
+keine fachlich persistierte Kartenposition. Search V2 bindet aktuelle File-/Symboltreffer nur bei
+eindeutiger Primärmembership an eine Region und behält andernfalls einen ungebundenen Inspector-
+Treffer. Replacement-Publish oder Projektwechsel verwirft Szene, Auswahl, Layout und verspätete
+Reads über die bestehende UI-Generation.
+
+`DeepMapActivityObserver` verbindet Planning, Exploration, Claim-Erzeugung, Verifikation und
+atomaren Publish mit einem flüchtigen 32er-Ringpuffer. Nur bestätigte Explorationsschritte erhöhen
+den deterministischen Fortschritt. Pause/Resume behält Sequenz und Events ohne Replay; der Atlas
+zeigt während des Laufs weiterhin den letzten veröffentlichten Snapshot und übernimmt neue Cards
+erst nach erfolgreichem Publish.
+
+Die Source-Vorschau aus ADR-0030 löst ausschließlich eine zuvor sichtbare Card-Evidence-Auswahl
+erneut auf. Der sichere Source-Reader liefert acht Kontextzeilen je Seite, höchstens 64 Zeilen und
+16 KiB Plain Text; stale, geheime, generierte, binäre, verlinkte oder hashveränderte Dateien bleiben
+ohne Inhalt.
+
 ## Hybride Suche
 
 Die U4-Project-Map-Suche verwendet die vorhandenen Exact- und Lexical-Projektionen als bewussten
 read-only Produktpfad. Die WebView liefert nur Protokollversion und einen gemeinsamen validierten
 Suchtext; Projekt, Cursor und Grenzen bleiben Core-eigen. Je Kanal gelangen höchstens 100 aktuelle
 Kandidaten aus derselben Publikation in R4, daraus werden höchstens 20 Ziele sichtbar. Jeder Treffer
-behält typisierte native Begründung, normalisierten Kanalscore, Run, Snapshot und exakte File- oder
-Declaration-Evidence. Die Suche startet nur nach Submit, läuft nicht im Statuspolling und öffnet
+behält typisierte native Begründung, normalisierten Kanalscore, Run, Snapshot, eine optionale exakt
+eindeutige Primärmodulbindung und eine opaque typisierte File- oder Declaration-Evidence-Auswahl.
+Die Suche startet nur nach Submit, läuft nicht im Statuspolling und öffnet
 Evidence progressiv. Widersprüchliche Publikationen oder Projektionen werden nicht teilweise
 gerendert; Source-Inhalt und autoritative Pfade bleiben im Core.
 

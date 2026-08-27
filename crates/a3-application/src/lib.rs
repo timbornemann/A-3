@@ -17,6 +17,7 @@ mod agent_turn;
 mod command_discovery;
 mod context_compiler;
 mod deep_map_action_codec;
+mod deep_map_activity;
 mod deep_map_execution;
 mod deep_map_explorer;
 mod deep_map_model_adapter;
@@ -58,7 +59,9 @@ mod policy;
 mod policy_store;
 mod process_runner;
 mod project_catalog;
+mod project_map_scene;
 mod project_map_search;
+mod project_map_source_preview;
 mod project_reconciliation;
 mod project_removal;
 mod project_settings;
@@ -154,6 +157,10 @@ pub use context_compiler::{
 };
 pub use deep_map_action_codec::{
     DecodeExplorerAction, ExplorerActionDecodeError, ExplorerActionJsonSchema,
+};
+pub use deep_map_activity::{
+    DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapPhase, DeepMapSafeAction,
+    DeepMapTargetKind, IgnoreDeepMapActivity,
 };
 pub use deep_map_execution::{
     DeepMapExecutionFailure, DeepMapExecutionFuture, DeepMapExecutionOutcome,
@@ -330,8 +337,23 @@ pub use project_catalog::{
     ProjectCatalogCursor, ProjectCatalogDirection, ProjectCatalogPage, ProjectCatalogQuery,
     ProjectCatalogQueryError,
 };
+pub use project_map_scene::{
+    GetProjectMapScene, PROJECT_MAP_SCENE_FOCUS_MODULE_LIMIT,
+    PROJECT_MAP_SCENE_OVERVIEW_MODULE_LIMIT, PROJECT_MAP_SCENE_RELATION_LIMIT,
+    ProjectMapCardBinding, ProjectMapMappingStatus, ProjectMapScene, ProjectMapSceneControl,
+    ProjectMapSceneControlError, ProjectMapSceneError, ProjectMapSceneFailure,
+    ProjectMapSceneFuture, ProjectMapSceneLoadResult, ProjectMapSceneModule,
+    ProjectMapSceneModuleKind, ProjectMapSceneQuery, ProjectMapSceneRelation, ProjectMapSceneStore,
+    ScenePolicyVersion,
+};
 pub use project_map_search::{
-    ProjectMapSearchQuery, ProjectMapSearchQueryError, SearchProjectMap, SearchProjectMapFailure,
+    ProjectMapSearchQuery, ProjectMapSearchQueryError, ProjectMapSearchResult, SearchProjectMap,
+    SearchProjectMapFailure,
+};
+pub use project_map_source_preview::{
+    GetProjectMapSourcePreview, ProjectMapSourceHighlight, ProjectMapSourcePreview,
+    ProjectMapSourcePreviewControl, ProjectMapSourcePreviewControlError,
+    ProjectMapSourcePreviewFailure, ProjectMapSourcePreviewQuery, ProjectMapSourcePreviewResult,
 };
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,

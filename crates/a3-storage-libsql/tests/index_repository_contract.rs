@@ -4,16 +4,16 @@ mod support;
 
 use a3_application::{
     CompileTaskLens, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
-    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetRepositoryTreePage,
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
-    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
-    ModuleCardClaimState, ModuleCardDetailControl, ModuleCardDetailControlError,
-    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
-    ModuleCardEvidenceControl, ModuleCardEvidenceControlError, ModuleCardEvidenceFailure,
-    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
-    ModuleCardEvidenceQuery, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardLifecycle,
-    ModuleCardVerificationControl, ModuleCardVerificationControlError,
+    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectMapScene,
+    GetRepositoryTreePage, IndexPersistenceControl, IndexPersistenceControlError,
+    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
+    LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
+    ModuleCardDetailQuery, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
+    ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult,
+    ModuleCardEvidencePayload, ModuleCardEvidenceQuery, ModuleCardFreshnessControl,
+    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
+    ModuleCardLifecycle, ModuleCardVerificationControl, ModuleCardVerificationControlError,
     ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
     ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyNodeLimit,
     ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
@@ -21,11 +21,12 @@ use a3_application::{
     ModuleRuntimeFlowQuery, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
     ModuleRuntimeRootLimit, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery,
-    PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure, RemapQueueControl,
-    RemapQueueControlError, RemapQueueLimit, RepositoryTreeControl, RepositoryTreeControlError,
-    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery,
-    TaskLensControl, TaskLensControlError, TraceModuleRuntimeFlow,
-    VerifiedModuleCardPublisherFailure,
+    ProjectMapSceneControl, ProjectMapSceneControlError, ProjectMapSceneFailure,
+    ProjectMapSceneLoadResult, ProjectMapSceneQuery, PublishVerifiedModuleCards,
+    PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
+    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
+    RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl,
+    TaskLensControlError, TraceModuleRuntimeFlow, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
@@ -215,6 +216,23 @@ impl ModuleTreeControl for TestIndexControl {
     }
 }
 
+impl ProjectMapSceneControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ProjectMapSceneControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ProjectMapSceneControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
 impl ModuleDependencyGraphControl for TestIndexControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -326,6 +344,19 @@ impl ModuleTreeControl for CancelledIndexControl {
         &self,
         _progress: a3_domain::Progress,
     ) -> Result<(), ModuleTreeControlError> {
+        Ok(())
+    }
+}
+
+impl ProjectMapSceneControl for CancelledIndexControl {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ProjectMapSceneControlError> {
         Ok(())
     }
 }
@@ -1232,7 +1263,11 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         };
         assert!(matches!(
             symbol_evidence.payload(),
-            ModuleCardEvidencePayload::Symbol { symbol_id, revision }
+            ModuleCardEvidencePayload::Symbol {
+                symbol_id,
+                revision,
+                ..
+            }
                 if ModuleCardEvidenceId::for_symbol_id_v1(*symbol_id) == symbol_evidence_id
                     && revision.path().as_bytes() == b"src/lib.rs"
         ));
@@ -2700,6 +2735,157 @@ fn module_tree_pages_only_direct_primary_boundaries_from_the_latest_projection()
                 )
                 .await,
             Err(ModuleTreeFailure::ParentUnavailable)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn project_map_scene_is_deterministic_manifest_first_bounded_and_latest_only()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([101; 32], [102; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let query = GetProjectMapScene::new(store.clone());
+        let overview_query = ProjectMapSceneQuery::new(None);
+        assert_eq!(
+            query
+                .execute(&fixture.project, &overview_query, &control)
+                .await?,
+            ProjectMapSceneLoadResult::NoPublishedIndex
+        );
+
+        let files = nested_module_files();
+        let first_snapshot = snapshot(
+            [103; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Upsert))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &first_snapshot)
+            .await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([104; 32], first_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                first_run.id(),
+                &nested_module_publication(first_snapshot.id())?,
+                &control,
+            )
+            .await?;
+
+        let first = match query
+            .execute(&fixture.project, &overview_query, &control)
+            .await?
+        {
+            ProjectMapSceneLoadResult::Scene(scene) => scene,
+            other => return Err(format!("unexpected project-map scene state: {other:?}").into()),
+        };
+        let repeated = match query
+            .execute(&fixture.project, &overview_query, &control)
+            .await?
+        {
+            ProjectMapSceneLoadResult::Scene(scene) => scene,
+            other => return Err(format!("unexpected repeated scene state: {other:?}").into()),
+        };
+        assert_eq!(first, repeated);
+        assert_eq!(first.index_run_id(), first_run.id());
+        assert_eq!(first.snapshot_id(), first_snapshot.id());
+        assert_eq!(first.primary_module_count(), 4);
+        assert_eq!(first.modules().len(), 4);
+        assert_eq!(
+            first.modules()[0].module_id(),
+            ModuleId::from_bytes([210; 32])
+        );
+        assert_eq!(
+            first.modules()[0].kind(),
+            a3_application::ProjectMapSceneModuleKind::ManifestBoundary
+        );
+        assert!(first.modules().len() <= a3_application::PROJECT_MAP_SCENE_OVERVIEW_MODULE_LIMIT);
+        assert!(first.relations().len() <= a3_application::PROJECT_MAP_SCENE_RELATION_LIMIT);
+
+        let focus_id = first.modules()[0].module_id();
+        let focused = match query
+            .execute(
+                &fixture.project,
+                &ProjectMapSceneQuery::new(Some(focus_id)),
+                &control,
+            )
+            .await?
+        {
+            ProjectMapSceneLoadResult::Scene(scene) => scene,
+            other => return Err(format!("unexpected focused scene state: {other:?}").into()),
+        };
+        assert_eq!(focused.focus_module_id(), Some(focus_id));
+        assert!(
+            focused
+                .modules()
+                .iter()
+                .any(|module| module.module_id() == focus_id)
+        );
+        assert!(focused.modules().len() <= a3_application::PROJECT_MAP_SCENE_FOCUS_MODULE_LIMIT);
+        assert_eq!(
+            query
+                .execute(&fixture.project, &overview_query, &CancelledIndexControl)
+                .await,
+            Err(ProjectMapSceneFailure::Cancelled)
+        );
+
+        let next_snapshot = snapshot(
+            [105; 32],
+            fixture.project.worktree().id(),
+            Some(first_snapshot.id()),
+            2,
+            files
+                .iter()
+                .map(|(path, hash)| change(path, *hash, SnapshotChangeKind::Delete))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        store
+            .append_snapshot(&fixture.project, &next_snapshot)
+            .await?;
+        let next_run = store
+            .start_index_run(&fixture.project, run([106; 32], next_snapshot.id(), 1)?)
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                next_run.id(),
+                &empty_publication(next_snapshot.id())?,
+                &control,
+            )
+            .await?;
+        let replacement = match query
+            .execute(&fixture.project, &overview_query, &control)
+            .await?
+        {
+            ProjectMapSceneLoadResult::Scene(scene) => scene,
+            other => {
+                return Err(format!("unexpected replacement scene state: {other:?}").into());
+            }
+        };
+        assert_eq!(replacement.index_run_id(), next_run.id());
+        assert_eq!(replacement.snapshot_id(), next_snapshot.id());
+        assert_eq!(replacement.primary_module_count(), 0);
+        assert!(replacement.modules().is_empty());
+        assert_eq!(
+            query
+                .execute(
+                    &fixture.project,
+                    &ProjectMapSceneQuery::new(Some(focus_id)),
+                    &control,
+                )
+                .await?,
+            ProjectMapSceneLoadResult::FocusUnavailable
         );
         Ok::<(), Box<dyn std::error::Error>>(())
     })

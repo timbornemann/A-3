@@ -32,10 +32,11 @@ use a3_application::{
     AgentTaskControlResult, AgentTaskRecovery, AgentTaskRecoveryLoadResult,
     CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
     ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
-    DeepMapExecutionFailure, DeepMapExecutor, GetAgentActivity, GetAgentActivityFailure,
-    GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence,
-    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
-    GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectStorageUsage,
+    DeepMapExecutionFailure, DeepMapExecutor, DeepMapPhase, DeepMapSafeAction, DeepMapTargetKind,
+    GetAgentActivity, GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth,
+    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
+    GetProjectMapScene, GetProjectMapSourcePreview, GetProjectStorageUsage,
     GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
     GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
     HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
@@ -62,28 +63,33 @@ use a3_application::{
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePage, ModuleTreePageSize, ModuleTreeQuery,
     ModuleTreeStore, OpenProject, OpenProjectError, OpenProjectOutcome, PolicyStore,
     ProjectCatalogAdmin, ProjectCatalogAdminFailure, ProjectCatalogPage, ProjectCatalogQuery,
-    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure, ProjectMapSearchQuery,
-    ProjectReconciliationConfirmer, ProjectStorageControl, ProjectStorageControlError,
-    ProjectStorageFailure, ProjectStorageStore, PublishedIndexOverview, RecentProject,
-    RemoveProjectFromList, RemoveProjectFromListError, RepositoryTreeChildName,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize, RepositoryTreeQuery,
-    RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure, RunJournalStore,
-    RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure, TaskLedgerStore,
-    TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore, TaskLensCompilation,
-    TaskLensControl, TaskLensControlError, TaskLensIndexStore, TaskLensTaskLoadResult,
-    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceStore,
-    TaskVerificationInspection, TaskVerificationInspectionLoadResult, TraceModuleRuntimeFlow,
-    VerificationEvidenceStore,
+    ProjectDirectoryPicker, ProjectIndexStatus, ProjectInspectionFailure, ProjectMapMappingStatus,
+    ProjectMapScene, ProjectMapSceneControl, ProjectMapSceneControlError, ProjectMapSceneFailure,
+    ProjectMapSceneLoadResult, ProjectMapSceneModule, ProjectMapSceneModuleKind,
+    ProjectMapSceneQuery, ProjectMapSceneRelation, ProjectMapSceneStore, ProjectMapSearchQuery,
+    ProjectMapSearchResult, ProjectMapSourcePreview, ProjectMapSourcePreviewControl,
+    ProjectMapSourcePreviewControlError, ProjectMapSourcePreviewFailure,
+    ProjectMapSourcePreviewQuery, ProjectMapSourcePreviewResult, ProjectReconciliationConfirmer,
+    ProjectStorageControl, ProjectStorageControlError, ProjectStorageFailure, ProjectStorageStore,
+    PublishedIndexOverview, RecentProject, RemoveProjectFromList, RemoveProjectFromListError,
+    RepositoryTreeChildName, RepositoryTreeControl, RepositoryTreeControlError,
+    RepositoryTreeEntryKind, RepositoryTreeFailure, RepositoryTreePage, RepositoryTreePageSize,
+    RepositoryTreeQuery, RepositoryTreeStore, ReviseAgentGoal, ReviseAgentGoalFailure,
+    RunJournalStore, RunJournalStoreFailure, SearchProjectMap, SearchProjectMapFailure,
+    TaskLedgerStore, TaskLedgerStoreFailure, TaskLedgerStoreVersion, TaskLensClaimStore,
+    TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
+    TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
+    TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
+    TraceModuleRuntimeFlow, VerificationEvidenceStore,
 };
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
     AgentControllerState, AgentTurnActionClass, AgentTurnRepairUsage, ApplicationVersion,
     ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget, ExploreBudget,
-    FileRevision, FusedRetrievalResult, FusionPriority, GitHead, GoalConstraint, GoalContract,
-    GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol,
-    GraphTraversalResult, Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
+    FileRevision, FusionPriority, GitHead, GoalConstraint, GoalContract, GoalContractRevision,
+    GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult,
+    Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
     LexicalSearchExplanation, LinkResolution, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
     ModuleClaimPolarity, ModuleClaimPredicate, ModuleId, ModuleKind, ModuleRoot, NonGoal,
     ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
@@ -107,9 +113,10 @@ use a3_protocol::{
     AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
     AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
     AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
-    DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1,
-    DeepMapControlResponseV1, DeepMapFailureV1, DeepMapModelV1, DeepMapProgressV1,
-    DeepMapStatusResponseV1, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
+    DeepMapActivityStateV1, DeepMapActivityV2, DeepMapBudgetV1, DeepMapConfigurationV1,
+    DeepMapControlResponseV1, DeepMapEventV2, DeepMapFailureV1, DeepMapModelV1, DeepMapPhaseV2,
+    DeepMapProgressV1, DeepMapPublicationSummaryV2, DeepMapSafeActionV2, DeepMapStatusResponseV2,
+    DeepMapTargetKindV2, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
     IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
     IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
     IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
@@ -132,26 +139,32 @@ use a3_protocol::{
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
     OpenProjectResponseV1, PlatformV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
     ProjectIndexStatusV1, ProjectMapExactExplanationV1, ProjectMapLexicalExplanationV1,
-    ProjectMapSearchChannelV1, ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1,
-    ProjectMapSearchPriorityV1, ProjectMapSearchResponseV1, ProjectMapSearchSourceV1,
-    ProjectMapSearchSymbolKindV1, ProjectMapSearchTargetV1, ProjectMapSearchV1, ProjectSnapshotV1,
+    ProjectMapMappingStatusV1, ProjectMapSceneCardBindingV1, ProjectMapSceneModuleKindV1,
+    ProjectMapSceneModuleV1, ProjectMapSceneRelationV1, ProjectMapSceneResponseV1,
+    ProjectMapSceneV1, ProjectMapSearchChannelV1, ProjectMapSearchEvidenceSelectionV2,
+    ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1, ProjectMapSearchPriorityV1,
+    ProjectMapSearchResponseV1, ProjectMapSearchSourceV1, ProjectMapSearchSymbolKindV1,
+    ProjectMapSearchTargetV1, ProjectMapSearchV1, ProjectMapSourceHighlightV1,
+    ProjectMapSourcePreviewResponseV1, ProjectMapSourcePreviewV1, ProjectSnapshotV1,
     ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleCardDetailRequestV1,
     QueryModuleCardEvidenceRequestV1, QueryModuleDependencyGraphRequestV1,
     QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSearchRequestV1, QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1,
-    RebuildProjectIndexResponseV1, RebuildStateV1, RecentProjectSummaryV1,
-    RecentProjectsResponseV1, RemoveProjectResponseV1, RepositoryTreeEntryKindV1,
-    RepositoryTreeEntryV1, RepositoryTreePageV1, RepositoryTreeResponseV1, TaskLensClaimEvidenceV1,
-    TaskLensClaimKindV1, TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1,
-    TaskLensCompileResponseV1, TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1,
-    TaskLensModuleKindV1, TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1,
-    TaskLensRetrievalSourceV1, TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1,
-    TaskLensTaskSummaryV1, TaskLensTasksResponseV1, TaskLensV1,
+    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    QueryProjectMapSourcePreviewRequestV1, QueryRepositoryTreeRequestV1,
+    QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
+    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
+    RepositoryTreeResponseV1, TaskLensClaimEvidenceV1, TaskLensClaimKindV1,
+    TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1,
+    TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
+    TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
+    TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
+    TaskLensTasksResponseV1, TaskLensV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
 };
-use a3_workspace::RepositoryInspector;
+use a3_workspace::{RepositoryInspector, WorkspaceAgentSourceReader};
 use agent_approval_mapping::map_agent_approval_to_v1;
 use agent_approval_metadata::SystemAgentApprovalMetadata;
 use agent_goal_metadata::SystemAgentGoalMetadata;
@@ -200,6 +213,8 @@ pub struct CompositionRoot {
     module_card_freshness: Option<GetModuleCardFreshness>,
     module_card_detail: Option<GetModuleCardDetail>,
     module_card_evidence: Option<GetModuleCardEvidence>,
+    project_map_scene: Option<GetProjectMapScene>,
+    project_map_source_preview: Option<GetProjectMapSourcePreview>,
     module_dependency_graph: Option<GetModuleDependencyGraph>,
     module_runtime_map: Option<GetModuleRuntimeMap>,
     module_runtime_flow: Option<TraceModuleRuntimeFlow>,
@@ -732,6 +747,84 @@ impl CompositionRoot {
                 }
                 ModuleCardEvidenceLoadResult::Detail(detail) => {
                     ModuleCardEvidenceResponseV1::available(map_module_card_evidence_to_v1(&detail))
+                }
+            })
+    }
+
+    /// Reads source only for one still-current Evidence hook selected from the Inspector.
+    pub async fn query_project_map_source_preview(
+        &self,
+        query: &ProjectMapSourcePreviewQuery,
+    ) -> Result<ProjectMapSourcePreviewResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapSourcePreviewResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_source_preview else {
+            return Ok(ProjectMapSourcePreviewResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_project_map_source_preview_error_to_v1)
+            .map(|result| match result {
+                ProjectMapSourcePreviewResult::NoPublishedIndex => {
+                    ProjectMapSourcePreviewResponseV1::no_published_index()
+                }
+                ProjectMapSourcePreviewResult::ProjectionUnavailable => {
+                    ProjectMapSourcePreviewResponseV1::projection_unavailable()
+                }
+                ProjectMapSourcePreviewResult::ModuleUnavailable => {
+                    ProjectMapSourcePreviewResponseV1::module_unavailable()
+                }
+                ProjectMapSourcePreviewResult::CardUnavailable => {
+                    ProjectMapSourcePreviewResponseV1::card_unavailable()
+                }
+                ProjectMapSourcePreviewResult::SelectionChanged => {
+                    ProjectMapSourcePreviewResponseV1::selection_changed()
+                }
+                ProjectMapSourcePreviewResult::EvidenceUnavailable => {
+                    ProjectMapSourcePreviewResponseV1::evidence_unavailable()
+                }
+                ProjectMapSourcePreviewResult::StaleEvidence => {
+                    ProjectMapSourcePreviewResponseV1::stale_evidence()
+                }
+                ProjectMapSourcePreviewResult::Available(preview) => {
+                    ProjectMapSourcePreviewResponseV1::available(
+                        map_project_map_source_preview_to_v1(&preview),
+                    )
+                }
+            })
+    }
+
+    /// Returns the bounded deterministic architecture-atlas scene for the active project.
+    pub async fn query_project_map_scene(
+        &self,
+        query: &ProjectMapSceneQuery,
+    ) -> Result<ProjectMapSceneResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapSceneResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_scene else {
+            return Ok(ProjectMapSceneResponseV1::no_published_index());
+        };
+        reader
+            .execute(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_project_map_scene_error_to_v1)
+            .map(|result| match result {
+                ProjectMapSceneLoadResult::NoPublishedIndex => {
+                    ProjectMapSceneResponseV1::no_published_index()
+                }
+                ProjectMapSceneLoadResult::ProjectionUnavailable => {
+                    ProjectMapSceneResponseV1::projection_unavailable()
+                }
+                ProjectMapSceneLoadResult::FocusUnavailable => {
+                    ProjectMapSceneResponseV1::focus_unavailable()
+                }
+                ProjectMapSceneLoadResult::Scene(scene) => {
+                    ProjectMapSceneResponseV1::available(map_project_map_scene_to_v1(&scene))
                 }
             })
     }
@@ -1656,17 +1749,17 @@ impl CompositionRoot {
 
     /// Returns only Core-owned Deep-Map configuration and in-memory lifecycle state.
     #[must_use]
-    pub fn query_deep_map_status(&self) -> DeepMapStatusResponseV1 {
+    pub fn query_deep_map_status(&self) -> DeepMapStatusResponseV2 {
         if lock_recovering_poison(&self.active_project).is_none() {
-            return DeepMapStatusResponseV1::no_project();
+            return DeepMapStatusResponseV2::no_project();
         }
         let Some(manager) = &self.deep_map_manager else {
-            return DeepMapStatusResponseV1::unavailable();
+            return DeepMapStatusResponseV2::unavailable();
         };
         let Some(model) = manager.model() else {
-            return DeepMapStatusResponseV1::unavailable();
+            return DeepMapStatusResponseV2::unavailable();
         };
-        DeepMapStatusResponseV1::available(
+        DeepMapStatusResponseV2::available(
             DeepMapConfigurationV1::new(
                 DeepMapModelV1::new(
                     model.profile().id().to_string(),
@@ -1680,7 +1773,7 @@ impl CompositionRoot {
                 map_deep_map_budget_to_v1(ExploreBudget::DEFAULT),
                 map_deep_map_budget_to_v1(ExploreBudget::MAXIMUM),
             ),
-            map_deep_map_activity_to_v1(manager.activity()),
+            map_deep_map_activity_to_v2(manager.activity()),
         )
     }
 
@@ -2151,6 +2244,55 @@ impl ModuleCardEvidenceControl for DesktopBoundedReadControl {
     }
 }
 
+impl ProjectMapSourcePreviewControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: Progress,
+    ) -> Result<(), ProjectMapSourcePreviewControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ProjectMapSourcePreviewControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ProjectMapSourcePreviewControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ProjectMapSourcePreviewControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
+impl ProjectMapSceneControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ProjectMapSceneControlError> {
+        let completed = progress
+            .completed()
+            .ok_or(ProjectMapSceneControlError::Unavailable)?;
+        let total = progress
+            .total()
+            .ok_or(ProjectMapSceneControlError::Unavailable)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ProjectMapSceneControlError::Unavailable);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl RepositoryTreeControl for DesktopBoundedReadControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -2316,6 +2458,7 @@ struct OptionalCompositionPorts {
     module_card_freshness_store: Option<Arc<dyn ModuleCardFreshnessStore>>,
     module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
     module_card_evidence_store: Option<Arc<dyn ModuleCardEvidenceStore>>,
+    project_map_scene_store: Option<Arc<dyn ProjectMapSceneStore>>,
     module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
     module_runtime_store: Option<Arc<dyn ModuleRuntimeStore>>,
     knowledge_search_store: Option<Arc<dyn KnowledgeSearchStore>>,
@@ -2347,6 +2490,7 @@ struct IndexingCompositionPorts {
     module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore>,
     module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
     module_card_evidence_store: Arc<dyn ModuleCardEvidenceStore>,
+    project_map_scene_store: Arc<dyn ProjectMapSceneStore>,
     module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
     module_runtime_store: Arc<dyn ModuleRuntimeStore>,
     knowledge_search_store: Arc<dyn KnowledgeSearchStore>,
@@ -2426,6 +2570,7 @@ impl CompositionBase {
                 module_card_freshness_store: Some(ports.module_card_freshness_store),
                 module_card_detail_store: Some(ports.module_card_detail_store),
                 module_card_evidence_store: Some(ports.module_card_evidence_store),
+                project_map_scene_store: Some(ports.project_map_scene_store),
                 module_dependency_graph_store: Some(ports.module_dependency_graph_store),
                 module_runtime_store: Some(ports.module_runtime_store),
                 knowledge_search_store: Some(ports.knowledge_search_store),
@@ -2484,6 +2629,10 @@ impl CompositionBase {
             .module_card_freshness_store
             .map(GetModuleCardFreshness::new);
         let module_card_detail = ports.module_card_detail_store.map(GetModuleCardDetail::new);
+        let project_map_source_preview = ports.module_card_evidence_store.clone().map(|store| {
+            GetProjectMapSourcePreview::new(store, Arc::new(WorkspaceAgentSourceReader))
+        });
+        let project_map_scene = ports.project_map_scene_store.map(GetProjectMapScene::new);
         let module_card_evidence = ports
             .module_card_evidence_store
             .map(GetModuleCardEvidence::new);
@@ -2686,6 +2835,8 @@ impl CompositionBase {
             module_card_freshness,
             module_card_detail,
             module_card_evidence,
+            project_map_scene,
+            project_map_source_preview,
             module_dependency_graph,
             module_runtime_map,
             module_runtime_flow,
@@ -2753,6 +2904,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let module_card_freshness_store: Arc<dyn ModuleCardFreshnessStore> = store.clone();
             let module_card_detail_store: Arc<dyn ModuleCardDetailStore> = store.clone();
             let module_card_evidence_store: Arc<dyn ModuleCardEvidenceStore> = store.clone();
+            let project_map_scene_store: Arc<dyn ProjectMapSceneStore> = store.clone();
             let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
             let module_runtime_store: Arc<dyn ModuleRuntimeStore> = store.clone();
             let knowledge_search_store: Arc<dyn KnowledgeSearchStore> = store.clone();
@@ -2793,6 +2945,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     module_card_freshness_store,
                     module_card_detail_store,
                     module_card_evidence_store,
+                    project_map_scene_store,
                     module_dependency_graph_store,
                     module_runtime_store,
                     knowledge_search_store,
@@ -2840,6 +2993,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_card_freshness,
             commands::query_module_card_detail,
             commands::query_module_card_evidence,
+            commands::query_project_map_source_preview,
+            commands::query_project_map_scene,
             commands::query_module_dependency_graph,
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
@@ -3181,6 +3336,162 @@ pub(crate) fn map_module_card_evidence_query_from_v1(
             .map(ModuleCardEvidenceId::from_bytes)
             .map_err(|()| invalid_module_card_evidence_query())?,
     ))
+}
+
+pub(crate) fn map_project_map_source_preview_query_from_v1(
+    request: &QueryProjectMapSourcePreviewRequestV1,
+) -> Result<ProjectMapSourcePreviewQuery, CommandErrorV1> {
+    let current_index_run_id = decode_index_run_id(request.current_index_run_id())
+        .map_err(|()| invalid_project_map_source_preview_query())?;
+    let current_snapshot_id = decode_snapshot_id(request.current_snapshot_id())
+        .map_err(|()| invalid_project_map_source_preview_query())?;
+    let source_index_run_id = decode_index_run_id(request.source_index_run_id())
+        .map_err(|()| invalid_project_map_source_preview_query())?;
+    let source_snapshot_id = decode_snapshot_id(request.source_snapshot_id())
+        .map_err(|()| invalid_project_map_source_preview_query())?;
+    if source_index_run_id == current_index_run_id && source_snapshot_id != current_snapshot_id {
+        return Err(invalid_project_map_source_preview_query());
+    }
+    Ok(ProjectMapSourcePreviewQuery::new(
+        current_index_run_id,
+        current_snapshot_id,
+        source_index_run_id,
+        source_snapshot_id,
+        decode_stable_id(request.card_id())
+            .map(ModuleCardId::from_bytes)
+            .map_err(|()| invalid_project_map_source_preview_query())?,
+        decode_module_id(request.module_id())
+            .map_err(|()| invalid_project_map_source_preview_query())?,
+        decode_stable_id(request.evidence_id())
+            .map(ModuleCardEvidenceId::from_bytes)
+            .map_err(|()| invalid_project_map_source_preview_query())?,
+    ))
+}
+
+pub(crate) fn map_project_map_scene_query_from_v1(
+    request: &QueryProjectMapSceneRequestV1,
+) -> Result<ProjectMapSceneQuery, CommandErrorV1> {
+    request
+        .focus_module_id()
+        .map(decode_module_id)
+        .transpose()
+        .map(ProjectMapSceneQuery::new)
+        .map_err(|()| invalid_project_map_scene_query())
+}
+
+fn map_project_map_scene_to_v1(scene: &ProjectMapScene) -> ProjectMapSceneV1 {
+    ProjectMapSceneV1::new(
+        scene.index_run_id().to_string(),
+        scene.snapshot_id().to_string(),
+        a3_protocol::ScenePolicyVersionV1::V1,
+        scene.focus_module_id().map(|id| id.to_string()),
+        scene.primary_module_count().to_string(),
+        scene
+            .modules()
+            .iter()
+            .map(map_project_map_scene_module_to_v1)
+            .collect(),
+        scene.modules_truncated(),
+        scene.observed_relation_group_count().to_string(),
+        scene
+            .relations()
+            .iter()
+            .map(map_project_map_scene_relation_to_v1)
+            .collect(),
+        scene.relations_truncated(),
+        scene.inspected_edge_count().to_string(),
+        scene.unmapped_edge_count().to_string(),
+        scene.source_edges_truncated(),
+    )
+}
+
+fn map_project_map_scene_module_to_v1(module: &ProjectMapSceneModule) -> ProjectMapSceneModuleV1 {
+    ProjectMapSceneModuleV1::new(
+        module.module_id().to_string(),
+        module.parent_module_id().map(|id| id.to_string()),
+        match module.kind() {
+            ProjectMapSceneModuleKind::ManifestBoundary => {
+                ProjectMapSceneModuleKindV1::ManifestBoundary
+            }
+            ProjectMapSceneModuleKind::PathBoundary => ProjectMapSceneModuleKindV1::PathBoundary,
+        },
+        module.display_name().to_owned(),
+        module.rank(),
+        module.manifest_count().to_string(),
+        module.file_count().to_string(),
+        module.symbol_count().to_string(),
+        module.central_symbol_count().to_string(),
+        module.entrypoint_count().to_string(),
+        module.test_count().to_string(),
+        match module.mapping_status() {
+            ProjectMapMappingStatus::Current => ProjectMapMappingStatusV1::Current,
+            ProjectMapMappingStatus::Stale => ProjectMapMappingStatusV1::Stale,
+            ProjectMapMappingStatus::NeedsReview => ProjectMapMappingStatusV1::NeedsReview,
+            ProjectMapMappingStatus::Unmapped => ProjectMapMappingStatusV1::Unmapped,
+        },
+        module.card_coverage_basis_points(),
+        module.card_binding().map(|binding| {
+            ProjectMapSceneCardBindingV1::new(
+                encode_hex(binding.card_id().as_bytes()),
+                binding.source_index_run_id().to_string(),
+                binding.source_snapshot_id().to_string(),
+            )
+        }),
+        module
+            .representative_evidence_id()
+            .map(|id| encode_hex(id.as_bytes())),
+    )
+}
+
+fn map_project_map_scene_relation_to_v1(
+    relation: &ProjectMapSceneRelation,
+) -> ProjectMapSceneRelationV1 {
+    ProjectMapSceneRelationV1::new(
+        relation.source_module_id().to_string(),
+        relation.target_module_id().to_string(),
+        match relation.relation() {
+            ModuleDependencyRelation::Imports => ModuleDependencyRelationV1::Imports,
+            ModuleDependencyRelation::Exports => ModuleDependencyRelationV1::Exports,
+            ModuleDependencyRelation::Calls => ModuleDependencyRelationV1::Calls,
+            ModuleDependencyRelation::Implements => ModuleDependencyRelationV1::Implements,
+            ModuleDependencyRelation::Extends => ModuleDependencyRelationV1::Extends,
+            ModuleDependencyRelation::Reads => ModuleDependencyRelationV1::Reads,
+            ModuleDependencyRelation::Writes => ModuleDependencyRelationV1::Writes,
+            ModuleDependencyRelation::Configures => ModuleDependencyRelationV1::Configures,
+            ModuleDependencyRelation::Tests => ModuleDependencyRelationV1::Tests,
+            ModuleDependencyRelation::Builds => ModuleDependencyRelationV1::Builds,
+            ModuleDependencyRelation::Documents => ModuleDependencyRelationV1::Documents,
+        },
+        relation.observed_evidence_count().to_string(),
+        relation.evidence_id().map(|id| encode_hex(id.as_bytes())),
+    )
+}
+
+fn map_project_map_source_preview_to_v1(
+    preview: &ProjectMapSourcePreview,
+) -> ProjectMapSourcePreviewV1 {
+    ProjectMapSourcePreviewV1::new(
+        match preview.language() {
+            IndexLanguage::Generic => IndexLanguageV1::Generic,
+            IndexLanguage::Rust => IndexLanguageV1::Rust,
+            IndexLanguage::TypeScriptJavaScript => IndexLanguageV1::TypeScriptJavaScript,
+            IndexLanguage::Python => IndexLanguageV1::Python,
+        },
+        preview.path_display().to_owned(),
+        preview.start_line(),
+        preview.line_count(),
+        preview.highlight().map(|highlight| {
+            ProjectMapSourceHighlightV1::new(
+                highlight.start_line(),
+                highlight.start_column(),
+                highlight.end_line(),
+                highlight.end_column(),
+            )
+        }),
+        preview.text().to_owned(),
+        preview.truncated_before(),
+        preview.truncated_after(),
+    )
 }
 
 fn map_module_card_evidence_to_v1(detail: &ModuleCardEvidenceDetail) -> ModuleCardEvidenceV1 {
@@ -3609,11 +3920,11 @@ fn map_module_dependency_endpoint_to_v1(endpoint: &GraphEndpoint) -> ModuleDepen
 
 fn map_project_map_search_to_v1(
     query: &ProjectMapSearchQuery,
-    result: &FusedRetrievalResult,
+    result: &ProjectMapSearchResult,
 ) -> Option<ProjectMapSearchV1> {
     let mut rank = 0_u16;
     let mut hits = Vec::with_capacity(result.hits().len());
-    for hit in result.hits() {
+    for (index, hit) in result.hits().iter().enumerate() {
         rank = rank.checked_add(1)?;
         let priority = match hit.explanation().priority() {
             FusionPriority::Exact => ProjectMapSearchPriorityV1::Exact,
@@ -3631,6 +3942,8 @@ fn map_project_map_search_to_v1(
             priority,
             hit.explanation().final_score().get(),
             sources,
+            result.module_binding(index).map(|id| id.to_string()),
+            map_project_map_search_selection_to_v2(hit.target()),
             map_project_map_search_target_to_v1(hit.target()),
         ));
     }
@@ -3642,6 +3955,24 @@ fn map_project_map_search_to_v1(
         hits,
         result.truncated(),
     ))
+}
+
+fn map_project_map_search_selection_to_v2(
+    target: &ExactSearchTarget,
+) -> ProjectMapSearchEvidenceSelectionV2 {
+    match target {
+        ExactSearchTarget::File(revision) => ProjectMapSearchEvidenceSelectionV2::File {
+            evidence_id: encode_hex(
+                ModuleCardEvidenceId::for_file_revision_v1(revision).as_bytes(),
+            ),
+        },
+        ExactSearchTarget::Symbol(symbol) => ProjectMapSearchEvidenceSelectionV2::Symbol {
+            evidence_id: encode_hex(
+                ModuleCardEvidenceId::for_symbol_v1(symbol.symbol()).as_bytes(),
+            ),
+            symbol_id: symbol.symbol().id().to_string(),
+        },
+    }
 }
 
 fn map_project_map_search_source_to_v1(
@@ -5251,11 +5582,19 @@ fn invalid_module_card_evidence_query() -> CommandErrorV1 {
     CommandErrorV1::project_open(ErrorCodeV1::InvalidModuleCardEvidenceQuery)
 }
 
+fn invalid_project_map_source_preview_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectMapSourcePreviewQuery)
+}
+
+fn invalid_project_map_scene_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(ErrorCodeV1::InvalidProjectMapSceneQuery)
+}
+
 const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
     DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
 }
 
-fn map_deep_map_activity_to_v1(activity: DeepMapActivity) -> DeepMapActivityV1 {
+fn map_deep_map_activity_to_v2(activity: DeepMapActivity) -> DeepMapActivityV2 {
     let progress = activity.progress().and_then(|progress| {
         progress
             .completed()
@@ -5264,7 +5603,24 @@ fn map_deep_map_activity_to_v1(activity: DeepMapActivity) -> DeepMapActivityV1 {
                 DeepMapProgressV1::new(completed.to_string(), total.to_string())
             })
     });
-    DeepMapActivityV1::new(
+    let events = activity
+        .events()
+        .copied()
+        .map(|event| {
+            let update = event.update();
+            DeepMapEventV2::new(
+                event.sequence().to_string(),
+                map_deep_map_phase_to_v2(update.phase()),
+                update.module_id().map(|module_id| module_id.to_string()),
+                map_deep_map_target_kind_to_v2(update.target_kind()),
+                map_deep_map_safe_action_to_v2(update.action()),
+                update.step_position().map(|position| position.to_string()),
+                update.total_steps().map(|total| total.to_string()),
+                update.confirmed(),
+            )
+        })
+        .collect();
+    DeepMapActivityV2::new(
         match activity.state() {
             DeepMapActivityState::Idle => DeepMapActivityStateV1::Idle,
             DeepMapActivityState::Queued => DeepMapActivityStateV1::Queued,
@@ -5281,7 +5637,51 @@ fn map_deep_map_activity_to_v1(activity: DeepMapActivity) -> DeepMapActivityV1 {
         activity.failure().map(map_deep_map_failure_to_v1),
         activity.completed_steps().to_string(),
         activity.total_steps().to_string(),
+        activity.phase().map(map_deep_map_phase_to_v2),
+        activity
+            .current_module_id()
+            .map(|module_id| module_id.to_string()),
+        activity.target_kind().map(map_deep_map_target_kind_to_v2),
+        activity.safe_action().map(map_deep_map_safe_action_to_v2),
+        activity
+            .step_position()
+            .map(|position| position.to_string()),
+        events,
+        activity
+            .publication_succeeded()
+            .then_some(DeepMapPublicationSummaryV2::succeeded()),
     )
+}
+
+const fn map_deep_map_phase_to_v2(phase: DeepMapPhase) -> DeepMapPhaseV2 {
+    match phase {
+        DeepMapPhase::Planning => DeepMapPhaseV2::Planning,
+        DeepMapPhase::Exploring => DeepMapPhaseV2::Exploring,
+        DeepMapPhase::Claiming => DeepMapPhaseV2::Claiming,
+        DeepMapPhase::Verifying => DeepMapPhaseV2::Verifying,
+        DeepMapPhase::Publishing => DeepMapPhaseV2::Publishing,
+    }
+}
+
+const fn map_deep_map_target_kind_to_v2(kind: DeepMapTargetKind) -> DeepMapTargetKindV2 {
+    match kind {
+        DeepMapTargetKind::Project => DeepMapTargetKindV2::Project,
+        DeepMapTargetKind::Module => DeepMapTargetKindV2::Module,
+        DeepMapTargetKind::Manifest => DeepMapTargetKindV2::Manifest,
+        DeepMapTargetKind::Symbol => DeepMapTargetKindV2::Symbol,
+    }
+}
+
+const fn map_deep_map_safe_action_to_v2(action: DeepMapSafeAction) -> DeepMapSafeActionV2 {
+    match action {
+        DeepMapSafeAction::BuildPlan => DeepMapSafeActionV2::BuildPlan,
+        DeepMapSafeAction::Inspect => DeepMapSafeActionV2::Inspect,
+        DeepMapSafeAction::Search => DeepMapSafeActionV2::Search,
+        DeepMapSafeAction::Propose => DeepMapSafeActionV2::Propose,
+        DeepMapSafeAction::GenerateClaims => DeepMapSafeActionV2::GenerateClaims,
+        DeepMapSafeAction::VerifyEvidence => DeepMapSafeActionV2::VerifyEvidence,
+        DeepMapSafeAction::PublishCards => DeepMapSafeActionV2::PublishCards,
+    }
 }
 
 const fn map_deep_map_failure_to_v1(failure: DeepMapExecutionFailure) -> DeepMapFailureV1 {
@@ -5471,6 +5871,35 @@ fn map_module_card_evidence_error_to_v1(error: ModuleCardEvidenceFailure) -> Com
     CommandErrorV1::project_open(code)
 }
 
+fn map_project_map_source_preview_error_to_v1(
+    error: ProjectMapSourcePreviewFailure,
+) -> CommandErrorV1 {
+    match error {
+        ProjectMapSourcePreviewFailure::Evidence(error) => {
+            map_module_card_evidence_error_to_v1(error)
+        }
+        ProjectMapSourcePreviewFailure::InvalidProjection => {
+            CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
+        }
+        ProjectMapSourcePreviewFailure::Source(_)
+        | ProjectMapSourcePreviewFailure::Cancelled
+        | ProjectMapSourcePreviewFailure::ProgressUnavailable => {
+            CommandErrorV1::project_open(ErrorCodeV1::ProjectMapSourcePreviewUnavailable)
+        }
+    }
+}
+
+fn map_project_map_scene_error_to_v1(error: ProjectMapSceneFailure) -> CommandErrorV1 {
+    let code = match error {
+        ProjectMapSceneFailure::Storage(error) => map_storage_error_to_v1(error),
+        ProjectMapSceneFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        ProjectMapSceneFailure::Cancelled
+        | ProjectMapSceneFailure::TimedOut
+        | ProjectMapSceneFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
 fn map_module_tree_error_to_v1(error: ModuleTreeFailure) -> CommandErrorV1 {
     let code = match error {
         ModuleTreeFailure::Storage(error) => map_storage_error_to_v1(error),
@@ -5527,7 +5956,8 @@ fn map_project_map_search_error_to_v1(error: SearchProjectMapFailure) -> Command
         | SearchProjectMapFailure::InvalidCandidateSet(_)
         | SearchProjectMapFailure::InvalidPublication(_)
         | SearchProjectMapFailure::Fusion(_)
-        | SearchProjectMapFailure::ResourceLimit => ErrorCodeV1::LocalStorageInvalidData,
+        | SearchProjectMapFailure::ResourceLimit
+        | SearchProjectMapFailure::InvalidModuleBindings => ErrorCodeV1::LocalStorageInvalidData,
     };
     CommandErrorV1::project_open(code)
 }

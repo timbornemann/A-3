@@ -11,7 +11,8 @@ use crate::{
     map_module_card_evidence_query_from_v1, map_module_dependency_graph_query_from_v1,
     map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
     map_module_tree_query_from_v1, map_project_catalog_query_from_v1,
-    map_project_map_search_query_from_v1, map_repository_tree_query_from_v1,
+    map_project_map_scene_query_from_v1, map_project_map_search_query_from_v1,
+    map_project_map_source_preview_query_from_v1, map_repository_tree_query_from_v1,
     map_revise_agent_goal_from_v1, map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
     map_worktree_id_from_v1,
 };
@@ -23,21 +24,23 @@ use a3_protocol::{
     CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
     ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-    DeepMapControlResponseV1, DeepMapStatusResponseV1, DeleteModelProviderCredentialRequestV1,
+    DeepMapControlResponseV1, DeepMapStatusResponseV2, DeleteModelProviderCredentialRequestV1,
     DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
     IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
     ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
     ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
     OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSearchResponseV1,
-    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
+    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
     QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
     QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
     QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
     QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
     QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectCatalogRequestV1, QueryProjectMapSearchRequestV1, QueryProjectSettingsRequestV1,
+    QueryProjectCatalogRequestV1, QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    QueryProjectMapSourcePreviewRequestV1, QueryProjectSettingsRequestV1,
     QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
     QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
     RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveCatalogProjectRequestV1,
@@ -145,6 +148,24 @@ pub async fn query_module_card_evidence(
     root: State<'_, CompositionRoot>,
 ) -> Result<ModuleCardEvidenceResponseV1, CommandErrorV1> {
     execute_query_module_card_evidence(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Revalidates one Core-issued Evidence selection before returning bounded plain source text.
+pub async fn query_project_map_source_preview(
+    request: QueryProjectMapSourcePreviewRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapSourcePreviewResponseV1, CommandErrorV1> {
+    execute_query_project_map_source_preview(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns the policy-bounded deterministic atlas scene for the active project.
+pub async fn query_project_map_scene(
+    request: QueryProjectMapSceneRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapSceneResponseV1, CommandErrorV1> {
+    execute_query_project_map_scene(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -323,7 +344,7 @@ pub async fn query_repository_tree(
 pub fn query_deep_map(
     request: QueryDeepMapRequestV1,
     root: State<'_, CompositionRoot>,
-) -> Result<DeepMapStatusResponseV1, CommandErrorV1> {
+) -> Result<DeepMapStatusResponseV2, CommandErrorV1> {
     execute_query_deep_map(request, root.inner())
 }
 
@@ -716,6 +737,28 @@ async fn execute_query_module_card_evidence(
     root.query_module_card_evidence(&query).await
 }
 
+async fn execute_query_project_map_source_preview(
+    request: QueryProjectMapSourcePreviewRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapSourcePreviewResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_project_map_source_preview_query_from_v1(&request)?;
+    root.query_project_map_source_preview(&query).await
+}
+
+async fn execute_query_project_map_scene(
+    request: QueryProjectMapSceneRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapSceneResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_project_map_scene_query_from_v1(&request)?;
+    root.query_project_map_scene(&query).await
+}
+
 async fn execute_query_module_tree(
     request: QueryModuleTreeRequestV1,
     root: &CompositionRoot,
@@ -940,7 +983,7 @@ async fn execute_query_repository_tree(
 fn execute_query_deep_map(
     request: QueryDeepMapRequestV1,
     root: &CompositionRoot,
-) -> Result<DeepMapStatusResponseV1, CommandErrorV1> {
+) -> Result<DeepMapStatusResponseV2, CommandErrorV1> {
     if request.protocol_version() != ProtocolVersion::CURRENT {
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
@@ -1035,7 +1078,7 @@ mod tests {
         AgentInspectionResultV1, AgentInspectionStreamV1, AgentTaskControlResultV1,
         AgentTaskRecoveryResultV1, CompileTaskLensRequestV1, ControlAgentApprovalRequestV1,
         ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-        DeepMapBudgetV1, DeepMapStatusResultV1, ErrorCodeV1, HealthRequestV1,
+        DeepMapBudgetV1, DeepMapStatusResultV2, ErrorCodeV1, HealthRequestV1,
         IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
         ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
         ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
@@ -2210,7 +2253,7 @@ mod tests {
         let root = root()?;
         let status = execute_query_deep_map(QueryDeepMapRequestV1::current(), &root)
             .map_err(|error| std::io::Error::other(error.message()))?;
-        assert!(matches!(status.result(), DeepMapStatusResultV1::NoProject));
+        assert!(matches!(status.result(), DeepMapStatusResultV2::NoProject));
 
         let start = execute_start_deep_map(
             StartDeepMapRequestV1::new(

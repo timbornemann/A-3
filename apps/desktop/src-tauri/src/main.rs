@@ -16,7 +16,7 @@ mod tests {
     use a3_desktop::CompositionRoot;
     use a3_domain::{ApplicationVersion, Platform, ProjectId, ProjectIdentity};
     use a3_protocol::{
-        CommandErrorV1, DeepMapStatusResponseV1, DeepMapStatusResultV1, ErrorCodeV1,
+        CommandErrorV1, DeepMapStatusResponseV2, DeepMapStatusResultV2, ErrorCodeV1,
         HealthResponseV1, HealthStatusV1, ModuleCardFreshnessResponseV1,
         ModuleCardFreshnessResultV1, ModuleDependencyGraphResponseV1,
         ModuleDependencyGraphResultV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowResultV1,
@@ -368,10 +368,10 @@ mod tests {
             },
         )
         .map_err(|error| io::Error::other(error.to_string()))?
-        .deserialize::<DeepMapStatusResponseV1>()?;
+        .deserialize::<DeepMapStatusResponseV2>()?;
         assert!(matches!(
             deep_map_response.result(),
-            DeepMapStatusResultV1::NoProject
+            DeepMapStatusResultV2::NoProject
         ));
 
         let untrusted_deep_map_scope = get_ipc_response(
@@ -499,6 +499,8 @@ mod tests {
                 "allow-query-module-card-freshness",
                 "allow-query-module-card-detail",
                 "allow-query-module-card-evidence",
+                "allow-query-project-map-source-preview",
+                "allow-query-project-map-scene",
                 "allow-query-module-dependency-graph",
                 "allow-query-module-runtime-flow",
                 "allow-query-module-runtime-map",

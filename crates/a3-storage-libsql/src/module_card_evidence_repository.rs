@@ -145,8 +145,17 @@ async fn load_linked_evidence(
                evidence.source_value, evidence.target_kind, evidence.target_value,\n\
                evidence.relation_kind, evidence.provider, evidence.edge_confidence,\n\
                evidence.resolution, evidence.start_byte, evidence.end_byte,\n\
-               evidence.start_row, evidence.start_column, evidence.end_row, evidence.end_column\n\
+               evidence.start_row, evidence.start_column, evidence.end_row, evidence.end_column,\n\
+               symbol.declaration_start_byte, symbol.declaration_end_byte,\n\
+               symbol.declaration_start_row, symbol.declaration_start_column,\n\
+               symbol.declaration_end_row, symbol.declaration_end_column\n\
              FROM evidence_refs evidence\n\
+             LEFT JOIN symbols symbol\n\
+               ON evidence.evidence_kind = 'symbol'\n\
+              AND symbol.index_run_id = evidence.source_index_run_id\n\
+              AND symbol.symbol_id = evidence.symbol_id\n\
+              AND symbol.repository_path = evidence.repository_path\n\
+              AND symbol.content_hash = evidence.content_hash\n\
              WHERE evidence.source_index_run_id = ?1 AND evidence.evidence_id = ?2\n\
                AND EXISTS (\n\
                  SELECT 1 FROM module_card_field_evidence membership\n\
@@ -192,6 +201,10 @@ async fn load_linked_evidence(
         .map(|index| read_optional_u32(&row, index))
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
+    let declaration_coordinates = [19, 20, 21, 22, 23, 24]
+        .map(|index| read_optional_u32(&row, index))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
     match kind.as_str() {
         "file"
             if symbol_id.is_none()
@@ -203,7 +216,8 @@ async fn load_linked_evidence(
                 && provider.is_none()
                 && confidence.is_none()
                 && resolution.is_none()
-                && coordinates.iter().all(Option::is_none) =>
+                && coordinates.iter().all(Option::is_none)
+                && declaration_coordinates.iter().all(Option::is_none) =>
         {
             Ok(Some(ModuleCardEvidencePayload::File { revision }))
         }
@@ -217,12 +231,29 @@ async fn load_linked_evidence(
                 && provider.is_none()
                 && confidence.is_none()
                 && resolution.is_none()
-                && coordinates.iter().all(Option::is_none) =>
+                && coordinates.iter().all(Option::is_none)
+                && declaration_coordinates.iter().all(Option::is_some) =>
         {
+            let declaration_values = declaration_coordinates
+                .into_iter()
+                .map(|value| {
+                    value.ok_or(ModuleCardEvidenceRepositoryError::InvalidStoredProjection)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let declaration_range = SourceRange::new(
+                usize::try_from(declaration_values[0])
+                    .map_err(|_| ModuleCardEvidenceRepositoryError::InvalidStoredProjection)?,
+                usize::try_from(declaration_values[1])
+                    .map_err(|_| ModuleCardEvidenceRepositoryError::InvalidStoredProjection)?,
+                SourcePosition::new(declaration_values[2], declaration_values[3]),
+                SourcePosition::new(declaration_values[4], declaration_values[5]),
+            )
+            .map_err(|_| ModuleCardEvidenceRepositoryError::InvalidStoredProjection)?;
             Ok(Some(ModuleCardEvidencePayload::Symbol {
                 symbol_id: symbol_id
                     .ok_or(ModuleCardEvidenceRepositoryError::InvalidStoredProjection)?,
                 revision,
+                declaration_range,
             }))
         }
         "graph-edge"
@@ -235,7 +266,8 @@ async fn load_linked_evidence(
                 && provider.is_some()
                 && confidence.is_some()
                 && resolution.is_some()
-                && coordinates.iter().all(Option::is_some) =>
+                && coordinates.iter().all(Option::is_some)
+                && declaration_coordinates.iter().all(Option::is_none) =>
         {
             let source = parse_endpoint(
                 source_kind
@@ -318,6 +350,7 @@ async fn evidence_resolves_current(
         ModuleCardEvidencePayload::Symbol {
             symbol_id,
             revision,
+            ..
         } => {
             count_rows(
                 transaction,

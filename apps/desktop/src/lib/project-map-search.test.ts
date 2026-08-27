@@ -11,7 +11,13 @@ function availableResponse() {
         fusionPolicyVersion: 1,
         hits: [
           {
+            evidenceSelection: {
+              evidenceId: id('e'),
+              kind: 'symbol',
+              symbolId: id('d'),
+            },
             finalScore: 52_478,
+            moduleId: id('f'),
             priority: 'exact',
             rank: 1,
             sources: [
@@ -100,6 +106,14 @@ describe('Project Map search V1 boundary', () => {
     const missingRange = structuredClone(availableResponse());
     missingRange.result.search.hits[0].target.evidence.declarationRange = null as never;
     expect(() => parseProjectMapSearchResponseV1(missingRange)).toThrow(/evidence target/i);
+
+    const fabricatedBinding = structuredClone(availableResponse());
+    fabricatedBinding.result.search.hits[0].moduleId = 'not-an-id';
+    expect(() => parseProjectMapSearchResponseV1(fabricatedBinding)).toThrow(/invalid hit/i);
+
+    const mismatchedSelection = structuredClone(availableResponse());
+    mismatchedSelection.result.search.hits[0].evidenceSelection.symbolId = id('9');
+    expect(() => parseProjectMapSearchResponseV1(mismatchedSelection)).toThrow(/selection/i);
   });
 
   it('trims once, invokes the pathless command, and binds the response to the query', async () => {

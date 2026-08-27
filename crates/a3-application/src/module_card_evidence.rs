@@ -1,7 +1,7 @@
 use crate::{JobContext, KnowledgeStoreFailure, ModuleCardLifecycle};
 use a3_domain::{
     FileRevision, GraphEdge, IndexRunId, ModuleCardEvidenceId, ModuleCardId, ModuleId, Progress,
-    ProjectIdentity, SnapshotId, SymbolId,
+    ProjectIdentity, SnapshotId, SourceRange, SymbolId,
 };
 use std::error::Error;
 use std::fmt;
@@ -111,6 +111,8 @@ pub enum ModuleCardEvidencePayload {
         symbol_id: SymbolId,
         /// Historical revision that contained the symbol.
         revision: FileRevision,
+        /// Exact declaration range retained by the immutable source index.
+        declaration_range: SourceRange,
     },
     /// Exact deterministic graph relation with its source range.
     GraphEdge {

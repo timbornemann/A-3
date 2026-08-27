@@ -1,4 +1,4 @@
-use crate::JobContext;
+use crate::{DeepMapActivityObserver, JobContext};
 use a3_domain::{
     ExploreBudget, ExplorePlan, ExplorerCheckpoint, ModelProfile, ModelProfileReference,
     ProjectIdentity,
@@ -213,6 +213,17 @@ pub trait DeepMapExecutor: fmt::Debug + Send + Sync {
         request: DeepMapExecutionRequest,
         control: &'a JobContext,
     ) -> DeepMapExecutionFuture<'a>;
+
+    /// Executes with an ephemeral safe activity observer. Existing adapters remain inert by default.
+    fn execute_observed<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        request: DeepMapExecutionRequest,
+        control: &'a JobContext,
+        _observer: &'a dyn DeepMapActivityObserver,
+    ) -> DeepMapExecutionFuture<'a> {
+        self.execute(project, request, control)
+    }
 }
 
 /// Stable complete-run failure without provider payloads, endpoints, source, or storage rows.

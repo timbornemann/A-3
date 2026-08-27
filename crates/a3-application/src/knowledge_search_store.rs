@@ -1,8 +1,9 @@
 use crate::{JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
-    GraphTraversalResult, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
-    LexicalSearchQuery, ProjectIdentity, SourceChannel, TraversalQuery,
+    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget,
+    GraphTraversalResult, IndexRunId, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleId, ProjectIdentity, SourceChannel,
+    TraversalQuery,
 };
 use std::error::Error;
 use std::fmt;
@@ -48,6 +49,19 @@ pub trait KnowledgeSearchStore: fmt::Debug + Send + Sync {
         cursor: Option<&'a LexicalSearchCursor>,
         control: &'a dyn KnowledgeSearchControl,
     ) -> KnowledgeSearchFuture<'a, LexicalSearchPage>;
+
+    /// Resolves each current search target to exactly one primary module when the published
+    /// membership projection proves that association. Ambiguous and unassigned targets remain
+    /// deliberately unbound.
+    fn bind_modules<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _index_run_id: IndexRunId,
+        targets: &'a [ExactSearchTarget],
+        _control: &'a dyn KnowledgeSearchControl,
+    ) -> KnowledgeSearchFuture<'a, Vec<Option<ModuleId>>> {
+        Box::pin(async move { Ok(vec![None; targets.len()]) })
+    }
 
     /// Traverses typed relationships in exactly one atomically published evidence graph.
     fn traverse_graph<'a>(

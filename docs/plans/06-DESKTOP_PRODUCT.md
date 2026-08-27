@@ -880,6 +880,48 @@ getrennten Projects-, Map-, Agent- und Settings-Arbeitsbereiche, den einzeiligen
 Statusstreifen, den begrenzten Settings-Inhalt, das Zurücksetzen der Arbeitsfläche bei Seitenwechsel
 und den sicheren Abbruch des modalen Entfernungsdialogs.
 
+## U11 Visuelle Code Map
+
+Abhängigkeiten: U3, U4, U9, U10, ADR-0030
+
+- [x] eine map-first Arbeitsfläche statt Recherche-, Explorer-, Modul- und Mapping-Unterseiten
+- [x] begrenzter deterministischer Architektur-Atlas mit Mappingstatus und Relationsrouten
+- [x] gemeinsame Code-Suche und Task-Lens-Fokus
+- [x] kontextabhängiger Inspector mit Entry Points, Tests, Claims und Evidence
+- [x] evidence-gebundene begrenzte Source-Vorschau
+- [x] Deep-Map-Presets und strukturierter content-freier Live-Feed
+- [x] responsive und vollständig tastaturbedienbare Map bei begrenztem DOM
+
+Akzeptanz:
+
+- Nutzer erkennt beim Öffnen Module, Abhängigkeiten, Mappingstatus und Begrenzungen ohne eine
+  technische Unterseite auswählen zu müssen;
+- Suche, Task Lens, Moduldetails, Runtime-Flows und Evidence fokussieren dieselbe Kartenfläche;
+- Deep Map zeigt Phase, aktuelles Modul, sichere Aktionsart und bestätigten Fortschritt, startet
+  aber weiterhin nur explizit und veröffentlicht erst nach Verifikation;
+- Source-Vorschau akzeptiert keine freien Pfade und liefert ausschließlich aktuellen,
+  evidence-gebundenen Plain Text innerhalb der festen ADR-0030-Grenzen;
+- Übersicht, Fokus und Live-Feed überschreiten weder Core-, IPC-, DOM- noch
+  100-Millisekunden-Interaktionsgrenzen.
+
+Nicht-Ziele sind ein Vollgraph, Force-Simulation, Code-Stadt, rohe Modelltranskripte,
+Zwischenpublikation unbestätigter Claims, vollständige Dateien oder eine allgemeine
+WebView-Dateisystemfähigkeit. Checklistenpunkte werden erst nach den objektiven U11-Verträgen und
+dem vollständigen Quality Gate abgehakt.
+
+Lokale U11-Abnahme vom 2026-08-27: Das reproduzierbare Browserprofil
+`apps/desktop/performance/u11-map-atlas.html` rendert die produktive `MapWorkspace` mit 64 Regionen,
+128 Routen und einem 32-Ereignis-Feed. Unter Chrome 151 auf Windows lagen die synchronen
+Main-Thread-Zeiten bei 1,3 ms für Mount, 0,3 ms für Auswahl, 0,2 ms für Zoom und 0,0 ms für Pan;
+der Feed-Commit benötigte 13,5 ms. Es trat kein Long Task auf, und die fokussierte Ansicht blieb mit
+659 DOM-Knoten unter der festgelegten 1.500-Knoten-Grenze. Die responsive Browserprüfung bestand
+bei 720 × 520 und 680 × 760 ohne Horizontaloverflow, mit 3-Pixel-Fokus, Drawer-Inspector und ohne
+sichtbares Bedienelement unter 44 × 44 Pixel. Der Produktionsbuild trennt die Map in einen
+42,64-kB-JavaScript-/24,20-kB-CSS-Lazy-Chunk; der initiale JavaScript-Chunk beträgt 201,69 kB.
+Diese Messung belegt das aktuelle Budget, behauptet aber keine Verbesserung gegenüber der
+entfernten Legacy-Oberfläche. Der native Windows-Smoke bestand mit einem echten 976 × 719 großen
+WebView2-Fenster und einem 50.500-Byte-Screenshot.
+
 ## Gate M8
 
 - [x] vollständiger Nutzerworkflow vom Open bis Done

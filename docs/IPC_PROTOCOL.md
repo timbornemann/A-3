@@ -38,7 +38,7 @@ Zusätzliche Felder, ein fehlender Request oder ein nicht numerischer Versionswe
 Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_project` keinen Pfad und
 `list_recent_projects` weder einen Pfad noch ein WebView-gesteuertes Limit.
 
-## Deep Map V1
+## Deep Map Status V2
 
 `query_deep_map` liefert genau `noProject`, `unavailable` oder `available`. Nur `available` enthält
 die sichere Identität eines live verifizierten ModelProfiles, Context- und Outputlimit, den festen
@@ -53,6 +53,39 @@ Protokollversion an und quittieren ausschließlich eine vom Core akzeptierte Tra
 geschlossene Lifecycle lautet `idle`, `queued`, `running`, `pausing`, `paused`, `cancelling`,
 `succeeded`, `failed` oder `cancelled`; `paused` darf erst nach abgeschlossenem kooperativem Abbruch
 mit validiertem Checkpoint sichtbar werden.
+
+Die V2-Statusprojektion ergänzt ausschließlich die geschlossenen Phasen `planning`, `exploring`,
+`claiming`, `verifying` und `publishing`, eine optionale aktuelle Modul-ID, Ziel- und sichere
+Aktionsart, bestätigte Schrittposition sowie höchstens 32 monoton sequenzierte content-freie
+Ereignisse. Ereignisse enthalten weder Prompt, Suchtext, Source, Modellantwort noch Begründung. Nur
+ein terminal erfolgreich abgeschlossener Publishing-Lauf darf eine begrenzte
+`publicationSummary` tragen. Pause/Resume behält den Ringpuffer ohne Replay; ein neuer Start oder
+Projektwechsel erzeugt eine neue Sequenz ab eins.
+
+## Project Map Scene V1 und Search V2
+
+`query_project_map_scene` akzeptiert ausschließlich `protocolVersion` und optional eine aktuelle
+`focusModuleId`; Pfade und Limits sind nicht darstellbar. Die Übersicht liefert höchstens 64
+Primärmodule und 128 Relationsgruppen, der Fokus Zentrum plus höchstens 31 direkte Nachbarn. Run,
+Snapshot, `scenePolicyVersion`, vollständige Gesamt-/Trunkierungs-/Unmapped-Zähler, sichere Namen,
+Counts, Mappingstatus, Coverage und opaque Evidence-Hooks gehören zwingend zu derselben atomaren
+Publikation.
+
+`query_project_map_search` behält den submit-gebundenen pfadlosen Request. Search V2 ergänzt jeden
+Treffer um eine optionale eindeutige Primärmodulbindung und eine streng typisierte opaque File-
+oder Symbol-Evidence-Auswahl. Uneindeutige oder ungemappte Treffer führen `moduleId: null`; der
+Core erfindet keine Region. Decoder lehnen fehlende oder unbekannte Felder, unkanonische IDs,
+gemischte Publikationen, inkonsistente Selection-/Target-Paare und mehr als 20 Treffer ab.
+
+## Project Map Source Preview V1
+
+`query_project_map_source_preview` akzeptiert ausschließlich die sieben zuvor ausgegebenen
+Run-/Snapshot-/Card-/Modul-/Evidence-IDs einer sichtbaren Card. Der Request enthält niemals Pfad,
+Range oder Limit. Nach erneuter Publikations-, Membership-, Freshness-, Root-, Symlink-, Binary-,
+Generated-, Secret- und Hashprüfung liefert er nur aktuelle File-, Symbol- oder Graph-Evidence als
+Plain Text: acht Kontextzeilen je Seite, insgesamt höchstens 64 Zeilen und 16 KiB UTF-8. Sprache,
+sichere Pfadanzeige, Zeilennummern und Highlight sind Daten; HTML und Source in Fehlern sind
+ausgeschlossen.
 
 ## Module Card Freshness V1
 
