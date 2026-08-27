@@ -119,6 +119,20 @@ describe('U9 design tokens', () => {
       /@media \(width <= 1100px\)\s*\{[\s\S]*?\.model-profile-grid,[\s\S]*?\.project-policy-grid,[\s\S]*?\.privacy-settings\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/u,
     );
   });
+
+  it('integrates the Map as a full-size square-edged workspace pane instead of a card', () => {
+    const mapCss = scopedComponentCss.find(([path]) => path.endsWith('MapWorkspace.svelte'))?.[1];
+    expect(mapCss).toBeDefined();
+    expect(componentCss).toMatch(
+      /\.app-shell\[data-workspace-area='map'\] \.workspace-content > \.project-card\.project-active,[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?max-width:\s*none;/u,
+    );
+    expect(componentCss).toMatch(
+      /\.app-shell\[data-workspace-area='map'\] \.workspace-content > \.project-card\.project-active\s*\{[^}]*padding:\s*0;[^}]*overflow:\s*hidden;[^}]*border:\s*0;/u,
+    );
+    expect(mapCss).toMatch(
+      /\.map-shell\s*\{[^}]*min-height:\s*0;[^}]*height:\s*100%;[^}]*width:\s*100%;[^}]*border:\s*0;[^}]*border-radius:\s*0;/u,
+    );
+  });
 });
 
 function readScopedComponentCss(directory: string): Array<readonly [string, string]> {

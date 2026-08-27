@@ -912,12 +912,13 @@ dem vollständigen Quality Gate abgehakt.
 Lokale U11-Abnahme vom 2026-08-27: Das reproduzierbare Browserprofil
 `apps/desktop/performance/u11-map-atlas.html` rendert die produktive `MapWorkspace` mit 64 Regionen,
 128 Routen und einem 32-Ereignis-Feed. Unter Chrome 151 auf Windows lagen die synchronen
-Main-Thread-Zeiten bei 1,3 ms für Mount, 0,3 ms für Auswahl, 0,2 ms für Zoom und 0,0 ms für Pan;
-der Feed-Commit benötigte 13,5 ms. Es trat kein Long Task auf, und die fokussierte Ansicht blieb mit
-659 DOM-Knoten unter der festgelegten 1.500-Knoten-Grenze. Die responsive Browserprüfung bestand
-bei 720 × 520 und 680 × 760 ohne Horizontaloverflow, mit 3-Pixel-Fokus, Drawer-Inspector und ohne
-sichtbares Bedienelement unter 44 × 44 Pixel. Der Produktionsbuild trennt die Map in einen
-42,64-kB-JavaScript-/24,20-kB-CSS-Lazy-Chunk; der initiale JavaScript-Chunk beträgt 201,69 kB.
+Main-Thread-Zeiten bei 3,7 ms für Mount, 0,7 ms für Auswahl, 0,2 ms für Zoom und 0,2 ms für Pan;
+der Feed-Commit benötigte 19,8 ms. Es trat kein Long Task auf, und die fokussierte Ansicht blieb mit
+660 DOM-Knoten unter der festgelegten 1.500-Knoten-Grenze. Die responsive Browserprüfung bestand
+bei 1.440 × 900, 720 × 520 und 680 × 760 flächenfüllend ohne Außenradius, Außenrahmen oder
+Horizontaloverflow, mit 3-Pixel-Fokus, Drawer-Inspector und ohne sichtbares Bedienelement unter
+44 × 44 Pixel. Der Produktionsbuild trennt die Map in einen
+42,64-kB-JavaScript-/23,80-kB-CSS-Lazy-Chunk; der initiale JavaScript-Chunk beträgt 201,69 kB.
 Diese Messung belegt das aktuelle Budget, behauptet aber keine Verbesserung gegenüber der
 entfernten Legacy-Oberfläche. Der native Windows-Smoke bestand mit einem echten 976 × 719 großen
 WebView2-Fenster und einem 50.500-Byte-Screenshot.

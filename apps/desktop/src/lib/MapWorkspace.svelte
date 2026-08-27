@@ -1230,14 +1230,14 @@
     --line: color-mix(in srgb, currentColor 14%, transparent);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    min-height: min(780px, calc(100vh - 9.5rem));
-    height: calc(100vh - 9.5rem);
+    min-height: 0;
+    height: 100%;
     width: 100%;
     overflow: hidden;
     color: var(--color-text);
     background: var(--map-bg);
-    border: 1px solid var(--line);
-    border-radius: 18px;
+    border: 0;
+    border-radius: 0;
   }
   button,
   input,
@@ -1247,7 +1247,7 @@
   button {
     min-height: 44px;
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: 2px;
     color: inherit;
     background: color-mix(in srgb, var(--map-bg) 84%, var(--color-surface-raised) 5%);
     cursor: pointer;
@@ -1276,8 +1276,7 @@
     align-items: center;
     padding: 12px 16px;
     border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--map-bg) 94%, transparent);
-    backdrop-filter: blur(18px);
+    background: color-mix(in srgb, var(--map-bg) 96%, var(--color-surface-raised) 4%);
   }
   .map-title {
     display: flex;
@@ -1291,7 +1290,7 @@
     width: 42px;
     height: 42px;
     flex: 0 0 auto;
-    border-radius: 12px;
+    border-radius: 2px;
     color: var(--color-info);
     background: color-mix(in srgb, var(--color-info) 17%, transparent);
     font-weight: 800;
@@ -1318,7 +1317,7 @@
     min-width: 0;
     padding: 4px 4px 4px 13px;
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--map-bg) 80%, var(--color-overlay) 8%);
   }
   .map-search:focus-within {
@@ -1363,7 +1362,7 @@
     width: min(360px, calc(100vw - 32px));
     padding: 16px;
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--map-bg) 96%, var(--color-overlay));
     box-shadow: 0 18px 50px color-mix(in srgb, var(--color-shadow) 53%, transparent);
   }
@@ -1381,7 +1380,7 @@
     padding-inline: 10px;
     color: inherit;
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: 2px;
     background: var(--map-bg);
   }
   .map-body {
@@ -1483,9 +1482,9 @@
     text-align: left;
     border: 1px solid color-mix(in srgb, var(--color-info) 28%, var(--line));
     border-left: 4px solid var(--color-info);
-    border-radius: 13px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--map-bg) 88%, var(--color-info) 5%);
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 20%, transparent);
+    box-shadow: none;
     transition:
       opacity 0.15s ease,
       scale 0.15s ease,
@@ -1495,9 +1494,7 @@
   .module-region.selected {
     z-index: 3;
     scale: 1.035;
-    box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--color-info) 33%, transparent),
-      0 14px 35px color-mix(in srgb, var(--color-shadow) 40%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-info) 33%, transparent);
   }
   .module-region[data-status='current'] {
     border-left-color: var(--color-positive);
@@ -1516,9 +1513,7 @@
     opacity: 0.24;
   }
   .module-region.lens-match {
-    box-shadow:
-      0 0 0 3px color-mix(in srgb, var(--color-hypothesis) 40%, transparent),
-      0 12px 30px color-mix(in srgb, var(--color-shadow) 33%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-hypothesis) 40%, transparent);
   }
   .region-kind {
     color: var(--color-info);
@@ -1576,7 +1571,7 @@
     max-width: calc(100% - 24px);
     padding: 6px 10px;
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: 2px;
     background: var(--map-bg);
     font-size: 0.75rem;
   }
@@ -1601,7 +1596,7 @@
     overflow: auto;
     padding: 12px;
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--map-bg) 96%, var(--color-overlay));
     box-shadow: 0 20px 45px color-mix(in srgb, var(--color-shadow) 47%, transparent);
   }
@@ -1630,7 +1625,7 @@
     align-self: center;
     padding: 3px 6px;
     color: var(--color-info);
-    border-radius: 5px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--color-info) 11%, transparent);
     font-size: 0.62rem;
     text-transform: uppercase;
@@ -1666,8 +1661,7 @@
     align-items: center;
     padding: 14px 16px;
     border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--map-bg) 96%, transparent);
-    backdrop-filter: blur(15px);
+    background: color-mix(in srgb, var(--map-bg) 96%, var(--color-surface-raised) 4%);
   }
   .inspector > header span,
   .eyebrow {
@@ -1697,7 +1691,7 @@
   .status-badge {
     display: inline-flex;
     padding: 4px 8px;
-    border-radius: 999px;
+    border-radius: 2px;
     color: var(--color-neutral);
     background: var(--color-neutral-surface);
     font-size: 0.7rem;
@@ -1726,7 +1720,7 @@
     gap: 2px;
     padding: 8px;
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: 2px;
   }
   .metric-grid strong {
     font-size: 0.9rem;
@@ -1830,7 +1824,7 @@
     gap: 8px;
     padding: 7px 9px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 2px;
     font-size: 0.72rem;
   }
   .landmark-list span,
@@ -1857,7 +1851,7 @@
     padding: 10px 0;
     color: var(--color-on-code);
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: 2px;
     background: var(--color-code);
     font-size: 0.68rem;
     line-height: 1.5;
@@ -1941,14 +1935,14 @@
     width: 36px;
     height: 36px;
     color: var(--color-hypothesis);
-    border-radius: 10px;
+    border-radius: 2px;
     background: var(--color-hypothesis-surface);
   }
   .run-state {
     justify-self: start;
     padding: 4px 9px;
     color: var(--color-neutral);
-    border-radius: 999px;
+    border-radius: 2px;
     background: var(--color-neutral-surface);
     font-size: 0.68rem;
   }
@@ -2018,7 +2012,7 @@
     padding: 6px 8px;
     color: inherit;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--map-bg);
   }
   .run-panel {
@@ -2035,7 +2029,7 @@
     gap: 3px;
     padding: 9px;
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: 2px;
   }
   .run-facts span {
     color: var(--color-muted);
@@ -2076,7 +2070,7 @@
     align-items: center;
     padding: 7px 8px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 2px;
     font-size: 0.68rem;
   }
   .activity-feed li > span {
@@ -2124,9 +2118,9 @@
   }
   @media (max-width: 899px) {
     .map-shell {
-      min-height: calc(100vh - 7.5rem);
-      height: calc(100vh - 7.5rem);
-      border-radius: 12px;
+      min-height: 0;
+      height: 100%;
+      border-radius: 0;
     }
     .command-bar {
       grid-template-columns: 1fr auto;
