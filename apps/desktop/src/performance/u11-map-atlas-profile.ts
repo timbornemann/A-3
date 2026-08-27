@@ -2,10 +2,20 @@ import { mount } from 'svelte';
 import '../styles.css';
 import MapWorkspace from '../lib/MapWorkspace.svelte';
 import type { DeepMapStatusResponseV1 } from '../lib/deep-map';
-import type { ProjectMapSceneResponseV1 } from '../lib/project-map-scene';
+import type {
+  ProjectMapAtlasNodeV1,
+  ProjectMapAtlasRelationV1,
+  ProjectMapAtlasSceneResponseV1,
+  ProjectMapAtlasSceneV1,
+  ProjectMapEntityContextResponseV1,
+  ProjectMapEntitySelectionV1,
+} from '../lib/project-map-atlas';
 
 const MODULE_COUNT = 64;
+const FILE_COUNT = 32;
+const SYMBOL_COUNT = 48;
 const ROUTE_COUNT = 128;
+const FLOW_TARGET_COUNT = 31;
 const EVENT_COUNT = 32;
 const DOM_NODE_LIMIT = 1_500;
 const UI_BLOCK_BUDGET_MS = 100;
@@ -16,6 +26,9 @@ interface ProfileResult {
   domNodeLimit: number;
   feedCommitMs: number;
   feedEvents: number;
+  fixtureFileCount: number;
+  fixtureFlowTargetCount: number;
+  fixtureSymbolCount: number;
   longTaskCount: number;
   maxLongTaskMs: number;
   moduleCount: number;
@@ -23,69 +36,154 @@ interface ProfileResult {
   panMs: number;
   routeCount: number;
   selectionMs: number;
+  semanticZoomMs: number;
   status: 'pass' | 'fail';
   userAgent: string;
-  zoomMs: number;
 }
 
 const stableId = (value: number): string => value.toString(16).padStart(64, '0');
 const indexRunId = stableId(10_001);
 const snapshotId = stableId(10_002);
 
-const modules = Array.from({ length: MODULE_COUNT }, (_, index) => ({
-  cardBinding: null,
-  cardCoverageBasisPoints: index % 4 === 3 ? null : 6_000 + index * 50,
-  centralSymbolCount: String(index % 7),
-  displayName: `module-${String(index + 1).padStart(2, '0')}`,
-  entrypointCount: String(index % 5),
-  fileCount: String(2 + (index % 17)),
-  kind: index % 3 === 0 ? ('manifestBoundary' as const) : ('pathBoundary' as const),
-  manifestCount: index % 3 === 0 ? '1' : '0',
-  mappingStatus: (['current', 'needsReview', 'stale', 'unmapped'] as const)[index % 4],
-  moduleId: stableId(index + 1),
-  parentModuleId: null,
-  rank: index + 1,
-  representativeEvidenceId: index % 4 === 3 ? null : stableId(index + 20_001),
-  symbolCount: String(8 + (index % 29)),
-  testCount: String(index % 6),
-}));
+function moduleNode(index: number): ProjectMapAtlasNodeV1 {
+  return {
+    claimBadgeCount: index % 5,
+    currentRiskCount: String(index % 4),
+    detail: `${2 + (index % 17)} Dateien · ${8 + (index % 29)} Symbole`,
+    dimmed: false,
+    displayName: `module-${String(index + 1).padStart(2, '0')}`,
+    evidenceId: null,
+    fileCount: String(2 + (index % 17)),
+    kind: index % 3 === 0 ? 'manifestModule' : 'pathModule',
+    mappingStatus: (['current', 'needsReview', 'stale', 'unmapped'] as const)[index % 4],
+    memberCount: '0',
+    nodeId: stableId(index + 1),
+    parentNodeId: null,
+    purpose: index % 4 === 0 ? 'Deterministisch verifizierte Architekturregion.' : null,
+    rank: index + 1,
+    selection: { kind: 'module', moduleId: stableId(index + 1) },
+    symbolCount: String(8 + (index % 29)),
+    volume: String(2 + (index % 17)),
+  };
+}
 
-const relations = Array.from({ length: ROUTE_COUNT }, (_, index) => ({
-  evidenceId: stableId(index + 30_001),
-  observedEvidenceCount: String(1 + (index % 4)),
-  relation: (['calls', 'imports', 'tests', 'reads'] as const)[index % 4],
-  sourceModuleId: modules[index % MODULE_COUNT].moduleId,
-  targetModuleId: modules[(index + 1 + Math.floor(index / MODULE_COUNT)) % MODULE_COUNT].moduleId,
-}));
+function fileNode(moduleId: string, index: number): ProjectMapAtlasNodeV1 {
+  const evidenceId = stableId(20_001 + index);
+  return {
+    claimBadgeCount: index % 4 === 0 ? 1 : 0,
+    currentRiskCount: '0',
+    detail: `entry_${index} · Type${index}`,
+    dimmed: false,
+    displayName: `src/file_${String(index + 1).padStart(2, '0')}.rs`,
+    evidenceId,
+    fileCount: '1',
+    kind: 'file',
+    mappingStatus: null,
+    memberCount: '0',
+    nodeId: stableId(30_001 + index),
+    parentNodeId: moduleId,
+    purpose: null,
+    rank: index + 1,
+    selection: { evidenceId, kind: 'file', moduleId, ordinal: index },
+    symbolCount: String(1 + (index % 12)),
+    volume: String(1 + (index % 12)),
+  };
+}
 
-function scene(focusModuleId: string | null): ProjectMapSceneResponseV1 {
-  const visibleModules = focusModuleId === null ? modules : modules.slice(0, 32);
-  const visibleModuleIds = new Set(visibleModules.map((module) => module.moduleId));
-  const visibleRelations =
-    focusModuleId === null
-      ? relations
-      : relations.filter(
-          (relation) =>
-            visibleModuleIds.has(relation.sourceModuleId) &&
-            visibleModuleIds.has(relation.targetModuleId),
-        );
+const projectNodes = Array.from({ length: MODULE_COUNT }, (_, index) => moduleNode(index));
+const projectRelations: ProjectMapAtlasRelationV1[] = Array.from(
+  { length: ROUTE_COUNT },
+  (_, index) => ({
+    claimBadgeCount: index % 7 === 0 ? 1 : 0,
+    confidenceBasisPoints: 10_000 - (index % 8) * 250,
+    evidence: {
+      edgeSequence: String(index),
+      evidenceId: stableId(40_001 + index),
+      kind: 'relation',
+      moduleId: projectNodes[index % MODULE_COUNT].selection!.moduleId,
+    },
+    evidenceCount: String(1 + (index % 4)),
+    provider: 'treeSitter',
+    relation: index < MODULE_COUNT ? 'imports' : 'exports',
+    sourceNodeId: projectNodes[index % MODULE_COUNT].nodeId,
+    targetNodeId:
+      projectNodes[(index + 1 + Math.floor(index / MODULE_COUNT)) % MODULE_COUNT].nodeId,
+    uncertainty: null,
+  }),
+);
+
+function scene(selection: ProjectMapEntitySelectionV1 | null): ProjectMapAtlasSceneV1 {
+  if (selection === null) {
+    return {
+      boundariesTruncated: false,
+      boundaryCount: '0',
+      breadcrumb: [{ label: 'Projekt', selection: null }],
+      indexRunId,
+      inspectedEdgeCount: '4096',
+      level: 'project',
+      nodeCount: String(MODULE_COUNT),
+      nodes: projectNodes,
+      nodesTruncated: false,
+      policyVersion: 1,
+      relationCount: String(ROUTE_COUNT),
+      relations: projectRelations,
+      relationsTruncated: false,
+      selection: null,
+      snapshotId,
+      sourceEdgesTruncated: false,
+      unresolvedCount: '0',
+    };
+  }
+  const moduleId = selection.moduleId;
+  const nodes = Array.from({ length: FILE_COUNT }, (_, index) => fileNode(moduleId, index));
+  return {
+    boundariesTruncated: false,
+    boundaryCount: '0',
+    breadcrumb: [
+      { label: 'Projekt', selection: null },
+      { label: projectNodes[0].displayName, selection: { kind: 'module', moduleId } },
+    ],
+    indexRunId,
+    inspectedEdgeCount: '512',
+    level: 'module',
+    nodeCount: String(FILE_COUNT),
+    nodes,
+    nodesTruncated: false,
+    policyVersion: 1,
+    relationCount: '0',
+    relations: [],
+    relationsTruncated: false,
+    selection: { kind: 'module', moduleId },
+    snapshotId,
+    sourceEdgesTruncated: false,
+    unresolvedCount: '0',
+  };
+}
+
+function sceneResponse(
+  selection: ProjectMapEntitySelectionV1 | null,
+): ProjectMapAtlasSceneResponseV1 {
+  return { protocolVersion: 1, result: { scene: scene(selection), status: 'available' } };
+}
+
+function contextResponse(node: ProjectMapAtlasNodeV1): ProjectMapEntityContextResponseV1 {
   return {
     protocolVersion: 1,
     result: {
-      scene: {
-        focusModuleId,
+      context: {
+        architectureRelationCount: '0',
+        architectureRelations: [],
+        boundaryCount: '0',
+        boundaryNodes: [],
+        boundaryRelations: [],
+        claims: [],
+        documentRelationCount: '0',
+        entity: node,
         indexRunId,
-        inspectedEdgeCount: '512',
-        modules: visibleModules,
-        modulesTruncated: focusModuleId !== null,
-        observedRelationGroupCount: String(ROUTE_COUNT),
-        policyVersion: 'v1',
-        primaryModuleCount: String(MODULE_COUNT),
-        relations: visibleRelations,
-        relationsTruncated: focusModuleId !== null,
+        relatedNodes: [],
+        relationCounts: [],
         snapshotId,
         sourceEdgesTruncated: false,
-        unmappedEdgeCount: '17',
       },
       status: 'available',
     },
@@ -100,7 +198,7 @@ function deepMapStatus(): DeepMapStatusResponseV1 {
   if (visibleEvents === EVENT_COUNT) feedResolvedAt = performance.now();
   const events = Array.from({ length: visibleEvents }, (_, index) => ({
     confirmed: true,
-    currentModuleId: modules[index % MODULE_COUNT].moduleId,
+    currentModuleId: projectNodes[index % MODULE_COUNT].selection!.moduleId,
     phase: 'exploring' as const,
     safeAction: 'inspect' as const,
     sequence: String(index + 1),
@@ -114,7 +212,7 @@ function deepMapStatus(): DeepMapStatusResponseV1 {
       activity: {
         budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
         confirmedSteps: String(visibleEvents),
-        currentModuleId: modules[visibleEvents - 1].moduleId,
+        currentModuleId: projectNodes[visibleEvents - 1].selection!.moduleId,
         events,
         failure: null,
         phase: 'exploring',
@@ -138,7 +236,7 @@ function deepMapStatus(): DeepMapStatusResponseV1 {
           contextTokens: 32_000,
           modelId: 'profile-fixture',
           outputTokens: 4_096,
-          profileId: stableId(40_001),
+          profileId: stableId(50_001),
           profileVersion: 1,
           providerId: 'local',
         },
@@ -153,11 +251,9 @@ function requiredElement<T extends HTMLElement>(selector: string): T {
   if (!(element instanceof HTMLElement)) throw new Error(`Missing profile element: ${selector}`);
   return element as T;
 }
-
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
-
 async function mainThreadDuration(action: () => void): Promise<number> {
   const startedAt = performance.now();
   action();
@@ -166,12 +262,10 @@ async function mainThreadDuration(action: () => void): Promise<number> {
   await nextFrame();
   return duration;
 }
-
 function rounded(value: number): number {
   return Number(value.toFixed(3));
 }
-
-async function waitFor(selector: string, timeoutMs = 3_000): Promise<HTMLElement> {
+async function waitFor(selector: string, timeoutMs = 4_000): Promise<HTMLElement> {
   const startedAt = performance.now();
   while (performance.now() - startedAt < timeoutMs) {
     const element = document.querySelector(selector);
@@ -197,51 +291,48 @@ async function runProfile(): Promise<void> {
   mount(MapWorkspace, {
     target: root,
     props: {
-      cardLoader: async () => ({ protocolVersion: 1, result: { status: 'cardUnavailable' } }),
+      atlasSceneLoader: async (selection) => sceneResponse(selection),
+      contextLoader: async (selection) => {
+        const node = projectNodes.find(
+          (candidate) => candidate.selection?.moduleId === selection.moduleId,
+        );
+        return contextResponse(node ?? projectNodes[0]);
+      },
       deepMapStatusLoader: async () => deepMapStatus(),
-      projectKey: stableId(50_001),
-      runtimeLoader: async () => ({
-        protocolVersion: 1,
-        result: { status: 'projectionUnavailable' },
-      }),
-      sceneLoader: async ({ focusModuleId }) => scene(focusModuleId),
+      projectKey: stableId(60_001),
     },
   });
   const mountMs = performance.now() - mountStartedAt;
-  await waitFor('.module-region');
+  await waitFor('.atlas-node');
   await nextFrame();
-  const moduleCount = document.querySelectorAll('.module-region').length;
+  const moduleCount = document.querySelectorAll('.atlas-node').length;
   const routeCount = document.querySelectorAll('.route').length;
 
   const selectionMs = await mainThreadDuration(() =>
-    requiredElement<HTMLButtonElement>('.module-region').click(),
+    requiredElement<HTMLButtonElement>('.atlas-node').click(),
   );
-  const zoomMs = await mainThreadDuration(() =>
-    requiredElement<HTMLButtonElement>('button[aria-label="Hineinzoomen"]').click(),
+  const semanticZoomMs = await mainThreadDuration(() =>
+    requiredElement<HTMLButtonElement>('.inspector .primary').click(),
   );
-  const atlas = requiredElement('.atlas-viewport');
+  await waitFor('.atlas-node[data-kind="file"]');
+  const canvas = requiredElement('.canvas-host');
   const panMs = await mainThreadDuration(() => {
-    atlas.scrollLeft = 180;
-    atlas.scrollTop = 120;
+    canvas.scrollLeft = 180;
+    canvas.scrollTop = 120;
   });
-  const dock = Array.from(document.querySelectorAll('button')).find((button) =>
-    button.textContent?.includes('Deep Map'),
-  );
-  if (!(dock instanceof HTMLButtonElement)) throw new Error('Missing Deep Map dock control');
-  dock.click();
-
-  await waitFor('.activity-feed li:nth-child(32)');
+  requiredElement<HTMLButtonElement>('.deep-map-dock .summary').click();
+  await waitFor('.feed li:nth-child(32)');
   await nextFrame();
   const feedCommitMs = performance.now() - feedResolvedAt;
   observer?.disconnect();
 
   const domNodeCount = document.querySelectorAll('*').length;
-  const feedEvents = document.querySelectorAll('.activity-feed li').length;
+  const feedEvents = document.querySelectorAll('.feed li').length;
   const maxLongTaskMs = Math.max(0, ...longTasks);
   const passes =
     mountMs <= UI_BLOCK_BUDGET_MS &&
     selectionMs <= UI_BLOCK_BUDGET_MS &&
-    zoomMs <= UI_BLOCK_BUDGET_MS &&
+    semanticZoomMs <= UI_BLOCK_BUDGET_MS &&
     panMs <= UI_BLOCK_BUDGET_MS &&
     feedCommitMs <= UI_BLOCK_BUDGET_MS &&
     maxLongTaskMs <= UI_BLOCK_BUDGET_MS &&
@@ -255,6 +346,9 @@ async function runProfile(): Promise<void> {
     domNodeLimit: DOM_NODE_LIMIT,
     feedCommitMs: rounded(feedCommitMs),
     feedEvents,
+    fixtureFileCount: FILE_COUNT,
+    fixtureFlowTargetCount: FLOW_TARGET_COUNT,
+    fixtureSymbolCount: SYMBOL_COUNT,
     longTaskCount: longTasks.length,
     maxLongTaskMs: rounded(maxLongTaskMs),
     moduleCount,
@@ -262,9 +356,9 @@ async function runProfile(): Promise<void> {
     panMs: rounded(panMs),
     routeCount,
     selectionMs: rounded(selectionMs),
+    semanticZoomMs: rounded(semanticZoomMs),
     status: passes ? 'pass' : 'fail',
     userAgent: navigator.userAgent,
-    zoomMs: rounded(zoomMs),
   };
   status.textContent = passes ? 'Profil bestanden.' : 'Profil fehlgeschlagen.';
   resultElement.textContent = JSON.stringify(result, null, 2);

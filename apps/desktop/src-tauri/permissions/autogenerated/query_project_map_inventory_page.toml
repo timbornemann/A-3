@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-project-map-inventory-page"
+description = "Enables the query_project_map_inventory_page command without any pre-configured scope."
+commands.allow = ["query_project_map_inventory_page"]
+
+[[permission]]
+identifier = "deny-query-project-map-inventory-page"
+description = "Denies the query_project_map_inventory_page command without any pre-configured scope."
+commands.deny = ["query_project_map_inventory_page"]

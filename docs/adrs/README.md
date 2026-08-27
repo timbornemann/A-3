@@ -55,6 +55,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0028](0028-provider-credentials-and-explicit-gemini-remote-access.md) | OS-Credentials und expliziter Gemini-Remotezugriff |
 | [0029](0029-core-owned-project-catalog-and-restoration.md)    | Core-Projektkatalog und sichere Wiederherstellung          |
 | [0030](0030-bounded-evidence-source-preview.md)               | Begrenzte evidence-gebundene Source-Vorschau               |
+| [0031](0031-progressive-code-atlas-index-evidence.md)         | Progressiver Code Atlas und aktuelle Index-Evidence        |
 
 ## Neue ADRs
 

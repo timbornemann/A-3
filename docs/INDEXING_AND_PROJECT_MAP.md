@@ -873,6 +873,36 @@ erneut auf. Der sichere Source-Reader liefert acht Kontextzeilen je Seite, höch
 16 KiB Plain Text; stale, geheime, generierte, binäre, verlinkte oder hashveränderte Dateien bleiben
 ohne Inhalt.
 
+## U12 Progressiver Code Atlas
+
+`ProjectMapAtlasSceneV1` ersetzt keine Core-Projektion und materialisiert keinen Vollgraph. Der
+Read baut aus dem aktuellen `PublishedIndex` jeweils nur eine deterministisch gerankte Ebene auf:
+Projekt mit höchstens 64 Primärmodulen und 128 Relationsgruppen, Modul mit 32 Dateien, Datei mit 48
+Architektursymbolen oder Symbol mit Zentrum plus 31 direkten Nachbarn. `Contains` und `Defines`
+bestimmen räumliche Zugehörigkeit; die Standardkarte beschränkt Routen auf `Imports`, `Exports`,
+`Implements`, `Extends`, `Builds` und `Configures`. Vollständige Counts, 16 begrenzte Boundary-Stubs
+und alle Trunkierungssignale bleiben Teil derselben Run-/Snapshotbindung.
+
+Dateiranking folgt Manifest, Entry Point, öffentlichem/exportiertem Symbol, Test, gespeichertem
+Symbolrang und zuletzt den verlustfreien Pfadbytes. Symbolranking folgt Architekturtyp,
+Sichtbarkeit, Entry-/Testrolle, gespeichertem Rang und `SymbolId`. Nachbarn und Routen verwenden
+Evidencezahl, Confidence, Relationspriorität und stabile IDs. Die Auswertung ist modellfrei,
+cancellable, auf zwei Sekunden sowie 4.096 inspizierte Kanten begrenzt und für dieselbe Publikation
+byte-stabil normalisierbar.
+
+`ProjectMapEntityContextV1` lädt erst nach Auswahl direkte Architekturbeziehungen, Relationszahlen,
+Dokumentationscounts, höchstens 16 externe/ungelöste Ziele und exakt passende aktuelle
+Claim-Referenzen. `ProjectMapInventoryPageV1` hält mit publikations- und scopegebundenem Cursor
+jeweils nur eine feste 50er-Seite für Dateien, Symbole oder Mitglieder. `ProjectMapFlowSceneV1`
+trennt Caller, Callee, Tests und Reads/Writes; die kanonische Breitensuche liefert höchstens 31
+Ziele und behält pro Ziel den vollständigen ersten kürzesten Evidence-Pfad.
+
+ADR-0031 erweitert den sicheren ADR-0030-Preview-Pfad um zuvor vom Atlas ausgegebene aktuelle
+File-, Symbol-, Relations- und ungelöste Relationsevidence. Vor Sourceausgabe werden Auswahl,
+Publikation, Membership, abgeleitete Evidence-ID, Dateirevision und sämtliche bestehenden
+Source-Reader-Regeln erneut geprüft. Es entstehen weder eine Datenbankmigration noch eine neue
+Abhängigkeit, ein allgemeiner Source-Read oder eine Netzwerkauflösung externer Ziele.
+
 ## Hybride Suche
 
 Die U4-Project-Map-Suche verwendet die vorhandenen Exact- und Lexical-Projektionen als bewussten

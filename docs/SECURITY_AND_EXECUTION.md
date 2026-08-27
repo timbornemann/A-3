@@ -121,14 +121,24 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   Namen sind sichere Anzeigen; Run, Snapshot, Counts, Status, Coverage, Relationen und
   Trunkierung stammen aus genau einer atomaren Publikation. Projektwechsel und Replacement-Publish
   invalidieren verspätete Reads über die UI-Generation.
+- Die vier progressiven Atlas-Reads akzeptieren ausschließlich Protokollversion, eine optionale
+  Core-ausgegebene Modul-/Datei-/Symbolauswahl und – je nach Read – einen geschlossenen
+  Inventartyp, einen opaken aktuellen Cursor oder ein festes Flow-Preset. Pfade, freie Relationen,
+  Hops, Limits, Run-/Snapshot-IDs, SQL und Source sind keine Requestfelder. Szene, Kontext,
+  50er-Inventarseite und 31-Ziel-Flow werden aus genau einer aktuellen Publikation unter
+  Cancellation, Zwei-Sekunden-Deadline und einer 4.096er-Kanteninspektionsgrenze erzeugt.
+  Externe und ungelöste Ziele sind begrenzte, nicht autoritative Boundary-Stubs; ihre Anzeigen und
+  Evidence-Auswahlen gewähren keine Netzwerk-, Paketmanager- oder Dateisystemfähigkeit.
 - Search V2 bindet einen Treffer nur dann an eine Primärregion, wenn die aktuelle
   Membership-Projektion genau ein Modul beweist. Die opaque File-/Symbol-Evidence-Auswahl gewährt
   weder Pfad- noch Sourceautorität; `moduleId: null` bleibt ein gültiger nutzbarer Treffer.
-- `query_project_map_source_preview` erweitert die WebView ausschließlich um den ADR-0030-Read:
-  vollständige Core-ausgegebene Card-/Evidence-Anker, keine Pfade, Ranges oder Limits. Der
-  bestehende sichere Source-Reader revalidiert Root, No-Follow, Dateityp, Größe, Binary,
-  Generated, Secret und Hash. Höchstens 64 Zeilen/16 KiB Plain Text werden weder persistiert noch
-  geloggt oder an einen Provider übergeben; stale Evidence bleibt content-frei.
+- `query_project_map_source_preview` erweitert die WebView ausschließlich um den ADR-0030-/0031-
+  Read: vollständige Core-ausgegebene Card-Anker oder eine aktuelle File-, Symbol-, Relations- oder
+  ungelöste Relationsevidence-Auswahl, keine Pfade, Ranges oder Limits. Der bestehende sichere
+  Source-Reader revalidiert Publikation, Membership, Evidence-ID, Root, No-Follow, Dateityp, Größe,
+  Binary, Generated, Secret und Hash. Höchstens 64 Zeilen/16 KiB Plain Text werden weder
+  persistiert noch geloggt oder an einen Provider übergeben; erfundene, fremde oder stale Evidence
+  bleibt content-frei.
 - `query_repository_tree` akzeptiert ausschließlich Protokollversion, eine optionale relative
   RepositoryPath als kleingeschriebenes Hex-Token, einen optionalen direkten Kind-Cursor und ein
   Limit von 1 bis 100. Projekt und Worktree stammen aus dem Core. Der Adapter liest nur direkte

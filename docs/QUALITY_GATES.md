@@ -174,6 +174,24 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   stale Auswahl, Hash-Race, Symlink/Junction, Binary, Secret, Generated, Großdatei, erfundene IDs
   sowie exakt 64 Zeilen und 16 KiB. Inhalt erscheint nur nach explizitem Evidence-Klick als Plain
   Text und wird nicht persistiert oder geloggt.
+- Der U12-Atlas-Contract prüft Projekt-, Modul-, Datei- und Symbolebene gegen 64/128, 32, 48 und
+  Zentrum-plus-31, deterministisches Ranking, alle 13 Relationsarten, Containment, 16
+  Boundary-Stubs, vollständige Counts/Trunkierungen, Cancellation, Zwei-Sekunden-Deadline und
+  Replacement-Publish. Inventory-Contracts prüfen ausschließlich `files`, `symbols` und `members`,
+  feste 50er-Seiten sowie publikations- und scopegebundene Cursor. Flow-Contracts prüfen Richtung,
+  Zwei-Hop-/Ein-Hop-Grenzen, Zyklen, 31 Ziele, 4.096 inspizierte Kanten und den vollständigen ersten
+  kürzesten Evidence-Pfad.
+- Der ADR-0031-Preview-Contract ergänzt erfundene, fremde und stale Indexauswahlen, aktuelle File-,
+  Symbol-, Relations- und ungelöste Relationsevidence sowie die erneute exakte Ableitung ihrer
+  Evidence-ID. Alle ADR-0030-Fälle und Zeilen-/Bytegrenzen bleiben unverändert Pflicht.
+- U12-Decoder lehnen unbekannte Felder, unkanonische IDs/Cursor, doppelte Knoten, ungültige
+  Breadcrumbs, widersprüchliche Counts und Trunkierung, gemischte Publikationen sowie übergroße
+  Szenen, Inventare und Flows ab. Component- und Browser-Smokes prüfen Auswahl gegen Öffnen,
+  Breadcrumb/Escape, jede Ebene, 50er-Inventare, die vier Flow-Presets, Task Lens, Search-Fokus,
+  Claim-/Boundary-Kennzeichnung und Publish-Refresh bei 720 × 520 und 680 × 760.
+- Das U12-Browserprofil verwendet 64 Module, 32 Dateien, 48 Symbole, 128 Routen, 31 Flow-Ziele und
+  32 Feed-Ereignisse. Es meldet Mount, Auswahl, semantischen Zoom, Pan, Feed-Commit, Long Tasks und
+  DOM-Zahl; höchstens 1.500 DOM-Knoten und keine sichtbare Blockade über 100 ms sind harte Gates.
 - Deep Map V2 prüft die Phasenfolge Planning → Exploring → Claiming → Verifying → Publishing,
   aktuelle Module/Aktionen, 32er-Retention, monotone Sequenzen, Pause/Resume ohne Replay,
   Cancel/Fehler und eine Publikationszusammenfassung ausschließlich nach erfolgreichem atomarem

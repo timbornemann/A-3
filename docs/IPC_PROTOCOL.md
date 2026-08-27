@@ -77,15 +77,35 @@ oder Symbol-Evidence-Auswahl. Uneindeutige oder ungemappte Treffer führen `modu
 Core erfindet keine Region. Decoder lehnen fehlende oder unbekannte Felder, unkanonische IDs,
 gemischte Publikationen, inkonsistente Selection-/Target-Paare und mehr als 20 Treffer ab.
 
+## Progressive Atlas Read Models V1
+
+`query_project_map_atlas_scene` akzeptiert neben `protocolVersion` nur eine optionale, zuvor vom
+Core ausgegebene typisierte Modul-, Datei- oder Symbolauswahl. Pfade, Run-/Snapshot-IDs und Limits
+sind nicht darstellbar. Die Antwort bindet genau eine aktuelle Publikation an Policy V1, Ebene,
+Breadcrumb, sichere Knoten, Relationsgruppen, Evidence-Auswahlen sowie vollständige Gesamt- und
+Trunkierungszähler. Die festen Obergrenzen lauten 64 Module/128 Routen, 32 Dateien, 48 Symbole,
+Zentrum plus 31 Nachbarn und 16 Boundary-Stubs.
+
+`query_project_map_entity_context` verwendet dieselbe Auswahl und liefert höchstens 32 direkte
+Architekturbeziehungen sowie 16 externe oder ungelöste Ziele. `query_project_map_inventory_page`
+akzeptiert zusätzlich ausschließlich `files`, `symbols` oder `members` und einen zuvor ausgegebenen,
+publikations- und scopegebundenen Cursor; jede Seite umfasst fest höchstens 50 Einträge.
+`query_project_map_flow_scene` akzeptiert nur `callers`, `callees`, `tests` oder `dataAccess`.
+Caller/Callee sind auf zwei Hops, Tests und Datenzugriff auf direkte Kanten, alle Flows auf 31 Ziele
+und 4.096 inspizierte Kanten begrenzt. Jeder Treffer enthält den vollständigen ersten kürzesten
+Evidence-Pfad. Zusätzliche Felder und widersprüchliche Publikations-, Breadcrumb-, Count- oder
+Trunkierungsdaten werden abgelehnt.
+
 ## Project Map Source Preview V1
 
-`query_project_map_source_preview` akzeptiert ausschließlich die sieben zuvor ausgegebenen
-Run-/Snapshot-/Card-/Modul-/Evidence-IDs einer sichtbaren Card. Der Request enthält niemals Pfad,
-Range oder Limit. Nach erneuter Publikations-, Membership-, Freshness-, Root-, Symlink-, Binary-,
-Generated-, Secret- und Hashprüfung liefert er nur aktuelle File-, Symbol- oder Graph-Evidence als
-Plain Text: acht Kontextzeilen je Seite, insgesamt höchstens 64 Zeilen und 16 KiB UTF-8. Sprache,
-sichere Pfadanzeige, Zeilennummern und Highlight sind Daten; HTML und Source in Fehlern sind
-ausgeschlossen.
+`query_project_map_source_preview` akzeptiert ausschließlich eine geschlossene
+`moduleCard`-Auswahl mit den sieben zuvor ausgegebenen Card-Ankern oder eine geschlossene `index`-
+Auswahl für zuvor ausgegebene File-, Symbol-, aufgelöste Relations- oder ungelöste
+Relationsevidence. Der Request enthält niemals Pfad, Range oder Limit. Nach erneuter Publikations-,
+Membership-, Freshness-, Root-, Symlink-, Binary-, Generated-, Secret- und Hashprüfung liefert er
+nur aktuelle Evidence als Plain Text: acht Kontextzeilen je Seite, insgesamt höchstens 64 Zeilen
+und 16 KiB UTF-8. Sprache, sichere Pfadanzeige, Zeilennummern und Highlight sind Daten; HTML und
+Source in Fehlern sind ausgeschlossen.
 
 ## Module Card Freshness V1
 

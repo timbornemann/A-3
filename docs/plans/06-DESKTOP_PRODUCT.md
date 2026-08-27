@@ -923,6 +923,60 @@ Diese Messung belegt das aktuelle Budget, behauptet aber keine Verbesserung gege
 entfernten Legacy-Oberfläche. Der native Windows-Smoke bestand mit einem echten 976 × 719 großen
 WebView2-Fenster und einem 50.500-Byte-Screenshot.
 
+## U12 Progressiver Code Atlas
+
+Abhängigkeiten: U11, ADR-0025, ADR-0030, ADR-0031
+
+- [x] semantischer Zoom Projekt → Modul → Datei → Typ/Symbol mit Breadcrumb
+- [x] verschachtelte, deterministische Regionen und begrenzte Architekturrouten
+- [x] getrennte Caller-/Callee-, Test- und Datenfluss-Szenen
+- [x] vollständige feste 50er-Inventarseiten im Inspector
+- [x] exakt evidence-gebundene Claim-Badges und verifizierte Modulhinweise
+- [x] aktuelle File-, Symbol- und Relationsevidence in der sicheren Source-Vorschau
+- [x] responsive, tastaturbedienbare Karte innerhalb der U10-DOM- und Interaktionsbudgets
+
+Akzeptanz:
+
+- Nutzer können ohne Unterseiten vom Projekt in ein Modul, von dort in eine Datei und weiter zu
+  einem Typ oder zentralen Symbol zoomen; Klick wählt, Enter, Doppelklick oder `Öffnen` vertieft,
+  Escape und Breadcrumb navigieren zurück;
+- Projekt-, Modul-, Datei- und Symbolebene halten die festen Grenzen 64/128, 32 Dateien,
+  48 Symbole sowie Zentrum plus 31 direkte Nachbarn ein; 16 Boundary-Stubs und 31 Flow-Ziele sind
+  zusätzliche feste Obergrenzen;
+- die Standardkarte zeigt ausschließlich `Imports`, `Exports`, `Implements`, `Extends`, `Builds`
+  und `Configures`; `Calls`, `Tests` und `Reads/Writes` öffnen getrennte evidenzgebundene Flows;
+- sämtliche ausgelieferten Gesamtzahlen, nicht zugeordneten oder ungelösten Ziele,
+  Inspektionsgrenzen und Trunkierungen bleiben sichtbar; die WebView erhält niemals einen
+  Vollgraph;
+- Inventare halten genau eine feste 50er-Seite im Renderzustand und akzeptieren nur einen aktuellen,
+  publikations- und scopegebundenen Cursor;
+- File-, Symbol-, Kanten- und Boundary-Auswahlen tragen nur dann Claim-Badges, wenn ihre aktuelle
+  Evidence-ID exakt in einem aktuellen verifizierten Claim vorkommt;
+- Source-Vorschauen verwenden ausschließlich eine zuvor vom Core ausgegebene aktuelle File-,
+  Symbol- oder Relationsevidence-Auswahl und behalten sämtliche ADR-0030-Grenzen;
+- Navigation, Suche, Task Lens und Polling starten keine Modellarbeit. Deep-Map-Inhalte erscheinen
+  erst nach Verifikation und atomarem Publish.
+
+Nicht-Ziele sind ein Vollgraph, Force-Simulation, Code-Stadt, Laufzeittelemetrie,
+Netzwerkauflösung externer Pakete, neue Sprachadapter, vollständige Dateien in der WebView oder
+fachlich persistierter Karten-/Zoom-/Filterzustand. Checklistenpunkte werden erst nach den
+objektiven U12-Verträgen, dem reproduzierbaren Browserprofil und dem vollständigen Quality Gate
+abgehakt.
+
+Lokale U12-Abnahme vom 2026-08-27: Das aktualisierte Browserprofil
+`apps/desktop/performance/u11-map-atlas.html` rendert die produktive progressive `MapWorkspace` mit
+64 Modulen, 128 Relationsgruppen, 32 Dateien, 48 Symbolen, 31 Flow-Zielen und 32 Deep-Map-
+Ereignissen. Im aufgewärmten Chrome 151 auf Windows lagen die jeweils schlechteren Messwerte aus
+720 × 520 und 680 × 760 bei 1,8 ms Mount, 0,3 ms Auswahl, 0,5 ms semantischem Zoom, 0,1 ms Pan und
+26,5 ms Feed-Commit. Es trat kein Long Task auf; die komplexere Drawer-Ansicht blieb mit 499
+DOM-Knoten unter der 1.500-Knoten-Grenze. Beide Mindestgrößen füllten die verfügbare Fläche exakt
+und blieben ohne Außenrahmen, Außenradius, Horizontaloverflow oder Browserfehler; bei 680 Pixeln
+öffnete der 390-Pixel-Inspector als kantiger Drawer. Der native Produktionsbuild trennt die Map in
+einen 63,52-kB-JavaScript-/18,26-kB-CSS-Lazy-Chunk; der initiale JavaScript-Chunk beträgt 152,66 kB.
+Der native Windows-Smoke bestand mit einem echten 976 × 719 großen WebView2-Fenster, 35
+Stichprobenfarben und einem 52.407-Byte-Screenshot. Die Messung belegt das aktuelle Budget, aber
+behauptet keine Verbesserung gegenüber U11.
+
 ## Gate M8
 
 - [x] vollständiger Nutzerworkflow vom Open bis Done

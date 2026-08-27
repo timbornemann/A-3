@@ -59,6 +59,7 @@ mod policy;
 mod policy_store;
 mod process_runner;
 mod project_catalog;
+mod project_map_atlas;
 mod project_map_scene;
 mod project_map_search;
 mod project_map_source_preview;
@@ -337,6 +338,7 @@ pub use project_catalog::{
     ProjectCatalogCursor, ProjectCatalogDirection, ProjectCatalogPage, ProjectCatalogQuery,
     ProjectCatalogQueryError,
 };
+pub use project_map_atlas::*;
 pub use project_map_scene::{
     GetProjectMapScene, PROJECT_MAP_SCENE_FOCUS_MODULE_LIMIT,
     PROJECT_MAP_SCENE_OVERVIEW_MODULE_LIMIT, PROJECT_MAP_SCENE_RELATION_LIMIT,

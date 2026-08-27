@@ -3,11 +3,11 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness,
-    GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage, GetProjectMapScene,
-    GetRepositoryTreePage, IndexPersistenceControl, IndexPersistenceControlError,
-    KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure,
-    LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
+    CompileTaskLens, ExploreProjectMapAtlas, GetModuleCardDetail, GetModuleCardEvidence,
+    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
+    GetProjectMapScene, GetRepositoryTreePage, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
+    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
     ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
     ModuleCardDetailQuery, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
     ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult,
@@ -21,12 +21,14 @@ use a3_application::{
     ModuleRuntimeFlowQuery, ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery,
     ModuleRuntimeRootLimit, ModuleTreeChildState, ModuleTreeControl, ModuleTreeControlError,
     ModuleTreeFailure, ModuleTreeLoadResult, ModuleTreePageSize, ModuleTreeQuery,
-    ProjectMapSceneControl, ProjectMapSceneControlError, ProjectMapSceneFailure,
-    ProjectMapSceneLoadResult, ProjectMapSceneQuery, PublishVerifiedModuleCards,
-    PublishVerifiedModuleCardsFailure, RemapQueueControl, RemapQueueControlError, RemapQueueLimit,
-    RepositoryTreeControl, RepositoryTreeControlError, RepositoryTreeEntryKind,
-    RepositoryTreeFailure, RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl,
-    TaskLensControlError, TraceModuleRuntimeFlow, VerifiedModuleCardPublisherFailure,
+    ProjectMapAtlasControl, ProjectMapAtlasControlError, ProjectMapAtlasLoadResult,
+    ProjectMapAtlasSceneQuery, ProjectMapEntitySelection, ProjectMapSceneControl,
+    ProjectMapSceneControlError, ProjectMapSceneFailure, ProjectMapSceneLoadResult,
+    ProjectMapSceneQuery, PublishVerifiedModuleCards, PublishVerifiedModuleCardsFailure,
+    RemapQueueControl, RemapQueueControlError, RemapQueueLimit, RepositoryTreeControl,
+    RepositoryTreeControlError, RepositoryTreeEntryKind, RepositoryTreeFailure,
+    RepositoryTreePageSize, RepositoryTreeQuery, TaskLensControl, TaskLensControlError,
+    TraceModuleRuntimeFlow, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
@@ -228,6 +230,23 @@ impl ProjectMapSceneControl for TestIndexControl {
         self.progress
             .lock()
             .map_err(|_| ProjectMapSceneControlError::Unavailable)?
+            .push(progress);
+        Ok(())
+    }
+}
+
+impl ProjectMapAtlasControl for TestIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), ProjectMapAtlasControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| ProjectMapAtlasControlError)?
             .push(progress);
         Ok(())
     }
@@ -2887,6 +2906,104 @@ fn project_map_scene_is_deterministic_manifest_first_bounded_and_latest_only()
                 .await?,
             ProjectMapSceneLoadResult::FocusUnavailable
         );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn progressive_atlas_enriches_current_file_evidence_from_verified_cards()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([107; 32], [108; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let snapshot = snapshot(
+            [109; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![
+                change(b"packages/a/lib.rs", [111; 32], SnapshotChangeKind::Upsert)?,
+                change(b"packages/b/lib.rs", [112; 32], SnapshotChangeKind::Upsert)?,
+                change(b"packages/c/lib.rs", [113; 32], SnapshotChangeKind::Upsert)?,
+            ],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([110; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication =
+            multi_module_publication(snapshot.id(), [[111; 32], [112; 32], [113; 32]])?;
+        store
+            .publish_index(&fixture.project, run.id(), &publication, &control)
+            .await?;
+        let published = store
+            .latest_published_index(&fixture.project, &control)
+            .await?
+            .ok_or("progressive Atlas fixture index is missing")?;
+        PublishVerifiedModuleCards::new(store.as_ref())
+            .execute(
+                &fixture.project,
+                &multi_module_card_batch(&published)?,
+                &control,
+            )
+            .await?;
+
+        let atlas = ExploreProjectMapAtlas::new(store);
+        let overview = match atlas
+            .scene(
+                &fixture.project,
+                &ProjectMapAtlasSceneQuery::new(None),
+                &control,
+            )
+            .await?
+        {
+            ProjectMapAtlasLoadResult::Available(scene) => scene,
+            other => return Err(format!("unexpected Atlas overview: {other:?}").into()),
+        };
+        assert_eq!(overview.nodes().len(), 3);
+        assert!(overview.nodes().iter().all(|node| {
+            node.mapping_status() == Some(a3_application::ProjectMapMappingStatus::Current)
+        }));
+
+        let module = overview.nodes()[0]
+            .selection()
+            .ok_or("Atlas module selection is missing")?;
+        let module_scene = match atlas
+            .scene(
+                &fixture.project,
+                &ProjectMapAtlasSceneQuery::new(Some(module)),
+                &control,
+            )
+            .await?
+        {
+            ProjectMapAtlasLoadResult::Available(scene) => scene,
+            other => return Err(format!("unexpected Atlas module scene: {other:?}").into()),
+        };
+        let file = module_scene
+            .nodes()
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.selection(),
+                    Some(ProjectMapEntitySelection::File { .. })
+                )
+            })
+            .ok_or("Atlas file node is missing")?;
+        assert_eq!(file.claim_badge_count(), 1);
+        let context = match atlas
+            .context(
+                &fixture.project,
+                file.selection().ok_or("Atlas file selection is missing")?,
+                &control,
+            )
+            .await?
+        {
+            ProjectMapAtlasLoadResult::Available(context) => context,
+            other => return Err(format!("unexpected Atlas context: {other:?}").into()),
+        };
+        assert_eq!(context.claims().len(), 1);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }

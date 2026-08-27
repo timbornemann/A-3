@@ -19,6 +19,7 @@ mod module_runtime;
 mod module_tree;
 mod project;
 mod project_catalog;
+mod project_map_atlas;
 mod project_map_scene;
 mod project_map_search;
 mod project_map_source_preview;
@@ -113,6 +114,7 @@ pub use project::{
     GitHeadV1, OpenProjectRequestV1, OpenProjectResponseV1, OpenProjectResultV1, ProjectSummaryV1,
 };
 pub use project_catalog::*;
+pub use project_map_atlas::*;
 pub use project_map_scene::{
     ProjectMapMappingStatusV1, ProjectMapSceneCardBindingV1, ProjectMapSceneModuleKindV1,
     ProjectMapSceneModuleV1, ProjectMapSceneRelationV1, ProjectMapSceneResponseV1,
@@ -129,7 +131,7 @@ pub use project_map_search::{
 };
 pub use project_map_source_preview::{
     ProjectMapSourceHighlightV1, ProjectMapSourcePreviewResponseV1,
-    ProjectMapSourcePreviewResultV1, ProjectMapSourcePreviewV1,
+    ProjectMapSourcePreviewResultV1, ProjectMapSourcePreviewSelectionV1, ProjectMapSourcePreviewV1,
     QueryProjectMapSourcePreviewRequestV1,
 };
 pub use project_rebuild::{RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1};

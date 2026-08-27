@@ -2,220 +2,109 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import MapWorkspace from './MapWorkspace.svelte';
 import type { DeepMapStatusResponseV1 } from './deep-map';
-import type { ModuleCardDetailResponseV1 } from './module-card-detail';
-import type { ModuleCardEvidenceResponseV1 } from './module-card-evidence';
-import type { ModuleRuntimeMapResponseV1 } from './module-runtime';
-import type { ProjectMapSceneResponseV1 } from './project-map-scene';
+import type {
+  ProjectMapAtlasNodeV1,
+  ProjectMapAtlasSceneResponseV1,
+  ProjectMapAtlasSceneV1,
+  ProjectMapEntityContextResponseV1,
+  ProjectMapEntitySelectionV1,
+  ProjectMapInventoryPageResponseV1,
+} from './project-map-atlas';
 import type { ProjectMapSourcePreviewResponseV1 } from './project-map-source-preview';
 
 const id = (digit: string): string => digit.repeat(64);
-
-const overviewScene: ProjectMapSceneResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    status: 'available',
-    scene: {
-      focusModuleId: null,
-      indexRunId: id('1'),
-      inspectedEdgeCount: '1',
-      modules: [
-        {
-          cardBinding: {
-            cardId: id('4'),
-            sourceIndexRunId: id('1'),
-            sourceSnapshotId: id('2'),
-          },
-          cardCoverageBasisPoints: 7_500,
-          centralSymbolCount: '2',
-          displayName: 'a3-application',
-          entrypointCount: '1',
-          fileCount: '8',
-          kind: 'manifestBoundary',
-          manifestCount: '1',
-          mappingStatus: 'current',
-          moduleId: id('a'),
-          parentModuleId: null,
-          rank: 1,
-          representativeEvidenceId: id('f'),
-          symbolCount: '20',
-          testCount: '4',
-        },
-        {
-          cardBinding: null,
-          cardCoverageBasisPoints: null,
-          centralSymbolCount: '1',
-          displayName: 'desktop',
-          entrypointCount: '1',
-          fileCount: '4',
-          kind: 'pathBoundary',
-          manifestCount: '0',
-          mappingStatus: 'unmapped',
-          moduleId: id('b'),
-          parentModuleId: null,
-          rank: 2,
-          representativeEvidenceId: null,
-          symbolCount: '10',
-          testCount: '2',
-        },
-      ],
-      modulesTruncated: false,
-      observedRelationGroupCount: '1',
-      policyVersion: 'v1',
-      primaryModuleCount: '2',
-      relations: [
-        {
-          evidenceId: id('e'),
-          observedEvidenceCount: '3',
-          relation: 'calls',
-          sourceModuleId: id('a'),
-          targetModuleId: id('b'),
-        },
-      ],
-      relationsTruncated: false,
-      snapshotId: id('2'),
-      sourceEdgesTruncated: false,
-      unmappedEdgeCount: '0',
-    },
-  },
+const moduleSelection: ProjectMapEntitySelectionV1 = { kind: 'module', moduleId: id('a') };
+const fileSelection: ProjectMapEntitySelectionV1 = {
+  evidenceId: id('f'),
+  kind: 'file',
+  moduleId: id('a'),
+  ordinal: 1,
 };
 
-const currentCard: ModuleCardDetailResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    status: 'available',
-    detail: {
-      cardId: id('4'),
-      confidenceBasisPoints: 8_600,
-      coverage: {
-        basisPoints: 833,
-        coveredFieldCount: 1,
-        must: {
-          basisPoints: 1_250,
-          coveredFieldCount: 1,
-          missingFields: [
-            'title',
-            'paths',
-            'responsibilities',
-            'publicSurface',
-            'dependencies',
-            'invariants',
-            'tests',
-          ],
-          totalFieldCount: 8,
-        },
-        should: {
-          basisPoints: 0,
-          coveredFieldCount: 0,
-          missingFields: ['entrypoints', 'dataFlows', 'risks', 'openQuestions'],
-          totalFieldCount: 4,
-        },
-        totalFieldCount: 12,
-      },
-      currentIndexRunId: id('1'),
-      currentSnapshotId: id('2'),
-      fields: [
-        {
-          evidenceIds: [id('f')],
-          kind: 'purpose',
-          values: [
-            {
-              claim: {
-                claimId: id('5'),
-                confidenceBasisPoints: 8_600,
-                evidenceIds: [id('f')],
-                kind: 'fact',
-                state: 'current',
-              },
-              value: 'Orchestriert die deterministischen Anwendungsfälle.',
-            },
-          ],
-        },
-      ],
-      lifecycle: { status: 'current' },
-      mapperProfileVersion: 1,
-      moduleId: id('a'),
-      schemaVersion: 1,
-      sourceIndexRunId: id('1'),
-      sourceSnapshotId: id('2'),
-    },
-  },
+const moduleNode: ProjectMapAtlasNodeV1 = {
+  claimBadgeCount: 1,
+  currentRiskCount: '2',
+  detail: '8 Dateien · 20 Symbole',
+  dimmed: false,
+  displayName: 'a3-application',
+  evidenceId: null,
+  fileCount: '8',
+  kind: 'manifestModule',
+  mappingStatus: 'current',
+  memberCount: '0',
+  nodeId: id('a'),
+  parentNodeId: null,
+  purpose: 'Orchestriert die deterministischen Anwendungsfälle.',
+  rank: 1,
+  selection: moduleSelection,
+  symbolCount: '20',
+  volume: '8',
+};
+const fileNode: ProjectMapAtlasNodeV1 = {
+  ...moduleNode,
+  claimBadgeCount: 0,
+  currentRiskCount: '0',
+  detail: 'RunDeepMap · ExploreProjectMapAtlas',
+  displayName: 'lib.rs',
+  evidenceId: id('f'),
+  fileCount: '1',
+  kind: 'file',
+  mappingStatus: null,
+  nodeId: id('b'),
+  parentNodeId: id('a'),
+  selection: fileSelection,
+  symbolCount: '12',
+  volume: '12',
 };
 
-const currentEvidence: ModuleCardEvidenceResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    status: 'available',
-    detail: {
-      cardId: id('4'),
-      cardLifecycle: { status: 'current' },
-      currentIndexRunId: id('1'),
-      currentSnapshotId: id('2'),
-      evidenceId: id('f'),
-      freshness: 'current',
-      moduleId: id('a'),
-      payload: {
-        kind: 'file',
-        revision: { contentHash: id('6'), pathHex: '7372632f6c69622e7273' },
-      },
-      sourceIndexRunId: id('1'),
-      sourceSnapshotId: id('2'),
-    },
-  },
-};
+function scene(selection: ProjectMapEntitySelectionV1 | null): ProjectMapAtlasSceneV1 {
+  const focused = selection !== null;
+  return {
+    boundariesTruncated: false,
+    boundaryCount: '0',
+    breadcrumb: focused
+      ? [
+          { label: 'Projekt', selection: null },
+          { label: 'a3-application', selection: moduleSelection },
+        ]
+      : [{ label: 'Projekt', selection: null }],
+    indexRunId: id('1'),
+    inspectedEdgeCount: '0',
+    level: focused ? 'module' : 'project',
+    nodeCount: '1',
+    nodes: [focused ? fileNode : moduleNode],
+    nodesTruncated: false,
+    policyVersion: 1,
+    relationCount: '0',
+    relations: [],
+    relationsTruncated: false,
+    selection,
+    snapshotId: id('2'),
+    sourceEdgesTruncated: false,
+    unresolvedCount: '0',
+  };
+}
 
 const sourcePreview: ProjectMapSourcePreviewResponseV1 = {
   protocolVersion: 1,
   result: {
-    status: 'available',
     preview: {
-      highlight: null,
+      highlight: { endColumn: 18, endLine: 10, startColumn: 0, startLine: 10 },
       language: 'rust',
       lineCount: 2,
-      pathDisplay: 'src/lib.rs',
-      startLine: 10,
-      text: 'pub struct RunDeepMap;\nimpl RunDeepMap {}',
+      pathDisplay: 'crates/a3-application/src/lib.rs',
+      startLine: 9,
+      text: 'use crate::atlas;\npub struct RunDeepMap;',
       truncatedAfter: true,
       truncatedBefore: true,
     },
-  },
-};
-
-const runtime: ModuleRuntimeMapResponseV1 = {
-  protocolVersion: 1,
-  result: {
     status: 'available',
-    map: {
-      entrypoints: {
-        projectionTruncated: false,
-        roots: [],
-        storedCount: '0',
-        visibleTruncated: false,
-      },
-      indexRunId: id('1'),
-      moduleId: id('a'),
-      snapshotId: id('2'),
-      tests: { projectionTruncated: false, roots: [], storedCount: '0', visibleTruncated: false },
-    },
   },
 };
 
 const deepMapStatus: DeepMapStatusResponseV1 = {
   protocolVersion: 1,
   result: {
-    status: 'available',
-    configuration: {
-      defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      maximumBudget: { tokenLimit: 1_000_000, timeLimitMillis: 86_400_000, toolCallLimit: 4_096 },
-      minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
-      model: {
-        contextTokens: 32_000,
-        modelId: 'mapper',
-        outputTokens: 4_096,
-        profileId: id('7'),
-        profileVersion: 1,
-        providerId: 'local',
-      },
-    },
     activity: {
       budget: null,
       confirmedSteps: '0',
@@ -231,90 +120,144 @@ const deepMapStatus: DeepMapStatusResponseV1 = {
       targetKind: null,
       totalSteps: '0',
     },
+    configuration: {
+      defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+      maximumBudget: { tokenLimit: 1_000_000, timeLimitMillis: 86_400_000, toolCallLimit: 4_096 },
+      minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
+      model: {
+        contextTokens: 32_000,
+        modelId: 'mapper',
+        outputTokens: 4_096,
+        profileId: id('7'),
+        profileVersion: 1,
+        providerId: 'local',
+      },
+    },
+    status: 'available',
   },
 };
 
-function renderWorkspace(overrides: Record<string, unknown> = {}) {
-  const baseScene = (
-    overviewScene.result as Extract<ProjectMapSceneResponseV1['result'], { status: 'available' }>
-  ).scene;
-  const sceneLoader = vi.fn(async ({ focusModuleId }: { focusModuleId: string | null }) => {
-    if (focusModuleId === null) return overviewScene;
+function renderWorkspace() {
+  const atlasSceneLoader = vi.fn(async (selection: ProjectMapEntitySelectionV1 | null) => ({
+    protocolVersion: 1 as const,
+    result: { scene: scene(selection), status: 'available' as const },
+  })) as unknown as (
+    selection: ProjectMapEntitySelectionV1 | null,
+  ) => Promise<ProjectMapAtlasSceneResponseV1>;
+  const contextLoader = vi.fn(async (selection: ProjectMapEntitySelectionV1) => {
+    const entity = selection.kind === 'module' ? moduleNode : fileNode;
     return {
-      ...overviewScene,
+      protocolVersion: 1 as const,
       result: {
-        status: 'available',
-        scene: { ...baseScene, focusModuleId },
+        context: {
+          architectureRelationCount: '0',
+          architectureRelations: [],
+          boundaryCount: '0',
+          boundaryNodes: [],
+          boundaryRelations: [],
+          claims: [],
+          documentRelationCount: '0',
+          entity,
+          indexRunId: id('1'),
+          relatedNodes: [],
+          relationCounts: [],
+          snapshotId: id('2'),
+          sourceEdgesTruncated: false,
+        },
+        status: 'available' as const,
       },
-    } as ProjectMapSceneResponseV1;
-  });
+    };
+  }) as unknown as (
+    selection: ProjectMapEntitySelectionV1,
+  ) => Promise<ProjectMapEntityContextResponseV1>;
+  const inventoryLoader = vi.fn(async () => ({
+    protocolVersion: 1 as const,
+    result: {
+      page: {
+        indexRunId: id('1'),
+        items: [fileNode],
+        nextCursor: null,
+        pageNumber: 1,
+        pageSize: 50 as const,
+        previousCursor: null,
+        selection: moduleSelection,
+        snapshotId: id('2'),
+        totalCount: '1',
+        view: 'files' as const,
+      },
+      status: 'available' as const,
+    },
+  })) as unknown as () => Promise<ProjectMapInventoryPageResponseV1>;
+  const sourcePreviewLoader = vi.fn(async () => sourcePreview);
+  const searchLoader = vi.fn(async () => ({
+    protocolVersion: 1 as const,
+    result: {
+      search: {
+        fusionPolicyVersion: 1 as const,
+        hits: [],
+        indexRunId: id('1'),
+        query: 'runner',
+        snapshotId: id('2'),
+        truncated: false,
+      },
+      status: 'available' as const,
+    },
+  }));
+  const starter = vi.fn(async () => ({ accepted: true as const, protocolVersion: 1 as const }));
   const props = {
-    cardLoader: vi.fn(async () => currentCard),
+    atlasSceneLoader,
+    contextLoader,
+    deepMapStarter: starter,
     deepMapStatusLoader: vi.fn(async () => deepMapStatus),
-    evidenceLoader: vi.fn(async () => currentEvidence),
+    inventoryLoader,
     projectKey: id('9'),
-    runtimeLoader: vi.fn(async () => runtime),
-    sceneLoader,
-    searchLoader: vi.fn(),
-    sourcePreviewLoader: vi.fn(async () => sourcePreview),
-    ...overrides,
+    searchLoader,
+    sourcePreviewLoader,
   };
-  return { ...render(MapWorkspace, { props }), props, sceneLoader };
+  return { ...render(MapWorkspace, { props }), props };
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+afterEach(() => vi.restoreAllMocks());
 
-describe('U11 Map workspace', () => {
-  it('opens as one map-first surface without legacy tabs and defers module reads', async () => {
-    const { props, sceneLoader } = renderWorkspace();
+describe('U12 progressive Code Atlas workspace', () => {
+  it('opens full-surface at project level and defers all entity reads', async () => {
+    const { props } = renderWorkspace();
     expect(await screen.findByRole('heading', { name: 'Code Atlas' })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: /a3-application, Current/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Recherche' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Explorer' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Modul' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Mapping' })).toBeNull();
-    expect(sceneLoader).toHaveBeenCalledWith({ focusModuleId: null });
-    expect(props.cardLoader).not.toHaveBeenCalled();
-    expect(props.runtimeLoader).not.toHaveBeenCalled();
+    expect(screen.getByText('Fläche 1:8 begrenzt')).toBeTruthy();
+    expect(props.atlasSceneLoader).toHaveBeenCalledWith(null);
+    expect(props.contextLoader).not.toHaveBeenCalled();
   });
 
-  it('loads progressive module detail and opens only a revalidated bounded source preview', async () => {
-    const { props, sceneLoader } = renderWorkspace();
-    await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Current/ }));
-    await waitFor(() => expect(props.cardLoader).toHaveBeenCalledWith({ moduleId: id('a') }));
-    expect(props.runtimeLoader).toHaveBeenCalledWith({
-      entrypointLimit: 20,
-      moduleId: id('a'),
-      testLimit: 20,
-    });
-    expect(sceneLoader).toHaveBeenCalledWith({ focusModuleId: id('a') });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Evidence öffnen' }));
-    await fireEvent.click(
-      await screen.findByRole('button', { name: 'Begrenzten Codeausschnitt anzeigen' }),
-    );
+  it('separates selection from semantic opening and previews only typed index Evidence', async () => {
+    const { props } = renderWorkspace();
+    await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Package/ }));
+    await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
+    expect(props.atlasSceneLoader).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    expect(await screen.findByRole('button', { name: /lib.rs, Datei/ })).toBeTruthy();
+    expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(moduleSelection);
+    await fireEvent.click(screen.getByRole('button', { name: /lib.rs, Datei/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Codeausschnitt' }));
     expect(await screen.findByText('pub struct RunDeepMap;', { exact: false })).toBeTruthy();
-    expect(props.sourcePreviewLoader).toHaveBeenCalledTimes(1);
+    expect(props.sourcePreviewLoader).toHaveBeenCalledWith({
+      evidence: fileSelection,
+      kind: 'index',
+    });
   });
 
-  it('searches only after submit and starts the Standard preset with its hard budget', async () => {
-    const searchLoader = vi.fn(async () => ({
-      protocolVersion: 1 as const,
-      result: { search: { hits: [], query: 'runner' }, status: 'available' as const },
-    })) as never;
-    const starter = vi.fn(async () => ({ accepted: true as const, protocolVersion: 1 as const }));
-    renderWorkspace({ deepMapStarter: starter, searchLoader });
+  it('submits search explicitly and starts the fixed Standard Deep Map preset', async () => {
+    const { props } = renderWorkspace();
     const input = await screen.findByRole('searchbox', { name: 'Code durchsuchen' });
     await fireEvent.input(input, { target: { value: 'runner' } });
-    expect(searchLoader).not.toHaveBeenCalled();
+    expect(props.searchLoader).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
-    await waitFor(() => expect(searchLoader).toHaveBeenCalledWith({ query: 'runner' }));
-
+    await waitFor(() => expect(props.searchLoader).toHaveBeenCalledWith({ query: 'runner' }));
     await fireEvent.click(screen.getByRole('button', { name: /Deep Map/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Deep Map starten' }));
     await waitFor(() =>
-      expect(starter).toHaveBeenCalledWith({
+      expect(props.deepMapStarter).toHaveBeenCalledWith({
         tokenLimit: 32_000,
         timeLimitMillis: 120_000,
         toolCallLimit: 64,

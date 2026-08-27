@@ -58,15 +58,13 @@
     type IndexLanguageV1,
     type IndexOverviewResponseV1,
   } from './lib/index-overview';
-  import {
-    queryModuleCardDetail,
-    type ModuleCardDetailQueryV1,
-    type ModuleCardDetailResponseV1,
+  import type {
+    ModuleCardDetailQueryV1,
+    ModuleCardDetailResponseV1,
   } from './lib/module-card-detail';
-  import {
-    queryModuleCardEvidence,
-    type ModuleCardEvidenceQueryV1,
-    type ModuleCardEvidenceResponseV1,
+  import type {
+    ModuleCardEvidenceQueryV1,
+    ModuleCardEvidenceResponseV1,
   } from './lib/module-card-evidence';
   import type { ModuleCardFreshnessResponseV1 } from './lib/module-card-freshness';
   import type {
@@ -74,12 +72,11 @@
     ModuleDependencyGraphResponseV1,
   } from './lib/module-dependency-graph';
   import type { ModuleTreeQueryV1, ModuleTreeResponseV1 } from './lib/module-tree';
-  import {
-    queryModuleRuntimeMap,
-    type ModuleRuntimeFlowQueryV1,
-    type ModuleRuntimeFlowResponseV1,
-    type ModuleRuntimeMapQueryV1,
-    type ModuleRuntimeMapResponseV1,
+  import type {
+    ModuleRuntimeFlowQueryV1,
+    ModuleRuntimeFlowResponseV1,
+    ModuleRuntimeMapQueryV1,
+    ModuleRuntimeMapResponseV1,
   } from './lib/module-runtime';
   import { openProject, type GitHeadV1, type OpenProjectResponseV1 } from './lib/project';
   import {
@@ -92,20 +89,10 @@
     type ProjectCatalogQueryV1,
     type ProjectCatalogResponseV1,
   } from './lib/project-catalog';
-  import {
-    queryProjectMapSearch,
-    type ProjectMapSearchQueryV1,
-    type ProjectMapSearchResponseV1,
+  import type {
+    ProjectMapSearchQueryV1,
+    ProjectMapSearchResponseV1,
   } from './lib/project-map-search';
-  import {
-    queryProjectMapScene,
-    type ProjectMapSceneQueryV1,
-    type ProjectMapSceneResponseV1,
-  } from './lib/project-map-scene';
-  import {
-    queryProjectMapSourcePreview,
-    type ProjectMapSourcePreviewResponseV1,
-  } from './lib/project-map-source-preview';
   import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './lib/project-rebuild';
   import { removeProject, type RemoveProjectResponseV1 } from './lib/project-removal';
   import {
@@ -192,13 +179,10 @@
     projectCatalogLoader?: (query: ProjectCatalogQueryV1) => Promise<ProjectCatalogResponseV1>;
     projectCatalogRemover?: (worktreeId: string) => Promise<RemoveProjectResponseV1>;
     projectRestorer?: () => Promise<ProjectActivationResponseV1>;
+    /** @deprecated U11 test seam; the lazy U12 workspace owns Project Map transport. */
     projectMapSearchLoader?: (
       query: ProjectMapSearchQueryV1,
     ) => Promise<ProjectMapSearchResponseV1>;
-    projectMapSceneLoader?: (query: ProjectMapSceneQueryV1) => Promise<ProjectMapSceneResponseV1>;
-    projectMapSourcePreviewLoader?: (
-      query: ModuleCardEvidenceQueryV1,
-    ) => Promise<ProjectMapSourcePreviewResponseV1>;
     projectRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     projectRemover?: () => Promise<RemoveProjectResponseV1>;
     projectStatusLoader?: () => Promise<ProjectStatusResponseV1>;
@@ -281,17 +265,12 @@
     deepMapCanceller = cancelDeepMap,
     indexActivityLoader = queryIndexActivity,
     indexOverviewLoader = queryIndexOverview,
-    moduleCardDetailLoader = queryModuleCardDetail,
-    moduleCardEvidenceLoader = queryModuleCardEvidence,
-    moduleRuntimeMapLoader = queryModuleRuntimeMap,
     projectOpener = openProject,
     projectCatalogActivator = activateCatalogProject,
     projectCatalogLoader = queryProjectCatalog,
     projectCatalogRemover = removeCatalogProject,
     projectRestorer = restoreLastProject,
-    projectMapSearchLoader = queryProjectMapSearch,
-    projectMapSceneLoader = queryProjectMapScene,
-    projectMapSourcePreviewLoader = queryProjectMapSourcePreview,
+    projectMapSearchLoader,
     projectRebuilder = rebuildProjectIndex,
     projectRemover = removeProject,
     projectStatusLoader = queryProjectStatus,
@@ -1569,12 +1548,7 @@
                   {@const MapWorkspace = mapWorkspaceComponent}
                   <MapWorkspace
                     projectKey={projectStatusView.result.project.worktreeId}
-                    sceneLoader={projectMapSceneLoader}
                     searchLoader={projectMapSearchLoader}
-                    cardLoader={moduleCardDetailLoader}
-                    evidenceLoader={moduleCardEvidenceLoader}
-                    sourcePreviewLoader={projectMapSourcePreviewLoader}
-                    runtimeLoader={moduleRuntimeMapLoader}
                     {taskLensTasksLoader}
                     {taskLensTaskLoader}
                     {taskLensCompiler}

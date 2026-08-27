@@ -3,7 +3,9 @@ use crate::{
     JobContext, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
     ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult,
     ModuleCardEvidencePayload, ModuleCardEvidenceQuery, ModuleCardEvidenceStore,
-    ModuleCardLifecycle,
+    ModuleCardLifecycle, ProjectMapAtlasControl, ProjectMapAtlasControlError,
+    ProjectMapAtlasFailure, ProjectMapAtlasLoadResult, ProjectMapAtlasStore,
+    ProjectMapIndexEvidenceSelection,
 };
 use a3_domain::{
     AgentFileInspection, AgentFileLineCount, AgentFileStartLine, FileRevision, IndexLanguage,
@@ -18,8 +20,14 @@ const CONTEXT_LINES: u32 = 8;
 const MAX_PREVIEW_BYTES: usize = 16 * 1_024;
 const MAX_PATH_DISPLAY_CHARS: usize = 512;
 
-/// One exact Evidence selection previously issued for a visible Module Card.
-pub type ProjectMapSourcePreviewQuery = ModuleCardEvidenceQuery;
+/// One exact Evidence selection previously issued by a Card or current static-index response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectMapSourcePreviewQuery {
+    /// Current Evidence previously issued for a verified Module Card.
+    ModuleCard(ModuleCardEvidenceQuery),
+    /// Current Evidence previously issued by the progressive Atlas.
+    Index(ProjectMapIndexEvidenceSelection),
+}
 
 /// Visible intersection of the selected Evidence range and the bounded source page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +210,8 @@ impl Error for ProjectMapSourcePreviewControlError {}
 pub enum ProjectMapSourcePreviewFailure {
     /// Evidence selection or persistence validation failed.
     Evidence(ModuleCardEvidenceFailure),
+    /// Current static-index Evidence selection or publication validation failed.
+    IndexEvidence(ProjectMapAtlasFailure),
     /// The secure source reader rejected or could not revalidate the selected revision.
     Source(AgentSourceReadFailure),
     /// A lower boundary returned data outside the fixed preview contract.
@@ -216,6 +226,9 @@ impl fmt::Display for ProjectMapSourcePreviewFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Evidence(error) => write!(formatter, "source-preview evidence failed: {error}"),
+            Self::IndexEvidence(error) => {
+                write!(formatter, "source-preview index evidence failed: {error}")
+            }
             Self::Source(error) => write!(formatter, "source-preview read failed: {error}"),
             Self::InvalidProjection => formatter.write_str("source-preview projection is invalid"),
             Self::Cancelled => formatter.write_str("source-preview read was cancelled"),
@@ -230,6 +243,7 @@ impl Error for ProjectMapSourcePreviewFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Evidence(source) => Some(source),
+            Self::IndexEvidence(source) => Some(source),
             Self::Source(source) => Some(source),
             Self::InvalidProjection | Self::Cancelled | Self::ProgressUnavailable => None,
         }
@@ -240,6 +254,7 @@ impl Error for ProjectMapSourcePreviewFailure {
 #[derive(Debug)]
 pub struct GetProjectMapSourcePreview {
     evidence: GetModuleCardEvidence,
+    atlas: Arc<dyn ProjectMapAtlasStore>,
     source: Arc<dyn AgentSourceReader>,
 }
 
@@ -248,10 +263,12 @@ impl GetProjectMapSourcePreview {
     #[must_use]
     pub fn new(
         evidence_store: Arc<dyn ModuleCardEvidenceStore>,
+        atlas_store: Arc<dyn ProjectMapAtlasStore>,
         source: Arc<dyn AgentSourceReader>,
     ) -> Self {
         Self {
             evidence: GetModuleCardEvidence::new(evidence_store),
+            atlas: atlas_store,
             source,
         }
     }
@@ -265,48 +282,74 @@ impl GetProjectMapSourcePreview {
     ) -> Result<ProjectMapSourcePreviewResult, ProjectMapSourcePreviewFailure> {
         report(control, 0)?;
         checkpoint(control)?;
-        let evidence = self
-            .evidence
-            .execute(project, query, &PreviewEvidenceControl(control))
-            .await
-            .map_err(ProjectMapSourcePreviewFailure::Evidence)?;
-        let detail = match evidence {
-            ModuleCardEvidenceLoadResult::NoPublishedIndex => {
-                return Ok(ProjectMapSourcePreviewResult::NoPublishedIndex);
+        let (revision, evidence_range) = match query {
+            ProjectMapSourcePreviewQuery::ModuleCard(query) => {
+                let evidence = self
+                    .evidence
+                    .execute(project, query, &PreviewEvidenceControl(control))
+                    .await
+                    .map_err(ProjectMapSourcePreviewFailure::Evidence)?;
+                let detail = match evidence {
+                    ModuleCardEvidenceLoadResult::NoPublishedIndex => {
+                        return Ok(ProjectMapSourcePreviewResult::NoPublishedIndex);
+                    }
+                    ModuleCardEvidenceLoadResult::ProjectionUnavailable => {
+                        return Ok(ProjectMapSourcePreviewResult::ProjectionUnavailable);
+                    }
+                    ModuleCardEvidenceLoadResult::ModuleUnavailable => {
+                        return Ok(ProjectMapSourcePreviewResult::ModuleUnavailable);
+                    }
+                    ModuleCardEvidenceLoadResult::CardUnavailable => {
+                        return Ok(ProjectMapSourcePreviewResult::CardUnavailable);
+                    }
+                    ModuleCardEvidenceLoadResult::SelectionChanged => {
+                        return Ok(ProjectMapSourcePreviewResult::SelectionChanged);
+                    }
+                    ModuleCardEvidenceLoadResult::EvidenceUnavailable => {
+                        return Ok(ProjectMapSourcePreviewResult::EvidenceUnavailable);
+                    }
+                    ModuleCardEvidenceLoadResult::Detail(detail) => detail,
+                };
+                if detail.freshness() != ModuleCardEvidenceFreshness::Current
+                    || matches!(detail.card_lifecycle(), ModuleCardLifecycle::Stale { .. })
+                {
+                    return Ok(ProjectMapSourcePreviewResult::StaleEvidence);
+                }
+                let (revision, range) = preview_target(detail.payload());
+                (revision.clone(), range)
             }
-            ModuleCardEvidenceLoadResult::ProjectionUnavailable => {
-                return Ok(ProjectMapSourcePreviewResult::ProjectionUnavailable);
+            ProjectMapSourcePreviewQuery::Index(selection) => {
+                let target = self
+                    .atlas
+                    .load_index_evidence(project, *selection, &PreviewAtlasControl(control))
+                    .await
+                    .map_err(ProjectMapSourcePreviewFailure::IndexEvidence)?;
+                match target {
+                    ProjectMapAtlasLoadResult::NoPublishedIndex => {
+                        return Ok(ProjectMapSourcePreviewResult::NoPublishedIndex);
+                    }
+                    ProjectMapAtlasLoadResult::ProjectionUnavailable => {
+                        return Ok(ProjectMapSourcePreviewResult::ProjectionUnavailable);
+                    }
+                    ProjectMapAtlasLoadResult::SelectionChanged => {
+                        return Ok(ProjectMapSourcePreviewResult::SelectionChanged);
+                    }
+                    ProjectMapAtlasLoadResult::Available(target) => {
+                        (target.revision().clone(), target.range())
+                    }
+                }
             }
-            ModuleCardEvidenceLoadResult::ModuleUnavailable => {
-                return Ok(ProjectMapSourcePreviewResult::ModuleUnavailable);
-            }
-            ModuleCardEvidenceLoadResult::CardUnavailable => {
-                return Ok(ProjectMapSourcePreviewResult::CardUnavailable);
-            }
-            ModuleCardEvidenceLoadResult::SelectionChanged => {
-                return Ok(ProjectMapSourcePreviewResult::SelectionChanged);
-            }
-            ModuleCardEvidenceLoadResult::EvidenceUnavailable => {
-                return Ok(ProjectMapSourcePreviewResult::EvidenceUnavailable);
-            }
-            ModuleCardEvidenceLoadResult::Detail(detail) => detail,
         };
-        if detail.freshness() != ModuleCardEvidenceFreshness::Current
-            || matches!(detail.card_lifecycle(), ModuleCardLifecycle::Stale { .. })
-        {
-            return Ok(ProjectMapSourcePreviewResult::StaleEvidence);
-        }
         checkpoint(control)?;
-        let (revision, evidence_range) = preview_target(detail.payload());
         let (start_line, line_count) = preview_window(evidence_range)?;
         let request = AgentFileInspection::new(revision.path().clone(), start_line, line_count);
         let page = self
             .source
-            .read_page(project, revision, &request, &PreviewSourceControl(control))
+            .read_page(project, &revision, &request, &PreviewSourceControl(control))
             .await
             .map_err(map_source_failure)?;
         checkpoint(control)?;
-        if page.revision() != revision
+        if page.revision() != &revision
             || page.start_line() != start_line
             || page.text().len() > MAX_PREVIEW_BYTES
         {
@@ -329,6 +372,19 @@ impl GetProjectMapSourcePreview {
         };
         report(control, 2)?;
         Ok(ProjectMapSourcePreviewResult::Available(preview))
+    }
+}
+
+#[derive(Debug)]
+struct PreviewAtlasControl<'a>(&'a dyn ProjectMapSourcePreviewControl);
+
+impl ProjectMapAtlasControl for PreviewAtlasControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), ProjectMapAtlasControlError> {
+        Ok(())
     }
 }
 
@@ -524,7 +580,107 @@ const fn map_source_failure(error: AgentSourceReadFailure) -> ProjectMapSourcePr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a3_domain::{SourcePosition, SourceRange};
+    use a3_domain::{
+        CanonicalDirectory, GitHead, GitReferenceName, ModuleCardEvidenceId, ModuleId,
+        RepositoryId, RepositoryIdentity, SourcePosition, SourceRange, WorktreeAnchorId,
+        WorktreeId, WorktreeIdentity,
+    };
+    use futures::executor::block_on;
+
+    #[derive(Debug)]
+    struct SelectionChangedAtlas;
+
+    impl ProjectMapAtlasStore for SelectionChangedAtlas {
+        fn load_atlas_scene<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a crate::ProjectMapAtlasSceneQuery,
+            _control: &'a dyn ProjectMapAtlasControl,
+        ) -> crate::ProjectMapAtlasFuture<'a, crate::ProjectMapAtlasScene> {
+            Box::pin(async { Ok(ProjectMapAtlasLoadResult::SelectionChanged) })
+        }
+
+        fn load_entity_context<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _selection: crate::ProjectMapEntitySelection,
+            _control: &'a dyn ProjectMapAtlasControl,
+        ) -> crate::ProjectMapAtlasFuture<'a, crate::ProjectMapEntityContext> {
+            Box::pin(async { Ok(ProjectMapAtlasLoadResult::SelectionChanged) })
+        }
+
+        fn load_inventory_page<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a crate::ProjectMapInventoryPageQuery,
+            _control: &'a dyn ProjectMapAtlasControl,
+        ) -> crate::ProjectMapAtlasFuture<'a, crate::ProjectMapInventoryPage> {
+            Box::pin(async { Ok(ProjectMapAtlasLoadResult::SelectionChanged) })
+        }
+
+        fn load_flow_scene<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a crate::ProjectMapFlowSceneQuery,
+            _control: &'a dyn ProjectMapAtlasControl,
+        ) -> crate::ProjectMapAtlasFuture<'a, crate::ProjectMapFlowScene> {
+            Box::pin(async { Ok(ProjectMapAtlasLoadResult::SelectionChanged) })
+        }
+
+        fn load_index_evidence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _selection: ProjectMapIndexEvidenceSelection,
+            _control: &'a dyn ProjectMapAtlasControl,
+        ) -> crate::ProjectMapAtlasFuture<'a, crate::ProjectMapIndexEvidenceTarget> {
+            Box::pin(async { Ok(ProjectMapAtlasLoadResult::SelectionChanged) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct UnusedEvidenceStore;
+
+    impl ModuleCardEvidenceStore for UnusedEvidenceStore {
+        fn load_module_card_evidence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a ModuleCardEvidenceQuery,
+            _control: &'a dyn ModuleCardEvidenceControl,
+        ) -> crate::ModuleCardEvidenceFuture<'a> {
+            Box::pin(async { Ok(ModuleCardEvidenceLoadResult::NoPublishedIndex) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct UnusedSourceReader;
+
+    impl AgentSourceReader for UnusedSourceReader {
+        fn read_page<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_revision: &'a FileRevision,
+            _request: &'a AgentFileInspection,
+            _control: &'a dyn AgentSourceReadControl,
+        ) -> crate::AgentSourceReaderFuture<'a> {
+            Box::pin(async { Err(AgentSourceReadFailure::Cancelled) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct AcceptingControl;
+
+    impl ProjectMapSourcePreviewControl for AcceptingControl {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+
+        fn report_progress(
+            &self,
+            _progress: Progress,
+        ) -> Result<(), ProjectMapSourcePreviewControlError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn graph_window_has_exact_eight_line_context_and_fixed_cap() -> Result<(), Box<dyn Error>> {
@@ -572,5 +728,49 @@ mod tests {
         assert_eq!(source_line_count("one\ntwo")?, 2);
         assert_eq!(source_line_count("")?, 0);
         Ok(())
+    }
+
+    #[test]
+    fn replacement_publish_invalidates_index_preview_selection() -> Result<(), Box<dyn Error>> {
+        let project = project()?;
+        let query = ProjectMapSourcePreviewQuery::Index(ProjectMapIndexEvidenceSelection::File {
+            module_id: ModuleId::from_bytes([6; 32]),
+            ordinal: crate::ProjectMapFileOrdinal::new(1)?,
+            evidence_id: ModuleCardEvidenceId::from_bytes([7; 32]),
+        });
+        let preview = GetProjectMapSourcePreview::new(
+            Arc::new(UnusedEvidenceStore),
+            Arc::new(SelectionChangedAtlas),
+            Arc::new(UnusedSourceReader),
+        );
+
+        assert_eq!(
+            block_on(preview.execute(&project, &query, &AcceptingControl))?,
+            ProjectMapSourcePreviewResult::SelectionChanged
+        );
+        Ok(())
+    }
+
+    fn project() -> Result<ProjectIdentity, Box<dyn Error>> {
+        let root = std::env::current_dir()?.canonicalize()?;
+        let repository_id = RepositoryId::from_bytes([1; 32]);
+        let repository = RepositoryIdentity::new(
+            repository_id,
+            CanonicalDirectory::from_canonicalized(root.clone())?,
+            None,
+        );
+        let worktree = WorktreeIdentity::new(
+            WorktreeId::from_bytes([3; 32]),
+            WorktreeAnchorId::from_bytes([4; 32]),
+            repository_id,
+            CanonicalDirectory::from_canonicalized(root)?,
+        );
+        Ok(ProjectIdentity::new(
+            repository,
+            worktree,
+            GitHead::Unborn {
+                reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
+            },
+        )?)
     }
 }

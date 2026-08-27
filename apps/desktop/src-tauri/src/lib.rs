@@ -15,6 +15,7 @@ mod deep_map_runtime;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
+mod project_map_atlas_mapping;
 mod project_picker;
 mod project_reconciliation_dialog;
 mod project_settings_manager;
@@ -82,6 +83,12 @@ use a3_application::{
     TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
     TraceModuleRuntimeFlow, VerificationEvidenceStore,
 };
+use a3_application::{
+    ExploreProjectMapAtlas, ProjectMapAtlasControl, ProjectMapAtlasControlError,
+    ProjectMapAtlasFailure, ProjectMapAtlasLoadResult, ProjectMapAtlasSceneQuery,
+    ProjectMapAtlasStore, ProjectMapEntitySelection, ProjectMapFlowSceneQuery,
+    ProjectMapInventoryPageQuery,
+};
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
@@ -145,14 +152,14 @@ use a3_protocol::{
     ProjectMapSearchEvidenceV1, ProjectMapSearchHitV1, ProjectMapSearchPriorityV1,
     ProjectMapSearchResponseV1, ProjectMapSearchSourceV1, ProjectMapSearchSymbolKindV1,
     ProjectMapSearchTargetV1, ProjectMapSearchV1, ProjectMapSourceHighlightV1,
-    ProjectMapSourcePreviewResponseV1, ProjectMapSourcePreviewV1, ProjectSnapshotV1,
-    ProjectStatusResponseV1, ProjectSummaryV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
-    QueryProjectMapSourcePreviewRequestV1, QueryRepositoryTreeRequestV1,
-    QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1, RebuildStateV1,
-    RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
+    ProjectMapSourcePreviewResponseV1, ProjectMapSourcePreviewSelectionV1,
+    ProjectMapSourcePreviewV1, ProjectSnapshotV1, ProjectStatusResponseV1, ProjectSummaryV1,
+    QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectMapSceneRequestV1,
+    QueryProjectMapSearchRequestV1, QueryProjectMapSourcePreviewRequestV1,
+    QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1,
+    RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
     RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
     RepositoryTreeResponseV1, TaskLensClaimEvidenceV1, TaskLensClaimKindV1,
     TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1,
@@ -160,6 +167,10 @@ use a3_protocol::{
     TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
     TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
     TaskLensTasksResponseV1, TaskLensV1,
+};
+use a3_protocol::{
+    ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
+    ProjectMapFlowSceneResponseV1, ProjectMapInventoryPageResponseV1,
 };
 use a3_storage_libsql::{
     CatalogOpenError, LibsqlKnowledgeStore, StorageLayout, StorageLayoutError,
@@ -182,6 +193,10 @@ use deep_map_runtime::DeepMapRuntime;
 use job_ids::DesktopJobIds;
 use model_settings_manager::ModelSettingsManager;
 use platform::SystemPlatform;
+use project_map_atlas_mapping::{
+    map_context_to_v1, map_flow_to_v1, map_index_evidence_from_v1, map_inventory_to_v1,
+    map_scene_to_v1,
+};
 use project_picker::NativeProjectDirectoryPicker;
 use project_reconciliation_dialog::NativeProjectReconciliationConfirmer;
 use project_settings_manager::ProjectSettingsManager;
@@ -214,6 +229,7 @@ pub struct CompositionRoot {
     module_card_detail: Option<GetModuleCardDetail>,
     module_card_evidence: Option<GetModuleCardEvidence>,
     project_map_scene: Option<GetProjectMapScene>,
+    project_map_atlas: Option<ExploreProjectMapAtlas>,
     project_map_source_preview: Option<GetProjectMapSourcePreview>,
     module_dependency_graph: Option<GetModuleDependencyGraph>,
     module_runtime_map: Option<GetModuleRuntimeMap>,
@@ -825,6 +841,138 @@ impl CompositionRoot {
                 }
                 ProjectMapSceneLoadResult::Scene(scene) => {
                     ProjectMapSceneResponseV1::available(map_project_map_scene_to_v1(&scene))
+                }
+            })
+    }
+
+    /// Returns one bounded semantic-zoom scene for the active project's latest publication.
+    pub async fn query_project_map_atlas_scene(
+        &self,
+        query: &ProjectMapAtlasSceneQuery,
+    ) -> Result<ProjectMapAtlasSceneResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapAtlasSceneResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_atlas else {
+            return Ok(ProjectMapAtlasSceneResponseV1::no_published_index());
+        };
+        reader
+            .scene(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_project_map_atlas_error_to_v1)
+            .map(|result| match result {
+                ProjectMapAtlasLoadResult::NoPublishedIndex => {
+                    ProjectMapAtlasSceneResponseV1::no_published_index()
+                }
+                ProjectMapAtlasLoadResult::ProjectionUnavailable => {
+                    ProjectMapAtlasSceneResponseV1::projection_unavailable()
+                }
+                ProjectMapAtlasLoadResult::SelectionChanged => {
+                    ProjectMapAtlasSceneResponseV1::selection_changed()
+                }
+                ProjectMapAtlasLoadResult::Available(scene) => {
+                    ProjectMapAtlasSceneResponseV1::available(map_scene_to_v1(&scene))
+                }
+            })
+    }
+
+    /// Returns bounded Inspector metadata for one Core-issued current Atlas selection.
+    pub async fn query_project_map_entity_context(
+        &self,
+        selection: ProjectMapEntitySelection,
+    ) -> Result<ProjectMapEntityContextResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapEntityContextResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_atlas else {
+            return Ok(ProjectMapEntityContextResponseV1::no_published_index());
+        };
+        reader
+            .context(
+                &active.project,
+                selection,
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(map_project_map_atlas_error_to_v1)
+            .map(|result| match result {
+                ProjectMapAtlasLoadResult::NoPublishedIndex => {
+                    ProjectMapEntityContextResponseV1::no_published_index()
+                }
+                ProjectMapAtlasLoadResult::ProjectionUnavailable => {
+                    ProjectMapEntityContextResponseV1::projection_unavailable()
+                }
+                ProjectMapAtlasLoadResult::SelectionChanged => {
+                    ProjectMapEntityContextResponseV1::selection_changed()
+                }
+                ProjectMapAtlasLoadResult::Available(context) => {
+                    ProjectMapEntityContextResponseV1::available(map_context_to_v1(&context))
+                }
+            })
+    }
+
+    /// Returns exactly one fixed fifty-entry inventory page for the active publication.
+    pub async fn query_project_map_inventory_page(
+        &self,
+        query: &ProjectMapInventoryPageQuery,
+    ) -> Result<ProjectMapInventoryPageResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapInventoryPageResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_atlas else {
+            return Ok(ProjectMapInventoryPageResponseV1::no_published_index());
+        };
+        reader
+            .inventory(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_project_map_atlas_error_to_v1)
+            .map(|result| match result {
+                ProjectMapAtlasLoadResult::NoPublishedIndex => {
+                    ProjectMapInventoryPageResponseV1::no_published_index()
+                }
+                ProjectMapAtlasLoadResult::ProjectionUnavailable => {
+                    ProjectMapInventoryPageResponseV1::projection_unavailable()
+                }
+                ProjectMapAtlasLoadResult::SelectionChanged => {
+                    ProjectMapInventoryPageResponseV1::selection_changed()
+                }
+                ProjectMapAtlasLoadResult::Available(page) => {
+                    ProjectMapInventoryPageResponseV1::available(map_inventory_to_v1(&page))
+                }
+            })
+    }
+
+    /// Returns one fixed-preset callers, callees, tests, or data-access flow scene.
+    pub async fn query_project_map_flow_scene(
+        &self,
+        query: &ProjectMapFlowSceneQuery,
+    ) -> Result<ProjectMapFlowSceneResponseV1, CommandErrorV1> {
+        let active = lock_recovering_poison(&self.active_project).clone();
+        let Some(active) = active else {
+            return Ok(ProjectMapFlowSceneResponseV1::no_project());
+        };
+        let Some(reader) = &self.project_map_atlas else {
+            return Ok(ProjectMapFlowSceneResponseV1::no_published_index());
+        };
+        reader
+            .flow(&active.project, query, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(map_project_map_atlas_error_to_v1)
+            .map(|result| match result {
+                ProjectMapAtlasLoadResult::NoPublishedIndex => {
+                    ProjectMapFlowSceneResponseV1::no_published_index()
+                }
+                ProjectMapAtlasLoadResult::ProjectionUnavailable => {
+                    ProjectMapFlowSceneResponseV1::projection_unavailable()
+                }
+                ProjectMapAtlasLoadResult::SelectionChanged => {
+                    ProjectMapFlowSceneResponseV1::selection_changed()
+                }
+                ProjectMapAtlasLoadResult::Available(flow) => {
+                    ProjectMapFlowSceneResponseV1::available(map_flow_to_v1(&flow))
                 }
             })
     }
@@ -2293,6 +2441,25 @@ impl ProjectMapSceneControl for DesktopBoundedReadControl {
     }
 }
 
+impl ProjectMapAtlasControl for DesktopBoundedReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), ProjectMapAtlasControlError> {
+        let completed = progress.completed().ok_or(ProjectMapAtlasControlError)?;
+        let total = progress.total().ok_or(ProjectMapAtlasControlError)?;
+        let previous_completed = self.completed.load(Ordering::Acquire);
+        let previous_total = self.total.load(Ordering::Acquire);
+        if completed < previous_completed || (previous_total != 0 && total != previous_total) {
+            return Err(ProjectMapAtlasControlError);
+        }
+        self.total.store(total, Ordering::Release);
+        self.completed.store(completed, Ordering::Release);
+        Ok(())
+    }
+}
+
 impl RepositoryTreeControl for DesktopBoundedReadControl {
     fn is_cancelled(&self) -> bool {
         false
@@ -2459,6 +2626,7 @@ struct OptionalCompositionPorts {
     module_card_detail_store: Option<Arc<dyn ModuleCardDetailStore>>,
     module_card_evidence_store: Option<Arc<dyn ModuleCardEvidenceStore>>,
     project_map_scene_store: Option<Arc<dyn ProjectMapSceneStore>>,
+    project_map_atlas_store: Option<Arc<dyn ProjectMapAtlasStore>>,
     module_dependency_graph_store: Option<Arc<dyn ModuleDependencyGraphStore>>,
     module_runtime_store: Option<Arc<dyn ModuleRuntimeStore>>,
     knowledge_search_store: Option<Arc<dyn KnowledgeSearchStore>>,
@@ -2491,6 +2659,7 @@ struct IndexingCompositionPorts {
     module_card_detail_store: Arc<dyn ModuleCardDetailStore>,
     module_card_evidence_store: Arc<dyn ModuleCardEvidenceStore>,
     project_map_scene_store: Arc<dyn ProjectMapSceneStore>,
+    project_map_atlas_store: Arc<dyn ProjectMapAtlasStore>,
     module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore>,
     module_runtime_store: Arc<dyn ModuleRuntimeStore>,
     knowledge_search_store: Arc<dyn KnowledgeSearchStore>,
@@ -2571,6 +2740,7 @@ impl CompositionBase {
                 module_card_detail_store: Some(ports.module_card_detail_store),
                 module_card_evidence_store: Some(ports.module_card_evidence_store),
                 project_map_scene_store: Some(ports.project_map_scene_store),
+                project_map_atlas_store: Some(ports.project_map_atlas_store),
                 module_dependency_graph_store: Some(ports.module_dependency_graph_store),
                 module_runtime_store: Some(ports.module_runtime_store),
                 knowledge_search_store: Some(ports.knowledge_search_store),
@@ -2629,10 +2799,21 @@ impl CompositionBase {
             .module_card_freshness_store
             .map(GetModuleCardFreshness::new);
         let module_card_detail = ports.module_card_detail_store.map(GetModuleCardDetail::new);
-        let project_map_source_preview = ports.module_card_evidence_store.clone().map(|store| {
-            GetProjectMapSourcePreview::new(store, Arc::new(WorkspaceAgentSourceReader))
-        });
+        let project_map_source_preview = ports
+            .module_card_evidence_store
+            .clone()
+            .zip(ports.project_map_atlas_store.clone())
+            .map(|(evidence, atlas)| {
+                GetProjectMapSourcePreview::new(
+                    evidence,
+                    atlas,
+                    Arc::new(WorkspaceAgentSourceReader),
+                )
+            });
         let project_map_scene = ports.project_map_scene_store.map(GetProjectMapScene::new);
+        let project_map_atlas = ports
+            .project_map_atlas_store
+            .map(ExploreProjectMapAtlas::new);
         let module_card_evidence = ports
             .module_card_evidence_store
             .map(GetModuleCardEvidence::new);
@@ -2836,6 +3017,7 @@ impl CompositionBase {
             module_card_detail,
             module_card_evidence,
             project_map_scene,
+            project_map_atlas,
             project_map_source_preview,
             module_dependency_graph,
             module_runtime_map,
@@ -2905,6 +3087,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let module_card_detail_store: Arc<dyn ModuleCardDetailStore> = store.clone();
             let module_card_evidence_store: Arc<dyn ModuleCardEvidenceStore> = store.clone();
             let project_map_scene_store: Arc<dyn ProjectMapSceneStore> = store.clone();
+            let project_map_atlas_store: Arc<dyn ProjectMapAtlasStore> = store.clone();
             let module_dependency_graph_store: Arc<dyn ModuleDependencyGraphStore> = store.clone();
             let module_runtime_store: Arc<dyn ModuleRuntimeStore> = store.clone();
             let knowledge_search_store: Arc<dyn KnowledgeSearchStore> = store.clone();
@@ -2946,6 +3129,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     module_card_detail_store,
                     module_card_evidence_store,
                     project_map_scene_store,
+                    project_map_atlas_store,
                     module_dependency_graph_store,
                     module_runtime_store,
                     knowledge_search_store,
@@ -2995,6 +3179,10 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_card_evidence,
             commands::query_project_map_source_preview,
             commands::query_project_map_scene,
+            commands::query_project_map_atlas_scene,
+            commands::query_project_map_entity_context,
+            commands::query_project_map_inventory_page,
+            commands::query_project_map_flow_scene,
             commands::query_module_dependency_graph,
             commands::query_module_runtime_flow,
             commands::query_module_runtime_map,
@@ -3341,31 +3529,52 @@ pub(crate) fn map_module_card_evidence_query_from_v1(
 pub(crate) fn map_project_map_source_preview_query_from_v1(
     request: &QueryProjectMapSourcePreviewRequestV1,
 ) -> Result<ProjectMapSourcePreviewQuery, CommandErrorV1> {
-    let current_index_run_id = decode_index_run_id(request.current_index_run_id())
-        .map_err(|()| invalid_project_map_source_preview_query())?;
-    let current_snapshot_id = decode_snapshot_id(request.current_snapshot_id())
-        .map_err(|()| invalid_project_map_source_preview_query())?;
-    let source_index_run_id = decode_index_run_id(request.source_index_run_id())
-        .map_err(|()| invalid_project_map_source_preview_query())?;
-    let source_snapshot_id = decode_snapshot_id(request.source_snapshot_id())
-        .map_err(|()| invalid_project_map_source_preview_query())?;
-    if source_index_run_id == current_index_run_id && source_snapshot_id != current_snapshot_id {
-        return Err(invalid_project_map_source_preview_query());
+    match request.selection() {
+        ProjectMapSourcePreviewSelectionV1::ModuleCard {
+            current_index_run_id,
+            current_snapshot_id,
+            source_index_run_id,
+            source_snapshot_id,
+            card_id,
+            module_id,
+            evidence_id,
+        } => {
+            let current_index_run_id = decode_index_run_id(current_index_run_id)
+                .map_err(|()| invalid_project_map_source_preview_query())?;
+            let current_snapshot_id = decode_snapshot_id(current_snapshot_id)
+                .map_err(|()| invalid_project_map_source_preview_query())?;
+            let source_index_run_id = decode_index_run_id(source_index_run_id)
+                .map_err(|()| invalid_project_map_source_preview_query())?;
+            let source_snapshot_id = decode_snapshot_id(source_snapshot_id)
+                .map_err(|()| invalid_project_map_source_preview_query())?;
+            if source_index_run_id == current_index_run_id
+                && source_snapshot_id != current_snapshot_id
+            {
+                return Err(invalid_project_map_source_preview_query());
+            }
+            Ok(ProjectMapSourcePreviewQuery::ModuleCard(
+                ModuleCardEvidenceQuery::new(
+                    current_index_run_id,
+                    current_snapshot_id,
+                    source_index_run_id,
+                    source_snapshot_id,
+                    decode_stable_id(card_id)
+                        .map(ModuleCardId::from_bytes)
+                        .map_err(|()| invalid_project_map_source_preview_query())?,
+                    decode_module_id(module_id)
+                        .map_err(|()| invalid_project_map_source_preview_query())?,
+                    decode_stable_id(evidence_id)
+                        .map(ModuleCardEvidenceId::from_bytes)
+                        .map_err(|()| invalid_project_map_source_preview_query())?,
+                ),
+            ))
+        }
+        ProjectMapSourcePreviewSelectionV1::Index { evidence } => {
+            map_index_evidence_from_v1(evidence)
+                .map(ProjectMapSourcePreviewQuery::Index)
+                .map_err(|()| invalid_project_map_source_preview_query())
+        }
     }
-    Ok(ProjectMapSourcePreviewQuery::new(
-        current_index_run_id,
-        current_snapshot_id,
-        source_index_run_id,
-        source_snapshot_id,
-        decode_stable_id(request.card_id())
-            .map(ModuleCardId::from_bytes)
-            .map_err(|()| invalid_project_map_source_preview_query())?,
-        decode_module_id(request.module_id())
-            .map_err(|()| invalid_project_map_source_preview_query())?,
-        decode_stable_id(request.evidence_id())
-            .map(ModuleCardEvidenceId::from_bytes)
-            .map_err(|()| invalid_project_map_source_preview_query())?,
-    ))
 }
 
 pub(crate) fn map_project_map_scene_query_from_v1(
@@ -5878,6 +6087,9 @@ fn map_project_map_source_preview_error_to_v1(
         ProjectMapSourcePreviewFailure::Evidence(error) => {
             map_module_card_evidence_error_to_v1(error)
         }
+        ProjectMapSourcePreviewFailure::IndexEvidence(error) => {
+            map_project_map_atlas_error_to_v1(error)
+        }
         ProjectMapSourcePreviewFailure::InvalidProjection => {
             CommandErrorV1::project_open(ErrorCodeV1::LocalStorageInvalidData)
         }
@@ -5896,6 +6108,17 @@ fn map_project_map_scene_error_to_v1(error: ProjectMapSceneFailure) -> CommandEr
         ProjectMapSceneFailure::Cancelled
         | ProjectMapSceneFailure::TimedOut
         | ProjectMapSceneFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
+    };
+    CommandErrorV1::project_open(code)
+}
+
+fn map_project_map_atlas_error_to_v1(error: ProjectMapAtlasFailure) -> CommandErrorV1 {
+    let code = match error {
+        ProjectMapAtlasFailure::Storage(error) => map_storage_error_to_v1(error),
+        ProjectMapAtlasFailure::InvalidStoredProjection => ErrorCodeV1::LocalStorageInvalidData,
+        ProjectMapAtlasFailure::Cancelled
+        | ProjectMapAtlasFailure::TimedOut
+        | ProjectMapAtlasFailure::ProgressUnavailable => ErrorCodeV1::LocalStorageUnavailable,
     };
     CommandErrorV1::project_open(code)
 }

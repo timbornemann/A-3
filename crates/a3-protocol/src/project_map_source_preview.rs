@@ -1,4 +1,4 @@
-use crate::{IndexLanguageV1, ProtocolVersion};
+use crate::{IndexLanguageV1, ProjectMapIndexEvidenceSelectionV1, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 
 /// Strict request for a source preview selected from a Core-issued Evidence hook.
@@ -6,38 +6,47 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct QueryProjectMapSourcePreviewRequestV1 {
     protocol_version: ProtocolVersion,
-    current_index_run_id: String,
-    current_snapshot_id: String,
-    source_index_run_id: String,
-    source_snapshot_id: String,
-    card_id: String,
-    module_id: String,
-    evidence_id: String,
+    selection: ProjectMapSourcePreviewSelectionV1,
+}
+
+/// Closed Evidence origin accepted by the source-preview trust boundary.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+pub enum ProjectMapSourcePreviewSelectionV1 {
+    /// Evidence selected from one visible current verified Module Card.
+    ModuleCard {
+        /// Current visible publication run.
+        current_index_run_id: String,
+        /// Current visible publication snapshot.
+        current_snapshot_id: String,
+        /// Publication run that supplied the Card.
+        source_index_run_id: String,
+        /// Snapshot that supplied the Card.
+        source_snapshot_id: String,
+        /// Exact visible Card identity.
+        card_id: String,
+        /// Exact primary module identity.
+        module_id: String,
+        /// Exact Card Evidence identity.
+        evidence_id: String,
+    },
+    /// Evidence selected from the current deterministic static index.
+    Index {
+        /// Exact Core-issued file, symbol, or relation selection.
+        evidence: ProjectMapIndexEvidenceSelectionV1,
+    },
 }
 
 impl QueryProjectMapSourcePreviewRequestV1 {
-    /// Creates an untrusted request containing IDs only, never a path or range.
-    #[allow(clippy::too_many_arguments)]
+    /// Creates an untrusted request containing a typed selection, never a path or range.
     #[must_use]
     pub const fn new(
         protocol_version: ProtocolVersion,
-        current_index_run_id: String,
-        current_snapshot_id: String,
-        source_index_run_id: String,
-        source_snapshot_id: String,
-        card_id: String,
-        module_id: String,
-        evidence_id: String,
+        selection: ProjectMapSourcePreviewSelectionV1,
     ) -> Self {
         Self {
             protocol_version,
-            current_index_run_id,
-            current_snapshot_id,
-            source_index_run_id,
-            source_snapshot_id,
-            card_id,
-            module_id,
-            evidence_id,
+            selection,
         }
     }
 
@@ -47,46 +56,10 @@ impl QueryProjectMapSourcePreviewRequestV1 {
         self.protocol_version
     }
 
-    /// Returns the untrusted visible publication-run anchor.
+    /// Returns the closed Core-issued Evidence selection.
     #[must_use]
-    pub fn current_index_run_id(&self) -> &str {
-        &self.current_index_run_id
-    }
-
-    /// Returns the untrusted visible publication-snapshot anchor.
-    #[must_use]
-    pub fn current_snapshot_id(&self) -> &str {
-        &self.current_snapshot_id
-    }
-
-    /// Returns the untrusted Card source-run anchor.
-    #[must_use]
-    pub fn source_index_run_id(&self) -> &str {
-        &self.source_index_run_id
-    }
-
-    /// Returns the untrusted Card source-snapshot anchor.
-    #[must_use]
-    pub fn source_snapshot_id(&self) -> &str {
-        &self.source_snapshot_id
-    }
-
-    /// Returns the untrusted visible Card identity.
-    #[must_use]
-    pub fn card_id(&self) -> &str {
-        &self.card_id
-    }
-
-    /// Returns the untrusted visible module identity.
-    #[must_use]
-    pub fn module_id(&self) -> &str {
-        &self.module_id
-    }
-
-    /// Returns the untrusted opaque Evidence identity.
-    #[must_use]
-    pub fn evidence_id(&self) -> &str {
-        &self.evidence_id
+    pub const fn selection(&self) -> &ProjectMapSourcePreviewSelectionV1 {
+        &self.selection
     }
 }
 
@@ -267,14 +240,16 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let json = r#"{
             "protocolVersion": 1,
-            "currentIndexRunId": "11",
-            "currentSnapshotId": "22",
-            "sourceIndexRunId": "33",
-            "sourceSnapshotId": "44",
-            "cardId": "55",
-            "moduleId": "66",
-            "evidenceId": "77",
-            "path": "src/lib.rs"
+            "selection": {
+                "kind": "index",
+                "evidence": {
+                    "kind": "file",
+                    "moduleId": "66",
+                    "ordinal": 1,
+                    "evidenceId": "77",
+                    "path": "src/lib.rs"
+                }
+            }
         }"#;
         assert!(serde_json::from_str::<QueryProjectMapSourcePreviewRequestV1>(json).is_err());
         Ok(())

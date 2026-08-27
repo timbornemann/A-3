@@ -39,7 +39,37 @@ describe('Project Map source preview V1', () => {
     const invoke = vi.fn().mockResolvedValue(response());
     await queryProjectMapSourcePreview(query, invoke);
     expect(invoke).toHaveBeenCalledWith('query_project_map_source_preview', {
-      request: { ...query, protocolVersion: 1 },
+      request: { protocolVersion: 1, selection: { ...query, kind: 'moduleCard' } },
+    });
+  });
+
+  it('submits current index Evidence without a path or caller-controlled range', async () => {
+    const invoke = vi.fn().mockResolvedValue(response());
+    await queryProjectMapSourcePreview(
+      {
+        evidence: {
+          evidenceId: id('4'),
+          kind: 'symbol',
+          moduleId: id('5'),
+          symbolId: id('6'),
+        },
+        kind: 'index',
+      },
+      invoke,
+    );
+    expect(invoke).toHaveBeenCalledWith('query_project_map_source_preview', {
+      request: {
+        protocolVersion: 1,
+        selection: {
+          evidence: {
+            evidenceId: id('4'),
+            kind: 'symbol',
+            moduleId: id('5'),
+            symbolId: id('6'),
+          },
+          kind: 'index',
+        },
+      },
     });
   });
 

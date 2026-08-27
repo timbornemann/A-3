@@ -29,6 +29,7 @@ mod module_tree_repository;
 mod policy_repository;
 mod project_catalog;
 mod project_layout;
+mod project_map_atlas_insight_repository;
 mod project_map_scene_repository;
 mod project_map_search_repository;
 mod repository_tree_repository;

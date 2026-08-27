@@ -10,10 +10,10 @@ use crate::{
     module_card_detail_repository, module_card_evidence_repository,
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
-    policy_repository, project_map_scene_repository, project_map_search_repository,
-    repository_tree_repository, run_journal_repository, semantic_embedding_repository,
-    settings_repository, task_ledger_repository, task_lens_claim_repository,
-    task_lens_workspace_repository, verification_evidence_repository,
+    policy_repository, project_map_atlas_insight_repository, project_map_scene_repository,
+    project_map_search_repository, repository_tree_repository, run_journal_repository,
+    semantic_embedding_repository, settings_repository, task_ledger_repository,
+    task_lens_claim_repository, task_lens_workspace_repository, verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
@@ -25,7 +25,8 @@ use a3_application::{
     IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
     KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
     KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
-    ModuleCardDetailFailure, ModuleCardDetailFuture, ModuleCardDetailQuery, ModuleCardDetailStore,
+    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailFuture,
+    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore,
     ModuleCardEvidenceControl, ModuleCardEvidenceFailure, ModuleCardEvidenceFuture,
     ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshnessControl,
     ModuleCardFreshnessFailure, ModuleCardFreshnessFuture, ModuleCardFreshnessStore,
@@ -37,8 +38,13 @@ use a3_application::{
     ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
     ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
     PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectCatalogPage,
-    ProjectCatalogQuery, ProjectMapSceneControl, ProjectMapSceneFailure, ProjectMapSceneFuture,
-    ProjectMapSceneQuery, ProjectMapSceneStore, ProjectOpenPreparation,
+    ProjectCatalogQuery, ProjectMapAtlasControl, ProjectMapAtlasFailure, ProjectMapAtlasFuture,
+    ProjectMapAtlasLoadResult, ProjectMapAtlasModuleInsight, ProjectMapAtlasScene,
+    ProjectMapAtlasSceneQuery, ProjectMapAtlasStore, ProjectMapEntityContext,
+    ProjectMapEntitySelection, ProjectMapFlowScene, ProjectMapFlowSceneQuery,
+    ProjectMapIndexEvidenceSelection, ProjectMapIndexEvidenceTarget, ProjectMapInventoryPage,
+    ProjectMapInventoryPageQuery, ProjectMapSceneControl, ProjectMapSceneFailure,
+    ProjectMapSceneFuture, ProjectMapSceneQuery, ProjectMapSceneStore, ProjectOpenPreparation,
     ProjectReconciliationProposal, ProjectStorageControl, ProjectStorageFailure,
     ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
     RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
@@ -53,7 +59,10 @@ use a3_application::{
     TaskLensWorkspaceFailure, TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage,
     TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit,
     VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
-    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture,
+    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture, build_project_map_atlas_scene,
+    build_project_map_atlas_scene_with_insights, build_project_map_entity_context_with_insights,
+    build_project_map_flow_scene_with_insights, build_project_map_inventory_page_with_insights,
+    resolve_project_map_index_evidence,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
@@ -77,6 +86,7 @@ use std::time::{Duration, Instant};
 const MAX_SEARCH_DATABASES: usize = 4;
 const MAX_MUTATION_DATABASES: usize = 4;
 const MAX_PUBLISHED_INDEX_CACHE_ENTRIES: usize = 1;
+const MAX_PROJECT_MAP_ATLAS_READ_DURATION: Duration = Duration::from_secs(2);
 
 /// Local libSQL implementation of the application knowledge-store boundary.
 ///
@@ -92,6 +102,175 @@ pub struct LibsqlKnowledgeStore {
 }
 
 impl LibsqlKnowledgeStore {
+    async fn load_project_map_atlas_insights(
+        &self,
+        project: &ProjectIdentity,
+        index: &PublishedIndex,
+        module_ids: &[ModuleId],
+        detailed: bool,
+        control: &dyn ProjectMapAtlasControl,
+        started_at: Instant,
+    ) -> Result<Option<Vec<ProjectMapAtlasModuleInsight>>, ProjectMapAtlasFailure> {
+        if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+            return Err(ProjectMapAtlasFailure::TimedOut);
+        }
+        let mut module_ids = module_ids.to_vec();
+        module_ids.sort_unstable();
+        module_ids.dedup();
+        let knowledge = self
+            .open_project_knowledge_for_project_map_atlas(project)
+            .await?;
+        let mut insights = project_map_atlas_insight_repository::load_summaries(
+            knowledge.connection(),
+            project.worktree().id(),
+            index.run().id(),
+            &module_ids,
+            &AtlasDeadlineControl {
+                control,
+                started_at,
+            },
+        )
+        .await
+        .map_err(|error| {
+            if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+                ProjectMapAtlasFailure::TimedOut
+            } else {
+                error
+            }
+        })?;
+        if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+            return Err(ProjectMapAtlasFailure::TimedOut);
+        }
+        if !detailed || module_ids.len() != 1 {
+            return Ok(Some(insights));
+        }
+        let module_id = module_ids[0];
+        let Some(summary) = insights.first() else {
+            return Err(ProjectMapAtlasFailure::InvalidStoredProjection);
+        };
+        if summary.mapping_status() == a3_application::ProjectMapMappingStatus::Unmapped {
+            return Ok(Some(insights));
+        }
+        let detail = module_card_detail_repository::load(
+            knowledge.connection(),
+            project.worktree().id(),
+            &ModuleCardDetailQuery::new(module_id),
+            &AtlasModuleCardControl {
+                control,
+                started_at,
+            },
+        )
+        .await
+        .map_err(|error| {
+            map_atlas_card_failure(
+                error.classify(),
+                started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION,
+            )
+        })?;
+        if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+            return Err(ProjectMapAtlasFailure::TimedOut);
+        }
+        let ModuleCardDetailLoadResult::Detail(detail) = detail else {
+            return Ok(None);
+        };
+        if detail.current_index_run_id() != index.run().id()
+            || detail.current_snapshot_id() != index.run().snapshot_id()
+        {
+            return Ok(None);
+        }
+        insights[0] = ProjectMapAtlasModuleInsight::from_detail(&detail)
+            .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+        Ok(Some(insights))
+    }
+
+    async fn load_project_map_atlas_index(
+        &self,
+        project: &ProjectIdentity,
+        control: &dyn ProjectMapAtlasControl,
+        started_at: Instant,
+    ) -> Result<Option<Arc<PublishedIndex>>, ProjectMapAtlasFailure> {
+        if control.is_cancelled() {
+            return Err(ProjectMapAtlasFailure::Cancelled);
+        }
+        let knowledge = self
+            .open_project_knowledge_for_project_map_atlas(project)
+            .await?;
+        let latest = index_repository::latest_index_run(
+            knowledge.connection(),
+            project.worktree().id(),
+            true,
+        )
+        .await
+        .map_err(IndexRepositoryError::classify)
+        .map_err(|error| {
+            map_atlas_index_failure(
+                error,
+                started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION,
+            )
+        })?;
+        if control.is_cancelled() {
+            return Err(ProjectMapAtlasFailure::Cancelled);
+        }
+        if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+            return Err(ProjectMapAtlasFailure::TimedOut);
+        }
+        let Some(record) = latest else {
+            self.remove_cached_published_index(project);
+            return Ok(None);
+        };
+        if let Some(index) = self.shared_cached_published_index(project, record) {
+            return Ok(Some(index));
+        }
+        let index_control = AtlasIndexControl {
+            control,
+            started_at,
+            deadline: MAX_PROJECT_MAP_ATLAS_READ_DURATION,
+        };
+        let published = index_publication::latest_published_index(
+            knowledge.connection(),
+            project.worktree().id(),
+            &index_control,
+        )
+        .await
+        .map_err(|error| error.classify())
+        .map_err(|error| {
+            map_atlas_index_failure(
+                error,
+                started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION,
+            )
+        })?
+        .ok_or(ProjectMapAtlasFailure::InvalidStoredProjection)?;
+        if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+            return Err(ProjectMapAtlasFailure::TimedOut);
+        }
+        let shared = Arc::new(published);
+        self.cache_shared_published_index(project, Arc::clone(&shared));
+        Ok(Some(shared))
+    }
+
+    async fn open_project_knowledge_for_project_map_atlas(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, ProjectMapAtlasFailure> {
+        if let Some(database) =
+            self.cached_search_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(classify_project_layout_error)
+            .map_err(ProjectMapAtlasFailure::Storage)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ProjectMapAtlasFailure::Storage)?,
+        );
+        Ok(self.cache_search_database(database))
+    }
+
     /// Opens the global catalog and retains the validated app-data layout used
     /// to derive private per-worktree database paths.
     pub async fn open(layout: &StorageLayout) -> Result<Self, CatalogOpenError> {
@@ -1697,6 +1876,198 @@ impl ProjectMapSceneStore for LibsqlKnowledgeStore {
     }
 }
 
+impl ProjectMapAtlasStore for LibsqlKnowledgeStore {
+    fn load_atlas_scene<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ProjectMapAtlasSceneQuery,
+        control: &'a dyn ProjectMapAtlasControl,
+    ) -> ProjectMapAtlasFuture<'a, ProjectMapAtlasScene> {
+        Box::pin(async move {
+            let started_at = Instant::now();
+            let Some(index) = self
+                .load_project_map_atlas_index(project, control, started_at)
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::NoPublishedIndex);
+            };
+            let base = build_project_map_atlas_scene(&index, query)
+                .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            let Some(base) = base else {
+                return Ok(ProjectMapAtlasLoadResult::SelectionChanged);
+            };
+            let module_ids = match query.selection() {
+                Some(selection) => vec![selection.module_id()],
+                None => base
+                    .nodes()
+                    .iter()
+                    .filter_map(|node| match node.selection() {
+                        Some(ProjectMapEntitySelection::Module { module_id }) => Some(module_id),
+                        _ => None,
+                    })
+                    .collect(),
+            };
+            let Some(insights) = self
+                .load_project_map_atlas_insights(
+                    project,
+                    &index,
+                    &module_ids,
+                    query.selection().is_some(),
+                    control,
+                    started_at,
+                )
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::SelectionChanged);
+            };
+            let scene = build_project_map_atlas_scene_with_insights(&index, query, &insights)
+                .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            Ok(match scene {
+                Some(scene) => ProjectMapAtlasLoadResult::Available(scene),
+                None => ProjectMapAtlasLoadResult::SelectionChanged,
+            })
+        })
+    }
+
+    fn load_entity_context<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        selection: ProjectMapEntitySelection,
+        control: &'a dyn ProjectMapAtlasControl,
+    ) -> ProjectMapAtlasFuture<'a, ProjectMapEntityContext> {
+        Box::pin(async move {
+            let started_at = Instant::now();
+            let Some(index) = self
+                .load_project_map_atlas_index(project, control, started_at)
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::NoPublishedIndex);
+            };
+            let Some(insights) = self
+                .load_project_map_atlas_insights(
+                    project,
+                    &index,
+                    &[selection.module_id()],
+                    true,
+                    control,
+                    started_at,
+                )
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::SelectionChanged);
+            };
+            let context =
+                build_project_map_entity_context_with_insights(&index, selection, &insights)
+                    .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            Ok(match context {
+                Some(context) => ProjectMapAtlasLoadResult::Available(context),
+                None => ProjectMapAtlasLoadResult::SelectionChanged,
+            })
+        })
+    }
+
+    fn load_inventory_page<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ProjectMapInventoryPageQuery,
+        control: &'a dyn ProjectMapAtlasControl,
+    ) -> ProjectMapAtlasFuture<'a, ProjectMapInventoryPage> {
+        Box::pin(async move {
+            let started_at = Instant::now();
+            let Some(index) = self
+                .load_project_map_atlas_index(project, control, started_at)
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::NoPublishedIndex);
+            };
+            let Some(insights) = self
+                .load_project_map_atlas_insights(
+                    project,
+                    &index,
+                    &[query.selection().module_id()],
+                    true,
+                    control,
+                    started_at,
+                )
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::SelectionChanged);
+            };
+            let page = build_project_map_inventory_page_with_insights(&index, query, &insights)
+                .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            Ok(match page {
+                Some(page) => ProjectMapAtlasLoadResult::Available(page),
+                None => ProjectMapAtlasLoadResult::SelectionChanged,
+            })
+        })
+    }
+
+    fn load_flow_scene<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a ProjectMapFlowSceneQuery,
+        control: &'a dyn ProjectMapAtlasControl,
+    ) -> ProjectMapAtlasFuture<'a, ProjectMapFlowScene> {
+        Box::pin(async move {
+            let started_at = Instant::now();
+            let Some(index) = self
+                .load_project_map_atlas_index(project, control, started_at)
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::NoPublishedIndex);
+            };
+            let Some(insights) = self
+                .load_project_map_atlas_insights(
+                    project,
+                    &index,
+                    &[query.selection().module_id()],
+                    true,
+                    control,
+                    started_at,
+                )
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::SelectionChanged);
+            };
+            let flow = build_project_map_flow_scene_with_insights(&index, query, &insights)
+                .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            Ok(match flow {
+                Some(flow) => ProjectMapAtlasLoadResult::Available(flow),
+                None => ProjectMapAtlasLoadResult::SelectionChanged,
+            })
+        })
+    }
+
+    fn load_index_evidence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        selection: ProjectMapIndexEvidenceSelection,
+        control: &'a dyn ProjectMapAtlasControl,
+    ) -> ProjectMapAtlasFuture<'a, ProjectMapIndexEvidenceTarget> {
+        Box::pin(async move {
+            let started_at = Instant::now();
+            let Some(index) = self
+                .load_project_map_atlas_index(project, control, started_at)
+                .await?
+            else {
+                return Ok(ProjectMapAtlasLoadResult::NoPublishedIndex);
+            };
+            let target = resolve_project_map_index_evidence(&index, selection)
+                .map_err(|_| ProjectMapAtlasFailure::InvalidStoredProjection)?;
+            check_project_map_atlas_read(control, started_at)?;
+            Ok(match target {
+                Some(target) => ProjectMapAtlasLoadResult::Available(target),
+                None => ProjectMapAtlasLoadResult::SelectionChanged,
+            })
+        })
+    }
+}
+
 impl ModuleRuntimeStore for LibsqlKnowledgeStore {
     fn load_module_runtime_map<'a>(
         &'a self,
@@ -2552,6 +2923,140 @@ struct CachedPublishedIndex {
 
 struct SharedIndexControl<'a>(&'a dyn TaskLensControl);
 
+struct AtlasIndexControl<'a> {
+    control: &'a dyn ProjectMapAtlasControl,
+    started_at: Instant,
+    deadline: Duration,
+}
+
+struct AtlasDeadlineControl<'a> {
+    control: &'a dyn ProjectMapAtlasControl,
+    started_at: Instant,
+}
+
+impl std::fmt::Debug for AtlasDeadlineControl<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AtlasDeadlineControl")
+    }
+}
+
+impl ProjectMapAtlasControl for AtlasDeadlineControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.control.is_cancelled()
+            || self.started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION
+    }
+
+    fn report_progress(
+        &self,
+        progress: a3_domain::Progress,
+    ) -> Result<(), a3_application::ProjectMapAtlasControlError> {
+        if self.is_cancelled() {
+            Err(a3_application::ProjectMapAtlasControlError)
+        } else {
+            self.control.report_progress(progress)
+        }
+    }
+}
+
+struct AtlasModuleCardControl<'a> {
+    control: &'a dyn ProjectMapAtlasControl,
+    started_at: Instant,
+}
+
+impl std::fmt::Debug for AtlasModuleCardControl<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AtlasModuleCardControl")
+    }
+}
+
+impl ModuleCardDetailControl for AtlasModuleCardControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.control.is_cancelled()
+            || self.started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), ModuleCardDetailControlError> {
+        if self.is_cancelled() {
+            Err(ModuleCardDetailControlError::Unavailable)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl std::fmt::Debug for AtlasIndexControl<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AtlasIndexControl")
+    }
+}
+
+impl IndexPersistenceControl for AtlasIndexControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.control.is_cancelled() || self.started_at.elapsed() >= self.deadline
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        if self.is_cancelled() {
+            Err(a3_application::IndexPersistenceControlError::Unavailable)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn map_atlas_index_failure(
+    error: KnowledgeIndexFailure,
+    deadline_elapsed: bool,
+) -> ProjectMapAtlasFailure {
+    if deadline_elapsed {
+        return ProjectMapAtlasFailure::TimedOut;
+    }
+    match error {
+        KnowledgeIndexFailure::Storage(error) => ProjectMapAtlasFailure::Storage(error),
+        KnowledgeIndexFailure::Cancelled => ProjectMapAtlasFailure::Cancelled,
+        KnowledgeIndexFailure::TimedOut => ProjectMapAtlasFailure::TimedOut,
+        KnowledgeIndexFailure::ProgressUnavailable => ProjectMapAtlasFailure::ProgressUnavailable,
+        _ => ProjectMapAtlasFailure::InvalidStoredProjection,
+    }
+}
+
+fn check_project_map_atlas_read(
+    control: &dyn ProjectMapAtlasControl,
+    started_at: Instant,
+) -> Result<(), ProjectMapAtlasFailure> {
+    if control.is_cancelled() {
+        Err(ProjectMapAtlasFailure::Cancelled)
+    } else if started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION {
+        Err(ProjectMapAtlasFailure::TimedOut)
+    } else {
+        Ok(())
+    }
+}
+
+fn map_atlas_card_failure(
+    error: ModuleCardDetailFailure,
+    deadline_elapsed: bool,
+) -> ProjectMapAtlasFailure {
+    if deadline_elapsed {
+        return ProjectMapAtlasFailure::TimedOut;
+    }
+    match error {
+        ModuleCardDetailFailure::Storage(error) => ProjectMapAtlasFailure::Storage(error),
+        ModuleCardDetailFailure::InvalidStoredProjection => {
+            ProjectMapAtlasFailure::InvalidStoredProjection
+        }
+        ModuleCardDetailFailure::Cancelled => ProjectMapAtlasFailure::Cancelled,
+        ModuleCardDetailFailure::TimedOut => ProjectMapAtlasFailure::TimedOut,
+        ModuleCardDetailFailure::ProgressUnavailable => ProjectMapAtlasFailure::ProgressUnavailable,
+    }
+}
+
 impl std::fmt::Debug for SharedIndexControl<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedIndexControl")
@@ -2857,5 +3362,43 @@ const fn classify_run_journal_for_agent_action(
         }
         RunJournalStoreFailure::RunNotFound => AgentActionStoreFailure::RunNotFound,
         RunJournalStoreFailure::SequenceConflict => AgentActionStoreFailure::RunSequenceConflict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct AtlasTestControl {
+        cancelled: bool,
+    }
+
+    impl ProjectMapAtlasControl for AtlasTestControl {
+        fn is_cancelled(&self) -> bool {
+            self.cancelled
+        }
+
+        fn report_progress(
+            &self,
+            _progress: a3_domain::Progress,
+        ) -> Result<(), a3_application::ProjectMapAtlasControlError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn atlas_read_checkpoint_distinguishes_cancellation_and_deadline() {
+        assert_eq!(
+            check_project_map_atlas_read(&AtlasTestControl { cancelled: true }, Instant::now()),
+            Err(ProjectMapAtlasFailure::Cancelled)
+        );
+        assert_eq!(
+            check_project_map_atlas_read(
+                &AtlasTestControl { cancelled: false },
+                Instant::now() - MAX_PROJECT_MAP_ATLAS_READ_DURATION
+            ),
+            Err(ProjectMapAtlasFailure::TimedOut)
+        );
     }
 }

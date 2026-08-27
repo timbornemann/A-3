@@ -1,6 +1,7 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
 import type { ModuleCardEvidenceQueryV1 } from './module-card-evidence';
+import type { ProjectMapIndexEvidenceSelectionV1 } from './project-map-atlas';
 
 const STABLE_ID_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_LINES = 64;
@@ -45,19 +46,37 @@ export interface ProjectMapSourcePreviewResponseV1 {
   result: ProjectMapSourcePreviewResultV1;
 }
 
+export type ProjectMapSourcePreviewQueryV1 =
+  | ({ kind: 'moduleCard' } & ModuleCardEvidenceQueryV1)
+  | { evidence: ProjectMapIndexEvidenceSelectionV1; kind: 'index' };
+
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
   tauriInvoke<unknown>(command, arguments_);
 
 export async function queryProjectMapSourcePreview(
-  query: ModuleCardEvidenceQueryV1,
+  query: ModuleCardEvidenceQueryV1 | ProjectMapSourcePreviewQueryV1,
   invokeCommand: InvokeCommand = invokeThroughTauri,
 ): Promise<ProjectMapSourcePreviewResponseV1> {
-  if (!isEvidenceQuery(query))
-    throw new Error('Project Map source-preview query does not match V1.');
-  const request = { ...query, protocolVersion: CURRENT_PROTOCOL_VERSION };
+  const selection = 'kind' in query ? query : { ...query, kind: 'moduleCard' as const };
+  if (!isPreviewSelection(selection))
+    throw new Error('Project Map source-preview selection does not match V1.');
+  const request = { protocolVersion: CURRENT_PROTOCOL_VERSION, selection };
   return parseProjectMapSourcePreviewResponseV1(
     await invokeCommand('query_project_map_source_preview', { request }),
   );
+}
+
+function isPreviewSelection(value: ProjectMapSourcePreviewQueryV1): boolean {
+  if (value.kind === 'moduleCard') return isEvidenceQuery(value);
+  return value.kind === 'index' && isIndexEvidence(value.evidence);
+}
+
+function isIndexEvidence(value: ProjectMapIndexEvidenceSelectionV1): boolean {
+  if (!isStableId(value.evidenceId) || !isStableId(value.moduleId)) return false;
+  if (value.kind === 'file') return Number.isInteger(value.ordinal) && value.ordinal > 0;
+  if (value.kind === 'symbol') return isStableId(value.symbolId);
+  if (value.kind === 'relation') return /^[1-9][0-9]*$/.test(value.edgeSequence);
+  return /^[1-9][0-9]*$/.test(value.candidateSequence);
 }
 
 export function parseProjectMapSourcePreviewResponseV1(

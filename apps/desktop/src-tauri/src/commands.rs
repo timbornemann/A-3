@@ -1,4 +1,7 @@
 use crate::model_settings_manager::settings_version_from_v1;
+use crate::project_map_atlas_mapping::{
+    map_flow_query_from_v1, map_inventory_query_from_v1, map_selection_from_v1,
+};
 use crate::project_settings_manager::{
     allowlist_version_from_v1, catalog_id_from_v1, command_ids_from_v1,
 };
@@ -48,6 +51,12 @@ use a3_protocol::{
     RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1, SetModelProviderCredentialRequestV1,
     SettingsResponseV1, StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
     TaskLensTasksResponseV1,
+};
+use a3_protocol::{
+    ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
+    ProjectMapFlowSceneResponseV1, ProjectMapInventoryPageResponseV1,
+    QueryProjectMapAtlasSceneRequestV1, QueryProjectMapEntityContextRequestV1,
+    QueryProjectMapFlowSceneRequestV1, QueryProjectMapInventoryPageRequestV1,
 };
 use tauri::State;
 
@@ -166,6 +175,42 @@ pub async fn query_project_map_scene(
     root: State<'_, CompositionRoot>,
 ) -> Result<ProjectMapSceneResponseV1, CommandErrorV1> {
     execute_query_project_map_scene(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns one bounded Project, Module, File, or Symbol Atlas scene.
+pub async fn query_project_map_atlas_scene(
+    request: QueryProjectMapAtlasSceneRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapAtlasSceneResponseV1, CommandErrorV1> {
+    execute_query_project_map_atlas_scene(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns progressive Inspector metadata for one Core-issued current selection.
+pub async fn query_project_map_entity_context(
+    request: QueryProjectMapEntityContextRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapEntityContextResponseV1, CommandErrorV1> {
+    execute_query_project_map_entity_context(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns exactly one fixed fifty-entry Atlas inventory page.
+pub async fn query_project_map_inventory_page(
+    request: QueryProjectMapInventoryPageRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapInventoryPageResponseV1, CommandErrorV1> {
+    execute_query_project_map_inventory_page(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns one bounded fixed-preset callers, callees, tests, or data-access flow.
+pub async fn query_project_map_flow_scene(
+    request: QueryProjectMapFlowSceneRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProjectMapFlowSceneResponseV1, CommandErrorV1> {
+    execute_query_project_map_flow_scene(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -757,6 +802,61 @@ async fn execute_query_project_map_scene(
     }
     let query = map_project_map_scene_query_from_v1(&request)?;
     root.query_project_map_scene(&query).await
+}
+
+async fn execute_query_project_map_atlas_scene(
+    request: QueryProjectMapAtlasSceneRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapAtlasSceneResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let selection = request
+        .selection()
+        .map(map_selection_from_v1)
+        .transpose()
+        .map_err(|_| invalid_project_map_atlas_query())?;
+    root.query_project_map_atlas_scene(&a3_application::ProjectMapAtlasSceneQuery::new(selection))
+        .await
+}
+
+async fn execute_query_project_map_entity_context(
+    request: QueryProjectMapEntityContextRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapEntityContextResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let selection = map_selection_from_v1(request.selection())
+        .map_err(|_| invalid_project_map_atlas_query())?;
+    root.query_project_map_entity_context(selection).await
+}
+
+async fn execute_query_project_map_inventory_page(
+    request: QueryProjectMapInventoryPageRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapInventoryPageResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query =
+        map_inventory_query_from_v1(&request).map_err(|_| invalid_project_map_atlas_query())?;
+    root.query_project_map_inventory_page(&query).await
+}
+
+async fn execute_query_project_map_flow_scene(
+    request: QueryProjectMapFlowSceneRequestV1,
+    root: &CompositionRoot,
+) -> Result<ProjectMapFlowSceneResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let query = map_flow_query_from_v1(&request).map_err(|_| invalid_project_map_atlas_query())?;
+    root.query_project_map_flow_scene(&query).await
+}
+
+fn invalid_project_map_atlas_query() -> CommandErrorV1 {
+    CommandErrorV1::project_open(a3_protocol::ErrorCodeV1::InvalidProjectMapSceneQuery)
 }
 
 async fn execute_query_module_tree(
