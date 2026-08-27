@@ -3,8 +3,10 @@
 mod support;
 
 use a3_application::{
-    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeStore,
-    PlanDeepMap, RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
+    ExploreProjectMapAtlas, IndexPersistenceControl, IndexPersistenceControlError,
+    KnowledgeIndexStore, KnowledgeStore, PlanDeepMap, ProjectMapAtlasControl,
+    ProjectMapAtlasControlError, ProjectMapAtlasLoadResult, ProjectMapAtlasSceneQuery,
+    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
     RepositoryIndexControlError, RepositoryRescanReason,
 };
 use a3_domain::{
@@ -185,6 +187,16 @@ impl IndexPersistenceControl for AcceptanceControl {
     }
 }
 
+impl ProjectMapAtlasControl for AcceptanceControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), ProjectMapAtlasControlError> {
+        Ok(())
+    }
+}
+
 #[test]
 fn deep_map_v1_accepts_rust_typescript_and_python_fixtures() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
@@ -248,6 +260,22 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<String, Box<dyn 
         .await?
         .ok_or_else(|| format!("{} published index is missing", fixture.name))?;
     validate_publication(fixture, &published, indexed.snapshot().id())?;
+
+    match ExploreProjectMapAtlas::new(store.clone())
+        .scene(
+            &project,
+            &ProjectMapAtlasSceneQuery::new(None),
+            &AcceptanceControl,
+        )
+        .await?
+    {
+        ProjectMapAtlasLoadResult::Available(scene) if !scene.nodes().is_empty() => {}
+        other => {
+            return Err(
+                format!("{} Atlas overview is unavailable: {other:?}", fixture.name).into(),
+            );
+        }
+    }
 
     let coverage =
         ModuleCoverageSnapshot::empty(published.run().snapshot_id(), ModuleCardSchemaVersion::V1);

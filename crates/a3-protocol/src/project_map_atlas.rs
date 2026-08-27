@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 
 /// Core-issued entity selection accepted by progressive Atlas reads.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum ProjectMapEntitySelectionV1 {
     /// One current primary module.
     Module {
@@ -32,7 +37,12 @@ pub enum ProjectMapEntitySelectionV1 {
 
 /// Exact current index Evidence selection emitted by an Atlas response.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "kind")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum ProjectMapIndexEvidenceSelectionV1 {
     /// Current file revision.
     File {
@@ -828,5 +838,40 @@ mod tests {
         assert!(serde_json::from_str::<QueryProjectMapAtlasSceneRequestV1>(json).is_err());
         let json = r#"{"protocolVersion":1,"selection":{"kind":"file","moduleId":"00","ordinal":1,"evidenceId":"00","path":"src/main.rs"}}"#;
         assert!(serde_json::from_str::<QueryProjectMapAtlasSceneRequestV1>(json).is_err());
+    }
+
+    #[test]
+    fn atlas_selections_use_exact_camel_case_wire_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let request = r#"{"protocolVersion":1,"selection":{"kind":"file","moduleId":"module","ordinal":7,"evidenceId":"evidence"}}"#;
+        let decoded = serde_json::from_str::<QueryProjectMapAtlasSceneRequestV1>(request)?;
+        assert_eq!(
+            serde_json::to_value(decoded)?,
+            serde_json::json!({
+                "protocolVersion": 1,
+                "selection": {
+                    "kind": "file",
+                    "moduleId": "module",
+                    "ordinal": 7,
+                    "evidenceId": "evidence"
+                }
+            })
+        );
+
+        let relation = ProjectMapIndexEvidenceSelectionV1::Relation {
+            module_id: "module".to_owned(),
+            edge_sequence: "11".to_owned(),
+            evidence_id: "evidence".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(relation)?,
+            serde_json::json!({
+                "kind": "relation",
+                "moduleId": "module",
+                "edgeSequence": "11",
+                "evidenceId": "evidence"
+            })
+        );
+        Ok(())
     }
 }

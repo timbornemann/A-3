@@ -210,6 +210,7 @@ function renderWorkspace() {
     deepMapStarter: starter,
     deepMapStatusLoader: vi.fn(async () => deepMapStatus),
     inventoryLoader,
+    publicationKey: id('2'),
     projectKey: id('9'),
     searchLoader,
     sourcePreviewLoader,
@@ -228,6 +229,17 @@ describe('U12 progressive Code Atlas workspace', () => {
     expect(screen.getByText('Fläche 1:8 begrenzt')).toBeTruthy();
     expect(props.atlasSceneLoader).toHaveBeenCalledWith(null);
     expect(props.contextLoader).not.toHaveBeenCalled();
+  });
+
+  it('reloads the Atlas when a newer atomic index publication becomes visible', async () => {
+    const view = renderWorkspace();
+    await screen.findByRole('button', { name: /a3-application, Package/ });
+    expect(view.props.atlasSceneLoader).toHaveBeenCalledTimes(1);
+
+    await view.rerender({ ...view.props, publicationKey: id('3') });
+
+    await waitFor(() => expect(view.props.atlasSceneLoader).toHaveBeenCalledTimes(2));
+    expect(view.props.atlasSceneLoader).toHaveBeenLastCalledWith(null);
   });
 
   it('separates selection from semantic opening and previews only typed index Evidence', async () => {

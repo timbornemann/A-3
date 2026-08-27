@@ -1548,6 +1548,9 @@
                   {@const MapWorkspace = mapWorkspaceComponent}
                   <MapWorkspace
                     projectKey={projectStatusView.result.project.worktreeId}
+                    publicationKey={indexOverviewView.kind === 'published'
+                      ? indexOverviewView.result.overview.snapshotId
+                      : null}
                     searchLoader={projectMapSearchLoader}
                     {taskLensTasksLoader}
                     {taskLensTaskLoader}

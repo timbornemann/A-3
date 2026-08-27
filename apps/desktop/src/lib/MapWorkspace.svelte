@@ -76,6 +76,7 @@
       selection: ProjectMapEntitySelectionV1,
       preset: ProjectMapFlowPresetV1,
     ) => Promise<ProjectMapFlowSceneResponseV1>;
+    publicationKey?: string | null;
     searchLoader?: (query: { query: string }) => Promise<ProjectMapSearchResponseV1>;
     sourcePreviewLoader?: (
       query: ProjectMapSourcePreviewQueryV1,
@@ -95,6 +96,7 @@
   }
   const {
     projectKey,
+    publicationKey = null,
     atlasSceneLoader = queryProjectMapAtlasScene,
     contextLoader = queryProjectMapEntityContext,
     inventoryLoader = queryProjectMapInventoryPage,
@@ -151,6 +153,7 @@
 
   $effect(() => {
     void projectKey;
+    void publicationKey;
     requestGeneration += 1;
     contextGeneration += 1;
     selected = null;
