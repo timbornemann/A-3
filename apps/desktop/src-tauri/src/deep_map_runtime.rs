@@ -6,7 +6,8 @@ use a3_application::{
 };
 use a3_provider::{
     GeminiEndpoint, GeminiModelProvider, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
-    OllamaModelProvider, StandardGeminiEndpointPolicy,
+    OllamaModelProvider, OpenAiEndpoint, OpenAiModelProvider, StandardGeminiEndpointPolicy,
+    StandardOpenAiEndpointPolicy,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -60,6 +61,17 @@ impl DeepMapRuntime {
                     .ok()??;
                 Arc::new(
                     GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
+                        .ok()?,
+                )
+            }
+            "openai" => {
+                let endpoint = OpenAiEndpoint::parse(endpoint.canonical_origin()).ok()?;
+                let key = LoadDesktopProviderCredential::new(Arc::clone(&self.credentials))
+                    .execute(settings)
+                    .await
+                    .ok()??;
+                Arc::new(
+                    OpenAiModelProvider::new(endpoint, Arc::new(StandardOpenAiEndpointPolicy), key)
                         .ok()?,
                 )
             }

@@ -267,5 +267,12 @@ describe('settings IPC client', () => {
         modelIds: ['qwen2.5-coder:7b', 'nomic-embed-text:latest'],
       }),
     ).toThrow('non-canonical');
+
+    const openAiResponse = {
+      ...response,
+      modelIds: ['gpt-5.4', 'text-embedding-3-small'],
+      providerKind: 'openai' as const,
+    };
+    expect(parseProviderModelsResponseV1(openAiResponse)).toEqual(openAiResponse);
   });
 });

@@ -480,7 +480,8 @@ Worktree, Quellcode und private `knowledge.db` bleiben außerhalb des Commands.
 
 `query_settings` akzeptiert nur `protocolVersion`. `configure_model_provider` akzeptiert
 zusätzlich ausschließlich die erwartete dezimale Settingsrevision, die geschlossene
-`providerKind`-Auswahl (`ollama | gemini`) und einen optionalen credential-freien Endpoint-Origin. Ein
+`providerKind`-Auswahl (`ollama | gemini | openai`) und einen optionalen credential-freien
+Endpoint-Origin. Ein
 fehlender Endpoint entfernt die aktive Verbindung und invalidiert Rollenprofile atomar.
 
 `set_model_provider_credential` akzeptiert ausschließlich `protocolVersion`,

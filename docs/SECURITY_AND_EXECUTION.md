@@ -613,20 +613,30 @@ oder Löschen eines API-Keys erzeugt keinen Netzwerkzugriff; Modelldiscovery und
 benötigen jeweils einen ausdrücklichen Klick. Eine spätere Agentenlaufzeit muss unabhängig davon
 ihre laufgebundene Netzwerkfreigabe erhalten.
 
-Der Gemini-Key ist auf 1 bis 4.096 ASCII-Bytes begrenzt, wird außen um ASCII-Whitespace bereinigt
+OpenAI verwendet ausschließlich den festen Origin `https://api.openai.com`. Der Adapter setzt
+`Authorization: Bearer ...` erst nach der exakten Produktionspolicy-Prüfung, deaktiviert Redirects
+und Umgebungsproxies und sendet `User-Agent: a3/0.1.0`. Benutzerdefinierte OpenAI-kompatible
+Gateways sind nicht zulässig. Speichern oder Löschen eines OpenAI-Keys erzeugt keinen
+Netzwerkzugriff; Discovery und Capability-Probe benötigen jeweils einen ausdrücklichen Klick. Eine
+spätere Agenten- oder Deep-Map-Laufzeit muss unabhängig davon ihre laufgebundene
+Netzwerkfreigabe erhalten. OpenAI-Anfragen können abhängig von Konto und Modell Kosten verursachen;
+die Settings-Oberfläche weist darauf hin.
+
+Gemini- und OpenAI-Keys sind auf 1 bis 4.096 ASCII-Bytes begrenzt, werden außen um
+ASCII-Whitespace bereinigt
 und darf keine eingebetteten Steuerzeichen enthalten. Das Passwortfeld ist nicht vorausgefüllt;
 DOM-Wert und temporärer `Uint8Array` werden nach Submit, Fehler, Schließen und Unmount geleert. Der
 one-way Set-Request ist weder serialisierbar noch clonebar oder secret-offenlegend debuggbar. Der
-Core speichert im nativen Keyring unter Service `dev.timbornemann.a3.provider-api-key` und Account
-`gemini` eine versionierte Hülle aus Generation und Key. Verwaltete Rust-Puffer werden beim Drop
-überschrieben.
+Core speichert im nativen Keyring unter Service `dev.timbornemann.a3.provider-api-key` und dem
+Provideraccount `gemini` beziehungsweise `openai` eine versionierte Hülle aus Generation und Key.
+Verwaltete Rust-Puffer werden beim Drop überschrieben.
 
 libSQL speichert nur Credential-Anforderung, Lifecycle und monotone Generation. Schreiben und
 Löschen verwenden `storing`/Keyring/`configured` beziehungsweise
 `deleting`/Keyring/`missing`. Jede Unterbrechung oder Generationsabweichung wird
 `RecoveryRequired`; Providerzugriffe bleiben dann gesperrt und nur Ersetzen oder Löschen ist
-zulässig. Providerwechsel und Entfernung löschen den Gemini-Eintrag zuerst, und ein Löschfehler
-blockiert den Wechsel sichtbar.
+zulässig. Providerwechsel und Entfernung löschen den aktiven Credential-Eintrag zuerst, und ein
+Löschfehler blockiert den Wechsel sichtbar.
 
 Der Ollama-kompatible Adapter akzeptiert nur credentialfreie HTTP-/HTTPS-Origins ohne Pfad, Query
 oder Fragment. `localhost` wird vor der Policyprüfung auf die IPv4-Loopbackadresse normalisiert;
@@ -641,6 +651,35 @@ Discovery-IPC-Request enthält weder URL, Provider-ID, Modellname noch Timeout. 
 autorisiert `GET /api/tags` erneut, begrenzt die JSON-Antwort auf 512 KiB und projiziert höchstens
 256 eindeutige Modell-IDs. Das Ergebnis bleibt flüchtig und setzt weder Health noch Capability.
 Discovery und Capability-Probe teilen einen besessenen, kooperativ abbrechbaren Operations-Slot.
+
+OpenAI-Discovery liest `GET /v1/models` einmalig mit höchstens 2 MiB, betrachtet maximal 1.000
+Einträge und projiziert höchstens 256 eindeutige IDs mit Präfix `gpt-` oder `text-embedding-`.
+Diese Präfixe trennen nur Rollenkandidaten; sie beweisen keine Capability. Generierung verwendet
+`POST /v1/responses` mit `stream: true`, `store: false`, `tool_choice: "none"`, leerem Toolset,
+deaktivierter Parallel-Toolauswahl und `truncation: "disabled"`. Strukturierte Ausgaben verwenden
+`text.format.type: "json_schema"` mit festem Schemanamen und `strict: true`.
+Für versionierte GPT-5-Familien ab 5.1 setzt der Adapter `reasoning.effort: "none"`, damit das
+profilgebundene Sampling gemäß OpenAI-Parametervertrag gültig bleibt; andere Familien erhalten
+keine vom Modellnamen abgeleitete Reasoningkonfiguration.
+
+Der OpenAI-SSE-Parser begrenzt Zeilen auf 5 MiB, Puffer geringfügig darüber und die gesamte
+projizierte Textausgabe auf 4 MiB. Er akzeptiert ausschließlich bekannte Response-,
+Reasoning-Lifecycle-, Assistant-Message-, `output_text`- und Terminalevents. Nur
+`response.output_text.delta` wird als Text projiziert. Refusal-, Tool- und unbekannte Inhaltstypen
+werden abgelehnt; widersprüchliche IDs, Indizes, Reihenfolgen, Daten nach dem Terminalevent oder ein
+fehlender sauberer Bodyabschluss sind ungültig. `response.completed` wird `Stop`;
+`response.incomplete` wird ausschließlich mit Grund `max_output_tokens` als `OutputLimit`
+akzeptiert. Usage stammt nur aus dem terminalen Responseobjekt. `store: false`, leeres Toolset und
+`tool_choice: "none"` werden auch in Provider-Lifecycleobjekten erneut geprüft.
+
+Die OpenAI-Capability-Probe verwendet 256 Outputtokens, höchstens 256 KiB Antwort und ein striktes
+einfaches Schema. Nur das exakte Objekt `{ "a3_probe": "ok" }` aus genau einem Assistant-
+`output_text` verifiziert Structured Output; Reasoning-Lifecycle kann ignoriert, aber kein Tool-
+oder Refusalinhalt akzeptiert werden. Die Modellliste enthält kein für diese Grenze belastbares
+Kontextmaximum, daher bleibt die providerseitige Kontextobservation leer. Embeddings verwenden
+`POST /v1/embeddings` mit Float-Encoding und höchstens 8 MiB Antwort. Modellbindung, Objektarten,
+vollständige eindeutige Indizes, Kardinalität, Dimension sowie endliche und nicht ausschließlich
+nullwertige Vektoren werden vor der neutralen Projektion geprüft.
 
 Gemini-Discovery verwendet `models.list` mit `pageSize=100`, maximal zehn Seiten, 1.000 gelesenen
 Einträgen, 256 eindeutigen Ergebnissen, 512 KiB pro Seite und 2 MiB insgesamt. Tokenschleifen und

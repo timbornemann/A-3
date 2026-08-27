@@ -58,6 +58,7 @@ describe('SettingsPanel', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'KI & Modelle' }));
     expect(await screen.findByText('Bereit für deine Modellverbindung')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Ollama verbinden' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'OpenAI verwenden' })).toBeTruthy();
     expect(screen.getByText('Provider erforderlich')).toBeTruthy();
   });
 
@@ -380,5 +381,68 @@ describe('SettingsPanel', () => {
     await fireEvent.input(unmountedCredentialInput, { target: { value: 'discard-on-unmount' } });
     rendered.unmount();
     expect(unmountedCredentialInput.value).toBe('');
+  });
+
+  it('creates an OpenAI provider with a one-way key and explicit model discovery', async () => {
+    const openAiEndpoint = {
+      access: 'explicitUserInitiatedRemote' as const,
+      origin: 'https://api.openai.com',
+      providerId: 'openai',
+      scope: 'remote' as const,
+    };
+    const providerConfigurer = vi.fn().mockResolvedValue(
+      response({
+        credential: { requirement: 'apiKey', status: 'missing' },
+        endpoint: openAiEndpoint,
+        revision: '1',
+      }),
+    );
+    let capturedCredentialBytes: number[] = [];
+    const credentialSetter = vi.fn(async (_revision: string, bytes: Uint8Array) => {
+      capturedCredentialBytes = Array.from(bytes);
+      return response({
+        credential: { requirement: 'apiKey', status: 'configured' },
+        endpoint: openAiEndpoint,
+        revision: '2',
+      });
+    });
+    const modelDiscoverer = vi.fn().mockResolvedValue({
+      modelIds: ['gpt-5.4', 'text-embedding-3-small'],
+      protocolVersion: 1,
+      providerKind: 'openai',
+      settingsRevision: '2',
+      truncated: false,
+    });
+    render(SettingsPanel, {
+      credentialSetter,
+      modelDiscoverer,
+      providerConfigurer,
+      settingsLoader: vi.fn().mockResolvedValue(response()),
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'KI & Modelle' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'OpenAI verwenden' }));
+    const dialog = screen.getByRole('dialog', { name: 'OpenAI verbinden' });
+    const endpoint = within(dialog).getByLabelText('Endpoint') as HTMLInputElement;
+    expect(endpoint.value).toBe('https://api.openai.com');
+    expect(endpoint.readOnly).toBe(true);
+    const credentialInput = within(dialog).getByLabelText('API-Key') as HTMLInputElement;
+    await fireEvent.input(credentialInput, { target: { value: 'test-openai-key' } });
+    await fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Verbinden und Modelle laden' }),
+    );
+
+    await waitFor(() =>
+      expect(providerConfigurer).toHaveBeenCalledWith('0', 'openai', 'https://api.openai.com'),
+    );
+    await waitFor(() => expect(credentialSetter).toHaveBeenCalledTimes(1));
+    expect(capturedCredentialBytes).toEqual(
+      Array.from(new TextEncoder().encode('test-openai-key')),
+    );
+    await waitFor(() => expect(modelDiscoverer).toHaveBeenCalledWith('2'));
+    expect(await screen.findByText('OpenAI')).toBeTruthy();
+    expect(screen.getByText('OpenAI Cloud')).toBeTruthy();
+    expect(screen.getByText(/Kosten verursachen/)).toBeTruthy();
+    expect(await screen.findByText('2 Modelle gefunden')).toBeTruthy();
   });
 });

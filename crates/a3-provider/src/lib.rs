@@ -1,8 +1,9 @@
-//! Local model-provider adapters for A^3.
+//! Native model-provider adapters for A^3.
 
 mod endpoint;
 mod gemini;
 mod ollama;
+mod openai;
 
 pub use endpoint::{
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaEndpointError, OllamaEndpointPolicy,
@@ -14,3 +15,8 @@ pub use gemini::{
     GeminiSettingsEndpointValidator, LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy,
 };
 pub use ollama::{OllamaModelProvider, OllamaProviderCreateError};
+pub use openai::{
+    LocalOnlyOpenAiEndpointPolicy, OpenAiEndpoint, OpenAiEndpointError, OpenAiEndpointPolicy,
+    OpenAiEndpointPolicyError, OpenAiEndpointScope, OpenAiModelProvider, OpenAiProviderCreateError,
+    OpenAiSettingsEndpointValidator, StandardOpenAiEndpointPolicy,
+};

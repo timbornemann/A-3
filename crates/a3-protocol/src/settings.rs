@@ -29,6 +29,9 @@ pub enum ModelProviderKindV1 {
     Ollama,
     /// Google Gemini API using its native REST/SSE contracts.
     Gemini,
+    /// OpenAI API using Responses, Models, and Embeddings contracts.
+    #[serde(rename = "openai")]
+    OpenAi,
 }
 
 /// Optimistic active-provider replacement; omission explicitly returns to model-free mode.
@@ -821,12 +824,20 @@ mod tests {
             "\"gemini\""
         );
         assert_eq!(
+            serde_json::to_string(&ModelProviderKindV1::OpenAi)?,
+            "\"openai\""
+        );
+        assert_eq!(
             serde_json::from_str::<ModelProviderKindV1>("\"ollama\"")?,
             ModelProviderKindV1::Ollama
         );
         assert_eq!(
             serde_json::from_str::<ModelProviderKindV1>("\"gemini\"")?,
             ModelProviderKindV1::Gemini
+        );
+        assert_eq!(
+            serde_json::from_str::<ModelProviderKindV1>("\"openai\"")?,
+            ModelProviderKindV1::OpenAi
         );
         assert!(serde_json::from_str::<ModelProviderKindV1>("\"other\"").is_err());
         Ok(())

@@ -152,10 +152,10 @@ Regeln:
 
 Gemäß ADR-0018 besitzt `a3-application` den allgemeinen `ModelProvider`-Port und alle neutralen
 Request-, Event-, Timeout-, Cancellation- und Fehlertypen. `a3-provider` implementiert diesen Port,
-kennt die Ollama-kompatiblen HTTP-/NDJSON-Payloads und hängt ausschließlich nach innen von
-Application und Domain ab. Der erste HTTP-Adapter verwendet das gepinnte `reqwest` nur mit JSON-,
+kennt die nativen Ollama-, Gemini- und OpenAI-Wireverträge und hängt ausschließlich nach innen von
+Application und Domain ab. Die HTTP-Adapter verwenden das gepinnte `reqwest` nur mit JSON-,
 Streaming- und Rustls-Unterstützung, weil die Standardbibliothek keinen asynchronen, abbrechbaren
-HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diesen Client deaktiviert.
+HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Clients deaktiviert.
 
 ## Hauptlaufzeiten
 
@@ -722,12 +722,13 @@ Probe-Evidence atomar. Ein Remote-Origin bleibt speicherbar und sichtbar, aber i
 `RemoteBlocked` und ohne pauschale Netzwerkfreigabe.
 
 ADR-0026 projiziert diesen aktiven Endpunkt als typisierte Providerverbindung. V1 unterstützt
-weiterhin genau eine aktive Verbindung und ausschließlich den konkret implementierten Typ
-`Ollama`; weitere Providerarten erweitern die geschlossene Protokollauswahl erst zusammen mit
-einem Adapter. `DiscoverProviderModels` erhält weder Endpoint noch Modellnamen aus der WebView.
-Der Composition Root lädt den revisionsgebundenen Endpoint und der Ollama-Adapter fragt erst nach
-explizitem Nutzeraufruf das begrenzte `/api/tags`-Ergebnis ab. Der flüchtige, sortierte Katalog ist
-nur Auswahlhilfe, wird nicht persistiert und ist niemals Capability-Evidence.
+weiterhin genau eine aktive Verbindung; ADR-0028 und ADR-0032 erweitern die geschlossene
+Protokollauswahl auf `ollama`, `gemini` und `openai`, jeweils zusammen mit einem nativen Adapter und
+einer exakten Endpointpolicy. `DiscoverProviderModels` erhält weder Endpoint noch Modellnamen aus
+der WebView. Der Composition Root lädt den revisionsgebundenen Endpoint und der konkrete Adapter
+fragt erst nach explizitem Nutzeraufruf den begrenzten nativen Modellkatalog ab. Der flüchtige,
+sortierte Katalog ist nur Auswahlhilfe, wird nicht persistiert und ist niemals
+Capability-Evidence.
 
 Coding, Mapping und Embedding besitzen getrennte Kandidaten und werden nur durch eine explizite,
 abbrechbare und zeitbegrenzte Providerprobe aktualisiert. Der Core lädt den Endpoint aus seinem
@@ -740,6 +741,13 @@ ausführbares Mapping-Profil an den produktiven Deep-Map-Executor und erneuert d
 Provider-, Credential- und Probe-Änderungen. Fehlt Profil, erforderliches Credential oder Executor,
 bleibt Deep Map bewusst unavailable; die Settings-Grenze simuliert keine Ausführbarkeit.
 Agent-Runs bleiben unabhängig davon unavailable, solange kein eigener Agent-Executor komponiert ist.
+
+OpenAI ist ausschließlich über `https://api.openai.com` produktiv erreichbar. Der native Adapter
+verwendet `GET /v1/models`, `POST /v1/responses` und `POST /v1/embeddings`; Requests setzen
+`store: false`, deaktivieren Provider-Tools und übertragen den Bearer-Key erst nach der exakten
+Policyprüfung. GPT- und Embeddingnamen bleiben Kandidaten. Nur eine echte strikte JSON-Schema-Probe
+beziehungsweise ein validierter Vektor aktiviert ein Rollenprofil. Der Deep-Map-Composition-Root
+rekonstruiert OpenAI wie Gemini erst aus revisionsgebundenem Endpoint, Profil und OS-Credential.
 
 Für Ollama formt der Adapter den operativen `num_ctx` aus konservativ gezähltem Request,
 Outputlimit und festem Chat-Template-Overhead und begrenzt ihn durch das verifizierte Profil. Das

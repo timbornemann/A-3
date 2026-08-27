@@ -27,15 +27,17 @@ M4/M5-Anwendungskern über Indexierung, Deep Map und Task Lens vollständig ohne
 und bestätigt den konstruktiv deaktivierten Embedding-Batchpfad. Der Durable Harness besitzt nun
 einen revisionierten Goal Contract, ein verifiziertes Task Ledger und ein append-only Run Journal
 mit atomarer libSQL-Materialisierung, sicherer Redaction und versioniertem JSONL-Export. Der
-allgemeine lokale `ModelProvider` besitzt begrenzte neutrale Streaming-Events, Cancellation und
+allgemeine `ModelProvider` besitzt begrenzte neutrale Streaming-Events, Cancellation und
 Gesamttimeout; sein Ollama-kompatibler Adapter erzwingt eine Local-only-Endpoint-Policy, strikte
 NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, konservative
 Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
-Aktionen freischalten. Die Desktop-Settings verwalten Ollama und den kanonischen Google-Gemini-
-Endpoint als typisierte Provider. Gemini-Schlüssel liegen ausschließlich im nativen
-Betriebssystem-Schlüsselspeicher; libSQL und IPC führen nur inhaltsfreien Status und monotone
-Generation. Modellkataloge werden nur nach expliziter Nutzeraktion begrenzt und flüchtig
+Aktionen freischalten. Die Desktop-Settings verwalten Ollama sowie die kanonischen Google-Gemini-
+und OpenAI-Endpoints als typisierte Provider. Gemini- und OpenAI-Schlüssel liegen ausschließlich
+im nativen Betriebssystem-Schlüsselspeicher; libSQL und IPC führen nur inhaltsfreien Status und
+monotone Generation. Der OpenAI-Adapter verwendet die Responses API mit deaktivierter
+Response-Speicherung, striktem JSON Schema und ohne Provider-Tools. Modellkataloge werden nur nach
+expliziter Nutzeraktion begrenzt und flüchtig
 abgefragt; Modellnamen bleiben ohne Capability-Probe nicht ausführbar. Der
 statische Promptvertrag und die allgemeine versionierte AgentAction-
 Union sind nun als kompakter budgetierter Systemvertrag, eingebettetes striktes JSON-Schema,

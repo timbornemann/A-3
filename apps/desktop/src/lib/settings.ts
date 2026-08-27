@@ -9,7 +9,7 @@ const MAX_PERSISTED_INTEGER = 9_223_372_036_854_775_807n;
 
 export type ModelEndpointScopeV1 = 'localLoopback' | 'remote';
 export type ModelEndpointAccessV1 = 'local' | 'remoteBlocked' | 'explicitUserInitiatedRemote';
-export type ModelProviderKindV1 = 'ollama' | 'gemini';
+export type ModelProviderKindV1 = 'ollama' | 'gemini' | 'openai';
 export type ProviderHealthStatusV1 =
   'notChecked' | 'healthy' | 'capabilityLimited' | 'unreachable' | 'cancelled' | 'remoteBlocked';
 export type ModelProfileActivationV1 = 'executable' | 'capabilityLimited';
@@ -268,7 +268,9 @@ export function parseProviderModelsResponseV1(payload: unknown): ProviderModelsR
       'truncated',
     ]) ||
     payload.protocolVersion !== CURRENT_PROTOCOL_VERSION ||
-    (payload.providerKind !== 'ollama' && payload.providerKind !== 'gemini') ||
+    (payload.providerKind !== 'ollama' &&
+      payload.providerKind !== 'gemini' &&
+      payload.providerKind !== 'openai') ||
     !Array.isArray(payload.modelIds) ||
     payload.modelIds.length > 256 ||
     typeof payload.settingsRevision !== 'string' ||

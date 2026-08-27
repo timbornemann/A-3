@@ -181,7 +181,7 @@
     clearCredentialInput();
     if (view.kind === 'ready' && view.settings.endpoint !== null) {
       endpointOrigin = view.settings.endpoint.origin;
-      providerKind = view.settings.endpoint.providerId === 'gemini' ? 'gemini' : 'ollama';
+      providerKind = providerKindFromId(view.settings.endpoint.providerId);
     } else {
       handleProviderKindChange(preferredKind ?? 'ollama');
     }
@@ -190,15 +190,39 @@
 
   function handleProviderKindChange(kind: ModelProviderKindV1): void {
     providerKind = kind;
-    if (kind === 'ollama') {
-      endpointOrigin = 'http://127.0.0.1:11434';
-    } else {
-      endpointOrigin = 'https://generativelanguage.googleapis.com';
-    }
+    endpointOrigin = defaultProviderOrigin(kind);
   }
 
   function providerLabel(providerId: string): string {
-    return providerId === 'gemini' ? 'Google Gemini' : 'Ollama';
+    if (providerId === 'gemini') return 'Google Gemini';
+    if (providerId === 'openai') return 'OpenAI';
+    return 'Ollama';
+  }
+
+  function providerKindFromId(providerId: string): ModelProviderKindV1 {
+    if (providerId === 'gemini') return 'gemini';
+    if (providerId === 'openai') return 'openai';
+    return 'ollama';
+  }
+
+  function defaultProviderOrigin(kind: ModelProviderKindV1): string {
+    if (kind === 'gemini') return 'https://generativelanguage.googleapis.com';
+    if (kind === 'openai') return 'https://api.openai.com';
+    return 'http://127.0.0.1:11434';
+  }
+
+  function providerInitial(providerId: string): string {
+    if (providerId === 'gemini') return 'G';
+    if (providerId === 'openai') return 'A';
+    return 'O';
+  }
+
+  function requiresApiKey(kind: ModelProviderKindV1): boolean {
+    return kind === 'gemini' || kind === 'openai';
+  }
+
+  function remoteProviderHost(providerId: string): string {
+    return providerId === 'openai' ? 'api.openai.com' : 'generativelanguage.googleapis.com';
   }
 
   async function saveProvider(endpoint: string | null): Promise<void> {
@@ -254,7 +278,7 @@
   }
 
   function captureCredentialInput(): Uint8Array | null {
-    if (providerKind !== 'gemini' || apiKeyInput === null || apiKeyInput.value.length === 0) {
+    if (!requiresApiKey(providerKind) || apiKeyInput === null || apiKeyInput.value.length === 0) {
       return null;
     }
     const encoded = new TextEncoder().encode(apiKeyInput.value);
@@ -290,7 +314,7 @@
       const catalog = await modelDiscoverer(view.settings.revision);
       if (
         catalog.settingsRevision !== view.settings.revision ||
-        (catalog.providerKind !== 'ollama' && catalog.providerKind !== 'gemini')
+        catalog.providerKind !== providerKindFromId(view.settings.endpoint?.providerId ?? '')
       ) {
         throw new Error('Provider model catalog is stale.');
       }
@@ -484,8 +508,7 @@
         title: 'Strukturiertes JSON konnte nicht verifiziert werden',
         detail:
           'A^3 hat für dieses Modell eine minimale Antwort nach einem festen JSON-Schema angefordert. Die Antwort war nicht schema-konform oder diese API-Funktion war für das Modell nicht verfügbar. Chatten kann ein Modell trotzdem – Agentenaktionen und Deep Map bleiben aber sicher gesperrt.',
-        nextStep:
-          'Wähle ein anderes Modell aus der geladenen Liste und prüfe es erneut. Bleibt der Status bei allen Modellen gleich, prüfe API-Key und Gemini-Zugriff und versuche die Prüfung später erneut.',
+        nextStep: `Wähle ein anderes Modell aus der geladenen Liste und prüfe es erneut. Bleibt der Status bei allen Modellen gleich, prüfe ${providerLabel(settings.endpoint?.providerId ?? '')}, API-Key und Verbindung und versuche die Prüfung später erneut.`,
       };
     }
     return {
@@ -601,6 +624,9 @@
     if (providerId === 'gemini') {
       return 'Die Gemini-Modelle konnten nicht abgefragt werden. Prüfe den gespeicherten API-Key und deine Internetverbindung.';
     }
+    if (providerId === 'openai') {
+      return 'Die OpenAI-Modelle konnten nicht abgefragt werden. Prüfe den gespeicherten API-Key, deinen OpenAI-Zugriff und die Internetverbindung.';
+    }
     return 'Die lokalen Modelle konnten nicht abgefragt werden. Prüfe, ob Ollama läuft, und versuche es erneut.';
   }
 
@@ -619,7 +645,7 @@
       return 'Der API-Key ist leer, zu lang oder enthält ungültige Zeichen.';
     }
     if (parsed?.code === 'providerCredentialMissing') {
-      return 'Hinterlege zuerst einen Gemini API-Key.';
+      return 'Hinterlege zuerst den API-Key des aktiven Providers.';
     }
     if (parsed?.code === 'providerCredentialRecoveryRequired') {
       return 'Der API-Key-Zustand ist unvollständig. Ersetze oder lösche den Schlüssel.';
@@ -745,13 +771,16 @@
                   <button type="button" onclick={() => openProviderDialog('create', 'gemini')}
                     >Google Gemini verwenden</button
                   >
+                  <button type="button" onclick={() => openProviderDialog('create', 'openai')}
+                    >OpenAI verwenden</button
+                  >
                 </div>
               </div>
             {:else}
               <div class="provider-list" aria-label="Aktive Providerverbindung">
                 <article class="provider-row">
                   <div class="provider-logo" aria-hidden="true">
-                    {view.settings.endpoint.providerId === 'gemini' ? 'G' : 'O'}
+                    {providerInitial(view.settings.endpoint.providerId)}
                   </div>
                   <div class="provider-summary">
                     <div>
@@ -791,16 +820,20 @@
                   </p>
                 </div>
               {/if}
-              {#if view.settings.endpoint.providerId === 'gemini' && view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
+              {#if view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
                 <div class="remote-warning" role="note">
-                  <strong>Google Gemini Cloud</strong>
+                  <strong>{providerLabel(view.settings.endpoint.providerId)} Cloud</strong>
                   <p>
                     Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
-                    <code>generativelanguage.googleapis.com</code>. Spätere Agentenläufe können
-                    Prompts und ausgewählten Quelltext nur mit einer eigenen laufgebundenen
-                    Netzwerkfreigabe an Google senden. Das Speichern des Keys erzeugt keinen
-                    Netzwerkzugriff.
+                    <code>{remoteProviderHost(view.settings.endpoint.providerId)}</code>. Spätere
+                    Agentenläufe können Prompts und ausgewählten Quelltext nur mit einer eigenen
+                    laufgebundenen Netzwerkfreigabe an {providerLabel(
+                      view.settings.endpoint.providerId,
+                    )} senden. Das Speichern des Keys erzeugt keinen Netzwerkzugriff.
                   </p>
+                  {#if view.settings.endpoint.providerId === 'openai'}
+                    <p>OpenAI-Anfragen können abhängig vom Konto und Modell Kosten verursachen.</p>
+                  {/if}
                 </div>
               {/if}
             {/if}
@@ -845,7 +878,9 @@
               </div>
             {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
               <div class="setup-pending-state">
-                <strong>Gemini API-Key erforderlich</strong>
+                <strong
+                  >{providerLabel(view.settings.endpoint.providerId)} API-Key erforderlich</strong
+                >
                 <p>Speichere oder repariere den API-Key im vorherigen Schritt.</p>
               </div>
             {:else if modelCatalog !== null}
@@ -1008,6 +1043,7 @@
           >
             <option value="ollama">Ollama</option>
             <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
           </select>
         </label>
         <label for="model-endpoint">
@@ -1020,19 +1056,19 @@
             spellcheck="false"
             autocomplete="off"
             bind:value={endpointOrigin}
-            readonly={providerKind === 'gemini'}
+            readonly={requiresApiKey(providerKind)}
             disabled={operationBusy()}
           />
         </label>
-        {#if providerKind === 'gemini'}
-          <p>Standard: <code>https://generativelanguage.googleapis.com</code></p>
+        {#if requiresApiKey(providerKind)}
+          <p>Standard: <code>{defaultProviderOrigin(providerKind)}</code></p>
           <p class="probe-explanation">
             Der API-Key wird beim Speichern direkt in den geschützten
             Betriebssystem-Schlüsselspeicher übernommen.
           </p>
           <div class="dialog-credential">
             <div>
-              <strong>Gemini API-Key</strong>
+              <strong>{providerLabel(providerKind)} API-Key</strong>
               <span
                 role="status"
                 aria-live="polite"
@@ -1044,10 +1080,10 @@
                   : 'API-Key wird beim Speichern geschützt abgelegt'}
               </span>
             </div>
-            <label for="gemini-api-key">
+            <label for="provider-api-key">
               API-Key
               <input
-                id="gemini-api-key"
+                id="provider-api-key"
                 bind:this={apiKeyInput}
                 type="password"
                 maxlength="4096"
@@ -1115,8 +1151,11 @@
       >
     </div>
     <p>Der Provider-Endpunkt und seine API-Verbindung werden aus den Einstellungen entfernt.</p>
-    {#if view.kind === 'ready' && view.settings.endpoint?.providerId === 'gemini'}
-      <p>Der gespeicherte Gemini API-Key wird zuerst aus dem OS-Schlüsselspeicher gelöscht.</p>
+    {#if view.kind === 'ready' && view.settings.endpoint?.access === 'explicitUserInitiatedRemote'}
+      <p>
+        Der gespeicherte {providerLabel(view.settings.endpoint.providerId)} API-Key wird zuerst aus dem
+        OS-Schlüsselspeicher gelöscht.
+      </p>
     {/if}
     <div class="modal-actions">
       <button type="button" onclick={() => (providerDialog = 'closed')}>Abbrechen</button>
@@ -1140,8 +1179,11 @@
   >
     <div class="modal-heading">
       <div>
-        <h3 id="delete-credential-heading">Gemini API-Key löschen?</h3>
-        <p>Gemini-Modellerkennung und Capability-Prüfungen werden danach deaktiviert.</p>
+        <h3 id="delete-credential-heading">{providerLabel(providerKind)} API-Key löschen?</h3>
+        <p>
+          {providerLabel(providerKind)}-Modellerkennung und Capability-Prüfungen werden danach
+          deaktiviert.
+        </p>
       </div>
       <button
         type="button"

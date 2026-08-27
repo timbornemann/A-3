@@ -715,6 +715,24 @@ strukturierte Ausgabe verwendet `responseJsonSchema`, und abgekündigte Embeddin
 fest codiert. Discovery und Probe bleiben explizite Nutzeraktionen; Speichern allein kontaktiert
 Google nicht.
 
+Erweiterung vom 2026-08-27: ADR-0032 ergänzt OpenAI über den ausschließlich zulässigen Origin
+`https://api.openai.com`. Der native Adapter verwendet die Responses API mit `store: false`,
+deaktivierten Provider-Tools, striktem JSON Schema und begrenztem SSE-Parser sowie Models- und
+Embeddings-API. OpenAI-Keys durchlaufen denselben one-way CAS-/OS-Keyring-Lifecycle wie Gemini,
+bleiben aber unter der Provider-ID `openai` isoliert. Die Settings-Oberfläche zeigt Remote- und
+Kostenhinweis, lädt Modelle nur nach ausdrücklichem Klick und aktiviert Coding oder Mapping erst
+nach einer echten Structured-Output-Probe sowie Embeddings erst nach einer validierten
+Dimensionsprobe. Der produktive Deep-Map-Composition-Root rekonstruiert OpenAI ausschließlich aus
+revisionsgebundenem Endpoint, Credential und ausführbarem Mappingprofil.
+
+Abnahme der OpenAI-Erweiterung vom 2026-08-27: Neunzehn Provider-Unittests, dreizehn Ollama-,
+dreizehn Gemini- und neun OpenAI-Offline-Contracts sind grün; die beiden echten Provider-Smokes
+bleiben ignoriert und ausdrücklich opt-in. Der vollständige Rust-Workspace-Test, Rustfmt,
+Workspace-Clippy und Rustdoc mit verweigerten Warnungen sowie Prettier, ESLint, Svelte-Typecheck,
+225 Frontendtests, Tooltests, Produktionsbuild und Markdown-Linkprüfung bestehen. Ein unabhängiger
+Windows-libSQL-Contract benötigte nach einem `STATUS_ACCESS_VIOLATION` einen isolierten grünen
+Wiederholungslauf; der anschließend wiederholte vollständige Workspace-Test war grün.
+
 UX-Korrektur vom 2026-08-22: Die zweite vertikale Settings-Sidebar wird durch eine kompakte
 horizontale Bereichsnavigation ersetzt. Provider und Modelle bilden nun den gemeinsamen Bereich
 `KI & Modelle` mit dem sichtbaren Ablauf Provider verbinden und dabei die Modellliste einmal

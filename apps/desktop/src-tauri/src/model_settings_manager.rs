@@ -28,7 +28,8 @@ use a3_protocol::{
 use a3_provider::{
     GeminiEndpoint, GeminiEndpointPolicy, GeminiModelProvider, GeminiSettingsEndpointValidator,
     LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider,
-    OllamaSettingsEndpointValidator, StandardGeminiEndpointPolicy,
+    OllamaSettingsEndpointValidator, OpenAiEndpoint, OpenAiEndpointPolicy, OpenAiModelProvider,
+    OpenAiSettingsEndpointValidator, StandardGeminiEndpointPolicy, StandardOpenAiEndpointPolicy,
 };
 use futures::task::AtomicWaker;
 use std::fmt;
@@ -89,7 +90,8 @@ impl ModelSettingsManager {
         }
         let switching_away_from_credential = current.settings().endpoint().is_some_and(|current| {
             current.credential_requirement() == ProviderCredentialRequirement::ApiKey
-                && (endpoint.is_none() || provider_kind != ModelProviderKindV1::Gemini)
+                && (endpoint.is_none()
+                    || current.provider_id().as_str() != provider_kind_id(provider_kind))
         });
         let expected = if switching_away_from_credential {
             DeleteDesktopProviderCredential::new(
@@ -106,6 +108,7 @@ impl ModelSettingsManager {
         let validator: Arc<dyn a3_application::ModelEndpointValidator> = match provider_kind {
             ModelProviderKindV1::Ollama => Arc::new(OllamaSettingsEndpointValidator),
             ModelProviderKindV1::Gemini => Arc::new(GeminiSettingsEndpointValidator),
+            ModelProviderKindV1::OpenAi => Arc::new(OpenAiSettingsEndpointValidator),
         };
         let stored = ConfigureDesktopModelEndpoint::new(Arc::clone(&self.store), validator)
             .execute(expected, endpoint)
@@ -260,6 +263,33 @@ impl ModelSettingsManager {
                     catalog.truncated(),
                 ))
             }
+            "openai" => {
+                let endpoint = OpenAiEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                StandardOpenAiEndpointPolicy
+                    .authorize(&endpoint)
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let key = self.load_provider_api_key(current.settings()).await?;
+                let provider =
+                    OpenAiModelProvider::new(endpoint, Arc::new(StandardOpenAiEndpointPolicy), key)
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                let catalog = DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+                    .map_err(map_model_operation_error)?;
+                Ok(ProviderModelsResponseV1::new(
+                    current.version().get().to_string(),
+                    ModelProviderKindV1::OpenAi,
+                    catalog
+                        .model_ids()
+                        .iter()
+                        .map(|model| model.as_str().to_owned())
+                        .collect(),
+                    catalog.truncated(),
+                ))
+            }
             _ => Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid)),
         }
     }
@@ -313,6 +343,23 @@ impl ModelSettingsManager {
                 let key = self.load_provider_api_key(current.settings()).await?;
                 let provider =
                     GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
+                        .map_err(|_| {
+                            CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
+                        })?;
+                self.execute_probe(
+                    &provider, &provider, expected, request, timeout, recorder, control,
+                )
+                .await
+            }
+            "openai" => {
+                let endpoint = OpenAiEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                StandardOpenAiEndpointPolicy
+                    .authorize(&endpoint)
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                let key = self.load_provider_api_key(current.settings()).await?;
+                let provider =
+                    OpenAiModelProvider::new(endpoint, Arc::new(StandardOpenAiEndpointPolicy), key)
                         .map_err(|_| {
                             CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable)
                         })?;
@@ -453,16 +500,14 @@ impl ModelSettingsManager {
             .settings()
             .endpoint()
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        if endpoint.provider_id().as_str() != "gemini"
-            || endpoint.access() != ModelEndpointAccess::ExplicitUserInitiatedRemote
-        {
+        if endpoint.access() != ModelEndpointAccess::ExplicitUserInitiatedRemote {
             return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
         }
-        let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
-        StandardGeminiEndpointPolicy
-            .authorize(&endpoint)
-            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))
+        if credential_origin_is_authorized(endpoint) {
+            Ok(())
+        } else {
+            Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))
+        }
     }
 
     fn release_probe(&self, completed: &Arc<ProbeCancellation>) {
@@ -634,10 +679,7 @@ async fn credential_projection(
     if endpoint.credential_requirement() == ProviderCredentialRequirement::None {
         return None;
     }
-    let authorized_origin = endpoint.provider_id().as_str() == "gemini"
-        && GeminiEndpoint::parse(endpoint.canonical_origin())
-            .ok()
-            .is_some_and(|candidate| StandardGeminiEndpointPolicy.authorize(&candidate).is_ok());
+    let authorized_origin = credential_origin_is_authorized(endpoint);
     if !authorized_origin {
         return Some(ProviderCredentialV1::api_key(
             ProviderCredentialStatusV1::RecoveryRequired,
@@ -670,6 +712,26 @@ async fn credential_projection(
         }
     };
     Some(ProviderCredentialV1::api_key(status))
+}
+
+const fn provider_kind_id(kind: ModelProviderKindV1) -> &'static str {
+    match kind {
+        ModelProviderKindV1::Ollama => "ollama",
+        ModelProviderKindV1::Gemini => "gemini",
+        ModelProviderKindV1::OpenAi => "openai",
+    }
+}
+
+fn credential_origin_is_authorized(endpoint: &a3_application::ConfiguredModelEndpoint) -> bool {
+    match endpoint.provider_id().as_str() {
+        "gemini" => GeminiEndpoint::parse(endpoint.canonical_origin())
+            .ok()
+            .is_some_and(|candidate| StandardGeminiEndpointPolicy.authorize(&candidate).is_ok()),
+        "openai" => OpenAiEndpoint::parse(endpoint.canonical_origin())
+            .ok()
+            .is_some_and(|candidate| StandardOpenAiEndpointPolicy.authorize(&candidate).is_ok()),
+        _ => false,
+    }
 }
 
 fn map_settings(
@@ -1053,6 +1115,41 @@ mod tests {
             assert_eq!(
                 configured_json["settings"]["endpoint"]["origin"],
                 "https://generativelanguage.googleapis.com"
+            );
+            assert_eq!(
+                configured_json["settings"]["providerHealth"]["status"],
+                "notChecked"
+            );
+            assert_eq!(
+                configured_json["settings"]["credential"]["status"],
+                "missing"
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn openai_provider_can_be_configured() -> Result<(), Box<dyn std::error::Error>> {
+        futures::executor::block_on(async {
+            let store: Arc<dyn DesktopSettingsStore> = Arc::new(MemoryStore::new());
+            let manager = manager(store);
+            let configured = manager
+                .configure_provider(
+                    DesktopSettingsStoreVersion::initial(),
+                    ModelProviderKindV1::OpenAi,
+                    Some("https://api.openai.com"),
+                )
+                .await
+                .map_err(|error| format!("openai configuration failed: {:?}", error.code()))?;
+            let configured_json = serde_json::to_value(configured)?;
+            assert_eq!(configured_json["settings"]["endpoint"]["scope"], "remote");
+            assert_eq!(
+                configured_json["settings"]["endpoint"]["providerId"],
+                "openai"
+            );
+            assert_eq!(
+                configured_json["settings"]["endpoint"]["origin"],
+                "https://api.openai.com"
             );
             assert_eq!(
                 configured_json["settings"]["providerHealth"]["status"],

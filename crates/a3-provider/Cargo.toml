@@ -1,6 +1,6 @@
 [package]
 name = "a3-provider"
-description = "Local model-provider adapters for A^3"
+description = "Native model-provider adapters for A^3"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
