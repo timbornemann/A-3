@@ -259,6 +259,56 @@ describe('U12 progressive Code Atlas workspace', () => {
     });
   });
 
+  it('retries a failed semantic zoom at the same entity instead of returning to project level', async () => {
+    const { props } = renderWorkspace();
+    await screen.findByRole('button', { name: /a3-application, Package/ });
+    vi.mocked(props.atlasSceneLoader).mockRejectedValueOnce(new Error('transient read failure'));
+
+    await fireEvent.click(screen.getByRole('button', { name: /a3-application, Package/ }));
+    await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
+    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    expect(await screen.findByText('Der Atlas konnte nicht sicher geladen werden.')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
+    expect(await screen.findByRole('button', { name: /lib.rs, Datei/ })).toBeTruthy();
+    expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(moduleSelection);
+  });
+
+  it('can recover to the project overview when a focused Atlas scene remains invalid', async () => {
+    const { props } = renderWorkspace();
+    await screen.findByRole('button', { name: /a3-application, Package/ });
+    vi.mocked(props.atlasSceneLoader).mockImplementation(async (selection) => {
+      if (selection !== null) {
+        throw new Error('invalid focused projection');
+      }
+      return {
+        protocolVersion: 1,
+        result: { scene: scene(null), status: 'available' },
+      };
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: /a3-application, Package/ }));
+    await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
+    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    expect(await screen.findByText('Der Atlas konnte nicht sicher geladen werden.')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Zur Projektübersicht' }));
+    expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
+    expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(null);
+  });
+
+  it('returns through the breadcrumb after a successful semantic zoom', async () => {
+    const { props } = renderWorkspace();
+    await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Package/ }));
+    await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
+    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    await screen.findByRole('button', { name: /lib.rs, Datei/ });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Projekt' }));
+    expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
+    expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(null);
+  });
+
   it('submits search explicitly and starts the fixed Standard Deep Map preset', async () => {
     const { props } = renderWorkspace();
     const input = await screen.findByRole('searchbox', { name: 'Code durchsuchen' });

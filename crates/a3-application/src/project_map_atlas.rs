@@ -2299,7 +2299,11 @@ impl<'a> AtlasIndex<'a> {
         let Some(module) = self.primary_module(module_id) else {
             return Ok(None);
         };
-        let symbols = self.ranked_file_symbols(file.revision.path());
+        let symbols = self
+            .ranked_file_symbols(file.revision.path())
+            .into_iter()
+            .filter(|symbol| self.primary_modules.get(&symbol.id()).copied() == Some(module_id))
+            .collect::<Vec<_>>();
         let node_count = count(symbols.len())?;
         let selected_symbols = symbols
             .iter()
@@ -2417,7 +2421,11 @@ impl<'a> AtlasIndex<'a> {
                 _ => None,
             };
             let Some(neighbor) = neighbor else { continue };
-            if !is_symbol_scene_relation(edge.kind()) || !self.symbols.contains_key(&neighbor) {
+            if neighbor == root.id()
+                || !is_symbol_scene_relation(edge.kind())
+                || !self.symbols.contains_key(&neighbor)
+                || !self.primary_modules.contains_key(&neighbor)
+            {
                 continue;
             }
             let facts = candidates.entry(neighbor).or_insert(NeighborFacts {
@@ -3040,6 +3048,7 @@ impl<'a> AtlasIndex<'a> {
         let landmarks = self
             .ranked_file_symbols(file.revision.path())
             .into_iter()
+            .filter(|symbol| self.primary_modules.get(&symbol.id()).copied() == Some(module_id))
             .take(3)
             .map(|symbol| symbol.parsed().name().as_str())
             .collect::<Vec<_>>()

@@ -957,7 +957,9 @@ Akzeptanz:
 
 - Nutzer können ohne Unterseiten vom Projekt in ein Modul, von dort in eine Datei und weiter zu
   einem Typ oder zentralen Symbol zoomen; Klick wählt, Enter, Doppelklick oder `Öffnen` vertieft,
-  Escape und Breadcrumb navigieren zurück;
+  Escape und Breadcrumb navigieren zurück; Selbstrelationen eines Namespace-/Modulsymbols
+  duplizieren niemals das fokussierte Zentrum, und ein abgewiesener Detail-Read bietet neben dem
+  gebundenen Retry immer den sicheren Rückweg zur weiterhin aktuellen Projektübersicht;
 - Projekt-, Modul-, Datei- und Symbolebene halten die festen Grenzen 64/128, 32 Dateien,
   48 Symbole sowie Zentrum plus 31 direkte Nachbarn ein; 16 Boundary-Stubs und 31 Flow-Ziele sind
   zusätzliche feste Obergrenzen;
@@ -966,6 +968,12 @@ Akzeptanz:
 - sämtliche ausgelieferten Gesamtzahlen, nicht zugeordneten oder ungelösten Ziele,
   Inspektionsgrenzen und Trunkierungen bleiben sichtbar; die WebView erhält niemals einen
   Vollgraph;
+- die Karte routet die 24 stärksten Übersichtskanten und bei Auswahl bis zu 32 relevante inzidente
+  Kanten über deterministische, rechtwinklige Korridore; vollständige Relationszahlen bleiben im
+  Read-Model und Inspector erhalten;
+- die Kartenfläche lässt sich zusätzlich zu den Scrollleisten durch Ziehen verschieben und per
+  Mausrad am Zeigerpunkt zwischen 50 und 200 Prozent zoomen; die nichtgrafische Zusammenfassung
+  bleibt als viewport-festes Fenster unten links unabhängig von Pan und Zoom erreichbar;
 - Inventare halten genau eine feste 50er-Seite im Renderzustand und akzeptieren nur einen aktuellen,
   publikations- und scopegebundenen Cursor;
 - File-, Symbol-, Kanten- und Boundary-Auswahlen tragen nur dann Claim-Badges, wenn ihre aktuelle

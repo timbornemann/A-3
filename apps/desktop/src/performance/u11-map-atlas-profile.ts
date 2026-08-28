@@ -15,10 +15,13 @@ const MODULE_COUNT = 64;
 const FILE_COUNT = 32;
 const SYMBOL_COUNT = 48;
 const ROUTE_COUNT = 128;
+const VISIBLE_ROUTE_COUNT = 24;
+const SELECTED_ROUTE_COUNT = 32;
 const FLOW_TARGET_COUNT = 31;
 const EVENT_COUNT = 32;
 const DOM_NODE_LIMIT = 1_500;
 const UI_BLOCK_BUDGET_MS = 100;
+const PREVIEW_ONLY = new URLSearchParams(window.location.search).has('preview');
 
 interface ProfileResult {
   budgetMs: number;
@@ -28,6 +31,7 @@ interface ProfileResult {
   feedEvents: number;
   fixtureFileCount: number;
   fixtureFlowTargetCount: number;
+  fixtureRouteCount: number;
   fixtureSymbolCount: number;
   longTaskCount: number;
   maxLongTaskMs: number;
@@ -35,6 +39,7 @@ interface ProfileResult {
   mountMs: number;
   panMs: number;
   routeCount: number;
+  selectedRouteCount: number;
   selectionMs: number;
   semanticZoomMs: number;
   status: 'pass' | 'fail';
@@ -93,23 +98,36 @@ function fileNode(moduleId: string, index: number): ProjectMapAtlasNodeV1 {
 const projectNodes = Array.from({ length: MODULE_COUNT }, (_, index) => moduleNode(index));
 const projectRelations: ProjectMapAtlasRelationV1[] = Array.from(
   { length: ROUTE_COUNT },
-  (_, index) => ({
-    claimBadgeCount: index % 7 === 0 ? 1 : 0,
-    confidenceBasisPoints: 10_000 - (index % 8) * 250,
-    evidence: {
-      edgeSequence: String(index),
-      evidenceId: stableId(40_001 + index),
-      kind: 'relation',
-      moduleId: projectNodes[index % MODULE_COUNT].selection!.moduleId,
-    },
-    evidenceCount: String(1 + (index % 4)),
-    provider: 'treeSitter',
-    relation: index < MODULE_COUNT ? 'imports' : 'exports',
-    sourceNodeId: projectNodes[index % MODULE_COUNT].nodeId,
-    targetNodeId:
-      projectNodes[(index + 1 + Math.floor(index / MODULE_COUNT)) % MODULE_COUNT].nodeId,
-    uncertainty: null,
-  }),
+  (_, index) => {
+    const sourceIndex =
+      index < MODULE_COUNT - 1
+        ? 0
+        : index === MODULE_COUNT - 1
+          ? MODULE_COUNT - 1
+          : (index - MODULE_COUNT) % MODULE_COUNT;
+    const targetIndex =
+      index < MODULE_COUNT - 1
+        ? index + 1
+        : index === MODULE_COUNT - 1
+          ? 0
+          : (sourceIndex + 1) % MODULE_COUNT;
+    return {
+      claimBadgeCount: index % 7 === 0 ? 1 : 0,
+      confidenceBasisPoints: 10_000 - (index % 8) * 250,
+      evidence: {
+        edgeSequence: String(index),
+        evidenceId: stableId(40_001 + index),
+        kind: 'relation',
+        moduleId: projectNodes[sourceIndex].selection!.moduleId,
+      },
+      evidenceCount: String(1 + (index % 4)),
+      provider: 'treeSitter',
+      relation: index < MODULE_COUNT ? 'imports' : 'exports',
+      sourceNodeId: projectNodes[sourceIndex].nodeId,
+      targetNodeId: projectNodes[targetIndex].nodeId,
+      uncertainty: null,
+    };
+  },
 );
 
 function scene(selection: ProjectMapEntitySelectionV1 | null): ProjectMapAtlasSceneV1 {
@@ -307,10 +325,17 @@ async function runProfile(): Promise<void> {
   await nextFrame();
   const moduleCount = document.querySelectorAll('.atlas-node').length;
   const routeCount = document.querySelectorAll('.route').length;
+  if (PREVIEW_ONLY) {
+    observer?.disconnect();
+    status.textContent = 'Atlas-Vorschau bereit.';
+    document.documentElement.dataset.profileStatus = 'preview';
+    return;
+  }
 
   const selectionMs = await mainThreadDuration(() =>
     requiredElement<HTMLButtonElement>('.atlas-node').click(),
   );
+  const selectedRouteCount = document.querySelectorAll('.route').length;
   const semanticZoomMs = await mainThreadDuration(() =>
     requiredElement<HTMLButtonElement>('.inspector .primary').click(),
   );
@@ -338,7 +363,8 @@ async function runProfile(): Promise<void> {
     maxLongTaskMs <= UI_BLOCK_BUDGET_MS &&
     domNodeCount <= DOM_NODE_LIMIT &&
     moduleCount === MODULE_COUNT &&
-    routeCount === ROUTE_COUNT &&
+    routeCount === VISIBLE_ROUTE_COUNT &&
+    selectedRouteCount === SELECTED_ROUTE_COUNT &&
     feedEvents === EVENT_COUNT;
   const result: ProfileResult = {
     budgetMs: UI_BLOCK_BUDGET_MS,
@@ -348,6 +374,7 @@ async function runProfile(): Promise<void> {
     feedEvents,
     fixtureFileCount: FILE_COUNT,
     fixtureFlowTargetCount: FLOW_TARGET_COUNT,
+    fixtureRouteCount: ROUTE_COUNT,
     fixtureSymbolCount: SYMBOL_COUNT,
     longTaskCount: longTasks.length,
     maxLongTaskMs: rounded(maxLongTaskMs),
@@ -355,6 +382,7 @@ async function runProfile(): Promise<void> {
     mountMs: rounded(mountMs),
     panMs: rounded(panMs),
     routeCount,
+    selectedRouteCount,
     selectionMs: rounded(selectionMs),
     semanticZoomMs: rounded(semanticZoomMs),
     status: passes ? 'pass' : 'fail',

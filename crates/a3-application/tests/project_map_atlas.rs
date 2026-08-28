@@ -3,12 +3,13 @@
 use a3_application::{
     ModuleCardClaimPresentation, ModuleCardClaimState, ModuleCardDetail, ModuleCardDetailField,
     ModuleCardLifecycle, ModuleCardValuePresentation, ProjectMapAtlasLevel,
-    ProjectMapAtlasModuleInsight, ProjectMapAtlasSceneQuery, ProjectMapEntitySelection,
-    ProjectMapFlowPreset, ProjectMapFlowSceneQuery, ProjectMapIndexEvidenceSelection,
-    ProjectMapInventoryPageQuery, ProjectMapInventoryView, build_project_map_atlas_scene,
-    build_project_map_atlas_scene_with_insights, build_project_map_entity_context,
-    build_project_map_entity_context_with_insights, build_project_map_flow_scene,
-    build_project_map_inventory_page, resolve_project_map_index_evidence,
+    ProjectMapAtlasModuleInsight, ProjectMapAtlasNodeKind, ProjectMapAtlasSceneQuery,
+    ProjectMapEntitySelection, ProjectMapFlowPreset, ProjectMapFlowSceneQuery,
+    ProjectMapIndexEvidenceSelection, ProjectMapInventoryPageQuery, ProjectMapInventoryView,
+    build_project_map_atlas_scene, build_project_map_atlas_scene_with_insights,
+    build_project_map_entity_context, build_project_map_entity_context_with_insights,
+    build_project_map_flow_scene, build_project_map_inventory_page,
+    resolve_project_map_index_evidence,
 };
 use a3_domain::{
     Centrality, Confidence, ContentHash, EvidenceRef, FileRevision, GraphEdge, GraphEndpoint,
@@ -85,6 +86,34 @@ fn progressive_scenes_rank_and_revalidate_every_semantic_level() -> Result<(), B
     .ok_or("missing inventory page")?;
     assert_eq!(page.items().len(), 2);
     assert_eq!(page.total_count(), 2);
+    Ok(())
+}
+
+#[test]
+fn namespace_scene_ignores_self_edges() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::namespace_with_self_edge()?;
+    let namespace_selection = ProjectMapEntitySelection::Symbol {
+        module_id: fixture.module,
+        symbol_id: fixture.root,
+        evidence_id: ModuleCardEvidenceId::for_symbol_id_v1(fixture.root),
+    };
+
+    let scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(namespace_selection)),
+    )?
+    .ok_or("missing namespace scene")?;
+
+    assert_eq!(scene.level(), ProjectMapAtlasLevel::Symbol);
+    assert_eq!(
+        scene
+            .nodes()
+            .iter()
+            .filter(|node| node.selection() == Some(namespace_selection))
+            .count(),
+        1
+    );
+    assert_eq!(scene.nodes()[0].kind(), ProjectMapAtlasNodeKind::Namespace);
     Ok(())
 }
 
@@ -220,6 +249,14 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self, Box<dyn Error>> {
+        Self::build(SymbolKind::Class, false)
+    }
+
+    fn namespace_with_self_edge() -> Result<Self, Box<dyn Error>> {
+        Self::build(SymbolKind::Module, true)
+    }
+
+    fn build(root_kind: SymbolKind, include_self_edge: bool) -> Result<Self, Box<dyn Error>> {
         let snapshot = SnapshotId::from_bytes([1; 32]);
         let manifest = revision("Cargo.toml", 2)?;
         let source = revision("src/lib.rs", 3)?;
@@ -227,7 +264,7 @@ impl Fixture {
         let root = SymbolId::from_bytes([10; 32]);
         let member = SymbolId::from_bytes([11; 32]);
         let test = SymbolId::from_bytes([12; 32]);
-        let root_symbol = symbol(root, source.clone(), 1, SymbolKind::Class, "Atlas")?
+        let root_symbol = symbol(root, source.clone(), 1, root_kind, "Atlas")?
             .with_visibility(SymbolVisibility::Public)
             .with_role(SymbolRole::Entrypoint);
         let member_symbol = symbol(member, source.clone(), 2, SymbolKind::Method, "run")?
@@ -280,6 +317,18 @@ impl Fixture {
             snapshot,
             EvidenceRef::new(tests.clone(), range),
         ));
+        if include_self_edge {
+            edges.push(GraphEdge::new(
+                GraphEndpoint::Symbol(root),
+                GraphEndpoint::Symbol(root),
+                SyntaxRelationKind::Contains,
+                SyntaxProvider::TreeSitter,
+                Confidence::certain(),
+                LinkResolution::AdapterLocalSymbol,
+                snapshot,
+                EvidenceRef::new(source.clone(), range),
+            ));
+        }
         let unresolved = UnresolvedEdgeCandidate::new(
             GraphEndpoint::Symbol(root),
             UnresolvedGraphTarget::Reference(SymbolReference::try_from_string(

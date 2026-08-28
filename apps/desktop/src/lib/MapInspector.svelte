@@ -56,6 +56,15 @@
     return null;
   }
 
+  function uniqueNodes(nodes: readonly ProjectMapAtlasNodeV1[]): ProjectMapAtlasNodeV1[] {
+    const seen: string[] = [];
+    return nodes.filter((node) => {
+      if (seen.includes(node.nodeId)) return false;
+      seen.push(node.nodeId);
+      return true;
+    });
+  }
+
   const flowPresets: { label: string; preset: ProjectMapFlowPresetV1 }[] = [
     { label: 'Aufrufer', preset: 'callers' },
     { label: 'Aufrufe', preset: 'callees' },
@@ -127,12 +136,12 @@
       {:else if context.kind === 'unavailable'}<p>{context.message}</p>
       {:else if context.kind === 'available'}
         <div class="relation-counts">
-          {#each context.value.relationCounts as count (`${count.relation}:${count.incoming}:${count.outgoing}`)}
+          {#each context.value.relationCounts as count, index (`${count.relation}:${index}`)}
             <span><strong>{count.relation}</strong> ← {count.incoming} · → {count.outgoing}</span>
           {:else}<span>Keine direkten Relationen.</span>{/each}
         </div>
         <ul class="entity-list">
-          {#each context.value.relatedNodes as node (node.nodeId)}
+          {#each uniqueNodes(context.value.relatedNodes) as node (node.nodeId)}
             <li>
               <button type="button" onclick={() => onselect(node)}
                 ><span>{node.kind}</span><strong>{node.displayName}</strong></button
@@ -143,7 +152,7 @@
         {#if context.value.architectureRelations.length > 0}
           <h4>Architekturrouten</h4>
           <ul class="route-list">
-            {#each context.value.architectureRelations as relation (`${relation.sourceNodeId}:${relation.targetNodeId}:${relation.relation}`)}
+            {#each context.value.architectureRelations as relation, index (`${relation.sourceNodeId}:${relation.targetNodeId}:${relation.relation}:${index}`)}
               <li>
                 <span>{relation.relation}</span>
                 <strong>{relation.evidenceCount} Evidence</strong>
@@ -188,7 +197,7 @@
       {:else if inventory.kind === 'available'}
         <p>Seite {inventory.value.pageNumber} · {inventory.value.totalCount} Einträge</p>
         <ul class="entity-list inventory">
-          {#each inventory.value.items as node (node.nodeId)}<li>
+          {#each uniqueNodes(inventory.value.items) as node (node.nodeId)}<li>
               <button type="button" onclick={() => onselect(node)}
                 ><span>{node.kind}</span><strong>{node.displayName}</strong></button
               >
@@ -225,7 +234,7 @@
       {:else if flow.kind === 'available'}
         <p>{flow.value.targetCount} Ziele · {flow.value.preset}</p>
         <ul class="entity-list">
-          {#each flow.value.nodes as node (node.nodeId)}<li>
+          {#each uniqueNodes(flow.value.nodes) as node (node.nodeId)}<li>
               <button type="button" onclick={() => onselect(node)}
                 ><span>{node.kind}</span><strong>{node.displayName}</strong></button
               >

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutAtlasNodes, type AtlasRect } from './map-atlas-layout';
+import { atlasRelationKey, layoutAtlasNodes, type AtlasRect } from './map-atlas-layout';
 import type { ProjectMapAtlasNodeV1, ProjectMapAtlasRelationV1 } from './project-map-atlas';
 
 const node = (rank: number, volume: string, kind: ProjectMapAtlasNodeV1['kind'] = 'file') =>
@@ -28,6 +28,7 @@ describe('deterministic relation-aware Atlas layout', () => {
     const second = layoutAtlasNodes([...nodes].reverse(), [...relations].reverse(), 1_200, 640);
 
     expect([...first.byId]).toEqual([...second.byId]);
+    expect([...first.routes]).toEqual([...second.routes]);
     expect(first.byId.get(nodes[0].nodeId)?.x).toBeLessThan(
       first.byId.get(nodes[1].nodeId)?.x ?? 0,
     );
@@ -85,6 +86,37 @@ describe('deterministic relation-aware Atlas layout', () => {
       layout.byId.get(unconnected.nodeId)?.x ?? 0,
     );
   });
+
+  it('routes a branched graph through angular tracks without crossing unrelated cards', () => {
+    const nodes = Array.from({ length: 6 }, (_, index) => node(index + 1, String(index + 1)));
+    const relations = [
+      relation(nodes[0], nodes[1]),
+      relation(nodes[0], nodes[2]),
+      relation(nodes[1], nodes[3]),
+      relation(nodes[2], nodes[3]),
+      relation(nodes[3], nodes[4]),
+      relation(nodes[2], nodes[5]),
+    ];
+    const layout = layoutAtlasNodes(nodes, relations, 1_280, 720);
+
+    for (const edge of relations) {
+      const route = layout.routes.get(atlasRelationKey(edge));
+      expect(route?.d).toMatch(/^M [0-9.]+ [0-9.]+(?: [HVL] [0-9.]+(?: [0-9.]+)?)+$/);
+      expect(route?.d).not.toMatch(/[CQ]/);
+      if (route === undefined) continue;
+      for (const candidate of nodes) {
+        if (candidate.nodeId === edge.sourceNodeId || candidate.nodeId === edge.targetNodeId)
+          continue;
+        const rect = layout.byId.get(candidate.nodeId);
+        if (rect === undefined) continue;
+        for (let index = 1; index < route.points.length; index += 1) {
+          expect(segmentCrossesInterior(route.points[index - 1], route.points[index], rect)).toBe(
+            false,
+          );
+        }
+      }
+    }
+  });
 });
 
 function overlaps(left: AtlasRect, right: AtlasRect): boolean {
@@ -94,4 +126,28 @@ function overlaps(left: AtlasRect, right: AtlasRect): boolean {
     left.y + left.height <= right.y ||
     right.y + right.height <= left.y
   );
+}
+
+function segmentCrossesInterior(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+  rect: AtlasRect,
+): boolean {
+  if (source.x === target.x) {
+    return (
+      source.x > rect.x &&
+      source.x < rect.x + rect.width &&
+      Math.max(source.y, target.y) > rect.y &&
+      Math.min(source.y, target.y) < rect.y + rect.height
+    );
+  }
+  if (source.y === target.y) {
+    return (
+      source.y > rect.y &&
+      source.y < rect.y + rect.height &&
+      Math.max(source.x, target.x) > rect.x &&
+      Math.min(source.x, target.x) < rect.x + rect.width
+    );
+  }
+  return true;
 }

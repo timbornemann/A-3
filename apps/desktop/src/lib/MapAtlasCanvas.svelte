@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { layoutAtlasNodes } from './map-atlas-layout';
-  import type { AtlasRect } from './map-atlas-layout';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { atlasRelationKey, layoutAtlasNodes } from './map-atlas-layout';
   import type {
     ProjectMapAtlasNodeV1,
     ProjectMapAtlasRelationV1,
@@ -20,7 +19,25 @@
   let host: HTMLDivElement;
   let width = $state(900);
   let height = $state(620);
-  const layout = $derived(layoutAtlasNodes(scene.nodes, scene.relations, width, height));
+  let zoom = $state(1);
+  let dragging = $state(false);
+  let selectionTimer: ReturnType<typeof setTimeout> | null = null;
+  let dragState:
+    | {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        startScrollLeft: number;
+        startScrollTop: number;
+      }
+    | undefined;
+  const visibleRelations = $derived.by(() => {
+    if (selectedNodeId === null) return scene.relations.slice(0, 24);
+    return scene.relations.filter((relation) => isIncident(relation)).slice(0, 32);
+  });
+  const layout = $derived(
+    layoutAtlasNodes(scene.nodes, scene.relations, width, height, visibleRelations),
+  );
   const nodesById = $derived(new Map(scene.nodes.map((node) => [node.nodeId, node])));
   const connectedNodeIds = $derived(
     new Set(scene.relations.flatMap((relation) => [relation.sourceNodeId, relation.targetNodeId])),
@@ -48,74 +65,8 @@
     return () => observer.disconnect();
   });
 
-  interface RoutedPath {
-    d: string;
-    labelX: number;
-    labelY: number;
-  }
-
-  function route(relation: ProjectMapAtlasRelationV1, index: number): RoutedPath {
-    const sourceRect = layout.byId.get(relation.sourceNodeId);
-    const targetRect = layout.byId.get(relation.targetNodeId);
-    if (sourceRect === undefined || targetRect === undefined) {
-      return { d: '', labelX: 0, labelY: 0 };
-    }
-    const sourceCenter = center(sourceRect);
-    const targetCenter = center(targetRect);
-    const horizontal =
-      Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y);
-    const laneOffset = ((index % 7) - 3) * 3;
-    if (horizontal) {
-      const forward = targetCenter.x >= sourceCenter.x;
-      const source = {
-        x: forward ? sourceRect.x + sourceRect.width : sourceRect.x,
-        y: sourceCenter.y + laneOffset,
-      };
-      const target = {
-        x: forward ? targetRect.x : targetRect.x + targetRect.width,
-        y: targetCenter.y - laneOffset,
-      };
-      if (forward) {
-        const bend = Math.max(36, (target.x - source.x) * 0.48);
-        return {
-          d: `M ${source.x} ${source.y} C ${source.x + bend} ${source.y}, ${target.x - bend} ${target.y}, ${target.x} ${target.y}`,
-          labelX: (source.x + target.x) / 2,
-          labelY: (source.y + target.y) / 2 - 7,
-        };
-      }
-      const gutter =
-        Math.max(sourceRect.x + sourceRect.width, targetRect.x + targetRect.width) +
-        32 +
-        (index % 5) * 8;
-      return {
-        d: `M ${source.x} ${source.y} C ${gutter} ${source.y}, ${gutter} ${target.y}, ${target.x} ${target.y}`,
-        labelX: gutter,
-        labelY: (source.y + target.y) / 2,
-      };
-    }
-    const downward = targetCenter.y >= sourceCenter.y;
-    const source = {
-      x: sourceCenter.x + laneOffset,
-      y: downward ? sourceRect.y + sourceRect.height : sourceRect.y,
-    };
-    const target = {
-      x: targetCenter.x - laneOffset,
-      y: downward ? targetRect.y : targetRect.y + targetRect.height,
-    };
-    const bend = Math.max(30, Math.abs(target.y - source.y) * 0.42);
-    return {
-      d: `M ${source.x} ${source.y} C ${source.x} ${source.y + (downward ? bend : -bend)}, ${target.x} ${target.y + (downward ? -bend : bend)}, ${target.x} ${target.y}`,
-      labelX: (source.x + target.x) / 2 + 7,
-      labelY: (source.y + target.y) / 2,
-    };
-  }
-
-  function center(rect: AtlasRect): { x: number; y: number } {
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  }
-
   function relationKey(relation: ProjectMapAtlasRelationV1): string {
-    return `${relation.sourceNodeId}:${relation.targetNodeId}:${relation.relation}`;
+    return atlasRelationKey(relation);
   }
 
   function isIncident(relation: ProjectMapAtlasRelationV1): boolean {
@@ -161,6 +112,82 @@
     }
   }
 
+  function scheduleSelection(event: MouseEvent, node: ProjectMapAtlasNodeV1): void {
+    cancelScheduledSelection();
+    if (event.detail === 0) {
+      onselect(node);
+      return;
+    }
+    selectionTimer = setTimeout(() => {
+      selectionTimer = null;
+      onselect(node);
+    }, 180);
+  }
+
+  function openImmediately(node: ProjectMapAtlasNodeV1): void {
+    cancelScheduledSelection();
+    onopen(node);
+  }
+
+  function cancelScheduledSelection(): void {
+    if (selectionTimer === null) return;
+    clearTimeout(selectionTimer);
+    selectionTimer = null;
+  }
+
+  function beginPan(event: PointerEvent): void {
+    if (event.button !== 0 || !(event.target instanceof Element)) return;
+    if (event.target.closest('.atlas-node')) return;
+    event.preventDefault();
+    dragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startScrollLeft: host.scrollLeft,
+      startScrollTop: host.scrollTop,
+    };
+    dragging = true;
+    host.setPointerCapture?.(event.pointerId);
+  }
+
+  function continuePan(event: PointerEvent): void {
+    if (dragState?.pointerId !== event.pointerId) return;
+    host.scrollLeft = dragState.startScrollLeft - (event.clientX - dragState.startX);
+    host.scrollTop = dragState.startScrollTop - (event.clientY - dragState.startY);
+  }
+
+  function endPan(event: PointerEvent): void {
+    if (dragState?.pointerId !== event.pointerId) return;
+    if (host.hasPointerCapture?.(event.pointerId)) host.releasePointerCapture(event.pointerId);
+    dragState = undefined;
+    dragging = false;
+  }
+
+  async function zoomAtPointer(event: WheelEvent): Promise<void> {
+    event.preventDefault();
+    const deltaMultiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1;
+    const nextZoom = Math.min(
+      2,
+      Math.max(
+        0.5,
+        Math.round(zoom * Math.exp(-event.deltaY * deltaMultiplier * 0.0015) * 1000) / 1000,
+      ),
+    );
+    if (nextZoom === zoom) return;
+
+    const bounds = host.getBoundingClientRect();
+    const pointerX = event.clientX - bounds.left;
+    const pointerY = event.clientY - bounds.top;
+    const worldX = (host.scrollLeft + pointerX) / zoom;
+    const worldY = (host.scrollTop + pointerY) / zoom;
+    zoom = nextZoom;
+    await tick();
+    host.scrollLeft = worldX * nextZoom - pointerX;
+    host.scrollTop = worldY * nextZoom - pointerY;
+  }
+
+  onDestroy(cancelScheduledSelection);
+
   function kindLabel(node: ProjectMapAtlasNodeV1): string {
     return {
       boundary: 'Boundary',
@@ -175,117 +202,152 @@
   }
 </script>
 
-<div class="canvas-host" bind:this={host} aria-label="Progressiver Architektur-Atlas">
-  <div class="canvas-plane" style={`width:${layout.width}px;height:${layout.height}px`}>
-    {#each layout.bands as band (`${band.kind}:${band.x}`)}
-      <span
-        class="atlas-band-label"
-        data-kind={band.kind}
-        style={`left:${band.x}px;width:${band.width}px`}>{band.label}</span
+<div class="canvas-shell">
+  <div
+    class:dragging
+    class="canvas-host"
+    bind:this={host}
+    aria-label="Progressiver Architektur-Atlas"
+    data-zoom={zoom}
+    role="region"
+    onpointerdown={beginPan}
+    onpointermove={continuePan}
+    onpointerup={endPan}
+    onpointercancel={endPan}
+    onwheel={zoomAtPointer}
+  >
+    <div
+      class="canvas-space"
+      style={`width:${layout.width * zoom}px;height:${layout.height * zoom}px`}
+    >
+      <div
+        class="canvas-plane"
+        style={`width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})`}
       >
-    {/each}
-    <svg class="route-layer" viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
-      <defs>
-        <marker
-          id="atlas-arrow"
-          viewBox="0 0 10 10"
-          refX="8"
-          refY="5"
-          markerWidth="5"
-          markerHeight="5"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z"></path>
-        </marker>
-      </defs>
-      {#each scene.relations as relation, index (relationKey(relation))}
-        {@const routed = route(relation, index)}
-        <path
-          class:uncertain={relation.uncertainty !== null}
-          class:incident={isIncident(relation)}
-          class:muted={selectedNodeId !== null && !isIncident(relation)}
-          class={`route relation-${relation.relation}`}
-          data-relation={relation.relation}
-          d={routed.d}
-          marker-end="url(#atlas-arrow)"
-        ></path>
-        {#if labeledRouteKeys.has(relationKey(relation))}
-          <text class="route-label" x={routed.labelX} y={routed.labelY} text-anchor="middle"
-            >{relationLabel(relation)}</text
+        {#each layout.bands as band (`${band.kind}:${band.x}`)}
+          <span
+            class="atlas-band-label"
+            data-kind={band.kind}
+            style={`left:${band.x}px;width:${band.width}px`}>{band.label}</span
           >
-        {/if}
-      {/each}
-    </svg>
-
-    {#each scene.nodes as node (node.nodeId)}
-      {@const rect = layout.byId.get(node.nodeId)}
-      {#if rect !== undefined}
-        <button
-          type="button"
-          class="atlas-node"
-          class:selected={node.nodeId === selectedNodeId}
-          class:boundary={node.kind === 'boundary'}
-          class:lens-muted={isLensMuted(node)}
-          data-connected={connectedNodeIds.has(node.nodeId)}
-          data-kind={node.kind}
-          data-status={node.mappingStatus ?? 'none'}
-          style={`left:${rect.x}px;top:${rect.y}px;width:${rect.width}px;height:${rect.height}px`}
-          aria-label={`${node.displayName}, ${kindLabel(node)}, ${node.fileCount} Dateien, ${node.symbolCount} Symbole, ${connectionCount(node.nodeId)} sichtbare Verbindungen`}
-          onclick={() => onselect(node)}
-          ondblclick={() => onopen(node)}
-          onkeydown={(event) => keydown(event, node)}
+        {/each}
+        <svg
+          class="route-layer"
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          aria-hidden="true"
         >
-          <span class="node-kind">{kindLabel(node)}</span>
-          <strong>{node.displayName}</strong>
-          {#if rect.height > 102 && node.detail !== null}<small>{node.detail}</small>{/if}
-          <span class="node-counts">
-            {#if node.kind === 'file'}{node.symbolCount} Struktursymbole
-            {:else if node.kind === 'type' || node.kind === 'callable'}{node.memberCount} Member
-            {:else}{node.fileCount} Dateien · {node.symbolCount} Symbole{/if}
-            · {connectionCount(node.nodeId)} Routen
-          </span>
-          {#if node.mappingStatus !== null}
-            <span class="node-status">{node.mappingStatus}</span>
-          {/if}
-          {#if node.claimBadgeCount > 0}<span class="claim-badge"
-              >{node.claimBadgeCount} Claims</span
-            >{/if}
-          {#if node.currentRiskCount !== '0'}<span class="risk-badge"
-              >{node.currentRiskCount} Risiken</span
-            >{/if}
-        </button>
-      {/if}
-    {/each}
-
-    <details class="atlas-summary">
-      <summary>Nichtgrafische Zusammenfassung</summary>
-      <strong>Objekte</strong>
-      <ul>
-        {#each scene.nodes as node (node.nodeId)}
-          <li>
-            <button type="button" onclick={() => onselect(node)}
-              >{node.displayName} · {kindLabel(node)} · {connectionCount(node.nodeId)} Routen</button
+          <defs>
+            <marker
+              id="atlas-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
             >
+              <path d="M 0 0 L 10 5 L 0 10 z"></path>
+            </marker>
+          </defs>
+          {#each visibleRelations as relation (relationKey(relation))}
+            {@const routed = layout.routes.get(relationKey(relation))}
+            {#if routed !== undefined}
+              <path
+                class:uncertain={relation.uncertainty !== null}
+                class:incident={isIncident(relation)}
+                class:muted={selectedNodeId !== null && !isIncident(relation)}
+                class={`route relation-${relation.relation}`}
+                data-relation={relation.relation}
+                d={routed.d}
+                marker-end="url(#atlas-arrow)"
+              ></path>
+              {#if labeledRouteKeys.has(relationKey(relation))}
+                <text class="route-label" x={routed.labelX} y={routed.labelY} text-anchor="middle"
+                  >{relationLabel(relation)}</text
+                >
+              {/if}
+            {/if}
+          {/each}
+        </svg>
+
+        {#each scene.nodes as node (node.nodeId)}
+          {@const rect = layout.byId.get(node.nodeId)}
+          {#if rect !== undefined}
+            <button
+              type="button"
+              class="atlas-node"
+              class:selected={node.nodeId === selectedNodeId}
+              class:boundary={node.kind === 'boundary'}
+              class:lens-muted={isLensMuted(node)}
+              data-connected={connectedNodeIds.has(node.nodeId)}
+              data-kind={node.kind}
+              data-status={node.mappingStatus ?? 'none'}
+              style={`left:${rect.x}px;top:${rect.y}px;width:${rect.width}px;height:${rect.height}px`}
+              aria-label={`${node.displayName}, ${kindLabel(node)}, ${node.fileCount} Dateien, ${node.symbolCount} Symbole, ${connectionCount(node.nodeId)} sichtbare Verbindungen`}
+              onclick={(event) => scheduleSelection(event, node)}
+              ondblclick={() => openImmediately(node)}
+              onkeydown={(event) => keydown(event, node)}
+            >
+              <span class="node-kind">{kindLabel(node)}</span>
+              <strong>{node.displayName}</strong>
+              {#if rect.height > 102 && node.detail !== null}<small>{node.detail}</small>{/if}
+              <span class="node-counts">
+                {#if node.kind === 'file'}{node.symbolCount} Struktursymbole
+                {:else if node.kind === 'type' || node.kind === 'callable'}{node.memberCount} Member
+                {:else}{node.fileCount} Dateien · {node.symbolCount} Symbole{/if}
+                · {connectionCount(node.nodeId)} Routen
+              </span>
+              {#if node.mappingStatus !== null}
+                <span class="node-status">{node.mappingStatus}</span>
+              {/if}
+              {#if node.claimBadgeCount > 0}<span class="claim-badge"
+                  >{node.claimBadgeCount} Claims</span
+                >{/if}
+              {#if node.currentRiskCount !== '0'}<span class="risk-badge"
+                  >{node.currentRiskCount} Risiken</span
+                >{/if}
+            </button>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  </div>
+  <details class="atlas-summary">
+    <summary>Nichtgrafische Zusammenfassung</summary>
+    <strong>Objekte</strong>
+    <ul>
+      {#each scene.nodes as node (node.nodeId)}
+        <li>
+          <button type="button" onclick={() => onselect(node)}
+            >{node.displayName} · {kindLabel(node)} · {connectionCount(node.nodeId)} Routen</button
+          >
+        </li>
+      {/each}
+    </ul>
+    {#if scene.relations.length > 0}
+      <strong>Verbindungen</strong>
+      <ul>
+        {#each scene.relations as relation (relationKey(relation))}
+          <li>
+            {nodesById.get(relation.sourceNodeId)?.displayName ?? 'Unbekannt'}
+            → {relationLabel(relation)} →
+            {nodesById.get(relation.targetNodeId)?.displayName ?? 'Unbekannt'}
           </li>
         {/each}
       </ul>
-      {#if scene.relations.length > 0}
-        <strong>Verbindungen</strong>
-        <ul>
-          {#each scene.relations as relation (relationKey(relation))}
-            <li>
-              {nodesById.get(relation.sourceNodeId)?.displayName ?? 'Unbekannt'}
-              → {relationLabel(relation)} →
-              {nodesById.get(relation.targetNodeId)?.displayName ?? 'Unbekannt'}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </details>
-  </div>
+    {/if}
+  </details>
 </div>
 
 <style>
+  .canvas-shell {
+    position: relative;
+    min-width: 0;
+    min-height: 280px;
+    height: 100%;
+    overflow: hidden;
+    background: var(--surface-canvas);
+  }
   .canvas-host {
     position: relative;
     min-width: 0;
@@ -296,11 +358,21 @@
     scrollbar-color: var(--line) var(--surface-canvas);
     scrollbar-width: thin;
     background: var(--surface-canvas);
+    cursor: grab;
+    touch-action: none;
   }
-  .canvas-plane {
+  .canvas-host.dragging {
+    cursor: grabbing;
+    user-select: none;
+  }
+  .canvas-space {
     position: relative;
     min-width: 100%;
     min-height: 100%;
+  }
+  .canvas-plane {
+    position: relative;
+    transform-origin: 0 0;
     background-color: var(--surface-canvas);
     background-image: radial-gradient(
       circle,
@@ -321,6 +393,8 @@
     fill: none;
     stroke: color-mix(in srgb, var(--accent) 50%, var(--line));
     stroke-width: 1.65;
+    stroke-linecap: square;
+    stroke-linejoin: miter;
     opacity: 0.58;
     vector-effect: non-scaling-stroke;
     transition:
@@ -401,6 +475,7 @@
     transition:
       background-color 120ms ease,
       border-color 120ms ease;
+    cursor: pointer;
   }
   .atlas-node:hover {
     background: color-mix(in srgb, var(--surface-raised) 84%, var(--accent));
@@ -478,13 +553,16 @@
   }
   .atlas-summary {
     position: absolute;
-    z-index: 5;
+    z-index: 6;
     left: 10px;
     bottom: 10px;
     max-width: min(360px, 70%);
+    max-height: min(60%, 420px);
+    overflow: auto;
     border: 1px solid var(--line);
     background: var(--surface);
     font-size: 0.75rem;
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--surface-canvas) 72%, transparent);
   }
   .atlas-summary summary {
     padding: 9px 12px;

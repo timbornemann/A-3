@@ -131,8 +131,13 @@
   let selectedStepId = $state('');
   let lensBusy = $state(false);
   let lensError = $state(false);
+  let retrySelection = $state<ProjectMapEntitySelectionV1 | null>(null);
   let requestGeneration = 0;
   let contextGeneration = 0;
+  let activeSceneLoad: {
+    key: string;
+    promise: Promise<ProjectMapAtlasSceneV1 | null>;
+  } | null = null;
 
   const lensModuleIds = $derived.by(() => {
     const ids = new SvelteSet<string>();
@@ -164,10 +169,24 @@
     void loadScene(null);
   });
 
-  async function loadScene(
+  function loadScene(
+    selection: ProjectMapEntitySelectionV1 | null,
+  ): Promise<ProjectMapAtlasSceneV1 | null> {
+    const key = `${projectKey}:${publicationKey ?? ''}:${selectionKey(selection)}`;
+    if (activeSceneLoad?.key === key) return activeSceneLoad.promise;
+    const promise = performSceneLoad(selection);
+    activeSceneLoad = { key, promise };
+    void promise.finally(() => {
+      if (activeSceneLoad?.promise === promise) activeSceneLoad = null;
+    });
+    return promise;
+  }
+
+  async function performSceneLoad(
     selection: ProjectMapEntitySelectionV1 | null,
   ): Promise<ProjectMapAtlasSceneV1 | null> {
     const request = ++requestGeneration;
+    retrySelection = selection;
     scene = { kind: 'loading' };
     try {
       const response = await atlasSceneLoader(selection);
@@ -200,6 +219,7 @@
   }
 
   async function selectNode(node: ProjectMapAtlasNodeV1): Promise<void> {
+    if (selected?.nodeId === node.nodeId && context.kind === 'loading') return;
     selected = node;
     inventory = { kind: 'idle' };
     flow = { kind: 'idle' };
@@ -226,7 +246,18 @@
   }
 
   async function openNode(node: ProjectMapAtlasNodeV1): Promise<void> {
-    if (node.selection !== null) await loadScene(node.selection);
+    if (node.selection === null) return;
+    contextGeneration += 1;
+    await loadScene(node.selection);
+  }
+
+  function selectionKey(selection: ProjectMapEntitySelectionV1 | null): string {
+    if (selection === null) return 'project';
+    if (selection.kind === 'module') return `module:${selection.moduleId}`;
+    if (selection.kind === 'file') {
+      return `file:${selection.moduleId}:${selection.evidenceId}:${selection.ordinal}`;
+    }
+    return `symbol:${selection.moduleId}:${selection.evidenceId}:${selection.symbolId}`;
   }
 
   async function goBack(): Promise<void> {
@@ -543,7 +574,12 @@
         </div>
       {:else if scene.kind === 'error'}<div class="empty" role="alert">
           <p>Der Atlas konnte nicht sicher geladen werden.</p>
-          <button type="button" onclick={() => loadScene(null)}>Erneut laden</button>
+          <div class="empty-actions">
+            <button type="button" onclick={() => loadScene(retrySelection)}>Erneut laden</button>
+            {#if retrySelection !== null}
+              <button type="button" onclick={() => loadScene(null)}>Zur Projektübersicht</button>
+            {/if}
+          </div>
         </div>
       {:else if scene.kind === 'unavailable'}<div class="empty">
           <p>{scene.message}</p>
@@ -822,6 +858,12 @@
     border-radius: 0;
     background: transparent;
     color: inherit;
+  }
+  .empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
   }
   .sr-only {
     position: absolute;

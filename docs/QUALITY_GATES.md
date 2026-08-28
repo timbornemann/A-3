@@ -188,10 +188,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Breadcrumbs, widersprüchliche Counts und Trunkierung, gemischte Publikationen sowie übergroße
   Szenen, Inventare und Flows ab. Component- und Browser-Smokes prüfen Auswahl gegen Öffnen,
   Breadcrumb/Escape, jede Ebene, 50er-Inventare, die vier Flow-Presets, Task Lens, Search-Fokus,
-  Claim-/Boundary-Kennzeichnung und Publish-Refresh bei 720 × 520 und 680 × 760.
-- Das U12-Browserprofil verwendet 64 Module, 32 Dateien, 48 Symbole, 128 Routen, 31 Flow-Ziele und
-  32 Feed-Ereignisse. Es meldet Mount, Auswahl, semantischen Zoom, Pan, Feed-Commit, Long Tasks und
-  DOM-Zahl; höchstens 1.500 DOM-Knoten und keine sichtbare Blockade über 100 ms sind harte Gates.
+  Claim-/Boundary-Kennzeichnung, Pointer-Pan, zeigerzentrierten Mausrad-Zoom, eine viewport-feste
+  nichtgrafische Zusammenfassung und Publish-Refresh bei 720 × 520 und 680 × 760. Mehrere direkte
+  Relationen zum selben Nachbarknoten dürfen im Inspector keinen doppelten Svelte-Key erzeugen.
+  Namespace-Selbstrelationen dürfen das Symbolzentrum nicht duplizieren; bei einem dauerhaft
+  abgewiesenen Detail-Read muss die Projektübersicht ohne neuen Indexlauf wieder erreichbar sein.
+- Das U12-Browserprofil verwendet 64 Module, 32 Dateien, 48 Symbole, 128 Relationsgruppen,
+  31 Flow-Ziele und 32 Feed-Ereignisse. Es rendert davon 24 priorisierte Übersichtsrouten sowie
+  32 inzidente Auswahlrouten und meldet Mount, Auswahl, semantischen Zoom, Pan, Feed-Commit,
+  Long Tasks und DOM-Zahl; höchstens 1.500 DOM-Knoten und keine sichtbare Blockade über 100 ms sind
+  harte Gates.
 - Deep Map V2 prüft die Phasenfolge Planning → Exploring → Claiming → Verifying → Publishing,
   aktuelle Module/Aktionen, 32er-Retention, monotone Sequenzen, Pause/Resume ohne Replay,
   Cancel/Fehler und eine Publikationszusammenfassung ausschließlich nach erfolgreichem atomarem
@@ -600,16 +606,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 
 ## Testpyramide
 
-| Ebene | Zweck |
-| --- | --- |
-| Domain Unit | Invarianten und Zustandsübergänge |
-| Property | Parser-, Pfad-, Hash- und Zustandskombinationen |
-| Adapter Contract | gleiche Semantik je Provider oder Store |
-| Golden Fixture | stabile Index- und Context-Ergebnisse |
-| Integration | DB, Workspace, Modellstub und Controller |
-| End-to-End | Desktop-Workflow auf kleinem Fixture-Repo |
-| Evaluation | reale Coding-Aufgaben und Retrievalqualität |
-| Platform Smoke | Windows, Linux und macOS |
+| Ebene            | Zweck                                           |
+| ---------------- | ----------------------------------------------- |
+| Domain Unit      | Invarianten und Zustandsübergänge               |
+| Property         | Parser-, Pfad-, Hash- und Zustandskombinationen |
+| Adapter Contract | gleiche Semantik je Provider oder Store         |
+| Golden Fixture   | stabile Index- und Context-Ergebnisse           |
+| Integration      | DB, Workspace, Modellstub und Controller        |
+| End-to-End       | Desktop-Workflow auf kleinem Fixture-Repo       |
+| Evaluation       | reale Coding-Aufgaben und Retrievalqualität     |
+| Platform Smoke   | Windows, Linux und macOS                        |
 
 Tests müssen offline und deterministisch laufen, außer explizit markierten optionalen Provider-Benchmarks.
 
@@ -631,16 +637,16 @@ Fixtures enthalten keine inkompatibel lizenzierten oder vertraulichen Quellen.
 
 Die Budgets gelten auf einer dokumentierten Referenzmaschine mit 8 CPU-Kernen, 32 GB RAM und NVMe; LLM-Server und Modellgewichte werden bei App-RAM separat ausgewiesen.
 
-| Messung | Ziel für V1 |
-| --- | ---: |
-| Desktop bis interaktiv, warm | P95 ≤ 2 s |
-| Idle-RAM ohne Modellserver | ≤ 200 MB |
-| Fast Index, 100.000 LOC cold | P95 ≤ 30 s |
-| Ein-Datei-Indexdelta | P95 ≤ 2 s |
-| exakte oder FTS-Suche | P95 ≤ 100 ms |
-| Context Compile ohne LLM | P95 ≤ 300 ms |
+| Messung                          |                          Ziel für V1 |
+| -------------------------------- | -----------------------------------: |
+| Desktop bis interaktiv, warm     |                            P95 ≤ 2 s |
+| Idle-RAM ohne Modellserver       |                             ≤ 200 MB |
+| Fast Index, 100.000 LOC cold     |                           P95 ≤ 30 s |
+| Ein-Datei-Indexdelta             |                            P95 ≤ 2 s |
+| exakte oder FTS-Suche            |                         P95 ≤ 100 ms |
+| Context Compile ohne LLM         |                         P95 ≤ 300 ms |
 | UI-Interaktion während Indexlauf | keine sichtbare Blockade über 100 ms |
-| Cancellation-Reaktion | ≤ 500 ms plus Prozessbeendigung |
+| Cancellation-Reaktion            |      ≤ 500 ms plus Prozessbeendigung |
 
 Diese Zahlen sind Releaseziele. Wird ein Ziel nicht erreicht, braucht der Release eine dokumentierte Abweichung, Messdaten und einen konkreten Folgetask.
 
