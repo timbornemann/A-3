@@ -958,11 +958,13 @@ Akzeptanz:
 - Nutzer können ohne Unterseiten vom Projekt in ein Modul, von dort in eine Datei und weiter zu
   einem Typ oder zentralen Symbol zoomen; Klick wählt, Enter, Doppelklick oder `Öffnen` vertieft,
   Escape und Breadcrumb navigieren zurück; Selbstrelationen eines Namespace-/Modulsymbols
-  duplizieren niemals das fokussierte Zentrum, und ein abgewiesener Detail-Read bietet neben dem
-  gebundenen Retry immer den sicheren Rückweg zur weiterhin aktuellen Projektübersicht;
+  erzeugen weder auf Dateiebene einen Self-Parent noch auf Symbolebene ein dupliziertes Zentrum,
+  und ein abgewiesener Detail-Read bietet neben dem gebundenen Retry immer den sicheren Rückweg zur
+  weiterhin aktuellen Projektübersicht;
 - Projekt-, Modul-, Datei- und Symbolebene halten die festen Grenzen 64/128, 32 Dateien,
   48 Symbole sowie Zentrum plus 31 direkte Nachbarn ein; 16 Boundary-Stubs und 31 Flow-Ziele sind
-  zusätzliche feste Obergrenzen;
+  zusätzliche feste Obergrenzen; werden mehr Boundary-Stubs gezählt als gerendert, melden sowohl
+  Boundary- als auch Relationsmetadaten die Kürzung konsistent zur tatsächlich gelieferten Szene;
 - die Standardkarte zeigt ausschließlich `Imports`, `Exports`, `Implements`, `Extends`, `Builds`
   und `Configures`; `Calls`, `Tests` und `Reads/Writes` öffnen getrennte evidenzgebundene Flows;
 - sämtliche ausgelieferten Gesamtzahlen, nicht zugeordneten oder ungelösten Ziele,

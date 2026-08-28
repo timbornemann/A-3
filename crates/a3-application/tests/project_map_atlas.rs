@@ -90,20 +90,58 @@ fn progressive_scenes_rank_and_revalidate_every_semantic_level() -> Result<(), B
 }
 
 #[test]
-fn namespace_scene_ignores_self_edges() -> Result<(), Box<dyn Error>> {
+fn namespace_file_and_symbol_scenes_ignore_self_edges() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::namespace_with_self_edge()?;
+    let module_scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(ProjectMapEntitySelection::Module {
+            module_id: fixture.module,
+        })),
+    )?
+    .ok_or("missing module scene")?;
+    let file_selection = module_scene
+        .nodes()
+        .iter()
+        .find_map(|node| match node.selection() {
+            Some(selection @ ProjectMapEntitySelection::File { .. }) => Some(selection),
+            _ => None,
+        })
+        .ok_or("missing file selection")?;
     let namespace_selection = ProjectMapEntitySelection::Symbol {
         module_id: fixture.module,
         symbol_id: fixture.root,
         evidence_id: ModuleCardEvidenceId::for_symbol_id_v1(fixture.root),
     };
 
+    let file_scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(file_selection)),
+    )?
+    .ok_or("missing file scene")?;
     let scene = build_project_map_atlas_scene(
         &fixture.published,
         &ProjectMapAtlasSceneQuery::new(Some(namespace_selection)),
     )?
     .ok_or("missing namespace scene")?;
 
+    assert_eq!(file_scene.level(), ProjectMapAtlasLevel::File);
+    assert_eq!(
+        file_scene
+            .nodes()
+            .iter()
+            .filter(|node| node.selection() == Some(namespace_selection))
+            .count(),
+        1
+    );
+    assert_eq!(
+        file_scene
+            .nodes()
+            .iter()
+            .find(|node| node.selection() == Some(namespace_selection))
+            .ok_or("missing namespace node")?
+            .member_count(),
+        1
+    );
     assert_eq!(scene.level(), ProjectMapAtlasLevel::Symbol);
     assert_eq!(
         scene
@@ -114,6 +152,58 @@ fn namespace_scene_ignores_self_edges() -> Result<(), Box<dyn Error>> {
         1
     );
     assert_eq!(scene.nodes()[0].kind(), ProjectMapAtlasNodeKind::Namespace);
+    Ok(())
+}
+
+#[test]
+fn file_and_symbol_scenes_report_boundary_truncation() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::with_unresolved_boundary_overflow()?;
+    let module_scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(ProjectMapEntitySelection::Module {
+            module_id: fixture.module,
+        })),
+    )?
+    .ok_or("missing module scene")?;
+    let file_selection = module_scene
+        .nodes()
+        .iter()
+        .find_map(|node| match node.selection() {
+            Some(selection @ ProjectMapEntitySelection::File { .. }) => Some(selection),
+            _ => None,
+        })
+        .ok_or("missing file selection")?;
+    let symbol_selection = ProjectMapEntitySelection::Symbol {
+        module_id: fixture.module,
+        symbol_id: fixture.root,
+        evidence_id: ModuleCardEvidenceId::for_symbol_id_v1(fixture.root),
+    };
+
+    let file_scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(file_selection)),
+    )?
+    .ok_or("missing file scene")?;
+    let symbol_scene = build_project_map_atlas_scene(
+        &fixture.published,
+        &ProjectMapAtlasSceneQuery::new(Some(symbol_selection)),
+    )?
+    .ok_or("missing symbol scene")?;
+
+    for scene in [&file_scene, &symbol_scene] {
+        assert_eq!(scene.boundary_count(), 17);
+        assert_eq!(
+            scene
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == ProjectMapAtlasNodeKind::Boundary)
+                .count(),
+            16
+        );
+        assert!(scene.boundaries_truncated());
+        assert!(scene.relations_truncated());
+        assert!(scene.relation_count() > scene.relations().len() as u64);
+    }
     Ok(())
 }
 
@@ -249,14 +339,22 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self, Box<dyn Error>> {
-        Self::build(SymbolKind::Class, false)
+        Self::build(SymbolKind::Class, false, 1)
     }
 
     fn namespace_with_self_edge() -> Result<Self, Box<dyn Error>> {
-        Self::build(SymbolKind::Module, true)
+        Self::build(SymbolKind::Module, true, 1)
     }
 
-    fn build(root_kind: SymbolKind, include_self_edge: bool) -> Result<Self, Box<dyn Error>> {
+    fn with_unresolved_boundary_overflow() -> Result<Self, Box<dyn Error>> {
+        Self::build(SymbolKind::Module, false, 17)
+    }
+
+    fn build(
+        root_kind: SymbolKind,
+        include_self_edge: bool,
+        unresolved_count: u8,
+    ) -> Result<Self, Box<dyn Error>> {
         let snapshot = SnapshotId::from_bytes([1; 32]);
         let manifest = revision("Cargo.toml", 2)?;
         let source = revision("src/lib.rs", 3)?;
@@ -329,24 +427,28 @@ impl Fixture {
                 EvidenceRef::new(source.clone(), range),
             ));
         }
-        let unresolved = UnresolvedEdgeCandidate::new(
-            GraphEndpoint::Symbol(root),
-            UnresolvedGraphTarget::Reference(SymbolReference::try_from_string(
-                "runtime_target".to_owned(),
-            )?),
-            SyntaxRelationKind::Calls,
-            SyntaxProvider::LanguageHeuristic,
-            Confidence::certain(),
-            UnresolvedReason::DynamicReference,
-            snapshot,
-            EvidenceRef::new(source.clone(), range),
-        );
+        let unresolved = (0..unresolved_count)
+            .map(|index| {
+                Ok(UnresolvedEdgeCandidate::new(
+                    GraphEndpoint::Symbol(root),
+                    UnresolvedGraphTarget::Reference(SymbolReference::try_from_string(format!(
+                        "runtime_target_{index}"
+                    ))?),
+                    SyntaxRelationKind::Calls,
+                    SyntaxProvider::LanguageHeuristic,
+                    Confidence::certain(),
+                    UnresolvedReason::DynamicReference,
+                    snapshot,
+                    EvidenceRef::new(source.clone(), range),
+                ))
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
         let graph = LinkedGraph::new(
             snapshot,
             vec![manifest.clone(), source.clone(), tests.clone()],
             graph_symbols,
             edges,
-            vec![unresolved],
+            unresolved,
         )?;
         let ranking = RankProjection::new(
             snapshot,

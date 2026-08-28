@@ -2174,6 +2174,7 @@ impl<'a> AtlasIndex<'a> {
             .take(PROJECT_MAP_ATLAS_RELATION_LIMIT)
             .map(|group| self.relation_from_group(group))
             .collect::<Result<Vec<_>, _>>()?;
+        let relations_truncated = relation_count > count(relations.len())?;
         ProjectMapAtlasScene::new(
             self.run_id(),
             self.snapshot_id(),
@@ -2195,7 +2196,7 @@ impl<'a> AtlasIndex<'a> {
                     .min(PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT),
             )?,
             node_count > modules.len() as u64,
-            relation_count > PROJECT_MAP_ATLAS_RELATION_LIMIT as u64,
+            relations_truncated,
             false,
             self.published.publication().graph().edges().len()
                 > PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT,
@@ -2253,6 +2254,7 @@ impl<'a> AtlasIndex<'a> {
         let relation_count = normal_relation_count.saturating_add(boundary_count);
         relations.truncate(PROJECT_MAP_ATLAS_RELATION_LIMIT);
         rerank_nodes(&mut nodes)?;
+        let relations_truncated = relation_count > count(relations.len())?;
         ProjectMapAtlasScene::new(
             self.run_id(),
             self.snapshot_id(),
@@ -2280,7 +2282,7 @@ impl<'a> AtlasIndex<'a> {
                     .min(PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT),
             )?,
             node_count > PROJECT_MAP_ATLAS_FILE_LIMIT as u64,
-            relation_count > PROJECT_MAP_ATLAS_RELATION_LIMIT as u64,
+            relations_truncated,
             boundary_count > PROJECT_MAP_ATLAS_BOUNDARY_LIMIT as u64,
             self.published.publication().graph().edges().len()
                 > PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT,
@@ -2347,6 +2349,7 @@ impl<'a> AtlasIndex<'a> {
         relations.truncate(PROJECT_MAP_ATLAS_RELATION_LIMIT);
         rerank_nodes(&mut nodes)?;
         let relation_count = normal_relation_count.saturating_add(boundary_count);
+        let relations_truncated = relation_count > count(relations.len())?;
         ProjectMapAtlasScene::new(
             self.run_id(),
             self.snapshot_id(),
@@ -2378,7 +2381,7 @@ impl<'a> AtlasIndex<'a> {
                     .min(PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT),
             )?,
             node_count > PROJECT_MAP_ATLAS_SYMBOL_LIMIT as u64,
-            relation_count > PROJECT_MAP_ATLAS_RELATION_LIMIT as u64,
+            relations_truncated,
             boundary_count > PROJECT_MAP_ATLAS_BOUNDARY_LIMIT as u64,
             self.published.publication().graph().edges().len()
                 > PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT,
@@ -2485,6 +2488,7 @@ impl<'a> AtlasIndex<'a> {
         relations.truncate(PROJECT_MAP_ATLAS_RELATION_LIMIT);
         rerank_nodes(&mut nodes)?;
         let relation_count = normal_relation_count.saturating_add(boundary_count);
+        let relations_truncated = relation_count > count(relations.len())?;
         let file_selection = self.file_selection_for_revision(module_id, root.revision())?;
         ProjectMapAtlasScene::new(
             self.run_id(),
@@ -2521,7 +2525,7 @@ impl<'a> AtlasIndex<'a> {
                     .min(PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT),
             )?,
             node_count > PROJECT_MAP_ATLAS_SYMBOL_NEIGHBOR_LIMIT as u64,
-            relation_count > PROJECT_MAP_ATLAS_RELATION_LIMIT as u64,
+            relations_truncated,
             boundary_count > PROJECT_MAP_ATLAS_BOUNDARY_LIMIT as u64,
             self.published.publication().graph().edges().len()
                 > PROJECT_MAP_ATLAS_INSPECTED_EDGE_LIMIT,
@@ -2979,7 +2983,7 @@ impl<'a> AtlasIndex<'a> {
                     GraphEndpoint::Symbol(source),
                     GraphEndpoint::Symbol(target),
                     SyntaxRelationKind::Contains | SyntaxRelationKind::Defines,
-                ) if *source == symbol_id => self.symbols.get(target).copied(),
+                ) if *source == symbol_id && source != target => self.symbols.get(target).copied(),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -3266,6 +3270,7 @@ impl<'a> AtlasIndex<'a> {
             }
             if let (GraphEndpoint::Symbol(source), GraphEndpoint::Symbol(target)) =
                 (edge.source(), edge.target())
+                && source != target
                 && visible.contains(source)
                 && visible.contains(target)
             {

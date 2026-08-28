@@ -191,8 +191,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Claim-/Boundary-Kennzeichnung, Pointer-Pan, zeigerzentrierten Mausrad-Zoom, eine viewport-feste
   nichtgrafische Zusammenfassung und Publish-Refresh bei 720 × 520 und 680 × 760. Mehrere direkte
   Relationen zum selben Nachbarknoten dürfen im Inspector keinen doppelten Svelte-Key erzeugen.
-  Namespace-Selbstrelationen dürfen das Symbolzentrum nicht duplizieren; bei einem dauerhaft
-  abgewiesenen Detail-Read muss die Projektübersicht ohne neuen Indexlauf wieder erreichbar sein.
+  Namespace-Selbstrelationen dürfen weder einen Self-Parent in der Dateiszene erzeugen noch das
+  Symbolzentrum duplizieren. Überschreiten externe oder ungelöste Ziele die 16er-Grenze, müssen
+  Boundary- und Relationskürzung konsistent zur tatsächlich gerenderten Szene gemeldet werden.
+  Bei einem dauerhaft abgewiesenen Detail-Read muss die Projektübersicht ohne neuen Indexlauf
+  wieder erreichbar sein.
 - Das U12-Browserprofil verwendet 64 Module, 32 Dateien, 48 Symbole, 128 Relationsgruppen,
   31 Flow-Ziele und 32 Feed-Ereignisse. Es rendert davon 24 priorisierte Übersichtsrouten sowie
   32 inzidente Auswahlrouten und meldet Mount, Auswahl, semantischen Zoom, Pan, Feed-Commit,
