@@ -132,6 +132,17 @@
   let lensBusy = $state(false);
   let lensError = $state(false);
   let retrySelection = $state<ProjectMapEntitySelectionV1 | null>(null);
+  const INSPECTOR_DEFAULT_WIDTH = 380;
+  const INSPECTOR_MIN_WIDTH = 320;
+  const INSPECTOR_MAX_WIDTH = 720;
+  const ATLAS_MIN_WIDTH = 360;
+  const INSPECTOR_KEYBOARD_STEP = 24;
+  let workspaceBody = $state<HTMLElement | null>(null);
+  let workspaceBodyWidth = $state(0);
+  let inspectorWidth = $state(INSPECTOR_DEFAULT_WIDTH);
+  let resizingInspector = $state(false);
+  let inspectorResizePointerId: number | null = null;
+  let inspectorResizeHandle: HTMLElement | null = null;
   let requestGeneration = 0;
   let contextGeneration = 0;
   let activeSceneLoad: {
@@ -148,12 +159,47 @@
     return ids;
   });
 
+  const inspectorMaxWidth = $derived(
+    workspaceBodyWidth > 0
+      ? Math.max(
+          INSPECTOR_MIN_WIDTH,
+          Math.min(INSPECTOR_MAX_WIDTH, workspaceBodyWidth - ATLAS_MIN_WIDTH),
+        )
+      : INSPECTOR_MAX_WIDTH,
+  );
+  const effectiveInspectorWidth = $derived(
+    Math.min(Math.max(inspectorWidth, INSPECTOR_MIN_WIDTH), inspectorMaxWidth),
+  );
+
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') void goBack();
     };
+    const updateWorkspaceWidth = () => {
+      workspaceBodyWidth = workspaceBody?.clientWidth ?? 0;
+    };
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateWorkspaceWidth);
+    if (workspaceBody !== null) resizeObserver?.observe(workspaceBody);
+    updateWorkspaceWidth();
     window.addEventListener('keydown', keydown);
-    return () => window.removeEventListener('keydown', keydown);
+    window.addEventListener('pointermove', continueInspectorResize);
+    window.addEventListener('pointerup', stopInspectorResize);
+    window.addEventListener('pointercancel', stopInspectorResize);
+    window.addEventListener('resize', updateWorkspaceWidth);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('keydown', keydown);
+      window.removeEventListener('pointermove', continueInspectorResize);
+      window.removeEventListener('pointerup', stopInspectorResize);
+      window.removeEventListener('pointercancel', stopInspectorResize);
+      window.removeEventListener('resize', updateWorkspaceWidth);
+    };
+  });
+
+  $effect(() => {
+    void projectKey;
+    inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
   });
 
   $effect(() => {
@@ -168,6 +214,56 @@
     preview = { kind: 'idle' };
     void loadScene(null);
   });
+
+  function clampInspectorWidth(width: number): number {
+    return Math.min(Math.max(width, INSPECTOR_MIN_WIDTH), inspectorMaxWidth);
+  }
+
+  function resizeInspectorAt(clientX: number): void {
+    if (workspaceBody === null) return;
+    inspectorWidth = clampInspectorWidth(workspaceBody.getBoundingClientRect().right - clientX);
+  }
+
+  function startInspectorResize(event: PointerEvent): void {
+    if (event.button !== 0 || selected === null) return;
+    event.preventDefault();
+    resizingInspector = true;
+    inspectorResizePointerId = event.pointerId;
+    inspectorResizeHandle = event.currentTarget as HTMLElement;
+    inspectorResizeHandle.setPointerCapture?.(event.pointerId);
+    resizeInspectorAt(event.clientX);
+  }
+
+  function continueInspectorResize(event: PointerEvent): void {
+    if (!resizingInspector || event.pointerId !== inspectorResizePointerId) return;
+    resizeInspectorAt(event.clientX);
+  }
+
+  function stopInspectorResize(event: PointerEvent): void {
+    if (!resizingInspector || event.pointerId !== inspectorResizePointerId) return;
+    resizingInspector = false;
+    if (inspectorResizeHandle?.hasPointerCapture?.(event.pointerId))
+      inspectorResizeHandle.releasePointerCapture(event.pointerId);
+    inspectorResizePointerId = null;
+    inspectorResizeHandle = null;
+  }
+
+  function resizeInspectorWithKeyboard(event: KeyboardEvent): void {
+    if (selected === null) return;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      inspectorWidth = clampInspectorWidth(effectiveInspectorWidth + INSPECTOR_KEYBOARD_STEP);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      inspectorWidth = clampInspectorWidth(effectiveInspectorWidth - INSPECTOR_KEYBOARD_STEP);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      inspectorWidth = INSPECTOR_MIN_WIDTH;
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      inspectorWidth = inspectorMaxWidth;
+    }
+  }
 
   function loadScene(
     selection: ProjectMapEntitySelectionV1 | null,
@@ -567,7 +663,12 @@
     </div>
   </div>
 
-  <main class="workspace-body">
+  <main
+    class:resizing={resizingInspector}
+    class="workspace-body"
+    bind:this={workspaceBody}
+    style={`--inspector-width: ${effectiveInspectorWidth}px`}
+  >
     <div class="atlas-stage">
       {#if scene.kind === 'loading'}<div class="empty" role="status">
           Atlas wird aus der aktuellen Publikation aufgebaut …
@@ -593,6 +694,23 @@
           onopen={openNode}
         />{/if}
     </div>
+    {#if selected !== null}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="inspector-resizer"
+        role="separator"
+        aria-label="Breite des Inspectors ändern"
+        aria-orientation="vertical"
+        aria-valuemin={INSPECTOR_MIN_WIDTH}
+        aria-valuemax={inspectorMaxWidth}
+        aria-valuenow={effectiveInspectorWidth}
+        tabindex="0"
+        onkeydown={resizeInspectorWithKeyboard}
+        onpointerdown={startInspectorResize}
+        onlostpointercapture={() => (resizingInspector = false)}
+      ></div>
+    {/if}
     <MapInspector
       {selected}
       {context}
@@ -839,10 +957,48 @@
     min-height: 0;
     overflow: hidden;
   }
+  .workspace-body.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .workspace-body.resizing :global(.inspector) {
+    transition: none;
+  }
   .atlas-stage {
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
+  }
+  .inspector-resizer {
+    position: relative;
+    z-index: 4;
+    flex: 0 0 11px;
+    width: 11px;
+    min-height: 44px;
+    margin-left: -5px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .inspector-resizer::after {
+    position: absolute;
+    inset: 0 auto 0 5px;
+    width: 1px;
+    background: var(--line);
+    content: '';
+  }
+  .inspector-resizer:hover::after,
+  .inspector-resizer:focus-visible::after,
+  .workspace-body.resizing .inspector-resizer::after {
+    width: 3px;
+    margin-left: -1px;
+    background: var(--focus);
+  }
+  .inspector-resizer:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: -3px;
   }
   .empty {
     display: grid;
@@ -902,6 +1058,9 @@
     }
     .workspace-body {
       overflow: visible;
+    }
+    .inspector-resizer {
+      display: none;
     }
   }
   @media (max-width: 700px) {

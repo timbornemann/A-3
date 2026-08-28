@@ -227,6 +227,7 @@ describe('U12 progressive Code Atlas workspace', () => {
     expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Recherche' })).toBeNull();
     expect(screen.getByText('Fläche 1:8 begrenzt')).toBeTruthy();
+    expect(screen.queryByRole('complementary', { name: 'Code Inspector' })).toBeNull();
     expect(props.atlasSceneLoader).toHaveBeenCalledWith(null);
     expect(props.contextLoader).not.toHaveBeenCalled();
   });
@@ -247,11 +248,11 @@ describe('U12 progressive Code Atlas workspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Package/ }));
     await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
     expect(props.atlasSceneLoader).toHaveBeenCalledTimes(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Modul öffnen' }));
     expect(await screen.findByRole('button', { name: /lib.rs, Datei/ })).toBeTruthy();
     expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(moduleSelection);
     await fireEvent.click(screen.getByRole('button', { name: /lib.rs, Datei/ }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Codeausschnitt' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Code anzeigen' }));
     expect(await screen.findByText('pub struct RunDeepMap;', { exact: false })).toBeTruthy();
     expect(props.sourcePreviewLoader).toHaveBeenCalledWith({
       evidence: fileSelection,
@@ -266,7 +267,7 @@ describe('U12 progressive Code Atlas workspace', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /a3-application, Package/ }));
     await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
-    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Modul öffnen' }));
     expect(await screen.findByText('Der Atlas konnte nicht sicher geladen werden.')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
@@ -289,7 +290,7 @@ describe('U12 progressive Code Atlas workspace', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /a3-application, Package/ }));
     await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
-    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Modul öffnen' }));
     expect(await screen.findByText('Der Atlas konnte nicht sicher geladen werden.')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Zur Projektübersicht' }));
@@ -301,12 +302,45 @@ describe('U12 progressive Code Atlas workspace', () => {
     const { props } = renderWorkspace();
     await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Package/ }));
     await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
-    await fireEvent.click(screen.getByRole('button', { name: 'Öffnen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Modul öffnen' }));
     await screen.findByRole('button', { name: /lib.rs, Datei/ });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Projekt' }));
     expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
     expect(props.atlasSceneLoader).toHaveBeenLastCalledWith(null);
+  });
+
+  it('resizes the open Inspector by mouse or keyboard within the desktop split view', async () => {
+    const { props } = renderWorkspace();
+    await fireEvent.click(await screen.findByRole('button', { name: /a3-application, Package/ }));
+    await waitFor(() => expect(props.contextLoader).toHaveBeenCalledWith(moduleSelection));
+
+    const separator = screen.getByRole('separator', { name: 'Breite des Inspectors ändern' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('380');
+
+    await fireEvent.keyDown(separator, { key: 'ArrowLeft' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('404');
+    await fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('380');
+
+    const workspace = separator.closest('main');
+    expect(workspace).not.toBeNull();
+    vi.spyOn(workspace!, 'getBoundingClientRect').mockReturnValue({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1_000,
+      toJSON: () => ({}),
+      top: 0,
+      width: 1_000,
+      x: 0,
+      y: 0,
+    });
+    await fireEvent.pointerDown(separator, { button: 0, clientX: 500, pointerId: 1 });
+    await waitFor(() => expect(separator.getAttribute('aria-valuenow')).toBe('500'));
+    await fireEvent.pointerMove(separator, { clientX: 400, pointerId: 1 });
+    await waitFor(() => expect(separator.getAttribute('aria-valuenow')).toBe('600'));
+    await fireEvent.pointerUp(separator, { clientX: 400, pointerId: 1 });
   });
 
   it('submits search explicitly and starts the fixed Standard Deep Map preset', async () => {

@@ -98,5 +98,9 @@ describe('MapInspector', () => {
 
     expect(screen.getAllByRole('button', { name: /shared\.py/ })).toHaveLength(1);
     expect(screen.getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.getAllByText('Datei')).toHaveLength(2);
+    expect(screen.getByText('Verbindungen')).toBeTruthy();
+    expect(screen.getAllByText('Importiert').length).toBeGreaterThan(0);
+    expect(screen.queryByText('imports')).toBeNull();
   });
 });

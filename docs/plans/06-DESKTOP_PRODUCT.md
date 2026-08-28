@@ -976,6 +976,10 @@ Akzeptanz:
 - die Kartenfläche lässt sich zusätzlich zu den Scrollleisten durch Ziehen verschieben und per
   Mausrad am Zeigerpunkt zwischen 50 und 200 Prozent zoomen; die nichtgrafische Zusammenfassung
   bleibt als viewport-festes Fenster unten links unabhängig von Pan und Zoom erreichbar;
+- der Desktop-Inspector bildet mit der Karte ein horizontales Split-Panel und lässt sich per Maus
+  oder Tastatur zwischen 320 und 720 Pixeln verbreitern; auf schmalen Ansichten bleibt er ein
+  kantiger Drawer. Identität, verständliche Statusangaben, relevante Kennzahlen und Primäraktionen
+  stehen vor progressiv geöffneten Verbindungen, Inventaren, Flows und technischen Nachweisen;
 - Inventare halten genau eine feste 50er-Seite im Renderzustand und akzeptieren nur einen aktuellen,
   publikations- und scopegebundenen Cursor;
 - File-, Symbol-, Kanten- und Boundary-Auswahlen tragen nur dann Claim-Badges, wenn ihre aktuelle
