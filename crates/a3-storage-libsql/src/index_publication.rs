@@ -28,6 +28,77 @@ const CANCELLATION_POLL_INTERVAL: u64 = 1_024;
 const REBUILD_DELETE_BATCH: i64 = 4_096;
 const SUPERSEDED_DELETE_BATCH: i64 = 1_024;
 
+const RESTORE_CARD_SEARCH_FOR_RUN_SQL: &str = "INSERT INTO card_fts (index_run_id, card_id, title, purpose, body)\n\
+     SELECT cards.source_index_run_id, cards.card_id,\n\
+       COALESCE((\n\
+         SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+           SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+           WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+             AND values_row.card_id = cards.card_id AND values_row.field_kind = 'title'\n\
+           ORDER BY values_row.value_index\n\
+         ) AS ordered\n\
+       ), ''),\n\
+       COALESCE((\n\
+         SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+           SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+           WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+             AND values_row.card_id = cards.card_id AND values_row.field_kind = 'purpose'\n\
+           ORDER BY values_row.value_index\n\
+         ) AS ordered\n\
+       ), ''),\n\
+       COALESCE((\n\
+         SELECT group_concat(ordered.field_kind || ': ' || ordered.joined_values, char(10))\n\
+         FROM (\n\
+           SELECT fields.field_kind, COALESCE((\n\
+             SELECT group_concat(ordered_values.field_value, char(10)) FROM (\n\
+               SELECT values_row.field_value\n\
+               FROM module_card_field_values AS values_row\n\
+               WHERE values_row.source_index_run_id = fields.source_index_run_id\n\
+                 AND values_row.card_id = fields.card_id\n\
+                 AND values_row.field_kind = fields.field_kind\n\
+               ORDER BY values_row.value_index\n\
+             ) AS ordered_values\n\
+           ), '') AS joined_values\n\
+           FROM module_card_fields AS fields\n\
+           WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+             AND fields.card_id = cards.card_id\n\
+           ORDER BY CASE fields.field_kind\n\
+             WHEN 'title' THEN 1 WHEN 'paths' THEN 2 WHEN 'purpose' THEN 3\n\
+             WHEN 'responsibilities' THEN 4 WHEN 'public-surface' THEN 5\n\
+             WHEN 'entrypoints' THEN 6 WHEN 'dependencies' THEN 7\n\
+             WHEN 'data-flows' THEN 8 WHEN 'invariants' THEN 9 WHEN 'tests' THEN 10\n\
+             WHEN 'risks' THEN 11 WHEN 'open-questions' THEN 12 ELSE 13 END\n\
+         ) AS ordered\n\
+       ), '')\n\
+     FROM module_cards AS cards\n\
+     WHERE cards.source_index_run_id = ?1 AND cards.status = 'published'\n\
+       AND EXISTS (\n\
+         SELECT 1 FROM module_card_lifecycle AS lifecycle\n\
+         WHERE lifecycle.source_index_run_id = cards.source_index_run_id\n\
+           AND lifecycle.card_id = cards.card_id AND lifecycle.status = 'published'\n\
+       )\n\
+       AND EXISTS (\n\
+         SELECT 1 FROM modules\n\
+         WHERE modules.index_run_id = cards.source_index_run_id\n\
+           AND modules.module_id = cards.module_id\n\
+       )\n\
+       AND EXISTS (\n\
+         SELECT 1 FROM module_card_fields AS fields\n\
+         WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+           AND fields.card_id = cards.card_id\n\
+       )\n\
+       AND NOT EXISTS (\n\
+         SELECT 1 FROM module_card_fields AS fields\n\
+         WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+           AND fields.card_id = cards.card_id\n\
+           AND NOT EXISTS (\n\
+             SELECT 1 FROM module_card_field_values AS values_row\n\
+             WHERE values_row.source_index_run_id = fields.source_index_run_id\n\
+               AND values_row.card_id = fields.card_id\n\
+               AND values_row.field_kind = fields.field_kind\n\
+           )\n\
+       )";
+
 pub(crate) async fn publish_index(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -108,6 +179,7 @@ async fn publish_index_in_transaction(
         .await?;
     lexical_search_projection::write_projection(transaction, run_id, lexical_projection, progress)
         .await?;
+    restore_durable_card_search_projection(transaction, run_id, progress).await?;
     let published_record = IndexRunRecord::new(
         run.id(),
         run.snapshot_id(),
@@ -409,7 +481,7 @@ fn publication_work_units(
         publication.ranking().symbols().len(),
     ]
     .into_iter()
-    .try_fold(3_u64, |total, length| {
+    .try_fold(4_u64, |total, length| {
         u64::try_from(length)
             .ok()
             .and_then(|length| total.checked_add(length))
@@ -423,6 +495,96 @@ fn publication_work_units(
         .and_then(|total| total.checked_add(lexical_units))
         .and_then(|total| total.checked_add(module_units))
         .ok_or(IndexPublicationRepositoryError::ResourceLimit)
+}
+
+async fn restore_durable_card_search_projection(
+    transaction: &Transaction,
+    run_id: IndexRunId,
+    progress: &mut MutationProgress<'_>,
+) -> Result<(), IndexPublicationRepositoryError> {
+    progress.checkpoint()?;
+    let run = run_id.as_bytes().to_vec();
+    let card_count = count_rows(
+        transaction,
+        "SELECT COUNT(*) FROM module_cards\n\
+         WHERE source_index_run_id = ?1 AND status = 'published'",
+        run.clone(),
+    )
+    .await?;
+    if card_count
+        > i64::try_from(MAX_MODULES).map_err(|_| IndexPublicationRepositoryError::ResourceLimit)?
+    {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    if card_count == 0 {
+        progress.advance(1)?;
+        return Ok(());
+    }
+
+    let restorable_count = count_rows(
+        transaction,
+        "SELECT COUNT(*) FROM module_cards AS cards\n\
+         WHERE cards.source_index_run_id = ?1 AND cards.status = 'published'\n\
+           AND EXISTS (\n\
+             SELECT 1 FROM module_card_lifecycle AS lifecycle\n\
+             WHERE lifecycle.source_index_run_id = cards.source_index_run_id\n\
+               AND lifecycle.card_id = cards.card_id AND lifecycle.status = 'published'\n\
+           )\n\
+           AND EXISTS (\n\
+             SELECT 1 FROM modules\n\
+             WHERE modules.index_run_id = cards.source_index_run_id\n\
+               AND modules.module_id = cards.module_id\n\
+           )\n\
+           AND EXISTS (\n\
+             SELECT 1 FROM module_card_fields AS fields\n\
+             WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+               AND fields.card_id = cards.card_id\n\
+           )\n\
+           AND NOT EXISTS (\n\
+             SELECT 1 FROM module_card_fields AS fields\n\
+             WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+               AND fields.card_id = cards.card_id\n\
+               AND NOT EXISTS (\n\
+                 SELECT 1 FROM module_card_field_values AS values_row\n\
+                 WHERE values_row.source_index_run_id = fields.source_index_run_id\n\
+                   AND values_row.card_id = fields.card_id\n\
+                   AND values_row.field_kind = fields.field_kind\n\
+               )\n\
+           )",
+        run.clone(),
+    )
+    .await?;
+    if restorable_count != card_count {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+
+    let affected = transaction
+        .execute(RESTORE_CARD_SEARCH_FOR_RUN_SQL, [run.clone()])
+        .await
+        .map_err(IndexPublicationRepositoryError::Write)?;
+    if i64::try_from(affected).ok() != Some(card_count)
+        || count_rows(
+            transaction,
+            "SELECT COUNT(*) FROM card_fts WHERE index_run_id = ?1",
+            run.clone(),
+        )
+        .await?
+            != card_count
+    {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    let affected = transaction
+        .execute(
+            "UPDATE lexical_search_projections SET card_count = ?2\n\
+             WHERE index_run_id = ?1 AND card_count = 0",
+            params![run, card_count],
+        )
+        .await
+        .map_err(IndexPublicationRepositoryError::Write)?;
+    if affected != 1 {
+        return Err(IndexPublicationRepositoryError::InvalidStoredData);
+    }
+    progress.advance(1)
 }
 
 async fn publication_row_count(

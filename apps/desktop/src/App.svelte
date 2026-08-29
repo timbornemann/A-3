@@ -1566,6 +1566,10 @@
                   {@const MapWorkspace = mapWorkspaceComponent}
                   <MapWorkspace
                     projectKey={projectStatusView.result.project.worktreeId}
+                    indexActivityState={indexActivityView.kind === 'active'
+                      ? indexActivityView.result.activity.state
+                      : 'idle'}
+                    indexRebuilder={projectRebuilder}
                     publicationKey={indexOverviewView.kind === 'published'
                       ? indexOverviewView.result.overview.snapshotId
                       : null}

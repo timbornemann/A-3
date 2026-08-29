@@ -187,6 +187,30 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   nur geschlossene Phasen, Aktionen, Diagnosen, feste Budgetreservierungen und sichere
   Provider-/Modell-/Profilreferenzen — keine Prompts, Modellantworten, Chain-of-Thought,
   Providerpayloads, Source-Inhalte, Credentials oder rohe Fehlertexte.
+- Knowledge-Schema V26 repariert ausschließlich die regenerierbare Suchprojektion historischer,
+  bereits vollständig veröffentlichter Module Cards. Fehlende `card_fts`-Zeilen werden
+  deterministisch aus den unveränderlichen `module_card_field_values` aufgebaut; der
+  `lexical_search_projections.card_count` wird nur aktualisiert, wenn Card- und FTS-Anzahl danach
+  exakt übereinstimmen. Die kanonischen Cards, Claims und Evidence bleiben unverändert. Repair und
+  Markerwechsel erfolgen in derselben Migrationstransaktion und rollen bei jedem Widerspruch
+  vollständig zurück.
+- Knowledge-Schema V27 wiederholt diese begrenzte Reparatur für Installationen, in denen ein späterer
+  Fast-Index-Rebuild die regenerierbare Card-FTS-Projektion eines unveränderten, erneut verwendeten
+  Index-Ankers entfernt hatte. Berücksichtigt werden nur Cards eines aktuell veröffentlichten Runs
+  mit vorhandenem Lexical-Marker, veröffentlichter Lifecycle-Zeile und vollständig materialisierten
+  Feldwerten. Zusätzlich rekonstruiert jede neue Fast-Index-Publikation die Card-Suchprojektion
+  desselben unveränderten Ankers innerhalb ihrer atomaren Publish-Transaktion. Stimmen Card-Anzahl,
+  Modulbezug, Lifecycle, Feldmaterialisierung, FTS-Anzahl oder Marker nicht exakt überein, wird die
+  Fast-Index-Publikation zurückgerollt; ein neuer Index-Anker ohne Cards bleibt dagegen `Ready`.
+- Knowledge-Schema V28 ergänzt `index_run_sequence_cursors` als kleine dauerhafte
+  worktree-lokale High-Water-Projektion. Die Vorwärtsmigration übernimmt pro Worktree die höchste
+  vorhandene Run-Sequenz; ein neuer Worktree beginnt bei eins. Ein Fast-Index-Rebuild löscht
+  weiterhin die regenerierbaren `index_runs`, erhält aber den Cursor. Der Core liest ausschließlich
+  den exakt nächsten typisierten Wert, leitet daraus deterministisch die Run-ID ab und übergibt
+  beide an den Adapter. Cursorfortschreibung und `building`-Insert erfolgen in derselben
+  `IMMEDIATE`-Transaktion; stale Starts werden ohne Teilmutation abgewiesen und ein Überlauf wird vor
+  der Indexarbeit typisiert beendet. Integritätsreads akzeptieren nach einem Rebuild eine lückenlose
+  retained Runfolge, die größer als eins beginnt, verlangen jedoch weiterhin den exakten Marker.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich

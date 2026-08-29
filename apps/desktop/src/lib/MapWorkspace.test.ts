@@ -187,6 +187,10 @@ function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV3 = deepMa
     },
   }));
   const starter = vi.fn(async () => ({ outcome: 'queued' as const, protocolVersion: 1 as const }));
+  const indexRebuilder = vi.fn(async () => ({
+    protocolVersion: 1 as const,
+    state: 'queued' as const,
+  }));
   const available =
     deepMapStatusResponse.result.status === 'available' ? deepMapStatusResponse.result : null;
   const failure = available?.lifecycle.state === 'failed' ? available.lifecycle.failure : null;
@@ -254,6 +258,8 @@ function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV3 = deepMa
     deepMapEntriesLoader,
     deepMapDetailLoader,
     inventoryLoader,
+    indexActivityState: 'idle' as const,
+    indexRebuilder,
     publicationKey: id('2'),
     projectKey: id('9'),
     searchLoader,
@@ -285,6 +291,46 @@ describe('U12 progressive Code Atlas workspace', () => {
 
     await waitFor(() => expect(view.props.atlasSceneLoader).toHaveBeenCalledTimes(2));
     expect(view.props.atlasSceneLoader).toHaveBeenLastCalledWith(null);
+  });
+
+  it('starts Fast Index directly from the map and follows its bounded activity state', async () => {
+    const view = renderWorkspace();
+    await screen.findByRole('button', { name: /a3-application, Package/ });
+
+    await fireEvent.click(screen.getByRole('button', { name: '↻ Fast Index' }));
+
+    await waitFor(() => expect(view.props.indexRebuilder).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '↻ Eingeplant' }).disabled).toBe(
+      true,
+    );
+
+    await view.rerender({ ...view.props, indexActivityState: 'running' });
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: '↻ Fast Index läuft' }).disabled,
+    ).toBe(true);
+
+    await view.rerender({ ...view.props, indexActivityState: 'succeeded' });
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '↻ Fast Index' }).disabled).toBe(
+        false,
+      ),
+    );
+  });
+
+  it('keeps a safe retry action in the map when the Fast Index request is rejected', async () => {
+    const view = renderWorkspace();
+    view.props.indexRebuilder.mockRejectedValueOnce(new Error('private adapter detail'));
+    await screen.findByRole('button', { name: /a3-application, Package/ });
+
+    await fireEvent.click(screen.getByRole('button', { name: '↻ Fast Index' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Fast Index konnte nicht gestartet werden.',
+    );
+    expect(screen.queryByText('private adapter detail')).toBeNull();
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: '↻ Erneut versuchen' }).disabled,
+    ).toBe(false);
   });
 
   it('separates selection from semantic opening and previews only typed index Evidence', async () => {
@@ -457,5 +503,32 @@ describe('U12 progressive Code Atlas workspace', () => {
     expect(alert.textContent).toContain('modelRejected');
     expect(alert.textContent).not.toContain('provider response');
     expect(screen.getByText(/openai · gpt-5.4/)).toBeTruthy();
+  });
+
+  it('preserves the detailed lifecycle when starting an already failed publication state rejects', async () => {
+    if (deepMapStatus.result.status !== 'available') {
+      throw new Error('Deep Map test fixture must be available');
+    }
+    const failedStatus: DeepMapStatusResponseV3 = {
+      ...deepMapStatus,
+      result: {
+        ...deepMapStatus.result,
+        lifecycle: {
+          detailsIncomplete: true,
+          failure: 'publicationStorage',
+          progress: { action: null, confirmedSteps: '0', phase: null, totalSteps: '0' },
+          state: 'failed',
+        },
+      },
+    };
+    const { props } = renderWorkspace(failedStatus);
+    await screen.findByRole('button', { name: 'Fehlgeschlagen' });
+    vi.mocked(props.deepMapStarter).mockRejectedValueOnce(new Error('safe command failure'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+
+    await waitFor(() => expect(props.deepMapStatusLoader).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Fehlgeschlagen' })).toBeTruthy();
+    expect(screen.queryByText('Status nicht verfügbar')).toBeNull();
   });
 });

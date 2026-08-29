@@ -1,4 +1,4 @@
-use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
+use crate::fixture::{ContractWorkspace, change, project, run_at, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory};
 use a3_application::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerifier,
@@ -746,8 +746,12 @@ async fn publish<S>(
 where
     S: KnowledgeIndexStore,
 {
+    let sequence = store.next_index_run_sequence(project).await?;
     let index_run = store
-        .start_index_run(project, run(index_run_id, snapshot_id, 1)?)
+        .start_index_run(
+            project,
+            run_at(index_run_id, snapshot_id, 1, sequence.get())?,
+        )
         .await?;
     let publication =
         super::index::publication(snapshot_id, b"src/lib.rs", content_hash, symbol_byte)?;

@@ -408,7 +408,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Recovery-`Replan` einschließlich CAS-Rollback. Migrationstests decken leeres Schema, jeden
   Vorgänger bis V21, die konservative Übernahme laufender V21-Versuche und vollständigen
   V21→V22-Rollback ab.
-- Rebuild trennt regenerierbare und dauerhafte Daten korrekt
+- Rebuild trennt regenerierbare und dauerhafte Daten korrekt. V28-Contracts prüfen Backfill und
+  Rollback, Sequenz eins beim ersten Lauf, erhaltenen High-Water-Mark nach Rebuild und Reopen,
+  stale Start-CAS ohne Teilmutation sowie typisierten Überlauf. Der vollständige Fast-Index-
+  Contract verlangt bei unverändertem Snapshot einen neuen Run-Anker und anschließend Deep Map
+  `Ready`; historische Module Cards bleiben unverändert an den alten Anker gebunden.
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
   Worker aus; dieselbe Isolation schützt die Retrieval-Evalbaseline. Erfolg gilt erst nach dem

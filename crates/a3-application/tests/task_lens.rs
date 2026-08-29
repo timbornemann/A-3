@@ -256,6 +256,13 @@ impl KnowledgeIndexStore for StubStore<'_> {
         Box::pin(async { Err(KnowledgeIndexFailure::SnapshotNotFound) })
     }
 
+    fn next_index_run_sequence<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+    ) -> KnowledgeIndexFuture<'a, a3_domain::IndexRunSequence> {
+        Box::pin(async { Err(KnowledgeIndexFailure::IndexRunSequenceExhausted) })
+    }
+
     fn start_index_run<'a>(
         &'a self,
         _project: &'a ProjectIdentity,

@@ -301,8 +301,13 @@ spätestens nach 1.024 Zeilen erneut, emittieren höchstens 64 monotone Fortschr
 nach fünf Minuten kontrolliert ab. Der Rebuild verweigert einen aktiven `building`-Run und entfernt
 ausschließlich run-gebundene regenerierbare Indexzeilen in Batches von 4.096 Zeilen sowie anschließend
 die IndexRun-Historie. Snapshots, Worktree-Identität und nicht regenerierbare Task-, Decision- oder
-User-Evidence-Tabellen bleiben erhalten. Fehler, Cancellation, Timeout oder ein Crash vor dem finalen
-Statuswechsel rollen die gesamte Mutation zurück; der zuvor veröffentlichte Index bleibt sichtbar.
+User-Evidence-Tabellen bleiben erhalten. Knowledge-Schema V28 erhält zusätzlich die zuletzt
+vergebene worktree-lokale Run-Sequenz als nicht regenerierbare Identitätsmetadaten. Der nächste Full
+Rescan leitet seine Run-ID aus exakt dem Folgewert ab und publiziert deshalb auch bei unverändertem
+Snapshot einen neuen Anker. Historische Module Cards bleiben an ihrem alten Anker gebunden; Deep Map
+klassifiziert den neuen Anker ohne Cards als `Ready`. Fehler, Cancellation, Timeout oder ein Crash
+vor dem finalen Statuswechsel rollen die gesamte Mutation zurück; der zuvor veröffentlichte Index
+bleibt sichtbar.
 
 ### Progressiver Repository-Baum
 

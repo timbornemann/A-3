@@ -37,6 +37,7 @@
   let mode = $state<DeepMapModeV2>('standard');
   let busy = $state(false);
   let readFailed = $state(false);
+  let actionFailed = $state(false);
   let wasCurrent = $state(false);
 
   const lifecycle = $derived(
@@ -80,11 +81,13 @@
   async function start(): Promise<void> {
     busy = true;
     readFailed = false;
+    actionFailed = false;
     try {
       await starter(mode);
       await load();
     } catch {
-      readFailed = true;
+      actionFailed = true;
+      await load();
     } finally {
       busy = false;
     }
@@ -93,11 +96,13 @@
   async function control(action: () => Promise<DeepMapControlResponseV1>): Promise<void> {
     busy = true;
     readFailed = false;
+    actionFailed = false;
     try {
       await action();
       await load();
     } catch {
-      readFailed = true;
+      actionFailed = true;
+      await load();
     } finally {
       busy = false;
     }
@@ -143,6 +148,8 @@
     if (result?.status === 'unavailable') return 'Kein Mapping-Modell';
     if (result?.status === 'noProject') return 'Kein Projekt';
     if (lifecycle.state === 'current') return `${lifecycle.cardCount} Cards · aktuell`;
+    if (lifecycle.state === 'failed' && progress?.totalSteps === '0') return 'Fehlgeschlagen';
+    if (actionFailed) return 'Aktion fehlgeschlagen';
     if (progress === null) return stateLabel(lifecycle.state);
     const action =
       progress.action === null

@@ -1,4 +1,4 @@
-use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
+use crate::fixture::{ContractWorkspace, change, project, run, run_at, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory, fixture_modules};
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexStore,
@@ -576,7 +576,7 @@ where
         .await?;
     let replacement_publication = publication(replacement_snapshot.id(), [3; 32], 20, false)?;
     let replacement_run = store
-        .start_index_run(&project, run([85; 32], replacement_snapshot.id(), 1)?)
+        .start_index_run(&project, run_at([85; 32], replacement_snapshot.id(), 1, 2)?)
         .await?;
     store
         .publish_index(

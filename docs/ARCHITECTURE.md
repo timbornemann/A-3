@@ -189,14 +189,18 @@ HTTP-Body-Stream bereitstellt. Redirects und Umgebungsproxies sind für diese Cl
     zurück.
 
 Der schmale `KnowledgeIndexStore`-Port stellt unveränderliche Snapshot-Ketten, den serialisierten
-IndexRun-Lifecycle und das atomische Publish bereit. Diese Application-Grenze verwendet ausschließlich
-Domain-Typen; SQL, libSQL-Zeilen und Datenbankhandles bleiben im Adapter. Discovery und Hashing
+IndexRun-Lifecycle, die exakt nächste dauerhafte worktree-lokale Run-Koordinate und das atomische
+Publish bereit. Diese Application-Grenze verwendet ausschließlich Domain-Typen; SQL,
+libSQL-Zeilen und Datenbankhandles bleiben im Adapter. Discovery und Hashing
 erzeugen die Snapshot-Deltas, Parser, Linker und Ranker den vollständigen `IndexPublication`-Input.
 Der libSQL-Adapter schreibt die run-gebundenen Datei-, Symbol-, Kanten-, Kandidaten- und Rankzeilen
 und den Zustand `published` in genau einer Transaktion. Leser arbeiten ausschließlich auf dem
 jüngsten vollständig veröffentlichten Run. Beim erfolgreichen Ersatz werden die regenerierbaren
 Zeilen älterer Runs innerhalb derselben Transaktion entfernt; Run-Metadaten und Snapshotkette bleiben
-für monotone Historie erhalten. Rebuild entfernt nur regenerierbare Indexzeilen.
+für monotone Historie erhalten. Rebuild entfernt regenerierbare Index- und Run-Zeilen, behält aber
+den separaten High-Water-Marker. Der folgende Full Rescan startet Marker und `building`-Run atomar
+mit dem exakten Folgewert; so entsteht auch für einen unveränderten Snapshot ein neuer
+deterministischer Publikationsanker.
 
 Der Adapter hält getrennt höchstens vier identitäts- und policygeprüfte Mutations- sowie vier
 Read-Datenbankhandles. Dadurch wiederholt ein serialisierter Refresh nicht vor jedem Snapshot- oder
@@ -250,10 +254,12 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
    laufenden Refresh Cancellation an und wartet auf dessen terminalen Schedulerzustand.
 3. Der Scheduler besitzt den Rebuild-Job und reicht Cancellation sowie determinierten Progress an
    `KnowledgeIndexStore::rebuild_regenerable_index` weiter. Der Storageadapter löscht ausschließlich
-   regenerierbare Indexprojektionen in einer Transaktion.
+   regenerierbare Indexprojektionen und Run-Zeilen in einer Transaktion; die dauerhafte
+   worktree-lokale High-Water-Koordinate bleibt erhalten.
 4. Nach erfolgreichem Commit fordert der Manager einen expliziten vollständigen Rescan an. Ein
-   fehlgeschlagener oder abgebrochener Rebuild veröffentlicht keinen partiellen Indexzustand; der
-   geschlossene Rebuildstatus bleibt über `query_project_status` sichtbar.
+   unveränderter Dateistand erhält damit einen neuen Run-Anker und Deep Map wird ohne passende Cards
+   wieder `Ready`. Ein fehlgeschlagener oder abgebrochener Rebuild veröffentlicht keinen partiellen
+   Indexzustand; der geschlossene Rebuildstatus bleibt über `query_project_status` sichtbar.
 
 ### Live-Fortschritt des Fast Index
 

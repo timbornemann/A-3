@@ -5,6 +5,7 @@
   import DeepMapInspector from './DeepMapInspector.svelte';
   import MapAtlasCanvas from './MapAtlasCanvas.svelte';
   import MapInspector from './MapInspector.svelte';
+  import type { IndexActivityStateV1 } from './index-activity';
   import {
     queryProjectMapAtlasScene,
     queryProjectMapEntityContext,
@@ -29,6 +30,7 @@
     type ProjectMapSearchHitV1,
     type ProjectMapSearchResponseV1,
   } from './project-map-search';
+  import { rebuildProjectIndex, type RebuildProjectIndexResponseV1 } from './project-rebuild';
   import {
     queryProjectMapSourcePreview,
     type ProjectMapSourcePreviewQueryV1,
@@ -81,6 +83,8 @@
       selection: ProjectMapEntitySelectionV1,
       preset: ProjectMapFlowPresetV1,
     ) => Promise<ProjectMapFlowSceneResponseV1>;
+    indexActivityState?: IndexActivityStateV1;
+    indexRebuilder?: () => Promise<RebuildProjectIndexResponseV1>;
     publicationKey?: string | null;
     searchLoader?: (query: { query: string }) => Promise<ProjectMapSearchResponseV1>;
     sourcePreviewLoader?: (
@@ -115,6 +119,8 @@
     contextLoader = queryProjectMapEntityContext,
     inventoryLoader = queryProjectMapInventoryPage,
     flowLoader = queryProjectMapFlowScene,
+    indexActivityState = 'idle',
+    indexRebuilder = rebuildProjectIndex,
     searchLoader = queryProjectMapSearch,
     sourcePreviewLoader = queryProjectMapSourcePreview,
     taskLensTasksLoader = queryTaskLensTasks,
@@ -148,6 +154,8 @@
   let selectedStepId = $state('');
   let lensBusy = $state(false);
   let lensError = $state(false);
+  let indexRebuildView = $state<'error' | 'idle' | 'queued' | 'submitting'>('idle');
+  let indexRebuildSawActivity = $state(false);
   let retrySelection = $state<ProjectMapEntitySelectionV1 | null>(null);
   const INSPECTOR_DEFAULT_WIDTH = 380;
   const INSPECTOR_MIN_WIDTH = 320;
@@ -192,6 +200,25 @@
   const inspectorOpen = $derived(
     inspectorMode === 'deepMap' || (inspectorMode === 'code' && selected !== null),
   );
+  const indexRebuildActive = $derived(
+    indexActivityState === 'queued' ||
+      indexActivityState === 'running' ||
+      indexActivityState === 'cancelling',
+  );
+  const indexRebuildDisabled = $derived(
+    indexRebuildView === 'submitting' ||
+      (indexRebuildView === 'queued' && !indexRebuildSawActivity) ||
+      indexRebuildActive,
+  );
+  const indexRebuildLabel = $derived.by(() => {
+    if (indexRebuildView === 'submitting') return 'Wird eingeplant …';
+    if (indexActivityState === 'queued') return 'Startet …';
+    if (indexActivityState === 'running') return 'Fast Index läuft';
+    if (indexActivityState === 'cancelling') return 'Wird beendet …';
+    if (indexRebuildView === 'queued') return 'Eingeplant';
+    if (indexRebuildView === 'error') return 'Erneut versuchen';
+    return 'Fast Index';
+  });
 
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -225,6 +252,18 @@
   $effect(() => {
     void projectKey;
     inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
+    indexRebuildView = 'idle';
+    indexRebuildSawActivity = false;
+  });
+
+  $effect(() => {
+    if (indexRebuildView !== 'queued') return;
+    if (indexRebuildActive) {
+      indexRebuildSawActivity = true;
+    } else if (indexRebuildSawActivity) {
+      indexRebuildView = 'idle';
+      indexRebuildSawActivity = false;
+    }
   });
 
   $effect(() => {
@@ -580,6 +619,18 @@
     void loadScene(scene.kind === 'available' ? scene.value.selection : null);
   }
 
+  async function requestFastIndex(): Promise<void> {
+    if (indexRebuildDisabled) return;
+    indexRebuildView = 'submitting';
+    indexRebuildSawActivity = false;
+    try {
+      await indexRebuilder();
+      indexRebuildView = 'queued';
+    } catch {
+      indexRebuildView = 'error';
+    }
+  }
+
   function toggleDeepMapInspector(focusFailure: boolean): void {
     if (focusFailure) {
       inspectorMode = 'deepMap';
@@ -619,38 +670,50 @@
         >{searchState.kind === 'loading' ? 'Sucht …' : 'Suchen'}</button
       >
     </form>
-    <div class="lens">
-      <button
-        type="button"
-        class:active={lens !== null}
-        aria-expanded={lensOpen}
-        onclick={toggleLens}>◎ Task Lens{lens === null ? '' : ` · ${lensModuleIds.size}`}</button
-      >
-      {#if lensOpen}<div class="lens-popover">
-          <strong>Aktuellen Task fokussieren</strong>{#if lensBusy}<p role="status">
-              Task Lens wird geladen …
-            </p>{:else if lensError}<p role="alert">
-              Task Lens konnte nicht geladen werden.
-            </p>{:else}<label
-              >Task<select value={selectedTaskId} onchange={selectTask}
-                ><option value="">Task wählen</option
-                >{#if lensTasks?.status === 'available'}{#each lensTasks.tasks as task (task.taskId)}<option
-                      value={task.taskId}>{task.objective}</option
-                    >{/each}{/if}</select
-              ></label
-            >{#if lensTask?.status === 'available'}<label
-                >Schritt<select bind:value={selectedStepId}
-                  ><option value="">Schritt wählen</option
-                  >{#each lensTask.steps as step (step.stepId)}<option value={step.stepId}
-                      >{step.intendedOutcome}</option
-                    >{/each}</select
+    <div class="command-actions">
+      <div class="fast-index-control">
+        <button type="button" disabled={indexRebuildDisabled} onclick={requestFastIndex}
+          >↻ {indexRebuildLabel}</button
+        >
+        {#if indexRebuildView === 'error'}
+          <span class="fast-index-error" role="alert"
+            >Fast Index konnte nicht gestartet werden.</span
+          >
+        {/if}
+      </div>
+      <div class="lens">
+        <button
+          type="button"
+          class:active={lens !== null}
+          aria-expanded={lensOpen}
+          onclick={toggleLens}>◎ Task Lens{lens === null ? '' : ` · ${lensModuleIds.size}`}</button
+        >
+        {#if lensOpen}<div class="lens-popover">
+            <strong>Aktuellen Task fokussieren</strong>{#if lensBusy}<p role="status">
+                Task Lens wird geladen …
+              </p>{:else if lensError}<p role="alert">
+                Task Lens konnte nicht geladen werden.
+              </p>{:else}<label
+                >Task<select value={selectedTaskId} onchange={selectTask}
+                  ><option value="">Task wählen</option
+                  >{#if lensTasks?.status === 'available'}{#each lensTasks.tasks as task (task.taskId)}<option
+                        value={task.taskId}>{task.objective}</option
+                      >{/each}{/if}</select
                 ></label
-              ><button type="button" disabled={selectedStepId === ''} onclick={applyLens}
-                >Lens anwenden</button
-              >{/if}{#if lens !== null}<button type="button" onclick={clearLens}
-                >Lens entfernen</button
-              >{/if}{/if}
-        </div>{/if}
+              >{#if lensTask?.status === 'available'}<label
+                  >Schritt<select bind:value={selectedStepId}
+                    ><option value="">Schritt wählen</option
+                    >{#each lensTask.steps as step (step.stepId)}<option value={step.stepId}
+                        >{step.intendedOutcome}</option
+                      >{/each}</select
+                  ></label
+                ><button type="button" disabled={selectedStepId === ''} onclick={applyLens}
+                  >Lens anwenden</button
+                >{/if}{#if lens !== null}<button type="button" onclick={clearLens}
+                  >Lens entfernen</button
+                >{/if}{/if}
+          </div>{/if}
+      </div>
     </div>
   </header>
 
@@ -870,6 +933,30 @@
     background: var(--accent);
     color: var(--color-on-accent);
     font-weight: 750;
+  }
+  .command-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .fast-index-control {
+    position: relative;
+  }
+  .fast-index-control > button:disabled {
+    color: var(--muted);
+    cursor: wait;
+  }
+  .fast-index-error {
+    position: absolute;
+    z-index: 2;
+    top: 50px;
+    right: 0;
+    width: 230px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-danger);
+    background: var(--surface);
+    color: var(--color-danger);
+    font-size: 0.7rem;
   }
   .lens {
     position: relative;
@@ -1119,6 +1206,12 @@
     .command-bar {
       padding: 7px 9px;
       gap: 8px;
+    }
+    .command-actions {
+      gap: 4px;
+    }
+    .command-actions button {
+      padding-inline: 8px;
     }
     .atlas-toolbar {
       gap: 5px;

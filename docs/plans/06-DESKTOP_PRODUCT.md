@@ -135,6 +135,16 @@ Code-Analyse, Optionen und Bestätigung mit einem realen aktiven Projekt. Format
 Svelte-Typecheck, alle 220 Frontendtests, fünf Tooltests, Produktionsbuild und Markdown-Linkprüfung
 sind grün.
 
+Die Map bietet denselben pfadlosen Fast-Index-Neuaufbau zusätzlich direkt in ihrer Command-Leiste
+an. Sie verfolgt dafür ausschließlich den vorhandenen begrenzten Index-Aktivitätsstatus; weder
+Projektpfad noch Worktree- oder Job-ID werden von der WebView gewählt.
+
+Bugfix-Abnahme vom 2026-08-29: ADR-0035 und Knowledge-Schema V28 trennen die dauerhafte monotone
+Index-Laufkoordinate von den regenerierbaren `index_runs`. Ein expliziter Rebuild mit unverändertem
+Snapshot erhält dadurch einen neuen deterministischen Publikationsanker; historische Cards bleiben
+unverändert am alten Anker und Deep Map wechselt auf `Ready`. Storage-CAS, Reopen, Migration,
+Überlauf, der vollständige Fast-Index-Pfad und die Map-Aktion sind durch Regressionstests gedeckt.
+
 `activate_catalog_project` und `remove_catalog_project` nehmen ausschließlich eine zuvor gelistete
 `worktreeId`, aber nie einen Pfad an. Aktivierung revalidiert Root, Repository- und Worktree-
 Identität und schreibt die neue Reihenfolge erst nach erfolgreichem Runtime-Wechsel. Der

@@ -1,7 +1,8 @@
 use crate::{JobContext, KnowledgeStoreFailure};
 use a3_domain::{
-    IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, Progress,
-    ProjectIdentity, PublishedIndex, RepositoryFileState, Snapshot,
+    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStart,
+    IndexRunTerminalOutcome, Progress, ProjectIdentity, PublishedIndex, RepositoryFileState,
+    Snapshot,
 };
 use std::error::Error;
 use std::fmt;
@@ -71,6 +72,12 @@ pub trait KnowledgeIndexStore: fmt::Debug + Send + Sync {
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, RepositoryFileState>;
 
+    /// Returns the exact next durable worktree-local coordinate without reserving it.
+    fn next_index_run_sequence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeIndexFuture<'a, IndexRunSequence>;
+
     /// Starts one index attempt for an existing immutable snapshot.
     fn start_index_run<'a>(
         &'a self,
@@ -133,6 +140,10 @@ pub enum KnowledgeIndexFailure {
     SnapshotNotFound,
     /// A building index run already owns the worktree mutation slot.
     IndexRunAlreadyActive,
+    /// The requested coordinate no longer follows the durable worktree high-water mark.
+    IndexRunSequenceConflict,
+    /// No later worktree-local coordinate can be represented durably.
+    IndexRunSequenceExhausted,
     /// The requested index run does not exist for the observed worktree.
     IndexRunNotFound,
     /// The requested run transition is not legal from its durable state.
@@ -160,6 +171,12 @@ impl fmt::Display for KnowledgeIndexFailure {
             Self::IndexRunAlreadyActive => {
                 formatter.write_str("an index run is already active for this worktree")
             }
+            Self::IndexRunSequenceConflict => {
+                formatter.write_str("index run sequence conflicts with the durable coordinate")
+            }
+            Self::IndexRunSequenceExhausted => {
+                formatter.write_str("index run sequence is exhausted")
+            }
             Self::IndexRunNotFound => formatter.write_str("index run was not found"),
             Self::InvalidIndexRunTransition => {
                 formatter.write_str("index run transition is invalid")
@@ -186,6 +203,8 @@ impl Error for KnowledgeIndexFailure {
             Self::SnapshotConflict
             | Self::SnapshotNotFound
             | Self::IndexRunAlreadyActive
+            | Self::IndexRunSequenceConflict
+            | Self::IndexRunSequenceExhausted
             | Self::IndexRunNotFound
             | Self::InvalidIndexRunTransition
             | Self::IndexPublicationMismatch

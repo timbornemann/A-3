@@ -48,6 +48,7 @@ pub struct IndexRunStart {
     id: IndexRunId,
     snapshot_id: SnapshotId,
     ranking_policy_version: RankingPolicyVersion,
+    sequence: IndexRunSequence,
 }
 
 impl IndexRunStart {
@@ -57,11 +58,13 @@ impl IndexRunStart {
         id: IndexRunId,
         snapshot_id: SnapshotId,
         ranking_policy_version: RankingPolicyVersion,
+        sequence: IndexRunSequence,
     ) -> Self {
         Self {
             id,
             snapshot_id,
             ranking_policy_version,
+            sequence,
         }
     }
 
@@ -81,6 +84,12 @@ impl IndexRunStart {
     #[must_use]
     pub const fn ranking_policy_version(self) -> RankingPolicyVersion {
         self.ranking_policy_version
+    }
+
+    /// Returns the exact next worktree-local coordinate used to derive the run identity.
+    #[must_use]
+    pub const fn sequence(self) -> IndexRunSequence {
+        self.sequence
     }
 }
 
@@ -269,8 +278,10 @@ mod tests {
             IndexRunId::from_bytes([1; 32]),
             SnapshotId::from_bytes([2; 32]),
             RankingPolicyVersion::new(1)?,
+            IndexRunSequence::new(1)?,
         );
         assert_eq!(start.snapshot_id(), SnapshotId::from_bytes([2; 32]));
+        assert_eq!(start.sequence().get(), 1);
         assert_eq!(IndexRunSequence::new(1)?.get(), 1);
         assert_eq!(
             IndexRunTerminalOutcome::Failed.status(),

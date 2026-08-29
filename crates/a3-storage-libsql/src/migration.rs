@@ -2638,6 +2638,175 @@ const KNOWLEDGE_DEEP_MAP_JOURNAL_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_CARD_SEARCH_REPAIR_MIGRATION: Migration = Migration {
+    version: 26,
+    name: "repair_legacy_card_search_projection",
+    sql: "INSERT INTO card_fts (index_run_id, card_id, title, purpose, body)\n\
+      SELECT cards.source_index_run_id, cards.card_id,\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+            SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+            WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+              AND values_row.card_id = cards.card_id AND values_row.field_kind = 'title'\n\
+            ORDER BY values_row.value_index\n\
+          ) AS ordered\n\
+        ), ''),\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+            SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+            WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+              AND values_row.card_id = cards.card_id AND values_row.field_kind = 'purpose'\n\
+            ORDER BY values_row.value_index\n\
+          ) AS ordered\n\
+        ), ''),\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.search_line, char(10)) FROM (\n\
+            SELECT values_row.field_kind || ': ' || values_row.field_value AS search_line\n\
+            FROM module_card_field_values AS values_row\n\
+            WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+              AND values_row.card_id = cards.card_id\n\
+            ORDER BY CASE values_row.field_kind\n\
+              WHEN 'title' THEN 1 WHEN 'paths' THEN 2 WHEN 'purpose' THEN 3\n\
+              WHEN 'responsibilities' THEN 4 WHEN 'public-surface' THEN 5\n\
+              WHEN 'entrypoints' THEN 6 WHEN 'dependencies' THEN 7\n\
+              WHEN 'data-flows' THEN 8 WHEN 'invariants' THEN 9 WHEN 'tests' THEN 10\n\
+              WHEN 'risks' THEN 11 WHEN 'open-questions' THEN 12 ELSE 13 END,\n\
+              values_row.value_index\n\
+          ) AS ordered\n\
+        ), '')\n\
+      FROM module_cards AS cards\n\
+      WHERE cards.status = 'published' AND NOT EXISTS (\n\
+        SELECT 1 FROM card_fts AS search\n\
+        WHERE search.index_run_id = cards.source_index_run_id\n\
+          AND search.card_id = cards.card_id\n\
+      );\n\
+      UPDATE lexical_search_projections\n\
+      SET card_count = (\n\
+        SELECT COUNT(*) FROM module_cards\n\
+        WHERE source_index_run_id = lexical_search_projections.index_run_id\n\
+          AND status = 'published'\n\
+      )\n\
+      WHERE (\n\
+        SELECT COUNT(*) FROM module_cards\n\
+        WHERE source_index_run_id = lexical_search_projections.index_run_id\n\
+          AND status = 'published'\n\
+      ) = (\n\
+        SELECT COUNT(*) FROM card_fts\n\
+        WHERE index_run_id = lexical_search_projections.index_run_id\n\
+      );",
+};
+
+const KNOWLEDGE_RECURRENT_CARD_SEARCH_REPAIR_MIGRATION: Migration = Migration {
+    version: 27,
+    name: "repair_recurrent_card_search_projection",
+    sql: "INSERT INTO card_fts (index_run_id, card_id, title, purpose, body)\n\
+      SELECT cards.source_index_run_id, cards.card_id,\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+            SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+            WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+              AND values_row.card_id = cards.card_id AND values_row.field_kind = 'title'\n\
+            ORDER BY values_row.value_index\n\
+          ) AS ordered\n\
+        ), ''),\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.field_value, char(10)) FROM (\n\
+            SELECT values_row.field_value FROM module_card_field_values AS values_row\n\
+            WHERE values_row.source_index_run_id = cards.source_index_run_id\n\
+              AND values_row.card_id = cards.card_id AND values_row.field_kind = 'purpose'\n\
+            ORDER BY values_row.value_index\n\
+          ) AS ordered\n\
+        ), ''),\n\
+        COALESCE((\n\
+          SELECT group_concat(ordered.field_kind || ': ' || ordered.joined_values, char(10))\n\
+          FROM (\n\
+            SELECT fields.field_kind, COALESCE((\n\
+              SELECT group_concat(ordered_values.field_value, char(10)) FROM (\n\
+                SELECT values_row.field_value\n\
+                FROM module_card_field_values AS values_row\n\
+                WHERE values_row.source_index_run_id = fields.source_index_run_id\n\
+                  AND values_row.card_id = fields.card_id\n\
+                  AND values_row.field_kind = fields.field_kind\n\
+                ORDER BY values_row.value_index\n\
+              ) AS ordered_values\n\
+            ), '') AS joined_values\n\
+            FROM module_card_fields AS fields\n\
+            WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+              AND fields.card_id = cards.card_id\n\
+            ORDER BY CASE fields.field_kind\n\
+              WHEN 'title' THEN 1 WHEN 'paths' THEN 2 WHEN 'purpose' THEN 3\n\
+              WHEN 'responsibilities' THEN 4 WHEN 'public-surface' THEN 5\n\
+              WHEN 'entrypoints' THEN 6 WHEN 'dependencies' THEN 7\n\
+              WHEN 'data-flows' THEN 8 WHEN 'invariants' THEN 9 WHEN 'tests' THEN 10\n\
+              WHEN 'risks' THEN 11 WHEN 'open-questions' THEN 12 ELSE 13 END\n\
+          ) AS ordered\n\
+        ), '')\n\
+      FROM module_cards AS cards\n\
+      WHERE cards.status = 'published'\n\
+        AND EXISTS (\n\
+          SELECT 1 FROM index_runs\n\
+          WHERE index_runs.index_run_id = cards.source_index_run_id\n\
+            AND index_runs.status = 'published'\n\
+        )\n\
+        AND EXISTS (\n\
+          SELECT 1 FROM lexical_search_projections\n\
+          WHERE lexical_search_projections.index_run_id = cards.source_index_run_id\n\
+        )\n\
+        AND EXISTS (\n\
+          SELECT 1 FROM module_card_lifecycle AS lifecycle\n\
+          WHERE lifecycle.source_index_run_id = cards.source_index_run_id\n\
+            AND lifecycle.card_id = cards.card_id AND lifecycle.status = 'published'\n\
+        )\n\
+        AND EXISTS (\n\
+          SELECT 1 FROM module_card_fields AS fields\n\
+          WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+            AND fields.card_id = cards.card_id\n\
+        )\n\
+        AND NOT EXISTS (\n\
+          SELECT 1 FROM module_card_fields AS fields\n\
+          WHERE fields.source_index_run_id = cards.source_index_run_id\n\
+            AND fields.card_id = cards.card_id\n\
+            AND NOT EXISTS (\n\
+              SELECT 1 FROM module_card_field_values AS values_row\n\
+              WHERE values_row.source_index_run_id = fields.source_index_run_id\n\
+                AND values_row.card_id = fields.card_id\n\
+                AND values_row.field_kind = fields.field_kind\n\
+            )\n\
+        )\n\
+        AND NOT EXISTS (\n\
+          SELECT 1 FROM card_fts AS search\n\
+          WHERE search.index_run_id = cards.source_index_run_id\n\
+            AND search.card_id = cards.card_id\n\
+        );\n\
+      UPDATE lexical_search_projections\n\
+      SET card_count = (\n\
+        SELECT COUNT(*) FROM module_cards\n\
+        WHERE source_index_run_id = lexical_search_projections.index_run_id\n\
+          AND status = 'published'\n\
+      )\n\
+      WHERE (\n\
+        SELECT COUNT(*) FROM module_cards\n\
+        WHERE source_index_run_id = lexical_search_projections.index_run_id\n\
+          AND status = 'published'\n\
+      ) = (\n\
+        SELECT COUNT(*) FROM card_fts\n\
+        WHERE index_run_id = lexical_search_projections.index_run_id\n\
+      );",
+};
+
+const KNOWLEDGE_MONOTONE_INDEX_RUN_SEQUENCE_MIGRATION: Migration = Migration {
+    version: 28,
+    name: "monotone_index_run_sequence_across_rebuilds",
+    sql: "CREATE TABLE index_run_sequence_cursors (\n\
+      worktree_id BLOB PRIMARY KEY NOT NULL CHECK (length(worktree_id) = 32),\n\
+      last_sequence INTEGER NOT NULL CHECK (last_sequence > 0),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      INSERT INTO index_run_sequence_cursors (worktree_id, last_sequence)\n\
+      SELECT worktree_id, MAX(run_sequence) FROM index_runs GROUP BY worktree_id;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2664,6 +2833,9 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION,
     KNOWLEDGE_AGENT_SESSION_MIGRATION,
     KNOWLEDGE_DEEP_MAP_JOURNAL_MIGRATION,
+    KNOWLEDGE_CARD_SEARCH_REPAIR_MIGRATION,
+    KNOWLEDGE_RECURRENT_CARD_SEARCH_REPAIR_MIGRATION,
+    KNOWLEDGE_MONOTONE_INDEX_RUN_SEQUENCE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2696,7 +2868,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(25);
+    pub const CURRENT: Self = Self::new(28);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3115,11 +3287,12 @@ mod tests {
                      'verification_diff_evidence', 'verification_diff_paths',\n\
                      'verification_user_confirmations', 'verification_evidence_dependencies',\n\
                      'agent_session_revisions', 'agent_session_entries',\n\
-                     'deep_map_runs', 'deep_map_steps', 'deep_map_events'\n\
+                     'deep_map_runs', 'deep_map_steps', 'deep_map_events',\n\
+                     'index_run_sequence_cursors'\n\
                      )",
                 )
                 .await?,
-                69
+                70
             );
             assert_eq!(
                 query_i64(
@@ -3305,6 +3478,9 @@ mod tests {
         (knowledge_upgrades_from_v22, 22),
         (knowledge_upgrades_from_v23, 23),
         (knowledge_upgrades_from_v24, 24),
+        (knowledge_upgrades_from_v25, 25),
+        (knowledge_upgrades_from_v26, 26),
+        (knowledge_upgrades_from_v27, 27),
     );
 
     #[test]
@@ -4935,6 +5111,416 @@ mod tests {
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
+    }
+
+    #[test]
+    fn knowledge_v26_repairs_legacy_card_search_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [75; 32];
+            let worktree_id = [76; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..25],
+                25,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            seed_legacy_card_projection(&connection, worktree_id).await?;
+
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM card_fts").await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT card_count FROM lexical_search_projections",
+                )
+                .await?,
+                0
+            );
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM card_fts").await?,
+                1
+            );
+            assert_eq!(
+                query_string(&connection, "SELECT title FROM card_fts").await?,
+                "Legacy title"
+            );
+            assert_eq!(
+                query_string(&connection, "SELECT purpose FROM card_fts").await?,
+                "Legacy purpose"
+            );
+            assert_eq!(
+                query_string(&connection, "SELECT body FROM card_fts").await?,
+                "title: Legacy title\npurpose: Legacy purpose"
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT card_count FROM lexical_search_projections",
+                )
+                .await?,
+                1
+            );
+
+            super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM card_fts").await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v26_repair_rolls_back_fts_and_marker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [81; 32];
+            let worktree_id = [82; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..25],
+                25,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            seed_legacy_card_projection(&connection, worktree_id).await?;
+            connection
+                .execute(
+                    "CREATE TRIGGER block_legacy_card_projection_repair\n\
+                     BEFORE UPDATE ON lexical_search_projections BEGIN\n\
+                       SELECT RAISE(ABORT, 'injected repair failure');\n\
+                     END",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 26, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 25);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                25
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM card_fts").await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT card_count FROM lexical_search_projections",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v27_repairs_projection_removed_after_v26() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [83; 32];
+            let worktree_id = [84; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..26],
+                26,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            seed_legacy_card_projection(&connection, worktree_id).await?;
+            connection
+                .execute(
+                    "INSERT INTO module_card_field_values (\n\
+                     source_index_run_id, card_id, field_kind, value_index, field_value\n\
+                     ) VALUES (?1, ?2, 'purpose', 1, 'Second purpose line')",
+                    params![vec![92; 32], vec![93; 32]],
+                )
+                .await?;
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 28);
+            assert_eq!(
+                query_string(&connection, "SELECT purpose FROM card_fts").await?,
+                "Legacy purpose\nSecond purpose line"
+            );
+            assert_eq!(
+                query_string(&connection, "SELECT body FROM card_fts").await?,
+                "title: Legacy title\npurpose: Legacy purpose\nSecond purpose line"
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT card_count FROM lexical_search_projections",
+                )
+                .await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v27_repair_rolls_back_fts_and_marker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [85; 32];
+            let worktree_id = [86; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..26],
+                26,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            seed_legacy_card_projection(&connection, worktree_id).await?;
+            connection
+                .execute(
+                    "CREATE TRIGGER block_recurrent_card_projection_repair\n\
+                     BEFORE UPDATE ON lexical_search_projections BEGIN\n\
+                       SELECT RAISE(ABORT, 'injected recurrent repair failure');\n\
+                     END",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 27, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 26);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                26
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM card_fts").await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT card_count FROM lexical_search_projections",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v28_backfills_the_durable_index_run_high_water_mark()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [95; 32];
+            let worktree_id = [96; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..27],
+                27,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "INSERT INTO snapshots (\n\
+                     snapshot_id, worktree_id, parent_snapshot_id, generation, head_kind,\n\
+                     head_object_id, head_reference, index_schema_version\n\
+                     ) VALUES (?1, ?2, NULL, 1, 'unborn', NULL, 'refs/heads/main', 1)",
+                    params![vec![97; 32], worktree_id.to_vec()],
+                )
+                .await?;
+            connection
+                .execute(
+                    "INSERT INTO index_runs (\n\
+                     index_run_id, worktree_id, snapshot_id, run_sequence,\n\
+                     ranking_policy_version, status\n\
+                     ) VALUES (?1, ?2, ?3, 7, 1, 'failed')",
+                    params![vec![98; 32], worktree_id.to_vec(), vec![97; 32]],
+                )
+                .await?;
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 28);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT last_sequence FROM index_run_sequence_cursors",
+                )
+                .await?,
+                7
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v28_upgrade_preserves_the_v27_database()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [99; 32];
+            let worktree_id = [100; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..27],
+                27,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TABLE index_run_sequence_cursors (conflict INTEGER)",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 28, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 27);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                27
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('index_run_sequence_cursors')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    async fn seed_legacy_card_projection(
+        connection: &libsql::Connection,
+        worktree_id: [u8; 32],
+    ) -> Result<(), libsql::Error> {
+        let snapshot_id = [91; 32];
+        let index_run_id = [92; 32];
+        let card_id = [93; 32];
+        connection
+            .execute(
+                "INSERT INTO snapshots (\n\
+                 snapshot_id, worktree_id, parent_snapshot_id, generation, head_kind,\n\
+                 head_object_id, head_reference, index_schema_version\n\
+                 ) VALUES (?1, ?2, NULL, 1, 'unborn', NULL, 'refs/heads/main', 1)",
+                params![snapshot_id.to_vec(), worktree_id.to_vec()],
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO index_runs (\n\
+                 index_run_id, worktree_id, snapshot_id, run_sequence, ranking_policy_version, status\n\
+                 ) VALUES (?1, ?2, ?3, 1, 1, 'published')",
+                params![
+                    index_run_id.to_vec(),
+                    worktree_id.to_vec(),
+                    snapshot_id.to_vec()
+                ],
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO lexical_search_projections (\n\
+                 index_run_id, projection_version, symbol_count, path_count, card_count\n\
+                 ) VALUES (?1, 1, 0, 0, 0)",
+                [index_run_id.to_vec()],
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO module_cards (\n\
+                 source_index_run_id, snapshot_id, card_id, module_id, card_schema_version,\n\
+                 mapper_profile_version, confidence, status\n\
+                 ) VALUES (?1, ?2, ?3, ?4, 1, 1, 9000, 'published')",
+                params![
+                    index_run_id.to_vec(),
+                    snapshot_id.to_vec(),
+                    card_id.to_vec(),
+                    vec![94; 32]
+                ],
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO module_card_lifecycle (source_index_run_id, card_id, status)\n\
+                 VALUES (?1, ?2, 'published')",
+                params![index_run_id.to_vec(), card_id.to_vec()],
+            )
+            .await?;
+        for (field_kind, field_value) in [("title", "Legacy title"), ("purpose", "Legacy purpose")]
+        {
+            connection
+                .execute(
+                    "INSERT INTO module_card_fields\n\
+                     (source_index_run_id, card_id, field_kind) VALUES (?1, ?2, ?3)",
+                    params![index_run_id.to_vec(), card_id.to_vec(), field_kind],
+                )
+                .await?;
+            connection
+                .execute(
+                    "INSERT INTO module_card_field_values (\n\
+                     source_index_run_id, card_id, field_kind, value_index, field_value\n\
+                     ) VALUES (?1, ?2, ?3, 0, ?4)",
+                    params![
+                        index_run_id.to_vec(),
+                        card_id.to_vec(),
+                        field_kind,
+                        field_value
+                    ],
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     #[test]

@@ -329,24 +329,29 @@ impl RefreshRepositoryIndex {
 
         let mut active_run = None;
         if publication_required {
-            let next_attempt =
-                self.store
-                    .latest_index_run(project)
-                    .await?
-                    .map_or(Ok(1), |run| {
-                        run.sequence()
-                            .get()
-                            .checked_add(1)
-                            .ok_or(RefreshRepositoryIndexError::AttemptExhausted)
-                    })?;
-            let run_id =
-                self.run_ids
-                    .create(project, &snapshot, ranking_policy_version, next_attempt)?;
+            let next_sequence = match self.store.next_index_run_sequence(project).await {
+                Ok(sequence) => sequence,
+                Err(KnowledgeIndexFailure::IndexRunSequenceExhausted) => {
+                    return Err(RefreshRepositoryIndexError::AttemptExhausted);
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let run_id = self.run_ids.create(
+                project,
+                &snapshot,
+                ranking_policy_version,
+                next_sequence.get(),
+            )?;
             let run = self
                 .store
                 .start_index_run(
                     project,
-                    IndexRunStart::new(run_id, snapshot.id(), ranking_policy_version),
+                    IndexRunStart::new(
+                        run_id,
+                        snapshot.id(),
+                        ranking_policy_version,
+                        next_sequence,
+                    ),
                 )
                 .await?;
             active_run = Some(run.id());

@@ -727,6 +727,8 @@ fn map_index_failure(failure: KnowledgeIndexFailure) -> AgentReadToolFailure {
         | KnowledgeIndexFailure::IndexRunNotFound => AgentReadToolFailure::Unavailable,
         KnowledgeIndexFailure::SnapshotConflict
         | KnowledgeIndexFailure::IndexRunAlreadyActive
+        | KnowledgeIndexFailure::IndexRunSequenceConflict
+        | KnowledgeIndexFailure::IndexRunSequenceExhausted
         | KnowledgeIndexFailure::InvalidIndexRunTransition
         | KnowledgeIndexFailure::IndexPublicationMismatch
         | KnowledgeIndexFailure::IndexPublicationTooLarge

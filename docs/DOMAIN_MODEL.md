@@ -95,6 +95,13 @@ Zustand `building` besitzen. Ein Lauf kann ohne Veröffentlichung über `buildin
 `building` → `cancelled` enden. `building` → `published` ist ausschließlich der letzte Schritt der
 S10-Transaktion, die den vollständigen, exakt passenden Index gemeinsam sichtbar macht.
 
+Die nächste Sequenz folgt exakt auf eine separate dauerhafte worktree-lokale High-Water-Koordinate.
+Ein Fast-Index-Rebuild darf regenerierbare Run-Zeilen entfernen, erhält diese Koordinate jedoch.
+Retained Run-Historie muss deshalb lückenlos und eindeutig sein, kann nach einem Rebuild aber bei
+einem Wert größer eins beginnen. Markerfortschreibung und Einfügen des `building`-Runs sind atomar;
+ein stale Start wird als Sequenzkonflikt abgewiesen. Dadurch erhält auch ein unveränderter Snapshot
+nach einem expliziten Rebuild einen neuen deterministischen `IndexRunId`-Anker.
+
 ### SymbolId
 
 Ein `SymbolId` ist ein domänengetrennter BLAKE3-Digest über verlustfreie Repository-Pfadbytes,

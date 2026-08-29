@@ -243,7 +243,11 @@ async fn start_index_run_in_transaction(
     if index_run_exists(transaction, request.id()).await? {
         return Err(IndexRepositoryError::InvalidIndexRunTransition);
     }
-    let sequence = next_index_run_sequence(transaction, worktree_id).await?;
+    let sequence = next_index_run_sequence_in_transaction(transaction, worktree_id).await?;
+    if request.sequence() != sequence {
+        return Err(IndexRepositoryError::IndexRunSequenceConflict);
+    }
+    advance_index_run_sequence_in_transaction(transaction, worktree_id, sequence).await?;
     transaction
         .execute(
             "INSERT INTO index_runs (\n\
@@ -254,7 +258,7 @@ async fn start_index_run_in_transaction(
                 request.id().as_bytes().to_vec(),
                 worktree_id.as_bytes().to_vec(),
                 request.snapshot_id().as_bytes().to_vec(),
-                sequence_to_i64(sequence)?,
+                sequence_to_i64(request.sequence())?,
                 i64::from(request.ranking_policy_version().get())
             ],
         )
@@ -264,7 +268,7 @@ async fn start_index_run_in_transaction(
         request.id(),
         request.snapshot_id(),
         request.ranking_policy_version(),
-        sequence,
+        request.sequence(),
         IndexRunStatus::Building,
     ))
 }
@@ -367,6 +371,14 @@ pub(crate) async fn latest_index_run(
     Ok(Some(record))
 }
 
+pub(crate) async fn next_index_run_sequence(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+) -> Result<IndexRunSequence, IndexRepositoryError> {
+    validate_index_run_sequence(connection, worktree_id).await?;
+    next_sequence_after(read_index_run_sequence_cursor(connection, worktree_id).await?)
+}
+
 async fn latest_snapshot_position(
     transaction: &Transaction,
     worktree_id: WorktreeId,
@@ -454,31 +466,120 @@ async fn index_run_exists(
     .map(|count| count != 0)
 }
 
-async fn next_index_run_sequence(
+async fn next_index_run_sequence_in_transaction(
     transaction: &Transaction,
     worktree_id: WorktreeId,
 ) -> Result<IndexRunSequence, IndexRepositoryError> {
-    let mut rows = transaction
+    next_sequence_after(
+        read_index_run_sequence_cursor_in_transaction(transaction, worktree_id).await?,
+    )
+}
+
+fn next_sequence_after(
+    current: Option<IndexRunSequence>,
+) -> Result<IndexRunSequence, IndexRepositoryError> {
+    let next = match current {
+        None => 1,
+        Some(sequence) => sequence
+            .get()
+            .checked_add(1)
+            .ok_or(IndexRepositoryError::SequenceExhausted)?,
+    };
+    IndexRunSequence::new(next).map_err(|_| IndexRepositoryError::SequenceExhausted)
+}
+
+async fn advance_index_run_sequence_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    sequence: IndexRunSequence,
+) -> Result<(), IndexRepositoryError> {
+    let affected = if sequence.get() == 1 {
+        transaction
+            .execute(
+                "INSERT INTO index_run_sequence_cursors (worktree_id, last_sequence)\n\
+                 VALUES (?1, 1)",
+                [worktree_id.as_bytes().to_vec()],
+            )
+            .await
+    } else {
+        let previous = sequence
+            .get()
+            .checked_sub(1)
+            .ok_or(IndexRepositoryError::SequenceExhausted)?;
+        transaction
+            .execute(
+                "UPDATE index_run_sequence_cursors SET last_sequence = ?1\n\
+                 WHERE worktree_id = ?2 AND last_sequence = ?3",
+                params![
+                    sequence_to_i64(sequence)?,
+                    worktree_id.as_bytes().to_vec(),
+                    i64::try_from(previous).map_err(|_| IndexRepositoryError::SequenceExhausted)?
+                ],
+            )
+            .await
+    }
+    .map_err(|source| {
+        if sqlite_primary_code(&source) == Some(SQLITE_CONSTRAINT) {
+            IndexRepositoryError::IndexRunSequenceConflict
+        } else {
+            IndexRepositoryError::Write(source)
+        }
+    })?;
+    if affected != 1 {
+        return Err(IndexRepositoryError::IndexRunSequenceConflict);
+    }
+    Ok(())
+}
+
+async fn read_index_run_sequence_cursor(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+) -> Result<Option<IndexRunSequence>, IndexRepositoryError> {
+    let mut rows = connection
         .query(
-            "SELECT COALESCE(MAX(run_sequence), 0) FROM index_runs WHERE worktree_id = ?1",
+            "SELECT last_sequence FROM index_run_sequence_cursors WHERE worktree_id = ?1",
             [worktree_id.as_bytes().to_vec()],
         )
         .await
         .map_err(IndexRepositoryError::Read)?;
-    let row = rows
+    read_optional_index_run_sequence(&mut rows).await
+}
+
+async fn read_index_run_sequence_cursor_in_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+) -> Result<Option<IndexRunSequence>, IndexRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT last_sequence FROM index_run_sequence_cursors WHERE worktree_id = ?1",
+            [worktree_id.as_bytes().to_vec()],
+        )
+        .await
+        .map_err(IndexRepositoryError::Read)?;
+    read_optional_index_run_sequence(&mut rows).await
+}
+
+async fn read_optional_index_run_sequence(
+    rows: &mut libsql::Rows,
+) -> Result<Option<IndexRunSequence>, IndexRepositoryError> {
+    let Some(row) = rows.next().await.map_err(IndexRepositoryError::Read)? else {
+        return Ok(None);
+    };
+    let raw: i64 = row.get(0).map_err(IndexRepositoryError::Read)?;
+    let sequence = u64::try_from(raw)
+        .map_err(|_| IndexRepositoryError::InvalidStoredData)
+        .and_then(|value| {
+            IndexRunSequence::new(value).map_err(|_| IndexRepositoryError::InvalidStoredData)
+        })?;
+    if rows
         .next()
         .await
         .map_err(IndexRepositoryError::Read)?
-        .ok_or(IndexRepositoryError::InvalidStoredData)?;
-    let current: i64 = row.get(0).map_err(IndexRepositoryError::Read)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(IndexRepositoryError::SequenceExhausted)?;
-    u64::try_from(next)
-        .map_err(|_| IndexRepositoryError::InvalidStoredData)
-        .and_then(|value| {
-            IndexRunSequence::new(value).map_err(|_| IndexRepositoryError::SequenceExhausted)
-        })
+        .is_some()
+    {
+        return Err(IndexRepositoryError::InvalidStoredData);
+    }
+    Ok(Some(sequence))
 }
 
 async fn read_index_run_from_transaction(
@@ -610,7 +711,7 @@ async fn validate_index_run_sequence(
 ) -> Result<(), IndexRepositoryError> {
     let mut rows = connection
         .query(
-            "SELECT COUNT(*), COALESCE(MAX(run_sequence), 0)\n\
+            "SELECT COUNT(*), MIN(run_sequence), MAX(run_sequence)\n\
              FROM index_runs WHERE worktree_id = ?1",
             [worktree_id.as_bytes().to_vec()],
         )
@@ -622,11 +723,10 @@ async fn validate_index_run_sequence(
         .map_err(IndexRepositoryError::Read)?
         .ok_or(IndexRepositoryError::InvalidStoredData)?;
     let count: i64 = row.get(0).map_err(IndexRepositoryError::Read)?;
-    let maximum: i64 = row.get(1).map_err(IndexRepositoryError::Read)?;
-    if count != maximum {
-        return Err(IndexRepositoryError::InvalidStoredData);
-    }
-    Ok(())
+    let minimum: Option<i64> = row.get(1).map_err(IndexRepositoryError::Read)?;
+    let maximum: Option<i64> = row.get(2).map_err(IndexRepositoryError::Read)?;
+    let cursor = read_index_run_sequence_cursor(connection, worktree_id).await?;
+    validate_index_run_sequence_values(count, minimum, maximum, cursor)
 }
 
 async fn validate_index_run_sequence_in_transaction(
@@ -635,7 +735,7 @@ async fn validate_index_run_sequence_in_transaction(
 ) -> Result<(), IndexRepositoryError> {
     let mut rows = transaction
         .query(
-            "SELECT COUNT(*), COALESCE(MAX(run_sequence), 0)\n\
+            "SELECT COUNT(*), MIN(run_sequence), MAX(run_sequence)\n\
              FROM index_runs WHERE worktree_id = ?1",
             [worktree_id.as_bytes().to_vec()],
         )
@@ -647,8 +747,33 @@ async fn validate_index_run_sequence_in_transaction(
         .map_err(IndexRepositoryError::Read)?
         .ok_or(IndexRepositoryError::InvalidStoredData)?;
     let count: i64 = row.get(0).map_err(IndexRepositoryError::Read)?;
-    let maximum: i64 = row.get(1).map_err(IndexRepositoryError::Read)?;
-    if count != maximum {
+    let minimum: Option<i64> = row.get(1).map_err(IndexRepositoryError::Read)?;
+    let maximum: Option<i64> = row.get(2).map_err(IndexRepositoryError::Read)?;
+    let cursor = read_index_run_sequence_cursor_in_transaction(transaction, worktree_id).await?;
+    validate_index_run_sequence_values(count, minimum, maximum, cursor)
+}
+
+fn validate_index_run_sequence_values(
+    count: i64,
+    minimum: Option<i64>,
+    maximum: Option<i64>,
+    cursor: Option<IndexRunSequence>,
+) -> Result<(), IndexRepositoryError> {
+    if count == 0 {
+        return if minimum.is_none() && maximum.is_none() {
+            Ok(())
+        } else {
+            Err(IndexRepositoryError::InvalidStoredData)
+        };
+    }
+    let (Some(minimum), Some(maximum), Some(cursor)) = (minimum, maximum, cursor) else {
+        return Err(IndexRepositoryError::InvalidStoredData);
+    };
+    let retained_span = maximum
+        .checked_sub(minimum)
+        .and_then(|difference| difference.checked_add(1))
+        .ok_or(IndexRepositoryError::InvalidStoredData)?;
+    if count < 0 || count != retained_span || sequence_to_i64(cursor)? != maximum {
         return Err(IndexRepositoryError::InvalidStoredData);
     }
     Ok(())
@@ -945,6 +1070,7 @@ pub(crate) enum IndexRepositoryError {
     SnapshotConflict,
     SnapshotNotFound,
     IndexRunAlreadyActive,
+    IndexRunSequenceConflict,
     IndexRunNotFound,
     InvalidIndexRunTransition,
     SequenceExhausted,
@@ -965,16 +1091,15 @@ impl IndexRepositoryError {
             Self::SnapshotConflict => KnowledgeIndexFailure::SnapshotConflict,
             Self::SnapshotNotFound => KnowledgeIndexFailure::SnapshotNotFound,
             Self::IndexRunAlreadyActive => KnowledgeIndexFailure::IndexRunAlreadyActive,
+            Self::IndexRunSequenceConflict => KnowledgeIndexFailure::IndexRunSequenceConflict,
             Self::IndexRunNotFound => KnowledgeIndexFailure::IndexRunNotFound,
             Self::InvalidIndexRunTransition => KnowledgeIndexFailure::InvalidIndexRunTransition,
+            Self::SequenceExhausted => KnowledgeIndexFailure::IndexRunSequenceExhausted,
             Self::Begin(_)
             | Self::Read(_)
             | Self::Write(_)
             | Self::Rollback(_)
-            | Self::Commit(_)
-            | Self::SequenceExhausted => {
-                KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::Unavailable)
-            }
+            | Self::Commit(_) => KnowledgeIndexFailure::Storage(KnowledgeStoreFailure::Unavailable),
         }
     }
 }
@@ -994,6 +1119,9 @@ impl fmt::Display for IndexRepositoryError {
             Self::SnapshotConflict => formatter.write_str("snapshot chain conflicts"),
             Self::SnapshotNotFound => formatter.write_str("snapshot was not found"),
             Self::IndexRunAlreadyActive => formatter.write_str("index run is already active"),
+            Self::IndexRunSequenceConflict => {
+                formatter.write_str("index run sequence conflicts with the durable coordinate")
+            }
             Self::IndexRunNotFound => formatter.write_str("index run was not found"),
             Self::InvalidIndexRunTransition => {
                 formatter.write_str("index run transition is invalid")
@@ -1018,6 +1146,7 @@ impl Error for IndexRepositoryError {
             | Self::SnapshotConflict
             | Self::SnapshotNotFound
             | Self::IndexRunAlreadyActive
+            | Self::IndexRunSequenceConflict
             | Self::IndexRunNotFound
             | Self::InvalidIndexRunTransition
             | Self::SequenceExhausted => None,

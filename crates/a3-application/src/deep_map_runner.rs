@@ -400,6 +400,8 @@ const fn map_index_failure(failure: KnowledgeIndexFailure) -> DeepMapExecutionFa
         | KnowledgeIndexFailure::SnapshotConflict
         | KnowledgeIndexFailure::SnapshotNotFound
         | KnowledgeIndexFailure::IndexRunAlreadyActive
+        | KnowledgeIndexFailure::IndexRunSequenceConflict
+        | KnowledgeIndexFailure::IndexRunSequenceExhausted
         | KnowledgeIndexFailure::IndexRunNotFound
         | KnowledgeIndexFailure::InvalidIndexRunTransition
         | KnowledgeIndexFailure::IndexPublicationMismatch
@@ -636,6 +638,13 @@ mod tests {
             &'a self,
             _project: &'a ProjectIdentity,
         ) -> KnowledgeIndexFuture<'a, RepositoryFileState> {
+            self.unexpected()
+        }
+
+        fn next_index_run_sequence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeIndexFuture<'a, a3_domain::IndexRunSequence> {
             self.unexpected()
         }
 

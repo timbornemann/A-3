@@ -1,10 +1,10 @@
 use crate::ContractResult;
 use a3_domain::{
     CanonicalDirectory, ContentHash, GitHead, GitObjectId, GitReferenceName, IndexLanguage,
-    IndexRunId, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision, LanguageAdapterVersion,
-    ProjectIdentity, RankingPolicyVersion, RemoteIdentity, RepositoryId, RepositoryIdentity,
-    RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, WorktreeAnchorId,
-    WorktreeGeneration, WorktreeId, WorktreeIdentity,
+    IndexRunId, IndexRunSequence, IndexRunStart, IndexSchemaVersion, LanguageAdapterRevision,
+    LanguageAdapterVersion, ProjectIdentity, RankingPolicyVersion, RemoteIdentity, RepositoryId,
+    RepositoryIdentity, RepositoryPath, Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId,
+    WorktreeAnchorId, WorktreeGeneration, WorktreeId, WorktreeIdentity,
 };
 use std::fs;
 use std::io;
@@ -164,10 +164,20 @@ pub(crate) fn run(
     snapshot_id: SnapshotId,
     ranking_policy_version: u32,
 ) -> ContractResult<IndexRunStart> {
+    run_at(id, snapshot_id, ranking_policy_version, 1)
+}
+
+pub(crate) fn run_at(
+    id: [u8; 32],
+    snapshot_id: SnapshotId,
+    ranking_policy_version: u32,
+    sequence: u64,
+) -> ContractResult<IndexRunStart> {
     Ok(IndexRunStart::new(
         IndexRunId::from_bytes(id),
         snapshot_id,
         RankingPolicyVersion::new(ranking_policy_version)?,
+        IndexRunSequence::new(sequence)?,
     ))
 }
 

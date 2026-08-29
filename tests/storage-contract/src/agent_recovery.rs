@@ -1,4 +1,4 @@
-use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
+use crate::fixture::{ContractWorkspace, change, project, run_at, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory, index};
 use a3_application::{
     AgentMutationResultRecord, AgentReadResult, AgentRecoveryChoice, AgentRecoveryError,
@@ -723,7 +723,8 @@ async fn publish<S>(
 where
     S: KnowledgeIndexStore,
 {
-    let start = run(run_id, snapshot_id, 1)?;
+    let sequence = store.next_index_run_sequence(project).await?;
+    let start = run_at(run_id, snapshot_id, 1, sequence.get())?;
     store.start_index_run(project, start).await?;
     store
         .publish_index(

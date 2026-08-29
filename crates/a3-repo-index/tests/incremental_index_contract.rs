@@ -3,9 +3,11 @@
 mod support;
 
 use a3_application::{
-    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchStore, KnowledgeStore,
-    RefreshRepositoryIndex, RepositoryChangeBatch, RepositoryIndexControl,
-    RepositoryIndexControlError, RepositoryIndexMode, RepositoryIndexPhase, RepositoryRescanReason,
+    DeepMapPublicationState, DeepMapPublicationStateStore, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchStore, KnowledgeStore, RefreshRepositoryIndex, RepositoryChangeBatch,
+    RepositoryIndexControl, RepositoryIndexControlError, RepositoryIndexMode, RepositoryIndexPhase,
+    RepositoryRescanReason,
 };
 use a3_domain::{
     ExactSearchPageSize, ExactSearchQuery, ExactSearchRole, ExactSearchTerm, IndexSchemaVersion,
@@ -48,7 +50,8 @@ impl RepositoryIndexControl for RecordingControl {
             .lock()
             .map_err(|_| RepositoryIndexControlError::Unavailable)?
             .push(phase);
-        self.report_progress(
+        RepositoryIndexControl::report_progress(
+            self,
             Progress::determinate(phase.completed_boundaries(), 6)
                 .map_err(|_| RepositoryIndexControlError::Unavailable)?,
         )
@@ -58,6 +61,20 @@ impl RepositoryIndexControl for RecordingControl {
 impl KnowledgeSearchControl for RecordingControl {
     fn is_cancelled(&self) -> bool {
         false
+    }
+}
+
+impl IndexPersistenceControl for RecordingControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), IndexPersistenceControlError> {
+        self.progress
+            .lock()
+            .map_err(|_| IndexPersistenceControlError::Unavailable)?
+            .push(progress);
+        Ok(())
     }
 }
 
@@ -250,6 +267,7 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
             .await?
             .ok_or("published run missing")?;
         assert_eq!(published.snapshot_id(), incremental.snapshot().id());
+        let published_before_rebuild = published;
 
         drop(refresh);
         drop(store);
@@ -274,6 +292,42 @@ fn one_file_refresh_hashes_and_parses_only_that_file_then_publishes() -> Result<
             .await?;
         assert_eq!(warmed.compilation().mode(), RepositoryIndexMode::Full);
         assert!(!warmed.published());
+
+        reopened
+            .rebuild_regenerable_index(&project, &RecordingControl::default())
+            .await?;
+        assert_eq!(
+            reopened.next_index_run_sequence(&project).await?.get(),
+            published_before_rebuild.sequence().get() + 1
+        );
+        let rebuilt = restarted_refresh
+            .execute(
+                &project,
+                &RepositoryChangeBatch::full_rescan(Vec::new(), RepositoryRescanReason::Explicit)?,
+                &mut restarted_compiler,
+                &RecordingControl::default(),
+            )
+            .await?;
+        assert_eq!(rebuilt.snapshot().id(), warmed.snapshot().id());
+        assert!(rebuilt.published());
+        let rebuilt_run = reopened
+            .latest_published_index_run(&project)
+            .await?
+            .ok_or("rebuilt published run missing")?;
+        assert_ne!(rebuilt_run.id(), published_before_rebuild.id());
+        assert_eq!(
+            rebuilt_run.sequence().get(),
+            published_before_rebuild.sequence().get() + 1
+        );
+        let deep_map_state = reopened.load_deep_map_publication_state(&project).await?;
+        assert!(matches!(deep_map_state, DeepMapPublicationState::Ready(_)));
+        assert_eq!(
+            deep_map_state
+                .anchor()
+                .ok_or("Deep Map publication anchor missing")?
+                .index_run_id(),
+            rebuilt_run.id()
+        );
 
         repository.write("src/beta.rs", b"pub fn zeta() -> u8 { 2 }\n")?;
         let beta = RepositoryPath::try_from_bytes(b"src/beta.rs".to_vec())?;

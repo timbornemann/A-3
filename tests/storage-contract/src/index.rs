@@ -1,4 +1,4 @@
-use crate::fixture::{ContractWorkspace, change, project, run, snapshot, unborn_head};
+use crate::fixture::{ContractWorkspace, change, project, run, run_at, snapshot, unborn_head};
 use crate::{ContractResult, KnowledgeStoreContractFactory, fixture_modules};
 use a3_application::{
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
@@ -241,6 +241,7 @@ where
         vec![change(b"src/b.rs", [9; 32], SnapshotChangeKind::Upsert)?],
     )?;
     store.append_snapshot(&primary, &current).await?;
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 1);
 
     assert_eq!(
         store
@@ -251,10 +252,12 @@ where
             .await,
         Err(KnowledgeIndexFailure::SnapshotNotFound)
     );
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 1);
     let first_run = store
         .start_index_run(&primary, run([62; 32], current.id(), 1)?)
         .await?;
     assert_eq!(first_run.sequence().get(), 1);
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 2);
     assert_eq!(first_run.status(), IndexRunStatus::Building);
     assert_eq!(store.latest_index_run(&primary).await?, Some(first_run));
     assert_eq!(
@@ -285,8 +288,15 @@ where
             .await,
         Err(KnowledgeIndexFailure::InvalidIndexRunTransition)
     );
+    assert_eq!(
+        store
+            .start_index_run(&primary, run_at([63; 32], current.id(), 2, 1)?)
+            .await,
+        Err(KnowledgeIndexFailure::IndexRunSequenceConflict)
+    );
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 2);
     let second_run = store
-        .start_index_run(&primary, run([63; 32], current.id(), 2)?)
+        .start_index_run(&primary, run_at([63; 32], current.id(), 2, 2)?)
         .await?;
     assert_eq!(second_run.sequence().get(), 2);
     let cancelled = store
@@ -302,8 +312,9 @@ where
     let reopened = factory.open(&app_data).await?;
     assert_eq!(reopened.latest_index_run(&primary).await?, Some(cancelled));
     assert_eq!(reopened.latest_published_index_run(&primary).await?, None);
+    assert_eq!(reopened.next_index_run_sequence(&primary).await?.get(), 3);
     let third_run = reopened
-        .start_index_run(&primary, run([64; 32], current.id(), 1)?)
+        .start_index_run(&primary, run_at([64; 32], current.id(), 1, 3)?)
         .await?;
     assert_eq!(third_run.sequence().get(), 3);
     reopened
@@ -419,7 +430,7 @@ where
         .await?;
 
     let duplicate_run = reopened
-        .start_index_run(&primary, run([67; 32], current.id(), 1)?)
+        .start_index_run(&primary, run_at([67; 32], current.id(), 1, 2)?)
         .await?;
     assert_eq!(
         reopened
@@ -480,7 +491,7 @@ where
         .await?;
 
     let mismatched_run = reopened
-        .start_index_run(&primary, run([65; 32], current.id(), 2)?)
+        .start_index_run(&primary, run_at([65; 32], current.id(), 2, 2)?)
         .await?;
     assert_eq!(
         reopened
@@ -559,7 +570,7 @@ where
     let replacement_publication =
         publication(replacement_snapshot.id(), b"src/c.rs", [10; 32], 71)?;
     let replacement_run = store
-        .start_index_run(&primary, run([66; 32], replacement_snapshot.id(), 1)?)
+        .start_index_run(&primary, run_at([66; 32], replacement_snapshot.id(), 1, 2)?)
         .await?;
     let replacement_run = store
         .publish_index(
@@ -628,6 +639,7 @@ where
     store
         .publish_index(&primary, run.id(), &publication, &control)
         .await?;
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 2);
 
     store.rebuild_regenerable_index(&primary, &control).await?;
     assert_eq!(store.latest_index_run(&primary).await?, None);
@@ -647,6 +659,7 @@ where
         store.latest_snapshot(&linked).await?,
         Some(linked_snapshot.clone())
     );
+    assert_eq!(store.next_index_run_sequence(&primary).await?.get(), 2);
     crate::release_contract_store(store);
 
     let after_rebuild = factory.open(&app_data).await?;
@@ -658,12 +671,23 @@ where
     );
     assert_eq!(
         after_rebuild.latest_snapshot(&primary).await?,
-        Some(replacement_snapshot)
+        Some(replacement_snapshot.clone())
     );
     assert_eq!(
         after_rebuild.latest_snapshot(&linked).await?,
         Some(linked_snapshot)
     );
+    assert_eq!(
+        after_rebuild.next_index_run_sequence(&primary).await?.get(),
+        2
+    );
+    let next_run = after_rebuild
+        .start_index_run(&primary, run_at([67; 32], replacement_snapshot.id(), 1, 2)?)
+        .await?;
+    assert_ne!(next_run.id(), run.id());
+    after_rebuild
+        .finish_index_run(&primary, next_run.id(), IndexRunTerminalOutcome::Cancelled)
+        .await?;
     crate::complete_contract_phase()
 }
 

@@ -747,7 +747,12 @@ impl DeepMapCompactProgressV3 {
 
 /// Compact lifecycle without the obsolete in-memory event feed.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "state")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "state"
+)]
 pub enum DeepMapLifecycleV3 {
     /// The latest index can be mapped.
     Ready,
@@ -1135,10 +1140,10 @@ pub struct DeepMapEntryDetailResponseV1 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapConfigurationV1,
-        DeepMapFailureV1, DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1,
-        DeepMapStartResponseV2, DeepMapStatusResponseV1, DeepMapStatusResponseV3,
-        QueryDeepMapEntriesRequestV1, StartDeepMapRequestV2,
+        DeepMapActivityStateV1, DeepMapActivityV1, DeepMapBudgetV1, DeepMapCompactProgressV3,
+        DeepMapConfigurationV1, DeepMapFailureV1, DeepMapFailureV3, DeepMapLifecycleV3,
+        DeepMapModeV2, DeepMapModelV1, DeepMapStartResponseV2, DeepMapStatusResponseV1,
+        DeepMapStatusResponseV3, QueryDeepMapEntriesRequestV1, StartDeepMapRequestV2,
     };
     use crate::ProtocolVersion;
     use serde_json::json;
@@ -1253,11 +1258,41 @@ mod tests {
         );
         let value = serde_json::to_value(response)?;
         assert_eq!(value["result"]["lifecycle"]["state"], json!("current"));
+        assert_eq!(value["result"]["lifecycle"]["cardCount"], json!("3"));
+        assert_eq!(
+            value["result"]["lifecycle"]["detailsAvailable"],
+            json!(true)
+        );
+        assert!(value["result"]["lifecycle"].get("card_count").is_none());
+        assert!(
+            value["result"]["lifecycle"]
+                .get("details_available")
+                .is_none()
+        );
         assert!(!value.to_string().contains("events"));
         assert_eq!(
             serde_json::to_value(DeepMapStartResponseV2::already_current())?["outcome"],
             json!("alreadyCurrent")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn v3_active_lifecycle_fields_follow_the_camel_case_ipc_contract()
+    -> Result<(), serde_json::Error> {
+        let lifecycle = DeepMapLifecycleV3::Failed {
+            progress: DeepMapCompactProgressV3::new("2".to_owned(), "6".to_owned(), None, None),
+            failure: DeepMapFailureV3::PublicationStorage,
+            details_incomplete: true,
+        };
+
+        let value = serde_json::to_value(lifecycle)?;
+
+        assert_eq!(value["state"], json!("failed"));
+        assert_eq!(value["detailsIncomplete"], json!(true));
+        assert_eq!(value["progress"]["confirmedSteps"], json!("2"));
+        assert_eq!(value["progress"]["totalSteps"], json!("6"));
+        assert!(value.get("details_incomplete").is_none());
         Ok(())
     }
 

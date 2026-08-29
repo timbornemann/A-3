@@ -80,8 +80,8 @@ use a3_domain::{
     EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
     ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, ExplorePlan, GoalContract,
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
+    IndexRunSequence, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor,
+    LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
     MutationActionFingerprint, PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist,
     ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
     SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
@@ -1457,6 +1457,21 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
             index_repository::current_file_state(knowledge.connection(), project.worktree().id())
                 .await
                 .map_err(IndexRepositoryError::classify)
+        })
+    }
+
+    fn next_index_run_sequence<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> KnowledgeIndexFuture<'a, IndexRunSequence> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            index_repository::next_index_run_sequence(
+                knowledge.connection(),
+                project.worktree().id(),
+            )
+            .await
+            .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -3597,6 +3612,8 @@ const fn classify_verification_index_failure(
         | KnowledgeIndexFailure::SnapshotConflict
         | KnowledgeIndexFailure::SnapshotNotFound
         | KnowledgeIndexFailure::IndexRunAlreadyActive
+        | KnowledgeIndexFailure::IndexRunSequenceConflict
+        | KnowledgeIndexFailure::IndexRunSequenceExhausted
         | KnowledgeIndexFailure::IndexRunNotFound
         | KnowledgeIndexFailure::InvalidIndexRunTransition
         | KnowledgeIndexFailure::IndexPublicationMismatch

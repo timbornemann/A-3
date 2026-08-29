@@ -700,6 +700,19 @@ impl CompositionRoot {
             .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))
     }
 
+    async fn ensure_deep_map_runtime_available(&self) -> Result<(), CommandErrorV1> {
+        let manager = self
+            .deep_map_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        if manager.model().is_some() {
+            return Ok(());
+        }
+        self.synchronize_deep_map_runtime()
+            .await
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))
+    }
+
     /// Reads active-project ignore and manifest-evidenced command Settings.
     pub async fn query_project_settings(
         &self,
@@ -2220,6 +2233,9 @@ impl CompositionRoot {
         let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
             return DeepMapStatusResponseV3::no_project();
         };
+        if self.ensure_deep_map_runtime_available().await.is_err() {
+            return DeepMapStatusResponseV3::unavailable();
+        }
         let (Some(manager), Some(publication_store)) = (
             self.deep_map_manager.as_ref(),
             self.deep_map_publication_state.as_ref(),
@@ -2229,11 +2245,26 @@ impl CompositionRoot {
         let Some(model) = manager.model() else {
             return DeepMapStatusResponseV3::unavailable();
         };
-        let Ok(publication) = publication_store
+        let publication = match publication_store
             .load_deep_map_publication_state(&active.project)
             .await
-        else {
-            return DeepMapStatusResponseV3::unavailable();
+        {
+            Ok(publication) => publication,
+            Err(_) => {
+                return DeepMapStatusResponseV3::available(
+                    map_deep_map_model_to_v1(&model),
+                    DeepMapLifecycleV3::Failed {
+                        progress: DeepMapCompactProgressV3::new(
+                            "0".to_owned(),
+                            "0".to_owned(),
+                            None,
+                            None,
+                        ),
+                        failure: DeepMapFailureV3::PublicationStorage,
+                        details_incomplete: true,
+                    },
+                );
+            }
         };
         let activity = manager.activity();
         let lifecycle = match publication {
@@ -2274,6 +2305,7 @@ impl CompositionRoot {
         let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
             return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
         };
+        self.ensure_deep_map_runtime_available().await?;
         let manager = self
             .deep_map_manager
             .as_ref()

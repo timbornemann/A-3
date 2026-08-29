@@ -182,6 +182,13 @@ mod tests {
             unavailable()
         }
 
+        fn next_index_run_sequence<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+        ) -> KnowledgeIndexFuture<'a, a3_domain::IndexRunSequence> {
+            unavailable()
+        }
+
         fn start_index_run<'a>(
             &'a self,
             _project: &'a ProjectIdentity,

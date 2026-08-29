@@ -34,20 +34,20 @@ use a3_application::{
 use a3_domain::{
     CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
     FileRevision, GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
-    IndexPublication, IndexRunId, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
-    IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason, LanguageAdapterRevision,
-    LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion,
-    ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
-    ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
-    ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
-    ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence,
-    ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet, ParseCoverage,
-    ParseDiagnostic, ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol, ProjectIdentity,
-    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
-    RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
-    RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, Snapshot,
-    SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
-    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SyntaxProvider,
+    IndexPublication, IndexRunId, IndexRunSequence, IndexRunStart, IndexRunStatus,
+    IndexRunTerminalOutcome, IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason,
+    LanguageAdapterRevision, LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId,
+    MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
+    ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
+    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
+    ModuleClaimPredicate, ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership,
+    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
+    ParseCoverage, ParseDiagnostic, ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol,
+    ProjectIdentity, ProposedModuleCardField, PublishedIndex, RankProjection, RankScore,
+    RankingPolicyVersion, RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity,
+    RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet,
+    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange,
+    SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SyntaxProvider,
     SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText, TaskLensTokenBudget,
     TraversalResultLimit, VerifiedClaimKind, VerifiedModuleCardBatch, WorktreeAnchorId,
     WorktreeGeneration, WorktreeId, WorktreeIdentity,
@@ -618,7 +618,7 @@ fn index_run_lifecycle_serializes_mutation_and_never_false_publishes()
         );
 
         let second = store
-            .start_index_run(&fixture.project, run([32; 32], snapshot.id(), 2)?)
+            .start_index_run(&fixture.project, run_at([32; 32], snapshot.id(), 2, 2)?)
             .await?;
         assert_eq!(second.sequence().get(), 2);
         let cancelled = store
@@ -642,6 +642,125 @@ fn index_run_lifecycle_serializes_mutation_and_never_false_publishes()
                 .await?,
             None
         );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn index_run_sequence_survives_rebuild_reopen_and_rejects_a_stale_start()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([111; 32], [112; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [113; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            Vec::new(),
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        assert_eq!(
+            store.next_index_run_sequence(&fixture.project).await?.get(),
+            1
+        );
+        let first = store
+            .start_index_run(&fixture.project, run([114; 32], snapshot.id(), 1)?)
+            .await?;
+        store
+            .finish_index_run(
+                &fixture.project,
+                first.id(),
+                IndexRunTerminalOutcome::Failed,
+            )
+            .await?;
+        store
+            .rebuild_regenerable_index(&fixture.project, &TestIndexControl::default())
+            .await?;
+        assert_eq!(store.latest_index_run(&fixture.project).await?, None);
+        assert_eq!(
+            store.next_index_run_sequence(&fixture.project).await?.get(),
+            2
+        );
+        drop(store);
+
+        let reopened = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        assert_eq!(
+            reopened
+                .next_index_run_sequence(&fixture.project)
+                .await?
+                .get(),
+            2
+        );
+        assert_eq!(
+            reopened
+                .start_index_run(&fixture.project, run([115; 32], snapshot.id(), 1)?)
+                .await,
+            Err(KnowledgeIndexFailure::IndexRunSequenceConflict)
+        );
+        assert_eq!(
+            reopened
+                .next_index_run_sequence(&fixture.project)
+                .await?
+                .get(),
+            2
+        );
+        let second = reopened
+            .start_index_run(&fixture.project, run_at([116; 32], snapshot.id(), 1, 2)?)
+            .await?;
+        assert_eq!(second.sequence().get(), 2);
+        assert_ne!(first.id(), second.id());
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn exhausted_retained_index_run_sequence_blocks_the_next_start_coordinate()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([117; 32], [118; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [119; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            Vec::new(),
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let first = store
+            .start_index_run(&fixture.project, run([120; 32], snapshot.id(), 1)?)
+            .await?;
+        store
+            .finish_index_run(
+                &fixture.project,
+                first.id(),
+                IndexRunTerminalOutcome::Failed,
+            )
+            .await?;
+        store
+            .rebuild_regenerable_index(&fixture.project, &TestIndexControl::default())
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        drop(store);
+        mutate_knowledge(
+            &knowledge_path,
+            "UPDATE index_run_sequence_cursors SET last_sequence = 9223372036854775807",
+        )
+        .await?;
+
+        let reopened = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        assert_eq!(
+            reopened.next_index_run_sequence(&fixture.project).await,
+            Err(KnowledgeIndexFailure::IndexRunSequenceExhausted)
+        );
+        assert_eq!(reopened.latest_index_run(&fixture.project).await?, None);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1410,7 +1529,10 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
             .append_snapshot(&fixture.project, &changed_snapshot)
             .await?;
         let changed_run = store
-            .start_index_run(&fixture.project, run([85; 32], changed_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([85; 32], changed_snapshot.id(), 1, 2)?,
+            )
             .await?;
         let changed_publication =
             symbol_publication(changed_snapshot.id(), b"src/lib.rs", [84; 32])?;
@@ -1580,6 +1702,29 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
         assert_eq!(read_count(&knowledge_path, "claims").await?, 2);
         assert_eq!(read_count(&knowledge_path, "evidence_refs").await?, 2);
+        let rebuilt_run = store
+            .start_index_run(
+                &fixture.project,
+                run_at([117; 32], changed_snapshot.id(), 1, 3)?,
+            )
+            .await?;
+        store
+            .publish_index(
+                &fixture.project,
+                rebuilt_run.id(),
+                &changed_publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(
+            store
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Ready(a3_application::DeepMapPublicationAnchor::new(
+                rebuilt_run.id(),
+                changed_snapshot.id(),
+            ))
+        );
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }
@@ -1641,7 +1786,10 @@ fn unchanged_file_claim_survives_an_unrelated_delta_without_remap()
             .append_snapshot(&fixture.project, &unrelated_snapshot)
             .await?;
         let unrelated_run = store
-            .start_index_run(&fixture.project, run([93; 32], unrelated_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([93; 32], unrelated_snapshot.id(), 1, 2)?,
+            )
             .await?;
         let unrelated_publication = symbol_publication_with_extra_files(
             unrelated_snapshot.id(),
@@ -1704,7 +1852,10 @@ fn unchanged_file_claim_survives_an_unrelated_delta_without_remap()
             .append_snapshot(&fixture.project, &parser_snapshot)
             .await?;
         let parser_run = store
-            .start_index_run(&fixture.project, run([97; 32], parser_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([97; 32], parser_snapshot.id(), 1, 3)?,
+            )
             .await?;
         let parser_publication = symbol_publication_with_extra_files(
             parser_snapshot.id(),
@@ -1806,7 +1957,10 @@ fn direct_module_change_marks_only_one_hop_dependents_for_review()
             .append_snapshot(&fixture.project, &changed_snapshot)
             .await?;
         let changed_run = store
-            .start_index_run(&fixture.project, run([106; 32], changed_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([106; 32], changed_snapshot.id(), 1, 2)?,
+            )
             .await?;
         let changed_publication =
             multi_module_publication(changed_snapshot.id(), [[121; 32], [112; 32], [113; 32]])?;
@@ -2069,7 +2223,10 @@ fn removed_module_remains_visible_as_stale_without_a_remap_request()
             .append_snapshot(&fixture.project, &removed_snapshot)
             .await?;
         let removed_run = store
-            .start_index_run(&fixture.project, run([137; 32], removed_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([137; 32], removed_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -2149,7 +2306,10 @@ fn superseded_projection_rows_are_retired_without_deleting_run_history()
             .append_snapshot(&fixture.project, &second_snapshot)
             .await?;
         let second_run = store
-            .start_index_run(&fixture.project, run([65; 32], second_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([65; 32], second_snapshot.id(), 1, 2)?,
+            )
             .await?;
         let second_publication =
             file_only_publication(second_snapshot.id(), b"src/lib.rs", [55; 32])?;
@@ -2230,7 +2390,10 @@ fn zz_crash_before_visible_publish_rolls_back_new_rows_and_keeps_previous_index(
             .append_snapshot(&fixture.project, &second_snapshot)
             .await?;
         let second_run = store
-            .start_index_run(&fixture.project, run([61; 32], second_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([61; 32], second_snapshot.id(), 1, 2)?,
+            )
             .await?;
         let second_publication =
             file_only_publication(second_snapshot.id(), b"src/lib.rs", [51; 32])?;
@@ -2353,6 +2516,164 @@ fn rebuild_removes_only_regenerable_index_state() -> Result<(), Box<dyn std::err
         assert_eq!(
             store.latest_snapshot(&fixture.project).await?,
             Some(snapshot)
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn unchanged_rebuild_uses_a_new_anchor_and_returns_deep_map_to_ready()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([63; 32], [64; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [65; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [66; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([67; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = symbol_publication(snapshot.id(), b"src/lib.rs", [66; 32])?;
+        store
+            .publish_index(&fixture.project, first_run.id(), &publication, &control)
+            .await?;
+        let published = store
+            .latest_published_index(&fixture.project, &control)
+            .await?
+            .ok_or("published fixture index is missing")?;
+        PublishVerifiedModuleCards::new(&store)
+            .execute(
+                &fixture.project,
+                &verified_file_card_batch(&published)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+
+        store
+            .rebuild_regenerable_index(&fixture.project, &control)
+            .await?;
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "card_fts").await?, 0);
+
+        let rebuilt_run = store
+            .start_index_run(&fixture.project, run_at([68; 32], snapshot.id(), 1, 2)?)
+            .await?;
+        assert_ne!(rebuilt_run.id(), first_run.id());
+        store
+            .publish_index(
+                &fixture.project,
+                rebuilt_run.id(),
+                &publication,
+                &TestIndexControl::default(),
+            )
+            .await?;
+
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "card_fts").await?, 0);
+        assert_eq!(
+            read_lexical_card_count(&knowledge_path, rebuilt_run.id()).await?,
+            0
+        );
+        assert_eq!(
+            store
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Ready(a3_application::DeepMapPublicationAnchor::new(
+                rebuilt_run.id(),
+                snapshot.id(),
+            ))
+        );
+
+        drop(store);
+        let reopened = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        assert_eq!(
+            reopened
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Ready(a3_application::DeepMapPublicationAnchor::new(
+                rebuilt_run.id(),
+                snapshot.id(),
+            ))
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn stale_same_anchor_restart_is_rejected_before_card_search_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let control = TestIndexControl::default();
+        let fixture = ProjectFixture::new([68; 32], [69; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [70; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(b"src/lib.rs", [71; 32], SnapshotChangeKind::Upsert)?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let first_run = store
+            .start_index_run(&fixture.project, run([72; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = symbol_publication(snapshot.id(), b"src/lib.rs", [71; 32])?;
+        store
+            .publish_index(&fixture.project, first_run.id(), &publication, &control)
+            .await?;
+        let published = store
+            .latest_published_index(&fixture.project, &control)
+            .await?
+            .ok_or("published fixture index is missing")?;
+        PublishVerifiedModuleCards::new(&store)
+            .execute(
+                &fixture.project,
+                &verified_file_card_batch(&published)?,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        store
+            .rebuild_regenerable_index(&fixture.project, &control)
+            .await?;
+        mutate_knowledge(
+            &knowledge_path,
+            "CREATE TRIGGER block_card_search_restore\n\
+             BEFORE UPDATE OF card_count ON lexical_search_projections\n\
+             WHEN NEW.card_count > 0 BEGIN\n\
+               SELECT RAISE(ABORT, 'injected card search restore failure');\n\
+             END",
+        )
+        .await?;
+        assert_eq!(
+            store
+                .start_index_run(&fixture.project, run([72; 32], snapshot.id(), 1)?)
+                .await,
+            Err(KnowledgeIndexFailure::IndexRunSequenceConflict)
+        );
+        assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        assert_eq!(read_count(&knowledge_path, "card_fts").await?, 0);
+        assert_eq!(read_count(&knowledge_path, "file_revisions").await?, 0);
+        assert_eq!(
+            read_count(&knowledge_path, "lexical_search_projections").await?,
+            0
         );
         Ok::<(), Box<dyn std::error::Error>>(())
     })
@@ -2521,7 +2842,10 @@ fn repository_tree_pages_root_and_directories_losslessly_against_latest_publicat
             .append_snapshot(&fixture.project, &next_snapshot)
             .await?;
         let next_run = store
-            .start_index_run(&fixture.project, run([76; 32], next_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([76; 32], next_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -2758,7 +3082,10 @@ fn module_tree_pages_only_direct_primary_boundaries_from_the_latest_projection()
             .append_snapshot(&fixture.project, &next_snapshot)
             .await?;
         let next_run = store
-            .start_index_run(&fixture.project, run([86; 32], next_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([86; 32], next_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -2912,7 +3239,10 @@ fn project_map_scene_is_deterministic_manifest_first_bounded_and_latest_only()
             .append_snapshot(&fixture.project, &next_snapshot)
             .await?;
         let next_run = store
-            .start_index_run(&fixture.project, run([106; 32], next_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([106; 32], next_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -3228,7 +3558,10 @@ fn module_dependency_graph_is_bounded_evidence_bound_and_latest_only()
             .append_snapshot(&fixture.project, &next_snapshot)
             .await?;
         let next_run = store
-            .start_index_run(&fixture.project, run([92; 32], next_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([92; 32], next_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -3520,7 +3853,10 @@ fn module_runtime_roots_and_flows_are_current_role_bound() -> Result<(), Box<dyn
             .append_snapshot(&fixture.project, &next_snapshot)
             .await?;
         let next_run = store
-            .start_index_run(&fixture.project, run([110; 32], next_snapshot.id(), 1)?)
+            .start_index_run(
+                &fixture.project,
+                run_at([110; 32], next_snapshot.id(), 1, 2)?,
+            )
             .await?;
         store
             .publish_index(
@@ -3643,10 +3979,20 @@ fn run(
     snapshot_id: SnapshotId,
     policy: u32,
 ) -> Result<IndexRunStart, Box<dyn std::error::Error>> {
+    run_at(id, snapshot_id, policy, 1)
+}
+
+fn run_at(
+    id: [u8; 32],
+    snapshot_id: SnapshotId,
+    policy: u32,
+    sequence: u64,
+) -> Result<IndexRunStart, Box<dyn std::error::Error>> {
     Ok(IndexRunStart::new(
         IndexRunId::from_bytes(id),
         snapshot_id,
         RankingPolicyVersion::new(policy)?,
+        IndexRunSequence::new(sequence)?,
     ))
 }
 
@@ -4865,6 +5211,7 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         "evidence_invalidations" => "SELECT COUNT(*) FROM evidence_invalidations",
         "module_remap_queue" => "SELECT COUNT(*) FROM module_remap_queue",
         "card_fts" => "SELECT COUNT(*) FROM card_fts",
+        "lexical_search_projections" => "SELECT COUNT(*) FROM lexical_search_projections",
         "task_state_probe" => "SELECT COUNT(*) FROM task_state_probe",
         _ => return Err(Box::from(io::Error::other("unsupported test table"))),
     };
