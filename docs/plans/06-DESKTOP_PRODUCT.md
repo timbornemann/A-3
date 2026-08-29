@@ -733,6 +733,19 @@ Workspace-Clippy und Rustdoc mit verweigerten Warnungen sowie Prettier, ESLint, 
 Windows-libSQL-Contract benötigte nach einem `STATUS_ACCESS_VIOLATION` einen isolierten grünen
 Wiederholungslauf; der anschließend wiederholte vollständige Workspace-Test war grün.
 
+OpenAI-Produktionsschema-Korrektur vom 2026-08-29: Die kleine Capability-Probe verwendete nur ein
+einfaches Enum-Schema und konnte deshalb ein Modell aktivieren, obwohl die ersten echten Deep-Map-
+und AgentAction-Requests weiterhin A^3-interne Schlüssel wie `const`, `oneOf`, `prefixItems` und
+`uniqueItems` unverändert übertrugen. Der OpenAI-Dialektadapter übersetzt nun `const` nach einem
+Einzelwert-Enum und `oneOf` nach `anyOf`, verdichtet feste Tuple-Items unter unveränderten exakten
+Arraygrenzen und entfernt ausschließlich Hinweise, die der unveränderte strikte Decoder und die
+Domain-Invarianten nach jeder Antwort erneut prüfen. Unbekannte Schlüssel, optionale Objektfelder
+und fremde Referenzen bleiben vor dem Netzwerkzugriff abgelehnt. Offline-Contracts decken die
+vollständigen Explorer-, Claim- und AgentAction-Schemas sowie einen erfolgreichen schemafreien
+Agent-Chat ab. Ein fehlgeschlagener Deep-Map-Status öffnet jetzt per Klick eine sichere Erklärung
+mit Ursache, betroffenem Provider/Modell, nächstem Schritt und stabilem Diagnosecode; rohe
+Providerantworten und Secrets bleiben ausgeschlossen.
+
 UX-Korrektur vom 2026-08-22: Die zweite vertikale Settings-Sidebar wird durch eine kompakte
 horizontale Bereichsnavigation ersetzt. Provider und Modelle bilden nun den gemeinsamen Bereich
 `KI & Modelle` mit dem sichtbaren Ablauf Provider verbinden und dabei die Modellliste einmal
@@ -1051,6 +1064,12 @@ vollständig nutzbare Drawer geprüft. Der native Windows-Smoke bestand mit dem 
 Releasebinary in einem 1296 × 839 großen WebView2-Fenster, 35 Stichprobenfarben und einem
 65.764-Byte-Screenshot. Die Windows-Aufnahme wartet dabei explizit auf den WebView-Paint und lehnt
 eine bloße schwarze Titelleiste bei der manuellen Sichtkontrolle als ungültige Abnahme ab.
+
+OpenAI-Laufzeitkorrektur vom 2026-08-29: Schemafreie Ask-/Plan-Antworten und strukturierte
+AgentAction-Ausgaben laufen beide über den nativen Responses-Adapter. Ablehnung, ungültige Antwort,
+Timeout und Nichterreichbarkeit bleiben bis zur Conversation-Grenze getrennte geschlossene
+Fehlerklassen. Die Session zeigt dazu sichere konkrete Abhilfe statt des bisherigen pauschalen
+`nicht verfügbar`, ohne Providertexte, Promptinhalte oder Credentials zu übernehmen.
 
 ## Gate M8
 

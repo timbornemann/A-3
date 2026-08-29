@@ -137,7 +137,7 @@ const deepMapStatus: DeepMapStatusResponseV1 = {
   },
 };
 
-function renderWorkspace() {
+function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV1 = deepMapStatus) {
   const atlasSceneLoader = vi.fn(async (selection: ProjectMapEntitySelectionV1 | null) => ({
     protocolVersion: 1 as const,
     result: { scene: scene(selection), status: 'available' as const },
@@ -208,7 +208,7 @@ function renderWorkspace() {
     atlasSceneLoader,
     contextLoader,
     deepMapStarter: starter,
-    deepMapStatusLoader: vi.fn(async () => deepMapStatus),
+    deepMapStatusLoader: vi.fn(async () => deepMapStatusResponse),
     inventoryLoader,
     publicationKey: id('2'),
     projectKey: id('9'),
@@ -359,5 +359,44 @@ describe('U12 progressive Code Atlas workspace', () => {
         toolCallLimit: 64,
       }),
     );
+  });
+
+  it('opens a safe detailed OpenAI failure when the failed Deep Map status is clicked', async () => {
+    if (deepMapStatus.result.status !== 'available') {
+      throw new Error('Deep Map test fixture must be available');
+    }
+    const availableStatus = deepMapStatus.result;
+    const failedStatus: DeepMapStatusResponseV1 = {
+      ...deepMapStatus,
+      result: {
+        ...availableStatus,
+        activity: {
+          ...availableStatus.activity,
+          budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+          failure: 'modelRejected',
+          state: 'failed',
+        },
+        configuration: {
+          ...availableStatus.configuration,
+          model: {
+            ...availableStatus.configuration.model,
+            modelId: 'gpt-5.4',
+            providerId: 'openai',
+          },
+        },
+      },
+    };
+    renderWorkspace(failedStatus);
+
+    const summary = await screen.findByRole('button', { name: /Deep Map.*Fehlgeschlagen/ });
+    expect(screen.queryByText('OpenAI hat die strukturierte Anfrage abgelehnt')).toBeNull();
+    await fireEvent.click(summary);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('OpenAI hat die strukturierte Anfrage abgelehnt');
+    expect(alert.textContent).toContain('gpt-5.4');
+    expect(alert.textContent).toContain('Mapping-Capability erneut');
+    expect(alert.textContent).toContain('modelRejected');
+    expect(alert.textContent).not.toContain('provider response');
   });
 });

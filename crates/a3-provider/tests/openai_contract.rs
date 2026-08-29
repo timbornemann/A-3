@@ -225,7 +225,96 @@ async fn openai_adapter_streams_neutral_events_and_encodes_responses_request()
     assert_eq!(payload["text"]["format"]["type"], "json_schema");
     assert_eq!(payload["text"]["format"]["name"], "a3_response");
     assert_eq!(payload["text"]["format"]["strict"], true);
-    assert!(payload["text"]["format"]["schema"].is_object());
+    let schema = &payload["text"]["format"]["schema"];
+    assert!(schema.is_object());
+    for unsupported in ["const", "oneOf", "prefixItems", "uniqueItems"] {
+        assert!(
+            !contains_schema_key(schema, unsupported),
+            "OpenAI wire schema retained unsupported keyword {unsupported}"
+        );
+    }
+    assert_eq!(schema["properties"]["schema_version"]["enum"], json!([1]));
+    assert!(schema["properties"]["action"]["anyOf"].is_array());
+    assert_eq!(
+        schema["properties"]["action"]["anyOf"][0]["properties"]["observations"]["items"]["enum"],
+        json!(["observation-a", "observation-b"])
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openai_adapter_streams_plain_agent_conversation_without_a_schema() -> Result<(), TestError>
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        write_event_stream_head(&mut stream).await?;
+
+        let events = [
+            sse_response_event("response.created", "in_progress", None),
+            sse_event(
+                "response.output_item.added",
+                json!({
+                    "output_index":0,
+                    "item":{"id":"msg_agent","type":"message","status":"in_progress","role":"assistant","content":[]}
+                }),
+            ),
+            sse_event(
+                "response.content_part.added",
+                json!({
+                    "item_id":"msg_agent","output_index":0,"content_index":0,
+                    "part":{"type":"output_text","text":"","annotations":[]}
+                }),
+            ),
+            sse_event(
+                "response.output_text.delta",
+                json!({"item_id":"msg_agent","output_index":0,"content_index":0,"delta":"Agent reply"}),
+            ),
+            sse_event(
+                "response.output_text.done",
+                json!({"item_id":"msg_agent","output_index":0,"content_index":0,"text":"Agent reply"}),
+            ),
+            sse_event(
+                "response.content_part.done",
+                json!({
+                    "item_id":"msg_agent","output_index":0,"content_index":0,
+                    "part":{"type":"output_text","text":"Agent reply","annotations":[]}
+                }),
+            ),
+            sse_event(
+                "response.output_item.done",
+                json!({
+                    "output_index":0,
+                    "item":{"id":"msg_agent","type":"message","status":"completed","role":"assistant","content":[]}
+                }),
+            ),
+            sse_response_event("response.completed", "completed", Some((10, 2))),
+        ];
+        write_http_chunk(&mut stream, events.concat().as_bytes()).await?;
+        finish_http_chunks(&mut stream).await?;
+        Ok::<StubHttpRequest, TestError>(request)
+    });
+
+    let provider = test_provider(endpoint)?;
+    let request = sample_request("gpt-5.4", false)?;
+    let control = TestControl::default();
+    let expected = vec![
+        ProviderEvent::OutputText(ModelOutputChunk::try_from_string("Agent reply".to_owned())?),
+        ProviderEvent::Completed(ModelProviderCompletion::new(
+            ModelFinishReason::Stop,
+            ModelProviderUsage::new(Some(10), Some(2)),
+        )),
+    ];
+    verify_model_provider_stream(&provider, &request, timeout()?, &control, &expected).await?;
+
+    let wire = server.await??;
+    let payload: Value = serde_json::from_slice(&wire.body)?;
+    assert_eq!(wire.path, "/v1/responses");
+    assert_eq!(payload["model"], "gpt-5.4");
+    assert_eq!(payload["input"][1]["content"], "Hello assistant");
+    assert!(payload.get("text").is_none());
     Ok(())
 }
 
@@ -618,8 +707,30 @@ fn sample_request(model_id: &str, structured: bool) -> Result<ModelProviderReque
     let schema = if structured {
         Some(StructuredOutputSchema::new(json!({
             "type":"object",
-            "properties":{"result":{"type":"string"}},
-            "required":["result"],
+            "properties":{
+                "schema_version":{"type":"integer", "const":1},
+                "action":{
+                    "oneOf":[{
+                        "type":"object",
+                        "properties":{
+                            "kind":{"type":"string", "const":"inspect"},
+                            "observations":{
+                                "type":"array",
+                                "prefixItems":[
+                                    {"type":"string", "enum":["observation-a"]},
+                                    {"type":"string", "enum":["observation-b"]}
+                                ],
+                                "minItems":2,
+                                "maxItems":2,
+                                "uniqueItems":true
+                            }
+                        },
+                        "required":["kind", "observations"],
+                        "additionalProperties":false
+                    }]
+                }
+            },
+            "required":["schema_version", "action"],
             "additionalProperties":false
         }))?)
     } else {
@@ -646,6 +757,19 @@ fn sample_request(model_id: &str, structured: bool) -> Result<ModelProviderReque
         schema,
     )
     .map_err(map_app_error)
+}
+
+fn contains_schema_key(value: &Value, target: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.contains_key(target)
+                || object
+                    .values()
+                    .any(|value| contains_schema_key(value, target))
+        }
+        Value::Array(items) => items.iter().any(|value| contains_schema_key(value, target)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
 }
 
 struct StubHttpRequest {

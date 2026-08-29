@@ -8,6 +8,7 @@
     startDeepMap,
     type DeepMapBudgetV1,
     type DeepMapControlResponseV1,
+    type DeepMapFailureV1,
     type DeepMapStatusResponseV1,
   } from './deep-map';
 
@@ -130,6 +131,104 @@
         cancelled: 'Abgebrochen',
       }[value] ?? value
     );
+  }
+  function providerLabel(providerId: string): string {
+    return (
+      {
+        gemini: 'Google Gemini',
+        ollama: 'Ollama',
+        openai: 'OpenAI',
+      }[providerId] ?? providerId
+    );
+  }
+  function failureDetail(
+    failure: DeepMapFailureV1,
+    providerId: string,
+    modelId: string,
+  ): { explanation: string; recovery: string; title: string } {
+    const provider = providerLabel(providerId);
+    const details: Record<
+      DeepMapFailureV1,
+      { explanation: string; recovery: string; title: string }
+    > = {
+      noPublishedIndex: {
+        title: 'Kein veröffentlichter Index',
+        explanation:
+          'Deep Map konnte keinen aktuellen, atomar veröffentlichten Projektstand laden.',
+        recovery:
+          'Warte den Indexlauf ab oder erstelle die Code-Analyse in den Projektoptionen neu.',
+      },
+      staleSnapshot: {
+        title: 'Projektstand hat sich geändert',
+        explanation:
+          'Der Lauf war an einen älteren Snapshot gebunden und wurde vor weiterer Modellarbeit sicher beendet.',
+        recovery:
+          'Starte Deep Map erneut; der neue Lauf bindet sich an den aktuellen veröffentlichten Snapshot.',
+      },
+      planning: {
+        title: 'Mapping-Plan konnte nicht erstellt werden',
+        explanation:
+          'Aus dem aktuellen Index ließ sich innerhalb der festen Grenzen kein gültiger Deep-Map-Plan ableiten.',
+        recovery: 'Prüfe den Indexstatus und starte Deep Map danach erneut.',
+      },
+      modelUnavailable: {
+        title: `${provider} ist nicht erreichbar`,
+        explanation: `Die Verbindung zu ${provider} für „${modelId}“ endete auch nach dem begrenzten sicheren Wiederholungsversuch. Teilantworten wurden verworfen.`,
+        recovery:
+          'Prüfe Internetverbindung, Providerstatus und Zugangsdaten und versuche es anschließend erneut.',
+      },
+      modelRejected: {
+        title: `${provider} hat die strukturierte Anfrage abgelehnt`,
+        explanation: `Das Modell „${modelId}“ hat den begrenzten Strict-Structured-Output-Request nicht akzeptiert. Es wurde keine Modellantwort als Evidence übernommen.`,
+        recovery:
+          'Aktualisiere die Modellliste und verifiziere die Mapping-Capability erneut. Wähle bei wiederholter Ablehnung ein anderes GPT-Modell.',
+      },
+      modelTimedOut: {
+        title: 'Die Modellantwort hat zu lange gedauert',
+        explanation: `Der vollständige Request an ${provider} überschritt seine feste Deadline; eine unvollständige Antwort wurde nicht verwendet.`,
+        recovery:
+          'Versuche es erneut oder wähle ein kleineres beziehungsweise schnelleres Mapping-Modell.',
+      },
+      invalidModelResponse: {
+        title: 'Die Modellantwort war nicht verwendbar',
+        explanation: `${provider} lieferte keine vollständig abgeschlossene Antwort, die den gebundenen Structured-Output- und Evidence-Regeln entsprach.`,
+        recovery: 'Verifiziere die Mapping-Capability erneut oder verwende ein anderes Modell.',
+      },
+      read: {
+        title: 'Repository-Evidence konnte nicht gelesen werden',
+        explanation:
+          'Ein begrenzter, snapshotgebundener Read aus dem veröffentlichten Index schlug fehl.',
+        recovery: 'Erstelle die Code-Analyse neu und starte Deep Map anschließend erneut.',
+      },
+      verification: {
+        title: 'Claims konnten nicht verifiziert werden',
+        explanation:
+          'Mindestens ein vorgeschlagener Claim ließ sich nicht gegen aktuelle Repository-Evidence bestätigen.',
+        recovery:
+          'Starte einen neuen Lauf auf dem aktuellen Index; unverifizierte Claims wurden nicht publiziert.',
+      },
+      publication: {
+        title: 'Module Cards konnten nicht veröffentlicht werden',
+        explanation:
+          'Die atomare Veröffentlichung der verifizierten Mapping-Ergebnisse wurde nicht abgeschlossen.',
+        recovery:
+          'Starte Deep Map erneut. Vorherige veröffentlichte Ergebnisse bleiben unverändert nutzbar.',
+      },
+      invalidCheckpoint: {
+        title: 'Pause-Checkpoint ist nicht mehr gültig',
+        explanation:
+          'Der gespeicherte Checkpoint passt nicht mehr zu Plan, Budget oder aktuellem Projektstand.',
+        recovery: 'Beginne einen neuen Deep-Map-Lauf statt den alten Checkpoint fortzusetzen.',
+      },
+      progressUnavailable: {
+        title: 'Laufstatus ist widersprüchlich',
+        explanation:
+          'Scheduler und Deep-Map-Lifecycle konnten keinen gemeinsam bestätigten Fortschrittsstand herstellen.',
+        recovery:
+          'Starte Deep Map erneut. Falls der Zustand wiederkehrt, starte A^3 neu und versuche es nochmals.',
+      },
+    };
+    return details[failure];
   }
 </script>
 
@@ -264,6 +363,22 @@
               >{/if}
           </div>
         </div>
+        {#if status.activity.state === 'failed' && status.activity.failure !== null}
+          {@const detail = failureDetail(
+            status.activity.failure,
+            status.configuration.model.providerId,
+            status.configuration.model.modelId,
+          )}
+          <section class="failure-detail" role="alert" aria-labelledby="deep-map-failure-title">
+            <div>
+              <span aria-hidden="true">!</span>
+              <h3 id="deep-map-failure-title">{detail.title}</h3>
+            </div>
+            <p>{detail.explanation}</p>
+            <p><strong>Nächster Schritt:</strong> {detail.recovery}</p>
+            <small>Diagnosecode <code>{status.activity.failure}</code></small>
+          </section>
+        {/if}
         {#if status.activity.events.length > 0}
           <ol class="feed" aria-label="Aktuelle sichere Deep-Map-Ereignisse">
             {#each status.activity.events.slice().reverse() as event (event.sequence)}<li
@@ -427,6 +542,42 @@
     background: var(--accent);
     color: var(--color-on-accent);
     font-weight: 750;
+  }
+  .failure-detail {
+    display: grid;
+    gap: 8px;
+    grid-column: 1 / -1;
+    padding: 12px;
+    border: 1px solid var(--color-status-failed-ring);
+    background: color-mix(in srgb, var(--color-status-failed) 8%, var(--surface-raised));
+  }
+  .failure-detail > div {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .failure-detail > div > span {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--color-status-failed-ring);
+    color: var(--color-status-failed);
+    font-weight: 800;
+  }
+  .failure-detail h3,
+  .failure-detail p {
+    margin: 0;
+  }
+  .failure-detail h3 {
+    font-size: 0.9rem;
+  }
+  .failure-detail p,
+  .failure-detail small {
+    font-size: 0.75rem;
+  }
+  .failure-detail small {
+    color: var(--muted);
   }
   .feed {
     margin: 0;

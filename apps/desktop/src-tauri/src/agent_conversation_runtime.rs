@@ -2,7 +2,8 @@ use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore, GetDesktopSettings,
     LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope,
     ModelFinishReason, ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider,
-    ModelProviderRequest, ModelRequestTimeout, ProviderCredentialStore, ProviderEvent,
+    ModelProviderFailure, ModelProviderRequest, ModelRequestTimeout, ProviderCredentialStore,
+    ProviderEvent,
 };
 use a3_domain::{AgentSessionMode, SecretCandidateClassifierV1};
 use a3_provider::{
@@ -65,11 +66,11 @@ impl AgentConversationRuntime {
         let mut stream = provider
             .stream(&request, ModelRequestTimeout::DEFAULT, control)
             .await
-            .map_err(|_| AgentConversationFailure::Unavailable)?;
+            .map_err(map_provider_failure)?;
         let mut output = String::new();
         let mut completed = false;
         while let Some(event) = stream.next().await {
-            match event.map_err(|_| AgentConversationFailure::Unavailable)? {
+            match event.map_err(map_provider_failure)? {
                 ProviderEvent::OutputText(chunk) if !completed => {
                     let next = output
                         .len()
@@ -191,6 +192,8 @@ pub(crate) enum AgentConversationFailure {
     ModelNotConfigured,
     OutputTooLarge,
     InvalidOutput,
+    ModelRejected,
+    ModelTimedOut,
     Unavailable,
 }
 
@@ -202,6 +205,8 @@ impl fmt::Display for AgentConversationFailure {
             Self::ModelNotConfigured => "a verified Coding model is not configured",
             Self::OutputTooLarge => "conversation output exceeded its limit",
             Self::InvalidOutput => "conversation output was incomplete or invalid",
+            Self::ModelRejected => "conversation model rejected the bounded request",
+            Self::ModelTimedOut => "conversation model request timed out",
             Self::Unavailable => "conversation model is unavailable",
         })
     }
@@ -209,10 +214,49 @@ impl fmt::Display for AgentConversationFailure {
 
 impl std::error::Error for AgentConversationFailure {}
 
+const fn map_provider_failure(error: ModelProviderFailure) -> AgentConversationFailure {
+    match error {
+        ModelProviderFailure::Rejected | ModelProviderFailure::EndpointDenied => {
+            AgentConversationFailure::ModelRejected
+        }
+        ModelProviderFailure::InvalidResponse => AgentConversationFailure::InvalidOutput,
+        ModelProviderFailure::TimedOut => AgentConversationFailure::ModelTimedOut,
+        ModelProviderFailure::Unavailable | ModelProviderFailure::Cancelled => {
+            AgentConversationFailure::Unavailable
+        }
+    }
+}
+
 impl fmt::Debug for AgentConversationRuntime {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AgentConversationRuntime")
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentConversationFailure, map_provider_failure};
+    use a3_application::ModelProviderFailure;
+
+    #[test]
+    fn provider_failures_keep_safe_actionable_conversation_categories() {
+        assert_eq!(
+            map_provider_failure(ModelProviderFailure::Rejected),
+            AgentConversationFailure::ModelRejected
+        );
+        assert_eq!(
+            map_provider_failure(ModelProviderFailure::TimedOut),
+            AgentConversationFailure::ModelTimedOut
+        );
+        assert_eq!(
+            map_provider_failure(ModelProviderFailure::InvalidResponse),
+            AgentConversationFailure::InvalidOutput
+        );
+        assert_eq!(
+            map_provider_failure(ModelProviderFailure::Unavailable),
+            AgentConversationFailure::Unavailable
+        );
     }
 }

@@ -50,6 +50,8 @@ const MAX_OPENAI_SSE_BUFFER_BYTES: usize = MAX_OPENAI_SSE_LINE_BYTES + 64 * 1024
 const MAX_OPENAI_EVENT_TYPE_BYTES: usize = 128;
 const MAX_OPENAI_ITEM_ID_BYTES: usize = 256;
 const MAX_OPENAI_REASONING_ITEMS: usize = 64;
+const MAX_OPENAI_SCHEMA_DEPTH: usize = 64;
+const MAX_OPENAI_SCHEMA_NODES: usize = 4_096;
 
 /// Whether an OpenAI endpoint stays on loopback for tests or reaches the OpenAI API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -341,7 +343,7 @@ impl OpenAiModelProvider {
             "required": ["a3_probe"],
             "additionalProperties": false
         });
-        let wire_request = OpenAiResponseRequest::probe(request.model_id().as_str(), &schema);
+        let wire_request = OpenAiResponseRequest::probe(request.model_id().as_str(), &schema)?;
         let http_request = self.attach_auth(
             self.client
                 .post(self.endpoint.responses_url())
@@ -619,7 +621,7 @@ struct OpenAiResponseRequest<'a> {
     parallel_tool_calls: bool,
     truncation: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<OpenAiTextConfig<'a>>,
+    text: Option<OpenAiTextConfig>,
 }
 
 impl<'a> OpenAiResponseRequest<'a> {
@@ -648,14 +650,19 @@ impl<'a> OpenAiResponseRequest<'a> {
                 content: message.content(),
             })
             .collect();
-        let text = request.structured_output().map(|schema| OpenAiTextConfig {
-            format: OpenAiTextFormat {
-                format_type: "json_schema",
-                name: OPENAI_SCHEMA_NAME,
-                strict: true,
-                schema: schema.value(),
-            },
-        });
+        let text = request
+            .structured_output()
+            .map(|schema| {
+                translate_openai_json_schema(schema.value()).map(|schema| OpenAiTextConfig {
+                    format: OpenAiTextFormat {
+                        format_type: "json_schema",
+                        name: OPENAI_SCHEMA_NAME,
+                        strict: true,
+                        schema,
+                    },
+                })
+            })
+            .transpose()?;
         let sampling = request.profile().settings().sampling();
         let model = request.model_id().as_str();
         Ok(Self {
@@ -675,8 +682,8 @@ impl<'a> OpenAiResponseRequest<'a> {
         })
     }
 
-    fn probe(model: &'a str, schema: &'a Value) -> Self {
-        Self {
+    fn probe(model: &'a str, schema: &Value) -> Result<Self, ModelProviderFailure> {
+        Ok(Self {
             model,
             input: vec![OpenAiInputMessage {
                 role: "user",
@@ -697,10 +704,10 @@ impl<'a> OpenAiResponseRequest<'a> {
                     format_type: "json_schema",
                     name: OPENAI_PROBE_SCHEMA_NAME,
                     strict: true,
-                    schema,
+                    schema: translate_openai_json_schema(schema)?,
                 },
             }),
-        }
+        })
     }
 }
 
@@ -726,17 +733,383 @@ struct OpenAiInputMessage<'a> {
 }
 
 #[derive(Serialize)]
-struct OpenAiTextConfig<'a> {
-    format: OpenAiTextFormat<'a>,
+struct OpenAiTextConfig {
+    format: OpenAiTextFormat,
 }
 
 #[derive(Serialize)]
-struct OpenAiTextFormat<'a> {
+struct OpenAiTextFormat {
     #[serde(rename = "type")]
     format_type: &'static str,
     name: &'static str,
     strict: bool,
-    schema: &'a Value,
+    schema: Value,
+}
+
+fn translate_openai_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
+    let mut nodes = 0usize;
+    let mut translated = translate_openai_schema_node(schema, 0, &mut nodes)?;
+    compact_openai_prefix_items(&mut translated)?;
+    prune_openai_unused_definitions(&mut translated)?;
+    let root = translated
+        .as_object()
+        .ok_or(ModelProviderFailure::Rejected)?;
+    if root.get("type").and_then(Value::as_str) != Some("object") || root.contains_key("anyOf") {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    Ok(translated)
+}
+
+fn translate_openai_schema_node(
+    schema: &Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<Value, ModelProviderFailure> {
+    if depth > MAX_OPENAI_SCHEMA_DEPTH || *nodes >= MAX_OPENAI_SCHEMA_NODES {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    *nodes += 1;
+    let object = schema.as_object().ok_or(ModelProviderFailure::Rejected)?;
+    let mut translated = serde_json::Map::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "$schema" | "$id" | "$anchor" | "title" | "minLength" | "maxLength" | "uniqueItems" => {
+            }
+            "const" => {
+                if object.contains_key("enum") || !is_openai_enum_scalar(value) {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert("enum".to_owned(), Value::Array(vec![value.clone()]));
+            }
+            "$ref" => {
+                let reference = value.as_str().ok_or(ModelProviderFailure::Rejected)?;
+                if reference != "#" && !reference.starts_with("#/$defs/") {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(key.clone(), value.clone());
+            }
+            "type" => {
+                validate_openai_schema_type(value)?;
+                translated.insert(key.clone(), value.clone());
+            }
+            "description" => {
+                if !value.is_string() {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(key.clone(), value.clone());
+            }
+            "enum" => {
+                let values = value.as_array().ok_or(ModelProviderFailure::Rejected)?;
+                if values.is_empty() || values.iter().any(|value| !is_openai_enum_scalar(value)) {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(key.clone(), value.clone());
+            }
+            "pattern" | "format" | "minItems" | "maxItems" | "multipleOf" | "minimum"
+            | "maximum" | "exclusiveMinimum" | "exclusiveMaximum" | "required" => {
+                translated.insert(key.clone(), value.clone());
+            }
+            "items" => {
+                translated.insert(
+                    key.clone(),
+                    translate_openai_schema_node(value, depth + 1, nodes)?,
+                );
+            }
+            "additionalProperties" => {
+                if value.as_bool() != Some(false) {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(key.clone(), Value::Bool(false));
+            }
+            "prefixItems" | "anyOf" | "oneOf" => {
+                let items = value.as_array().ok_or(ModelProviderFailure::Rejected)?;
+                if items.is_empty() {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                let translated_items = items
+                    .iter()
+                    .map(|item| translate_openai_schema_node(item, depth + 1, nodes))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let translated_key = if key == "oneOf" { "anyOf" } else { key };
+                if translated.contains_key(translated_key) {
+                    return Err(ModelProviderFailure::Rejected);
+                }
+                translated.insert(translated_key.to_owned(), Value::Array(translated_items));
+            }
+            "properties" | "$defs" => {
+                let entries = value.as_object().ok_or(ModelProviderFailure::Rejected)?;
+                let mut translated_entries = serde_json::Map::new();
+                for (name, child) in entries {
+                    translated_entries.insert(
+                        name.clone(),
+                        translate_openai_schema_node(child, depth + 1, nodes)?,
+                    );
+                }
+                translated.insert(key.clone(), Value::Object(translated_entries));
+            }
+            _ => return Err(ModelProviderFailure::Rejected),
+        }
+    }
+    infer_openai_enum_type(&mut translated)?;
+    validate_openai_object_schema(&translated)?;
+    Ok(Value::Object(translated))
+}
+
+fn validate_openai_schema_type(value: &Value) -> Result<(), ModelProviderFailure> {
+    let valid = match value {
+        Value::String(value) => is_openai_schema_type(value),
+        Value::Array(values) => {
+            !values.is_empty()
+                && values
+                    .iter()
+                    .all(|value| value.as_str().is_some_and(is_openai_schema_type))
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ModelProviderFailure::Rejected)
+    }
+}
+
+fn is_openai_schema_type(value: &str) -> bool {
+    matches!(
+        value,
+        "string" | "number" | "boolean" | "integer" | "object" | "array" | "null"
+    )
+}
+
+fn is_openai_enum_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+    )
+}
+
+fn infer_openai_enum_type(
+    schema: &mut serde_json::Map<String, Value>,
+) -> Result<(), ModelProviderFailure> {
+    if schema.contains_key("type") || schema.contains_key("$ref") {
+        return Ok(());
+    }
+    let Some(values) = schema.get("enum").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let mut inferred: Option<&'static str> = None;
+    for value in values {
+        let current = match value {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) | Value::Object(_) => return Err(ModelProviderFailure::Rejected),
+        };
+        inferred = match (inferred, current) {
+            (None, current) => Some(current),
+            (Some("integer"), "number") | (Some("number"), "integer") => Some("number"),
+            (Some(previous), current) if previous == current => Some(previous),
+            _ => return Err(ModelProviderFailure::Rejected),
+        };
+    }
+    let inferred = inferred.ok_or(ModelProviderFailure::Rejected)?;
+    schema.insert("type".to_owned(), Value::String(inferred.to_owned()));
+    Ok(())
+}
+
+fn validate_openai_object_schema(
+    schema: &serde_json::Map<String, Value>,
+) -> Result<(), ModelProviderFailure> {
+    let declares_object = schema.get("type").and_then(Value::as_str) == Some("object")
+        || schema.contains_key("properties");
+    if !declares_object {
+        return Ok(());
+    }
+    if schema.get("type").and_then(Value::as_str) != Some("object")
+        || schema.get("additionalProperties").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or(ModelProviderFailure::Rejected)?;
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .ok_or(ModelProviderFailure::Rejected)?;
+    if required.len() != properties.len() {
+        return Err(ModelProviderFailure::Rejected);
+    }
+    let mut required_names = BTreeSet::new();
+    for name in required {
+        let name = name.as_str().ok_or(ModelProviderFailure::Rejected)?;
+        if !properties.contains_key(name) || !required_names.insert(name) {
+            return Err(ModelProviderFailure::Rejected);
+        }
+    }
+    Ok(())
+}
+
+fn compact_openai_prefix_items(schema: &mut Value) -> Result<(), ModelProviderFailure> {
+    match schema {
+        Value::Object(object) => {
+            for value in object.values_mut() {
+                compact_openai_prefix_items(value)?;
+            }
+            let Some(prefix_items) = object.get("prefixItems").and_then(Value::as_array) else {
+                return Ok(());
+            };
+            if prefix_items.is_empty()
+                || object.contains_key("items")
+                || !openai_exact_array_length(object, prefix_items.len())
+            {
+                return Err(ModelProviderFailure::Rejected);
+            }
+            let mut merged = prefix_items[0].clone();
+            let equivalent = prefix_items.iter().skip(1).all(|item| {
+                let mut candidate = merged.clone();
+                if merge_openai_schema_shape(&mut candidate, item, None) {
+                    merged = candidate;
+                    true
+                } else {
+                    false
+                }
+            });
+            let item_schema = if equivalent {
+                merged
+            } else {
+                let mut union = serde_json::Map::new();
+                union.insert("anyOf".to_owned(), Value::Array(prefix_items.clone()));
+                Value::Object(union)
+            };
+            object.remove("prefixItems");
+            object.insert("items".to_owned(), item_schema);
+        }
+        Value::Array(items) => {
+            for item in items {
+                compact_openai_prefix_items(item)?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
+fn openai_exact_array_length(object: &serde_json::Map<String, Value>, length: usize) -> bool {
+    let Ok(length) = u64::try_from(length) else {
+        return false;
+    };
+    object.get("minItems").and_then(Value::as_u64) == Some(length)
+        && object.get("maxItems").and_then(Value::as_u64) == Some(length)
+}
+
+fn merge_openai_schema_shape(left: &mut Value, right: &Value, key: Option<&str>) -> bool {
+    if key == Some("enum") {
+        let (Some(left), Some(right)) = (left.as_array_mut(), right.as_array()) else {
+            return false;
+        };
+        for value in right {
+            if !left.contains(value) {
+                left.push(value.clone());
+            }
+        }
+        return true;
+    }
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) if left.len() == right.len() => {
+            for (name, right_value) in right {
+                let Some(left_value) = left.get_mut(name) else {
+                    return false;
+                };
+                if !merge_openai_schema_shape(left_value, right_value, Some(name)) {
+                    return false;
+                }
+            }
+            true
+        }
+        (Value::Array(left), Value::Array(right)) if left.len() == right.len() => left
+            .iter_mut()
+            .zip(right)
+            .all(|(left, right)| merge_openai_schema_shape(left, right, None)),
+        (left, right) => left == right,
+    }
+}
+
+fn prune_openai_unused_definitions(schema: &mut Value) -> Result<(), ModelProviderFailure> {
+    let Some(root) = schema.as_object() else {
+        return Err(ModelProviderFailure::Rejected);
+    };
+    let Some(definitions) = root.get("$defs") else {
+        return Ok(());
+    };
+    let definitions = definitions
+        .as_object()
+        .ok_or(ModelProviderFailure::Rejected)?
+        .clone();
+    let mut referenced = BTreeSet::new();
+    for (name, value) in root {
+        if name != "$defs" {
+            collect_openai_definition_references(value, &mut referenced)?;
+        }
+    }
+    let mut pending = referenced.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(name) = pending.pop_front() {
+        let definition = definitions
+            .get(&name)
+            .ok_or(ModelProviderFailure::Rejected)?;
+        let mut nested = BTreeSet::new();
+        collect_openai_definition_references(definition, &mut nested)?;
+        for nested_name in nested {
+            if referenced.insert(nested_name.clone()) {
+                pending.push_back(nested_name);
+            }
+        }
+    }
+    let retained = definitions
+        .into_iter()
+        .filter(|(name, _)| referenced.contains(name))
+        .collect::<serde_json::Map<_, _>>();
+    let root = schema
+        .as_object_mut()
+        .ok_or(ModelProviderFailure::Rejected)?;
+    if retained.is_empty() {
+        root.remove("$defs");
+    } else {
+        root.insert("$defs".to_owned(), Value::Object(retained));
+    }
+    Ok(())
+}
+
+fn collect_openai_definition_references(
+    schema: &Value,
+    referenced: &mut BTreeSet<String>,
+) -> Result<(), ModelProviderFailure> {
+    match schema {
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref") {
+                let reference = reference.as_str().ok_or(ModelProviderFailure::Rejected)?;
+                if let Some(name) = reference.strip_prefix("#/$defs/") {
+                    let name = name.split('/').next().unwrap_or_default();
+                    if name.is_empty() {
+                        return Err(ModelProviderFailure::Rejected);
+                    }
+                    referenced.insert(name.to_owned());
+                }
+            }
+            for value in object.values() {
+                collect_openai_definition_references(value, referenced)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_openai_definition_references(item, referenced)?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1686,9 +2059,12 @@ mod tests {
         LocalOnlyOpenAiEndpointPolicy, OpenAiEndpoint, OpenAiEndpointError, OpenAiEndpointPolicy,
         OpenAiEndpointScope, StandardOpenAiEndpointPolicy, classify_http_status,
         classify_openai_error_code, openai_reasoning_for_sampling, parse_model_catalog,
-        response_model_matches_requested,
+        response_model_matches_requested, translate_openai_json_schema,
     };
-    use a3_application::ModelProviderFailure;
+    use a3_application::{
+        AgentActionJsonSchema, DecodeExplorerAction, DecodeModuleCardClaims, ModelProviderFailure,
+    };
+    use serde_json::{Value, json};
 
     #[test]
     fn endpoint_and_policies_keep_production_and_test_origins_separate()
@@ -1784,5 +2160,76 @@ mod tests {
         assert!(openai_reasoning_for_sampling("gpt-5.4-mini").is_some());
         assert!(openai_reasoning_for_sampling("gpt-5-mini").is_none());
         assert!(openai_reasoning_for_sampling("gpt-4.1").is_none());
+    }
+
+    #[test]
+    fn production_schemas_translate_to_the_openai_strict_subset()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let schemas = [
+            (
+                "Deep Map explorer",
+                DecodeExplorerAction::version_one()
+                    .json_schema()
+                    .as_str()
+                    .to_owned(),
+            ),
+            (
+                "Module Card claims",
+                DecodeModuleCardClaims::version_one()
+                    .json_schema()
+                    .as_str()
+                    .to_owned(),
+            ),
+            (
+                "AgentAction",
+                serde_json::to_string(&AgentActionJsonSchema::current().as_json()?)?,
+            ),
+        ];
+        for (name, schema) in schemas {
+            let schema: Value = serde_json::from_str(&schema)?;
+            let translated = translate_openai_json_schema(&schema).map_err(|error| {
+                std::io::Error::other(format!("{name} schema was rejected: {error:?}"))
+            })?;
+            assert_eq!(translated["type"], "object");
+            for unsupported in [
+                "$schema",
+                "$id",
+                "$anchor",
+                "const",
+                "oneOf",
+                "prefixItems",
+                "uniqueItems",
+                "minLength",
+                "maxLength",
+            ] {
+                assert!(!contains_key(&translated, unsupported));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn openai_schema_translation_rejects_optional_object_fields() {
+        let result = translate_openai_json_schema(&json!({
+            "type": "object",
+            "properties": {
+                "required_value": {"type": "string"},
+                "optional_value": {"type": "string"}
+            },
+            "required": ["required_value"],
+            "additionalProperties": false
+        }));
+        assert_eq!(result, Err(ModelProviderFailure::Rejected));
+    }
+
+    fn contains_key(value: &Value, target: &str) -> bool {
+        match value {
+            Value::Object(object) => {
+                object.contains_key(target)
+                    || object.values().any(|value| contains_key(value, target))
+            }
+            Value::Array(items) => items.iter().any(|value| contains_key(value, target)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+        }
     }
 }

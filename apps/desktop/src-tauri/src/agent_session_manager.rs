@@ -1465,8 +1465,14 @@ const fn safe_failure_message(error: AgentConversationFailure) -> &'static str {
         AgentConversationFailure::InvalidOutput => {
             "Das Modell lieferte eine unvollständige Antwort."
         }
+        AgentConversationFailure::ModelRejected => {
+            "Der Modellprovider hat die begrenzte Anfrage abgelehnt. Aktualisiere die Modellliste und verifiziere die Coding-Capability erneut; wähle bei wiederholter Ablehnung ein anderes Modell."
+        }
+        AgentConversationFailure::ModelTimedOut => {
+            "Die Modellantwort überschritt die feste Deadline. Versuche es erneut oder wähle ein kleineres beziehungsweise schnelleres Coding-Modell."
+        }
         AgentConversationFailure::Unavailable => {
-            "Das konfigurierte Coding-Modell ist derzeit nicht verfügbar."
+            "Das konfigurierte Coding-Modell ist derzeit nicht erreichbar. Prüfe Providerstatus, Verbindung und Zugangsdaten und versuche es erneut."
         }
     }
 }
@@ -1585,7 +1591,10 @@ impl Drop for AgentSessionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlanConversationResponse, classify_plan_response, presentation_can_be_hidden};
+    use super::{
+        AgentConversationFailure, PlanConversationResponse, classify_plan_response,
+        presentation_can_be_hidden, safe_failure_message,
+    };
     use a3_domain::AgentSessionState;
 
     #[test]
@@ -1618,5 +1627,17 @@ mod tests {
         assert!(presentation_can_be_hidden(AgentSessionState::Completed));
         assert!(presentation_can_be_hidden(AgentSessionState::Failed));
         assert!(presentation_can_be_hidden(AgentSessionState::Cancelled));
+    }
+
+    #[test]
+    fn conversation_failures_explain_safe_recovery_without_provider_payloads() {
+        let rejected = safe_failure_message(AgentConversationFailure::ModelRejected);
+        assert!(rejected.contains("Coding-Capability erneut"));
+        assert!(rejected.contains("anderes Modell"));
+        assert!(!rejected.contains("request body"));
+
+        let timed_out = safe_failure_message(AgentConversationFailure::ModelTimedOut);
+        assert!(timed_out.contains("feste Deadline"));
+        assert!(timed_out.contains("schnelleres Coding-Modell"));
     }
 }

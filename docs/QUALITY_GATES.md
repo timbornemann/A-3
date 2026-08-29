@@ -503,6 +503,13 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   vorhandenen `gemini-pro-latest`-Alias über Capability-Probe, SSE, ein kleines Schema und die
   produktionsnahe erste Deep-Map-Anfrage sowie Embedding ausschließlich am kanonischen
   Google-Origin. CI und normale Testläufe führen ihn nie aus.
+- Der OpenAI-Stubserver prüft die Responses-API sowohl für schemafreie Agent-Conversation als auch
+  für Strict Structured Output. Der Wire-Contract darf aus den vollständigen Explorer-, Claim- und
+  AgentAction-Schemas kein `const`, `oneOf`, `prefixItems` oder `uniqueItems` übertragen, muss
+  `additionalProperties: false` und vollständige `required`-Mengen erhalten und feste Tuple-Items
+  nur unter unveränderten exakten Arraygrenzen verdichten. Unbekannte Dialektschlüssel, optionale
+  Objektfelder und fremde Referenzen müssen vor Netzwerkzugriff scheitern; der unveränderte
+  A^3-Decoder bleibt für die engere positions- und evidencegebundene Antwort autoritativ.
 
 ### AgentAction und Prompt
 
