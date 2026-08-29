@@ -2,9 +2,9 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type {
-  DeepMapActivityV1,
-  DeepMapControlResponseV1,
-  DeepMapStatusResponseV1,
+  DeepMapModeV2,
+  DeepMapStartResponseV2,
+  DeepMapStatusResponseV3,
 } from './lib/deep-map';
 import type { HealthResponseV1 } from './lib/health';
 import type { IndexActivityResponseV1 } from './lib/index-activity';
@@ -759,111 +759,19 @@ const repositoryTreeSrc: RepositoryTreeResponseV1 = {
   },
 };
 
-const emptyDeepMapActivityV2: Pick<
-  DeepMapActivityV1,
-  | 'currentModuleId'
-  | 'events'
-  | 'phase'
-  | 'publicationSummary'
-  | 'safeAction'
-  | 'stepPosition'
-  | 'targetKind'
-> = {
-  currentModuleId: null,
-  events: [],
-  phase: null,
-  publicationSummary: null,
-  safeAction: null,
-  stepPosition: null,
-  targetKind: null,
-};
-
-const idleDeepMapStatus: DeepMapStatusResponseV1 = {
+const idleDeepMapStatus: DeepMapStatusResponseV3 = {
   protocolVersion: 1,
   result: {
     status: 'available',
-    configuration: {
-      model: {
-        profileId: '5'.repeat(64),
-        profileVersion: 1,
-        providerId: 'ollama',
-        modelId: 'mapper:latest',
-        contextTokens: 16_384,
-        outputTokens: 2_048,
-      },
-      minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
-      defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      maximumBudget: {
-        tokenLimit: 1_000_000,
-        timeLimitMillis: 86_400_000,
-        toolCallLimit: 4_096,
-      },
+    model: {
+      profileId: '5'.repeat(64),
+      profileVersion: 1,
+      providerId: 'ollama',
+      modelId: 'mapper:latest',
+      contextTokens: 16_384,
+      outputTokens: 2_048,
     },
-    activity: {
-      ...emptyDeepMapActivityV2,
-      state: 'idle',
-      budget: null,
-      progress: null,
-      failure: null,
-      confirmedSteps: '0',
-      totalSteps: '0',
-    },
-  },
-};
-
-const timedOutDeepMapStatus: DeepMapStatusResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    status: 'available',
-    configuration: (
-      idleDeepMapStatus.result as Extract<
-        DeepMapStatusResponseV1['result'],
-        { status: 'available' }
-      >
-    ).configuration,
-    activity: {
-      ...emptyDeepMapActivityV2,
-      state: 'failed',
-      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      progress: null,
-      failure: 'modelTimedOut',
-      confirmedSteps: '0',
-      totalSteps: '0',
-    },
-  },
-};
-
-const unavailableGeminiDeepMapStatus: DeepMapStatusResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    status: 'available',
-    configuration: {
-      ...(
-        idleDeepMapStatus.result as Extract<
-          DeepMapStatusResponseV1['result'],
-          { status: 'available' }
-        >
-      ).configuration,
-      model: {
-        ...(
-          idleDeepMapStatus.result as Extract<
-            DeepMapStatusResponseV1['result'],
-            { status: 'available' }
-          >
-        ).configuration.model,
-        providerId: 'gemini',
-        modelId: 'gemini-flash-latest',
-      },
-    },
-    activity: {
-      ...emptyDeepMapActivityV2,
-      state: 'failed',
-      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      progress: null,
-      failure: 'modelUnavailable',
-      confirmedSteps: '0',
-      totalSteps: '0',
-    },
+    lifecycle: { state: 'ready' },
   },
 };
 
@@ -1627,14 +1535,10 @@ describe('A^3 desktop shell', () => {
       ).toBeTruthy();
     });
 
-    it('shows verified model and budgets without starting Deep Map until the explicit click', async () => {
-      const deepMapStarter = vi.fn<
-        (budget: {
-          tokenLimit: number;
-          timeLimitMillis: number;
-          toolCallLimit: number;
-        }) => Promise<DeepMapControlResponseV1>
-      >(async () => ({ accepted: true, protocolVersion: 1 }));
+    it('starts Deep Map only with one of the three closed modes', async () => {
+      const deepMapStarter = vi.fn<(mode: DeepMapModeV2) => Promise<DeepMapStartResponseV2>>(
+        async () => ({ outcome: 'queued', protocolVersion: 1 }),
+      );
       render(App, {
         props: {
           deepMapStarter,
@@ -1644,76 +1548,11 @@ describe('A^3 desktop shell', () => {
         },
       });
 
-      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-      expect(await screen.findByText('ollama / mapper:latest')).toBeTruthy();
-      expect(screen.getByText('Bereit für einen bewussten Start')).toBeTruthy();
+      const mode = await screen.findByRole('combobox', { name: 'Deep-Map-Modus' });
       expect(deepMapStarter).not.toHaveBeenCalled();
-      expect((screen.getByLabelText('Tokenbudget') as HTMLInputElement).valueAsNumber).toBe(32_000);
-      expect(
-        (screen.getByLabelText('Zeitbudget in Millisekunden') as HTMLInputElement).valueAsNumber,
-      ).toBe(120_000);
-      expect(
-        (screen.getByLabelText('Read-only-Werkzeugaufrufe') as HTMLInputElement).valueAsNumber,
-      ).toBe(64);
-
-      await fireEvent.click(screen.getByRole('button', { name: 'Deep Map bewusst starten' }));
-
-      await waitFor(() => {
-        expect(deepMapStarter).toHaveBeenCalledWith({
-          tokenLimit: 32_000,
-          timeLimitMillis: 120_000,
-          toolCallLimit: 64,
-        });
-      });
-    });
-
-    it('explains a failed Deep Map run with a concrete safe recovery step', async () => {
-      render(App, {
-        props: {
-          deepMapStatusLoader: async () => timedOutDeepMapStatus,
-          healthLoader: async () => health,
-          projectStatusLoader: async () => activeProjectStatus,
-        },
-      });
-
-      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-      const alert = (await screen.findByText('Die Modellantwort hat zu lange gedauert')).closest(
-        '[role="alert"]',
-      );
-      expect(alert).not.toBeNull();
-      expect(alert?.textContent).toContain('Die Modellantwort hat zu lange gedauert');
-      expect(alert?.textContent).toContain('kleineres beziehungsweise schnelleres Modell');
-      expect(
-        (screen.getByRole('button', { name: 'Deep Map bewusst starten' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false);
-      expect(
-        (screen.getByRole('button', { name: 'Pausieren' }) as HTMLButtonElement).disabled,
-      ).toBe(true);
-      expect(
-        (screen.getByRole('button', { name: 'Fortsetzen' }) as HTMLButtonElement).disabled,
-      ).toBe(true);
-      expect(
-        (screen.getByRole('button', { name: 'Abbrechen' }) as HTMLButtonElement).disabled,
-      ).toBe(true);
-    });
-
-    it('uses the configured provider in Deep Map connection recovery guidance', async () => {
-      render(App, {
-        props: {
-          deepMapStatusLoader: async () => unavailableGeminiDeepMapStatus,
-          healthLoader: async () => health,
-          projectStatusLoader: async () => activeProjectStatus,
-        },
-      });
-
-      await fireEvent.click(await screen.findByRole('button', { name: 'Mapping' }));
-      const alert = (await screen.findByText('Das Mapping-Modell ist nicht erreichbar')).closest(
-        '[role="alert"]',
-      );
-      expect(alert?.textContent).toContain('automatische zweite Verbindungsversuch');
-      expect(alert?.textContent).toContain('Google-Gemini-Verbindung');
-      expect(alert?.textContent).not.toContain('Ollama');
+      await fireEvent.change(mode, { target: { value: 'thorough' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+      await waitFor(() => expect(deepMapStarter).toHaveBeenCalledWith('thorough'));
     });
   });
 

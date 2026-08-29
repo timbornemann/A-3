@@ -461,6 +461,8 @@ impl Error for ModuleCardEvidenceResolverFailure {}
 /// Stable verified-only publisher failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifiedModuleCardPublisherFailure {
+    /// The exact latest index already has one complete immutable publication.
+    AlreadyPublished,
     /// Storage boundary rejected the verified batch.
     Rejected,
     /// Atomic publication failed.
@@ -476,6 +478,7 @@ pub enum VerifiedModuleCardPublisherFailure {
 impl fmt::Display for VerifiedModuleCardPublisherFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::AlreadyPublished => "verified Module Cards are already published",
             Self::Rejected => "verified Module Card batch was rejected",
             Self::Storage => "verified Module Card publication failed",
             Self::TimedOut => "verified Module Card publication timed out",

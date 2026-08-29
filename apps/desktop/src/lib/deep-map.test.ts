@@ -1,162 +1,212 @@
 import { describe, expect, it, vi } from 'vitest';
-
 import {
   cancelDeepMap,
-  parseDeepMapStatusResponseV1,
+  parseDeepMapStatusResponseV3,
   pauseDeepMap,
   queryDeepMap,
+  queryDeepMapEntries,
+  queryDeepMapEntryDetail,
+  queryDeepMapRuns,
   resumeDeepMap,
   startDeepMap,
 } from './deep-map';
 
-const emptyActivityV2 = {
-  currentModuleId: null,
-  events: [],
-  phase: null,
-  publicationSummary: null,
-  safeAction: null,
-  stepPosition: null,
-  targetKind: null,
-} as const;
+const model = {
+  profileId: 'a'.repeat(64),
+  profileVersion: 1,
+  providerId: 'openai',
+  modelId: 'gpt-5.4-mini',
+  contextTokens: 128_000,
+  outputTokens: 16_384,
+};
+const progress = {
+  action: 'verifyEvidence',
+  confirmedSteps: '3',
+  phase: 'verifying',
+  totalSteps: '6',
+};
+const readyStatus = {
+  protocolVersion: 1,
+  result: { lifecycle: { state: 'ready' }, model, status: 'available' },
+};
+const runSelection = 'a'.repeat(96);
+const entrySelection = 'b'.repeat(48);
+const runCursor = 'c'.repeat(112);
+const run = {
+  confirmedSteps: '2',
+  detailsIncomplete: false,
+  failure: null,
+  mode: 'standard',
+  selection: runSelection,
+  startedAtUnixMillis: '1000',
+  state: 'running',
+  totalSteps: '6',
+  updatedAtUnixMillis: '1200',
+};
+const entry = {
+  action: 'verifyEvidence',
+  confirmed: true,
+  failure: null,
+  occurredAtUnixMillis: '1100',
+  phase: 'verifying',
+  result: 'confirmed',
+  selection: entrySelection,
+  sequence: '2',
+  state: 'running',
+  stepPosition: '2',
+  targetKind: 'module',
+  totalSteps: '6',
+};
 
-function availableResponse(): unknown {
-  return {
-    protocolVersion: 1,
-    result: {
-      status: 'available',
-      configuration: {
-        model: {
-          profileId: '11'.repeat(32),
-          profileVersion: 1,
-          providerId: 'ollama',
-          modelId: 'mapper:latest',
-          contextTokens: 16_384,
-          outputTokens: 2_048,
-        },
-        minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
-        defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-        maximumBudget: {
-          tokenLimit: 1_000_000,
-          timeLimitMillis: 86_400_000,
-          toolCallLimit: 4_096,
-        },
-      },
-      activity: {
-        ...emptyActivityV2,
-        state: 'idle',
-        budget: null,
-        progress: null,
-        failure: null,
-        confirmedSteps: '0',
-        totalSteps: '0',
-      },
-    },
-  };
-}
-
-describe('Deep Map protocol', () => {
-  it('queries status without exposing a path, profile choice, or job id', async () => {
-    const invokeMock = vi.fn().mockResolvedValue(availableResponse());
-    await expect(queryDeepMap(invokeMock)).resolves.toMatchObject({
-      result: { status: 'available' },
-    });
+describe('Deep Map V2/V3 boundary', () => {
+  it('reads the compact status without an event feed or caller budgets', async () => {
+    const invokeMock = vi.fn(async () => readyStatus);
+    await expect(queryDeepMap(invokeMock)).resolves.toEqual(readyStatus);
     expect(invokeMock).toHaveBeenCalledWith('query_deep_map', {
       request: { protocolVersion: 1 },
     });
   });
 
-  it('passes only a validated hard budget to explicit start', async () => {
-    const invokeMock = vi.fn().mockResolvedValue({ accepted: true, protocolVersion: 1 });
-    const budget = { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 };
-    await expect(startDeepMap(budget, invokeMock)).resolves.toEqual({
-      accepted: true,
+  it('starts only one of the three closed modes', async () => {
+    const invokeMock = vi.fn(async () => ({ outcome: 'queued', protocolVersion: 1 }));
+    await expect(startDeepMap('standard', invokeMock)).resolves.toEqual({
+      outcome: 'queued',
       protocolVersion: 1,
     });
     expect(invokeMock).toHaveBeenCalledWith('start_deep_map', {
-      request: { budget, protocolVersion: 1 },
+      request: { mode: 'standard', protocolVersion: 1 },
     });
   });
 
-  it('keeps pause, resume, and cancel pathless', async () => {
-    const invokeMock = vi.fn().mockResolvedValue({ accepted: true, protocolVersion: 1 });
+  it('keeps pause, resume and cancel on strict acknowledgements', async () => {
+    const invokeMock = vi.fn(async (command: string, arguments_?: unknown) => {
+      void command;
+      void arguments_;
+      return {
+        accepted: true,
+        protocolVersion: 1,
+      };
+    });
     await pauseDeepMap(invokeMock);
     await resumeDeepMap(invokeMock);
     await cancelDeepMap(invokeMock);
-    expect(invokeMock.mock.calls).toEqual([
-      ['pause_deep_map', { request: { protocolVersion: 1 } }],
-      ['resume_deep_map', { request: { protocolVersion: 1 } }],
-      ['cancel_deep_map', { request: { protocolVersion: 1 } }],
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      'pause_deep_map',
+      'resume_deep_map',
+      'cancel_deep_map',
     ]);
   });
 
-  it('rejects unknown fields and contradictory paused state', () => {
-    const extra = availableResponse() as Record<string, unknown>;
-    expect(() => parseDeepMapStatusResponseV1({ ...extra, rawEndpoint: 'secret' })).toThrow();
-
-    const paused = availableResponse() as {
-      result: { activity: Record<string, unknown> };
-    };
-    paused.result.activity = {
-      ...emptyActivityV2,
-      state: 'paused',
-      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      progress: null,
-      failure: null,
-      confirmedSteps: '4',
-      totalSteps: '4',
-    };
-    expect(() => parseDeepMapStatusResponseV1(paused)).toThrow();
+  it('parses current and distinct safe failure states', () => {
+    expect(
+      parseDeepMapStatusResponseV3({
+        protocolVersion: 1,
+        result: {
+          lifecycle: { cardCount: '4', detailsAvailable: false, state: 'current' },
+          model,
+          status: 'available',
+        },
+      }).result,
+    ).toMatchObject({ lifecycle: { state: 'current' } });
+    expect(
+      parseDeepMapStatusResponseV3({
+        protocolVersion: 1,
+        result: {
+          lifecycle: {
+            detailsIncomplete: false,
+            failure: 'publicationStorage',
+            progress,
+            state: 'failed',
+          },
+          model,
+          status: 'available',
+        },
+      }).result,
+    ).toMatchObject({ lifecycle: { failure: 'publicationStorage', state: 'failed' } });
   });
 
-  it('accepts only a known content-free failure on failed activity', () => {
-    const failed = availableResponse() as {
-      result: { activity: Record<string, unknown> };
-    };
-    failed.result.activity = {
-      ...emptyActivityV2,
-      state: 'failed',
-      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      progress: null,
-      failure: 'modelTimedOut',
-      confirmedSteps: '0',
-      totalSteps: '0',
-    };
-    expect(parseDeepMapStatusResponseV1(failed).result).toMatchObject({
-      activity: { failure: 'modelTimedOut', state: 'failed' },
+  it('rejects unknown status fields and contradictory progress', () => {
+    expect(() =>
+      parseDeepMapStatusResponseV3({ ...readyStatus, rawProviderPayload: 'secret' }),
+    ).toThrow(/field/i);
+    expect(() =>
+      parseDeepMapStatusResponseV3({
+        protocolVersion: 1,
+        result: {
+          lifecycle: {
+            detailsIncomplete: false,
+            progress: { ...progress, confirmedSteps: '7' },
+            state: 'running',
+          },
+          model,
+          status: 'available',
+        },
+      }),
+    ).toThrow(/progress/i);
+  });
+
+  it('uses bounded opaque run and entry pagination contracts', async () => {
+    const invokeMock = vi
+      .fn()
+      .mockResolvedValueOnce({ nextCursor: runCursor, protocolVersion: 1, runs: [run] })
+      .mockResolvedValueOnce({ entries: [entry], nextCursor: null, protocolVersion: 1 });
+    await expect(queryDeepMapRuns(null, invokeMock)).resolves.toMatchObject({ runs: [run] });
+    await expect(queryDeepMapEntries(runSelection, null, invokeMock)).resolves.toMatchObject({
+      entries: [entry],
     });
-
-    failed.result.activity.failure = 'rawProviderError';
-    expect(() => parseDeepMapStatusResponseV1(failed)).toThrow();
   });
 
-  it('rejects oversized or non-monotonic live event feeds', () => {
-    const oversized = availableResponse() as {
-      result: { activity: Record<string, unknown> };
-    };
-    oversized.result.activity = {
-      ...emptyActivityV2,
-      state: 'running',
-      budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      progress: { completed: '1', total: '40' },
-      failure: null,
-      confirmedSteps: '1',
-      totalSteps: '40',
-      events: Array.from({ length: 33 }, (_, index) => ({
+  it('loads only safe detail metadata and rejects invented selections', async () => {
+    const detail = {
+      durationMillis: '100',
+      entry,
+      indexReference: '123456abcdef',
+      modelId: model.modelId,
+      nextAction: null,
+      planStopReason: 'coveragePlanned',
+      profileId: model.profileId,
+      profileVersion: 1,
+      protocolVersion: 1,
+      providerId: 'openai',
+      publicationResult: null,
+      run,
+      snapshotReference: 'abcdef123456',
+      step: {
         confirmed: true,
-        currentModuleId: 'aa'.repeat(32),
-        phase: 'exploring',
-        safeAction: 'inspect',
-        sequence: String(index + 1),
-        stepPosition: String(index + 1),
+        coverageFieldCount: 3,
+        evidenceRequirement: 'fieldEvidence',
+        informationGainBasisPoints: 7500,
+        reservedTimeMillis: '750',
+        reservedTokens: 512,
+        reservedToolCalls: 1,
+        seedReason: 'centralSymbol',
         targetKind: 'module',
-        totalSteps: '40',
-      })),
+        verificationMethod: 'publishedIndexEvidence',
+      },
+      timeBudgetMillis: '120000',
+      tokenBudget: 32000,
+      toolCallBudget: 64,
     };
-    expect(() => parseDeepMapStatusResponseV1(oversized)).toThrow(/activity|event/i);
+    const invokeMock = vi.fn(async () => detail);
+    await expect(
+      queryDeepMapEntryDetail(runSelection, entrySelection, invokeMock),
+    ).resolves.toEqual(detail);
+    await expect(queryDeepMapEntryDetail('invented', entrySelection, invokeMock)).rejects.toThrow(
+      /selection/i,
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
 
-    const nonMonotonic = structuredClone(oversized);
-    (nonMonotonic.result.activity.events as Array<Record<string, unknown>>).splice(0, 2);
-    (nonMonotonic.result.activity.events as Array<Record<string, unknown>>)[1].sequence = '2';
-    expect(() => parseDeepMapStatusResponseV1(nonMonotonic)).toThrow(/activity|event/i);
+  it('rejects oversized pages before they reach the inspector DOM', async () => {
+    const invokeMock = vi.fn(async () => ({
+      entries: Array.from({ length: 51 }, (_, index) => ({
+        ...entry,
+        sequence: String(index + 1),
+        selection: index.toString(16).padStart(48, '0'),
+      })),
+      nextCursor: null,
+      protocolVersion: 1,
+    }));
+    await expect(queryDeepMapEntries(runSelection, null, invokeMock)).rejects.toThrow(/page/i);
   });
 });

@@ -2,10 +2,17 @@
 
 mod support;
 
-use a3_application::{KnowledgeStore, KnowledgeStoreFailure, RecentProjectLimit};
+use a3_application::{
+    DeepMapEventResult, DeepMapJournalEvent, DeepMapModelDescriptor, DeepMapPhase,
+    DeepMapPublicationAnchor, DeepMapPublicationResult, DeepMapRunJournalFailure,
+    DeepMapRunJournalStore, DeepMapRunStart, DeepMapSafeAction, DeepMapTargetKind, KnowledgeStore,
+    KnowledgeStoreFailure, RecentProjectLimit,
+};
 use a3_domain::{
-    CanonicalDirectory, GitHead, GitReferenceName, ProjectIdentity, RepositoryId,
-    RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    CanonicalDirectory, DeepMapEventSequence, DeepMapMode, DeepMapRunId, DeepMapRunState,
+    DeepMapRunTimestamp, GitHead, GitReferenceName, IndexRunId, ModelProfileId,
+    ModelProfileReference, ModelProfileVersion, ProjectIdentity, RepositoryId, RepositoryIdentity,
+    SnapshotId, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{
     KnowledgeDatabase, KnowledgeOpenError, KnowledgeSchemaVersion, LibsqlKnowledgeStore,
@@ -51,6 +58,171 @@ fn empty_knowledge_database_migrates_binds_and_reopens() -> Result<(), Box<dyn s
             read_user_version(reopened.path()).await?,
             KnowledgeSchemaVersion::CURRENT.get()
         );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn deep_map_journal_roundtrips_reconciles_and_rejects_false_replay()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_knowledge_test()?;
+    run_knowledge_test(async {
+        let fixture = ProjectFixture::new([91; 32], [92; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let anchor = DeepMapPublicationAnchor::new(
+            IndexRunId::from_bytes([93; 32]),
+            SnapshotId::from_bytes([94; 32]),
+        );
+        let model = DeepMapModelDescriptor::from_stored_parts(
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([95; 32]),
+                ModelProfileVersion::V1,
+            ),
+            "openai".to_owned(),
+            "gpt-5.4".to_owned(),
+            128_000,
+            16_384,
+        )?;
+        let completed_id = DeepMapRunId::from_bytes([96; 32]);
+        store
+            .create_run(
+                &fixture.project,
+                &DeepMapRunStart::new(
+                    completed_id,
+                    anchor,
+                    DeepMapMode::Standard,
+                    model.clone(),
+                    DeepMapRunTimestamp::new(1_000)?,
+                ),
+            )
+            .await?;
+        store
+            .append_event(
+                &fixture.project,
+                completed_id,
+                DeepMapJournalEvent::new(
+                    DeepMapEventSequence::new(2)?,
+                    DeepMapRunTimestamp::new(1_100)?,
+                    DeepMapRunState::Running,
+                    Some(DeepMapPhase::Planning),
+                    Some(DeepMapTargetKind::Project),
+                    Some(DeepMapSafeAction::BuildPlan),
+                    None,
+                    None,
+                    None,
+                    false,
+                    DeepMapEventResult::Pending,
+                    None,
+                )?,
+            )
+            .await?;
+        store
+            .append_event(
+                &fixture.project,
+                completed_id,
+                DeepMapJournalEvent::new(
+                    DeepMapEventSequence::new(3)?,
+                    DeepMapRunTimestamp::new(1_200)?,
+                    DeepMapRunState::Succeeded,
+                    Some(DeepMapPhase::Publishing),
+                    Some(DeepMapTargetKind::Project),
+                    Some(DeepMapSafeAction::PublishCards),
+                    None,
+                    None,
+                    None,
+                    true,
+                    DeepMapEventResult::AlreadyCurrent,
+                    None,
+                )?,
+            )
+            .await?;
+        assert_eq!(
+            store
+                .append_event(
+                    &fixture.project,
+                    completed_id,
+                    DeepMapJournalEvent::new(
+                        DeepMapEventSequence::new(4)?,
+                        DeepMapRunTimestamp::new(1_300)?,
+                        DeepMapRunState::Succeeded,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        false,
+                        DeepMapEventResult::Pending,
+                        None,
+                    )?,
+                )
+                .await,
+            Err(DeepMapRunJournalFailure::Conflict)
+        );
+
+        let interrupted_id = DeepMapRunId::from_bytes([97; 32]);
+        store
+            .create_run(
+                &fixture.project,
+                &DeepMapRunStart::new(
+                    interrupted_id,
+                    anchor,
+                    DeepMapMode::Fast,
+                    model,
+                    DeepMapRunTimestamp::new(2_000)?,
+                ),
+            )
+            .await?;
+        store
+            .mark_details_incomplete(&fixture.project, interrupted_id)
+            .await?;
+        drop(store);
+
+        let reopened = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        assert_eq!(
+            reopened
+                .reconcile_interrupted(&fixture.project, DeepMapRunTimestamp::new(2_100)?,)
+                .await?,
+            1
+        );
+        assert_eq!(
+            reopened
+                .reconcile_interrupted(&fixture.project, DeepMapRunTimestamp::new(2_200)?,)
+                .await?,
+            0
+        );
+        let runs = reopened.list_runs(&fixture.project, None).await?;
+        assert_eq!(runs.runs().len(), 2);
+        assert_eq!(runs.runs()[0].state(), DeepMapRunState::Interrupted);
+        assert!(runs.runs()[0].details_incomplete());
+        assert_eq!(runs.runs()[1].state(), DeepMapRunState::Succeeded);
+        assert_eq!(
+            runs.runs()[1].publication_result(),
+            Some(DeepMapPublicationResult::AlreadyCurrent)
+        );
+
+        let entries = reopened
+            .list_entries(&fixture.project, completed_id, None)
+            .await?;
+        assert_eq!(
+            entries
+                .entries()
+                .iter()
+                .map(|event| event.sequence().get())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let detail = reopened
+            .load_entry(
+                &fixture.project,
+                completed_id,
+                DeepMapEventSequence::new(3)?,
+            )
+            .await?
+            .ok_or("completed journal detail is missing")?;
+        assert_eq!(detail.event().result(), DeepMapEventResult::AlreadyCurrent);
+        assert_eq!(detail.run().start().model().provider_id(), "openai");
+        assert!(detail.step().is_none());
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }

@@ -21,8 +21,10 @@ mod deep_map_action_codec;
 mod deep_map_activity;
 mod deep_map_execution;
 mod deep_map_explorer;
+mod deep_map_journal;
 mod deep_map_model_adapter;
 mod deep_map_planner;
+mod deep_map_publication_state;
 mod deep_map_read_tools;
 mod deep_map_runner;
 mod embedding_provider;
@@ -178,8 +180,18 @@ pub use deep_map_explorer::{
     DeepMapExplorerFailure, DeepMapExplorerFuture, DeepMapExplorerOutcome, DeepMapExplorerStatus,
     ExploreDeepMap,
 };
+pub use deep_map_journal::{
+    DEEP_MAP_ENTRY_PAGE_LIMIT, DEEP_MAP_RUN_PAGE_LIMIT, DeepMapEntryDetail, DeepMapEntryPage,
+    DeepMapEventResult, DeepMapJournalEvent, DeepMapPublicationResult, DeepMapRunCursor,
+    DeepMapRunJournalFailure, DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage,
+    DeepMapRunStart, DeepMapRunSummary, DeepMapStepDetail,
+};
 pub use deep_map_model_adapter::ModelBackedExplorerProvider;
 pub use deep_map_planner::PlanDeepMap;
+pub use deep_map_publication_state::{
+    DeepMapPublicationAnchor, DeepMapPublicationState, DeepMapPublicationStateFailure,
+    DeepMapPublicationStateFuture, DeepMapPublicationStateStore,
+};
 pub use deep_map_read_tools::{
     DeepMapReadControl, DeepMapReadFailure, DeepMapReadFuture, DeepMapReadTimeout,
     DeepMapReadTools, ExplorerObservation, ExplorerObservationError, ExplorerObservationStatus,

@@ -3,17 +3,18 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, ExploreProjectMapAtlas, GetModuleCardDetail, GetModuleCardEvidence,
-    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
-    GetProjectMapScene, GetRepositoryTreePage, IndexPersistenceControl,
-    IndexPersistenceControlError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeStore,
-    KnowledgeStoreFailure, LoadPendingModuleRemaps, ModuleCardClaimState, ModuleCardDetailControl,
-    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailLoadResult,
-    ModuleCardDetailQuery, ModuleCardEvidenceControl, ModuleCardEvidenceControlError,
-    ModuleCardEvidenceFailure, ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult,
-    ModuleCardEvidencePayload, ModuleCardEvidenceQuery, ModuleCardFreshnessControl,
-    ModuleCardFreshnessControlError, ModuleCardFreshnessFailure, ModuleCardFreshnessStatus,
-    ModuleCardLifecycle, ModuleCardVerificationControl, ModuleCardVerificationControlError,
+    CompileTaskLens, DeepMapPublicationState, DeepMapPublicationStateStore, ExploreProjectMapAtlas,
+    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleRuntimeMap, GetModuleTreePage, GetProjectMapScene, GetRepositoryTreePage,
+    IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
+    KnowledgeIndexStore, KnowledgeStore, KnowledgeStoreFailure, LoadPendingModuleRemaps,
+    ModuleCardClaimState, ModuleCardDetailControl, ModuleCardDetailControlError,
+    ModuleCardDetailFailure, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardEvidenceControl, ModuleCardEvidenceControlError, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFreshness, ModuleCardEvidenceLoadResult, ModuleCardEvidencePayload,
+    ModuleCardEvidenceQuery, ModuleCardFreshnessControl, ModuleCardFreshnessControlError,
+    ModuleCardFreshnessFailure, ModuleCardFreshnessStatus, ModuleCardLifecycle,
+    ModuleCardVerificationControl, ModuleCardVerificationControlError,
     ModuleDependencyGraphControl, ModuleDependencyGraphControlError, ModuleDependencyGraphFailure,
     ModuleDependencyGraphLoadResult, ModuleDependencyGraphQuery, ModuleDependencyNodeLimit,
     ModuleDependencyRelation, ModuleRuntimeControl, ModuleRuntimeControlError,
@@ -1043,6 +1044,15 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                 &TestIndexControl::default(),
             )
             .await?;
+        assert_eq!(
+            store
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Ready(a3_application::DeepMapPublicationAnchor::new(
+                initial_run.id(),
+                initial_snapshot.id(),
+            ))
+        );
         let published = store
             .latest_published_index(&fixture.project, &TestIndexControl::default())
             .await?
@@ -1337,10 +1347,30 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                 .execute(&fixture.project, &batch, &TestIndexControl::default())
                 .await,
             Err(PublishVerifiedModuleCardsFailure::Publisher(
-                VerifiedModuleCardPublisherFailure::Rejected
+                VerifiedModuleCardPublisherFailure::AlreadyPublished
             ))
         );
         assert_eq!(read_count(&knowledge_path, "module_cards").await?, 1);
+        drop(store);
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let reopened_run = store
+            .latest_published_index_run(&fixture.project)
+            .await?
+            .ok_or("reopened published index run is missing")?;
+        assert_eq!(reopened_run.id(), initial_run.id());
+        assert_eq!(reopened_run.snapshot_id(), initial_snapshot.id());
+        assert_eq!(
+            store
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Current {
+                anchor: a3_application::DeepMapPublicationAnchor::new(
+                    initial_run.id(),
+                    initial_snapshot.id(),
+                ),
+                card_count: 1,
+            }
+        );
 
         let lens = CompileTaskLens::new(&store, &store, &store)
             .execute(
@@ -1392,6 +1422,15 @@ fn verified_module_cards_publish_atomically_with_evidence_and_search_projection(
                 &TestIndexControl::default(),
             )
             .await?;
+        assert_eq!(
+            store
+                .load_deep_map_publication_state(&fixture.project)
+                .await?,
+            DeepMapPublicationState::Ready(a3_application::DeepMapPublicationAnchor::new(
+                changed_run.id(),
+                changed_snapshot.id(),
+            ))
+        );
 
         assert_eq!(
             read_single_text(&knowledge_path, "SELECT status FROM module_card_lifecycle").await?,

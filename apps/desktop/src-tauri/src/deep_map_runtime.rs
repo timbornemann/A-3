@@ -1,8 +1,8 @@
 use a3_application::{
-    ConfiguredModelEndpoint, DeepMapExecutor, DesktopSettings, DesktopSettingsStore,
-    GetDesktopSettings, KnowledgeIndexStore, LlmModelRole, LlmProfileActivation,
-    LoadDesktopProviderCredential, ModelEndpointScope, ModelProvider, ProviderCredentialStore,
-    RunDeepMap, VerifiedModuleCardPublisher,
+    ConfiguredModelEndpoint, DeepMapExecutor, DeepMapPublicationStateStore, DesktopSettings,
+    DesktopSettingsStore, GetDesktopSettings, KnowledgeIndexStore, LlmModelRole,
+    LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope, ModelProvider,
+    ProviderCredentialStore, RunDeepMap, VerifiedModuleCardPublisher,
 };
 use a3_provider::{
     GeminiEndpoint, GeminiModelProvider, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
@@ -19,6 +19,7 @@ pub(crate) struct DeepMapRuntime {
     credentials: Arc<dyn ProviderCredentialStore>,
     index: Arc<dyn KnowledgeIndexStore>,
     publisher: Arc<dyn VerifiedModuleCardPublisher>,
+    publication_state: Arc<dyn DeepMapPublicationStateStore>,
 }
 
 impl DeepMapRuntime {
@@ -28,12 +29,14 @@ impl DeepMapRuntime {
         credentials: Arc<dyn ProviderCredentialStore>,
         index: Arc<dyn KnowledgeIndexStore>,
         publisher: Arc<dyn VerifiedModuleCardPublisher>,
+        publication_state: Arc<dyn DeepMapPublicationStateStore>,
     ) -> Self {
         Self {
             settings,
             credentials,
             index,
             publisher,
+            publication_state,
         }
     }
 
@@ -82,6 +85,7 @@ impl DeepMapRuntime {
             provider,
             Arc::clone(&self.index),
             Arc::clone(&self.publisher),
+            Arc::clone(&self.publication_state),
         )
         .ok()
         .map(|executor| Arc::new(executor) as Arc<dyn DeepMapExecutor>)
@@ -113,8 +117,8 @@ impl fmt::Debug for DeepMapRuntime {
 mod tests {
     use super::executable_mapping;
     use a3_application::{
-        ConfiguredModelEndpoint, DesktopSettings, LlmModelRole, ModelEndpointScope,
-        SettingsTimestamp,
+        ConfiguredModelEndpoint, DesktopSettings, LlmModelRole, ModelEndpointAccess,
+        ModelEndpointScope, ProviderCredentialRequirement, SettingsTimestamp,
     };
     use a3_domain::{
         ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
@@ -132,7 +136,7 @@ mod tests {
             "http://127.0.0.1:11434".to_owned(),
             ModelEndpointScope::LocalLoopback,
         )?;
-        let profile = profile(ModelStructuredOutputCapability::Verified)?;
+        let profile = profile("ollama", ModelStructuredOutputCapability::Verified)?;
         let settings = DesktopSettings::unconfigured()
             .with_endpoint(Some(endpoint))
             .with_llm_probe(
@@ -142,6 +146,68 @@ mod tests {
             )?;
         let (_, resolved) = executable_mapping(&settings).ok_or("mapping runtime unavailable")?;
         assert_eq!(resolved.reference(), profile.reference());
+        Ok(())
+    }
+
+    #[test]
+    fn every_supported_provider_uses_the_same_verified_mapping_contract()
+    -> Result<(), Box<dyn Error>> {
+        for (provider, origin, scope) in [
+            (
+                "ollama",
+                "http://127.0.0.1:11434",
+                ModelEndpointScope::LocalLoopback,
+            ),
+            (
+                "gemini",
+                "https://generativelanguage.googleapis.com",
+                ModelEndpointScope::Remote,
+            ),
+            (
+                "openai",
+                "https://api.openai.com",
+                ModelEndpointScope::Remote,
+            ),
+        ] {
+            let provider_id = ModelProviderId::try_from_string(provider.to_owned())?;
+            let endpoint = match scope {
+                ModelEndpointScope::LocalLoopback => {
+                    ConfiguredModelEndpoint::from_validated_adapter(
+                        provider_id,
+                        origin.to_owned(),
+                        scope,
+                    )?
+                }
+                ModelEndpointScope::Remote => {
+                    ConfiguredModelEndpoint::from_validated_adapter_with_security(
+                        provider_id,
+                        origin.to_owned(),
+                        scope,
+                        ModelEndpointAccess::ExplicitUserInitiatedRemote,
+                        ProviderCredentialRequirement::ApiKey,
+                    )?
+                }
+            };
+            let profile = profile(provider, ModelStructuredOutputCapability::Verified)?;
+            let settings = DesktopSettings::unconfigured().with_endpoint(Some(endpoint));
+            let settings = if scope == ModelEndpointScope::Remote {
+                let (settings, generation) = settings.begin_credential_store()?;
+                settings.complete_credential_store(generation)?
+            } else {
+                settings
+            };
+            let settings = settings.with_llm_probe(
+                LlmModelRole::Mapping,
+                profile.clone(),
+                SettingsTimestamp::from_unix_millis(1)?,
+            )?;
+
+            let (resolved_endpoint, resolved_profile) =
+                executable_mapping(&settings).ok_or("mapping runtime unavailable")?;
+
+            assert_eq!(resolved_endpoint.provider_id().as_str(), provider);
+            assert_eq!(resolved_profile.reference(), profile.reference());
+        }
         Ok(())
     }
 
@@ -156,7 +222,7 @@ mod tests {
             .with_endpoint(Some(endpoint))
             .with_llm_probe(
                 LlmModelRole::Mapping,
-                profile(ModelStructuredOutputCapability::Unavailable)?,
+                profile("ollama", ModelStructuredOutputCapability::Unavailable)?,
                 SettingsTimestamp::from_unix_millis(1)?,
             )?;
         assert!(executable_mapping(&settings).is_none());
@@ -164,10 +230,11 @@ mod tests {
     }
 
     fn profile(
+        provider: &str,
         capability: ModelStructuredOutputCapability,
     ) -> Result<ModelProfile, Box<dyn Error>> {
         Ok(ModelProfile::from_probe(
-            ModelProviderId::try_from_string("ollama".to_owned())?,
+            ModelProviderId::try_from_string(provider.to_owned())?,
             ModelId::try_from_string("mapper".to_owned())?,
             ModelProfileSettings::new(
                 ModelContextLimit::new(16_384)?,

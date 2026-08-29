@@ -67,6 +67,10 @@ stable_id!(
     IndexRunId
 );
 stable_id!(
+    /// Stable identity of one durable Deep-Map run.
+    DeepMapRunId
+);
+stable_id!(
     /// Stable identity of one durable coding task across Goal Contract revisions and runs.
     TaskId
 );
@@ -150,10 +154,10 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 mod tests {
     use super::{
         AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-        ApprovalRequestId, CommandCatalogId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
-        PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
-        StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
-        VerificationSpecId, WorktreeAnchorId, WorktreeId,
+        ApprovalRequestId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId,
+        PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
+        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+        VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -170,6 +174,7 @@ mod tests {
         assert_eq!(RemoteIdentity::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(SnapshotId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(IndexRunId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(DeepMapRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentSessionId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentWorkItemId::from_bytes(bytes).as_bytes(), &bytes);

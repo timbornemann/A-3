@@ -22,7 +22,7 @@ use crate::{
     parse_canonical_positive_u64,
 };
 use a3_application::{AgentSessionListQuery, AgentWorkspaceLayout, UiPreferencesStoreVersion};
-use a3_domain::{AgentSessionId, AgentSessionMode, AgentSessionRevision};
+use a3_domain::{AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode};
 use a3_protocol::{
     ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
     AgentApprovalResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
@@ -33,18 +33,20 @@ use a3_protocol::{
     ConfigureModelProviderRequestV1, ConfirmProjectCommandAllowlistRequestV1,
     ControlAgentApprovalRequestV1, ControlAgentSessionRequestV1, ControlAgentTaskRunRequestV1,
     ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapControlResponseV1,
-    DeepMapStatusResponseV2, DeleteModelProviderCredentialRequestV1,
-    DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
-    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
-    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapModeV2,
+    DeepMapRunPageResponseV1, DeepMapStartResponseV2, DeepMapStatusResponseV3,
+    DeleteModelProviderCredentialRequestV1, DiscoverProviderModelsRequestV1, HealthRequestV1,
+    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
+    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
+    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
+    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProbeModelRoleRequestV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
+    ProjectMapSceneResponseV1, ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1,
+    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
     QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1,
-    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
+    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapEntriesRequestV1,
+    QueryDeepMapEntryDetailRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunsRequestV1,
     QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
     QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
     QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
@@ -56,7 +58,7 @@ use a3_protocol::{
     RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
     RemoveCatalogProjectRequestV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
     RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
-    SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV1,
+    SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV2,
     SubmitAgentMessageRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
     TaskLensTasksResponseV1, UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
 };
@@ -448,20 +450,58 @@ pub async fn query_repository_tree(
 
 #[tauri::command]
 /// Returns verified pre-start configuration and the Core-owned Deep-Map lifecycle.
-pub fn query_deep_map(
+pub async fn query_deep_map(
     request: QueryDeepMapRequestV1,
     root: State<'_, CompositionRoot>,
-) -> Result<DeepMapStatusResponseV2, CommandErrorV1> {
-    execute_query_deep_map(request, root.inner())
+) -> Result<DeepMapStatusResponseV3, CommandErrorV1> {
+    execute_query_deep_map(request, root.inner()).await
 }
 
 #[tauri::command]
 /// Explicitly starts Deep Map with the supplied bounded budget and no WebView-selected identity.
-pub fn start_deep_map(
-    request: StartDeepMapRequestV1,
+pub async fn start_deep_map(
+    request: StartDeepMapRequestV2,
     root: State<'_, CompositionRoot>,
-) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
-    execute_start_deep_map(request, root.inner())
+) -> Result<DeepMapStartResponseV2, CommandErrorV1> {
+    execute_start_deep_map(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns at most twenty durable project-bound Deep-Map runs.
+pub async fn query_deep_map_runs(
+    request: QueryDeepMapRunsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapRunPageResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_runs(request.cursor()).await
+}
+
+#[tauri::command]
+/// Returns at most fifty chronological safe entries for one Core-issued run selection.
+pub async fn query_deep_map_entries(
+    request: QueryDeepMapEntriesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapEntryPageResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_entries(request.run_selection(), request.cursor())
+        .await
+}
+
+#[tauri::command]
+/// Returns one selected safe entry with its bounded technical metadata.
+pub async fn query_deep_map_entry_detail(
+    request: QueryDeepMapEntryDetailRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapEntryDetailResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_entry_detail(request.run_selection(), request.entry_selection())
+        .await
 }
 
 #[tauri::command]
@@ -1317,24 +1357,29 @@ async fn execute_query_repository_tree(
     root.query_repository_tree(&query).await
 }
 
-fn execute_query_deep_map(
+async fn execute_query_deep_map(
     request: QueryDeepMapRequestV1,
     root: &CompositionRoot,
-) -> Result<DeepMapStatusResponseV2, CommandErrorV1> {
+) -> Result<DeepMapStatusResponseV3, CommandErrorV1> {
     if request.protocol_version() != ProtocolVersion::CURRENT {
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
-    Ok(root.query_deep_map_status())
+    Ok(root.query_deep_map_status_v3().await)
 }
 
-fn execute_start_deep_map(
-    request: StartDeepMapRequestV1,
+async fn execute_start_deep_map(
+    request: StartDeepMapRequestV2,
     root: &CompositionRoot,
-) -> Result<DeepMapControlResponseV1, CommandErrorV1> {
+) -> Result<DeepMapStartResponseV2, CommandErrorV1> {
     if request.protocol_version() != ProtocolVersion::CURRENT {
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
-    root.start_deep_map(request.budget())
+    let mode = match request.mode() {
+        DeepMapModeV2::Fast => DeepMapMode::Fast,
+        DeepMapModeV2::Standard => DeepMapMode::Standard,
+        DeepMapModeV2::Thorough => DeepMapMode::Thorough,
+    };
+    root.start_deep_map_v2(mode).await
 }
 
 fn execute_control_deep_map(
@@ -1415,14 +1460,14 @@ mod tests {
         AgentInspectionResultV1, AgentInspectionStreamV1, AgentTaskControlResultV1,
         AgentTaskRecoveryResultV1, CompileTaskLensRequestV1, ControlAgentApprovalRequestV1,
         ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-        DeepMapBudgetV1, DeepMapStatusResultV2, ErrorCodeV1, HealthRequestV1,
-        IndexActivityResultV1, IndexOverviewResultV1, ListRecentProjectsRequestV1,
-        ModuleCardDetailResultV1, ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1,
-        ModuleDependencyGraphResultV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1,
-        ModuleRuntimeMapResultV1, ModuleTreeResultV1, OpenProjectRequestV1,
-        ProjectCatalogDirectionV1, ProjectMapSearchResultV1, ProjectStatusResultV1,
-        ProtocolVersion, QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1,
-        QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
+        DeepMapModeV2, DeepMapStatusResultV3, ErrorCodeV1, HealthRequestV1, IndexActivityResultV1,
+        IndexOverviewResultV1, ListRecentProjectsRequestV1, ModuleCardDetailResultV1,
+        ModuleCardEvidenceResultV1, ModuleCardFreshnessResultV1, ModuleDependencyGraphResultV1,
+        ModuleRuntimeFlowKindV1, ModuleRuntimeFlowResultV1, ModuleRuntimeMapResultV1,
+        ModuleTreeResultV1, OpenProjectRequestV1, ProjectCatalogDirectionV1,
+        ProjectMapSearchResultV1, ProjectStatusResultV1, ProtocolVersion,
+        QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
+        QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
         QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
         QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
         QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
@@ -1432,7 +1477,7 @@ mod tests {
         QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1,
         RebuildProjectIndexRequestV1, RemoveCatalogProjectRequestV1, RemoveProjectRequestV1,
         RepositoryTreeResultV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
-        StartDeepMapRequestV1, TaskLensCompileResultV1, TaskLensTaskResultV1,
+        StartDeepMapRequestV2, TaskLensCompileResultV1, TaskLensTaskResultV1,
         TaskLensTasksResultV1,
     };
     use futures::executor::block_on;
@@ -2588,17 +2633,17 @@ mod tests {
     fn deep_map_commands_are_pathless_and_require_core_owned_project_state()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = root()?;
-        let status = execute_query_deep_map(QueryDeepMapRequestV1::current(), &root)
-            .map_err(|error| std::io::Error::other(error.message()))?;
-        assert!(matches!(status.result(), DeepMapStatusResultV2::NoProject));
-
-        let start = execute_start_deep_map(
-            StartDeepMapRequestV1::new(
-                ProtocolVersion::CURRENT,
-                DeepMapBudgetV1::new(32_000, 120_000, 64),
-            ),
+        let status = block_on(execute_query_deep_map(
+            QueryDeepMapRequestV1::current(),
             &root,
-        );
+        ))
+        .map_err(|error| std::io::Error::other(error.message()))?;
+        assert!(matches!(status.result(), DeepMapStatusResultV3::NoProject));
+
+        let start = block_on(execute_start_deep_map(
+            StartDeepMapRequestV2::new(ProtocolVersion::CURRENT, DeepMapModeV2::Standard),
+            &root,
+        ));
         assert_eq!(
             start.map_err(|error| error.code()),
             Err(ErrorCodeV1::NoActiveProject)
@@ -2620,8 +2665,10 @@ mod tests {
     fn deep_map_rejects_unsupported_protocol_before_lifecycle_access()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = root()?;
-        let result =
-            execute_query_deep_map(QueryDeepMapRequestV1::new(ProtocolVersion::new(999)), &root);
+        let result = block_on(execute_query_deep_map(
+            QueryDeepMapRequestV1::new(ProtocolVersion::new(999)),
+            &root,
+        ));
         assert_eq!(
             result.map_err(|error| error.code()),
             Err(ErrorCodeV1::UnsupportedProtocolVersion)

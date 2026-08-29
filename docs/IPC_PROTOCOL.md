@@ -2,7 +2,7 @@
 
 Status: verbindliche Baseline
 
-Stand: 2026-08-04
+Stand: 2026-08-29
 
 ## Zweck und Grenze
 
@@ -38,7 +38,38 @@ Zusätzliche Felder, ein fehlender Request oder ein nicht numerischer Versionswe
 Ausführung des jeweiligen Use Cases abgelehnt. Insbesondere akzeptiert `open_project` keinen Pfad und
 `list_recent_projects` weder einen Pfad noch ein WebView-gesteuertes Limit.
 
-## Deep Map Status V2
+## Deep Map Start V2, Status V3 und Journal-Reads V1
+
+Die historischen V1-/V2-DTOs bleiben unverändert decodierbar. Die Desktop-Oberfläche verwendet
+geschlossen `StartDeepMapRequestV2` und `DeepMapStatusResponseV3`. `start_deep_map` akzeptiert neben
+der Protokollversion ausschließlich `mode: fast | standard | thorough`; daraus wählt der Core die
+festen Budgets 8.000/32.000/128.000 Tokens sowie die festen Zeit- und Read-Grenzen. Freie
+Budgetwerte, Profile, Provider-Parameter und Projektanker sind nicht darstellbar. Der Start-
+Preflight antwortet mit `queued` oder `alreadyCurrent` und ruft im zweiten Fall weder Planner,
+Provider noch Publisher auf.
+
+`query_deep_map` V3 liefert genau `noProject`, `unavailable` oder `available`. `available` enthält
+nur das verifizierte ModelProfile und eine kompakte diskriminierte Lifecycle-Projektion ohne
+Ereignisfeed. Der Lifecycle unterscheidet `ready`, `current`, `queued`, `running`, `pausing`,
+`paused`, `cancelling`, `succeeded`, `failed` und `cancelled`. `current` bindet die vollständige
+Module-Card-Publikation an den neuesten Fast Index. Neue Fast-Index-Publikationen ohne aktuelle
+Cards führen wieder zu `ready`.
+
+Die content-freien Detaildaten werden ausschließlich über getrennte V1-Reads geladen:
+`query_deep_map_runs` liefert neueste 20 Läufe, `query_deep_map_entries` höchstens 50 chronologische
+Einträge und `query_deep_map_entry_detail` genau einen ausgewählten Eintrag. Cursor sowie Run- und
+Entry-Selektionen sind opak, Core-ausgegeben und an das aktive Projekt gebunden. Fremde, erfundene,
+stale oder übergroße Werte werden abgelehnt. Die Reads enthalten sichere Phasen, Aktionen,
+Zeitpunkte, feste Budgetreservierungen, Modell-/Profilreferenzen, Planstopp- und
+Publikationsergebnis sowie geschlossene Diagnosecodes. Prompts, Modellantworten, Chain-of-Thought,
+Providerpayloads, Source-Inhalt, Credentials, rohe Fehlertexte und nicht zuverlässig gemessener
+Tokenverbrauch überschreiten die IPC-Grenze nicht.
+
+Die geschlossenen V3-Diagnosen trennen insbesondere stale Index, Provider-Ablehnung/-Timeout,
+Publication-Rejection, Storage, Timeout und Progress. Ein fehlgeschlagener Status ist damit ein
+sicherer Schlüssel für die Detailansicht und keine Projektion eines rohen Adapterfehlers.
+
+### Historische Statusprojektion V2
 
 `query_deep_map` liefert genau `noProject`, `unavailable` oder `available`. Nur `available` enthält
 die sichere Identität eines live verifizierten ModelProfiles, Context- und Outputlimit, den festen
@@ -548,7 +579,8 @@ Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Fresh
 `allow-query-module-runtime-map` und `allow-query-module-runtime-flow`.
 `allow-query-module-card-detail` ist die einzige Capability für Card-Inhalte und akzeptiert nur
 eine stabile Modul-ID. Für Deep Map sind das
-`allow-query-deep-map`, `allow-start-deep-map`, `allow-pause-deep-map`,
+`allow-query-deep-map`, `allow-query-deep-map-runs`, `allow-query-deep-map-entries`,
+`allow-query-deep-map-entry-detail`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.
 Der Projektkatalog besitzt ausschließlich `allow-query-project-catalog`,

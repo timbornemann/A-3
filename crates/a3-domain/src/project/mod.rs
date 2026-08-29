@@ -9,6 +9,7 @@ mod command_discovery;
 mod context_pack;
 mod deep_map;
 mod deep_map_explorer;
+mod deep_map_run;
 mod discovery;
 mod embedding;
 mod git;
@@ -118,6 +119,10 @@ pub use deep_map_explorer::{
     InformationGainRationaleError, ModuleCardProposal, ModuleCardProposalEnvelope,
     ModuleCardProposalError, ProposedModuleCardField,
 };
+pub use deep_map_run::{
+    DeepMapDiagnosticCode, DeepMapEventSequence, DeepMapEventSequenceError, DeepMapMode,
+    DeepMapRunState, DeepMapRunTimestamp, DeepMapRunTimestampError,
+};
 pub use discovery::{
     DiscoveredFile, DiscoveredFileRole, DiscoveredFileRoles, DiscoveredFileRolesError,
     DiscoveryExclusionCounts, DiscoveryExclusionReason, DiscoveryOrigin, DiscoveryPolicy,
@@ -156,10 +161,10 @@ pub use graph_retrieval::{
 };
 pub use id::{
     AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-    ApprovalRequestId, CommandCatalogId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
-    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
-    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
-    VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    ApprovalRequestId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId,
+    PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
+    SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+    VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{

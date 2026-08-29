@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import DeepMapDock from './DeepMapDock.svelte';
+  import DeepMapInspector from './DeepMapInspector.svelte';
   import MapAtlasCanvas from './MapAtlasCanvas.svelte';
   import MapInspector from './MapInspector.svelte';
   import {
@@ -43,9 +44,13 @@
     type TaskLensTasksResponseV1,
   } from './task-lens';
   import type {
-    DeepMapBudgetV1,
     DeepMapControlResponseV1,
-    DeepMapStatusResponseV1,
+    DeepMapEntryDetailResponseV1,
+    DeepMapEntryPageResponseV1,
+    DeepMapModeV2,
+    DeepMapRunPageResponseV1,
+    DeepMapStartResponseV2,
+    DeepMapStatusResponseV3,
   } from './deep-map';
 
   type ReadState<T> =
@@ -88,11 +93,20 @@
       stepId: string;
       taskId: string;
     }) => Promise<TaskLensCompileResponseV1>;
-    deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV1>;
-    deepMapStarter?: (budget: DeepMapBudgetV1) => Promise<DeepMapControlResponseV1>;
+    deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV3>;
+    deepMapStarter?: (mode: DeepMapModeV2) => Promise<DeepMapStartResponseV2>;
     deepMapPauser?: () => Promise<DeepMapControlResponseV1>;
     deepMapResumer?: () => Promise<DeepMapControlResponseV1>;
     deepMapCanceller?: () => Promise<DeepMapControlResponseV1>;
+    deepMapRunsLoader?: (cursor?: string | null) => Promise<DeepMapRunPageResponseV1>;
+    deepMapEntriesLoader?: (
+      runSelection: string,
+      cursor?: string | null,
+    ) => Promise<DeepMapEntryPageResponseV1>;
+    deepMapDetailLoader?: (
+      runSelection: string,
+      entrySelection: string,
+    ) => Promise<DeepMapEntryDetailResponseV1>;
   }
   const {
     projectKey,
@@ -111,6 +125,9 @@
     deepMapPauser,
     deepMapResumer,
     deepMapCanceller,
+    deepMapRunsLoader,
+    deepMapEntriesLoader,
+    deepMapDetailLoader,
   }: Props = $props();
 
   let scene = $state<ReadState<ProjectMapAtlasSceneV1>>({ kind: 'loading' });
@@ -141,6 +158,8 @@
   let workspaceBodyWidth = $state(0);
   let inspectorWidth = $state(INSPECTOR_DEFAULT_WIDTH);
   let resizingInspector = $state(false);
+  let inspectorMode = $state<'code' | 'deepMap' | null>(null);
+  let deepMapFailureFocusEpoch = $state(0);
   let inspectorResizePointerId: number | null = null;
   let inspectorResizeHandle: HTMLElement | null = null;
   let requestGeneration = 0;
@@ -170,10 +189,16 @@
   const effectiveInspectorWidth = $derived(
     Math.min(Math.max(inspectorWidth, INSPECTOR_MIN_WIDTH), inspectorMaxWidth),
   );
+  const inspectorOpen = $derived(
+    inspectorMode === 'deepMap' || (inspectorMode === 'code' && selected !== null),
+  );
 
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') void goBack();
+      if (event.key === 'Escape') {
+        if (inspectorMode === 'deepMap') inspectorMode = null;
+        else void goBack();
+      }
     };
     const updateWorkspaceWidth = () => {
       workspaceBodyWidth = workspaceBody?.clientWidth ?? 0;
@@ -208,6 +233,7 @@
     requestGeneration += 1;
     contextGeneration += 1;
     selected = null;
+    inspectorMode = null;
     context = { kind: 'idle' };
     inventory = { kind: 'idle' };
     flow = { kind: 'idle' };
@@ -225,7 +251,7 @@
   }
 
   function startInspectorResize(event: PointerEvent): void {
-    if (event.button !== 0 || selected === null) return;
+    if (event.button !== 0 || !inspectorOpen) return;
     event.preventDefault();
     resizingInspector = true;
     inspectorResizePointerId = event.pointerId;
@@ -249,7 +275,7 @@
   }
 
   function resizeInspectorWithKeyboard(event: KeyboardEvent): void {
-    if (selected === null) return;
+    if (!inspectorOpen) return;
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
       inspectorWidth = clampInspectorWidth(effectiveInspectorWidth + INSPECTOR_KEYBOARD_STEP);
@@ -317,6 +343,7 @@
   async function selectNode(node: ProjectMapAtlasNodeV1): Promise<void> {
     if (selected?.nodeId === node.nodeId && context.kind === 'loading') return;
     selected = node;
+    inspectorMode = 'code';
     inventory = { kind: 'idle' };
     flow = { kind: 'idle' };
     preview = { kind: 'idle' };
@@ -483,6 +510,7 @@
         symbolCount: hit.target.kind === 'symbol' ? '1' : '0',
         volume: '1',
       };
+      inspectorMode = 'code';
       context = {
         kind: 'unavailable',
         message:
@@ -550,6 +578,15 @@
   }
   function reloadPublished(): void {
     void loadScene(scene.kind === 'available' ? scene.value.selection : null);
+  }
+
+  function toggleDeepMapInspector(focusFailure: boolean): void {
+    if (focusFailure) {
+      inspectorMode = 'deepMap';
+      deepMapFailureFocusEpoch += 1;
+      return;
+    }
+    inspectorMode = inspectorMode === 'deepMap' ? null : 'deepMap';
   }
 </script>
 
@@ -694,7 +731,7 @@
           onopen={openNode}
         />{/if}
     </div>
-    {#if selected !== null}
+    {#if inspectorOpen}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
@@ -712,17 +749,28 @@
       ></div>
     {/if}
     <MapInspector
-      {selected}
+      selected={inspectorMode === 'code' ? selected : null}
       {context}
       {inventory}
       {flow}
       {preview}
-      onclose={() => (selected = null)}
+      onclose={() => {
+        selected = null;
+        inspectorMode = null;
+      }}
       onopen={openNode}
       onselect={selectNode}
       oninventory={loadInventory}
       onflow={loadFlow}
       onevidence={openEvidence}
+    />
+    <DeepMapInspector
+      open={inspectorMode === 'deepMap'}
+      focusFailureEpoch={deepMapFailureFocusEpoch}
+      runsLoader={deepMapRunsLoader}
+      entriesLoader={deepMapEntriesLoader}
+      detailLoader={deepMapDetailLoader}
+      onclose={() => (inspectorMode = null)}
     />
   </main>
 
@@ -732,6 +780,7 @@
     pauser={deepMapPauser}
     resumer={deepMapResumer}
     canceller={deepMapCanceller}
+    ondetails={toggleDeepMapInspector}
     onpublished={reloadPublished}
   />
 </section>

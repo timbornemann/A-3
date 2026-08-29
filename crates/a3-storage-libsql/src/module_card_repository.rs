@@ -77,6 +77,8 @@ async fn validate_publication_target(
              (SELECT COUNT(*) FROM module_cards WHERE source_index_run_id = index_runs.index_run_id),\n\
              (SELECT COUNT(*) FROM card_fts WHERE index_run_id = index_runs.index_run_id),\n\
              (SELECT COUNT(*) FROM lexical_search_projections\n\
+               WHERE index_run_id = index_runs.index_run_id),\n\
+             (SELECT card_count FROM lexical_search_projections\n\
                WHERE index_run_id = index_runs.index_run_id)\n\
              FROM index_runs\n\
              WHERE worktree_id = ?1 AND status = 'published'\n\
@@ -95,17 +97,22 @@ async fn validate_publication_target(
     let card_count: i64 = row.get(2).map_err(ModuleCardRepositoryError::Read)?;
     let fts_count: i64 = row.get(3).map_err(ModuleCardRepositoryError::Read)?;
     let projection_count: i64 = row.get(4).map_err(ModuleCardRepositoryError::Read)?;
-    if run_id.as_slice() != batch.index_run_id().as_bytes()
+    let projected_cards: Option<i64> = row.get(5).map_err(ModuleCardRepositoryError::Read)?;
+    if rows
+        .next()
+        .await
+        .map_err(ModuleCardRepositoryError::Read)?
+        .is_some()
+        || run_id.as_slice() != batch.index_run_id().as_bytes()
         || snapshot_id.as_slice() != batch.snapshot_id().as_bytes()
-        || card_count != 0
-        || fts_count != 0
         || projection_count != 1
-        || rows
-            .next()
-            .await
-            .map_err(ModuleCardRepositoryError::Read)?
-            .is_some()
     {
+        return Err(ModuleCardRepositoryError::Rejected);
+    }
+    if card_count > 0 && card_count == fts_count && projected_cards == Some(card_count) {
+        return Err(ModuleCardRepositoryError::AlreadyPublished);
+    }
+    if card_count != 0 || fts_count != 0 || projected_cards != Some(0) {
         return Err(ModuleCardRepositoryError::Rejected);
     }
     Ok(())
@@ -800,6 +807,7 @@ async fn rollback(
 
 #[derive(Debug, Clone, Copy)]
 enum ModuleCardRepositoryErrorClass {
+    AlreadyPublished,
     Rejected,
     Storage,
     Cancelled,
@@ -816,6 +824,7 @@ pub(crate) enum ModuleCardRepositoryError {
     Commit(libsql::Error),
     Rollback(libsql::Error),
     Rejected,
+    AlreadyPublished,
     Cancelled,
     TimedOut,
     ProgressUnavailable,
@@ -825,6 +834,7 @@ pub(crate) enum ModuleCardRepositoryError {
 impl ModuleCardRepositoryError {
     fn class(&self) -> ModuleCardRepositoryErrorClass {
         match self {
+            Self::AlreadyPublished => ModuleCardRepositoryErrorClass::AlreadyPublished,
             Self::Rejected => ModuleCardRepositoryErrorClass::Rejected,
             Self::Cancelled => ModuleCardRepositoryErrorClass::Cancelled,
             Self::TimedOut => ModuleCardRepositoryErrorClass::TimedOut,
@@ -840,6 +850,9 @@ impl ModuleCardRepositoryError {
 
     pub(crate) fn classify(&self) -> VerifiedModuleCardPublisherFailure {
         match self.class() {
+            ModuleCardRepositoryErrorClass::AlreadyPublished => {
+                VerifiedModuleCardPublisherFailure::AlreadyPublished
+            }
             ModuleCardRepositoryErrorClass::Rejected
             | ModuleCardRepositoryErrorClass::ResourceLimit => {
                 VerifiedModuleCardPublisherFailure::Rejected
@@ -867,6 +880,7 @@ impl fmt::Display for ModuleCardRepositoryError {
             Self::Commit(_) => "could not commit verified Module Card publication",
             Self::Rollback(_) => "could not roll back verified Module Card publication",
             Self::Rejected => "verified Module Card publication target was rejected",
+            Self::AlreadyPublished => "verified Module Cards are already published",
             Self::Cancelled => "verified Module Card publication was cancelled",
             Self::TimedOut => "verified Module Card publication timed out",
             Self::ProgressUnavailable => "verified Module Card progress is unavailable",
@@ -884,6 +898,7 @@ impl Error for ModuleCardRepositoryError {
             | Self::Commit(source) => Some(source),
             Self::Rollback(source) => Some(source),
             Self::Rejected
+            | Self::AlreadyPublished
             | Self::Cancelled
             | Self::TimedOut
             | Self::ProgressUnavailable

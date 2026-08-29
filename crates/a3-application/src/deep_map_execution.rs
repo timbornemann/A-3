@@ -1,7 +1,8 @@
+use crate::DeepMapPublicationAnchor;
 use crate::{DeepMapActivityObserver, JobContext};
 use a3_domain::{
-    ExploreBudget, ExplorePlan, ExplorerCheckpoint, ModelProfile, ModelProfileReference,
-    ProjectIdentity,
+    ExploreBudget, ExplorePlan, ExplorerCheckpoint, ModelContextLimit, ModelId, ModelOutputLimit,
+    ModelProfile, ModelProfileReference, ModelProviderId, ProjectIdentity,
 };
 use std::error::Error;
 use std::fmt;
@@ -37,6 +38,31 @@ impl DeepMapModelDescriptor {
             model_id: profile.model_id().as_str().to_owned(),
             context_tokens: profile.settings().context_limit().get(),
             output_tokens: profile.settings().output_limit().get(),
+        })
+    }
+
+    /// Reconstructs safe persisted descriptor fields after applying the domain identifier bounds.
+    pub fn from_stored_parts(
+        profile: ModelProfileReference,
+        provider_id: String,
+        model_id: String,
+        context_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<Self, DeepMapModelDescriptorError> {
+        ModelProviderId::try_from_string(provider_id.clone())
+            .map_err(|_| DeepMapModelDescriptorError::InvalidStoredDescriptor)?;
+        ModelId::try_from_string(model_id.clone())
+            .map_err(|_| DeepMapModelDescriptorError::InvalidStoredDescriptor)?;
+        ModelContextLimit::new(context_tokens)
+            .map_err(|_| DeepMapModelDescriptorError::InvalidStoredDescriptor)?;
+        ModelOutputLimit::new(output_tokens)
+            .map_err(|_| DeepMapModelDescriptorError::InvalidStoredDescriptor)?;
+        Ok(Self {
+            profile,
+            provider_id,
+            model_id,
+            context_tokens,
+            output_tokens,
         })
     }
 
@@ -76,11 +102,18 @@ impl DeepMapModelDescriptor {
 pub enum DeepMapModelDescriptorError {
     /// The live structured-output probe was not successful.
     StructuredOutputNotVerified,
+    /// Persisted safe descriptor fields violated their domain bounds.
+    InvalidStoredDescriptor,
 }
 
 impl fmt::Display for DeepMapModelDescriptorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Deep-Map model profile is not verified for structured output")
+        formatter.write_str(match self {
+            Self::StructuredOutputNotVerified => {
+                "Deep-Map model profile is not verified for structured output"
+            }
+            Self::InvalidStoredDescriptor => "Deep-Map model descriptor is invalid",
+        })
     }
 }
 
@@ -171,6 +204,8 @@ impl DeepMapExecutionRequest {
 /// Terminal result of one scheduler-owned Deep-Map attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeepMapExecutionOutcome {
+    /// The latest Fast Index already owns one complete immutable Card publication.
+    AlreadyCurrent(DeepMapPublicationAnchor),
     /// Every step completed; the retained state proves the checkpoint covers the full plan.
     Completed(DeepMapResumeState),
     /// Cooperative cancellation retained a validated prefix suitable for a deliberate resume.
@@ -194,9 +229,10 @@ impl DeepMapExecutionOutcome {
 
     /// Returns the exact plan and confirmed prefix retained at termination.
     #[must_use]
-    pub const fn state(&self) -> &DeepMapResumeState {
+    pub const fn state(&self) -> Option<&DeepMapResumeState> {
         match self {
-            Self::Completed(state) | Self::Cancelled(state) => state,
+            Self::AlreadyCurrent(_) => None,
+            Self::Completed(state) | Self::Cancelled(state) => Some(state),
         }
     }
 }
@@ -247,8 +283,14 @@ pub enum DeepMapExecutionFailure {
     Read,
     /// Proposal or claim verification failed.
     Verification,
-    /// Verified Module Cards could not be atomically published.
-    Publication,
+    /// A stale or contradictory verified batch was rejected.
+    PublicationRejected,
+    /// Local storage could not complete atomic publication.
+    PublicationStorage,
+    /// Atomic publication exceeded its bounded deadline.
+    PublicationTimedOut,
+    /// Publication progress could not reach the owning job.
+    PublicationProgressUnavailable,
     /// Resume state did not match its immutable plan or completion claim.
     InvalidCheckpoint,
     /// Progress could not reach the owning scheduler.
@@ -267,7 +309,10 @@ impl fmt::Display for DeepMapExecutionFailure {
             Self::InvalidModelResponse => "Deep Map model response is invalid",
             Self::Read => "Deep Map read-only exploration failed",
             Self::Verification => "Deep Map verification failed",
-            Self::Publication => "Deep Map publication failed",
+            Self::PublicationRejected => "Deep Map publication was rejected",
+            Self::PublicationStorage => "Deep Map publication storage failed",
+            Self::PublicationTimedOut => "Deep Map publication timed out",
+            Self::PublicationProgressUnavailable => "Deep Map publication progress is unavailable",
             Self::InvalidCheckpoint => "Deep Map checkpoint is invalid for its plan",
             Self::ProgressUnavailable => "Deep Map progress is unavailable",
         })

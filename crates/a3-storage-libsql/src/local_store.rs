@@ -5,9 +5,10 @@ use crate::{
 };
 use crate::{
     agent_recovery_repository, agent_session_repository, command_allowlist_repository,
-    exact_search_repository, goal_contract_repository, graph_traversal_repository,
-    index_publication, index_repository, index_repository::IndexRepositoryError,
-    lexical_search_repository, module_card_detail_repository, module_card_evidence_repository,
+    deep_map_journal_repository, deep_map_repository, exact_search_repository,
+    goal_contract_repository, graph_traversal_repository, index_publication, index_repository,
+    index_repository::IndexRepositoryError, lexical_search_repository,
+    module_card_detail_repository, module_card_evidence_repository,
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
     policy_repository, project_map_atlas_insight_repository, project_map_scene_repository,
@@ -22,28 +23,30 @@ use a3_application::{
     AgentRecoveryStoreFuture, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
     AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture, AgentWorkspaceLayout,
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
-    CommandAllowlistStoreVersion, DesktopSettingsStore, DesktopSettingsStoreFuture,
-    DesktopSettingsStoreVersion, EmbeddingOperationControl, EvaluatedPolicyAction,
-    GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture, IndexPersistenceControl,
-    KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl,
-    KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore,
-    KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
-    ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailFuture,
-    ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore,
-    ModuleCardEvidenceControl, ModuleCardEvidenceFailure, ModuleCardEvidenceFuture,
-    ModuleCardEvidenceQuery, ModuleCardEvidenceStore, ModuleCardFreshnessControl,
-    ModuleCardFreshnessFailure, ModuleCardFreshnessFuture, ModuleCardFreshnessStore,
-    ModuleCardPublicationTimeout, ModuleCardVerificationControl, ModuleDependencyGraphControl,
-    ModuleDependencyGraphFailure, ModuleDependencyGraphFuture, ModuleDependencyGraphQuery,
-    ModuleDependencyGraphStore, ModuleRemapQueueFailure, ModuleRemapQueueFuture,
-    ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure, ModuleRuntimeFlowQuery,
-    ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture, ModuleRuntimeMapLoadResult,
-    ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl, ModuleTreeFailure,
-    ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore, PolicyStoreFailure,
-    PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture, ProjectCatalogPage,
-    ProjectCatalogQuery, ProjectMapAtlasControl, ProjectMapAtlasFailure, ProjectMapAtlasFuture,
-    ProjectMapAtlasLoadResult, ProjectMapAtlasModuleInsight, ProjectMapAtlasScene,
-    ProjectMapAtlasSceneQuery, ProjectMapAtlasStore, ProjectMapEntityContext,
+    CommandAllowlistStoreVersion, DeepMapEntryPage, DeepMapJournalEvent,
+    DeepMapPublicationStateFuture, DeepMapPublicationStateStore, DeepMapRunCursor,
+    DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage, DeepMapRunStart,
+    DesktopSettingsStore, DesktopSettingsStoreFuture, DesktopSettingsStoreVersion,
+    EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
+    GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
+    KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
+    KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture,
+    ModuleCardDetailControl, ModuleCardDetailControlError, ModuleCardDetailFailure,
+    ModuleCardDetailFuture, ModuleCardDetailLoadResult, ModuleCardDetailQuery,
+    ModuleCardDetailStore, ModuleCardEvidenceControl, ModuleCardEvidenceFailure,
+    ModuleCardEvidenceFuture, ModuleCardEvidenceQuery, ModuleCardEvidenceStore,
+    ModuleCardFreshnessControl, ModuleCardFreshnessFailure, ModuleCardFreshnessFuture,
+    ModuleCardFreshnessStore, ModuleCardPublicationTimeout, ModuleCardVerificationControl,
+    ModuleDependencyGraphControl, ModuleDependencyGraphFailure, ModuleDependencyGraphFuture,
+    ModuleDependencyGraphQuery, ModuleDependencyGraphStore, ModuleRemapQueueFailure,
+    ModuleRemapQueueFuture, ModuleRemapQueueStore, ModuleRuntimeControl, ModuleRuntimeFailure,
+    ModuleRuntimeFlowQuery, ModuleRuntimeFlowRootValidation, ModuleRuntimeFuture,
+    ModuleRuntimeMapLoadResult, ModuleRuntimeMapQuery, ModuleRuntimeStore, ModuleTreeControl,
+    ModuleTreeFailure, ModuleTreeFuture, ModuleTreeQuery, ModuleTreeStore, PolicyStore,
+    PolicyStoreFailure, PolicyStoreFuture, ProjectCatalogAdmin, ProjectCatalogAdminFuture,
+    ProjectCatalogPage, ProjectCatalogQuery, ProjectMapAtlasControl, ProjectMapAtlasFailure,
+    ProjectMapAtlasFuture, ProjectMapAtlasLoadResult, ProjectMapAtlasModuleInsight,
+    ProjectMapAtlasScene, ProjectMapAtlasSceneQuery, ProjectMapAtlasStore, ProjectMapEntityContext,
     ProjectMapEntitySelection, ProjectMapFlowScene, ProjectMapFlowSceneQuery,
     ProjectMapIndexEvidenceSelection, ProjectMapIndexEvidenceTarget, ProjectMapInventoryPage,
     ProjectMapInventoryPageQuery, ProjectMapSceneControl, ProjectMapSceneFailure,
@@ -73,16 +76,17 @@ use a3_domain::{
     AgentRunTimestamp, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision,
     AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence,
     ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest, ApprovalRequestId,
-    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
-    ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, GoalContract, GoalContractRevision,
-    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
-    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
-    LexicalSearchQuery, ModuleCardClaimId, ModuleId, MutationActionFingerprint, PolicyDecision,
-    PolicyDecisionId, ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex,
-    RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId,
-    TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery, VectorSearchCapability,
-    VectorSearchLimit, VectorSearchResult, VerificationEvidence, VerifiedModuleCardBatch,
-    WorktreeId,
+    DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp, EmbeddingCacheKey,
+    EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
+    ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, ExplorePlan, GoalContract,
+    GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
+    IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
+    MutationActionFingerprint, PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist,
+    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
+    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
+    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
+    VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -1738,6 +1742,187 @@ impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
             )
             .await
             .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl DeepMapPublicationStateStore for LibsqlKnowledgeStore {
+    fn load_deep_map_publication_state<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+    ) -> DeepMapPublicationStateFuture<'a> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapPublicationStateFailure::Storage)?;
+            deep_map_repository::load_publication_state(
+                knowledge.connection(),
+                project.worktree().id(),
+            )
+            .await
+        })
+    }
+}
+
+impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
+    fn create_run<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run: &'a DeepMapRunStart,
+    ) -> DeepMapRunJournalFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::create_run(
+                knowledge.connection(),
+                project.worktree().id(),
+                run,
+            )
+            .await
+        })
+    }
+
+    fn record_plan<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        plan: &'a ExplorePlan,
+    ) -> DeepMapRunJournalFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::record_plan(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                plan,
+            )
+            .await
+        })
+    }
+
+    fn append_event<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        event: DeepMapJournalEvent,
+    ) -> DeepMapRunJournalFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::append_event(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                event,
+            )
+            .await
+        })
+    }
+
+    fn mark_details_incomplete<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+    ) -> DeepMapRunJournalFuture<'a, ()> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::mark_details_incomplete(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+            )
+            .await
+        })
+    }
+
+    fn reconcile_interrupted<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        occurred_at: DeepMapRunTimestamp,
+    ) -> DeepMapRunJournalFuture<'a, u64> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::reconcile_interrupted(
+                knowledge.connection(),
+                project.worktree().id(),
+                occurred_at,
+            )
+            .await
+        })
+    }
+
+    fn list_runs<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        cursor: Option<DeepMapRunCursor>,
+    ) -> DeepMapRunJournalFuture<'a, DeepMapRunPage> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::list_runs(
+                knowledge.connection(),
+                project.worktree().id(),
+                cursor,
+            )
+            .await
+        })
+    }
+
+    fn list_entries<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        before_sequence: Option<DeepMapEventSequence>,
+    ) -> DeepMapRunJournalFuture<'a, DeepMapEntryPage> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::list_entries(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                before_sequence,
+            )
+            .await
+        })
+    }
+
+    fn load_entry<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        sequence: DeepMapEventSequence,
+    ) -> DeepMapRunJournalFuture<'a, Option<a3_application::DeepMapEntryDetail>> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::load_entry(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                sequence,
+            )
+            .await
         })
     }
 }

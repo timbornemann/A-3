@@ -4,70 +4,13 @@ import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
 const PROFILE_ID = /^[0-9a-f]{64}$/;
 const PROVIDER_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const MODEL_ID = /^[A-Za-z0-9._/@:-]{1,512}$/;
+const RUN_SELECTION = /^[0-9a-f]{96}$/;
+const ENTRY_SELECTION = /^[0-9a-f]{48}$/;
+const RUN_CURSOR = /^[0-9a-f]{112}$/;
 const U64_DECIMAL = /^(0|[1-9][0-9]{0,19})$/;
 const U64_MAX = BigInt('18446744073709551615');
 
-export interface DeepMapBudgetV1 {
-  tokenLimit: number;
-  timeLimitMillis: number;
-  toolCallLimit: number;
-}
-
-export interface DeepMapModelV1 {
-  profileId: string;
-  profileVersion: number;
-  providerId: string;
-  modelId: string;
-  contextTokens: number;
-  outputTokens: number;
-}
-
-export type DeepMapActivityStateV1 =
-  | 'idle'
-  | 'queued'
-  | 'running'
-  | 'pausing'
-  | 'paused'
-  | 'cancelling'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled';
-
-export interface DeepMapProgressV1 {
-  completed: string;
-  total: string;
-}
-
-export type DeepMapFailureV1 =
-  | 'noPublishedIndex'
-  | 'staleSnapshot'
-  | 'planning'
-  | 'modelUnavailable'
-  | 'modelRejected'
-  | 'modelTimedOut'
-  | 'invalidModelResponse'
-  | 'read'
-  | 'verification'
-  | 'publication'
-  | 'invalidCheckpoint'
-  | 'progressUnavailable';
-
-export interface DeepMapActivityV1 {
-  state: DeepMapActivityStateV1;
-  budget: DeepMapBudgetV1 | null;
-  progress: DeepMapProgressV1 | null;
-  failure: DeepMapFailureV1 | null;
-  confirmedSteps: string;
-  totalSteps: string;
-  phase: DeepMapPhaseV2 | null;
-  currentModuleId: string | null;
-  targetKind: DeepMapTargetKindV2 | null;
-  safeAction: DeepMapSafeActionV2 | null;
-  stepPosition: string | null;
-  events: DeepMapEventV2[];
-  publicationSummary: DeepMapPublicationSummaryV2 | null;
-}
-
+export type DeepMapModeV2 = 'fast' | 'standard' | 'thorough';
 export type DeepMapPhaseV2 = 'planning' | 'exploring' | 'claiming' | 'verifying' | 'publishing';
 export type DeepMapTargetKindV2 = 'project' | 'module' | 'manifest' | 'symbol';
 export type DeepMapSafeActionV2 =
@@ -78,48 +21,167 @@ export type DeepMapSafeActionV2 =
   | 'generateClaims'
   | 'verifyEvidence'
   | 'publishCards';
+export type DeepMapFailureV3 =
+  | 'noPublishedIndex'
+  | 'staleIndex'
+  | 'planning'
+  | 'modelUnavailable'
+  | 'modelRejected'
+  | 'modelTimeout'
+  | 'invalidModelResponse'
+  | 'read'
+  | 'verification'
+  | 'publicationRejected'
+  | 'publicationStorage'
+  | 'publicationTimeout'
+  | 'publicationProgress'
+  | 'invalidCheckpoint'
+  | 'progressUnavailable'
+  | 'interrupted';
+export type DeepMapRunStateV1 =
+  | 'queued'
+  | 'running'
+  | 'pausing'
+  | 'paused'
+  | 'cancelling'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+export type DeepMapEventResultV1 =
+  | 'pending'
+  | 'confirmed'
+  | 'alreadyCurrent'
+  | 'published'
+  | 'paused'
+  | 'resumed'
+  | 'cancelled'
+  | 'failed'
+  | 'interrupted';
 
-export interface DeepMapEventV2 {
-  sequence: string;
-  phase: DeepMapPhaseV2;
-  currentModuleId: string | null;
-  targetKind: DeepMapTargetKindV2;
-  safeAction: DeepMapSafeActionV2;
-  stepPosition: string | null;
-  totalSteps: string | null;
-  confirmed: boolean;
+export interface DeepMapModelV1 {
+  profileId: string;
+  profileVersion: number;
+  providerId: string;
+  modelId: string;
+  contextTokens: number;
+  outputTokens: number;
 }
 
-export interface DeepMapPublicationSummaryV2 {
-  atomicallyPublished: true;
+export interface DeepMapCompactProgressV3 {
+  confirmedSteps: string;
+  totalSteps: string;
+  phase: DeepMapPhaseV2 | null;
+  action: DeepMapSafeActionV2 | null;
 }
 
-export type DeepMapActivityV2 = DeepMapActivityV1;
+type ActiveLifecycleStateV3 =
+  'queued' | 'running' | 'pausing' | 'paused' | 'cancelling' | 'succeeded' | 'cancelled';
+export type DeepMapLifecycleV3 =
+  | { state: 'ready' }
+  | { state: 'current'; cardCount: string; detailsAvailable: boolean }
+  | {
+      state: ActiveLifecycleStateV3;
+      progress: DeepMapCompactProgressV3;
+      detailsIncomplete: boolean;
+    }
+  | {
+      state: 'failed';
+      progress: DeepMapCompactProgressV3;
+      failure: DeepMapFailureV3;
+      detailsIncomplete: boolean;
+    };
 
-export interface DeepMapConfigurationV1 {
-  model: DeepMapModelV1;
-  minimumBudget: DeepMapBudgetV1;
-  defaultBudget: DeepMapBudgetV1;
-  maximumBudget: DeepMapBudgetV1;
-}
-
-export type DeepMapStatusResponseV1 = {
+export type DeepMapStatusResponseV3 = {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
   result:
     | { status: 'noProject' }
     | { status: 'unavailable' }
-    | {
-        status: 'available';
-        configuration: DeepMapConfigurationV1;
-        activity: DeepMapActivityV1;
-      };
+    | { status: 'available'; model: DeepMapModelV1; lifecycle: DeepMapLifecycleV3 };
 };
 
-export type DeepMapStatusResponseV2 = DeepMapStatusResponseV1;
+export interface DeepMapStartResponseV2 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  outcome: 'queued' | 'alreadyCurrent';
+}
 
 export interface DeepMapControlResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
   accepted: true;
+}
+
+export interface DeepMapRunV1 {
+  selection: string;
+  mode: DeepMapModeV2;
+  state: DeepMapRunStateV1;
+  startedAtUnixMillis: string;
+  updatedAtUnixMillis: string;
+  confirmedSteps: string;
+  totalSteps: string;
+  failure: DeepMapFailureV3 | null;
+  detailsIncomplete: boolean;
+}
+
+export interface DeepMapRunPageResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  runs: DeepMapRunV1[];
+  nextCursor: string | null;
+}
+
+export interface DeepMapEntryV1 {
+  selection: string;
+  sequence: string;
+  state: DeepMapRunStateV1;
+  occurredAtUnixMillis: string;
+  phase: DeepMapPhaseV2 | null;
+  action: DeepMapSafeActionV2 | null;
+  targetKind: DeepMapTargetKindV2 | null;
+  stepPosition: string | null;
+  totalSteps: string | null;
+  confirmed: boolean;
+  result: DeepMapEventResultV1;
+  failure: DeepMapFailureV3 | null;
+}
+
+export interface DeepMapEntryPageResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  entries: DeepMapEntryV1[];
+  nextCursor: string | null;
+}
+
+export interface DeepMapStepDetailV1 {
+  targetKind: DeepMapTargetKindV2;
+  seedReason:
+    'manifest' | 'entrypoint' | 'centralSymbol' | 'testRoot' | 'graphCommunity' | 'uncoveredModule';
+  reservedTokens: number;
+  reservedTimeMillis: string;
+  reservedToolCalls: number;
+  informationGainBasisPoints: number;
+  coverageFieldCount: number;
+  evidenceRequirement: 'fieldEvidence';
+  verificationMethod: 'publishedIndexEvidence';
+  confirmed: boolean;
+}
+
+export interface DeepMapEntryDetailResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  run: DeepMapRunV1;
+  entry: DeepMapEntryV1;
+  durationMillis: string;
+  providerId: string;
+  modelId: string;
+  profileId: string;
+  profileVersion: number;
+  tokenBudget: number;
+  timeBudgetMillis: string;
+  toolCallBudget: number;
+  indexReference: string;
+  snapshotReference: string;
+  nextAction: string | null;
+  planStopReason:
+    'coveragePlanned' | 'budgetExhausted' | 'belowGainThreshold' | 'noEligibleSeed' | null;
+  publicationResult: 'published' | 'alreadyCurrent' | null;
+  step: DeepMapStepDetailV1 | null;
 }
 
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
@@ -127,22 +189,31 @@ const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
 
 export async function queryDeepMap(
   invokeCommand: InvokeCommand = invokeThroughTauri,
-): Promise<DeepMapStatusResponseV1> {
-  const value = await invokeCommand('query_deep_map', {
-    request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
-  });
-  return parseDeepMapStatusResponseV1(value);
+): Promise<DeepMapStatusResponseV3> {
+  return parseDeepMapStatusResponseV3(
+    await invokeCommand('query_deep_map', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
+    }),
+  );
 }
 
 export async function startDeepMap(
-  budget: DeepMapBudgetV1,
+  mode: DeepMapModeV2,
   invokeCommand: InvokeCommand = invokeThroughTauri,
-): Promise<DeepMapControlResponseV1> {
-  const validated = parseBudget(budget);
-  const value = await invokeCommand('start_deep_map', {
-    request: { budget: validated, protocolVersion: CURRENT_PROTOCOL_VERSION },
-  });
-  return parseControlResponse(value);
+): Promise<DeepMapStartResponseV2> {
+  const object = record(
+    await invokeCommand('start_deep_map', {
+      request: { mode, protocolVersion: CURRENT_PROTOCOL_VERSION },
+    }),
+    ['outcome', 'protocolVersion'],
+  );
+  if (
+    object.protocolVersion !== CURRENT_PROTOCOL_VERSION ||
+    !oneOf(object.outcome, ['queued', 'alreadyCurrent'] as const)
+  ) {
+    throw new Error('Invalid Deep Map start response');
+  }
+  return object as unknown as DeepMapStartResponseV2;
 }
 
 export async function pauseDeepMap(
@@ -163,66 +234,131 @@ export async function cancelDeepMap(
   return control('cancel_deep_map', invokeCommand);
 }
 
+export async function queryDeepMapRuns(
+  cursor: string | null = null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<DeepMapRunPageResponseV1> {
+  if (cursor !== null && !RUN_CURSOR.test(cursor)) throw new Error('Invalid Deep Map run cursor');
+  return parseRunPage(
+    await invokeCommand('query_deep_map_runs', {
+      request: { cursor, protocolVersion: CURRENT_PROTOCOL_VERSION },
+    }),
+  );
+}
+
+export async function queryDeepMapEntries(
+  runSelection: string,
+  cursor: string | null = null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<DeepMapEntryPageResponseV1> {
+  selection(runSelection, RUN_SELECTION, 'run');
+  if (cursor !== null) selection(cursor, ENTRY_SELECTION, 'entry cursor');
+  return parseEntryPage(
+    await invokeCommand('query_deep_map_entries', {
+      request: { cursor, protocolVersion: CURRENT_PROTOCOL_VERSION, runSelection },
+    }),
+  );
+}
+
+export async function queryDeepMapEntryDetail(
+  runSelection: string,
+  entrySelection: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<DeepMapEntryDetailResponseV1> {
+  selection(runSelection, RUN_SELECTION, 'run');
+  selection(entrySelection, ENTRY_SELECTION, 'entry');
+  return parseEntryDetail(
+    await invokeCommand('query_deep_map_entry_detail', {
+      request: { entrySelection, protocolVersion: CURRENT_PROTOCOL_VERSION, runSelection },
+    }),
+  );
+}
+
 async function control(
   command: string,
   invokeCommand: InvokeCommand,
 ): Promise<DeepMapControlResponseV1> {
-  const value = await invokeCommand(command, {
-    request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
-  });
-  return parseControlResponse(value);
+  const object = record(
+    await invokeCommand(command, {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
+    }),
+    ['accepted', 'protocolVersion'],
+  );
+  if (object.protocolVersion !== CURRENT_PROTOCOL_VERSION || object.accepted !== true) {
+    throw new Error('Invalid Deep Map control response');
+  }
+  return { accepted: true, protocolVersion: CURRENT_PROTOCOL_VERSION };
 }
 
-export function parseDeepMapStatusResponseV1(value: unknown): DeepMapStatusResponseV1 {
+export function parseDeepMapStatusResponseV3(value: unknown): DeepMapStatusResponseV3 {
   const root = record(value, ['protocolVersion', 'result']);
-  if (root.protocolVersion !== CURRENT_PROTOCOL_VERSION) {
-    throw new Error('Unsupported Deep Map protocol version');
-  }
+  version(root.protocolVersion);
   const result = record(root.result);
   if (result.status === 'noProject' || result.status === 'unavailable') {
     exactKeys(result, ['status']);
-    return {
-      protocolVersion: CURRENT_PROTOCOL_VERSION,
-      result: { status: result.status },
-    };
+    return { protocolVersion: CURRENT_PROTOCOL_VERSION, result: { status: result.status } };
   }
-  if (result.status !== 'available') {
-    throw new Error('Invalid Deep Map availability state');
-  }
-  exactKeys(result, ['activity', 'configuration', 'status']);
+  if (result.status !== 'available') throw new Error('Invalid Deep Map availability state');
+  exactKeys(result, ['lifecycle', 'model', 'status']);
   return {
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     result: {
       status: 'available',
-      configuration: parseConfiguration(result.configuration),
-      activity: parseActivity(result.activity),
+      model: parseModel(result.model),
+      lifecycle: parseLifecycle(result.lifecycle),
     },
   };
 }
 
-export const parseDeepMapStatusResponseV2 = parseDeepMapStatusResponseV1;
-
-function parseConfiguration(value: unknown): DeepMapConfigurationV1 {
-  const object = record(value, ['defaultBudget', 'maximumBudget', 'minimumBudget', 'model']);
-  const minimumBudget = parseBudget(object.minimumBudget);
-  const defaultBudget = parseBudget(object.defaultBudget);
-  const maximumBudget = parseBudget(object.maximumBudget);
-  if (
-    minimumBudget.tokenLimit !== 1 ||
-    minimumBudget.timeLimitMillis !== 1 ||
-    minimumBudget.toolCallLimit !== 1 ||
-    maximumBudget.tokenLimit !== 1_000_000 ||
-    maximumBudget.timeLimitMillis !== 86_400_000 ||
-    maximumBudget.toolCallLimit !== 4_096 ||
-    !budgetContains(maximumBudget, defaultBudget)
-  ) {
-    throw new Error('Invalid Deep Map budget envelope');
+function parseLifecycle(value: unknown): DeepMapLifecycleV3 {
+  const object = record(value);
+  if (object.state === 'ready') {
+    exactKeys(object, ['state']);
+    return { state: 'ready' };
   }
+  if (object.state === 'current') {
+    exactKeys(object, ['cardCount', 'detailsAvailable', 'state']);
+    decimal(object.cardCount);
+    if (typeof object.detailsAvailable !== 'boolean') throw new Error('Invalid current state');
+    return object as unknown as DeepMapLifecycleV3;
+  }
+  const active = [
+    'queued',
+    'running',
+    'pausing',
+    'paused',
+    'cancelling',
+    'succeeded',
+    'cancelled',
+  ] as const;
+  if (oneOf(object.state, active)) {
+    exactKeys(object, ['detailsIncomplete', 'progress', 'state']);
+    if (typeof object.detailsIncomplete !== 'boolean') throw new Error('Invalid journal state');
+    return { ...object, progress: parseProgress(object.progress) } as DeepMapLifecycleV3;
+  }
+  if (object.state === 'failed') {
+    exactKeys(object, ['detailsIncomplete', 'failure', 'progress', 'state']);
+    if (typeof object.detailsIncomplete !== 'boolean') throw new Error('Invalid journal state');
+    return {
+      state: 'failed',
+      progress: parseProgress(object.progress),
+      failure: failure(object.failure),
+      detailsIncomplete: object.detailsIncomplete,
+    };
+  }
+  throw new Error('Invalid Deep Map lifecycle state');
+}
+
+function parseProgress(value: unknown): DeepMapCompactProgressV3 {
+  const object = record(value, ['action', 'confirmedSteps', 'phase', 'totalSteps']);
+  const confirmed = decimal(object.confirmedSteps);
+  const total = decimal(object.totalSteps);
+  if (confirmed > total) throw new Error('Invalid Deep Map progress');
   return {
-    model: parseModel(object.model),
-    minimumBudget,
-    defaultBudget,
-    maximumBudget,
+    confirmedSteps: object.confirmedSteps as string,
+    totalSteps: object.totalSteps as string,
+    phase: nullableOneOf(object.phase, PHASES),
+    action: nullableOneOf(object.action, ACTIONS),
   };
 }
 
@@ -252,273 +388,315 @@ function parseModel(value: unknown): DeepMapModelV1 {
   return object as unknown as DeepMapModelV1;
 }
 
-function parseActivity(value: unknown): DeepMapActivityV1 {
+function parseRunPage(value: unknown): DeepMapRunPageResponseV1 {
+  const object = record(value, ['nextCursor', 'protocolVersion', 'runs']);
+  version(object.protocolVersion);
+  if (!Array.isArray(object.runs) || object.runs.length > 20) {
+    throw new Error('Invalid Deep Map run page');
+  }
+  const runs = object.runs.map(parseRun);
+  for (let index = 1; index < runs.length; index += 1) {
+    if (BigInt(runs[index - 1].updatedAtUnixMillis) < BigInt(runs[index].updatedAtUnixMillis)) {
+      throw new Error('Invalid Deep Map run ordering');
+    }
+  }
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    runs,
+    nextCursor: nullableSelection(object.nextCursor, RUN_CURSOR, 'run cursor'),
+  };
+}
+
+function parseRun(value: unknown): DeepMapRunV1 {
   const object = record(value, [
-    'budget',
     'confirmedSteps',
-    'currentModuleId',
-    'events',
+    'detailsIncomplete',
     'failure',
+    'mode',
+    'selection',
+    'startedAtUnixMillis',
+    'state',
+    'totalSteps',
+    'updatedAtUnixMillis',
+  ]);
+  const state = requiredOneOf(object.state, RUN_STATES, 'run state');
+  const confirmed = decimal(object.confirmedSteps);
+  const total = decimal(object.totalSteps);
+  const started = decimal(object.startedAtUnixMillis);
+  const updated = decimal(object.updatedAtUnixMillis);
+  const diagnosis = object.failure === null ? null : failure(object.failure);
+  if (
+    confirmed > total ||
+    started > updated ||
+    typeof object.detailsIncomplete !== 'boolean' ||
+    (state === 'failed') !== (diagnosis !== null)
+  ) {
+    throw new Error('Contradictory Deep Map run');
+  }
+  return {
+    selection: selection(object.selection, RUN_SELECTION, 'run'),
+    mode: requiredOneOf(object.mode, MODES, 'mode'),
+    state,
+    startedAtUnixMillis: object.startedAtUnixMillis as string,
+    updatedAtUnixMillis: object.updatedAtUnixMillis as string,
+    confirmedSteps: object.confirmedSteps as string,
+    totalSteps: object.totalSteps as string,
+    failure: diagnosis,
+    detailsIncomplete: object.detailsIncomplete,
+  };
+}
+
+function parseEntryPage(value: unknown): DeepMapEntryPageResponseV1 {
+  const object = record(value, ['entries', 'nextCursor', 'protocolVersion']);
+  version(object.protocolVersion);
+  if (!Array.isArray(object.entries) || object.entries.length > 50) {
+    throw new Error('Invalid Deep Map entry page');
+  }
+  const entries = object.entries.map(parseEntry);
+  for (let index = 1; index < entries.length; index += 1) {
+    if (BigInt(entries[index - 1].sequence) >= BigInt(entries[index].sequence)) {
+      throw new Error('Invalid Deep Map entry ordering');
+    }
+  }
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    entries,
+    nextCursor: nullableSelection(object.nextCursor, ENTRY_SELECTION, 'entry cursor'),
+  };
+}
+
+function parseEntry(value: unknown): DeepMapEntryV1 {
+  const object = record(value, [
+    'action',
+    'confirmed',
+    'failure',
+    'occurredAtUnixMillis',
     'phase',
-    'progress',
-    'publicationSummary',
-    'safeAction',
+    'result',
+    'selection',
+    'sequence',
     'state',
     'stepPosition',
     'targetKind',
     'totalSteps',
   ]);
-  const states = new Set<DeepMapActivityStateV1>([
-    'idle',
-    'queued',
-    'running',
-    'pausing',
-    'paused',
-    'cancelling',
-    'succeeded',
-    'failed',
-    'cancelled',
-  ]);
-  if (typeof object.state !== 'string' || !states.has(object.state as DeepMapActivityStateV1)) {
-    throw new Error('Invalid Deep Map lifecycle state');
-  }
-  const state = object.state as DeepMapActivityStateV1;
-  const budget = object.budget === null ? null : parseBudget(object.budget);
-  const progress = object.progress === null ? null : parseProgress(object.progress);
-  const failures = new Set<DeepMapFailureV1>([
-    'noPublishedIndex',
-    'staleSnapshot',
-    'planning',
-    'modelUnavailable',
-    'modelRejected',
-    'modelTimedOut',
-    'invalidModelResponse',
-    'read',
-    'verification',
-    'publication',
-    'invalidCheckpoint',
-    'progressUnavailable',
-  ]);
-  const failure =
-    object.failure === null
-      ? null
-      : typeof object.failure === 'string' && failures.has(object.failure as DeepMapFailureV1)
-        ? (object.failure as DeepMapFailureV1)
-        : undefined;
-  const confirmedSteps = decimal(object.confirmedSteps);
-  const totalSteps = decimal(object.totalSteps);
-  const phase = nullableEnum<DeepMapPhaseV2>(object.phase, [
-    'planning',
-    'exploring',
-    'claiming',
-    'verifying',
-    'publishing',
-  ]);
-  const targetKind = nullableEnum<DeepMapTargetKindV2>(object.targetKind, [
-    'project',
-    'module',
-    'manifest',
-    'symbol',
-  ]);
-  const safeAction = nullableEnum<DeepMapSafeActionV2>(object.safeAction, [
-    'buildPlan',
-    'inspect',
-    'search',
-    'propose',
-    'generateClaims',
-    'verifyEvidence',
-    'publishCards',
-  ]);
-  const currentModuleId =
-    object.currentModuleId === null
-      ? null
-      : typeof object.currentModuleId === 'string' && PROFILE_ID.test(object.currentModuleId)
-        ? object.currentModuleId
-        : undefined;
+  const state = requiredOneOf(object.state, RUN_STATES, 'entry state');
+  const result = requiredOneOf(object.result, EVENT_RESULTS, 'entry result');
+  const diagnosis = object.failure === null ? null : failure(object.failure);
+  decimal(object.sequence);
+  decimal(object.occurredAtUnixMillis);
   const stepPosition = object.stepPosition === null ? null : decimal(object.stepPosition);
-  const events = parseEvents(object.events);
-  const publicationSummary = parsePublicationSummary(object.publicationSummary);
-  const hasCurrentActivity = phase !== null || targetKind !== null || safeAction !== null;
+  const totalSteps = object.totalSteps === null ? null : decimal(object.totalSteps);
   if (
-    confirmedSteps > totalSteps ||
-    failure === undefined ||
-    (state === 'failed') !== (failure !== null) ||
-    (state === 'idle' && (budget !== null || progress !== null || totalSteps !== BigInt(0))) ||
-    (['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(state) && budget === null) ||
-    (state === 'paused' && (totalSteps === BigInt(0) || confirmedSteps >= totalSteps)) ||
-    (state === 'succeeded' && confirmedSteps !== totalSteps) ||
-    (progress !== null && !['queued', 'running', 'pausing', 'cancelling'].includes(state)) ||
-    phase === undefined ||
-    targetKind === undefined ||
-    safeAction === undefined ||
-    currentModuleId === undefined ||
-    stepPosition === undefined ||
-    (hasCurrentActivity && (phase === null || targetKind === null || safeAction === null)) ||
-    (!hasCurrentActivity && currentModuleId !== null) ||
-    (stepPosition !== null && (stepPosition === BigInt(0) || stepPosition > totalSteps)) ||
-    (state === 'idle' && (events.length !== 0 || hasCurrentActivity)) ||
-    (publicationSummary !== null && state !== 'succeeded')
+    typeof object.confirmed !== 'boolean' ||
+    (stepPosition === null) !== (totalSteps === null) ||
+    (stepPosition !== null &&
+      totalSteps !== null &&
+      (stepPosition === BigInt(0) || stepPosition > totalSteps)) ||
+    (state === 'failed') !== (diagnosis !== null) ||
+    (result === 'failed') !== (diagnosis !== null)
   ) {
-    throw new Error('Contradictory Deep Map lifecycle state');
+    throw new Error('Contradictory Deep Map entry');
   }
   return {
+    selection: selection(object.selection, ENTRY_SELECTION, 'entry'),
+    sequence: object.sequence as string,
     state,
-    budget,
-    progress,
-    failure,
-    confirmedSteps: object.confirmedSteps as string,
-    totalSteps: object.totalSteps as string,
-    phase,
-    currentModuleId,
-    targetKind,
-    safeAction,
-    stepPosition: stepPosition === null ? null : (object.stepPosition as string),
-    events,
-    publicationSummary,
+    occurredAtUnixMillis: object.occurredAtUnixMillis as string,
+    phase: nullableOneOf(object.phase, PHASES),
+    action: nullableOneOf(object.action, ACTIONS),
+    targetKind: nullableOneOf(object.targetKind, TARGET_KINDS),
+    stepPosition: object.stepPosition as string | null,
+    totalSteps: object.totalSteps as string | null,
+    confirmed: object.confirmed,
+    result,
+    failure: diagnosis,
   };
 }
 
-function parseEvents(value: unknown): DeepMapEventV2[] {
-  if (!Array.isArray(value) || value.length > 32) throw new Error('Invalid Deep Map event buffer');
-  let previousSequence = BigInt(0);
-  let previousPhase = 0;
-  return value.map((entry) => {
-    const object = record(entry, [
-      'confirmed',
-      'currentModuleId',
-      'phase',
-      'safeAction',
-      'sequence',
-      'stepPosition',
-      'targetKind',
-      'totalSteps',
-    ]);
-    const sequence = decimal(object.sequence);
-    const phase = nullableEnum<DeepMapPhaseV2>(object.phase, [
-      'planning',
-      'exploring',
-      'claiming',
-      'verifying',
-      'publishing',
-    ]);
-    const targetKind = nullableEnum<DeepMapTargetKindV2>(object.targetKind, [
-      'project',
-      'module',
-      'manifest',
-      'symbol',
-    ]);
-    const safeAction = nullableEnum<DeepMapSafeActionV2>(object.safeAction, [
-      'buildPlan',
-      'inspect',
-      'search',
-      'propose',
-      'generateClaims',
-      'verifyEvidence',
-      'publishCards',
-    ]);
-    const currentModuleId =
-      object.currentModuleId === null
-        ? null
-        : typeof object.currentModuleId === 'string' && PROFILE_ID.test(object.currentModuleId)
-          ? object.currentModuleId
-          : undefined;
-    const stepPosition = object.stepPosition === null ? null : decimal(object.stepPosition);
-    const total = object.totalSteps === null ? null : decimal(object.totalSteps);
-    const phaseRank = phase === null || phase === undefined ? 0 : phaseOrder(phase);
-    if (
-      sequence <= previousSequence ||
-      phase === null ||
-      phase === undefined ||
-      targetKind === null ||
-      targetKind === undefined ||
-      safeAction === null ||
-      safeAction === undefined ||
-      currentModuleId === undefined ||
-      typeof object.confirmed !== 'boolean' ||
-      stepPosition === undefined ||
-      total === undefined ||
-      (stepPosition === null) !== (total === null) ||
-      (stepPosition !== null &&
-        total !== null &&
-        (stepPosition === BigInt(0) || total === BigInt(0) || stepPosition > total)) ||
-      (object.confirmed && stepPosition === null && phase !== 'publishing') ||
-      phaseRank < previousPhase
-    ) {
-      throw new Error('Invalid Deep Map event');
-    }
-    previousSequence = sequence;
-    previousPhase = phaseRank;
-    return {
-      confirmed: object.confirmed,
-      currentModuleId,
-      phase,
-      safeAction,
-      sequence: object.sequence as string,
-      stepPosition: object.stepPosition as string | null,
-      targetKind,
-      totalSteps: object.totalSteps as string | null,
-    };
-  });
-}
-
-function parsePublicationSummary(value: unknown): DeepMapPublicationSummaryV2 | null {
-  if (value === null) return null;
-  const object = record(value, ['atomicallyPublished']);
-  if (object.atomicallyPublished !== true) throw new Error('Invalid Deep Map publication summary');
-  return { atomicallyPublished: true };
-}
-
-function nullableEnum<T extends string>(
-  value: unknown,
-  allowed: readonly T[],
-): T | null | undefined {
-  return value === null
-    ? null
-    : typeof value === 'string' && allowed.includes(value as T)
-      ? (value as T)
-      : undefined;
-}
-
-function phaseOrder(phase: DeepMapPhaseV2): number {
-  return ['planning', 'exploring', 'claiming', 'verifying', 'publishing'].indexOf(phase) + 1;
-}
-
-function parseProgress(value: unknown): DeepMapProgressV1 {
-  const object = record(value, ['completed', 'total']);
-  const completed = decimal(object.completed);
-  const total = decimal(object.total);
-  if (total === BigInt(0) || completed > total) {
-    throw new Error('Invalid Deep Map progress');
-  }
-  return { completed: object.completed as string, total: object.total as string };
-}
-
-function parseBudget(value: unknown): DeepMapBudgetV1 {
-  const object = record(value, ['timeLimitMillis', 'tokenLimit', 'toolCallLimit']);
+function parseEntryDetail(value: unknown): DeepMapEntryDetailResponseV1 {
+  const object = record(value, [
+    'durationMillis',
+    'entry',
+    'indexReference',
+    'modelId',
+    'nextAction',
+    'planStopReason',
+    'profileId',
+    'profileVersion',
+    'protocolVersion',
+    'providerId',
+    'publicationResult',
+    'run',
+    'snapshotReference',
+    'step',
+    'timeBudgetMillis',
+    'tokenBudget',
+    'toolCallBudget',
+  ]);
+  version(object.protocolVersion);
+  decimal(object.durationMillis);
+  decimal(object.timeBudgetMillis);
   if (
-    !integer(object.tokenLimit, 1, 1_000_000) ||
-    !integer(object.timeLimitMillis, 1, 86_400_000) ||
-    !integer(object.toolCallLimit, 1, 4_096)
+    typeof object.providerId !== 'string' ||
+    !PROVIDER_ID.test(object.providerId) ||
+    typeof object.modelId !== 'string' ||
+    !MODEL_ID.test(object.modelId) ||
+    typeof object.profileId !== 'string' ||
+    !PROFILE_ID.test(object.profileId) ||
+    !integer(object.profileVersion, 1, 65_535) ||
+    !integer(object.tokenBudget, 1, 1_000_000) ||
+    !integer(object.toolCallBudget, 1, 4_096) ||
+    typeof object.indexReference !== 'string' ||
+    !/^[0-9a-f]{12}$/.test(object.indexReference) ||
+    typeof object.snapshotReference !== 'string' ||
+    !/^[0-9a-f]{12}$/.test(object.snapshotReference) ||
+    (object.nextAction !== null &&
+      (typeof object.nextAction !== 'string' || object.nextAction.length > 512))
   ) {
-    throw new Error('Invalid Deep Map budget');
+    throw new Error('Invalid Deep Map entry detail');
   }
-  return object as unknown as DeepMapBudgetV1;
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    run: parseRun(object.run),
+    entry: parseEntry(object.entry),
+    durationMillis: object.durationMillis as string,
+    providerId: object.providerId,
+    modelId: object.modelId,
+    profileId: object.profileId,
+    profileVersion: object.profileVersion,
+    tokenBudget: object.tokenBudget,
+    timeBudgetMillis: object.timeBudgetMillis as string,
+    toolCallBudget: object.toolCallBudget,
+    indexReference: object.indexReference,
+    snapshotReference: object.snapshotReference,
+    nextAction: object.nextAction as string | null,
+    planStopReason: nullableOneOf(object.planStopReason, PLAN_STOP_REASONS),
+    publicationResult: nullableOneOf(object.publicationResult, PUBLICATION_RESULTS),
+    step: object.step === null ? null : parseStepDetail(object.step),
+  };
 }
 
-function parseControlResponse(value: unknown): DeepMapControlResponseV1 {
-  const object = record(value, ['accepted', 'protocolVersion']);
-  if (object.protocolVersion !== CURRENT_PROTOCOL_VERSION || object.accepted !== true) {
-    throw new Error('Invalid Deep Map control response');
+function parseStepDetail(value: unknown): DeepMapStepDetailV1 {
+  const object = record(value, [
+    'confirmed',
+    'coverageFieldCount',
+    'evidenceRequirement',
+    'informationGainBasisPoints',
+    'reservedTimeMillis',
+    'reservedTokens',
+    'reservedToolCalls',
+    'seedReason',
+    'targetKind',
+    'verificationMethod',
+  ]);
+  decimal(object.reservedTimeMillis);
+  if (
+    !integer(object.reservedTokens, 0, 1_000_000) ||
+    !integer(object.reservedToolCalls, 0, 4_096) ||
+    !integer(object.informationGainBasisPoints, 0, 10_000) ||
+    !integer(object.coverageFieldCount, 1, 65_535) ||
+    object.evidenceRequirement !== 'fieldEvidence' ||
+    object.verificationMethod !== 'publishedIndexEvidence' ||
+    typeof object.confirmed !== 'boolean'
+  ) {
+    throw new Error('Invalid Deep Map step detail');
   }
-  return { accepted: true, protocolVersion: CURRENT_PROTOCOL_VERSION };
+  return {
+    targetKind: requiredOneOf(object.targetKind, TARGET_KINDS, 'target kind'),
+    seedReason: requiredOneOf(object.seedReason, SEED_REASONS, 'seed reason'),
+    reservedTokens: object.reservedTokens,
+    reservedTimeMillis: object.reservedTimeMillis as string,
+    reservedToolCalls: object.reservedToolCalls,
+    informationGainBasisPoints: object.informationGainBasisPoints,
+    coverageFieldCount: object.coverageFieldCount,
+    evidenceRequirement: 'fieldEvidence',
+    verificationMethod: 'publishedIndexEvidence',
+    confirmed: object.confirmed,
+  };
 }
 
-function budgetContains(outer: DeepMapBudgetV1, inner: DeepMapBudgetV1): boolean {
-  return (
-    inner.tokenLimit <= outer.tokenLimit &&
-    inner.timeLimitMillis <= outer.timeLimitMillis &&
-    inner.toolCallLimit <= outer.toolCallLimit
-  );
+const MODES = ['fast', 'standard', 'thorough'] as const;
+const PHASES = ['planning', 'exploring', 'claiming', 'verifying', 'publishing'] as const;
+const TARGET_KINDS = ['project', 'module', 'manifest', 'symbol'] as const;
+const ACTIONS = [
+  'buildPlan',
+  'inspect',
+  'search',
+  'propose',
+  'generateClaims',
+  'verifyEvidence',
+  'publishCards',
+] as const;
+const FAILURES = [
+  'noPublishedIndex',
+  'staleIndex',
+  'planning',
+  'modelUnavailable',
+  'modelRejected',
+  'modelTimeout',
+  'invalidModelResponse',
+  'read',
+  'verification',
+  'publicationRejected',
+  'publicationStorage',
+  'publicationTimeout',
+  'publicationProgress',
+  'invalidCheckpoint',
+  'progressUnavailable',
+  'interrupted',
+] as const;
+const RUN_STATES = [
+  'queued',
+  'running',
+  'pausing',
+  'paused',
+  'cancelling',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'interrupted',
+] as const;
+const EVENT_RESULTS = [
+  'pending',
+  'confirmed',
+  'alreadyCurrent',
+  'published',
+  'paused',
+  'resumed',
+  'cancelled',
+  'failed',
+  'interrupted',
+] as const;
+const SEED_REASONS = [
+  'manifest',
+  'entrypoint',
+  'centralSymbol',
+  'testRoot',
+  'graphCommunity',
+  'uncoveredModule',
+] as const;
+const PLAN_STOP_REASONS = [
+  'coveragePlanned',
+  'budgetExhausted',
+  'belowGainThreshold',
+  'noEligibleSeed',
+] as const;
+const PUBLICATION_RESULTS = ['published', 'alreadyCurrent'] as const;
+
+function failure(value: unknown): DeepMapFailureV3 {
+  return requiredOneOf(value, FAILURES, 'failure');
+}
+
+function nullableSelection(value: unknown, pattern: RegExp, name: string): string | null {
+  return value === null ? null : selection(value, pattern, name);
+}
+
+function selection(value: unknown, pattern: RegExp, name: string): string {
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    throw new Error(`Invalid Deep Map ${name} selection`);
+  }
+  return value;
 }
 
 function decimal(value: unknown): bigint {
@@ -526,10 +704,29 @@ function decimal(value: unknown): bigint {
     throw new Error('Invalid lossless Deep Map count');
   }
   const parsed = BigInt(value);
-  if (parsed > U64_MAX) {
-    throw new Error('Deep Map count exceeds u64');
-  }
+  if (parsed > U64_MAX) throw new Error('Deep Map count exceeds u64');
   return parsed;
+}
+
+function requiredOneOf<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  name: string,
+): T[number] {
+  if (!oneOf(value, allowed)) throw new Error(`Invalid Deep Map ${name}`);
+  return value;
+}
+
+function nullableOneOf<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+): T[number] | null {
+  if (value === null) return null;
+  return requiredOneOf(value, allowed, 'enum value');
+}
+
+function oneOf<const T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {
+  return typeof value === 'string' && allowed.includes(value as T[number]);
 }
 
 function integer(value: unknown, minimum: number, maximum: number): value is number {
@@ -538,14 +735,16 @@ function integer(value: unknown, minimum: number, maximum: number): value is num
   );
 }
 
+function version(value: unknown): void {
+  if (value !== CURRENT_PROTOCOL_VERSION) throw new Error('Unsupported Deep Map protocol version');
+}
+
 function record(value: unknown, keys?: string[]): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Invalid Deep Map response object');
   }
   const object = value as Record<string, unknown>;
-  if (keys !== undefined) {
-    exactKeys(object, keys);
-  }
+  if (keys !== undefined) exactKeys(object, keys);
   return object;
 }
 

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import MapWorkspace from './MapWorkspace.svelte';
-import type { DeepMapStatusResponseV1 } from './deep-map';
+import type { DeepMapStatusResponseV3 } from './deep-map';
 import type {
   ProjectMapAtlasNodeV1,
   ProjectMapAtlasSceneResponseV1,
@@ -13,6 +13,8 @@ import type {
 import type { ProjectMapSourcePreviewResponseV1 } from './project-map-source-preview';
 
 const id = (digit: string): string => digit.repeat(64);
+const runSelection = 'a'.repeat(96);
+const entrySelection = 'b'.repeat(48);
 const moduleSelection: ProjectMapEntitySelectionV1 = { kind: 'module', moduleId: id('a') };
 const fileSelection: ProjectMapEntitySelectionV1 = {
   evidenceId: id('f'),
@@ -102,42 +104,23 @@ const sourcePreview: ProjectMapSourcePreviewResponseV1 = {
   },
 };
 
-const deepMapStatus: DeepMapStatusResponseV1 = {
+const deepMapStatus: DeepMapStatusResponseV3 = {
   protocolVersion: 1,
   result: {
-    activity: {
-      budget: null,
-      confirmedSteps: '0',
-      currentModuleId: null,
-      events: [],
-      failure: null,
-      phase: null,
-      progress: null,
-      publicationSummary: null,
-      safeAction: null,
-      state: 'idle',
-      stepPosition: null,
-      targetKind: null,
-      totalSteps: '0',
-    },
-    configuration: {
-      defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-      maximumBudget: { tokenLimit: 1_000_000, timeLimitMillis: 86_400_000, toolCallLimit: 4_096 },
-      minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
-      model: {
-        contextTokens: 32_000,
-        modelId: 'mapper',
-        outputTokens: 4_096,
-        profileId: id('7'),
-        profileVersion: 1,
-        providerId: 'local',
-      },
+    lifecycle: { state: 'ready' },
+    model: {
+      contextTokens: 32_000,
+      modelId: 'mapper',
+      outputTokens: 4_096,
+      profileId: id('7'),
+      profileVersion: 1,
+      providerId: 'local',
     },
     status: 'available',
   },
 };
 
-function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV1 = deepMapStatus) {
+function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV3 = deepMapStatus) {
   const atlasSceneLoader = vi.fn(async (selection: ProjectMapEntitySelectionV1 | null) => ({
     protocolVersion: 1 as const,
     result: { scene: scene(selection), status: 'available' as const },
@@ -203,12 +186,73 @@ function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV1 = deepMa
       status: 'available' as const,
     },
   }));
-  const starter = vi.fn(async () => ({ accepted: true as const, protocolVersion: 1 as const }));
+  const starter = vi.fn(async () => ({ outcome: 'queued' as const, protocolVersion: 1 as const }));
+  const available =
+    deepMapStatusResponse.result.status === 'available' ? deepMapStatusResponse.result : null;
+  const failure = available?.lifecycle.state === 'failed' ? available.lifecycle.failure : null;
+  const run = {
+    confirmedSteps: '0',
+    detailsIncomplete: false,
+    failure,
+    mode: 'standard' as const,
+    selection: runSelection,
+    startedAtUnixMillis: '1000',
+    state: failure === null ? ('succeeded' as const) : ('failed' as const),
+    totalSteps: '0',
+    updatedAtUnixMillis: '1200',
+  };
+  const entry = {
+    action: null,
+    confirmed: false,
+    failure,
+    occurredAtUnixMillis: '1200',
+    phase: null,
+    result: failure === null ? ('published' as const) : ('failed' as const),
+    selection: entrySelection,
+    sequence: '2',
+    state: run.state,
+    stepPosition: null,
+    targetKind: null,
+    totalSteps: null,
+  };
+  const deepMapRunsLoader = vi.fn(async () => ({
+    nextCursor: null,
+    protocolVersion: 1 as const,
+    runs: [run],
+  }));
+  const deepMapEntriesLoader = vi.fn(async () => ({
+    entries: [entry],
+    nextCursor: null,
+    protocolVersion: 1 as const,
+  }));
+  const deepMapDetailLoader = vi.fn(async () => ({
+    durationMillis: '200',
+    entry,
+    indexReference: '123456abcdef',
+    modelId: available?.model.modelId ?? 'mapper',
+    nextAction:
+      failure === null ? null : 'Verifiziere das Mapping-Modell oder wähle ein anderes Modell.',
+    planStopReason: null,
+    profileId: available?.model.profileId ?? id('7'),
+    profileVersion: available?.model.profileVersion ?? 1,
+    protocolVersion: 1 as const,
+    providerId: available?.model.providerId ?? 'local',
+    publicationResult: null,
+    run,
+    snapshotReference: 'abcdef123456',
+    step: null,
+    timeBudgetMillis: '120000',
+    tokenBudget: 32000,
+    toolCallBudget: 64,
+  }));
   const props = {
     atlasSceneLoader,
     contextLoader,
     deepMapStarter: starter,
     deepMapStatusLoader: vi.fn(async () => deepMapStatusResponse),
+    deepMapRunsLoader,
+    deepMapEntriesLoader,
+    deepMapDetailLoader,
     inventoryLoader,
     publicationKey: id('2'),
     projectKey: id('9'),
@@ -350,15 +394,33 @@ describe('U12 progressive Code Atlas workspace', () => {
     expect(props.searchLoader).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
     await waitFor(() => expect(props.searchLoader).toHaveBeenCalledWith({ query: 'runner' }));
-    await fireEvent.click(screen.getByRole('button', { name: /Deep Map/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Deep Map starten' }));
-    await waitFor(() =>
-      expect(props.deepMapStarter).toHaveBeenCalledWith({
-        tokenLimit: 32_000,
-        timeLimitMillis: 120_000,
-        toolCallLimit: 64,
-      }),
-    );
+    const modes = screen.getByRole('combobox', { name: 'Deep-Map-Modus' });
+    expect(Array.from((modes as HTMLSelectElement).options).map((option) => option.text)).toEqual([
+      'Schnell',
+      'Standard',
+      'Gründlich',
+    ]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(props.deepMapStarter).toHaveBeenCalledWith('standard'));
+  });
+
+  it('keeps one accessible Inspector and switches between code and Deep Map', async () => {
+    renderWorkspace();
+    expect(await screen.findByRole('button', { name: /a3-application, Package/ })).toBeTruthy();
+    expect(screen.queryByRole('complementary', { name: 'Code Inspector' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Deep-Map-Details' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: /a3-application, Package/ }));
+    expect(await screen.findByRole('complementary', { name: 'Code Inspector' })).toBeTruthy();
+    expect(screen.queryByRole('complementary', { name: 'Deep-Map-Details' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(await screen.findByRole('complementary', { name: 'Deep-Map-Details' })).toBeTruthy();
+    expect(screen.queryByRole('complementary', { name: 'Code Inspector' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.queryByRole('complementary', { name: 'Deep-Map-Details' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Code Inspector' })).toBeNull();
   });
 
   it('opens a safe detailed OpenAI failure when the failed Deep Map status is clicked', async () => {
@@ -366,37 +428,34 @@ describe('U12 progressive Code Atlas workspace', () => {
       throw new Error('Deep Map test fixture must be available');
     }
     const availableStatus = deepMapStatus.result;
-    const failedStatus: DeepMapStatusResponseV1 = {
+    const failedStatus: DeepMapStatusResponseV3 = {
       ...deepMapStatus,
       result: {
         ...availableStatus,
-        activity: {
-          ...availableStatus.activity,
-          budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
+        lifecycle: {
+          detailsIncomplete: false,
           failure: 'modelRejected',
+          progress: { action: null, confirmedSteps: '0', phase: null, totalSteps: '0' },
           state: 'failed',
         },
-        configuration: {
-          ...availableStatus.configuration,
-          model: {
-            ...availableStatus.configuration.model,
-            modelId: 'gpt-5.4',
-            providerId: 'openai',
-          },
+        model: {
+          ...availableStatus.model,
+          modelId: 'gpt-5.4',
+          providerId: 'openai',
         },
       },
     };
     renderWorkspace(failedStatus);
 
-    const summary = await screen.findByRole('button', { name: /Deep Map.*Fehlgeschlagen/ });
-    expect(screen.queryByText('OpenAI hat die strukturierte Anfrage abgelehnt')).toBeNull();
+    const summary = await screen.findByRole('button', { name: /Fehlgeschlagen/ });
+    expect(screen.queryByText('Modell hat die Anfrage abgelehnt')).toBeNull();
     await fireEvent.click(summary);
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('OpenAI hat die strukturierte Anfrage abgelehnt');
-    expect(alert.textContent).toContain('gpt-5.4');
-    expect(alert.textContent).toContain('Mapping-Capability erneut');
+    expect(alert.textContent).toContain('Modell hat die Anfrage abgelehnt');
+    expect(alert.textContent).toContain('Mapping-Modell');
     expect(alert.textContent).toContain('modelRejected');
     expect(alert.textContent).not.toContain('provider response');
+    expect(screen.getByText(/openai · gpt-5.4/)).toBeTruthy();
   });
 });

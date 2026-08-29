@@ -2525,6 +2525,119 @@ const KNOWLEDGE_AGENT_SESSION_MIGRATION: Migration = Migration {
       END;",
 };
 
+const KNOWLEDGE_DEEP_MAP_JOURNAL_MIGRATION: Migration = Migration {
+    version: 25,
+    name: "deep_map_run_journal",
+    sql: "CREATE TABLE deep_map_runs (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      mode TEXT NOT NULL CHECK (mode IN ('fast', 'standard', 'thorough')),\n\
+      token_budget INTEGER NOT NULL CHECK (token_budget IN (8000, 32000, 128000)),\n\
+      time_budget_millis INTEGER NOT NULL CHECK (time_budget_millis IN (60000, 120000, 600000)),\n\
+      tool_budget INTEGER NOT NULL CHECK (tool_budget IN (16, 64, 256)),\n\
+      provider_id TEXT NOT NULL CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),\n\
+      model_id TEXT NOT NULL CHECK (length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512),\n\
+      profile_id BLOB NOT NULL CHECK (length(profile_id) = 32),\n\
+      profile_version INTEGER NOT NULL CHECK (profile_version > 0),\n\
+      context_tokens INTEGER NOT NULL CHECK (context_tokens > 0),\n\
+      output_tokens INTEGER NOT NULL CHECK (output_tokens > 0),\n\
+      state TEXT NOT NULL CHECK (state IN\n\
+        ('queued', 'running', 'pausing', 'paused', 'cancelling', 'succeeded', 'failed',\n\
+         'cancelled', 'interrupted')),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      updated_at_unix_millis INTEGER NOT NULL\n\
+        CHECK (updated_at_unix_millis >= created_at_unix_millis),\n\
+      confirmed_steps INTEGER NOT NULL CHECK (confirmed_steps >= 0),\n\
+      total_steps INTEGER NOT NULL CHECK (total_steps >= confirmed_steps),\n\
+      latest_event_sequence INTEGER NOT NULL CHECK (latest_event_sequence > 0),\n\
+      diagnostic_code TEXT CHECK (diagnostic_code IS NULL OR diagnostic_code IN\n\
+        ('no-published-index', 'stale-index', 'planning', 'model-unavailable',\n\
+         'model-rejected', 'model-timeout', 'invalid-model-response', 'read', 'verification',\n\
+         'publication-rejected', 'publication-storage', 'publication-timeout',\n\
+         'publication-progress', 'invalid-checkpoint', 'progress-unavailable', 'interrupted')),\n\
+      details_incomplete INTEGER NOT NULL CHECK (details_incomplete IN (0, 1)),\n\
+      plan_stop_reason TEXT CHECK (plan_stop_reason IS NULL OR plan_stop_reason IN\n\
+        ('coverage-planned', 'budget-exhausted', 'below-gain-threshold', 'no-eligible-seed')),\n\
+      publication_result TEXT CHECK (publication_result IS NULL OR publication_result IN\n\
+        ('published', 'already-current')),\n\
+      CHECK ((state = 'failed' AND diagnostic_code IS NOT NULL) OR\n\
+        (state <> 'failed' AND diagnostic_code IS NULL)),\n\
+      PRIMARY KEY (worktree_id, run_id),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX deep_map_runs_recent_idx ON deep_map_runs\n\
+        (worktree_id, updated_at_unix_millis DESC, run_id DESC);\n\
+      CREATE INDEX deep_map_runs_anchor_idx ON deep_map_runs\n\
+        (worktree_id, index_run_id, snapshot_id, updated_at_unix_millis DESC);\n\
+      CREATE TABLE deep_map_steps (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      step_position INTEGER NOT NULL CHECK (step_position > 0),\n\
+      module_id BLOB NOT NULL CHECK (length(module_id) = 32),\n\
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('module', 'manifest', 'symbol')),\n\
+      seed_reason TEXT NOT NULL CHECK (seed_reason IN\n\
+        ('manifest', 'entrypoint', 'central-symbol', 'test-root', 'graph-community',\n\
+         'uncovered-module')),\n\
+      reserved_tokens INTEGER NOT NULL CHECK (reserved_tokens >= 0),\n\
+      reserved_time_millis INTEGER NOT NULL CHECK (reserved_time_millis >= 0),\n\
+      reserved_tool_calls INTEGER NOT NULL CHECK (reserved_tool_calls >= 0),\n\
+      information_gain_basis_points INTEGER NOT NULL\n\
+        CHECK (information_gain_basis_points BETWEEN 0 AND 10000),\n\
+      coverage_field_count INTEGER NOT NULL CHECK (coverage_field_count > 0),\n\
+      evidence_requirement TEXT NOT NULL CHECK (evidence_requirement = 'field-evidence'),\n\
+      verification_method TEXT NOT NULL CHECK (verification_method = 'published-index-evidence'),\n\
+      confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1)),\n\
+      PRIMARY KEY (worktree_id, run_id, step_position),\n\
+      FOREIGN KEY (worktree_id, run_id) REFERENCES deep_map_runs(worktree_id, run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE deep_map_events (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      sequence INTEGER NOT NULL CHECK (sequence > 0),\n\
+      occurred_at_unix_millis INTEGER NOT NULL CHECK (occurred_at_unix_millis >= 0),\n\
+      state TEXT NOT NULL CHECK (state IN\n\
+        ('queued', 'running', 'pausing', 'paused', 'cancelling', 'succeeded', 'failed',\n\
+         'cancelled', 'interrupted')),\n\
+      phase TEXT CHECK (phase IS NULL OR phase IN\n\
+        ('planning', 'exploring', 'claiming', 'verifying', 'publishing')),\n\
+      target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN\n\
+        ('project', 'module', 'manifest', 'symbol')),\n\
+      safe_action TEXT CHECK (safe_action IS NULL OR safe_action IN\n\
+        ('build-plan', 'inspect', 'search', 'propose', 'generate-claims',\n\
+         'verify-evidence', 'publish-cards')),\n\
+      module_id BLOB CHECK (module_id IS NULL OR length(module_id) = 32),\n\
+      step_position INTEGER CHECK (step_position IS NULL OR step_position > 0),\n\
+      total_steps INTEGER CHECK (total_steps IS NULL OR total_steps > 0),\n\
+      confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1)),\n\
+      result TEXT NOT NULL CHECK (result IN\n\
+        ('pending', 'confirmed', 'already-current', 'published', 'paused', 'resumed',\n\
+         'cancelled', 'failed', 'interrupted')),\n\
+      diagnostic_code TEXT CHECK (diagnostic_code IS NULL OR diagnostic_code IN\n\
+        ('no-published-index', 'stale-index', 'planning', 'model-unavailable',\n\
+         'model-rejected', 'model-timeout', 'invalid-model-response', 'read', 'verification',\n\
+         'publication-rejected', 'publication-storage', 'publication-timeout',\n\
+         'publication-progress', 'invalid-checkpoint', 'progress-unavailable', 'interrupted')),\n\
+      CHECK ((step_position IS NULL AND total_steps IS NULL) OR\n\
+        (step_position IS NOT NULL AND total_steps IS NOT NULL\n\
+         AND step_position <= total_steps)),\n\
+      CHECK ((state = 'failed' AND result = 'failed' AND diagnostic_code IS NOT NULL) OR\n\
+        (state <> 'failed' AND result <> 'failed' AND diagnostic_code IS NULL)),\n\
+      PRIMARY KEY (worktree_id, run_id, sequence),\n\
+      FOREIGN KEY (worktree_id, run_id) REFERENCES deep_map_runs(worktree_id, run_id)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER deep_map_events_update_guard BEFORE UPDATE ON deep_map_events BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map events are immutable');\n\
+      END;\n\
+      CREATE TRIGGER deep_map_events_delete_guard BEFORE DELETE ON deep_map_events BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map events are append-only');\n\
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2550,6 +2663,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_MUTATION_RECOVERY_MIGRATION,
     KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION,
     KNOWLEDGE_AGENT_SESSION_MIGRATION,
+    KNOWLEDGE_DEEP_MAP_JOURNAL_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2582,7 +2696,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(24);
+    pub const CURRENT: Self = Self::new(25);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3000,11 +3114,12 @@ mod tests {
                      'verification_test_cases', 'verification_diagnostic_reports',\n\
                      'verification_diff_evidence', 'verification_diff_paths',\n\
                      'verification_user_confirmations', 'verification_evidence_dependencies',\n\
-                     'agent_session_revisions', 'agent_session_entries'\n\
+                     'agent_session_revisions', 'agent_session_entries',\n\
+                     'deep_map_runs', 'deep_map_steps', 'deep_map_events'\n\
                      )",
                 )
                 .await?,
-                66
+                69
             );
             assert_eq!(
                 query_i64(
@@ -3189,6 +3304,7 @@ mod tests {
         (knowledge_upgrades_from_v21, 21),
         (knowledge_upgrades_from_v22, 22),
         (knowledge_upgrades_from_v23, 23),
+        (knowledge_upgrades_from_v24, 24),
     );
 
     #[test]
@@ -4759,6 +4875,59 @@ mod tests {
                 query_i64(
                     &connection,
                     "SELECT COUNT(*) FROM pragma_table_info('agent_session_entries')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v25_upgrade_preserves_v24_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [73; 32];
+            let worktree_id = [74; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..24],
+                24,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE deep_map_steps (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 25, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 24);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                24
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'deep_map_runs'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('deep_map_steps')
                      WHERE name = 'conflict'",
                 )
                 .await?,

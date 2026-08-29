@@ -162,7 +162,7 @@ Abhängigkeiten: Fast Index, Deep Map
 - [x] Fast-Index-Fortschritt nach Phasen
 - [x] Dateien, Symbole, Diagnostics und Coverage
 - [x] Deep Map bewusst starten, pausieren, fortsetzen und abbrechen
-- [x] Token-, Zeit- und Modellbudget vor Start
+- [x] feste Schnell-/Standard-/Gründlich-Budgets vor Start
 - [x] stale und NeedsReview sichtbar
 - [x] Indexfehler pro Datei statt globalem Blank State
 
@@ -177,9 +177,10 @@ dem Core-eigenen in-memory Read-Model. Die getrennte begrenzte Übersicht hält 
 atomar veröffentlichten Snapshot während eines neuen Laufs lesbar und zeigt Dateien, Symbole,
 bytegewichtete Coverage sowie sichere file-lokale Diagnostics statt eines globalen Blank States.
 
-Deep Map besitzt nun einen expliziten, ebenfalls pfadlosen Produkt-Lifecycle. Vor dem Start zeigt
-die UI ausschließlich ein durch Capability Probe verifiziertes Mapping-Profil samt Context- und
-Outputlimit sowie Token-, Zeit- und Read-only-Toolbudget. Ohne vollständig komponierten Executor
+Deep Map besitzt nun einen expliziten, ebenfalls pfadlosen Produkt-Lifecycle. Die dauerhafte,
+einzeilige Leiste bietet ausschließlich Schnell, Standard und Gründlich mit Core-eigenen festen
+Token-, Zeit- und Read-only-Toolbudgets. Modell- und Laufdetails liegen im gemeinsamen rechten
+Inspector. Ohne vollständig komponierten Executor
 bleibt die Funktion sichtbar `unavailable` und startet keine Modell- oder GPU-Arbeit. Start,
 Pause, Resume und Cancel laufen über den besessenen Scheduler; `Paused` wird erst nach terminaler
 kooperativer Cancellation und einem plan-, snapshot- und budgetgebundenen Checkpoint sichtbar.
@@ -920,7 +921,7 @@ Abhängigkeiten: U3, U4, U9, U10, ADR-0030
 - [x] gemeinsame Code-Suche und Task-Lens-Fokus
 - [x] kontextabhängiger Inspector mit Entry Points, Tests, Claims und Evidence
 - [x] evidence-gebundene begrenzte Source-Vorschau
-- [x] Deep-Map-Presets und strukturierter content-freier Live-Feed
+- [x] minimalistische Deep-Map-Leiste und dauerhaftes content-freies Laufjournal
 - [x] responsive und vollständig tastaturbedienbare Map bei begrenztem DOM
 
 Akzeptanz:
@@ -928,11 +929,12 @@ Akzeptanz:
 - Nutzer erkennt beim Öffnen Module, Abhängigkeiten, Mappingstatus und Begrenzungen ohne eine
   technische Unterseite auswählen zu müssen;
 - Suche, Task Lens, Moduldetails, Runtime-Flows und Evidence fokussieren dieselbe Kartenfläche;
-- Deep Map zeigt Phase, aktuelles Modul, sichere Aktionsart und bestätigten Fortschritt, startet
-  aber weiterhin nur explizit und veröffentlicht erst nach Verifikation;
+- Deep Map zeigt Schritt, sichere Aktion und bestätigten Fortschritt kompakt, startet aber
+  weiterhin nur explizit und veröffentlicht erst nach Verifikation; ein Current-Index verursacht
+  keine erneuten Modellkosten;
 - Source-Vorschau akzeptiert keine freien Pfade und liefert ausschließlich aktuellen,
   evidence-gebundenen Plain Text innerhalb der festen ADR-0030-Grenzen;
-- Übersicht, Fokus und Live-Feed überschreiten weder Core-, IPC-, DOM- noch
+- Übersicht, Fokus und paginiertes Laufjournal überschreiten weder Core-, IPC-, DOM- noch
   100-Millisekunden-Interaktionsgrenzen.
 
 Nicht-Ziele sind ein Vollgraph, Force-Simulation, Code-Stadt, rohe Modelltranskripte,

@@ -1,7 +1,7 @@
 # Daten und Persistenz
 
 Status: verbindliche Baseline  
-Stand: 2026-08-06
+Stand: 2026-08-29
 
 ## Entscheidung
 
@@ -176,6 +176,17 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   werden bei Replacement und Rebuild mit entfernt und bei Reads erneut gegen Dateirevision,
   Sequenz und Coverage validiert. Historische Index-Snapshots bis V4 bleiben lesbar und liefern
   explizit keine strukturelle Analyse, statt Erkenntnisse zu erfinden.
+- Knowledge-Schema V24 persistiert die versionierten Agent-Session-Projektionen und ihre begrenzten
+  Einträge. Knowledge-Schema V25 ergänzt davon getrennt `deep_map_runs`, die materialisierten
+  `deep_map_steps` und das append-only `deep_map_events`-Journal. Runstart, Planmaterialisierung und
+  jeder Eventappend laufen projektgebunden in Transaktionen; Eventsequenz und terminale Zustände
+  verhindern Replay oder spätere Umschreibung. Nichtterminale Läufe werden beim nächsten
+  Projektstart als `interrupted` reconciled. Journalfehler steuern weder Modellarbeit noch atomare
+  Card-Publikation; die Runprojektion markiert dann ausschließlich `details_incomplete`.
+  Reads bleiben auf 20 Läufe und 50 chronologische Einträge pro Seite begrenzt. Gespeichert werden
+  nur geschlossene Phasen, Aktionen, Diagnosen, feste Budgetreservierungen und sichere
+  Provider-/Modell-/Profilreferenzen — keine Prompts, Modellantworten, Chain-of-Thought,
+  Providerpayloads, Source-Inhalte, Credentials oder rohe Fehlertexte.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich

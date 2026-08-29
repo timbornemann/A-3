@@ -38,9 +38,10 @@
     queryDeepMap,
     resumeDeepMap,
     startDeepMap,
-    type DeepMapBudgetV1,
     type DeepMapControlResponseV1,
-    type DeepMapStatusResponseV1,
+    type DeepMapModeV2,
+    type DeepMapStartResponseV2,
+    type DeepMapStatusResponseV3,
   } from './lib/deep-map';
   import { queryHealth, type HealthResponseV1 } from './lib/health';
   import {
@@ -165,8 +166,8 @@
       action: AgentTaskControlActionV1,
     ) => Promise<AgentTaskControlResponseV1>;
     healthLoader?: () => Promise<HealthResponseV1>;
-    deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV1>;
-    deepMapStarter?: (budget: DeepMapBudgetV1) => Promise<DeepMapControlResponseV1>;
+    deepMapStatusLoader?: () => Promise<DeepMapStatusResponseV3>;
+    deepMapStarter?: (mode: DeepMapModeV2) => Promise<DeepMapStartResponseV2>;
     deepMapPauser?: () => Promise<DeepMapControlResponseV1>;
     deepMapResumer?: () => Promise<DeepMapControlResponseV1>;
     deepMapCanceller?: () => Promise<DeepMapControlResponseV1>;
@@ -248,7 +249,7 @@
     | { kind: 'unavailable' }
     | {
         kind: 'available';
-        result: Extract<DeepMapStatusResponseV1['result'], { status: 'available' }>;
+        result: Extract<DeepMapStatusResponseV3['result'], { status: 'available' }>;
       }
     | { kind: 'error' };
   type RebuildView = { kind: 'idle' } | { kind: 'submitting' } | { kind: 'error'; message: string };
@@ -425,7 +426,7 @@
       case 'available':
         return {
           tone: 'ready',
-          value: `Mapping bereit · ${deepMapView.result.configuration.model.modelId}`,
+          value: `Mapping bereit · ${deepMapView.result.model.modelId}`,
         };
       case 'error':
         return { tone: 'failed', value: 'Modellstatus nicht verfügbar' };

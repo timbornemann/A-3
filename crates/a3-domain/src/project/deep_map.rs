@@ -566,6 +566,20 @@ impl ExploreBudget {
         tool_calls: 64,
     };
 
+    /// Fixed bounded budget for the fast Deep-Map product mode.
+    pub const FAST: Self = Self {
+        tokens: 8_000,
+        milliseconds: 60_000,
+        tool_calls: 16,
+    };
+
+    /// Fixed bounded budget for the thorough Deep-Map product mode.
+    pub const THOROUGH: Self = Self {
+        tokens: 128_000,
+        milliseconds: 600_000,
+        tool_calls: 256,
+    };
+
     /// Smallest constructively valid budget in every dimension.
     pub const MINIMUM: Self = Self {
         tokens: 1,

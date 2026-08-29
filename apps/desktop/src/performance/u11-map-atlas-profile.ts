@@ -1,7 +1,7 @@
 import { mount } from 'svelte';
 import '../styles.css';
 import MapWorkspace from '../lib/MapWorkspace.svelte';
-import type { DeepMapStatusResponseV1 } from '../lib/deep-map';
+import type { DeepMapStatusResponseV3 } from '../lib/deep-map';
 import type {
   ProjectMapAtlasNodeV1,
   ProjectMapAtlasRelationV1,
@@ -208,61 +208,60 @@ function contextResponse(node: ProjectMapAtlasNodeV1): ProjectMapEntityContextRe
   };
 }
 
-let deepMapPoll = 0;
 let feedResolvedAt = 0;
-function deepMapStatus(): DeepMapStatusResponseV1 {
-  deepMapPoll += 1;
-  const visibleEvents = deepMapPoll === 1 ? 16 : EVENT_COUNT;
-  if (visibleEvents === EVENT_COUNT) feedResolvedAt = performance.now();
-  const events = Array.from({ length: visibleEvents }, (_, index) => ({
-    confirmed: true,
-    currentModuleId: projectNodes[index % MODULE_COUNT].selection!.moduleId,
-    phase: 'exploring' as const,
-    safeAction: 'inspect' as const,
-    sequence: String(index + 1),
-    stepPosition: String(index + 1),
-    targetKind: 'module' as const,
-    totalSteps: String(EVENT_COUNT),
-  }));
+function deepMapStatus(): DeepMapStatusResponseV3 {
   return {
     protocolVersion: 1,
     result: {
-      activity: {
-        budget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-        confirmedSteps: String(visibleEvents),
-        currentModuleId: projectNodes[visibleEvents - 1].selection!.moduleId,
-        events,
-        failure: null,
-        phase: 'exploring',
-        progress: { completed: String(visibleEvents), total: String(EVENT_COUNT) },
-        publicationSummary: null,
-        safeAction: 'inspect',
+      lifecycle: {
+        detailsIncomplete: false,
+        progress: {
+          action: 'inspect',
+          confirmedSteps: String(EVENT_COUNT),
+          phase: 'exploring',
+          totalSteps: String(EVENT_COUNT),
+        },
         state: 'running',
-        stepPosition: String(visibleEvents),
-        targetKind: 'module',
-        totalSteps: String(EVENT_COUNT),
       },
-      configuration: {
-        defaultBudget: { tokenLimit: 32_000, timeLimitMillis: 120_000, toolCallLimit: 64 },
-        maximumBudget: {
-          tokenLimit: 1_000_000,
-          timeLimitMillis: 86_400_000,
-          toolCallLimit: 4_096,
-        },
-        minimumBudget: { tokenLimit: 1, timeLimitMillis: 1, toolCallLimit: 1 },
-        model: {
-          contextTokens: 32_000,
-          modelId: 'profile-fixture',
-          outputTokens: 4_096,
-          profileId: stableId(50_001),
-          profileVersion: 1,
-          providerId: 'local',
-        },
+      model: {
+        contextTokens: 32_000,
+        modelId: 'profile-fixture',
+        outputTokens: 4_096,
+        profileId: stableId(50_001),
+        profileVersion: 1,
+        providerId: 'local',
       },
       status: 'available',
     },
   };
 }
+
+const deepMapRunSelection = 'a'.repeat(96);
+const deepMapEntries = Array.from({ length: EVENT_COUNT }, (_, index) => ({
+  action: 'inspect' as const,
+  confirmed: true,
+  failure: null,
+  occurredAtUnixMillis: String(1_000 + index),
+  phase: 'exploring' as const,
+  result: 'confirmed' as const,
+  selection: (index + 1).toString(16).padStart(48, '0'),
+  sequence: String(index + 1),
+  state: 'running' as const,
+  stepPosition: String(index + 1),
+  targetKind: 'module' as const,
+  totalSteps: String(EVENT_COUNT),
+}));
+const deepMapRun = {
+  confirmedSteps: String(EVENT_COUNT),
+  detailsIncomplete: false,
+  failure: null,
+  mode: 'standard' as const,
+  selection: deepMapRunSelection,
+  startedAtUnixMillis: '1000',
+  state: 'running' as const,
+  totalSteps: String(EVENT_COUNT),
+  updatedAtUnixMillis: String(1_000 + EVENT_COUNT),
+};
 
 function requiredElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector(selector);
@@ -316,6 +315,35 @@ async function runProfile(): Promise<void> {
         );
         return contextResponse(node ?? projectNodes[0]);
       },
+      deepMapDetailLoader: async (_runSelection, entrySelection) => ({
+        durationMillis: '32',
+        entry:
+          deepMapEntries.find((entry) => entry.selection === entrySelection) ?? deepMapEntries[0],
+        indexReference: '123456abcdef',
+        modelId: 'profile-fixture',
+        nextAction: null,
+        planStopReason: 'coveragePlanned',
+        profileId: stableId(50_001),
+        profileVersion: 1,
+        protocolVersion: 1,
+        providerId: 'local',
+        publicationResult: null,
+        run: deepMapRun,
+        snapshotReference: 'abcdef123456',
+        step: null,
+        timeBudgetMillis: '120000',
+        tokenBudget: 32_000,
+        toolCallBudget: 64,
+      }),
+      deepMapEntriesLoader: async () => {
+        feedResolvedAt = performance.now();
+        return { entries: deepMapEntries, nextCursor: null, protocolVersion: 1 };
+      },
+      deepMapRunsLoader: async () => ({
+        nextCursor: null,
+        protocolVersion: 1,
+        runs: [deepMapRun],
+      }),
       deepMapStatusLoader: async () => deepMapStatus(),
       projectKey: stableId(60_001),
     },
@@ -345,14 +373,14 @@ async function runProfile(): Promise<void> {
     canvas.scrollLeft = 180;
     canvas.scrollTop = 120;
   });
-  requiredElement<HTMLButtonElement>('.deep-map-dock .summary').click();
-  await waitFor('.feed li:nth-child(32)');
+  requiredElement<HTMLButtonElement>('.deep-map-bar .details').click();
+  await waitFor('.timeline li:nth-child(32)');
   await nextFrame();
   const feedCommitMs = performance.now() - feedResolvedAt;
   observer?.disconnect();
 
   const domNodeCount = document.querySelectorAll('*').length;
-  const feedEvents = document.querySelectorAll('.feed li').length;
+  const feedEvents = document.querySelectorAll('.timeline li').length;
   const maxLongTaskMs = Math.max(0, ...longTasks);
   const passes =
     mountMs <= UI_BLOCK_BUDGET_MS &&

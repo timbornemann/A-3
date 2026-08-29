@@ -479,6 +479,15 @@ Publikation auf. Leere Coverage endet für alle drei Sprachen mit `CoveragePlann
 derselben Publikation sind identisch. Der Contract läuft ohne Modell, Embeddings und Netzwerk mit
 `cargo test -p a3-repo-index --test deep_map_fixture_acceptance --locked`.
 
+Vor jeder frischen Planung liest `DeepMapPublicationStateStore` den neuesten veröffentlichten
+Index, Module Cards, Card-FTS und Projektionsmarker konsistent. Eine vollständige, exakt zu diesem
+Index gehörende Publikation beendet den Start als `AlreadyCurrent`, bevor Planner oder Provider
+aufgerufen werden. Erkennt der atomare Publisher denselben Zustand erst im Commit-Rennen, wird
+`AlreadyPublished` nach erneuter konsistenter Prüfung ebenfalls als erfolgreicher Current-Zustand
+behandelt. Ein fremder oder stale Anchor bleibt ein echter Fehler; Rejection, Storage, Timeout und
+Progress besitzen getrennte Diagnosecodes. Ein neuer Fast Index ohne passende Cards setzt den
+Produktstatus wieder auf `Ready`.
+
 ### Exploration
 
 Das LLM darf nur über typisierte Read-only-Werkzeuge explorieren. Jeder nächste Leseschritt benötigt einen erwarteten Informationsgewinn. Vollständiges rekursives Lesen ist verboten.
@@ -863,10 +872,18 @@ Treffer. Replacement-Publish oder Projektwechsel verwirft Szene, Auswahl, Layout
 Reads über die bestehende UI-Generation.
 
 `DeepMapActivityObserver` verbindet Planning, Exploration, Claim-Erzeugung, Verifikation und
-atomaren Publish mit einem flüchtigen 32er-Ringpuffer. Nur bestätigte Explorationsschritte erhöhen
-den deterministischen Fortschritt. Pause/Resume behält Sequenz und Events ohne Replay; der Atlas
-zeigt während des Laufs weiterhin den letzten veröffentlichten Snapshot und übernimmt neue Cards
-erst nach erfolgreichem Publish.
+atomaren Publish. Nur bestätigte Explorationsschritte erhöhen den deterministischen Fortschritt.
+ADR-0034 ersetzt die flüchtige 32er-Retention durch das lokale V25-Laufjournal: alle
+Planner-Schritte werden materialisiert, sichere Pipeline-Ereignisse append-only geführt und Run-
+und Eventzustand transaktional aktualisiert. Pause/Resume behält die monotone Sequenz ohne Replay;
+nichtterminale Läufe werden nach Neustart als `Unterbrochen` sichtbar. Journalfehler sind
+nicht-autoritativ für Mapping und Publish und erscheinen nur als `Details unvollständig`.
+
+Die Map zeigt Deep Map dauerhaft als 52-Pixel-Leiste mit genau den Modi Schnell, Standard und
+Gründlich, einer zustandsabhängigen Hauptaktion, kompaktem Fortschritt und `Details`. Der rechte,
+größenveränderbare Inspector wird mit dem Code-Inspector geteilt und lädt separat höchstens 20
+Läufe sowie 50 chronologische Einträge pro Seite. Er zeigt ausschließlich sichere technische
+Metadaten; Rohprompts, Modellantworten, Source und Providerfehler bleiben außerhalb der WebView.
 
 Die Source-Vorschau aus ADR-0030 löst ausschließlich eine zuvor sichtbare Card-Evidence-Auswahl
 erneut auf. Der sichere Source-Reader liefert acht Kontextzeilen je Seite, höchstens 64 Zeilen und

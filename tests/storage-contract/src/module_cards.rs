@@ -191,7 +191,7 @@ where
             .execute(&project, &batch, &ContractCardControl::default())
             .await,
         Err(PublishVerifiedModuleCardsFailure::Publisher(
-            VerifiedModuleCardPublisherFailure::Rejected
+            VerifiedModuleCardPublisherFailure::AlreadyPublished
         ))
     );
 

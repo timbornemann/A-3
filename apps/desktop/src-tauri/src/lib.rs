@@ -37,10 +37,12 @@ use a3_application::{
     AgentTaskRecovery, AgentTaskRecoveryLoadResult, AgentWorkspaceLayout, CompileWorkspaceTaskLens,
     CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult, ControlAgentApproval,
     ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutionFailure,
-    DeepMapExecutor, DeepMapPhase, DeepMapSafeAction, DeepMapTargetKind, GetAgentActivity,
-    GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail,
-    GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
-    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectMapScene,
+    DeepMapExecutor, DeepMapJournalEvent, DeepMapPhase, DeepMapPublicationState,
+    DeepMapPublicationStateStore, DeepMapRunCursor, DeepMapRunJournalStore, DeepMapRunSummary,
+    DeepMapSafeAction, DeepMapTargetKind, GetAgentActivity, GetAgentActivityFailure,
+    GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence,
+    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
+    GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectMapScene,
     GetProjectMapSourcePreview, GetProjectStorageUsage, GetProjectStorageUsageError,
     GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
     GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore, HealthQuery,
@@ -99,19 +101,19 @@ use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
     AgentControllerState, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
     AgentSessionMode, AgentSessionRevision, AgentSessionState, AgentTurnActionClass,
-    AgentTurnRepairUsage, ApplicationVersion, ApplicationVersionError, ExactSearchExplanation,
-    ExactSearchTarget, ExploreBudget, FileRevision, FusionPriority, GitHead, GoalConstraint,
-    GoalContract, GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge,
-    GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage, IndexRunId,
-    IndexRunStatus, InvalidationReason, LexicalSearchExplanation, LinkResolution,
-    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleClaimPolarity, ModuleClaimPredicate,
-    ModuleId, ModuleKind, ModuleRoot, NonGoal, ParseDiagnosticCode, ParseDiagnosticSeverity,
-    Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
-    ResultSourceExplanation, RetrievalCandidateReason, RunEvent, RunEventCode, RunEventKind,
-    RunEventOutcome, SnapshotId, SourceChannel, SuccessVerification, SymbolId, SymbolKind,
-    SyntaxProvider, SyntaxRelationKind, TaskId, TaskLedgerRevision, TaskLensEntryReason,
-    TaskLensTarget, TaskStepId, TaskStepStatus, TraversalResultLimit, UserDecision,
-    VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
+    AgentTurnRepairUsage, ApplicationVersion, ApplicationVersionError, DeepMapDiagnosticCode,
+    DeepMapEventSequence, DeepMapMode, DeepMapRunId, ExactSearchExplanation, ExactSearchTarget,
+    ExploreBudget, FileRevision, FusionPriority, GitHead, GoalConstraint, GoalContract,
+    GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol,
+    GraphTraversalResult, Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
+    LexicalSearchExplanation, LinkResolution, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
+    ModuleClaimPolarity, ModuleClaimPredicate, ModuleId, ModuleKind, ModuleRoot, NonGoal,
+    ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
+    RepositoryPath, ResolvedModuleCardEvidence, ResultSourceExplanation, RetrievalCandidateReason,
+    RunEvent, RunEventCode, RunEventKind, RunEventOutcome, SnapshotId, SourceChannel,
+    SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
+    TaskLedgerRevision, TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus,
+    TraversalResultLimit, UserDecision, VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
 };
 use a3_protocol::{
     AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
@@ -129,27 +131,30 @@ use a3_protocol::{
     AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
     AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
     AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
-    DeepMapActivityStateV1, DeepMapActivityV2, DeepMapBudgetV1, DeepMapConfigurationV1,
-    DeepMapControlResponseV1, DeepMapEventV2, DeepMapFailureV1, DeepMapModelV1, DeepMapPhaseV2,
-    DeepMapProgressV1, DeepMapPublicationSummaryV2, DeepMapSafeActionV2, DeepMapStatusResponseV2,
-    DeepMapTargetKindV2, ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1,
-    IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1,
-    IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1,
-    ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1,
-    ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
-    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
-    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
-    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
-    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
-    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
-    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
-    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
-    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
-    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
-    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
-    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
-    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    DeepMapActivityStateV1, DeepMapActivityV2, DeepMapBudgetV1, DeepMapCompactProgressV3,
+    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEntryDetailResponseV1,
+    DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2, DeepMapFailureV1, DeepMapFailureV3,
+    DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1, DeepMapPhaseV2, DeepMapProgressV1,
+    DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1, DeepMapRunV1, DeepMapSafeActionV2,
+    DeepMapStartResponseV2, DeepMapStatusResponseV2, DeepMapStatusResponseV3, DeepMapTargetKindV2,
+    ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1,
+    IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1,
+    IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1,
+    IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1,
+    ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
+    ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
+    ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
+    ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    ModuleCardLifecycleV1, ModuleCardValueV1, ModuleDependencyEdgeEvidenceV1,
+    ModuleDependencyEdgeV1, ModuleDependencyEndpointV1, ModuleDependencyGraphResponseV1,
+    ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1,
+    ModuleDependencyProviderV1, ModuleDependencyRelationV1, ModuleDependencyResolutionV1,
+    ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1, ModuleRuntimeFlowEdgeV1,
+    ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowRelationV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1,
+    ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
@@ -275,6 +280,8 @@ pub struct CompositionRoot {
     index_manager: Option<RepositoryIndexManager>,
     deep_map_manager: Option<DeepMapManager>,
     deep_map_runtime: Option<DeepMapRuntime>,
+    deep_map_publication_state: Option<Arc<dyn DeepMapPublicationStateStore>>,
+    deep_map_journal: Option<Arc<dyn DeepMapRunJournalStore>>,
     agent_run_manager: Option<Arc<AgentRunManager>>,
     agent_sessions: Option<AgentSessionManager>,
     ui_preferences: Option<Arc<dyn UiPreferencesStore>>,
@@ -2208,6 +2215,200 @@ impl CompositionRoot {
         )
     }
 
+    /// Returns the compact V3 lifecycle after a Core-owned current-index preflight.
+    pub async fn query_deep_map_status_v3(&self) -> DeepMapStatusResponseV3 {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return DeepMapStatusResponseV3::no_project();
+        };
+        let (Some(manager), Some(publication_store)) = (
+            self.deep_map_manager.as_ref(),
+            self.deep_map_publication_state.as_ref(),
+        ) else {
+            return DeepMapStatusResponseV3::unavailable();
+        };
+        let Some(model) = manager.model() else {
+            return DeepMapStatusResponseV3::unavailable();
+        };
+        let Ok(publication) = publication_store
+            .load_deep_map_publication_state(&active.project)
+            .await
+        else {
+            return DeepMapStatusResponseV3::unavailable();
+        };
+        let activity = manager.activity();
+        let lifecycle = match publication {
+            DeepMapPublicationState::Current { anchor, card_count } => {
+                let details_available = if let Some(journal) = self.deep_map_journal.as_ref() {
+                    journal
+                        .list_runs(&active.project, None)
+                        .await
+                        .ok()
+                        .is_some_and(|page| {
+                            page.runs().iter().any(|run| run.start().anchor() == anchor)
+                        })
+                } else {
+                    false
+                };
+                DeepMapLifecycleV3::Current {
+                    card_count: card_count.to_string(),
+                    details_available,
+                }
+            }
+            DeepMapPublicationState::Ready(_) => map_deep_map_lifecycle_to_v3(&activity),
+            DeepMapPublicationState::NoPublishedIndex => {
+                if activity.state() == DeepMapActivityState::Failed {
+                    map_deep_map_lifecycle_to_v3(&activity)
+                } else {
+                    DeepMapLifecycleV3::Ready
+                }
+            }
+        };
+        DeepMapStatusResponseV3::available(map_deep_map_model_to_v1(&model), lifecycle)
+    }
+
+    /// Starts only one of the three Core-owned modes and returns before model work when current.
+    pub async fn start_deep_map_v2(
+        &self,
+        mode: DeepMapMode,
+    ) -> Result<DeepMapStartResponseV2, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let manager = self
+            .deep_map_manager
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let publication = self
+            .deep_map_publication_state
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?
+            .load_deep_map_publication_state(&active.project)
+            .await
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        match publication {
+            DeepMapPublicationState::Current { .. } => {
+                Ok(DeepMapStartResponseV2::already_current())
+            }
+            DeepMapPublicationState::Ready(anchor) => {
+                manager
+                    .start_current_mapping(mode, anchor)
+                    .map_err(map_deep_map_control_error)?;
+                Ok(DeepMapStartResponseV2::queued())
+            }
+            DeepMapPublicationState::NoPublishedIndex => {
+                Err(CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))
+            }
+        }
+    }
+
+    /// Reads the newest twenty durable Deep-Map runs for the active project.
+    pub async fn query_deep_map_runs(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<DeepMapRunPageResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let cursor = cursor
+            .map(|value| decode_deep_map_run_cursor(active.project.worktree().id(), value))
+            .transpose()
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        if let Some(cursor) = cursor {
+            let sequence = DeepMapEventSequence::new(1)
+                .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+            let valid = journal
+                .load_entry(&active.project, cursor.run_id(), sequence)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|detail| detail.run().updated_at() == cursor.updated_at());
+            if !valid {
+                return Err(CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable));
+            }
+        }
+        let page = journal
+            .list_runs(&active.project, cursor)
+            .await
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        Ok(map_deep_map_run_page_to_v1(
+            active.project.worktree().id(),
+            &page,
+        ))
+    }
+
+    /// Reads one bounded chronological event page after validating its run and cursor.
+    pub async fn query_deep_map_entries(
+        &self,
+        run_selection: &str,
+        cursor: Option<&str>,
+    ) -> Result<DeepMapEntryPageResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let run_id = decode_deep_map_run_selection(active.project.worktree().id(), run_selection)
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let before = cursor
+            .map(|value| {
+                decode_deep_map_entry_selection(active.project.worktree().id(), run_id, value)
+            })
+            .transpose()
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        if let Some(sequence) = before
+            && journal
+                .load_entry(&active.project, run_id, sequence)
+                .await
+                .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?
+                .is_none()
+        {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable));
+        }
+        let page = journal
+            .list_entries(&active.project, run_id, before)
+            .await
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        Ok(map_deep_map_entry_page_to_v1(
+            active.project.worktree().id(),
+            run_id,
+            &page,
+        ))
+    }
+
+    /// Reads exactly one safe event detail for a project-bound Core-issued selection.
+    pub async fn query_deep_map_entry_detail(
+        &self,
+        run_selection: &str,
+        entry_selection: &str,
+    ) -> Result<DeepMapEntryDetailResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let run_id = decode_deep_map_run_selection(active.project.worktree().id(), run_selection)
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let sequence = decode_deep_map_entry_selection(
+            active.project.worktree().id(),
+            run_id,
+            entry_selection,
+        )
+        .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        let detail = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?
+            .load_entry(&active.project, run_id, sequence)
+            .await
+            .map_err(|_| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?
+            .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+        map_deep_map_entry_detail_to_v1(active.project.worktree().id(), &detail)
+    }
+
     /// Starts model work only after the explicit bounded WebView request was validated.
     pub fn start_deep_map(
         &self,
@@ -3052,6 +3253,8 @@ struct OptionalCompositionPorts {
     project_catalog_admin: Option<Arc<dyn ProjectCatalogAdmin>>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
     deep_map_runtime: Option<DeepMapRuntime>,
+    deep_map_publication_state: Option<Arc<dyn DeepMapPublicationStateStore>>,
+    deep_map_journal: Option<Arc<dyn DeepMapRunJournalStore>>,
     agent_run_executor: Option<Arc<dyn AgentRunExecutor>>,
 }
 
@@ -3087,6 +3290,8 @@ struct IndexingCompositionPorts {
     project_catalog_admin: Arc<dyn ProjectCatalogAdmin>,
     deep_map_executor: Option<Arc<dyn DeepMapExecutor>>,
     deep_map_runtime: DeepMapRuntime,
+    deep_map_publication_state: Arc<dyn DeepMapPublicationStateStore>,
+    deep_map_journal: Arc<dyn DeepMapRunJournalStore>,
 }
 
 impl CompositionBase {
@@ -3170,6 +3375,8 @@ impl CompositionBase {
                 project_catalog_admin: Some(ports.project_catalog_admin),
                 deep_map_executor: ports.deep_map_executor,
                 deep_map_runtime: Some(ports.deep_map_runtime),
+                deep_map_publication_state: Some(ports.deep_map_publication_state),
+                deep_map_journal: Some(ports.deep_map_journal),
                 agent_run_executor: None,
             },
         )
@@ -3451,11 +3658,12 @@ impl CompositionBase {
                     .job_scheduler
                     .submitter()
                     .map_err(|_| CompositionRootError::DeepMapManagerUnavailable)?;
-                DeepMapManager::start(
+                DeepMapManager::start_with_journal(
                     submitter,
                     self.job_events.clone(),
                     ports.deep_map_executor,
                     Arc::clone(&job_ids),
+                    ports.deep_map_journal.clone(),
                 )
                 .map_err(|_| CompositionRootError::DeepMapManager)
             }?)
@@ -3582,6 +3790,8 @@ impl CompositionBase {
             index_manager,
             deep_map_manager,
             deep_map_runtime,
+            deep_map_publication_state: ports.deep_map_publication_state,
+            deep_map_journal: ports.deep_map_journal,
             agent_run_manager,
             agent_sessions,
             ui_preferences,
@@ -3642,12 +3852,16 @@ pub fn run() -> Result<(), DesktopRunError> {
             let repository_tree_store: Arc<dyn RepositoryTreeStore> = store.clone();
             let catalog_store: Arc<dyn KnowledgeStore> = store.clone();
             let index_store: Arc<dyn KnowledgeIndexStore> = store.clone();
+            let deep_map_publication_state: Arc<dyn a3_application::DeepMapPublicationStateStore> =
+                store.clone();
+            let deep_map_journal: Arc<dyn a3_application::DeepMapRunJournalStore> = store.clone();
             let module_card_publisher: Arc<dyn a3_application::VerifiedModuleCardPublisher> = store;
             let deep_map_runtime = DeepMapRuntime::new(
                 Arc::clone(&settings_store),
                 Arc::clone(&credential_store),
                 Arc::clone(&index_store),
                 module_card_publisher,
+                Arc::clone(&deep_map_publication_state),
             );
             let deep_map_executor = tauri::async_runtime::block_on(deep_map_runtime.resolve());
             app.manage(base.finish_with_indexing(
@@ -3688,6 +3902,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                     project_catalog_admin,
                     deep_map_executor,
                     deep_map_runtime,
+                    deep_map_publication_state,
+                    deep_map_journal,
                 },
             )?);
             Ok(())
@@ -3709,6 +3925,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::open_project,
             commands::pause_deep_map,
             commands::query_deep_map,
+            commands::query_deep_map_runs,
+            commands::query_deep_map_entries,
+            commands::query_deep_map_entry_detail,
             commands::query_project_catalog,
             commands::query_project_status,
             commands::query_project_settings,
@@ -6348,6 +6567,458 @@ const fn map_deep_map_budget_to_v1(budget: ExploreBudget) -> DeepMapBudgetV1 {
     DeepMapBudgetV1::new(budget.tokens(), budget.milliseconds(), budget.tool_calls())
 }
 
+fn map_deep_map_model_to_v1(model: &a3_application::DeepMapModelDescriptor) -> DeepMapModelV1 {
+    DeepMapModelV1::new(
+        model.profile().id().to_string(),
+        model.profile().version().get(),
+        model.provider_id().to_owned(),
+        model.model_id().to_owned(),
+        model.context_tokens(),
+        model.output_tokens(),
+    )
+}
+
+fn map_deep_map_lifecycle_to_v3(activity: &DeepMapActivity) -> DeepMapLifecycleV3 {
+    if activity.state() == DeepMapActivityState::Idle {
+        return DeepMapLifecycleV3::Ready;
+    }
+    let progress = DeepMapCompactProgressV3::new(
+        activity.completed_steps().to_string(),
+        activity.total_steps().to_string(),
+        activity.phase().map(map_deep_map_phase_to_v2),
+        activity.safe_action().map(map_deep_map_safe_action_to_v2),
+    );
+    let details_incomplete = activity.details_incomplete();
+    match activity.state() {
+        DeepMapActivityState::Idle => DeepMapLifecycleV3::Ready,
+        DeepMapActivityState::Queued => DeepMapLifecycleV3::Queued {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Running => DeepMapLifecycleV3::Running {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Pausing => DeepMapLifecycleV3::Pausing {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Paused => DeepMapLifecycleV3::Paused {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Cancelling => DeepMapLifecycleV3::Cancelling {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Succeeded => DeepMapLifecycleV3::Succeeded {
+            progress,
+            details_incomplete,
+        },
+        DeepMapActivityState::Failed => DeepMapLifecycleV3::Failed {
+            progress,
+            failure: activity
+                .failure()
+                .map(map_deep_map_failure_to_v3)
+                .unwrap_or(DeepMapFailureV3::ProgressUnavailable),
+            details_incomplete,
+        },
+        DeepMapActivityState::Cancelled => DeepMapLifecycleV3::Cancelled {
+            progress,
+            details_incomplete,
+        },
+    }
+}
+
+fn map_deep_map_run_page_to_v1(
+    worktree_id: WorktreeId,
+    page: &a3_application::DeepMapRunPage,
+) -> DeepMapRunPageResponseV1 {
+    DeepMapRunPageResponseV1 {
+        protocol_version: a3_protocol::ProtocolVersion::CURRENT,
+        runs: page
+            .runs()
+            .iter()
+            .map(|run| map_deep_map_run_to_v1(worktree_id, run))
+            .collect(),
+        next_cursor: page
+            .next_cursor()
+            .map(|cursor| encode_deep_map_run_cursor(worktree_id, cursor)),
+    }
+}
+
+fn map_deep_map_entry_page_to_v1(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    page: &a3_application::DeepMapEntryPage,
+) -> DeepMapEntryPageResponseV1 {
+    DeepMapEntryPageResponseV1 {
+        protocol_version: a3_protocol::ProtocolVersion::CURRENT,
+        entries: page
+            .entries()
+            .iter()
+            .copied()
+            .map(|entry| map_deep_map_entry_to_v1(worktree_id, run_id, entry))
+            .collect(),
+        next_cursor: page
+            .next_before_sequence()
+            .map(|sequence| encode_deep_map_entry_selection(worktree_id, run_id, sequence)),
+    }
+}
+
+fn map_deep_map_run_to_v1(worktree_id: WorktreeId, run: &DeepMapRunSummary) -> DeepMapRunV1 {
+    DeepMapRunV1 {
+        selection: encode_deep_map_run_selection(worktree_id, run.start().id()),
+        mode: map_deep_map_mode_to_v2(run.start().mode()),
+        state: deep_map_run_state_label(run.state()).to_owned(),
+        started_at_unix_millis: run.start().created_at().unix_millis().to_string(),
+        updated_at_unix_millis: run.updated_at().unix_millis().to_string(),
+        confirmed_steps: run.confirmed_steps().to_string(),
+        total_steps: run.total_steps().to_string(),
+        failure: run.diagnostic().map(map_deep_map_diagnostic_to_v3),
+        details_incomplete: run.details_incomplete(),
+    }
+}
+
+fn map_deep_map_entry_to_v1(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    entry: DeepMapJournalEvent,
+) -> DeepMapEntryV1 {
+    DeepMapEntryV1 {
+        selection: encode_deep_map_entry_selection(worktree_id, run_id, entry.sequence()),
+        sequence: entry.sequence().get().to_string(),
+        state: deep_map_run_state_label(entry.state()).to_owned(),
+        occurred_at_unix_millis: entry.occurred_at().unix_millis().to_string(),
+        phase: entry.phase().map(map_deep_map_phase_to_v2),
+        action: entry.action().map(map_deep_map_safe_action_to_v2),
+        target_kind: entry.target_kind().map(map_deep_map_target_kind_to_v2),
+        step_position: entry.step_position().map(|value| value.to_string()),
+        total_steps: entry.total_steps().map(|value| value.to_string()),
+        confirmed: entry.confirmed(),
+        result: deep_map_event_result_label(entry.result()).to_owned(),
+        failure: entry.diagnostic().map(map_deep_map_diagnostic_to_v3),
+    }
+}
+
+fn map_deep_map_entry_detail_to_v1(
+    worktree_id: WorktreeId,
+    detail: &a3_application::DeepMapEntryDetail,
+) -> Result<DeepMapEntryDetailResponseV1, CommandErrorV1> {
+    let run = detail.run();
+    let entry = detail.event();
+    let duration = entry
+        .occurred_at()
+        .unix_millis()
+        .checked_sub(run.start().created_at().unix_millis())
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable))?;
+    let model = run.start().model();
+    let budget = run.start().mode().budget();
+    Ok(DeepMapEntryDetailResponseV1 {
+        protocol_version: a3_protocol::ProtocolVersion::CURRENT,
+        run: map_deep_map_run_to_v1(worktree_id, run),
+        entry: map_deep_map_entry_to_v1(worktree_id, run.start().id(), entry),
+        duration_millis: duration.to_string(),
+        provider_id: model.provider_id().to_owned(),
+        model_id: model.model_id().to_owned(),
+        profile_id: model.profile().id().to_string(),
+        profile_version: model.profile().version().get(),
+        token_budget: budget.tokens(),
+        time_budget_millis: budget.milliseconds().to_string(),
+        tool_call_budget: budget.tool_calls(),
+        index_reference: short_reference(run.start().anchor().index_run_id().as_bytes()),
+        snapshot_reference: short_reference(run.start().anchor().snapshot_id().as_bytes()),
+        next_action: entry
+            .diagnostic()
+            .or(run.diagnostic())
+            .map(deep_map_next_action)
+            .map(str::to_owned),
+        plan_stop_reason: run
+            .plan_stop_reason()
+            .map(deep_map_plan_stop_label)
+            .map(str::to_owned),
+        publication_result: run
+            .publication_result()
+            .map(deep_map_publication_result_label)
+            .map(str::to_owned),
+        step: detail.step().map(map_deep_map_step_detail_to_v1),
+    })
+}
+
+fn map_deep_map_step_detail_to_v1(
+    step: a3_application::DeepMapStepDetail,
+) -> a3_protocol::DeepMapStepDetailV1 {
+    let cost = step.reserved_cost();
+    a3_protocol::DeepMapStepDetailV1 {
+        target_kind: map_deep_map_target_kind_to_v2(step.target_kind()),
+        seed_reason: deep_map_seed_reason_label(step.seed_reason()).to_owned(),
+        reserved_tokens: cost.tokens(),
+        reserved_time_millis: cost.milliseconds().to_string(),
+        reserved_tool_calls: cost.tool_calls(),
+        information_gain_basis_points: step.information_gain_basis_points(),
+        coverage_field_count: step.coverage_field_count(),
+        evidence_requirement: "fieldEvidence".to_owned(),
+        verification_method: "publishedIndexEvidence".to_owned(),
+        confirmed: step.confirmed(),
+    }
+}
+
+const fn deep_map_plan_stop_label(value: a3_domain::ExplorePlanStopReason) -> &'static str {
+    match value {
+        a3_domain::ExplorePlanStopReason::CoveragePlanned => "coveragePlanned",
+        a3_domain::ExplorePlanStopReason::BudgetExhausted => "budgetExhausted",
+        a3_domain::ExplorePlanStopReason::BelowInformationGainThreshold => "belowGainThreshold",
+        a3_domain::ExplorePlanStopReason::NoEligibleSeed => "noEligibleSeed",
+    }
+}
+
+const fn deep_map_publication_result_label(
+    value: a3_application::DeepMapPublicationResult,
+) -> &'static str {
+    match value {
+        a3_application::DeepMapPublicationResult::Published => "published",
+        a3_application::DeepMapPublicationResult::AlreadyCurrent => "alreadyCurrent",
+    }
+}
+
+const fn deep_map_seed_reason_label(value: a3_domain::ExploreSeedReason) -> &'static str {
+    match value {
+        a3_domain::ExploreSeedReason::Manifest => "manifest",
+        a3_domain::ExploreSeedReason::Entrypoint => "entrypoint",
+        a3_domain::ExploreSeedReason::CentralSymbol => "centralSymbol",
+        a3_domain::ExploreSeedReason::TestRoot => "testRoot",
+        a3_domain::ExploreSeedReason::GraphCommunity => "graphCommunity",
+        a3_domain::ExploreSeedReason::UncoveredModule => "uncoveredModule",
+    }
+}
+
+const fn map_deep_map_mode_to_v2(mode: DeepMapMode) -> DeepMapModeV2 {
+    match mode {
+        DeepMapMode::Fast => DeepMapModeV2::Fast,
+        DeepMapMode::Standard => DeepMapModeV2::Standard,
+        DeepMapMode::Thorough => DeepMapModeV2::Thorough,
+    }
+}
+
+const fn deep_map_run_state_label(state: a3_domain::DeepMapRunState) -> &'static str {
+    match state {
+        a3_domain::DeepMapRunState::Queued => "queued",
+        a3_domain::DeepMapRunState::Running => "running",
+        a3_domain::DeepMapRunState::Pausing => "pausing",
+        a3_domain::DeepMapRunState::Paused => "paused",
+        a3_domain::DeepMapRunState::Cancelling => "cancelling",
+        a3_domain::DeepMapRunState::Succeeded => "succeeded",
+        a3_domain::DeepMapRunState::Failed => "failed",
+        a3_domain::DeepMapRunState::Cancelled => "cancelled",
+        a3_domain::DeepMapRunState::Interrupted => "interrupted",
+    }
+}
+
+const fn deep_map_event_result_label(result: a3_application::DeepMapEventResult) -> &'static str {
+    match result {
+        a3_application::DeepMapEventResult::Pending => "pending",
+        a3_application::DeepMapEventResult::Confirmed => "confirmed",
+        a3_application::DeepMapEventResult::AlreadyCurrent => "alreadyCurrent",
+        a3_application::DeepMapEventResult::Published => "published",
+        a3_application::DeepMapEventResult::Paused => "paused",
+        a3_application::DeepMapEventResult::Resumed => "resumed",
+        a3_application::DeepMapEventResult::Cancelled => "cancelled",
+        a3_application::DeepMapEventResult::Failed => "failed",
+        a3_application::DeepMapEventResult::Interrupted => "interrupted",
+    }
+}
+
+const fn map_deep_map_failure_to_v3(failure: DeepMapExecutionFailure) -> DeepMapFailureV3 {
+    match failure {
+        DeepMapExecutionFailure::NoPublishedIndex => DeepMapFailureV3::NoPublishedIndex,
+        DeepMapExecutionFailure::StaleSnapshot => DeepMapFailureV3::StaleIndex,
+        DeepMapExecutionFailure::Planning => DeepMapFailureV3::Planning,
+        DeepMapExecutionFailure::ModelUnavailable => DeepMapFailureV3::ModelUnavailable,
+        DeepMapExecutionFailure::ModelRejected => DeepMapFailureV3::ModelRejected,
+        DeepMapExecutionFailure::ModelTimedOut => DeepMapFailureV3::ModelTimeout,
+        DeepMapExecutionFailure::InvalidModelResponse => DeepMapFailureV3::InvalidModelResponse,
+        DeepMapExecutionFailure::Read => DeepMapFailureV3::Read,
+        DeepMapExecutionFailure::Verification => DeepMapFailureV3::Verification,
+        DeepMapExecutionFailure::PublicationRejected => DeepMapFailureV3::PublicationRejected,
+        DeepMapExecutionFailure::PublicationStorage => DeepMapFailureV3::PublicationStorage,
+        DeepMapExecutionFailure::PublicationTimedOut => DeepMapFailureV3::PublicationTimeout,
+        DeepMapExecutionFailure::PublicationProgressUnavailable => {
+            DeepMapFailureV3::PublicationProgress
+        }
+        DeepMapExecutionFailure::InvalidCheckpoint => DeepMapFailureV3::InvalidCheckpoint,
+        DeepMapExecutionFailure::ProgressUnavailable => DeepMapFailureV3::ProgressUnavailable,
+    }
+}
+
+const fn map_deep_map_diagnostic_to_v3(code: DeepMapDiagnosticCode) -> DeepMapFailureV3 {
+    match code {
+        DeepMapDiagnosticCode::NoPublishedIndex => DeepMapFailureV3::NoPublishedIndex,
+        DeepMapDiagnosticCode::StaleIndex => DeepMapFailureV3::StaleIndex,
+        DeepMapDiagnosticCode::Planning => DeepMapFailureV3::Planning,
+        DeepMapDiagnosticCode::ModelUnavailable => DeepMapFailureV3::ModelUnavailable,
+        DeepMapDiagnosticCode::ModelRejected => DeepMapFailureV3::ModelRejected,
+        DeepMapDiagnosticCode::ModelTimeout => DeepMapFailureV3::ModelTimeout,
+        DeepMapDiagnosticCode::InvalidModelResponse => DeepMapFailureV3::InvalidModelResponse,
+        DeepMapDiagnosticCode::Read => DeepMapFailureV3::Read,
+        DeepMapDiagnosticCode::Verification => DeepMapFailureV3::Verification,
+        DeepMapDiagnosticCode::PublicationRejected => DeepMapFailureV3::PublicationRejected,
+        DeepMapDiagnosticCode::PublicationStorage => DeepMapFailureV3::PublicationStorage,
+        DeepMapDiagnosticCode::PublicationTimeout => DeepMapFailureV3::PublicationTimeout,
+        DeepMapDiagnosticCode::PublicationProgress => DeepMapFailureV3::PublicationProgress,
+        DeepMapDiagnosticCode::InvalidCheckpoint => DeepMapFailureV3::InvalidCheckpoint,
+        DeepMapDiagnosticCode::ProgressUnavailable => DeepMapFailureV3::ProgressUnavailable,
+        DeepMapDiagnosticCode::Interrupted => DeepMapFailureV3::Interrupted,
+    }
+}
+
+const fn deep_map_next_action(code: DeepMapDiagnosticCode) -> &'static str {
+    match code {
+        DeepMapDiagnosticCode::NoPublishedIndex => "Fast Index vollständig erstellen.",
+        DeepMapDiagnosticCode::StaleIndex => "Status aktualisieren und Deep Map erneut starten.",
+        DeepMapDiagnosticCode::ModelUnavailable => "Provider-Verbindung und Zugang prüfen.",
+        DeepMapDiagnosticCode::ModelRejected => "Modellprofil und strukturierte Ausgabe prüfen.",
+        DeepMapDiagnosticCode::ModelTimeout => "Provider prüfen oder einen kleineren Modus wählen.",
+        DeepMapDiagnosticCode::PublicationStorage => "Lokalen Speicher prüfen und erneut starten.",
+        DeepMapDiagnosticCode::PublicationTimeout => "Speicherlast prüfen und erneut starten.",
+        DeepMapDiagnosticCode::PublicationProgress => {
+            "Deep Map nach Statusaktualisierung erneut starten."
+        }
+        DeepMapDiagnosticCode::Interrupted => "Deep Map bei Bedarf erneut starten.",
+        DeepMapDiagnosticCode::Planning
+        | DeepMapDiagnosticCode::InvalidModelResponse
+        | DeepMapDiagnosticCode::Read
+        | DeepMapDiagnosticCode::Verification
+        | DeepMapDiagnosticCode::PublicationRejected
+        | DeepMapDiagnosticCode::InvalidCheckpoint
+        | DeepMapDiagnosticCode::ProgressUnavailable => {
+            "Details prüfen und Deep Map erneut starten."
+        }
+    }
+}
+
+fn short_reference(bytes: &[u8; 32]) -> String {
+    encode_hex(&bytes[..6])
+}
+
+fn encode_deep_map_run_selection(worktree_id: WorktreeId, run_id: DeepMapRunId) -> String {
+    let mut bytes = Vec::with_capacity(48);
+    bytes.extend_from_slice(run_id.as_bytes());
+    bytes.extend_from_slice(&deep_map_selection_tag(
+        b"a3.deep-map.run-selection.v1\0",
+        worktree_id,
+        run_id,
+        None,
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_run_selection(worktree_id: WorktreeId, value: &str) -> Result<DeepMapRunId, ()> {
+    let bytes = decode_hex(value, 48)?;
+    if bytes.len() != 48 {
+        return Err(());
+    }
+    let run_id = DeepMapRunId::from_bytes(bytes[..32].try_into().map_err(|_| ())?);
+    let expected =
+        deep_map_selection_tag(b"a3.deep-map.run-selection.v1\0", worktree_id, run_id, None);
+    if bytes[32..] != expected {
+        return Err(());
+    }
+    Ok(run_id)
+}
+
+fn encode_deep_map_entry_selection(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    sequence: DeepMapEventSequence,
+) -> String {
+    let mut bytes = Vec::with_capacity(24);
+    bytes.extend_from_slice(&sequence.get().to_be_bytes());
+    bytes.extend_from_slice(&deep_map_selection_tag(
+        b"a3.deep-map.entry-selection.v1\0",
+        worktree_id,
+        run_id,
+        Some(sequence.get()),
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_entry_selection(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    value: &str,
+) -> Result<DeepMapEventSequence, ()> {
+    let bytes = decode_hex(value, 24)?;
+    if bytes.len() != 24 {
+        return Err(());
+    }
+    let sequence = u64::from_be_bytes(bytes[..8].try_into().map_err(|_| ())?);
+    let expected = deep_map_selection_tag(
+        b"a3.deep-map.entry-selection.v1\0",
+        worktree_id,
+        run_id,
+        Some(sequence),
+    );
+    if bytes[8..] != expected {
+        return Err(());
+    }
+    DeepMapEventSequence::new(sequence).map_err(|_| ())
+}
+
+fn encode_deep_map_run_cursor(worktree_id: WorktreeId, cursor: DeepMapRunCursor) -> String {
+    let mut bytes = Vec::with_capacity(56);
+    bytes.extend_from_slice(&cursor.updated_at().unix_millis().to_be_bytes());
+    bytes.extend_from_slice(cursor.run_id().as_bytes());
+    bytes.extend_from_slice(&deep_map_selection_tag(
+        b"a3.deep-map.run-cursor.v1\0",
+        worktree_id,
+        cursor.run_id(),
+        Some(cursor.updated_at().unix_millis().unsigned_abs()),
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_run_cursor(
+    worktree_id: WorktreeId,
+    value: &str,
+) -> Result<DeepMapRunCursor, ()> {
+    let bytes = decode_hex(value, 56)?;
+    if bytes.len() != 56 {
+        return Err(());
+    }
+    let timestamp = i64::from_be_bytes(bytes[..8].try_into().map_err(|_| ())?);
+    let timestamp = a3_domain::DeepMapRunTimestamp::new(timestamp).map_err(|_| ())?;
+    let run_id = DeepMapRunId::from_bytes(bytes[8..40].try_into().map_err(|_| ())?);
+    let expected = deep_map_selection_tag(
+        b"a3.deep-map.run-cursor.v1\0",
+        worktree_id,
+        run_id,
+        Some(timestamp.unix_millis().unsigned_abs()),
+    );
+    if bytes[40..] != expected {
+        return Err(());
+    }
+    Ok(DeepMapRunCursor::new(timestamp, run_id))
+}
+
+fn deep_map_selection_tag(
+    domain: &[u8],
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    number: Option<u64>,
+) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(run_id.as_bytes());
+    if let Some(number) = number {
+        hasher.update(&number.to_be_bytes());
+    }
+    let mut tag = [0_u8; 16];
+    tag.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    tag
+}
+
 fn map_deep_map_activity_to_v2(activity: DeepMapActivity) -> DeepMapActivityV2 {
     let progress = activity.progress().and_then(|progress| {
         progress
@@ -6449,7 +7120,10 @@ const fn map_deep_map_failure_to_v1(failure: DeepMapExecutionFailure) -> DeepMap
         DeepMapExecutionFailure::InvalidModelResponse => DeepMapFailureV1::InvalidModelResponse,
         DeepMapExecutionFailure::Read => DeepMapFailureV1::Read,
         DeepMapExecutionFailure::Verification => DeepMapFailureV1::Verification,
-        DeepMapExecutionFailure::Publication => DeepMapFailureV1::Publication,
+        DeepMapExecutionFailure::PublicationRejected
+        | DeepMapExecutionFailure::PublicationStorage
+        | DeepMapExecutionFailure::PublicationTimedOut
+        | DeepMapExecutionFailure::PublicationProgressUnavailable => DeepMapFailureV1::Publication,
         DeepMapExecutionFailure::InvalidCheckpoint => DeepMapFailureV1::InvalidCheckpoint,
         DeepMapExecutionFailure::ProgressUnavailable => DeepMapFailureV1::ProgressUnavailable,
     }
@@ -7145,16 +7819,20 @@ impl Error for DesktopRunError {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PROJECT_PATH_DISPLAY_CHARS, map_agent_goal_to_v1, map_agent_task_control_result_to_v1,
-        map_create_agent_goal_from_v1, project_path_display,
+        MAX_PROJECT_PATH_DISPLAY_CHARS, decode_deep_map_entry_selection,
+        decode_deep_map_run_cursor, decode_deep_map_run_selection, encode_deep_map_entry_selection,
+        encode_deep_map_run_cursor, encode_deep_map_run_selection, map_agent_goal_to_v1,
+        map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1, project_path_display,
     };
+    use a3_application::DeepMapRunCursor;
     use a3_application::{
         AgentRecoveryOutcomeKind, AgentTaskControlResult, TaskLedgerStoreVersion,
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
-        AcceptanceCriterionStatement, GoalContract, GoalContractDraft, GoalContractTimestamp,
-        GoalObjective, SuccessVerification, TaskId,
+        AcceptanceCriterionStatement, DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp,
+        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, SuccessVerification,
+        TaskId, WorktreeId,
     };
     use a3_protocol::{AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1};
     use serde_json::json;
@@ -7170,6 +7848,61 @@ mod tests {
         assert_eq!(display.chars().count(), MAX_PROJECT_PATH_DISPLAY_CHARS);
         assert!(!display.chars().any(char::is_control));
         assert!(display.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn deep_map_selections_are_project_bound_and_tamper_evident() -> Result<(), Box<dyn Error>> {
+        let first_worktree = WorktreeId::from_bytes([1; 32]);
+        let second_worktree = WorktreeId::from_bytes([2; 32]);
+        let run_id = DeepMapRunId::from_bytes([3; 32]);
+        let sequence = DeepMapEventSequence::new(7)?;
+
+        let run_selection = encode_deep_map_run_selection(first_worktree, run_id);
+        assert_eq!(
+            decode_deep_map_run_selection(first_worktree, &run_selection),
+            Ok(run_id)
+        );
+        assert!(decode_deep_map_run_selection(second_worktree, &run_selection).is_err());
+
+        let entry_selection = encode_deep_map_entry_selection(first_worktree, run_id, sequence);
+        assert_eq!(
+            decode_deep_map_entry_selection(first_worktree, run_id, &entry_selection),
+            Ok(sequence)
+        );
+        assert!(
+            decode_deep_map_entry_selection(
+                first_worktree,
+                DeepMapRunId::from_bytes([4; 32]),
+                &entry_selection,
+            )
+            .is_err()
+        );
+
+        let mut tampered = entry_selection.into_bytes();
+        tampered[0] = if tampered[0] == b'0' { b'1' } else { b'0' };
+        let tampered = String::from_utf8(tampered)?;
+        assert!(decode_deep_map_entry_selection(first_worktree, run_id, &tampered).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn deep_map_run_cursors_are_project_bound_and_reject_stale_or_invented_values()
+    -> Result<(), Box<dyn Error>> {
+        let first_worktree = WorktreeId::from_bytes([5; 32]);
+        let second_worktree = WorktreeId::from_bytes([6; 32]);
+        let cursor = DeepMapRunCursor::new(
+            DeepMapRunTimestamp::new(1_725_000_000_000)?,
+            DeepMapRunId::from_bytes([7; 32]),
+        );
+
+        let encoded = encode_deep_map_run_cursor(first_worktree, cursor);
+        assert_eq!(
+            decode_deep_map_run_cursor(first_worktree, &encoded),
+            Ok(cursor)
+        );
+        assert!(decode_deep_map_run_cursor(second_worktree, &encoded).is_err());
+        assert!(decode_deep_map_run_cursor(first_worktree, "00").is_err());
+        Ok(())
     }
 
     #[test]

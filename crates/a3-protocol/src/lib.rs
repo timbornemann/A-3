@@ -58,11 +58,15 @@ pub use agent_inspection::*;
 pub use agent_session::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapActivityV2,
-    DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEventV2,
-    DeepMapFailureV1, DeepMapModelV1, DeepMapPhaseV2, DeepMapProgressV1,
-    DeepMapPublicationSummaryV2, DeepMapSafeActionV2, DeepMapStatusResponseV1,
-    DeepMapStatusResponseV2, DeepMapStatusResultV1, DeepMapStatusResultV2, DeepMapTargetKindV2,
-    QueryDeepMapRequestV1, StartDeepMapRequestV1,
+    DeepMapBudgetV1, DeepMapCompactProgressV3, DeepMapConfigurationV1, DeepMapControlResponseV1,
+    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2,
+    DeepMapFailureV1, DeepMapFailureV3, DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1,
+    DeepMapPhaseV2, DeepMapProgressV1, DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1,
+    DeepMapRunV1, DeepMapSafeActionV2, DeepMapStartOutcomeV2, DeepMapStartResponseV2,
+    DeepMapStatusResponseV1, DeepMapStatusResponseV2, DeepMapStatusResponseV3,
+    DeepMapStatusResultV1, DeepMapStatusResultV2, DeepMapStatusResultV3, DeepMapStepDetailV1,
+    DeepMapTargetKindV2, QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
+    QueryDeepMapRequestV1, QueryDeepMapRunsRequestV1, StartDeepMapRequestV1, StartDeepMapRequestV2,
 };
 pub use error::{CommandErrorV1, ErrorCodeV1};
 pub use goal_contract::{AcceptanceCriterionV1, GoalContractDraftV1, GoalContractV1};

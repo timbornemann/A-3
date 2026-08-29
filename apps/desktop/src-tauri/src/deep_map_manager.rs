@@ -1,18 +1,23 @@
 use crate::job_ids::DesktopJobIds;
 use a3_application::{
-    DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapExecutionFailure,
-    DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor, DeepMapModelDescriptor,
-    DeepMapPhase, DeepMapResumeState, DeepMapSafeAction, DeepMapTargetKind, JobCancellationError,
-    JobCompletion, JobEventStream, JobSchedulerSubmitError, JobSubmitter,
+    DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapEventResult, DeepMapExecutionFailure,
+    DeepMapExecutionOutcome, DeepMapExecutionRequest, DeepMapExecutor, DeepMapJournalEvent,
+    DeepMapModelDescriptor, DeepMapPhase, DeepMapPublicationAnchor, DeepMapResumeState,
+    DeepMapRunJournalStore, DeepMapRunStart, DeepMapSafeAction, DeepMapTargetKind,
+    JobCancellationError, JobCompletion, JobEventStream, JobSchedulerSubmitError, JobSubmitter,
 };
-use a3_domain::{ExploreBudget, JobId, JobOwner, JobStatus, ModuleId, Progress, ProjectIdentity};
+use a3_domain::{
+    DeepMapDiagnosticCode, DeepMapEventSequence, DeepMapMode, DeepMapRunId, DeepMapRunState,
+    DeepMapRunTimestamp, ExploreBudget, ExplorePlan, JobId, JobOwner, JobStatus, ModuleId,
+    Progress, ProjectIdentity,
+};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::block_on;
 
 const COORDINATOR_TICK: Duration = Duration::from_millis(20);
@@ -28,11 +33,22 @@ pub(crate) struct DeepMapManager {
 }
 
 impl DeepMapManager {
+    #[cfg(test)]
     pub(crate) fn start(
         submitter: JobSubmitter,
         events: JobEventStream,
         executor: Option<Arc<dyn DeepMapExecutor>>,
         job_ids: Arc<DesktopJobIds>,
+    ) -> Result<Self, DeepMapManagerStartError> {
+        Self::start_with_journal(submitter, events, executor, job_ids, None)
+    }
+
+    pub(crate) fn start_with_journal(
+        submitter: JobSubmitter,
+        events: JobEventStream,
+        executor: Option<Arc<dyn DeepMapExecutor>>,
+        job_ids: Arc<DesktopJobIds>,
+        journal: Option<Arc<dyn DeepMapRunJournalStore>>,
     ) -> Result<Self, DeepMapManagerStartError> {
         let (commands, receiver) = bounded(8);
         let model = Arc::new(Mutex::new(
@@ -44,15 +60,16 @@ impl DeepMapManager {
         let worker = thread::Builder::new()
             .name("a3-deep-map-coordinator".to_owned())
             .spawn(move || {
-                coordinator_loop(
+                coordinator_loop(CoordinatorRuntime {
                     submitter,
                     events,
                     executor,
                     job_ids,
-                    receiver,
-                    worker_activity,
-                    worker_model,
-                );
+                    commands: receiver,
+                    activity: worker_activity,
+                    model: worker_model,
+                    journal,
+                });
             })
             .map_err(DeepMapManagerStartError::WorkerSpawn)?;
         Ok(Self {
@@ -79,6 +96,16 @@ impl DeepMapManager {
         budget: ExploreBudget,
     ) -> Result<(), DeepMapManagerControlError> {
         self.request(|response| ManagerCommand::Start(budget, response))
+    }
+
+    pub(crate) fn start_current_mapping(
+        &self,
+        mode: DeepMapMode,
+        anchor: DeepMapPublicationAnchor,
+    ) -> Result<(), DeepMapManagerControlError> {
+        self.request(|response| {
+            ManagerCommand::StartCurrent(JournalStartContext { mode, anchor }, response)
+        })
     }
 
     pub(crate) fn configure_executor(
@@ -171,6 +198,10 @@ enum ManagerCommand {
         ExploreBudget,
         Sender<Result<(), DeepMapManagerControlError>>,
     ),
+    StartCurrent(
+        JournalStartContext,
+        Sender<Result<(), DeepMapManagerControlError>>,
+    ),
     Pause(Sender<Result<(), DeepMapManagerControlError>>),
     Resume(Sender<Result<(), DeepMapManagerControlError>>),
     Cancel(Sender<Result<(), DeepMapManagerControlError>>),
@@ -182,12 +213,33 @@ struct CoordinatorState {
     executor: Option<Arc<dyn DeepMapExecutor>>,
     active: Option<ManagedAttempt>,
     resume: Option<DeepMapResumeState>,
+    journal_run: Option<ManagedJournalRun>,
 }
 
 struct ManagedAttempt {
     id: JobId,
     intent: TerminationIntent,
     result: SharedAttemptResult,
+    journal_signals: Receiver<JournalSignal>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JournalStartContext {
+    mode: DeepMapMode,
+    anchor: DeepMapPublicationAnchor,
+}
+
+#[derive(Debug)]
+enum JournalSignal {
+    Activity(DeepMapActivityUpdate),
+    Plan(Box<ExplorePlan>),
+}
+
+struct ManagedJournalRun {
+    id: DeepMapRunId,
+    project: ProjectIdentity,
+    next_sequence: u64,
+    writable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +253,7 @@ enum TerminationIntent {
 type SharedAttemptResult =
     Arc<Mutex<Option<Result<DeepMapExecutionOutcome, DeepMapExecutionFailure>>>>;
 
-fn coordinator_loop(
+struct CoordinatorRuntime {
     submitter: JobSubmitter,
     events: JobEventStream,
     executor: Option<Arc<dyn DeepMapExecutor>>,
@@ -209,17 +261,32 @@ fn coordinator_loop(
     commands: Receiver<ManagerCommand>,
     activity: Arc<Mutex<DeepMapActivity>>,
     model: Arc<Mutex<Option<DeepMapModelDescriptor>>>,
-) {
+    journal: Option<Arc<dyn DeepMapRunJournalStore>>,
+}
+
+fn coordinator_loop(runtime: CoordinatorRuntime) {
+    let CoordinatorRuntime {
+        submitter,
+        events,
+        executor,
+        job_ids,
+        commands,
+        activity,
+        model,
+        journal,
+    } = runtime;
     let mut state = CoordinatorState {
         project: None,
         executor,
         active: None,
         resume: None,
+        journal_run: None,
     };
 
     loop {
         while events.try_next().ok().flatten().is_some() {}
-        refresh_attempt(&submitter, &mut state, &activity);
+        drain_journal_signals(&mut state, journal.as_deref(), &activity);
+        refresh_attempt(&submitter, &mut state, &activity, journal.as_deref());
 
         match commands.recv_timeout(COORDINATOR_TICK) {
             Ok(ManagerCommand::Shutdown) => {
@@ -229,9 +296,15 @@ fn coordinator_loop(
                 }
                 return;
             }
-            Ok(command) => {
-                handle_command(command, &submitter, &job_ids, &mut state, &activity, &model)
-            }
+            Ok(command) => handle_command(
+                command,
+                &submitter,
+                &job_ids,
+                &mut state,
+                &activity,
+                &model,
+                journal.as_deref(),
+            ),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
         }
@@ -245,12 +318,19 @@ fn handle_command(
     state: &mut CoordinatorState,
     activity: &Arc<Mutex<DeepMapActivity>>,
     model: &Mutex<Option<DeepMapModelDescriptor>>,
+    journal: Option<&dyn DeepMapRunJournalStore>,
 ) {
     match command {
         ManagerCommand::Activate(project, response) => {
             let resetting = cancel_active(submitter, state, TerminationIntent::Reset);
             state.project = Some(*project);
             state.resume = None;
+            state.journal_run = None;
+            if let (Some(store), Some(project)) = (journal, state.project.as_ref())
+                && let Ok(timestamp) = now_timestamp()
+            {
+                let _reconciled = block_on(store.reconcile_interrupted(project, timestamp));
+            }
             if resetting {
                 set_activity_state(activity, DeepMapActivityState::Cancelling);
             } else {
@@ -262,6 +342,7 @@ fn handle_command(
             let resetting = cancel_active(submitter, state, TerminationIntent::Reset);
             state.project = None;
             state.resume = None;
+            state.journal_run = None;
             if resetting {
                 set_activity_state(activity, DeepMapActivityState::Cancelling);
             } else {
@@ -274,6 +355,7 @@ fn handle_command(
             let next = executor.as_ref().map(|executor| executor.model().clone());
             state.executor = executor;
             state.resume = None;
+            state.journal_run = None;
             if resetting {
                 set_activity_state(activity, DeepMapActivityState::Cancelling);
             } else {
@@ -289,6 +371,22 @@ fn handle_command(
                 state,
                 DeepMapExecutionRequest::Start { budget },
                 activity,
+                None,
+                journal,
+            );
+            let _sent = response.send(result);
+        }
+        ManagerCommand::StartCurrent(context, response) => {
+            let result = submit_attempt(
+                submitter,
+                job_ids,
+                state,
+                DeepMapExecutionRequest::Start {
+                    budget: context.mode.budget(),
+                },
+                activity,
+                Some(context),
+                journal,
             );
             let _sent = response.send(result);
         }
@@ -302,6 +400,8 @@ fn handle_command(
                         state,
                         DeepMapExecutionRequest::Resume(Box::new(resume)),
                         activity,
+                        None,
+                        journal,
                     );
                     if result.is_err() {
                         state.resume = Some(fallback);
@@ -364,6 +464,8 @@ fn submit_attempt(
     state: &mut CoordinatorState,
     request: DeepMapExecutionRequest,
     activity: &Arc<Mutex<DeepMapActivity>>,
+    journal_context: Option<JournalStartContext>,
+    journal: Option<&dyn DeepMapRunJournalStore>,
 ) -> Result<(), DeepMapManagerControlError> {
     if state.active.is_some() || state.resume.is_some() {
         return Err(DeepMapManagerControlError::AlreadyPending);
@@ -381,9 +483,20 @@ fn submit_attempt(
     let id = job_ids
         .allocate()
         .map_err(|_| DeepMapManagerControlError::JobIdsExhausted)?;
+    if !is_resume {
+        state.journal_run = create_journal_run(
+            journal,
+            journal_context,
+            &project,
+            executor.model(),
+            activity,
+        );
+    }
     let task_executor = executor;
+    let (journal_signals, journal_receiver) = bounded(1_024);
     let observer = ManagerActivityObserver {
         activity: Arc::clone(activity),
+        journal_signals,
     };
     let result: SharedAttemptResult = Arc::new(Mutex::new(None));
     let task_result = Arc::clone(&result);
@@ -392,6 +505,7 @@ fn submit_attempt(
             let outcome =
                 block_on(task_executor.execute_observed(&project, request, &context, &observer));
             let completion = match &outcome {
+                Ok(DeepMapExecutionOutcome::AlreadyCurrent(_)) => JobCompletion::Succeeded,
                 Ok(DeepMapExecutionOutcome::Completed(_)) => JobCompletion::Succeeded,
                 Ok(DeepMapExecutionOutcome::Cancelled(_)) => JobCompletion::Cancelled,
                 Err(_) => JobCompletion::Failed,
@@ -404,6 +518,7 @@ fn submit_attempt(
         id,
         intent: TerminationIntent::None,
         result,
+        journal_signals: journal_receiver,
     });
     state.resume = None;
     let next_activity = if is_resume {
@@ -421,6 +536,7 @@ fn refresh_attempt(
     submitter: &JobSubmitter,
     state: &mut CoordinatorState,
     activity: &Mutex<DeepMapActivity>,
+    journal: Option<&dyn DeepMapRunJournalStore>,
 ) {
     let Some(active) = state.active.as_ref() else {
         return;
@@ -461,6 +577,25 @@ fn refresh_attempt(
         (
             JobStatus::Succeeded,
             TerminationIntent::None,
+            Some(Ok(DeepMapExecutionOutcome::AlreadyCurrent(_))),
+        ) => {
+            state.resume = None;
+            set_activity(
+                activity,
+                current_activity.terminal(DeepMapActivityState::Succeeded, StepCounts::default()),
+            );
+            persist_terminal_event(
+                state,
+                journal,
+                DeepMapRunState::Succeeded,
+                DeepMapEventResult::AlreadyCurrent,
+                None,
+                activity,
+            );
+        }
+        (
+            JobStatus::Succeeded,
+            TerminationIntent::None,
             Some(Ok(DeepMapExecutionOutcome::Completed(completed))),
         ) if budget == Some(completed.budget()) => {
             let counts = step_counts(&completed);
@@ -468,6 +603,14 @@ fn refresh_attempt(
             set_activity(
                 activity,
                 current_activity.terminal(DeepMapActivityState::Succeeded, counts),
+            );
+            persist_terminal_event(
+                state,
+                journal,
+                DeepMapRunState::Succeeded,
+                DeepMapEventResult::Published,
+                None,
+                activity,
             );
         }
         (
@@ -481,6 +624,14 @@ fn refresh_attempt(
                 activity,
                 current_activity.terminal(DeepMapActivityState::Paused, counts),
             );
+            persist_terminal_event(
+                state,
+                journal,
+                DeepMapRunState::Paused,
+                DeepMapEventResult::Paused,
+                None,
+                activity,
+            );
         }
         (_, TerminationIntent::Cancel, _) => {
             state.resume = None;
@@ -488,10 +639,26 @@ fn refresh_attempt(
                 activity,
                 current_activity.terminal(DeepMapActivityState::Cancelled, StepCounts::default()),
             );
+            persist_terminal_event(
+                state,
+                journal,
+                DeepMapRunState::Cancelled,
+                DeepMapEventResult::Cancelled,
+                None,
+                activity,
+            );
         }
         (_, _, Some(Err(failure))) => {
             state.resume = None;
             set_activity(activity, current_activity.failed(failure));
+            persist_terminal_event(
+                state,
+                journal,
+                DeepMapRunState::Failed,
+                DeepMapEventResult::Failed,
+                Some(map_diagnostic(failure)),
+                activity,
+            );
         }
         (
             JobStatus::Succeeded,
@@ -555,6 +722,188 @@ fn map_submit_error(error: JobSchedulerSubmitError) -> DeepMapManagerControlErro
     }
 }
 
+fn create_journal_run(
+    journal: Option<&dyn DeepMapRunJournalStore>,
+    context: Option<JournalStartContext>,
+    project: &ProjectIdentity,
+    model: &DeepMapModelDescriptor,
+    activity: &Mutex<DeepMapActivity>,
+) -> Option<ManagedJournalRun> {
+    let (Some(journal), Some(context)) = (journal, context) else {
+        return None;
+    };
+    let Some((id, timestamp)) = new_journal_identity().ok() else {
+        lock_recovering_poison(activity).details_incomplete = true;
+        return None;
+    };
+    let start = DeepMapRunStart::new(id, context.anchor, context.mode, model.clone(), timestamp);
+    if block_on(journal.create_run(project, &start)).is_err() {
+        lock_recovering_poison(activity).details_incomplete = true;
+        return None;
+    }
+    Some(ManagedJournalRun {
+        id,
+        project: project.clone(),
+        next_sequence: 2,
+        writable: true,
+    })
+}
+
+fn drain_journal_signals(
+    state: &mut CoordinatorState,
+    journal: Option<&dyn DeepMapRunJournalStore>,
+    activity: &Mutex<DeepMapActivity>,
+) {
+    let receiver = state
+        .active
+        .as_ref()
+        .map(|attempt| attempt.journal_signals.clone());
+    let Some(receiver) = receiver else {
+        return;
+    };
+    while let Ok(signal) = receiver.try_recv() {
+        let Some(run) = state.journal_run.as_mut() else {
+            continue;
+        };
+        let Some(journal) = journal else {
+            continue;
+        };
+        if !run.writable {
+            continue;
+        }
+        let result = match signal {
+            JournalSignal::Plan(plan) => block_on(journal.record_plan(&run.project, run.id, &plan)),
+            JournalSignal::Activity(update) => append_activity_event(journal, run, update),
+        };
+        if result.is_err() {
+            mark_journal_incomplete(journal, run, activity);
+        }
+    }
+}
+
+fn append_activity_event(
+    journal: &dyn DeepMapRunJournalStore,
+    run: &mut ManagedJournalRun,
+    update: DeepMapActivityUpdate,
+) -> Result<(), a3_application::DeepMapRunJournalFailure> {
+    let event = DeepMapJournalEvent::new(
+        DeepMapEventSequence::new(run.next_sequence)
+            .map_err(|_| a3_application::DeepMapRunJournalFailure::InvalidInput)?,
+        now_timestamp().map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?,
+        DeepMapRunState::Running,
+        Some(update.phase()),
+        Some(update.target_kind()),
+        Some(update.action()),
+        update.module_id(),
+        update.step_position(),
+        update.total_steps(),
+        update.confirmed(),
+        if update.confirmed() {
+            DeepMapEventResult::Confirmed
+        } else {
+            DeepMapEventResult::Pending
+        },
+        None,
+    )?;
+    block_on(journal.append_event(&run.project, run.id, event))?;
+    run.next_sequence = run.next_sequence.saturating_add(1);
+    Ok(())
+}
+
+fn persist_terminal_event(
+    state: &mut CoordinatorState,
+    journal: Option<&dyn DeepMapRunJournalStore>,
+    run_state: DeepMapRunState,
+    result: DeepMapEventResult,
+    diagnostic: Option<DeepMapDiagnosticCode>,
+    activity: &Mutex<DeepMapActivity>,
+) {
+    let (Some(journal), Some(run)) = (journal, state.journal_run.as_mut()) else {
+        return;
+    };
+    if !run.writable {
+        return;
+    }
+    let current = lock_recovering_poison(activity).clone();
+    let step_pair = current
+        .step_position
+        .filter(|_| current.total_steps > 0)
+        .map(|step| (step, current.total_steps));
+    let event = now_timestamp().ok().and_then(|timestamp| {
+        DeepMapJournalEvent::new(
+            DeepMapEventSequence::new(run.next_sequence).ok()?,
+            timestamp,
+            run_state,
+            current.phase,
+            current.target_kind,
+            current.safe_action,
+            current.current_module_id,
+            step_pair.map(|pair| pair.0),
+            step_pair.map(|pair| pair.1),
+            run_state == DeepMapRunState::Succeeded,
+            result,
+            diagnostic,
+        )
+        .ok()
+    });
+    let succeeded = event
+        .is_some_and(|event| block_on(journal.append_event(&run.project, run.id, event)).is_ok());
+    if succeeded {
+        run.next_sequence = run.next_sequence.saturating_add(1);
+    } else {
+        mark_journal_incomplete(journal, run, activity);
+    }
+}
+
+fn mark_journal_incomplete(
+    journal: &dyn DeepMapRunJournalStore,
+    run: &mut ManagedJournalRun,
+    activity: &Mutex<DeepMapActivity>,
+) {
+    run.writable = false;
+    lock_recovering_poison(activity).details_incomplete = true;
+    let _marked = block_on(journal.mark_details_incomplete(&run.project, run.id));
+}
+
+fn new_journal_identity() -> Result<(DeepMapRunId, DeepMapRunTimestamp), ()> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| ())?;
+    Ok((DeepMapRunId::from_bytes(bytes), now_timestamp()?))
+}
+
+fn now_timestamp() -> Result<DeepMapRunTimestamp, ()> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ())?
+        .as_millis();
+    let millis = i64::try_from(millis).map_err(|_| ())?;
+    DeepMapRunTimestamp::new(millis).map_err(|_| ())
+}
+
+const fn map_diagnostic(failure: DeepMapExecutionFailure) -> DeepMapDiagnosticCode {
+    match failure {
+        DeepMapExecutionFailure::NoPublishedIndex => DeepMapDiagnosticCode::NoPublishedIndex,
+        DeepMapExecutionFailure::StaleSnapshot => DeepMapDiagnosticCode::StaleIndex,
+        DeepMapExecutionFailure::Planning => DeepMapDiagnosticCode::Planning,
+        DeepMapExecutionFailure::ModelUnavailable => DeepMapDiagnosticCode::ModelUnavailable,
+        DeepMapExecutionFailure::ModelRejected => DeepMapDiagnosticCode::ModelRejected,
+        DeepMapExecutionFailure::ModelTimedOut => DeepMapDiagnosticCode::ModelTimeout,
+        DeepMapExecutionFailure::InvalidModelResponse => {
+            DeepMapDiagnosticCode::InvalidModelResponse
+        }
+        DeepMapExecutionFailure::Read => DeepMapDiagnosticCode::Read,
+        DeepMapExecutionFailure::Verification => DeepMapDiagnosticCode::Verification,
+        DeepMapExecutionFailure::PublicationRejected => DeepMapDiagnosticCode::PublicationRejected,
+        DeepMapExecutionFailure::PublicationStorage => DeepMapDiagnosticCode::PublicationStorage,
+        DeepMapExecutionFailure::PublicationTimedOut => DeepMapDiagnosticCode::PublicationTimeout,
+        DeepMapExecutionFailure::PublicationProgressUnavailable => {
+            DeepMapDiagnosticCode::PublicationProgress
+        }
+        DeepMapExecutionFailure::InvalidCheckpoint => DeepMapDiagnosticCode::InvalidCheckpoint,
+        DeepMapExecutionFailure::ProgressUnavailable => DeepMapDiagnosticCode::ProgressUnavailable,
+    }
+}
+
 fn update_running_activity(
     activity: &Mutex<DeepMapActivity>,
     state: DeepMapActivityState,
@@ -608,6 +957,7 @@ pub(crate) struct DeepMapActivity {
     events: VecDeque<DeepMapActivityEvent>,
     next_event_sequence: u64,
     publication_succeeded: bool,
+    details_incomplete: bool,
 }
 
 impl DeepMapActivity {
@@ -627,6 +977,7 @@ impl DeepMapActivity {
             events: VecDeque::new(),
             next_event_sequence: 1,
             publication_succeeded: false,
+            details_incomplete: false,
         }
     }
 
@@ -646,6 +997,7 @@ impl DeepMapActivity {
             events: VecDeque::new(),
             next_event_sequence: 1,
             publication_succeeded: false,
+            details_incomplete: false,
         }
     }
 
@@ -726,6 +1078,10 @@ impl DeepMapActivity {
     pub(crate) const fn publication_succeeded(&self) -> bool {
         self.publication_succeeded
     }
+
+    pub(crate) const fn details_incomplete(&self) -> bool {
+        self.details_incomplete
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -747,6 +1103,7 @@ impl DeepMapActivityEvent {
 #[derive(Debug)]
 struct ManagerActivityObserver {
     activity: Arc<Mutex<DeepMapActivity>>,
+    journal_signals: Sender<JournalSignal>,
 }
 
 impl DeepMapActivityObserver for ManagerActivityObserver {
@@ -773,6 +1130,23 @@ impl DeepMapActivityObserver for ManagerActivityObserver {
         activity
             .events
             .push_back(DeepMapActivityEvent { sequence, update });
+        if self
+            .journal_signals
+            .try_send(JournalSignal::Activity(update))
+            .is_err()
+        {
+            activity.details_incomplete = true;
+        }
+    }
+
+    fn observe_plan(&self, plan: &ExplorePlan) {
+        if self
+            .journal_signals
+            .try_send(JournalSignal::Plan(Box::new(plan.clone())))
+            .is_err()
+        {
+            lock_recovering_poison(&self.activity).details_incomplete = true;
+        }
     }
 }
 
@@ -879,6 +1253,7 @@ mod tests {
         SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName, SymbolRank,
         SymbolRankSignals, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
+    use crossbeam_channel::bounded;
     use std::error::Error;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -897,8 +1272,10 @@ mod tests {
     #[test]
     fn activity_feed_retains_only_the_latest_monotonic_32_events() {
         let activity = Arc::new(Mutex::new(DeepMapActivity::idle()));
+        let (journal_signals, _journal_receiver) = bounded(64);
         let observer = ManagerActivityObserver {
             activity: activity.clone(),
+            journal_signals,
         };
         for position in 1..=40 {
             observer.observe(DeepMapActivityUpdate::new(
@@ -1479,8 +1856,8 @@ mod tests {
     #[test]
     fn executor_failure_type_remains_content_free() {
         assert_eq!(
-            DeepMapExecutionFailure::Publication.to_string(),
-            "Deep Map publication failed"
+            DeepMapExecutionFailure::PublicationStorage.to_string(),
+            "Deep Map publication storage failed"
         );
     }
 }

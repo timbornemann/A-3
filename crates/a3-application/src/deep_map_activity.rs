@@ -1,4 +1,4 @@
-use a3_domain::ModuleId;
+use a3_domain::{ExplorePlan, ModuleId};
 use std::fmt;
 
 /// Stable product phase emitted without prompts, source, model output, or reasoning text.
@@ -130,6 +130,9 @@ impl DeepMapActivityUpdate {
 pub trait DeepMapActivityObserver: fmt::Debug + Send + Sync {
     /// Records one content-free update. Observability must never control execution.
     fn observe(&self, update: DeepMapActivityUpdate);
+
+    /// Exposes immutable, deterministic plan metadata to a safe journal observer.
+    fn observe_plan(&self, _plan: &ExplorePlan) {}
 }
 
 /// Default observer used by callers that do not need a live activity projection.
