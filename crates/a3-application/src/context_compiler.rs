@@ -1,9 +1,9 @@
-use crate::{ModelProviderRequest, TaskLensControlError};
+use crate::{JobContext, ModelProviderRequest, TaskLensControlError};
 use a3_domain::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
-    ContextDigest, GoalContract, GoalContractReference, IndexRunId, ModelProfile, ProjectIdentity,
-    RunEventSequence, RunMemoryCheckpoint, RunMemoryDigest, SnapshotId, TaskLedger,
-    TaskLedgerRevision, TaskLensDigest, TaskLensSeed, TaskStepId, ToolRunId,
+    ContextDigest, GoalContract, GoalContractReference, IndexRunId, ModelProfile, Progress,
+    ProjectIdentity, RunEventSequence, RunMemoryCheckpoint, RunMemoryDigest, SnapshotId,
+    TaskLedger, TaskLedgerRevision, TaskLensDigest, TaskLensSeed, TaskStepId, ToolRunId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -43,6 +43,26 @@ pub enum ContextCompilePhase {
     Validate,
     /// A provider-neutral request is complete.
     Complete,
+}
+
+impl ContextCompileControl for JobContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token().is_cancelled()
+    }
+
+    fn report_phase(&self, phase: ContextCompilePhase) -> Result<(), TaskLensControlError> {
+        let completed = match phase {
+            ContextCompilePhase::Anchor => 0,
+            ContextCompilePhase::Retrieve => 1,
+            ContextCompilePhase::Rank => 2,
+            ContextCompilePhase::Pack => 3,
+            ContextCompilePhase::Validate => 4,
+            ContextCompilePhase::Complete => 5,
+        };
+        let progress =
+            Progress::determinate(completed, 5).map_err(|_| TaskLensControlError::Unavailable)?;
+        JobContext::report_progress(self, progress).map_err(|_| TaskLensControlError::Unavailable)
+    }
 }
 
 /// Result class of one normalized read-only tool observation.

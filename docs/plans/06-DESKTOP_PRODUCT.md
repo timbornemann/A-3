@@ -1009,6 +1009,49 @@ Der native Windows-Smoke bestand mit einem echten 976 × 719 großen WebView2-Fe
 Stichprobenfarben und einem 52.407-Byte-Screenshot. Die Messung belegt das aktuelle Budget, aber
 behauptet keine Verbesserung gegenüber U11.
 
+## U13 Chatbasierter Agent Workspace
+
+Abhängigkeiten: ADR-0033, Gate M8
+
+- [x] eine Agent-Seite mit Sessionverlauf, Conversation und Inspector
+- [x] projektlokale revisionierte Sessions und inhaltsfreie Layoutpräferenzen
+- [x] geschlossene `Ask`-, `Plan`- und `Agent`-IPC-Verträge
+- [x] serverseitige Suche, Archivierung, Rename und Presentation Delete
+- [x] Scheduler-Eigentum, Fortschritt, Cancellation und Projektwechsel-Quiesce für Conversationjobs
+- [x] evidence-gebundener Ask-Lauf mit ausschließlich read-only Werkzeugen
+- [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
+- [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
+- [x] Component-, Accessibility-, responsive und native UX-Verifikation
+
+Akzeptanz:
+
+- Ask kann Repositoryfragen beantworten, ohne eine mutierende Capability zu besitzen;
+- Plan hält Rückfragen und jede vollständige Planrevision im Verlauf und startet erst nach Review;
+- Agent bindet jede Ausführung an Goal, Ledger, Run, Snapshot und aktuelle Evidence und zeigt
+  Activity, Inspection, Approval und Verification in derselben Session;
+- Follow-ups behalten den projektlokalen Zusammenhang, während eine neue Session ohne fachlichen
+  Altzustand beginnt;
+- Verlauf und Inspector sind tastaturbedienbar, begrenzt, persistent anpassbar und bei schmalen
+  Fenstern als Drawer vollständig nutzbar.
+
+Nicht-Ziele sind ein offener Chat-Loop, rohe Chain-of-Thought- oder Providertranskripte,
+WebView-Datei-/Shell-/SQL-Zugriff, automatische Veröffentlichung sowie das Löschen von Auditdaten.
+
+Abnahme U13 vom 2026-08-29: Der neue Workspace ersetzt die internen Agent-Unterseiten durch eine
+projektlokale Conversation mit Sessionverlauf und einem gemeinsamen Inspector für Fortschritt,
+Änderungen, Verification und Approval. Ask liest ausschließlich aktuelle, hashgebundene
+Repository-Evidence; Plan trennt Rückfragen von unveränderlichen Planrevisionen; erst die exakte
+Review-Aktion materialisiert Goal, Ledger und Run. Der produktive Executor verwendet den
+vorhandenen Context Compiler, die typisierten Read-/Mutation-Actions, zentrale Policy, Approval,
+Reindex und Acceptance bis zu einem autoritativen terminalen Zustand. Die Component- und
+IPC-Tests decken die drei Modi, exakte Revisionen, den vollständigen Open-bis-Done-Workflow und
+begrenztes textuelles Markdown ab. Die visuelle Browserprüfung bestand bei 1440 × 900, 1024 × 768
+und 720 × 800 ohne Horizontaloverflow; Verlauf und Inspector wurden bei schmaler Breite als
+vollständig nutzbare Drawer geprüft. Der native Windows-Smoke bestand mit dem aktuellen
+Releasebinary in einem 1296 × 839 großen WebView2-Fenster, 35 Stichprobenfarben und einem
+65.764-Byte-Screenshot. Die Windows-Aufnahme wartet dabei explizit auf den WebView-Paint und lehnt
+eine bloße schwarze Titelleiste bei der manuellen Sichtkontrolle als ungültige Abnahme ab.
+
 ## Gate M8
 
 - [x] vollständiger Nutzerworkflow vom Open bis Done
@@ -1023,9 +1066,9 @@ Fixtures durch Command-Discovery, Goal/Ledger/Run, zentrale Policy, exaktes Allo
 atomaren Reindex, kataloggebundenen Offline-Test, frische Verification-Evidence und Acceptance bis
 zum dauerhaft gespeicherten `Done`. Der ergänzende Desktop-Vertrag beginnt bei `noProject`, öffnet
 den Worktree erst nach dem expliziten Klick, liest den Core-Projektzustand neu und navigiert dann
-zum taskgebundenen Agent Workspace. Terminaler Run, globales `Done`, Goal/Ledger und die exakten
-frischen Step-/Evidence-IDs jedes Muss-Beweises bleiben gemeinsam sichtbar; die UI erzeugt keinen
-eigenen Abschlusszustand.
+zum sessiongebundenen Agent Workspace. Terminaler Run, globales `Done` und die Goal-/Ledger-
+gebundenen exakten frischen Step-/Evidence-IDs jedes Muss-Beweises bleiben über Session,
+Fortschritt und Review gemeinsam erreichbar; die UI erzeugt keinen eigenen Abschlusszustand.
 
 Das U9-Accessibilitygate, die real gemessenen U10-Budgets sowie die vorhandenen textuellen Lade-,
 Fehler-, Offline-, Stale- und Recoveryzustände bestehen unverändert. Der exakte

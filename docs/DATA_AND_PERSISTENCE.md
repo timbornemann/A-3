@@ -346,6 +346,18 @@ verboten. Der Katalog enthält nur `credential_requirement`, den internen Lifecy
 
 ### Aufgaben und Runs
 
+Chatbasierte Agent-Sessions liegen in derselben privaten worktree-lokalen Knowledge-Datenbank als
+append-only `agent_session_revisions` und begrenzte `agent_session_entries`. Die aktuelle Revision
+enthält Modus, Präsentationsstatus, optionalen Work-Item-/Task-Anker, aktuelle Planrevision und
+Tombstone. Entries sind lückenlos sequenziert und können User Message, Assistant Summary, Plan,
+Activity oder Final Report sein. Die Präsentationslöschung entfernt nach einem dauerhaften
+Tombstone ausschließlich Entries; Goal, Ledger, Run, Journal, Evidence und Approval bleiben
+unverändert erhalten.
+
+Inhaltsfreie globale UI-Präferenzen werden getrennt im Katalog als revisionierte
+`ui_preference_revisions` gespeichert. Sie enthalten nur Breiten und Collapse-Zustände der
+Sessionleiste und des Inspectors, nie Projektinhalt, Chattext oder Pfade.
+
 - tasks
 - goal_contract_revisions
 - acceptance_criteria

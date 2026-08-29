@@ -1,6 +1,7 @@
 //! Local-only libSQL storage adapters for A^3 catalog and project data.
 
 mod agent_recovery_repository;
+mod agent_session_repository;
 mod catalog;
 mod command_allowlist_repository;
 mod exact_search_projection;
@@ -39,6 +40,7 @@ mod settings_repository;
 mod task_ledger_repository;
 mod task_lens_claim_repository;
 mod task_lens_workspace_repository;
+mod ui_preferences_repository;
 mod verification_evidence_repository;
 
 pub use catalog::{CatalogDatabase, CatalogOpenError, CatalogVerification};

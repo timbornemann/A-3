@@ -1,3 +1,4 @@
+use crate::JobContext;
 use a3_domain::{
     AgentFileInspection, AgentFileStartLine, AgentToolEvidence, EvidenceRef, FileRevision,
     ProjectIdentity, SourceRange,
@@ -17,6 +18,12 @@ pub type AgentSourceReaderFuture<'a> =
 pub trait AgentSourceReadControl: fmt::Debug + Send + Sync {
     /// Returns whether the owning agent turn requested cancellation.
     fn is_cancelled(&self) -> bool;
+}
+
+impl AgentSourceReadControl for JobContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token().is_cancelled()
+    }
 }
 
 /// Read-only workspace capability for a content-addressed source page.

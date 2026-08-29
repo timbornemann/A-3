@@ -109,4 +109,13 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 ## V1-Abnahme
 
 Eine Anforderung gilt nur als erfüllt, wenn ein automatisierter Test, ein reproduzierbarer Benchmark oder eine dokumentierte manuelle Plattformprüfung als Evidence verlinkt ist.
+- Der Agent-Bereich ist eine einzige professionelle, minimalistische Chat-Arbeitsfläche mit
+  projektlokalem Verlauf, zentralem Composer und kontextuellem Fortschritts-/Änderungs-/Review-
+  Inspector.
+- Neue Sessions starten standardmäßig im Modus `Agent`; `Ask` sammelt und berichtet ausschließlich
+  Informationen, `Plan` erarbeitet mit Rückfragen einen reviewbaren Plan, und `Agent` arbeitet
+  nach dessen Freigabe über den sicheren Harness.
+- Nutzer sehen laufenden Status, aktuelle Tätigkeit, notwendige Freigaben, verifizierte Änderungen
+  und den Abschlussreview und können danach im selben Kontext nachfragen oder eine neue Session
+  beginnen.
 

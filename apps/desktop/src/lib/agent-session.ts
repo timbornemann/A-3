@@ -1,0 +1,379 @@
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
+
+const STABLE_ID = /^[0-9a-f]{64}$/u;
+const DECIMAL = /^(?:0|[1-9][0-9]{0,18})$/u;
+const MODES = ['ask', 'plan', 'agent'] as const;
+const STATES = [
+  'draft',
+  'running',
+  'awaitingUser',
+  'awaitingPlanReview',
+  'awaitingApproval',
+  'paused',
+  'completed',
+  'failed',
+  'cancelled',
+  'archived',
+] as const;
+const ENTRY_KINDS = ['userMessage', 'assistantSummary', 'plan', 'finalReport', 'activity'] as const;
+const utf8 = new TextEncoder();
+
+export type AgentSessionModeV1 = (typeof MODES)[number];
+export type AgentSessionStateV1 = (typeof STATES)[number];
+export type AgentSessionEntryKindV1 = (typeof ENTRY_KINDS)[number];
+
+export interface AgentSessionSummaryV1 {
+  currentPlanRevision: number | null;
+  mode: AgentSessionModeV1;
+  revision: string;
+  sessionId: string;
+  state: AgentSessionStateV1;
+  title: string;
+  updatedAtUnixMillis: string;
+}
+
+export interface AgentSessionEntryV1 {
+  createdAtUnixMillis: string;
+  kind: AgentSessionEntryKindV1;
+  planRevision: number | null;
+  sequence: string;
+  text: string;
+}
+
+export interface AgentSessionV1 {
+  activeTaskId: string | null;
+  entries: AgentSessionEntryV1[];
+  hasOlderEntries: boolean;
+  summary: AgentSessionSummaryV1;
+}
+
+export type AgentSessionsResultV1 =
+  | { status: 'noProject' }
+  | { nextCursor: string | null; sessions: AgentSessionSummaryV1[]; status: 'available' };
+
+export interface AgentSessionsResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  result: AgentSessionsResultV1;
+}
+
+export type AgentSessionResultV1 =
+  | { status: 'noProject' }
+  | { status: 'notFound' }
+  | { session: AgentSessionV1; status: 'available' };
+
+export interface AgentSessionResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  result: AgentSessionResultV1;
+}
+
+export type AgentSessionControlActionV1 =
+  | { kind: 'pause' }
+  | { kind: 'resume' }
+  | { kind: 'cancel' }
+  | { kind: 'switchToPlan' }
+  | { kind: 'implementPlan'; planRevision: number }
+  | { kind: 'rename'; title: string }
+  | { kind: 'archive' }
+  | { kind: 'unarchive' }
+  | { kind: 'deletePresentation' };
+
+export interface UiPreferencesV1 {
+  inspectorCollapsed: boolean;
+  inspectorWidth: number;
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  revision: string;
+  sessionRailCollapsed: boolean;
+  sessionRailWidth: number;
+}
+
+const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
+  tauriInvoke<unknown>(command, arguments_);
+
+export async function queryAgentSessions(
+  options: {
+    beforeUpdatedAtUnixMillis?: string | null;
+    includeArchived?: boolean;
+    limit?: number;
+    search?: string | null;
+  } = {},
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionsResponseV1> {
+  const request = {
+    beforeUpdatedAtUnixMillis: options.beforeUpdatedAtUnixMillis ?? null,
+    includeArchived: options.includeArchived ?? false,
+    limit: options.limit ?? 50,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    search: options.search?.trim() || null,
+  };
+  return parseAgentSessionsResponseV1(await invokeCommand('query_agent_sessions', { request }));
+}
+
+export async function queryAgentSession(
+  sessionId: string,
+  beforeSequence: string | null = null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionResponseV1> {
+  requireStableId(sessionId, 'Agent session');
+  const request = {
+    beforeSequence,
+    limit: 128,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    sessionId,
+  };
+  return parseAgentSessionResponseV1(await invokeCommand('query_agent_session', { request }));
+}
+
+export async function submitAgentMessage(
+  input: {
+    expectedSessionRevision?: string | null;
+    message: string;
+    mode?: AgentSessionModeV1;
+    sessionId?: string | null;
+  },
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionResponseV1> {
+  const message = parseText(input.message, 256 * 1024, 'Agent message');
+  if (input.sessionId) requireStableId(input.sessionId, 'Agent session');
+  const request = {
+    contextReferences: [],
+    expectedSessionRevision: input.expectedSessionRevision ?? null,
+    message,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    sessionId: input.sessionId ?? null,
+    startMode: input.sessionId ? null : (input.mode ?? 'agent'),
+  };
+  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message', { request }));
+}
+
+export async function controlAgentSession(
+  sessionId: string,
+  expectedSessionRevision: string,
+  action: AgentSessionControlActionV1,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionResponseV1> {
+  requireStableId(sessionId, 'Agent session');
+  requireDecimal(expectedSessionRevision, 'Agent session revision', false);
+  const request = {
+    action,
+    expectedSessionRevision,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    sessionId,
+  };
+  return parseAgentSessionResponseV1(await invokeCommand('control_agent_session', { request }));
+}
+
+export async function queryUiPreferences(
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<UiPreferencesV1> {
+  const request = { protocolVersion: CURRENT_PROTOCOL_VERSION };
+  return parseUiPreferencesV1(await invokeCommand('query_ui_preferences', { request }));
+}
+
+export async function updateAgentWorkspaceLayout(
+  current: UiPreferencesV1,
+  layout: Pick<
+    UiPreferencesV1,
+    'inspectorCollapsed' | 'inspectorWidth' | 'sessionRailCollapsed' | 'sessionRailWidth'
+  >,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<UiPreferencesV1> {
+  const request = {
+    expectedRevision: current.revision,
+    ...layout,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+  };
+  return parseUiPreferencesV1(await invokeCommand('update_agent_workspace_layout', { request }));
+}
+
+export function parseAgentSessionsResponseV1(payload: unknown): AgentSessionsResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent sessions response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent sessions result');
+  if (result.status === 'noProject') {
+    exact(result, ['status'], 'Agent sessions result');
+    return value as unknown as AgentSessionsResponseV1;
+  }
+  exact(result, ['nextCursor', 'sessions', 'status'], 'Agent sessions result');
+  if (result.status !== 'available' || !Array.isArray(result.sessions))
+    fail('Agent sessions result');
+  const sessions = result.sessions.map(parseSummary);
+  if (sessions.length > 50) fail('Agent sessions page');
+  if (result.nextCursor !== null) requireDecimal(result.nextCursor, 'Agent session cursor', true);
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { ...result, sessions },
+  } as AgentSessionsResponseV1;
+}
+
+export function parseAgentSessionResponseV1(payload: unknown): AgentSessionResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent session response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent session result');
+  if (result.status === 'noProject' || result.status === 'notFound') {
+    exact(result, ['status'], 'Agent session result');
+    return value as unknown as AgentSessionResponseV1;
+  }
+  exact(result, ['session', 'status'], 'Agent session result');
+  if (result.status !== 'available') fail('Agent session result');
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { session: parseSession(result.session), status: 'available' },
+  };
+}
+
+export function parseUiPreferencesV1(payload: unknown): UiPreferencesV1 {
+  const value = object(
+    payload,
+    [
+      'inspectorCollapsed',
+      'inspectorWidth',
+      'protocolVersion',
+      'revision',
+      'sessionRailCollapsed',
+      'sessionRailWidth',
+    ],
+    'UI preferences',
+  );
+  protocol(value.protocolVersion);
+  requireDecimal(value.revision, 'UI preferences revision', true);
+  if (
+    !integer(value.sessionRailWidth, 220, 360) ||
+    !integer(value.inspectorWidth, 320, 640) ||
+    typeof value.sessionRailCollapsed !== 'boolean' ||
+    typeof value.inspectorCollapsed !== 'boolean'
+  ) {
+    fail('UI preferences');
+  }
+  return value as unknown as UiPreferencesV1;
+}
+
+function parseSession(payload: unknown): AgentSessionV1 {
+  const value = object(
+    payload,
+    ['activeTaskId', 'entries', 'hasOlderEntries', 'summary'],
+    'Agent session',
+  );
+  if (
+    (value.activeTaskId !== null && typeof value.activeTaskId !== 'string') ||
+    !Array.isArray(value.entries) ||
+    value.entries.length > 128 ||
+    typeof value.hasOlderEntries !== 'boolean'
+  ) {
+    fail('Agent session');
+  }
+  if (typeof value.activeTaskId === 'string') requireStableId(value.activeTaskId, 'Agent task');
+  const entries = value.entries.map(parseEntry);
+  for (let index = 1; index < entries.length; index += 1) {
+    if (BigInt(entries[index - 1].sequence) >= BigInt(entries[index].sequence)) {
+      fail('Agent session entry order');
+    }
+  }
+  return {
+    activeTaskId: value.activeTaskId,
+    entries,
+    hasOlderEntries: value.hasOlderEntries,
+    summary: parseSummary(value.summary),
+  } as AgentSessionV1;
+}
+
+function parseSummary(payload: unknown): AgentSessionSummaryV1 {
+  const value = object(
+    payload,
+    [
+      'currentPlanRevision',
+      'mode',
+      'revision',
+      'sessionId',
+      'state',
+      'title',
+      'updatedAtUnixMillis',
+    ],
+    'Agent session summary',
+  );
+  requireStableId(value.sessionId, 'Agent session');
+  requireDecimal(value.revision, 'Agent session revision', false);
+  requireDecimal(value.updatedAtUnixMillis, 'Agent session time', true);
+  if (
+    !MODES.includes(value.mode as AgentSessionModeV1) ||
+    !STATES.includes(value.state as AgentSessionStateV1) ||
+    typeof value.title !== 'string' ||
+    utf8.encode(value.title).length === 0 ||
+    utf8.encode(value.title).length > 120 ||
+    (value.currentPlanRevision !== null && !integer(value.currentPlanRevision, 1, 4_294_967_295))
+  ) {
+    fail('Agent session summary');
+  }
+  return value as unknown as AgentSessionSummaryV1;
+}
+
+function parseEntry(payload: unknown): AgentSessionEntryV1 {
+  const value = object(
+    payload,
+    ['createdAtUnixMillis', 'kind', 'planRevision', 'sequence', 'text'],
+    'Agent session entry',
+  );
+  requireDecimal(value.sequence, 'Agent session sequence', false);
+  requireDecimal(value.createdAtUnixMillis, 'Agent session entry time', true);
+  if (
+    !ENTRY_KINDS.includes(value.kind as AgentSessionEntryKindV1) ||
+    typeof value.text !== 'string' ||
+    utf8.encode(value.text).length === 0 ||
+    utf8.encode(value.text).length > 256 * 1024 ||
+    (value.planRevision !== null && !integer(value.planRevision, 1, 4_294_967_295)) ||
+    (value.kind === 'plan') !== (value.planRevision !== null)
+  ) {
+    fail('Agent session entry');
+  }
+  return value as unknown as AgentSessionEntryV1;
+}
+
+function object(
+  payload: unknown,
+  keys: string[] | undefined,
+  label: string,
+): Record<string, unknown> {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) fail(label);
+  const value = payload as Record<string, unknown>;
+  if (keys) exact(value, keys, label);
+  return value;
+}
+
+function exact(value: Record<string, unknown>, keys: string[], label: string): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    fail(label);
+  }
+}
+
+function protocol(value: unknown): void {
+  if (value !== CURRENT_PROTOCOL_VERSION) fail('protocol version');
+}
+
+function requireStableId(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || !STABLE_ID.test(value)) fail(`${label} identity`);
+}
+
+function requireDecimal(
+  value: unknown,
+  label: string,
+  allowZero: boolean,
+): asserts value is string {
+  if (typeof value !== 'string' || !DECIMAL.test(value) || (!allowZero && value === '0'))
+    fail(label);
+}
+
+function parseText(value: string, maxBytes: number, label: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0 || utf8.encode(normalized).length > maxBytes) fail(label);
+  return normalized;
+}
+
+function integer(value: unknown, minimum: number, maximum: number): value is number {
+  return Number.isInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+function fail(label: string): never {
+  throw new Error(`${label} does not match V1.`);
+}

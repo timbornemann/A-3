@@ -311,6 +311,22 @@ Endpoint-Kontinuität, Zyklen, Zielübereinstimmung, Duplikate, Grenzen und die 
 sichtbaren Query erneut. Beide Commands laufen nur nach expliziter Modul-, Root-, Nachlade- oder
 Aktualisierungsaktion, nicht im Statuspolling.
 
+## Agent Sessions und Workspace Layout V1
+
+`query_agent_sessions` listet höchstens 50 projektlokale Session-Summaries mit serverseitiger
+Titelsuche und optionalem Archivfilter. `query_agent_session` liefert eine begrenzte, lückenlose
+Entry-Seite. `submit_agent_message` akzeptiert entweder einen neuen geschlossenen Modus oder die
+exakte Revision einer bestehenden Session. Freie Pfade, Befehle und Providerparameter sind nicht
+Teil des Vertrags. `contextReferences` ist in V1 ein reserviertes, zwingend leeres Feld; ein
+späterer Kontextwähler benötigt zuerst einen eigenen Core-Resolver für ausschließlich stabile,
+aktuelle Indexreferenzen.
+
+`control_agent_session` erlaubt ausschließlich Pause, Resume, Cancel, `Ask → Plan`, die Umsetzung
+der exakten aktuellen Planrevision sowie Rename, Archive, Unarchive und Presentation Delete. Die
+fachlichen Controls werden im Core gegen aktuelle Task-/Ledger-/Runanker aufgelöst. Layoutqueries
+und -updates transportieren ausschließlich revisionierte Breiten und Collapse-Zustände innerhalb
+fester Grenzen.
+
 ## Agent Diff und Verification Inspector V1
 
 `query_agent_inspection` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake

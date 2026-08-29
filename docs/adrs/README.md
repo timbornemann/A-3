@@ -57,6 +57,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0030](0030-bounded-evidence-source-preview.md)               | Begrenzte evidence-gebundene Source-Vorschau               |
 | [0031](0031-progressive-code-atlas-index-evidence.md)         | Progressiver Code Atlas und aktuelle Index-Evidence        |
 | [0032](0032-openai-model-provider.md)                         | OpenAI Model-Provider und expliziter Remotezugriff         |
+| [0033](0033-chatbasierter-agent-workspace.md)                 | Chatbasierter Agent Workspace                              |
 
 ## Neue ADRs
 

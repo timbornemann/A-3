@@ -56,6 +56,7 @@ name = "a3-desktop"
 version = "0.1.0"
 dependencies = [
  "a3-application",
+ "a3-context",
  "a3-credentials",
  "a3-domain",
  "a3-protocol",

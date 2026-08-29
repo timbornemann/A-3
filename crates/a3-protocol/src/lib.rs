@@ -5,6 +5,7 @@ mod agent_approval;
 mod agent_control;
 mod agent_goal;
 mod agent_inspection;
+mod agent_session;
 mod deep_map;
 mod error;
 mod goal_contract;
@@ -54,6 +55,7 @@ pub use agent_goal::{
     AgentGoalResultV1, CreateAgentGoalRequestV1, QueryAgentGoalRequestV1, ReviseAgentGoalRequestV1,
 };
 pub use agent_inspection::*;
+pub use agent_session::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapActivityV2,
     DeepMapBudgetV1, DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEventV2,

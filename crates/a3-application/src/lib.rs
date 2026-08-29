@@ -11,6 +11,7 @@ mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
 mod agent_runtime;
+mod agent_session;
 mod agent_source_reader;
 mod agent_task_control;
 mod agent_turn;
@@ -84,6 +85,7 @@ mod settings;
 mod task_ledger;
 mod task_lens;
 mod task_lens_workspace;
+mod ui_preferences;
 mod verification;
 mod verification_inspection;
 mod workspace_directory;
@@ -130,6 +132,10 @@ pub use agent_recovery::{
 pub use agent_runtime::{
     AgentRunExecutionFailure, AgentRunExecutionFuture, AgentRunExecutionOutcome,
     AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
+};
+pub use agent_session::{
+    AgentSessionDetail, AgentSessionListQuery, AgentSessionPage, AgentSessionStore,
+    AgentSessionStoreFailure, AgentSessionStoreFuture, validate_agent_session_transition,
 };
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
@@ -445,6 +451,10 @@ pub use task_lens_workspace::{
     TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage, TaskLensWorkspaceGoalPageError,
     TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit,
     TaskLensWorkspaceTaskLimitError,
+};
+pub use ui_preferences::{
+    AgentWorkspaceLayout, StoredUiPreferences, UiPreferencesError, UiPreferencesStore,
+    UiPreferencesStoreFuture, UiPreferencesStoreVersion,
 };
 pub use verification::{
     DeterministicAcceptanceVerifier, EvaluateStepVerification, EvaluateStepVerificationError,

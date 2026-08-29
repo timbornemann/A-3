@@ -71,6 +71,14 @@ stable_id!(
     TaskId
 );
 stable_id!(
+    /// Stable identity of one project-bound Agent conversation.
+    AgentSessionId
+);
+stable_id!(
+    /// Stable identity of one task-bearing work item within an Agent conversation.
+    AgentWorkItemId
+);
+stable_id!(
     /// Stable identity of one acceptance criterion across Goal Contract revisions.
     AcceptanceCriterionId
 );
@@ -141,11 +149,11 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
-        DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId,
-        RemoteIdentity, RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId,
-        TaskId, TaskStepId, ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId,
-        WorktreeId,
+        AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
+        ApprovalRequestId, CommandCatalogId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
+        PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
+        StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
+        VerificationSpecId, WorktreeAnchorId, WorktreeId,
     };
 
     #[test]
@@ -163,6 +171,8 @@ mod tests {
         assert_eq!(SnapshotId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(IndexRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AgentSessionId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AgentWorkItemId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AcceptanceCriterionId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskStepId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskEvidenceId::from_bytes(bytes).as_bytes(), &bytes);

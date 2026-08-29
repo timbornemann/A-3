@@ -13,6 +13,7 @@
     "allow-delete-model-provider-credential",
     "allow-confirm-project-command-allowlist",
     "allow-control-agent-approval",
+    "allow-control-agent-session",
     "allow-control-agent-task-run",
     "allow-create-agent-goal",
     "allow-discover-provider-models",
@@ -21,6 +22,8 @@
     "allow-query-deep-map",
     "allow-query-agent-activity",
     "allow-query-agent-approval",
+    "allow-query-agent-session",
+    "allow-query-agent-sessions",
     "allow-query-agent-inspection",
     "allow-query-agent-inspection-log",
     "allow-query-agent-goal",
@@ -49,6 +52,7 @@
     "allow-query-project-settings",
     "allow-query-health",
     "allow-query-settings",
+    "allow-query-ui-preferences",
     "allow-rebuild-project-index",
     "allow-remove-project",
     "allow-remove-catalog-project",
@@ -57,6 +61,8 @@
     "allow-resume-deep-map",
     "allow-restore-last-project",
     "allow-start-deep-map",
-    "allow-set-model-provider-credential"
+    "allow-set-model-provider-credential",
+    "allow-submit-agent-message",
+    "allow-update-agent-workspace-layout"
   ]
 }

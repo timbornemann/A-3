@@ -81,6 +81,14 @@ pub enum ErrorCodeV1 {
     InvalidAgentApprovalRequest,
     /// Exact approval state or its atomic control could not be completed safely.
     AgentApprovalUnavailable,
+    /// Session identity, cursor, content, mode, or control violated the Agent chat contract.
+    InvalidAgentSessionRequest,
+    /// Another writer advanced the selected Agent session after it was displayed.
+    AgentSessionRevisionConflict,
+    /// Agent conversation persistence or the configured Coding model was unavailable.
+    AgentSessionUnavailable,
+    /// The selected Agent session already owns an incompatible active operation.
+    AgentSessionBusy,
     /// The active project already has a queued or running rebuild.
     IndexRebuildAlreadyPending,
     /// The owned index coordinator could not accept a rebuild request.
@@ -135,6 +143,27 @@ pub struct CommandErrorV1 {
 }
 
 impl CommandErrorV1 {
+    /// Creates a safe Agent-session failure from an already classified boundary code.
+    #[must_use]
+    pub fn agent_session(code: ErrorCodeV1) -> Self {
+        let message = match code {
+            ErrorCodeV1::InvalidAgentSessionRequest => {
+                "The Agent conversation request is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentSessionRevisionConflict => {
+                "The Agent conversation changed. Reload it before continuing."
+            }
+            ErrorCodeV1::AgentSessionBusy => {
+                "This Agent conversation is already processing another action."
+            }
+            ErrorCodeV1::NoActiveProject => {
+                "Open a local Git worktree before using the Agent workspace."
+            }
+            _ => "The Agent conversation could not be completed safely.",
+        };
+        Self::new(code, message)
+    }
+
     /// Creates the stable response for an unsupported request version.
     #[must_use]
     pub fn unsupported_protocol_version() -> Self {
@@ -250,6 +279,18 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::AgentApprovalUnavailable => {
                 "The exact Agent approval could not be inspected or controlled safely."
+            }
+            ErrorCodeV1::InvalidAgentSessionRequest => {
+                "The Agent conversation request is outside the supported bounds."
+            }
+            ErrorCodeV1::AgentSessionRevisionConflict => {
+                "The Agent conversation changed. Reload it before continuing."
+            }
+            ErrorCodeV1::AgentSessionUnavailable => {
+                "The Agent conversation could not be completed safely."
+            }
+            ErrorCodeV1::AgentSessionBusy => {
+                "This Agent conversation is already processing another action."
             }
             ErrorCodeV1::IndexRebuildAlreadyPending => {
                 "An index rebuild is already queued or running for the active worktree."

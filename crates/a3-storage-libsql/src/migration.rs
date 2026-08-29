@@ -405,6 +405,29 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
               VALUES (new.rowid, new.worktree_root_display);
           END;",
     },
+    Migration {
+        version: 7,
+        name: "ui_preferences_snapshots",
+        sql: "CREATE TABLE ui_preference_revisions (\n\
+          revision INTEGER PRIMARY KEY NOT NULL CHECK (revision > 0),\n\
+          agent_session_rail_width INTEGER NOT NULL\n\
+            CHECK (agent_session_rail_width BETWEEN 220 AND 360),\n\
+          agent_inspector_width INTEGER NOT NULL\n\
+            CHECK (agent_inspector_width BETWEEN 320 AND 640),\n\
+          agent_session_rail_collapsed INTEGER NOT NULL\n\
+            CHECK (agent_session_rail_collapsed IN (0, 1)),\n\
+          agent_inspector_collapsed INTEGER NOT NULL\n\
+            CHECK (agent_inspector_collapsed IN (0, 1))\n\
+          ) STRICT;\n\
+          CREATE TRIGGER ui_preference_revisions_update_guard\n\
+          BEFORE UPDATE ON ui_preference_revisions BEGIN\n\
+            SELECT RAISE(ABORT, 'UI preference revisions are immutable');\n\
+          END;\n\
+          CREATE TRIGGER ui_preference_revisions_delete_guard\n\
+          BEFORE DELETE ON ui_preference_revisions BEGIN\n\
+            SELECT RAISE(ABORT, 'UI preference revisions are append-only');\n\
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -2432,6 +2455,76 @@ const KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION: Migration = Migration {
       ) STRICT;",
 };
 
+const KNOWLEDGE_AGENT_SESSION_MIGRATION: Migration = Migration {
+    version: 24,
+    name: "agent_conversation_sessions",
+    sql: "CREATE TABLE agent_session_revisions (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      revision INTEGER NOT NULL CHECK (revision > 0),\n\
+      title TEXT NOT NULL CHECK (length(CAST(title AS BLOB)) BETWEEN 1 AND 120),\n\
+      mode TEXT NOT NULL CHECK (mode IN ('ask', 'plan', 'agent')),\n\
+      state TEXT NOT NULL CHECK (state IN\n\
+        ('draft', 'running', 'awaiting_user', 'awaiting_plan_review', 'awaiting_approval',\n\
+         'paused', 'completed', 'failed', 'cancelled', 'archived')),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      updated_at_unix_millis INTEGER NOT NULL\n\
+        CHECK (updated_at_unix_millis >= created_at_unix_millis),\n\
+      latest_sequence INTEGER CHECK (latest_sequence IS NULL OR latest_sequence > 0),\n\
+      active_work_item_id BLOB\n\
+        CHECK (active_work_item_id IS NULL OR length(active_work_item_id) = 32),\n\
+      active_task_id BLOB CHECK (active_task_id IS NULL OR length(active_task_id) = 32),\n\
+      active_work_item_mode TEXT\n\
+        CHECK (active_work_item_mode IS NULL OR active_work_item_mode IN ('ask', 'plan', 'agent')),\n\
+      current_plan_revision INTEGER\n\
+        CHECK (current_plan_revision IS NULL OR current_plan_revision > 0),\n\
+      presentation_deleted INTEGER NOT NULL CHECK (presentation_deleted IN (0, 1)),\n\
+      CHECK ((active_work_item_id IS NULL AND active_task_id IS NULL\n\
+          AND active_work_item_mode IS NULL) OR\n\
+        (active_work_item_id IS NOT NULL AND active_task_id IS NOT NULL\n\
+          AND active_work_item_mode IS NOT NULL)),\n\
+      PRIMARY KEY (worktree_id, session_id, revision),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX agent_session_revisions_recent_idx\n\
+        ON agent_session_revisions\n\
+          (worktree_id, updated_at_unix_millis DESC, session_id, revision DESC);\n\
+      CREATE TABLE agent_session_entries (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      session_revision INTEGER NOT NULL CHECK (session_revision > 0),\n\
+      sequence INTEGER NOT NULL CHECK (sequence > 0),\n\
+      kind TEXT NOT NULL CHECK (kind IN\n\
+        ('user_message', 'assistant_summary', 'plan', 'final_report', 'activity')),\n\
+      content TEXT NOT NULL CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 262144),\n\
+      created_at_unix_millis INTEGER NOT NULL CHECK (created_at_unix_millis >= 0),\n\
+      work_item_id BLOB CHECK (work_item_id IS NULL OR length(work_item_id) = 32),\n\
+      task_id BLOB CHECK (task_id IS NULL OR length(task_id) = 32),\n\
+      plan_revision INTEGER CHECK (plan_revision IS NULL OR plan_revision > 0),\n\
+      CHECK ((kind = 'plan' AND plan_revision IS NOT NULL) OR\n\
+        (kind <> 'plan' AND plan_revision IS NULL)),\n\
+      CHECK ((work_item_id IS NULL AND task_id IS NULL) OR\n\
+        (work_item_id IS NOT NULL AND task_id IS NOT NULL)),\n\
+      PRIMARY KEY (worktree_id, session_id, sequence),\n\
+      FOREIGN KEY (worktree_id, session_id, session_revision)\n\
+        REFERENCES agent_session_revisions(worktree_id, session_id, revision)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER agent_session_revisions_update_guard\n\
+      BEFORE UPDATE ON agent_session_revisions BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent session revisions are immutable');\n\
+      END;\n\
+      CREATE TRIGGER agent_session_revisions_delete_guard\n\
+      BEFORE DELETE ON agent_session_revisions BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent session revisions are append-only');\n\
+      END;\n\
+      CREATE TRIGGER agent_session_entries_update_guard\n\
+      BEFORE UPDATE ON agent_session_entries BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent session entries are immutable');\n\
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2456,6 +2549,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_ACTION_V2_MIGRATION,
     KNOWLEDGE_MUTATION_RECOVERY_MIGRATION,
     KNOWLEDGE_INDEX_FILE_ANALYSIS_MIGRATION,
+    KNOWLEDGE_AGENT_SESSION_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2467,7 +2561,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(6);
+    pub const CURRENT: Self = Self::new(7);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2488,7 +2582,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(23);
+    pub const CURRENT: Self = Self::new(24);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -2905,11 +2999,12 @@ mod tests {
                      'verification_evidence', 'verification_process_evidence',\n\
                      'verification_test_cases', 'verification_diagnostic_reports',\n\
                      'verification_diff_evidence', 'verification_diff_paths',\n\
-                     'verification_user_confirmations', 'verification_evidence_dependencies'\n\
+                     'verification_user_confirmations', 'verification_evidence_dependencies',\n\
+                     'agent_session_revisions', 'agent_session_entries'\n\
                      )",
                 )
                 .await?,
-                64
+                66
             );
             assert_eq!(
                 query_i64(
@@ -3093,6 +3188,7 @@ mod tests {
         (knowledge_upgrades_from_v20, 20),
         (knowledge_upgrades_from_v21, 21),
         (knowledge_upgrades_from_v22, 22),
+        (knowledge_upgrades_from_v23, 23),
     );
 
     #[test]
@@ -4566,6 +4662,107 @@ mod tests {
                 )
                 .await?,
                 0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_catalog_v7_upgrade_preserves_v6_schema() -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            migrate(
+                &connection,
+                &CATALOG_MIGRATIONS[..6],
+                6,
+                CATALOG_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TABLE ui_preference_revisions (conflict INTEGER)",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_catalog(&connection).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 7, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 6);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('ui_preference_revisions')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+                     AND name = 'ui_preference_revisions_update_guard'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v24_upgrade_preserves_v23_schema() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [71; 32];
+            let worktree_id = [72; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..23],
+                23,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE agent_session_entries (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 24, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 23);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                23
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                     AND name = 'agent_session_revisions'",
+                )
+                .await?,
+                0
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('agent_session_entries')
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

@@ -709,6 +709,18 @@ Evidence-IDs; Staleness dominiert historische Completion. Volatile Patch- oder L
 Composition Root nur ausgeliefert, wenn Worktree, Task, Run, Step, Spec und Snapshot weiterhin zur
 aktuellen dauerhaften Projektion passen.
 
+### AgentSession und AgentWorkItem
+
+Eine `AgentSession` ist die projektgebundene Conversation-Projektion des Agent Workspace. Sie
+besitzt eine monotone Revision, einen `Ask`-, `Plan`- oder `Agent`-Modus, einen geschlossenen
+Präsentationsstatus und eine begrenzte, monotone Entry-Sequenz. Ein optionaler `AgentWorkItem`
+bindet genau eine Core-eigene `TaskId`; diese Bindung macht die Session nicht zur Task-Autorität.
+
+Planrevisionen sind unveränderlich. Eine Umsetzung akzeptiert nur die aktuell sichtbare Revision.
+Modi können innerhalb eines Work Items nur `Ask → Plan → Agent` fortschreiten. Fachliche
+Aktivität, Mutationen und Abschluss werden ausschließlich aus Agent Run, Task Ledger und
+Verification projiziert.
+
 ### Agent Run
 
 Verwaltet Zustandsmaschine, Turnnummer, Context Pack, Tool Action, Events, Budgets und Abbruch.

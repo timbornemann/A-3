@@ -172,3 +172,10 @@ Vor Abschluss MUSS Codex beantworten können:
 - Welche Daten oder Berechtigungen kann ein kompromittiertes Frontend erreichen?
 - Welche Messung stützt eine Performanceaussage?
 - Welche Dokumentation oder ADR wurde aktualisiert?
+- Der chatbasierte Agent Workspace ist ausschließlich eine begrenzte Präsentationsprojektion.
+  Sessiontext, Modus und UI-Status ersetzen niemals Goal Contract, Task Ledger, Agent Run,
+  Journal, Evidence, Policy oder Verification.
+- `Ask`, `Plan` und `Agent` sind Core-erzwungene Capability-Envelopes. Eine Beschriftung oder
+  deaktivierte Schaltfläche im Frontend gilt nicht als Sicherheitsgrenze.
+- Eine Planumsetzung bindet immer die exakte sichtbare Session- und Planrevision; Pfade, Befehle,
+  Approval-IDs und Providerdaten werden nicht aus freiem Chattext übernommen.

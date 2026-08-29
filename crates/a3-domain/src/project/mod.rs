@@ -1,6 +1,7 @@
 mod agent_action;
 mod agent_controller;
 mod agent_run;
+mod agent_session;
 mod agent_tool;
 mod approval;
 mod claim_verification;
@@ -64,6 +65,11 @@ pub use agent_run::{
     RunEventIdentity, RunEventKind, RunEventOccurrence, RunEventOutcome, RunEventPayload,
     RunEventRedaction, RunEventRedactionSource, RunEventSequence, RunEventSequenceError,
     RunEventSubject, RunPayloadDigest,
+};
+pub use agent_session::{
+    AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionMode, AgentSessionRevision,
+    AgentSessionRevisionError, AgentSessionSequence, AgentSessionState, AgentSessionText,
+    AgentSessionTextError, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem,
 };
 pub use agent_tool::{
     AgentMutationAttempt, AgentMutationAttemptError, AgentMutationDisposition, AgentMutationKind,
@@ -149,10 +155,11 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, AgentRunId, ApprovalId, ApprovalRequestId, CommandCatalogId,
-    DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity,
-    RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
-    ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
+    ApprovalRequestId, CommandCatalogId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
+    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
+    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
+    VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{

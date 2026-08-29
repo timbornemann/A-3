@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "delete_model_provider_credential",
             "confirm_project_command_allowlist",
             "control_agent_task_run",
+            "control_agent_session",
             "create_agent_goal",
             "discover_provider_models",
             "open_project",
@@ -21,6 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "query_index_activity",
             "query_index_overview",
             "query_agent_activity",
+            "query_agent_session",
+            "query_agent_sessions",
             "query_agent_goal",
             "query_agent_task_recovery",
             "query_module_card_freshness",
@@ -38,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "query_project_settings",
             "query_health",
             "query_settings",
+            "query_ui_preferences",
             "rebuild_project_index",
             "resume_deep_map",
             "restore_last_project",
@@ -47,6 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "set_model_provider_credential",
             "revise_agent_goal",
             "start_deep_map",
+            "submit_agent_message",
+            "update_agent_workspace_layout",
         ]),
     ))?;
     Ok(())

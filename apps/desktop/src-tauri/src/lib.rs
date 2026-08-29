@@ -2,11 +2,13 @@
 
 mod agent_approval_mapping;
 mod agent_approval_metadata;
+mod agent_conversation_runtime;
 mod agent_goal_metadata;
 mod agent_inspection_mapping;
 mod agent_recovery_metadata;
 mod agent_run_manager;
 mod agent_runtime_recovery;
+mod agent_session_manager;
 mod clock;
 /// Narrow, typed commands exposed to the untrusted desktop WebView.
 pub mod commands;
@@ -15,6 +17,7 @@ mod deep_map_runtime;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
+mod production_agent_run_executor;
 mod project_map_atlas_mapping;
 mod project_picker;
 mod project_reconciliation_dialog;
@@ -29,18 +32,19 @@ use a3_application::{
     AgentGoalMetadataSource, AgentInspectionBuffer, AgentInspectionContext, AgentInspectionId,
     AgentInspectionOverview, AgentInspectionQueryError, AgentInspectionRevision, AgentLogPageLimit,
     AgentLogPageOffset, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryOutcomeKind,
-    AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor, AgentTaskControlFailure,
-    AgentTaskControlResult, AgentTaskRecovery, AgentTaskRecoveryLoadResult,
-    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
-    ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
-    DeepMapExecutionFailure, DeepMapExecutor, DeepMapPhase, DeepMapSafeAction, DeepMapTargetKind,
-    GetAgentActivity, GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth,
-    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
-    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
-    GetProjectMapScene, GetProjectMapSourcePreview, GetProjectStorageUsage,
-    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
-    GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
-    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor, AgentSessionDetail,
+    AgentSessionListQuery, AgentSessionStore, AgentTaskControlFailure, AgentTaskControlResult,
+    AgentTaskRecovery, AgentTaskRecoveryLoadResult, AgentWorkspaceLayout, CompileWorkspaceTaskLens,
+    CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult, ControlAgentApproval,
+    ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutionFailure,
+    DeepMapExecutor, DeepMapPhase, DeepMapSafeAction, DeepMapTargetKind, GetAgentActivity,
+    GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail,
+    GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap,
+    GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectMapScene,
+    GetProjectMapSourcePreview, GetProjectStorageUsage, GetProjectStorageUsageError,
+    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
+    GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore, HealthQuery,
+    IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
     JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
     JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
@@ -81,7 +85,8 @@ use a3_application::{
     TaskLensCompilation, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
     TaskLensTaskLoadResult, TaskLensWorkspaceControl, TaskLensWorkspaceFailure,
     TaskLensWorkspaceStore, TaskVerificationInspection, TaskVerificationInspectionLoadResult,
-    TraceModuleRuntimeFlow, VerificationEvidenceStore,
+    TraceModuleRuntimeFlow, UiPreferencesError, UiPreferencesStore, UiPreferencesStoreVersion,
+    VerificationEvidenceStore,
 };
 use a3_application::{
     ExploreProjectMapAtlas, ProjectMapAtlasControl, ProjectMapAtlasControlError,
@@ -92,19 +97,21 @@ use a3_application::{
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
-    AgentControllerState, AgentTurnActionClass, AgentTurnRepairUsage, ApplicationVersion,
-    ApplicationVersionError, ExactSearchExplanation, ExactSearchTarget, ExploreBudget,
-    FileRevision, FusionPriority, GitHead, GoalConstraint, GoalContract, GoalContractRevision,
-    GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult,
-    Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
-    LexicalSearchExplanation, LinkResolution, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
-    ModuleClaimPolarity, ModuleClaimPredicate, ModuleId, ModuleKind, ModuleRoot, NonGoal,
-    ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
-    RepositoryPath, ResolvedModuleCardEvidence, ResultSourceExplanation, RetrievalCandidateReason,
-    RunEvent, RunEventCode, RunEventKind, RunEventOutcome, SnapshotId, SourceChannel,
-    SuccessVerification, SymbolId, SymbolKind, SyntaxProvider, SyntaxRelationKind, TaskId,
-    TaskLedgerRevision, TaskLensEntryReason, TaskLensTarget, TaskStepId, TaskStepStatus,
-    TraversalResultLimit, UserDecision, VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
+    AgentControllerState, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
+    AgentSessionMode, AgentSessionRevision, AgentSessionState, AgentTurnActionClass,
+    AgentTurnRepairUsage, ApplicationVersion, ApplicationVersionError, ExactSearchExplanation,
+    ExactSearchTarget, ExploreBudget, FileRevision, FusionPriority, GitHead, GoalConstraint,
+    GoalContract, GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge,
+    GraphEndpoint, GraphSymbol, GraphTraversalResult, Health, IndexLanguage, IndexRunId,
+    IndexRunStatus, InvalidationReason, LexicalSearchExplanation, LinkResolution,
+    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleId, ModuleKind, ModuleRoot, NonGoal, ParseDiagnosticCode, ParseDiagnosticSeverity,
+    Platform, Progress, ProjectId, ProjectIdentity, RepositoryPath, ResolvedModuleCardEvidence,
+    ResultSourceExplanation, RetrievalCandidateReason, RunEvent, RunEventCode, RunEventKind,
+    RunEventOutcome, SnapshotId, SourceChannel, SuccessVerification, SymbolId, SymbolKind,
+    SyntaxProvider, SyntaxRelationKind, TaskId, TaskLedgerRevision, TaskLensEntryReason,
+    TaskLensTarget, TaskStepId, TaskStepStatus, TraversalResultLimit, UserDecision,
+    VerifiedClaimKind, VerifiedClaimStatus, WorktreeId,
 };
 use a3_protocol::{
     AgentActivityBlockerStatusV1, AgentActivityBlockerV1, AgentActivityBudgetV1,
@@ -116,6 +123,8 @@ use a3_protocol::{
     AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
     AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
     AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSelectedActionV1,
+    AgentSessionEntryKindV1, AgentSessionEntryV1, AgentSessionModeV1, AgentSessionResponseV1,
+    AgentSessionStateV1, AgentSessionSummaryV1, AgentSessionV1, AgentSessionsResponseV1,
     AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
     AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
     AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
@@ -166,7 +175,7 @@ use a3_protocol::{
     TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
     TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
     TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
-    TaskLensTasksResponseV1, TaskLensV1,
+    TaskLensTasksResponseV1, TaskLensV1, UiPreferencesResponseV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -185,6 +194,10 @@ use agent_inspection_mapping::{
 use agent_recovery_metadata::SystemAgentRecoveryMetadata;
 use agent_run_manager::{AgentRunActivityState, AgentRunManager, AgentRunManagerControlError};
 use agent_runtime_recovery::CoreAgentRuntimeRecovery;
+use agent_session_manager::{
+    AgentAskResearcher, AgentSessionManager, AgentSessionManagerDependencies,
+    AgentSessionManagerFailure, AgentSessionRunReporter, PresentationMutation,
+};
 use clock::SystemJobClock;
 use deep_map_manager::{
     DeepMapActivity, DeepMapActivityState, DeepMapManager, DeepMapManagerControlError,
@@ -193,6 +206,7 @@ use deep_map_runtime::DeepMapRuntime;
 use job_ids::DesktopJobIds;
 use model_settings_manager::ModelSettingsManager;
 use platform::SystemPlatform;
+use production_agent_run_executor::{ProductionAgentRunExecutor, ProductionAgentRunPorts};
 use project_map_atlas_mapping::{
     map_context_to_v1, map_flow_to_v1, map_index_evidence_from_v1, map_inventory_to_v1,
     map_scene_to_v1,
@@ -261,7 +275,9 @@ pub struct CompositionRoot {
     index_manager: Option<RepositoryIndexManager>,
     deep_map_manager: Option<DeepMapManager>,
     deep_map_runtime: Option<DeepMapRuntime>,
-    agent_run_manager: Option<AgentRunManager>,
+    agent_run_manager: Option<Arc<AgentRunManager>>,
+    agent_sessions: Option<AgentSessionManager>,
+    ui_preferences: Option<Arc<dyn UiPreferencesStore>>,
     _job_scheduler: JobScheduler,
     _job_events: JobEventStream,
 }
@@ -303,6 +319,273 @@ impl CompositionRoot {
     #[must_use]
     pub fn query_health(&self) -> HealthResponseV1 {
         map_health_to_v1(self.health_query.execute())
+    }
+
+    /// Lists bounded project-local Agent conversations for the session rail.
+    pub async fn query_agent_sessions(
+        &self,
+        query: AgentSessionListQuery,
+    ) -> Result<AgentSessionsResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionsResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let page = manager
+            .list(&active.project, &query)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let next_cursor = page
+            .has_more()
+            .then(|| {
+                page.sessions()
+                    .last()
+                    .map(|session| session.updated_at().unix_millis().to_string())
+            })
+            .flatten();
+        Ok(AgentSessionsResponseV1::available(
+            page.sessions()
+                .iter()
+                .map(map_agent_session_summary_to_v1)
+                .collect(),
+            next_cursor,
+        ))
+    }
+
+    /// Loads one bounded project-local conversation page.
+    pub async fn query_agent_session(
+        &self,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let mut detail = manager
+            .load(&active.project, session_id, before_sequence, limit)
+            .await
+            .map_err(map_agent_session_failure)?;
+        if let Some(current) = detail.as_ref()
+            && let Some(work_item) = current.session().active_work_item()
+            && let Some(runtime) = self
+                .agent_run_manager
+                .as_ref()
+                .map(|value| value.activity())
+            && runtime.task_id() == Some(work_item.task_id())
+        {
+            let projected = match runtime.state() {
+                AgentRunActivityState::Paused => Some(AgentSessionState::Paused),
+                AgentRunActivityState::Queued
+                | AgentRunActivityState::Running
+                | AgentRunActivityState::Pausing => Some(AgentSessionState::Running),
+                AgentRunActivityState::Idle
+                | AgentRunActivityState::Cancelling
+                | AgentRunActivityState::Succeeded
+                | AgentRunActivityState::Failed
+                | AgentRunActivityState::Cancelled => None,
+            };
+            if projected.is_some_and(|state| state != current.session().state()) {
+                manager
+                    .project_runtime_state(
+                        &active.project,
+                        work_item.task_id(),
+                        projected.unwrap_or(AgentSessionState::Running),
+                    )
+                    .await
+                    .map_err(map_agent_session_failure)?;
+                detail = manager
+                    .load(&active.project, session_id, before_sequence, limit)
+                    .await
+                    .map_err(map_agent_session_failure)?;
+            }
+        }
+        match detail {
+            Some(detail) => Ok(AgentSessionResponseV1::available(
+                map_agent_session_detail_to_v1(&detail),
+            )),
+            None => Ok(AgentSessionResponseV1::not_found()),
+        }
+    }
+
+    /// Persists one message and completes its bounded read-only conversation turn.
+    pub async fn submit_agent_message(
+        &self,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        start_mode: Option<AgentSessionMode>,
+        message: String,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let detail = manager
+            .submit(
+                &active.project,
+                session_id,
+                expected_revision,
+                start_mode,
+                message,
+            )
+            .await
+            .map_err(map_agent_session_failure)?;
+        Ok(AgentSessionResponseV1::available(
+            map_agent_session_detail_to_v1(&detail),
+        ))
+    }
+
+    /// Applies one non-privileged session-presentation control.
+    pub(crate) async fn control_agent_session_presentation(
+        &self,
+        session_id: AgentSessionId,
+        expected_revision: AgentSessionRevision,
+        mutation: PresentationMutation,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        match manager
+            .update_presentation(&active.project, session_id, expected_revision, mutation)
+            .await
+            .map_err(map_agent_session_failure)?
+        {
+            Some(detail) => Ok(AgentSessionResponseV1::available(
+                map_agent_session_detail_to_v1(&detail),
+            )),
+            None => Ok(AgentSessionResponseV1::not_found()),
+        }
+    }
+
+    /// Materializes and queues exactly the reviewed immutable plan revision.
+    pub(crate) async fn implement_agent_session_plan(
+        &self,
+        session_id: AgentSessionId,
+        expected_revision: AgentSessionRevision,
+        plan_revision: u32,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let detail = manager
+            .implement_plan(
+                &active.project,
+                session_id,
+                expected_revision,
+                plan_revision,
+            )
+            .await
+            .map_err(map_agent_session_failure)?;
+        Ok(AgentSessionResponseV1::available(
+            map_agent_session_detail_to_v1(&detail),
+        ))
+    }
+
+    /// Resolves Pause, Resume, or Cancel from the session's Core-owned task anchor.
+    pub(crate) async fn control_agent_session_runtime(
+        &self,
+        session_id: AgentSessionId,
+        expected_revision: AgentSessionRevision,
+        action: AgentTaskControlActionV1,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let sessions = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let detail = sessions
+            .load(&active.project, session_id, None, 128)
+            .await
+            .map_err(map_agent_session_failure)?
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        if detail.session().revision() != expected_revision {
+            return Err(CommandErrorV1::agent_session(
+                ErrorCodeV1::AgentSessionRevisionConflict,
+            ));
+        }
+        let Some(task_id) = detail
+            .session()
+            .active_work_item()
+            .map(|item| item.task_id())
+        else {
+            if action != AgentTaskControlActionV1::Cancel
+                || detail.session().state() != AgentSessionState::Running
+            {
+                return Err(CommandErrorV1::agent_session(
+                    ErrorCodeV1::AgentSessionUnavailable,
+                ));
+            }
+            sessions
+                .cancel_conversation(session_id)
+                .map_err(map_agent_session_failure)?;
+            return self.query_agent_session(session_id, None, 128).await;
+        };
+        let target =
+            load_agent_runtime_target(self.agent_activity.as_ref(), &active.project, task_id)
+                .await?;
+        let AgentRuntimeTargetLoad::Available(target) = target else {
+            return Err(CommandErrorV1::agent_session(
+                ErrorCodeV1::AgentSessionRevisionConflict,
+            ));
+        };
+        let _result = self
+            .control_agent_task_run(
+                task_id,
+                target.ledger_revision.get(),
+                target.ledger_store_version,
+                action,
+            )
+            .await?;
+        self.query_agent_session(session_id, None, 128).await
+    }
+
+    /// Loads global content-free Agent workspace layout preferences.
+    pub async fn query_ui_preferences(&self) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+        let store = self
+            .ui_preferences
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        store
+            .load()
+            .await
+            .map(map_ui_preferences_to_v1)
+            .map_err(map_ui_preferences_failure)
+    }
+
+    /// Compare-and-appends global content-free Agent workspace layout preferences.
+    pub async fn update_agent_workspace_layout(
+        &self,
+        expected: UiPreferencesStoreVersion,
+        layout: AgentWorkspaceLayout,
+    ) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+        let store = self
+            .ui_preferences
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        store
+            .append(expected, layout)
+            .await
+            .map(map_ui_preferences_to_v1)
+            .map_err(map_ui_preferences_failure)
     }
 
     /// Reads the current global model Settings without provider or network access.
@@ -1697,7 +1980,7 @@ impl CompositionRoot {
         let runtime = self
             .agent_run_manager
             .as_ref()
-            .map(AgentRunManager::activity);
+            .map(|manager| manager.activity());
         if let (Some(manager), Some(runtime)) = (&self.agent_run_manager, runtime.as_ref())
             && runtime.task_id() == Some(task_id)
             && (runtime.state().owns_live_worker()
@@ -2110,6 +2393,13 @@ impl CompositionRoot {
         project_id: ProjectId,
         error: fn(ErrorCodeV1) -> CommandErrorV1,
     ) -> Result<(), CommandErrorV1> {
+        if self
+            .agent_sessions
+            .as_ref()
+            .is_some_and(|manager| manager.quiesce().is_err())
+        {
+            return Err(error(ErrorCodeV1::ProjectOperationBusy));
+        }
         let previous = lock_recovering_poison(&self.active_project).clone();
         if let Some(manager) = &self.index_manager
             && manager.activate_project(project.clone()).is_err()
@@ -2211,6 +2501,15 @@ impl CompositionRoot {
     }
 
     fn deactivate_active_runtime(&self, active: &ActiveProject) -> Result<(), CommandErrorV1> {
+        if self
+            .agent_sessions
+            .as_ref()
+            .is_some_and(|manager| manager.quiesce().is_err())
+        {
+            return Err(CommandErrorV1::project_removal(
+                ErrorCodeV1::ProjectOperationBusy,
+            ));
+        }
         if let Some(manager) = &self.index_manager
             && let Err(error) = manager.deactivate_project()
         {
@@ -2260,6 +2559,111 @@ impl CompositionRoot {
 
 struct ExclusiveOperationPermit<'a> {
     active: &'a AtomicBool,
+}
+
+fn map_agent_session_detail_to_v1(detail: &AgentSessionDetail) -> AgentSessionV1 {
+    AgentSessionV1::new(
+        map_agent_session_summary_to_v1(detail.session()),
+        detail
+            .session()
+            .active_work_item()
+            .map(|work_item| work_item.task_id().to_string()),
+        detail
+            .entries()
+            .iter()
+            .map(map_agent_session_entry_to_v1)
+            .collect(),
+        detail.has_older_entries(),
+    )
+}
+
+fn map_agent_session_summary_to_v1(session: &AgentSession) -> AgentSessionSummaryV1 {
+    AgentSessionSummaryV1::new(
+        session.id().to_string(),
+        session.revision().get().to_string(),
+        session.title().as_str().to_owned(),
+        map_agent_session_mode_to_v1(session.mode()),
+        map_agent_session_state_to_v1(session.state()),
+        session.updated_at().unix_millis().to_string(),
+        session.current_plan_revision(),
+    )
+}
+
+fn map_agent_session_entry_to_v1(entry: &AgentSessionEntry) -> AgentSessionEntryV1 {
+    AgentSessionEntryV1::new(
+        entry.sequence().get().to_string(),
+        match entry.kind() {
+            AgentSessionEntryKind::UserMessage => AgentSessionEntryKindV1::UserMessage,
+            AgentSessionEntryKind::AssistantSummary => AgentSessionEntryKindV1::AssistantSummary,
+            AgentSessionEntryKind::Plan => AgentSessionEntryKindV1::Plan,
+            AgentSessionEntryKind::FinalReport => AgentSessionEntryKindV1::FinalReport,
+            AgentSessionEntryKind::Activity => AgentSessionEntryKindV1::Activity,
+        },
+        entry.text().as_str().to_owned(),
+        entry.created_at().unix_millis().to_string(),
+        entry.plan_revision(),
+    )
+}
+
+const fn map_agent_session_mode_to_v1(mode: AgentSessionMode) -> AgentSessionModeV1 {
+    match mode {
+        AgentSessionMode::Ask => AgentSessionModeV1::Ask,
+        AgentSessionMode::Plan => AgentSessionModeV1::Plan,
+        AgentSessionMode::Agent => AgentSessionModeV1::Agent,
+    }
+}
+
+const fn map_agent_session_state_to_v1(state: AgentSessionState) -> AgentSessionStateV1 {
+    match state {
+        AgentSessionState::Draft => AgentSessionStateV1::Draft,
+        AgentSessionState::Running => AgentSessionStateV1::Running,
+        AgentSessionState::AwaitingUser => AgentSessionStateV1::AwaitingUser,
+        AgentSessionState::AwaitingPlanReview => AgentSessionStateV1::AwaitingPlanReview,
+        AgentSessionState::AwaitingApproval => AgentSessionStateV1::AwaitingApproval,
+        AgentSessionState::Paused => AgentSessionStateV1::Paused,
+        AgentSessionState::Completed => AgentSessionStateV1::Completed,
+        AgentSessionState::Failed => AgentSessionStateV1::Failed,
+        AgentSessionState::Cancelled => AgentSessionStateV1::Cancelled,
+        AgentSessionState::Archived => AgentSessionStateV1::Archived,
+    }
+}
+
+fn map_agent_session_failure(error: AgentSessionManagerFailure) -> CommandErrorV1 {
+    let code = match error {
+        AgentSessionManagerFailure::InvalidInput | AgentSessionManagerFailure::InvalidOutput => {
+            ErrorCodeV1::InvalidAgentSessionRequest
+        }
+        AgentSessionManagerFailure::Conflict => ErrorCodeV1::AgentSessionRevisionConflict,
+        AgentSessionManagerFailure::Busy => ErrorCodeV1::AgentSessionBusy,
+        AgentSessionManagerFailure::NotFound | AgentSessionManagerFailure::Unavailable => {
+            ErrorCodeV1::AgentSessionUnavailable
+        }
+    };
+    CommandErrorV1::agent_session(code)
+}
+
+fn map_ui_preferences_to_v1(
+    stored: a3_application::StoredUiPreferences,
+) -> UiPreferencesResponseV1 {
+    let layout = stored.agent_workspace();
+    UiPreferencesResponseV1::new(
+        stored.version().get().to_string(),
+        layout.session_rail_width(),
+        layout.inspector_width(),
+        layout.session_rail_collapsed(),
+        layout.inspector_collapsed(),
+    )
+}
+
+fn map_ui_preferences_failure(error: UiPreferencesError) -> CommandErrorV1 {
+    let code = match error {
+        UiPreferencesError::InvalidLayout | UiPreferencesError::InvalidVersion => {
+            ErrorCodeV1::InvalidAgentSessionRequest
+        }
+        UiPreferencesError::Conflict => ErrorCodeV1::AgentSessionRevisionConflict,
+        UiPreferencesError::Unavailable => ErrorCodeV1::AgentSessionUnavailable,
+    };
+    CommandErrorV1::agent_session(code)
 }
 
 impl Drop for ExclusiveOperationPermit<'_> {
@@ -2619,6 +3023,8 @@ struct CompositionBase {
 struct OptionalCompositionPorts {
     settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
     credential_store: Option<Arc<dyn a3_application::ProviderCredentialStore>>,
+    agent_session_store: Option<Arc<dyn AgentSessionStore>>,
+    ui_preferences_store: Option<Arc<dyn UiPreferencesStore>>,
     command_allowlist_store: Option<Arc<dyn a3_application::CommandAllowlistStore>>,
     project_ignore_settings_source: Option<Arc<dyn a3_application::ProjectIgnoreSettingsSource>>,
     index_store: Option<Arc<dyn KnowledgeIndexStore>>,
@@ -2652,6 +3058,8 @@ struct OptionalCompositionPorts {
 struct IndexingCompositionPorts {
     settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
     credential_store: Arc<dyn a3_application::ProviderCredentialStore>,
+    agent_session_store: Arc<dyn AgentSessionStore>,
+    ui_preferences_store: Arc<dyn UiPreferencesStore>,
     command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore>,
     project_ignore_settings_source: Arc<dyn a3_application::ProjectIgnoreSettingsSource>,
     index_store: Arc<dyn KnowledgeIndexStore>,
@@ -2733,6 +3141,8 @@ impl CompositionBase {
             OptionalCompositionPorts {
                 settings_store: Some(ports.settings_store),
                 credential_store: Some(ports.credential_store),
+                agent_session_store: Some(ports.agent_session_store),
+                ui_preferences_store: Some(ports.ui_preferences_store),
                 command_allowlist_store: Some(ports.command_allowlist_store),
                 project_ignore_settings_source: Some(ports.project_ignore_settings_source),
                 index_store: Some(ports.index_store),
@@ -2775,6 +3185,17 @@ impl CompositionBase {
         let job_ids = Arc::new(DesktopJobIds::new());
         let project_inspector: Arc<dyn a3_application::ProjectInspector> =
             Arc::new(RepositoryInspector::new());
+        let model_settings = match (
+            ports.settings_store.as_ref(),
+            ports.credential_store.as_ref(),
+        ) {
+            (Some(settings), Some(credentials)) => Some(ModelSettingsManager::new(
+                Arc::clone(settings),
+                Arc::clone(credentials),
+            )),
+            _ => None,
+        };
+        let ui_preferences = ports.ui_preferences_store.clone();
         let project_settings = match (
             ports.project_ignore_settings_source.as_ref(),
             ports.index_store.as_ref(),
@@ -2868,6 +3289,78 @@ impl CompositionBase {
             .map(|(workspace, evidence)| GetTaskVerificationInspection::new(workspace, evidence));
         let agent_inspection = Arc::new(AgentInspectionBuffer::new());
         let agent_approval = Arc::new(AgentApprovalBuffer::new());
+        let agent_session_reporter = ports
+            .agent_session_store
+            .as_ref()
+            .map(|store| Arc::new(AgentSessionRunReporter::new(Arc::clone(store))));
+        let agent_ask_researcher = match (
+            ports.task_lens_index_store.as_ref(),
+            ports.knowledge_search_store.as_ref(),
+            ports.task_lens_claim_store.as_ref(),
+        ) {
+            (Some(index), Some(search), Some(claims)) => Some(AgentAskResearcher::new(
+                Arc::clone(index),
+                Arc::clone(search),
+                Arc::clone(claims),
+            )),
+            _ => None,
+        };
+        let production_agent_run_executor = match (
+            ports.settings_store.as_ref(),
+            ports.credential_store.as_ref(),
+            ports.task_lens_workspace_store.as_ref(),
+            ports.run_journal_store.as_ref(),
+            ports.agent_action_store.as_ref(),
+            ports.agent_recovery_store.as_ref(),
+            ports.policy_store.as_ref(),
+            ports.verification_evidence_store.as_ref(),
+            ports.index_store.as_ref(),
+            ports.task_lens_index_store.as_ref(),
+            ports.knowledge_search_store.as_ref(),
+            ports.task_lens_claim_store.as_ref(),
+            ports.command_allowlist_store.as_ref(),
+        ) {
+            (
+                Some(settings),
+                Some(credentials),
+                Some(workspace),
+                Some(journal),
+                Some(actions),
+                Some(recovery),
+                Some(policy),
+                Some(evidence),
+                Some(index),
+                Some(lens_index),
+                Some(search),
+                Some(claims),
+                Some(allowlist),
+            ) => Some(Arc::new(
+                ProductionAgentRunExecutor::new(
+                    ProductionAgentRunPorts {
+                        workspace: Arc::clone(workspace),
+                        journal: Arc::clone(journal),
+                        actions: Arc::clone(actions),
+                        recovery: Arc::clone(recovery),
+                        policy: Arc::clone(policy),
+                        evidence: Arc::clone(evidence),
+                        index: Arc::clone(index),
+                        lens_index: Arc::clone(lens_index),
+                        search: Arc::clone(search),
+                        claims: Arc::clone(claims),
+                        allowlist: Arc::clone(allowlist),
+                    },
+                    agent_conversation_runtime::AgentConversationRuntime::new(
+                        Arc::clone(settings),
+                        Arc::clone(credentials),
+                    ),
+                    Arc::clone(&agent_inspection),
+                    Arc::clone(&agent_approval),
+                    agent_session_reporter.clone(),
+                )
+                .map_err(|_| CompositionRootError::AgentRunManagerUnavailable)?,
+            ) as Arc<dyn AgentRunExecutor>),
+            _ => None,
+        };
         let approval_read_ports = ports
             .task_lens_workspace_store
             .clone()
@@ -2929,11 +3422,13 @@ impl CompositionBase {
             .map(|store| CreateAgentGoal::new(store, Arc::clone(&agent_goal_metadata)));
         let agent_goal_revise = ports
             .goal_contract_store
+            .clone()
             .map(|store| ReviseAgentGoal::new(store, agent_goal_metadata));
         let module_tree = ports.module_tree_store.map(GetModuleTreePage::new);
         let repository_tree = ports.repository_tree_store.map(GetRepositoryTreePage::new);
         let index_manager = ports
             .index_store
+            .clone()
             .map(|store| {
                 let submitter = self
                     .job_scheduler
@@ -2967,8 +3462,9 @@ impl CompositionBase {
         } else {
             None
         };
+        let agent_run_executor = ports.agent_run_executor.or(production_agent_run_executor);
         let agent_run_manager = match (
-            ports.agent_run_executor,
+            agent_run_executor,
             agent_task_recovery.clone(),
             agent_task_control.clone(),
         ) {
@@ -2977,7 +3473,7 @@ impl CompositionBase {
                     .job_scheduler
                     .submitter()
                     .map_err(|_| CompositionRootError::AgentRunManagerUnavailable)?;
-                Some(
+                Some(Arc::new(
                     AgentRunManager::start(
                         submitter,
                         self.job_events.clone(),
@@ -2986,18 +3482,55 @@ impl CompositionBase {
                         Arc::clone(&job_ids),
                     )
                     .map_err(|_| CompositionRootError::AgentRunManager)?,
-                )
+                ))
+            }
+            _ => None,
+        };
+        let agent_task_materializer = match (
+            ports.goal_contract_store.as_ref(),
+            ports.task_ledger_store.as_ref(),
+            ports.run_journal_store.as_ref(),
+            ports.index_store.as_ref(),
+        ) {
+            (Some(goals), Some(ledgers), Some(journal), Some(index)) => {
+                Some(agent_session_manager::AgentTaskMaterializer::new(
+                    Arc::clone(goals),
+                    Arc::clone(ledgers),
+                    Arc::clone(journal),
+                    Arc::clone(index),
+                ))
+            }
+            _ => None,
+        };
+        let agent_sessions = match (
+            ports.agent_session_store.as_ref(),
+            ports.settings_store.as_ref(),
+            ports.credential_store.as_ref(),
+        ) {
+            (Some(sessions), Some(settings), Some(credentials)) => {
+                let submitter = self
+                    .job_scheduler
+                    .submitter()
+                    .map_err(|_| CompositionRootError::AgentRunManagerUnavailable)?;
+                Some(AgentSessionManager::new(AgentSessionManagerDependencies {
+                    store: Arc::clone(sessions),
+                    runtime: agent_conversation_runtime::AgentConversationRuntime::new(
+                        Arc::clone(settings),
+                        Arc::clone(credentials),
+                    ),
+                    submitter,
+                    job_ids: Arc::clone(&job_ids),
+                    materializer: agent_task_materializer,
+                    run_manager: agent_run_manager.clone(),
+                    reporter: agent_session_reporter,
+                    researcher: agent_ask_researcher,
+                }))
             }
             _ => None,
         };
         Ok(CompositionRoot {
             health_query: self.health_query,
-            model_settings: match (ports.settings_store, ports.credential_store) {
-                (Some(settings), Some(credentials)) => {
-                    Some(ModelSettingsManager::new(settings, credentials))
-                }
-                _ => None,
-            },
+            model_settings,
             project_settings,
             open_project: OpenProject::new(
                 project_directory_picker,
@@ -3050,6 +3583,8 @@ impl CompositionBase {
             deep_map_manager,
             deep_map_runtime,
             agent_run_manager,
+            agent_sessions,
+            ui_preferences,
             _job_scheduler: self.job_scheduler,
             _job_events: self.job_events,
         })
@@ -3076,6 +3611,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             let settings_store: Arc<dyn a3_application::DesktopSettingsStore> = store.clone();
             let credential_store: Arc<dyn a3_application::ProviderCredentialStore> =
                 Arc::new(NativeProviderCredentialStore::new());
+            let agent_session_store: Arc<dyn AgentSessionStore> = store.clone();
+            let ui_preferences_store: Arc<dyn UiPreferencesStore> = store.clone();
             let command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore> =
                 store.clone();
             let project_ignore_settings_source: Arc<
@@ -3122,6 +3659,8 @@ pub fn run() -> Result<(), DesktopRunError> {
                 IndexingCompositionPorts {
                     settings_store,
                     credential_store,
+                    agent_session_store,
+                    ui_preferences_store,
                     command_allowlist_store,
                     project_ignore_settings_source,
                     index_store,
@@ -3162,6 +3701,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::delete_model_provider_credential,
             commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
+            commands::control_agent_session,
             commands::control_agent_task_run,
             commands::create_agent_goal,
             commands::discover_provider_models,
@@ -3189,6 +3729,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_module_tree,
             commands::query_agent_activity,
             commands::query_agent_approval,
+            commands::query_agent_session,
+            commands::query_agent_sessions,
             commands::query_agent_inspection,
             commands::query_agent_inspection_log,
             commands::query_agent_goal,
@@ -3199,6 +3741,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_repository_tree,
             commands::query_health,
             commands::query_settings,
+            commands::query_ui_preferences,
             commands::rebuild_project_index,
             commands::resume_deep_map,
             commands::restore_last_project,
@@ -3207,7 +3750,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::remove_catalog_project,
             commands::probe_model_role,
             commands::set_model_provider_credential,
-            commands::start_deep_map
+            commands::start_deep_map,
+            commands::submit_agent_message,
+            commands::update_agent_workspace_layout
         ])
         .run(tauri::generate_context!())
         .map_err(DesktopRunError::Tauri)

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-agent-session"
+description = "Enables the query_agent_session command without any pre-configured scope."
+commands.allow = ["query_agent_session"]
+
+[[permission]]
+identifier = "deny-query-agent-session"
+description = "Denies the query_agent_session command without any pre-configured scope."
+commands.deny = ["query_agent_session"]

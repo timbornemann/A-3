@@ -1,3 +1,4 @@
+use crate::agent_session_manager::PresentationMutation;
 use crate::model_settings_manager::settings_version_from_v1;
 use crate::project_map_atlas_mapping::{
     map_flow_query_from_v1, map_inventory_query_from_v1, map_selection_from_v1,
@@ -6,28 +7,33 @@ use crate::project_settings_manager::{
     allowlist_version_from_v1, catalog_id_from_v1, command_ids_from_v1,
 };
 use crate::{
-    CompositionRoot, map_agent_activity_task_id_from_v1, map_agent_approval_control_from_v1,
-    map_agent_approval_task_id_from_v1, map_agent_goal_task_id_from_v1,
-    map_agent_inspection_log_query_from_v1, map_agent_inspection_task_id_from_v1,
-    map_agent_task_control_from_v1, map_agent_task_recovery_task_id_from_v1,
-    map_create_agent_goal_from_v1, map_module_card_detail_query_from_v1,
-    map_module_card_evidence_query_from_v1, map_module_dependency_graph_query_from_v1,
-    map_module_runtime_flow_query_from_v1, map_module_runtime_map_query_from_v1,
-    map_module_tree_query_from_v1, map_project_catalog_query_from_v1,
-    map_project_map_scene_query_from_v1, map_project_map_search_query_from_v1,
-    map_project_map_source_preview_query_from_v1, map_repository_tree_query_from_v1,
-    map_revise_agent_goal_from_v1, map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1,
-    map_worktree_id_from_v1,
+    CompositionRoot, decode_stable_id, map_agent_activity_task_id_from_v1,
+    map_agent_approval_control_from_v1, map_agent_approval_task_id_from_v1,
+    map_agent_goal_task_id_from_v1, map_agent_inspection_log_query_from_v1,
+    map_agent_inspection_task_id_from_v1, map_agent_task_control_from_v1,
+    map_agent_task_recovery_task_id_from_v1, map_create_agent_goal_from_v1,
+    map_module_card_detail_query_from_v1, map_module_card_evidence_query_from_v1,
+    map_module_dependency_graph_query_from_v1, map_module_runtime_flow_query_from_v1,
+    map_module_runtime_map_query_from_v1, map_module_tree_query_from_v1,
+    map_project_catalog_query_from_v1, map_project_map_scene_query_from_v1,
+    map_project_map_search_query_from_v1, map_project_map_source_preview_query_from_v1,
+    map_repository_tree_query_from_v1, map_revise_agent_goal_from_v1,
+    map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1, map_worktree_id_from_v1,
+    parse_canonical_positive_u64,
 };
+use a3_application::{AgentSessionListQuery, AgentWorkspaceLayout, UiPreferencesStoreVersion};
+use a3_domain::{AgentSessionId, AgentSessionMode, AgentSessionRevision};
 use a3_protocol::{
     ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
     AgentApprovalResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentTaskControlResponseV1,
-    AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1, CancelModelProbeResponseV1,
-    CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
-    ConfirmProjectCommandAllowlistRequestV1, ControlAgentApprovalRequestV1,
-    ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1, CreateAgentGoalRequestV1,
-    DeepMapControlResponseV1, DeepMapStatusResponseV2, DeleteModelProviderCredentialRequestV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSessionControlActionV1,
+    AgentSessionModeV1, AgentSessionResponseV1, AgentSessionsResponseV1, AgentTaskControlActionV1,
+    AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1,
+    CancelModelProbeResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
+    ConfigureModelProviderRequestV1, ConfirmProjectCommandAllowlistRequestV1,
+    ControlAgentApprovalRequestV1, ControlAgentSessionRequestV1, ControlAgentTaskRunRequestV1,
+    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapControlResponseV1,
+    DeepMapStatusResponseV2, DeleteModelProviderCredentialRequestV1,
     DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
     IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
     ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
@@ -37,20 +43,22 @@ use a3_protocol::{
     ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
     ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
-    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1,
-    QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectCatalogRequestV1, QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1,
+    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectCatalogRequestV1,
+    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
     QueryProjectMapSourcePreviewRequestV1, QueryProjectSettingsRequestV1,
     QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
-    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, RebuildProjectIndexRequestV1,
-    RebuildProjectIndexResponseV1, RecentProjectsResponseV1, RemoveCatalogProjectRequestV1,
-    RemoveProjectRequestV1, RemoveProjectResponseV1, RepositoryTreeResponseV1,
-    RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1, SetModelProviderCredentialRequestV1,
-    SettingsResponseV1, StartDeepMapRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
-    TaskLensTasksResponseV1,
+    QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, QueryUiPreferencesRequestV1,
+    RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
+    RemoveCatalogProjectRequestV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
+    RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
+    SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV1,
+    SubmitAgentMessageRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
+    TaskLensTasksResponseV1, UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -283,6 +291,60 @@ pub async fn compile_task_lens(
     root: State<'_, CompositionRoot>,
 ) -> Result<TaskLensCompileResponseV1, CommandErrorV1> {
     execute_compile_task_lens(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Lists bounded project-local Agent conversations newest first.
+pub async fn query_agent_sessions(
+    request: QueryAgentSessionsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionsResponseV1, CommandErrorV1> {
+    execute_query_agent_sessions(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads one bounded Agent conversation page without exposing storage capabilities.
+pub async fn query_agent_session(
+    request: QueryAgentSessionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_query_agent_session(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Submits one bounded message to a new or existing project-local Agent conversation.
+pub async fn submit_agent_message(
+    request: SubmitAgentMessageRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_submit_agent_message(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Applies one closed optimistic Agent-session control.
+pub async fn control_agent_session(
+    request: ControlAgentSessionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_control_agent_session(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads global content-free Agent workspace layout preferences.
+pub async fn query_ui_preferences(
+    request: QueryUiPreferencesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+    execute_query_ui_preferences(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Persists bounded content-free Agent workspace layout preferences.
+pub async fn update_agent_workspace_layout(
+    request: UpdateAgentWorkspaceLayoutRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+    execute_update_agent_workspace_layout(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -944,6 +1006,181 @@ async fn execute_compile_task_lens(
     }
     let (task_id, step_id) = map_task_lens_selection_from_v1(&request)?;
     root.compile_task_lens(task_id, step_id).await
+}
+
+async fn execute_query_agent_sessions(
+    request: QueryAgentSessionsRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionsResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let cursor = request
+        .before_updated_at_unix_millis()
+        .map(parse_canonical_positive_u64)
+        .transpose()
+        .map_err(|()| invalid_agent_session())?;
+    let query = AgentSessionListQuery::new(
+        request.search().map(str::to_owned),
+        request.include_archived(),
+        cursor,
+        request.limit(),
+    )
+    .map_err(|_| invalid_agent_session())?;
+    root.query_agent_sessions(query).await
+}
+
+async fn execute_query_agent_session(
+    request: QueryAgentSessionRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let session_id = decode_agent_session_id(request.session_id())?;
+    let before = request
+        .before_sequence()
+        .map(parse_canonical_positive_u64)
+        .transpose()
+        .map_err(|()| invalid_agent_session())?;
+    if request.limit() == 0 || request.limit() > 128 {
+        return Err(invalid_agent_session());
+    }
+    root.query_agent_session(session_id, before, request.limit())
+        .await
+}
+
+async fn execute_submit_agent_message(
+    request: SubmitAgentMessageRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    if !request.context_references().is_empty() {
+        return Err(invalid_agent_session());
+    }
+    let session_id = request
+        .session_id()
+        .map(decode_agent_session_id)
+        .transpose()?;
+    let expected = request
+        .expected_session_revision()
+        .map(parse_agent_session_revision)
+        .transpose()?;
+    let mode = request.start_mode().map(|mode| match mode {
+        AgentSessionModeV1::Ask => AgentSessionMode::Ask,
+        AgentSessionModeV1::Plan => AgentSessionMode::Plan,
+        AgentSessionModeV1::Agent => AgentSessionMode::Agent,
+    });
+    if session_id.is_some() != expected.is_some() || session_id.is_some() == mode.is_some() {
+        return Err(invalid_agent_session());
+    }
+    root.submit_agent_message(session_id, expected, mode, request.message().to_owned())
+        .await
+}
+
+async fn execute_control_agent_session(
+    request: ControlAgentSessionRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let session_id = decode_agent_session_id(request.session_id())?;
+    let expected = parse_agent_session_revision(request.expected_session_revision())?;
+    let mutation = match request.action() {
+        AgentSessionControlActionV1::Rename { title } => {
+            PresentationMutation::Rename(title.clone())
+        }
+        AgentSessionControlActionV1::Archive => PresentationMutation::Archive,
+        AgentSessionControlActionV1::Unarchive => PresentationMutation::Unarchive,
+        AgentSessionControlActionV1::DeletePresentation => PresentationMutation::Delete,
+        AgentSessionControlActionV1::SwitchToPlan => PresentationMutation::SwitchToPlan,
+        AgentSessionControlActionV1::ImplementPlan { plan_revision } => {
+            return root
+                .implement_agent_session_plan(session_id, expected, *plan_revision)
+                .await;
+        }
+        AgentSessionControlActionV1::Pause => {
+            return root
+                .control_agent_session_runtime(
+                    session_id,
+                    expected,
+                    AgentTaskControlActionV1::Pause,
+                )
+                .await;
+        }
+        AgentSessionControlActionV1::Resume => {
+            return root
+                .control_agent_session_runtime(
+                    session_id,
+                    expected,
+                    AgentTaskControlActionV1::Resume,
+                )
+                .await;
+        }
+        AgentSessionControlActionV1::Cancel => {
+            return root
+                .control_agent_session_runtime(
+                    session_id,
+                    expected,
+                    AgentTaskControlActionV1::Cancel,
+                )
+                .await;
+        }
+    };
+    root.control_agent_session_presentation(session_id, expected, mutation)
+        .await
+}
+
+async fn execute_query_ui_preferences(
+    request: QueryUiPreferencesRequestV1,
+    root: &CompositionRoot,
+) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.query_ui_preferences().await
+}
+
+async fn execute_update_agent_workspace_layout(
+    request: UpdateAgentWorkspaceLayoutRequestV1,
+    root: &CompositionRoot,
+) -> Result<UiPreferencesResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let expected = parse_ui_preferences_revision(request.expected_revision())?;
+    let layout = AgentWorkspaceLayout::new(
+        request.session_rail_width(),
+        request.inspector_width(),
+        request.session_rail_collapsed(),
+        request.inspector_collapsed(),
+    )
+    .map_err(|_| invalid_agent_session())?;
+    root.update_agent_workspace_layout(expected, layout).await
+}
+
+fn require_agent_session_protocol(version: ProtocolVersion) -> Result<(), CommandErrorV1> {
+    if version == ProtocolVersion::CURRENT {
+        Ok(())
+    } else {
+        Err(CommandErrorV1::unsupported_protocol_version())
+    }
+}
+
+fn decode_agent_session_id(value: &str) -> Result<AgentSessionId, CommandErrorV1> {
+    decode_stable_id(value)
+        .map(AgentSessionId::from_bytes)
+        .map_err(|()| invalid_agent_session())
+}
+
+fn parse_agent_session_revision(value: &str) -> Result<AgentSessionRevision, CommandErrorV1> {
+    parse_canonical_positive_u64(value)
+        .and_then(|revision| AgentSessionRevision::new(revision).map_err(|_| ()))
+        .map_err(|()| invalid_agent_session())
+}
+
+fn parse_ui_preferences_revision(value: &str) -> Result<UiPreferencesStoreVersion, CommandErrorV1> {
+    if value == "0" {
+        return Ok(UiPreferencesStoreVersion::EMPTY);
+    }
+    parse_canonical_positive_u64(value)
+        .and_then(|revision| UiPreferencesStoreVersion::new(revision).map_err(|_| ()))
+        .map_err(|()| invalid_agent_session())
+}
+
+fn invalid_agent_session() -> CommandErrorV1 {
+    CommandErrorV1::agent_session(a3_protocol::ErrorCodeV1::InvalidAgentSessionRequest)
 }
 
 async fn execute_query_agent_goal(

@@ -15,19 +15,22 @@
     AgentTaskControlResponseV1,
     AgentTaskRecoveryResponseV1,
   } from './lib/agent-control';
-  import {
-    createAgentGoal,
-    queryAgentGoal,
-    reviseAgentGoal,
-    type AgentGoalDraftInputV1,
-    type AgentGoalMutationResponseV1,
-    type AgentGoalResponseV1,
+  import type {
+    AgentGoalDraftInputV1,
+    AgentGoalMutationResponseV1,
+    AgentGoalResponseV1,
   } from './lib/agent-goal';
   import type {
     AgentInspectionLogResponseV1,
     AgentInspectionResponseV1,
     AgentInspectionStreamV1,
   } from './lib/agent-inspection';
+  import type {
+    AgentSessionControlActionV1,
+    AgentSessionModeV1,
+    AgentSessionResponseV1,
+    AgentSessionsResponseV1,
+  } from './lib/agent-session';
   import { projectActionRecoveryMessage, projectOpenRecoveryMessage } from './lib/command-error';
   import {
     cancelDeepMap,
@@ -138,6 +141,22 @@
       stream: AgentInspectionStreamV1,
       offset: number,
     ) => Promise<AgentInspectionLogResponseV1>;
+    agentSessionController?: (
+      sessionId: string,
+      revision: string,
+      action: AgentSessionControlActionV1,
+    ) => Promise<AgentSessionResponseV1>;
+    agentSessionLoader?: (sessionId: string) => Promise<AgentSessionResponseV1>;
+    agentSessionsLoader?: (options?: {
+      includeArchived?: boolean;
+      search?: string | null;
+    }) => Promise<AgentSessionsResponseV1>;
+    agentMessageSubmitter?: (input: {
+      expectedSessionRevision?: string | null;
+      message: string;
+      mode?: AgentSessionModeV1;
+      sessionId?: string | null;
+    }) => Promise<AgentSessionResponseV1>;
     agentRecoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;
     agentRunController?: (
       taskId: string,
@@ -193,7 +212,7 @@
     taskLensCompiler?: (query: TaskLensCompileQueryV1) => Promise<TaskLensCompileResponseV1>;
   }
 
-  type AgentGoalWorkspaceComponent = typeof import('./lib/AgentGoalWorkspace.svelte').default;
+  type AgentWorkspaceComponent = typeof import('./lib/AgentWorkspace.svelte').default;
   type MapWorkspaceComponent = typeof import('./lib/MapWorkspace.svelte').default;
   type SettingsPanelComponent = typeof import('./lib/SettingsPanel.svelte').default;
   type LazySurfaceState = 'error' | 'idle' | 'loading' | 'ready';
@@ -249,14 +268,12 @@
     agentActivityLoader,
     agentApprovalController,
     agentApprovalLoader,
-    agentGoalCreator = createAgentGoal,
-    agentGoalLoader = queryAgentGoal,
-    agentGoalReviser = reviseAgentGoal,
-    agentGoalTasksLoader = queryTaskLensTasks,
     agentInspectionLoader,
     agentInspectionLogLoader,
-    agentRecoveryLoader,
-    agentRunController,
+    agentSessionController,
+    agentSessionLoader,
+    agentSessionsLoader,
+    agentMessageSubmitter,
     healthLoader = queryHealth,
     deepMapStatusLoader = queryDeepMap,
     deepMapStarter = startDeepMap,
@@ -302,7 +319,7 @@
   let appMounted = false;
   let workspaceContent: HTMLElement;
   let agentWorkspaceBoundary: HTMLElement;
-  let agentWorkspaceComponent = $state<AgentGoalWorkspaceComponent | null>(null);
+  let agentWorkspaceComponent = $state<AgentWorkspaceComponent | null>(null);
   let agentWorkspaceState = $state<LazySurfaceState>('idle');
   let settingsBoundary: HTMLElement;
   let settingsComponent = $state<SettingsPanelComponent | null>(null);
@@ -475,7 +492,7 @@
     if (agentWorkspaceState === 'loading' || agentWorkspaceState === 'ready') return;
     agentWorkspaceState = 'loading';
     try {
-      const component = await import('./lib/AgentGoalWorkspace.svelte');
+      const component = await import('./lib/AgentWorkspace.svelte');
       if (!appMounted) return;
       agentWorkspaceComponent = component.default;
       agentWorkspaceState = 'ready';
@@ -1800,16 +1817,13 @@
               activityLoader={agentActivityLoader}
               approvalController={agentApprovalController}
               approvalLoader={agentApprovalLoader}
-              goalCreator={agentGoalCreator}
-              goalLoader={agentGoalLoader}
-              goalReviser={agentGoalReviser}
               inspectionLoader={agentInspectionLoader}
               inspectionLogLoader={agentInspectionLogLoader}
-              ledgerLoader={taskLensTaskLoader}
+              sessionController={agentSessionController}
+              sessionLoader={agentSessionLoader}
+              sessionsLoader={agentSessionsLoader}
+              messageSubmitter={agentMessageSubmitter}
               onRunStatusChange={updateGlobalRunStatus}
-              recoveryLoader={agentRecoveryLoader}
-              runController={agentRunController}
-              tasksLoader={agentGoalTasksLoader}
             />
           {:else}
             <section class="lazy-surface" aria-labelledby="lazy-agent-heading">

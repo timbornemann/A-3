@@ -4,27 +4,30 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    agent_recovery_repository, command_allowlist_repository, exact_search_repository,
-    goal_contract_repository, graph_traversal_repository, index_publication, index_repository,
-    index_repository::IndexRepositoryError, lexical_search_repository,
-    module_card_detail_repository, module_card_evidence_repository,
+    agent_recovery_repository, agent_session_repository, command_allowlist_repository,
+    exact_search_repository, goal_contract_repository, graph_traversal_repository,
+    index_publication, index_repository, index_repository::IndexRepositoryError,
+    lexical_search_repository, module_card_detail_repository, module_card_evidence_repository,
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
     policy_repository, project_map_atlas_insight_repository, project_map_scene_repository,
     project_map_search_repository, repository_tree_repository, run_journal_repository,
     semantic_embedding_repository, settings_repository, task_ledger_repository,
-    task_lens_claim_repository, task_lens_workspace_repository, verification_evidence_repository,
+    task_lens_claim_repository, task_lens_workspace_repository, ui_preferences_repository,
+    verification_evidence_repository,
 };
 use a3_application::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentControllerControl,
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
-    AgentRecoveryStoreFuture, CommandAllowlistStore, CommandAllowlistStoreFailure,
-    CommandAllowlistStoreFuture, CommandAllowlistStoreVersion, DesktopSettingsStore,
-    DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, EmbeddingOperationControl,
-    EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture,
-    IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore,
-    KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore,
-    KnowledgeStore, KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
+    AgentRecoveryStoreFuture, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
+    AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture, AgentWorkspaceLayout,
+    CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
+    CommandAllowlistStoreVersion, DesktopSettingsStore, DesktopSettingsStoreFuture,
+    DesktopSettingsStoreVersion, EmbeddingOperationControl, EvaluatedPolicyAction,
+    GoalContractStore, GoalContractStoreFailure, GoalContractStoreFuture, IndexPersistenceControl,
+    KnowledgeIndexFailure, KnowledgeIndexFuture, KnowledgeIndexStore, KnowledgeSearchControl,
+    KnowledgeSearchFailure, KnowledgeSearchFuture, KnowledgeSearchStore, KnowledgeStore,
+    KnowledgeStoreFailure, KnowledgeStoreFuture, ModuleCardDetailControl,
     ModuleCardDetailControlError, ModuleCardDetailFailure, ModuleCardDetailFuture,
     ModuleCardDetailLoadResult, ModuleCardDetailQuery, ModuleCardDetailStore,
     ModuleCardEvidenceControl, ModuleCardEvidenceFailure, ModuleCardEvidenceFuture,
@@ -57,27 +60,29 @@ use a3_application::{
     TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
     TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensWorkspaceControl,
     TaskLensWorkspaceFailure, TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage,
-    TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit,
-    VerificationEvidenceStore, VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture,
-    VerifiedModuleCardPublisher, VerifiedModuleCardPublisherFuture, build_project_map_atlas_scene,
+    TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit, UiPreferencesStore,
+    UiPreferencesStoreFuture, UiPreferencesStoreVersion, VerificationEvidenceStore,
+    VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    VerifiedModuleCardPublisherFuture, build_project_map_atlas_scene,
     build_project_map_atlas_scene_with_insights, build_project_map_entity_context_with_insights,
     build_project_map_flow_scene_with_insights, build_project_map_inventory_page_with_insights,
     resolve_project_map_index_evidence,
 };
 use a3_domain::{
     AgentMutationAttempt, AgentMutationDisposition, AgentMutationKind, AgentRun, AgentRunId,
-    AgentRunTimestamp, AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus,
-    AgentToolEvidence, ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest,
-    ApprovalRequestId, EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector,
-    ExactSearchCursor, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget,
-    GoalContract, GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId,
-    IndexRunRecord, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage,
-    LexicalSearchPageSize, LexicalSearchQuery, ModuleCardClaimId, ModuleId,
-    MutationActionFingerprint, PolicyDecision, PolicyDecisionId, ProjectCommandAllowlist,
-    ProjectId, ProjectIdentity, PublishedIndex, RepositoryId, RunEvent, RunEventSequence,
-    SemanticEmbedding, Snapshot, SnapshotId, TaskEvidenceId, TaskId, TaskLedger, ToolRunId,
-    TraversalQuery, VectorSearchCapability, VectorSearchLimit, VectorSearchResult,
-    VerificationEvidence, VerifiedModuleCardBatch, WorktreeId,
+    AgentRunTimestamp, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision,
+    AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence,
+    ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest, ApprovalRequestId,
+    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
+    ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, GoalContract, GoalContractRevision,
+    GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord, IndexRunStart,
+    IndexRunTerminalOutcome, LexicalSearchCursor, LexicalSearchPage, LexicalSearchPageSize,
+    LexicalSearchQuery, ModuleCardClaimId, ModuleId, MutationActionFingerprint, PolicyDecision,
+    PolicyDecisionId, ProjectCommandAllowlist, ProjectId, ProjectIdentity, PublishedIndex,
+    RepositoryId, RunEvent, RunEventSequence, SemanticEmbedding, Snapshot, SnapshotId,
+    TaskEvidenceId, TaskId, TaskLedger, ToolRunId, TraversalQuery, VectorSearchCapability,
+    VectorSearchLimit, VectorSearchResult, VerificationEvidence, VerifiedModuleCardBatch,
+    WorktreeId,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -314,6 +319,135 @@ impl DesktopSettingsStore for LibsqlKnowledgeStore {
             settings_repository::append(&self.catalog, expected, settings)
                 .await
                 .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl UiPreferencesStore for LibsqlKnowledgeStore {
+    fn load(&self) -> UiPreferencesStoreFuture<'_> {
+        Box::pin(async move {
+            ui_preferences_repository::load(&self.catalog)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn append(
+        &self,
+        expected: UiPreferencesStoreVersion,
+        layout: AgentWorkspaceLayout,
+    ) -> UiPreferencesStoreFuture<'_> {
+        Box::pin(async move {
+            ui_preferences_repository::append(&self.catalog, expected, layout)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+}
+
+impl AgentSessionStore for LibsqlKnowledgeStore {
+    fn create_session<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session: &'a AgentSession,
+        first_entry: Option<&'a AgentSessionEntry>,
+    ) -> AgentSessionStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            agent_session_repository::create(
+                database.connection(),
+                project.worktree().id(),
+                session,
+                first_entry,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_session_revision<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_revision: AgentSessionRevision,
+        session: &'a AgentSession,
+        entry: Option<&'a AgentSessionEntry>,
+    ) -> AgentSessionStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            agent_session_repository::append(
+                database.connection(),
+                project.worktree().id(),
+                expected_revision,
+                session,
+                entry,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_sessions<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        query: &'a AgentSessionListQuery,
+    ) -> AgentSessionStoreFuture<'a, AgentSessionPage> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            agent_session_repository::list(database.connection(), project.worktree().id(), query)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_session<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> AgentSessionStoreFuture<'a, Option<AgentSessionDetail>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            agent_session_repository::load(
+                database.connection(),
+                project.worktree().id(),
+                session_id,
+                before_sequence,
+                limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn delete_presentation<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        expected_revision: AgentSessionRevision,
+        tombstone: &'a AgentSession,
+    ) -> AgentSessionStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            agent_session_repository::delete_presentation(
+                database.connection(),
+                project.worktree().id(),
+                session_id,
+                expected_revision,
+                tombstone,
+            )
+            .await
+            .map_err(|error| error.classify())
         })
     }
 }
@@ -2315,6 +2449,27 @@ impl LibsqlKnowledgeStore {
                 .await
                 .map_err(classify_knowledge_open_error)
                 .map_err(classify_goal_contract_storage_failure)?,
+        );
+        Ok(self.cache_mutation_database(database))
+    }
+
+    async fn open_project_knowledge_for_agent_session(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, AgentSessionStoreFailure> {
+        if let Some(database) =
+            self.cached_mutation_database(project.repository().id(), project.worktree().id())
+        {
+            return Ok(database);
+        }
+        let project_layout = self
+            .layout
+            .prepare_project(project.worktree())
+            .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+        let database = Arc::new(
+            KnowledgeDatabase::open(&project_layout, project)
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?,
         );
         Ok(self.cache_mutation_database(database))
     }

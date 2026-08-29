@@ -746,3 +746,8 @@ Sicherheitsrelevante Aktionen speichern:
 - sichere Digests
 
 Nicht gespeichert werden rohe Secrets, vollständige Umgebungen oder uneingeschränkte Prozessausgaben.
+Der Agent-Session-IPC ist keine generische Chat-Tool-Brücke. `Ask` und `Plan` besitzen keine
+mutierenden Capabilities. `Agent` erhält ebenfalls keine WebView-Datei- oder Shellbefugnis;
+Chattext wird nur in Core-eigene Goal-/Ledger-Anker überführt und jede konkrete Aktion erneut durch
+Schemas, kanonische Worktree-Pfade, zentrale Policy, Approval, Tooladapter und Verification
+geprüft. Presentation Delete löscht keine Auditdaten.

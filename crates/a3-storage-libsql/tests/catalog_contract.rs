@@ -3,9 +3,10 @@
 mod support;
 
 use a3_application::{
-    ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore, ModelEndpointAccess,
-    ModelEndpointScope, ProviderApiKey, ProviderCredential, ProviderCredentialRequirement,
-    ProviderCredentialStore, ProviderCredentialStoreFuture, SetDesktopProviderCredential,
+    AgentWorkspaceLayout, ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore,
+    ModelEndpointAccess, ModelEndpointScope, ProviderApiKey, ProviderCredential,
+    ProviderCredentialRequirement, ProviderCredentialStore, ProviderCredentialStoreFuture,
+    SetDesktopProviderCredential, UiPreferencesError, UiPreferencesStore,
 };
 use a3_domain::ModelProviderId;
 use a3_storage_libsql::{
@@ -80,6 +81,36 @@ fn empty_catalog_migrates_and_reopens_at_current_version() -> Result<(), Box<dyn
         let reopened = CatalogDatabase::open(&layout).await?;
         assert_eq!(reopened.schema_version(), CatalogSchemaVersion::CURRENT);
         reopened.verify().await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn ui_preferences_are_append_only_conflict_checked_and_reopenable()
+-> Result<(), Box<dyn std::error::Error>> {
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let store: Arc<dyn UiPreferencesStore> =
+            Arc::new(LibsqlKnowledgeStore::open(&layout).await?);
+        let initial = store.load().await?;
+        assert_eq!(initial.version().get(), 0);
+        assert_eq!(initial.agent_workspace(), AgentWorkspaceLayout::DEFAULT);
+        let changed = AgentWorkspaceLayout::new(300, 520, true, false)?;
+        let stored = store.append(initial.version(), changed).await?;
+        assert_eq!(stored.version().get(), 1);
+        assert_eq!(stored.agent_workspace(), changed);
+        assert_eq!(
+            store
+                .append(initial.version(), AgentWorkspaceLayout::DEFAULT)
+                .await,
+            Err(UiPreferencesError::Conflict)
+        );
+        drop(store);
+
+        let reopened: Arc<dyn UiPreferencesStore> =
+            Arc::new(LibsqlKnowledgeStore::open(&layout).await?);
+        assert_eq!(reopened.load().await?, stored);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }

@@ -1,5 +1,5 @@
 use crate::{
-    CompileTaskLens, CompileTaskLensFailure, KnowledgeSearchStore, StoredTaskLedger,
+    CompileTaskLens, CompileTaskLensFailure, JobContext, KnowledgeSearchStore, StoredTaskLedger,
     TaskLensClaimStore, TaskLensControl, TaskLensIndexStore,
 };
 use a3_domain::{
@@ -23,6 +23,12 @@ pub type TaskLensWorkspaceFuture<'a, T> =
 pub trait TaskLensWorkspaceControl: fmt::Debug + Send + Sync {
     /// Returns whether the owning interactive operation requested cancellation.
     fn is_cancelled(&self) -> bool;
+}
+
+impl TaskLensWorkspaceControl for JobContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token().is_cancelled()
+    }
 }
 
 /// Maximum durable tasks returned before the UI must acknowledge truncation.

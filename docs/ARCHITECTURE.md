@@ -536,6 +536,19 @@ Watcher und Scheduler besitzen explizite Shutdown- und Join-Pfade.
 
 ### Agentenlauf
 
+Der Einstieg in einen Agentenlauf erfolgt gemäß ADR-0033 über eine projektlokale Conversation-
+Session. Diese Session gruppiert User Messages, Planrevisionen, sichere Aktivitätszusammenfassungen
+und Abschlussberichte. Sie kann auf ein Core-eigenes Work Item mit `TaskId` zeigen, besitzt aber
+keine Controller- oder Abschlussautorität. `AgentSessionState` wird aus Scheduler- und
+Runprojektionen abgeleitet; nur der verifizierte Agent Run kann `Done` erreichen.
+
+`Ask` bleibt read-only. `Plan` erzeugt zunächst eine unveränderliche Planrevision und benötigt vor
+der Materialisierung die exakte sichtbare Revision. `Agent` materialisiert Goal, Ledger und Run und
+startet die vorhandene endliche Zustandsmaschine. Sämtliche Datei- oder Prozesswirkungen laufen
+weiterhin durch typisierte Adapter, zentrale Policy, Approval, frische Indexierung und
+Verification. Projektwechsel quiesziert Conversation- und Agentjobs, bevor neue Projektanker aktiv
+werden.
+
 1. Ein Goal Contract wird erstellt oder bestätigt.
 2. Der Controller lokalisiert relevante Evidenz.
 3. Der Context Compiler erzeugt ein tokenbegrenztes Context Pack.

@@ -4,12 +4,11 @@ import App from './App.svelte';
 import type { AgentActivityResponseV1 } from './lib/agent-activity';
 import type { AgentApprovalResponseV1 } from './lib/agent-approval';
 import type { AgentTaskRecoveryResponseV1 } from './lib/agent-control';
-import type { AgentGoalResponseV1 } from './lib/agent-goal';
 import type { AgentInspectionResponseV1 } from './lib/agent-inspection';
+import type { AgentSessionResponseV1, AgentSessionsResponseV1 } from './lib/agent-session';
 import type { HealthResponseV1 } from './lib/health';
 import type { OpenProjectResponseV1, ProjectSummaryV1 } from './lib/project';
 import type { ProjectStatusResponseV1 } from './lib/project-status';
-import type { TaskLensTaskResponseV1, TaskLensTasksResponseV1 } from './lib/task-lens';
 
 const id = (value: string): string => value.repeat(64);
 const taskId = id('1');
@@ -19,6 +18,7 @@ const verificationSpecId = id('4');
 const snapshotId = id('5');
 const runId = id('6');
 const evidenceId = id('7');
+const sessionId = id('d');
 
 const project: ProjectSummaryV1 = {
   head: { kind: 'born', objectId: id('a'), reference: 'refs/heads/main' },
@@ -61,49 +61,57 @@ const activeProject: ProjectStatusResponseV1 = {
   },
 };
 
-const tasks: TaskLensTasksResponseV1 = {
+const sessionSummary = {
+  currentPlanRevision: 1,
+  mode: 'agent' as const,
+  revision: '4',
+  sessionId,
+  state: 'completed' as const,
+  title: 'M8 vollständig verifizieren',
+  updatedAtUnixMillis: '1786000002000',
+};
+
+const sessions: AgentSessionsResponseV1 = {
   protocolVersion: 1,
   result: {
+    nextCursor: null,
+    sessions: [sessionSummary],
     status: 'available',
-    tasks: [{ goalRevision: 1, objective: 'M8 vollständig verifizieren', taskId }],
-    truncated: false,
   },
 };
 
-const goal: AgentGoalResponseV1 = {
+const session: AgentSessionResponseV1 = {
   protocolVersion: 1,
   result: {
-    goal: {
-      acceptanceCriteria: [
+    session: {
+      activeTaskId: taskId,
+      entries: [
         {
-          criterionId,
-          requirement: 'must',
-          statement: 'Der vollständige lokale Workflow endet evidenzverifiziert.',
+          createdAtUnixMillis: '1786000000000',
+          kind: 'userMessage',
+          planRevision: null,
+          sequence: '1',
+          text: 'M8 vollständig verifizieren',
+        },
+        {
+          createdAtUnixMillis: '1786000000500',
+          kind: 'plan',
+          planRevision: 1,
+          sequence: '2',
+          text: 'Workflow mit aktuellen Evidence-Ankern verifizieren.',
+        },
+        {
+          createdAtUnixMillis: '1786000002000',
+          kind: 'finalReport',
+          planRevision: null,
+          sequence: '3',
+          text: 'Die Aufgabe ist verifiziert abgeschlossen.',
         },
       ],
-      constraints: ['Offline und innerhalb des aktiven Worktrees bleiben.'],
-      createdAtUnixMillis: '1786000000000',
-      nonGoals: ['Keine externe Veröffentlichung.'],
-      objective: 'M8 vollständig verifizieren',
-      previousRevision: null,
-      revision: 1,
-      revisionReason: null,
-      successVerification: 'Aktuellen Must-Beweis und terminalen Run gemeinsam laden.',
-      taskId,
-      userDecisions: ['Nur Core-verifizierte Evidence ist autoritativ.'],
+      hasOlderEntries: false,
+      summary: sessionSummary,
     },
     status: 'available',
-  },
-};
-
-const ledger: TaskLensTaskResponseV1 = {
-  protocolVersion: 1,
-  result: {
-    ledgerRevision: 2,
-    ledgerStoreVersion: '7',
-    status: 'available',
-    steps: [{ intendedOutcome: 'Workflow verifizieren', status: 'completed', stepId }],
-    task: { goalRevision: 1, objective: 'M8 vollständig verifizieren', taskId },
   },
 };
 
@@ -249,9 +257,8 @@ describe('M8 desktop user workflow', () => {
       .fn<() => Promise<ProjectStatusResponseV1>>()
       .mockResolvedValueOnce(noProject)
       .mockResolvedValue(activeProject);
-    const tasksLoader = vi.fn(async () => tasks);
-    const goalLoader = vi.fn(async () => goal);
-    const ledgerLoader = vi.fn(async () => ledger);
+    const sessionsLoader = vi.fn(async () => sessions);
+    const sessionLoader = vi.fn(async () => session);
     const activityLoader = vi.fn(async () => activity);
     const inspectionLoader = vi.fn(async () => inspection);
 
@@ -259,19 +266,18 @@ describe('M8 desktop user workflow', () => {
       props: {
         agentActivityLoader: activityLoader,
         agentApprovalLoader: async () => approval,
-        agentGoalLoader: goalLoader,
-        agentGoalTasksLoader: tasksLoader,
         agentInspectionLoader: inspectionLoader,
         agentRecoveryLoader: async () => recovery,
+        agentSessionLoader: sessionLoader,
+        agentSessionsLoader: sessionsLoader,
         healthLoader: async () => health,
         projectOpener,
         projectStatusLoader,
-        taskLensTaskLoader: ledgerLoader,
       },
     });
 
     expect((await screen.findAllByText('Kein Projekt geöffnet')).length).toBeGreaterThan(0);
-    expect(tasksLoader).not.toHaveBeenCalled();
+    expect(sessionsLoader).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
     expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
 
@@ -279,9 +285,8 @@ describe('M8 desktop user workflow', () => {
     expect(
       await screen.findByRole('heading', { name: 'M8 vollständig verifizieren' }),
     ).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Aktivität', pressed: false }));
-    expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', { name: 'Review', pressed: false }));
+    expect(await screen.findByRole('heading', { name: 'done' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     expect(
       await screen.findByText(/Done · alle Muss-Kriterien besitzen exakte frische Beweise/u),
     ).toBeTruthy();
@@ -292,7 +297,7 @@ describe('M8 desktop user workflow', () => {
     expect(screen.getAllByText(evidenceId).length).toBeGreaterThan(0);
     expect(projectOpener).toHaveBeenCalledTimes(1);
     expect(projectStatusLoader).toHaveBeenCalledTimes(2);
-    expect(goalLoader).toHaveBeenCalledWith(taskId);
+    expect(sessionLoader).toHaveBeenCalledWith(sessionId);
     expect(activityLoader).toHaveBeenCalledWith(taskId);
     expect(inspectionLoader).toHaveBeenCalledWith(taskId);
   });
