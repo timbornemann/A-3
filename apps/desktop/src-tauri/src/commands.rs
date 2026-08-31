@@ -32,26 +32,29 @@ use a3_protocol::{
     CancelModelProbeResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
     ConfigureModelProviderRequestV1, ConfirmProjectCommandAllowlistRequestV1,
     ControlAgentApprovalRequestV1, ControlAgentSessionRequestV1, ControlAgentTaskRunRequestV1,
-    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapControlResponseV1,
-    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapModeV2,
-    DeepMapRunPageResponseV1, DeepMapStartResponseV2, DeepMapStatusResponseV3,
-    DeleteModelProviderCredentialRequestV1, DiscoverProviderModelsRequestV1, HealthRequestV1,
-    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProbeModelRoleRequestV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
-    ProjectMapSceneResponseV1, ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1,
-    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1,
+    DeepMapControlResponseV1, DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1,
+    DeepMapModeV2, DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1,
+    DeepMapRunModulesResponseV1, DeepMapRunPageResponseV1, DeepMapStartResponseV2,
+    DeepMapStatusResponseV3, DeleteModelProviderCredentialRequestV1,
+    DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
+    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
+    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
+    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
     QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1,
-    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapEntriesRequestV1,
-    QueryDeepMapEntryDetailRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunsRequestV1,
-    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
-    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
-    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
-    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectCatalogRequestV1,
-    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapAtlasImpactRequestV1,
+    QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
+    QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunDashboardRequestV1,
+    QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1, QueryIndexActivityRequestV1,
+    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
+    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
+    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
+    QueryProjectCatalogRequestV1, QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
     QueryProjectMapSourcePreviewRequestV1, QueryProjectSettingsRequestV1,
     QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
     QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, QueryUiPreferencesRequestV1,
@@ -505,6 +508,66 @@ pub async fn query_deep_map_entry_detail(
 }
 
 #[tauri::command]
+/// Returns the understandable five-phase dashboard for one Core-issued run.
+pub async fn query_deep_map_run_dashboard(
+    request: QueryDeepMapRunDashboardRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapRunDashboardResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_run_dashboard(request.run_selection())
+        .await
+}
+
+#[tauri::command]
+/// Returns at most twenty understandable module summaries for one run.
+pub async fn query_deep_map_run_modules(
+    request: QueryDeepMapRunModulesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapRunModulesResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_run_modules(request.run_selection(), request.cursor())
+        .await
+}
+
+#[tauri::command]
+/// Returns at most fifty safe resolved exploration targets for one module.
+pub async fn query_deep_map_module_steps(
+    request: QueryDeepMapModuleStepsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapModuleStepsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_module_steps(
+        request.run_selection(),
+        request.module_selection(),
+        request.cursor(),
+    )
+    .await
+}
+
+#[tauri::command]
+/// Returns at most fifty exact current Atlas effects for one published Card.
+pub async fn query_deep_map_atlas_impact(
+    request: QueryDeepMapAtlasImpactRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<DeepMapAtlasImpactResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_deep_map_atlas_impact(
+        request.run_selection(),
+        request.module_selection(),
+        request.cursor(),
+    )
+    .await
+}
+
+#[tauri::command]
 /// Requests a checkpoint-producing cooperative pause of the active Deep Map.
 pub fn pause_deep_map(
     request: ControlDeepMapRequestV1,
@@ -869,8 +932,20 @@ async fn execute_query_module_card_detail(
     if request.protocol_version() != ProtocolVersion::CURRENT {
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
-    let query = map_module_card_detail_query_from_v1(&request)?;
-    root.query_module_card_detail(&query).await
+    match (
+        request.module_id(),
+        request.run_selection(),
+        request.module_selection(),
+    ) {
+        (Some(_), None, None) => {
+            let query = map_module_card_detail_query_from_v1(&request)?;
+            root.query_module_card_detail(&query).await
+        }
+        (None, Some(run), Some(module)) => {
+            root.query_deep_map_module_card_detail(run, module).await
+        }
+        _ => Err(crate::invalid_module_card_detail_query()),
+    }
 }
 
 async fn execute_query_module_card_evidence(

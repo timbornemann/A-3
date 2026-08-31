@@ -237,6 +237,7 @@ function deepMapStatus(): DeepMapStatusResponseV3 {
 }
 
 const deepMapRunSelection = 'a'.repeat(96);
+const deepMapModuleSelection = 'b'.repeat(96);
 const deepMapEntries = Array.from({ length: EVENT_COUNT }, (_, index) => ({
   action: 'inspect' as const,
   confirmed: true,
@@ -315,36 +316,169 @@ async function runProfile(): Promise<void> {
         );
         return contextResponse(node ?? projectNodes[0]);
       },
-      deepMapDetailLoader: async (_runSelection, entrySelection) => ({
-        durationMillis: '32',
-        entry:
-          deepMapEntries.find((entry) => entry.selection === entrySelection) ?? deepMapEntries[0],
-        indexReference: '123456abcdef',
-        modelId: 'profile-fixture',
-        nextAction: null,
-        planStopReason: 'coveragePlanned',
-        profileId: stableId(50_001),
-        profileVersion: 1,
+      deepMapAtlasImpactLoader: async () => ({
         protocolVersion: 1,
-        providerId: 'local',
-        publicationResult: null,
-        run: deepMapRun,
-        snapshotReference: 'abcdef123456',
-        step: null,
-        timeBudgetMillis: '120000',
-        tokenBudget: 32_000,
-        toolCallBudget: 64,
+        result: {
+          items: [
+            {
+              confirmedClaimCount: '2',
+              kind: 'file' as const,
+              label: 'src/deep_map_dashboard.rs',
+            },
+            {
+              confirmedClaimCount: '1',
+              kind: 'symbol' as const,
+              label: 'DeepMapRunDashboard',
+            },
+          ],
+          nextCursor: null,
+          status: 'available' as const,
+          summary: {
+            fileCount: '1',
+            purpose: 'Erklärt Deep-Map-Läufe als verständliche Produktphasen.',
+            relationCount: '0',
+            riskCount: '1',
+            symbolCount: '1',
+          },
+        },
+      }),
+      deepMapCardLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          detail: {
+            cardId: stableId(70_001),
+            confidenceBasisPoints: 9_500,
+            coverage: {
+              basisPoints: 10_000,
+              coveredFieldCount: 2,
+              must: {
+                basisPoints: 10_000,
+                coveredFieldCount: 2,
+                missingFields: [],
+                totalFieldCount: 2,
+              },
+              should: {
+                basisPoints: 10_000,
+                coveredFieldCount: 0,
+                missingFields: [],
+                totalFieldCount: 0,
+              },
+              totalFieldCount: 2,
+            },
+            currentIndexRunId: indexRunId,
+            currentSnapshotId: snapshotId,
+            fields: [
+              {
+                evidenceIds: [stableId(70_002)],
+                kind: 'purpose' as const,
+                values: [
+                  {
+                    claim: {
+                      claimId: stableId(70_003),
+                      confidenceBasisPoints: 9_500,
+                      evidenceIds: [stableId(70_002)],
+                      kind: 'fact' as const,
+                      state: 'current' as const,
+                    },
+                    value: 'Erklärt Deep-Map-Läufe als verständliche Produktphasen.',
+                  },
+                ],
+              },
+              {
+                evidenceIds: [stableId(70_004)],
+                kind: 'risks' as const,
+                values: [
+                  {
+                    claim: {
+                      claimId: stableId(70_005),
+                      confidenceBasisPoints: 8_500,
+                      evidenceIds: [stableId(70_004)],
+                      kind: 'observation' as const,
+                      state: 'current' as const,
+                    },
+                    value: 'Historische Läufe dürfen nicht mit heutigen Cards vermischt werden.',
+                  },
+                ],
+              },
+            ],
+            lifecycle: { status: 'current' as const },
+            mapperProfileVersion: 1 as const,
+            moduleId: projectNodes[0].selection!.moduleId,
+            schemaVersion: 1 as const,
+            sourceIndexRunId: indexRunId,
+            sourceSnapshotId: snapshotId,
+          },
+          status: 'available' as const,
+        },
+      }),
+      deepMapDashboardLoader: async () => ({
+        confirmedSteps: '2',
+        currentActivity: null,
+        detailsIncomplete: false,
+        failure: null,
+        freshness: 'current' as const,
+        historicalPlanLimited: false,
+        phases: [
+          { phase: 'planning' as const, state: 'completed' as const },
+          { phase: 'exploring' as const, state: 'completed' as const },
+          { phase: 'creatingCards' as const, state: 'completed' as const },
+          { phase: 'verifying' as const, state: 'completed' as const },
+          { phase: 'updatingAtlas' as const, state: 'completed' as const },
+        ],
+        protocolVersion: 1,
+        runSelection: deepMapRunSelection,
+        startedAtUnixMillis: '1000',
+        state: 'completed' as const,
+        totalSteps: '2',
+        updatedAtUnixMillis: String(1_000 + EVENT_COUNT),
       }),
       deepMapEntriesLoader: async () => {
         feedResolvedAt = performance.now();
         return { entries: deepMapEntries, nextCursor: null, protocolVersion: 1 };
       },
+      deepMapModulesLoader: async () => ({
+        modules: [
+          {
+            cardAvailable: true,
+            confirmedSteps: '2',
+            displayName: 'a3-application',
+            plannedSteps: '2',
+            selection: deepMapModuleSelection,
+            state: 'published' as const,
+          },
+        ],
+        nextCursor: null,
+        protocolVersion: 1,
+      }),
       deepMapRunsLoader: async () => ({
         nextCursor: null,
         protocolVersion: 1,
         runs: [deepMapRun],
       }),
       deepMapStatusLoader: async () => deepMapStatus(),
+      deepMapStepsLoader: async () => ({
+        historicalDetailsLimited: false,
+        nextCursor: null,
+        protocolVersion: 1,
+        steps: [
+          {
+            cardFields: ['purpose' as const, 'dependencies' as const],
+            position: '1',
+            selectionReason: 'manifest' as const,
+            state: 'confirmed' as const,
+            targetKind: 'manifest' as const,
+            targetLabel: 'Cargo.toml',
+          },
+          {
+            cardFields: ['dataFlows' as const, 'risks' as const],
+            position: '2',
+            selectionReason: 'centralSymbol' as const,
+            state: 'confirmed' as const,
+            targetKind: 'symbol' as const,
+            targetLabel: 'DeepMapRunDashboard',
+          },
+        ],
+      }),
       projectKey: stableId(60_001),
     },
   });

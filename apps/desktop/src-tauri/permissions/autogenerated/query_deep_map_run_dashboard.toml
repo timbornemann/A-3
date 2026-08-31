@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-deep-map-run-dashboard"
+description = "Enables the query_deep_map_run_dashboard command without any pre-configured scope."
+commands.allow = ["query_deep_map_run_dashboard"]
+
+[[permission]]
+identifier = "deny-query-deep-map-run-dashboard"
+description = "Denies the query_deep_map_run_dashboard command without any pre-configured scope."
+commands.deny = ["query_deep_map_run_dashboard"]

@@ -413,6 +413,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   stale Start-CAS ohne Teilmutation sowie typisierten Überlauf. Der vollständige Fast-Index-
   Contract verlangt bei unverändertem Snapshot einen neuen Run-Anker und anschließend Deep Map
   `Ready`; historische Module Cards bleiben unverändert an den alten Anker gebunden.
+- V29-Contracts prüfen Neuinstallation, V28→V29, atomare Planpersistenz, unveränderte Lesbarkeit
+  historischer Läufe und vollständigen Rollback. Dashboard-Verträge prüfen die 20/50/50-Grenzen,
+  projektgebundene Cursor, geschlossene Phasen- und Modulzustände, sichere Zielauflösung und das
+  Fehlen von Prompts, Modellantworten, Source, Providerdaten, Budgets, Snapshots sowie internen IDs.
+  Komponentenprüfungen decken Live-Aktualisierung ohne überlappende Reads, erhaltene Auswahl,
+  veröffentlichte Cards, Fehlerhilfe, kompakte Historie und Atlas-Fokus bei 720×520 und 680×760 ab.
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
   Worker aus; dieselbe Isolation schützt die Retrieval-Evalbaseline. Erfolg gilt erst nach dem

@@ -54,6 +54,21 @@
     DeepMapStartResponseV2,
     DeepMapStatusResponseV3,
   } from './deep-map';
+  import {
+    queryDeepMapAtlasImpact,
+    queryDeepMapModuleSteps,
+    queryDeepMapRunDashboard,
+    queryDeepMapRunModules,
+    type DeepMapAtlasImpactResponseV1,
+    type DeepMapModuleStepsResponseV1,
+    type DeepMapRunDashboardResponseV1,
+    type DeepMapRunModulesResponseV1,
+  } from './deep-map-dashboard';
+  import {
+    queryModuleCardDetail,
+    type ModuleCardDetailQueryV1,
+    type ModuleCardDetailResponseV1,
+  } from './module-card-detail';
 
   type ReadState<T> =
     | { kind: 'idle' | 'loading' | 'error' }
@@ -111,6 +126,22 @@
       runSelection: string,
       entrySelection: string,
     ) => Promise<DeepMapEntryDetailResponseV1>;
+    deepMapDashboardLoader?: (runSelection: string) => Promise<DeepMapRunDashboardResponseV1>;
+    deepMapModulesLoader?: (
+      runSelection: string,
+      cursor?: string | null,
+    ) => Promise<DeepMapRunModulesResponseV1>;
+    deepMapStepsLoader?: (
+      runSelection: string,
+      moduleSelection: string,
+      cursor?: string | null,
+    ) => Promise<DeepMapModuleStepsResponseV1>;
+    deepMapAtlasImpactLoader?: (
+      runSelection: string,
+      moduleSelection: string,
+      cursor?: string | null,
+    ) => Promise<DeepMapAtlasImpactResponseV1>;
+    deepMapCardLoader?: (query: ModuleCardDetailQueryV1) => Promise<ModuleCardDetailResponseV1>;
   }
   const {
     projectKey,
@@ -133,7 +164,11 @@
     deepMapCanceller,
     deepMapRunsLoader,
     deepMapEntriesLoader,
-    deepMapDetailLoader,
+    deepMapDashboardLoader = queryDeepMapRunDashboard,
+    deepMapModulesLoader = queryDeepMapRunModules,
+    deepMapStepsLoader = queryDeepMapModuleSteps,
+    deepMapAtlasImpactLoader = queryDeepMapAtlasImpact,
+    deepMapCardLoader = queryModuleCardDetail,
   }: Props = $props();
 
   let scene = $state<ReadState<ProjectMapAtlasSceneV1>>({ kind: 'loading' });
@@ -404,6 +439,37 @@
             };
     } catch {
       if (request === contextGeneration) context = { kind: 'error' };
+    }
+  }
+
+  async function showDeepMapModuleInAtlas(
+    runSelection: string,
+    moduleSelection: string,
+  ): Promise<void> {
+    try {
+      const card = await deepMapCardLoader({ runSelection, moduleSelection });
+      if (card.result.status !== 'available') return;
+      const selection: ProjectMapEntitySelectionV1 = {
+        kind: 'module',
+        moduleId: card.result.detail.moduleId,
+      };
+      const overview = await loadScene(null);
+      const visible = overview?.nodes.find(
+        (node) =>
+          node.selection?.kind === 'module' && node.selection.moduleId === selection.moduleId,
+      );
+      if (visible !== undefined) {
+        await selectNode(visible);
+        return;
+      }
+      await loadScene(selection);
+      const response = await contextLoader(selection);
+      if (response.result.status !== 'available') return;
+      selected = response.result.context.entity;
+      context = { kind: 'available', value: response.result.context };
+      inspectorMode = 'code';
+    } catch {
+      context = { kind: 'error' };
     }
   }
 
@@ -832,7 +898,13 @@
       focusFailureEpoch={deepMapFailureFocusEpoch}
       runsLoader={deepMapRunsLoader}
       entriesLoader={deepMapEntriesLoader}
-      detailLoader={deepMapDetailLoader}
+      dashboardLoader={deepMapDashboardLoader}
+      modulesLoader={deepMapModulesLoader}
+      stepsLoader={deepMapStepsLoader}
+      atlasImpactLoader={deepMapAtlasImpactLoader}
+      cardLoader={deepMapCardLoader}
+      {sourcePreviewLoader}
+      onshowinatlas={showDeepMapModuleInAtlas}
       onclose={() => (inspectorMode = null)}
     />
   </main>

@@ -98,6 +98,19 @@ describe('Module Card detail V1 boundary', () => {
     }
   });
 
+  it('loads a published Card through the dashboard run and module selections', async () => {
+    const invoke = vi.fn().mockResolvedValue(available);
+    const runSelection = 'a'.repeat(96);
+    const moduleSelection = 'b'.repeat(96);
+
+    await expect(queryModuleCardDetail({ runSelection, moduleSelection }, invoke)).resolves.toEqual(
+      available,
+    );
+    expect(invoke).toHaveBeenCalledWith('query_module_card_detail', {
+      request: { moduleSelection, protocolVersion: 1, runSelection },
+    });
+  });
+
   it('rejects malformed queries and responses for another module', async () => {
     await expect(queryModuleCardDetail({ moduleId: 'AA'.repeat(32) }, vi.fn())).rejects.toThrow(
       /query/,

@@ -7,6 +7,7 @@ mod agent_goal;
 mod agent_inspection;
 mod agent_session;
 mod deep_map;
+mod deep_map_dashboard;
 mod error;
 mod goal_contract;
 mod health;
@@ -68,6 +69,7 @@ pub use deep_map::{
     DeepMapTargetKindV2, QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
     QueryDeepMapRequestV1, QueryDeepMapRunsRequestV1, StartDeepMapRequestV1, StartDeepMapRequestV2,
 };
+pub use deep_map_dashboard::*;
 pub use error::{CommandErrorV1, ErrorCodeV1};
 pub use goal_contract::{AcceptanceCriterionV1, GoalContractDraftV1, GoalContractV1};
 pub use health::{HealthRequestV1, HealthResponseV1, HealthStatusV1, PlatformV1};

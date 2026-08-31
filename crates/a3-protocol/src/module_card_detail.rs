@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct QueryModuleCardDetailRequestV1 {
     protocol_version: ProtocolVersion,
-    module_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_selection: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module_selection: Option<String>,
 }
 
 impl QueryModuleCardDetailRequestV1 {
@@ -15,7 +20,24 @@ impl QueryModuleCardDetailRequestV1 {
     pub const fn new(protocol_version: ProtocolVersion, module_id: String) -> Self {
         Self {
             protocol_version,
-            module_id,
+            module_id: Some(module_id),
+            run_selection: None,
+            module_selection: None,
+        }
+    }
+
+    /// Creates a request from project- and run-bound opaque dashboard selections.
+    #[must_use]
+    pub const fn for_deep_map(
+        protocol_version: ProtocolVersion,
+        run_selection: String,
+        module_selection: String,
+    ) -> Self {
+        Self {
+            protocol_version,
+            module_id: None,
+            run_selection: Some(run_selection),
+            module_selection: Some(module_selection),
         }
     }
 
@@ -27,8 +49,20 @@ impl QueryModuleCardDetailRequestV1 {
 
     /// Returns the untrusted stable module token.
     #[must_use]
-    pub fn module_id(&self) -> &str {
-        &self.module_id
+    pub fn module_id(&self) -> Option<&str> {
+        self.module_id.as_deref()
+    }
+
+    /// Returns the optional Deep-Map run selection.
+    #[must_use]
+    pub fn run_selection(&self) -> Option<&str> {
+        self.run_selection.as_deref()
+    }
+
+    /// Returns the optional Deep-Map module selection.
+    #[must_use]
+    pub fn module_selection(&self) -> Option<&str> {
+        self.module_selection.as_deref()
     }
 }
 

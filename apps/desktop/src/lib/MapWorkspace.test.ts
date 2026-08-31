@@ -249,6 +249,42 @@ function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV3 = deepMa
     tokenBudget: 32000,
     toolCallBudget: 64,
   }));
+  const deepMapDashboardLoader = vi.fn(async () => ({
+    confirmedSteps: '0',
+    currentActivity: null,
+    detailsIncomplete: false,
+    failure:
+      failure === null
+        ? null
+        : {
+            cause: failure,
+            confirmedWorkRetained: false,
+            diagnosticCode: failure,
+          },
+    freshness: 'current' as const,
+    historicalPlanLimited: false,
+    phases: [
+      {
+        phase: 'planning' as const,
+        state: failure === null ? ('completed' as const) : ('stopped' as const),
+      },
+      { phase: 'exploring' as const, state: 'pending' as const },
+      { phase: 'creatingCards' as const, state: 'pending' as const },
+      { phase: 'verifying' as const, state: 'pending' as const },
+      { phase: 'updatingAtlas' as const, state: 'pending' as const },
+    ],
+    protocolVersion: 1 as const,
+    runSelection,
+    startedAtUnixMillis: '1000',
+    state: failure === null ? ('completed' as const) : ('failed' as const),
+    totalSteps: '0',
+    updatedAtUnixMillis: '1200',
+  }));
+  const deepMapModulesLoader = vi.fn(async () => ({
+    modules: [],
+    nextCursor: null,
+    protocolVersion: 1 as const,
+  }));
   const props = {
     atlasSceneLoader,
     contextLoader,
@@ -257,6 +293,8 @@ function renderWorkspace(deepMapStatusResponse: DeepMapStatusResponseV3 = deepMa
     deepMapRunsLoader,
     deepMapEntriesLoader,
     deepMapDetailLoader,
+    deepMapDashboardLoader,
+    deepMapModulesLoader,
     inventoryLoader,
     indexActivityState: 'idle' as const,
     indexRebuilder,
@@ -502,7 +540,8 @@ describe('U12 progressive Code Atlas workspace', () => {
     expect(alert.textContent).toContain('Mapping-Modell');
     expect(alert.textContent).toContain('modelRejected');
     expect(alert.textContent).not.toContain('provider response');
-    expect(screen.getByText(/openai · gpt-5.4/)).toBeTruthy();
+    expect(alert.textContent).not.toContain('openai');
+    expect(alert.textContent).not.toContain('gpt-5.4');
   });
 
   it('preserves the detailed lifecycle when starting an already failed publication state rejects', async () => {

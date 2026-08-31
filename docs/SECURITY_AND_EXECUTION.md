@@ -60,9 +60,14 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `create_agent_goal`, `revise_agent_goal`, `query_agent_activity`, `query_agent_inspection`,
   `query_agent_inspection_log`,
   `query_agent_task_recovery`, `control_agent_task_run`, `query_deep_map`,
-  `start_deep_map`, `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
+  `query_deep_map_run_dashboard`, `query_deep_map_run_modules`,
+  `query_deep_map_module_steps`, `query_deep_map_atlas_impact`, `start_deep_map`,
+  `pause_deep_map`, `resume_deep_map`, `cancel_deep_map` sowie `query_health`, aber keine
   direkten Dialog-, Datei-, Shell- oder SQL-Plugin-Commands. Die Rückgabeverträge enthalten weder
   Handles noch Git Common Directory oder autoritative gespeicherte Pfade.
+  Die Dashboard-Reads akzeptieren ausschließlich Core-ausgegebene projektgebundene Selektionen und
+  geben weder interne Ziel-IDs noch Provider-, Budget-, Snapshot-, Prompt-, Modellantwort- oder
+  Source-Daten aus. Card-Inhalt wird nur nach aktueller verifizierter Publikation freigegeben.
 - `list_recent_projects` akzeptiert außer der Protokollversion keine WebView-gesteuerten Pfade oder
   Limits. Die V1-Antwort ist auf zehn validierte Einträge begrenzt; ungültige Katalogdaten werden als
   redigierter stabiler Fehler statt als rohe Datenbank- oder Pfadinformation zurückgegeben.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-deep-map-atlas-impact"
+description = "Enables the query_deep_map_atlas_impact command without any pre-configured scope."
+commands.allow = ["query_deep_map_atlas_impact"]
+
+[[permission]]
+identifier = "deny-query-deep-map-atlas-impact"
+description = "Denies the query_deep_map_atlas_impact command without any pre-configured scope."
+commands.deny = ["query_deep_map_atlas_impact"]

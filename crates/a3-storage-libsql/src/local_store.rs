@@ -1899,6 +1899,69 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn load_run<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+    ) -> DeepMapRunJournalFuture<'a, Option<a3_application::DeepMapRunSummary>> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::load_run(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+            )
+            .await
+        })
+    }
+
+    fn list_run_modules<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        cursor: Option<a3_application::DeepMapModuleCursor>,
+    ) -> DeepMapRunJournalFuture<'a, a3_application::DeepMapRunModulePage> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::list_run_modules(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                cursor,
+            )
+            .await
+        })
+    }
+
+    fn list_module_steps<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        module_id: a3_domain::ModuleId,
+        after_position: Option<u64>,
+    ) -> DeepMapRunJournalFuture<'a, a3_application::DeepMapModuleStepPage> {
+        Box::pin(async move {
+            let knowledge = self
+                .open_project_knowledge(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::list_module_steps(
+                knowledge.connection(),
+                project.worktree().id(),
+                run_id,
+                module_id,
+                after_position,
+            )
+            .await
+        })
+    }
+
     fn list_entries<'a>(
         &'a self,
         project: &'a ProjectIdentity,

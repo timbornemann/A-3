@@ -429,8 +429,8 @@ Ein terminal fehlgeschlagener Lauf behält eine geschlossene, inhaltsfreie Ursac
 Model. Die Desktopprojektion unterscheidet insbesondere fehlenden Published Index, geänderten
 Snapshot, Provider-Nichterreichbarkeit, Requestablehnung, Modelltimeout, ungültige strukturierte
 Antwort, Read-, Verify-, Publish- und Checkpointfehler. Die UI leitet daraus feste Recovery-Schritte
-ab und benennt dafür den tatsächlich konfigurierten Provider; Providerpayloads, Endpoints,
-Credentials und Repositoryinhalt überschreiten diese Grenze nicht. Vor einer terminalen
+ab; die normale Laufdetailansicht nennt dabei weder Provider noch Modell. Providerpayloads,
+Endpoints, Credentials und Repositoryinhalt überschreiten diese Grenze nicht. Vor einer terminalen
 Provider-Nichterreichbarkeit wiederholt der gemeinsame Explorer-/Claim-Collector genau einmal nach
 einer cancellation-fähigen Sekunde. Nur die normalisierte transiente Klasse `Unavailable` ist
 retry-fähig, Teiloutput wird nicht übernommen und die ursprüngliche Requestdeadline wird nicht
@@ -438,6 +438,14 @@ verlängert. Der Gemini-Adapter zählt dazu auch numerisch transiente Fehlerobje
 geöffneten SSE-Stream und verdichtet produktive Structured-Output-Schemas durch Entfernen
 unerreichbarer Definitionen sowie Zusammenführen gleichförmiger Tuple-Items; die positionsgenaue
 Antwortprüfung bleibt unverändert im Core.
+
+Die normale Deep-Map-Detailansicht kombiniert gemäß ADR-0036 den Laufplan nur lesend mit dem exakt
+zugehörigen aktuellen Index, veröffentlichten verifizierten Module Cards und der Atlas-Projektion.
+Sie zeigt die fünf verständlichen Schritte `Planen → Erkunden → Module Cards erstellen → Prüfen →
+Atlas aktualisieren`, das aktuelle Ziel samt Auswahlgrund, den nach Modulen gruppierten Plan sowie
+konkrete Atlas-Auswirkungen. Provider-/Modellnamen, feste Budgets, interne IDs, Snapshots und
+technische Ereignistabellen gehören nicht zu dieser Oberfläche. Ein älterer Lauf bleibt als
+kompakter Verlauf lesbar, erhält aber niemals heutige Cards oder scheinbar aufgelöste stale Ziele.
 
 Phasen:
 
@@ -887,8 +895,10 @@ nicht-autoritativ für Mapping und Publish und erscheinen nur als `Details unvol
 Die Map zeigt Deep Map dauerhaft als 52-Pixel-Leiste mit genau den Modi Schnell, Standard und
 Gründlich, einer zustandsabhängigen Hauptaktion, kompaktem Fortschritt und `Details`. Der rechte,
 größenveränderbare Inspector wird mit dem Code-Inspector geteilt und lädt separat höchstens 20
-Läufe sowie 50 chronologische Einträge pro Seite. Er zeigt ausschließlich sichere technische
-Metadaten; Rohprompts, Modellantworten, Source und Providerfehler bleiben außerhalb der WebView.
+Läufe, 20 Module sowie je 50 Planschritte, Atlas-Auswirkungen und chronologische Einträge pro Seite.
+Er zeigt Plan, aktuelle Arbeit, veröffentlichte Cards und Atlas-Wirkung in Produktsprache;
+Rohprompts, Modellantworten, Source, Providerdaten, Budgets und interne Kennungen bleiben außerhalb
+dieser normalen Ansicht. `Im Atlas zeigen` fokussiert anschließend den bestehenden Atlas-Inspector.
 
 Die Source-Vorschau aus ADR-0030 löst ausschließlich eine zuvor sichtbare Card-Evidence-Auswahl
 erneut auf. Der sichere Source-Reader liefert acht Kontextzeilen je Seite, höchstens 64 Zeilen und

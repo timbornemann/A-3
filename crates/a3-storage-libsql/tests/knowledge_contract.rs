@@ -4,15 +4,21 @@ mod support;
 
 use a3_application::{
     DeepMapEventResult, DeepMapJournalEvent, DeepMapModelDescriptor, DeepMapPhase,
-    DeepMapPublicationAnchor, DeepMapPublicationResult, DeepMapRunJournalFailure,
-    DeepMapRunJournalStore, DeepMapRunStart, DeepMapSafeAction, DeepMapTargetKind, KnowledgeStore,
-    KnowledgeStoreFailure, RecentProjectLimit,
+    DeepMapPlanTargetReference, DeepMapPublicationAnchor, DeepMapPublicationResult,
+    DeepMapRunJournalFailure, DeepMapRunJournalStore, DeepMapRunStart, DeepMapSafeAction,
+    DeepMapTargetKind, KnowledgeStore, KnowledgeStoreFailure, RecentProjectLimit,
 };
 use a3_domain::{
-    CanonicalDirectory, DeepMapEventSequence, DeepMapMode, DeepMapRunId, DeepMapRunState,
-    DeepMapRunTimestamp, GitHead, GitReferenceName, IndexRunId, ModelProfileId,
-    ModelProfileReference, ModelProfileVersion, ProjectIdentity, RepositoryId, RepositoryIdentity,
-    SnapshotId, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    CanonicalDirectory, Centrality, ContentHash, DeepMapEventSequence, DeepMapMode, DeepMapPlanner,
+    DeepMapRunId, DeepMapRunState, DeepMapRunTimestamp, ExploreBudget, ExplorePlan, FileRevision,
+    GitHead, GitReferenceName, GraphSymbol, IndexLanguage, IndexPublication, IndexRunId,
+    IndexRunRecord, IndexRunSequence, IndexRunStatus, LinkedGraph, LocalSymbolId, ModelProfileId,
+    ModelProfileReference, ModelProfileVersion, ModuleCoverageSnapshot, ModuleId, ModuleKind,
+    ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot,
+    ModuleSymbolSet, ParsedSymbol, ProjectIdentity, RankProjection, RankScore,
+    RankingPolicyVersion, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
+    RepositoryPath, SnapshotId, SourcePosition, SourceRange, SymbolId, SymbolKind, SymbolName,
+    SymbolRank, SymbolRankSignals, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
 };
 use a3_storage_libsql::{
     KnowledgeDatabase, KnowledgeOpenError, KnowledgeSchemaVersion, LibsqlKnowledgeStore,
@@ -228,6 +234,102 @@ fn deep_map_journal_roundtrips_reconciles_and_rejects_false_replay()
 }
 
 #[test]
+fn deep_map_v29_plan_details_roundtrip_as_safe_references_and_canonical_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_knowledge_test()?;
+    run_knowledge_test(async {
+        let fixture = ProjectFixture::new([105; 32], [106; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let plan = deep_map_plan_fixture()?;
+        let run_id = DeepMapRunId::from_bytes([107; 32]);
+        store
+            .create_run(&fixture.project, &deep_map_run_start(run_id, &plan, 1_000)?)
+            .await?;
+
+        store.record_plan(&fixture.project, run_id, &plan).await?;
+
+        let page = store
+            .list_run_modules(&fixture.project, run_id, None)
+            .await?;
+        assert_eq!(page.modules().len(), 1);
+        assert_eq!(
+            page.modules()[0].planned_steps(),
+            u64::try_from(plan.steps().len())?
+        );
+        let steps = store
+            .list_module_steps(
+                &fixture.project,
+                run_id,
+                page.modules()[0].module_id(),
+                None,
+            )
+            .await?;
+        assert_eq!(steps.steps().len(), plan.steps().len());
+        for step in steps.steps() {
+            assert!(matches!(
+                step.target_reference(),
+                Some(
+                    DeepMapPlanTargetReference::Module(_)
+                        | DeepMapPlanTargetReference::FileEvidence(_)
+                        | DeepMapPlanTargetReference::Symbol(_)
+                )
+            ));
+            let fields = step.coverage_fields().ok_or("V29 Card fields missing")?;
+            assert!(!fields.is_empty());
+            assert!(fields.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn deep_map_v29_plan_persistence_rolls_back_all_rows_on_a_mid_plan_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_knowledge_test()?;
+    run_knowledge_test(async {
+        let fixture = ProjectFixture::new([108; 32], [109; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let plan = deep_map_plan_fixture()?;
+        assert!(plan.steps().len() >= 2);
+        let run_id = DeepMapRunId::from_bytes([110; 32]);
+        store
+            .create_run(&fixture.project, &deep_map_run_start(run_id, &plan, 2_000)?)
+            .await?;
+        let knowledge_path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        mutate_knowledge(
+            &knowledge_path,
+            "CREATE TRIGGER reject_second_safe_plan_target\n\
+             BEFORE INSERT ON deep_map_step_targets\n\
+             WHEN NEW.step_position = 2\n\
+             BEGIN SELECT RAISE(ABORT, 'test rollback'); END",
+        )
+        .await?;
+
+        assert_eq!(
+            store.record_plan(&fixture.project, run_id, &plan).await,
+            Err(DeepMapRunJournalFailure::Unavailable)
+        );
+        let run = store
+            .load_run(&fixture.project, run_id)
+            .await?
+            .ok_or("run missing after rollback")?;
+        assert_eq!(run.total_steps(), 0);
+        assert!(
+            store
+                .list_run_modules(&fixture.project, run_id, None)
+                .await?
+                .modules()
+                .is_empty()
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
 fn linked_worktrees_receive_distinct_identity_bound_databases()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_knowledge_test()?;
@@ -428,6 +530,131 @@ fn knowledge_rejects_a_symlink_outside_private_storage() -> Result<(), Box<dyn s
         ));
         Ok::<(), Box<dyn std::error::Error>>(())
     })
+}
+
+fn deep_map_run_start(
+    run_id: DeepMapRunId,
+    plan: &ExplorePlan,
+    created_at: i64,
+) -> Result<DeepMapRunStart, Box<dyn std::error::Error>> {
+    Ok(DeepMapRunStart::new(
+        run_id,
+        DeepMapPublicationAnchor::new(plan.index_run_id(), plan.snapshot_id()),
+        DeepMapMode::Standard,
+        DeepMapModelDescriptor::from_stored_parts(
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([111; 32]),
+                ModelProfileVersion::V1,
+            ),
+            "local".to_owned(),
+            "mapper".to_owned(),
+            32_000,
+            4_096,
+        )?,
+        DeepMapRunTimestamp::new(created_at)?,
+    ))
+}
+
+fn deep_map_plan_fixture() -> Result<ExplorePlan, Box<dyn std::error::Error>> {
+    let published = deep_map_published_fixture()?;
+    let coverage = ModuleCoverageSnapshot::empty(
+        published.run().snapshot_id(),
+        a3_domain::ModuleCardSchemaVersion::V1,
+    );
+    Ok(DeepMapPlanner::v1().plan(&published, &coverage, ExploreBudget::DEFAULT)?)
+}
+
+fn deep_map_published_fixture() -> Result<a3_domain::PublishedIndex, Box<dyn std::error::Error>> {
+    let snapshot_id = SnapshotId::from_bytes([112; 32]);
+    let manifest = deep_map_revision("Cargo.toml", 113)?;
+    let source = deep_map_revision("src/lib.rs", 114)?;
+    let symbol_id = SymbolId::from_bytes([115; 32]);
+    let range = SourceRange::new(0, 1, SourcePosition::new(0, 0), SourcePosition::new(0, 1))?;
+    let symbol = GraphSymbol::new(
+        symbol_id,
+        source.clone(),
+        ParsedSymbol::new(
+            LocalSymbolId::new(1)?,
+            SymbolKind::Function,
+            SymbolName::try_from_string("main".to_owned())?,
+            range,
+            range,
+        )?,
+    );
+    let graph = LinkedGraph::new(
+        snapshot_id,
+        vec![manifest.clone(), source.clone()],
+        vec![symbol],
+        Vec::new(),
+        Vec::new(),
+    )?;
+    let ranking = RankProjection::new(
+        snapshot_id,
+        RankingPolicyVersion::v1(),
+        vec![SymbolRank::new(
+            symbol_id,
+            RankScore::try_from_sum(1_000)?,
+            SymbolRankSignals {
+                in_degree: 0,
+                out_degree: 0,
+                centrality: Centrality::from_basis_points(1_000)?,
+                degree_contribution: 0,
+                centrality_contribution: 1_000,
+                entrypoint_contribution: 0,
+                public_export_contribution: 0,
+                manifest_contribution: 0,
+                test_contribution: 0,
+            },
+        )],
+    )?;
+    let module_id = ModuleId::from_bytes([116; 32]);
+    let featured = ModuleSymbolSet::new(vec![symbol_id], false)?;
+    let module = RepositoryModule::new(
+        module_id,
+        ModuleKind::ManifestBoundary,
+        Some(ModuleRoot::Repository),
+        vec![manifest.clone()],
+        featured.clone(),
+        featured.clone(),
+        ModuleSymbolSet::empty(),
+    )?;
+    let membership = ModuleMembership::new(
+        module_id,
+        symbol_id,
+        ModuleMembershipEvidence::manifest(source, manifest.clone()),
+    );
+    let card = RepositoryCard::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        vec![module_id],
+        vec![IndexLanguage::Rust],
+        featured,
+        2,
+        1,
+    )?;
+    let modules = ModuleProjection::new(
+        snapshot_id,
+        ModulePolicyVersion::v1(),
+        vec![module],
+        vec![membership],
+        card,
+    )?;
+    let publication = IndexPublication::new(graph, ranking, vec![manifest], modules)?;
+    let run = IndexRunRecord::new(
+        IndexRunId::from_bytes([117; 32]),
+        snapshot_id,
+        RankingPolicyVersion::v1(),
+        IndexRunSequence::new(1)?,
+        IndexRunStatus::Published,
+    );
+    Ok(a3_domain::PublishedIndex::new(run, publication)?)
+}
+
+fn deep_map_revision(path: &str, hash: u8) -> Result<FileRevision, Box<dyn std::error::Error>> {
+    Ok(FileRevision::new(
+        RepositoryPath::try_from_bytes(path.as_bytes().to_vec())?,
+        ContentHash::from_bytes([hash; 32]),
+    ))
 }
 
 struct ProjectFixture {

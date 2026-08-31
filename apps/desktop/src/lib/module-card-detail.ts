@@ -8,13 +8,12 @@ const MAX_CARD_BYTES = 65_536;
 const MAX_CARD_EVIDENCE = 512;
 const MAX_CLAIM_EVIDENCE = 16;
 
-export interface ModuleCardDetailQueryV1 {
-  moduleId: string;
-}
+export type ModuleCardDetailQueryV1 =
+  { moduleId: string } | { runSelection: string; moduleSelection: string };
 
-export interface QueryModuleCardDetailRequestV1 extends ModuleCardDetailQueryV1 {
+export type QueryModuleCardDetailRequestV1 = ModuleCardDetailQueryV1 & {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
-}
+};
 
 export type ModuleCardClaimKindV1 = 'fact' | 'observation' | 'hypothesis';
 export type ModuleCardClaimStateV1 = 'current' | 'stale' | 'needsReview';
@@ -114,20 +113,27 @@ export async function queryModuleCardDetail(
   query: ModuleCardDetailQueryV1,
   invokeCommand: InvokeCommand = invokeThroughTauri,
 ): Promise<ModuleCardDetailResponseV1> {
-  if (
-    !isStableId(query.moduleId) ||
-    !hasExactKeys(query as unknown as Record<string, unknown>, ['moduleId'])
-  ) {
+  const raw = query as unknown as Record<string, unknown>;
+  const stableQuery =
+    hasExactKeys(raw, ['moduleId']) && typeof raw.moduleId === 'string' && isStableId(raw.moduleId);
+  const dashboardQuery =
+    hasExactKeys(raw, ['moduleSelection', 'runSelection']) &&
+    typeof raw.moduleSelection === 'string' &&
+    /^[0-9a-f]{96}$/.test(raw.moduleSelection) &&
+    typeof raw.runSelection === 'string' &&
+    /^[0-9a-f]{96}$/.test(raw.runSelection);
+  if (!stableQuery && !dashboardQuery) {
     throw new Error('Module Card detail query does not match the V1 schema.');
   }
   const request: QueryModuleCardDetailRequestV1 = {
-    moduleId: query.moduleId,
+    ...query,
     protocolVersion: CURRENT_PROTOCOL_VERSION,
   };
   const payload = await invokeCommand('query_module_card_detail', { request });
   const response = parseModuleCardDetailResponseV1(payload);
   if (
     response.result.status === 'available' &&
+    'moduleId' in query &&
     response.result.detail.moduleId !== query.moduleId
   ) {
     throw new Error('Module Card detail response does not match the selected module.');

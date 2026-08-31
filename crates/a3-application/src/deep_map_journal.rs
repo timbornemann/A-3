@@ -5,7 +5,7 @@ use crate::{
 use a3_domain::{
     DeepMapDiagnosticCode, DeepMapEventSequence, DeepMapMode, DeepMapRunId, DeepMapRunState,
     DeepMapRunTimestamp, ExploreCost, ExplorePlan, ExplorePlanStopReason, ExploreSeedReason,
-    ModuleId, ProjectIdentity,
+    ModuleCardEvidenceId, ModuleCardField, ModuleId, ProjectIdentity, SymbolId,
 };
 use std::error::Error;
 use std::fmt;
@@ -16,6 +16,245 @@ use std::pin::Pin;
 pub const DEEP_MAP_RUN_PAGE_LIMIT: u16 = 20;
 /// Fixed maximum number of events returned by one journal read.
 pub const DEEP_MAP_ENTRY_PAGE_LIMIT: u16 = 50;
+/// Fixed maximum number of module summaries returned by one dashboard read.
+pub const DEEP_MAP_MODULE_PAGE_LIMIT: u16 = 20;
+/// Fixed maximum number of resolved plan steps returned by one dashboard read.
+pub const DEEP_MAP_MODULE_STEP_PAGE_LIMIT: u16 = 50;
+
+/// Closed, content-free reference to the exact target selected by the planner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeepMapPlanTargetReference {
+    /// A deterministic module projection.
+    Module(ModuleId),
+    /// An exact file revision represented only by its Evidence ID.
+    FileEvidence(ModuleCardEvidenceId),
+    /// An exact structural symbol.
+    Symbol(SymbolId),
+}
+
+/// User-facing plan data retained without source content or model output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeepMapPlanStep {
+    position: u64,
+    module_id: ModuleId,
+    target_kind: DeepMapTargetKind,
+    target_reference: Option<DeepMapPlanTargetReference>,
+    seed_reason: ExploreSeedReason,
+    coverage_fields: Option<Vec<ModuleCardField>>,
+    confirmed: bool,
+}
+
+impl DeepMapPlanStep {
+    /// Reconstructs one current or legacy plan step.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        position: u64,
+        module_id: ModuleId,
+        target_kind: DeepMapTargetKind,
+        target_reference: Option<DeepMapPlanTargetReference>,
+        seed_reason: ExploreSeedReason,
+        coverage_fields: Option<Vec<ModuleCardField>>,
+        confirmed: bool,
+    ) -> Result<Self, DeepMapRunJournalFailure> {
+        if position == 0
+            || target_reference.is_some() != coverage_fields.is_some()
+            || coverage_fields.as_ref().is_some_and(Vec::is_empty)
+            || coverage_fields
+                .as_ref()
+                .is_some_and(|fields| fields.windows(2).any(|pair| pair[0] >= pair[1]))
+            || target_reference.is_some_and(|reference| {
+                !matches!(
+                    (target_kind, reference),
+                    (
+                        DeepMapTargetKind::Module,
+                        DeepMapPlanTargetReference::Module(_)
+                    ) | (
+                        DeepMapTargetKind::Manifest,
+                        DeepMapPlanTargetReference::FileEvidence(_)
+                    ) | (
+                        DeepMapTargetKind::Symbol,
+                        DeepMapPlanTargetReference::Symbol(_)
+                    )
+                )
+            })
+        {
+            return Err(DeepMapRunJournalFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            position,
+            module_id,
+            target_kind,
+            target_reference,
+            seed_reason,
+            coverage_fields,
+            confirmed,
+        })
+    }
+
+    /// Returns the one-based planner position.
+    #[must_use]
+    pub const fn position(&self) -> u64 {
+        self.position
+    }
+    /// Returns the module whose card gains coverage.
+    #[must_use]
+    pub const fn module_id(&self) -> ModuleId {
+        self.module_id
+    }
+    /// Returns the closed target class.
+    #[must_use]
+    pub const fn target_kind(&self) -> DeepMapTargetKind {
+        self.target_kind
+    }
+    /// Returns the exact opaque target when V29 details are available.
+    #[must_use]
+    pub const fn target_reference(&self) -> Option<DeepMapPlanTargetReference> {
+        self.target_reference
+    }
+    /// Returns why this exploration was planned.
+    #[must_use]
+    pub const fn seed_reason(&self) -> ExploreSeedReason {
+        self.seed_reason
+    }
+    /// Returns canonical intended card fields, or `None` for a legacy run.
+    #[must_use]
+    pub fn coverage_fields(&self) -> Option<&[ModuleCardField]> {
+        self.coverage_fields.as_deref()
+    }
+    /// Returns whether the step produced verified evidence.
+    #[must_use]
+    pub const fn confirmed(&self) -> bool {
+        self.confirmed
+    }
+}
+
+/// Stable keyset cursor for module summaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeepMapModuleCursor(ModuleId);
+
+impl DeepMapModuleCursor {
+    /// Creates a cursor after one canonical module identity.
+    #[must_use]
+    pub const fn new(module_id: ModuleId) -> Self {
+        Self(module_id)
+    }
+    /// Returns the exclusive module identity.
+    #[must_use]
+    pub const fn module_id(self) -> ModuleId {
+        self.0
+    }
+}
+
+/// Aggregate planner progress for one module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeepMapRunModuleSummary {
+    module_id: ModuleId,
+    planned_steps: u64,
+    confirmed_steps: u64,
+}
+
+impl DeepMapRunModuleSummary {
+    /// Reconstructs validated per-module progress.
+    pub fn new(
+        module_id: ModuleId,
+        planned_steps: u64,
+        confirmed_steps: u64,
+    ) -> Result<Self, DeepMapRunJournalFailure> {
+        if planned_steps == 0 || confirmed_steps > planned_steps {
+            return Err(DeepMapRunJournalFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            module_id,
+            planned_steps,
+            confirmed_steps,
+        })
+    }
+    /// Returns the module identity.
+    #[must_use]
+    pub const fn module_id(self) -> ModuleId {
+        self.module_id
+    }
+    /// Returns the number of planned explorations.
+    #[must_use]
+    pub const fn planned_steps(self) -> u64 {
+        self.planned_steps
+    }
+    /// Returns the number of confirmed explorations.
+    #[must_use]
+    pub const fn confirmed_steps(self) -> u64 {
+        self.confirmed_steps
+    }
+}
+
+/// Bounded canonical page of modules represented in a plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeepMapRunModulePage {
+    modules: Vec<DeepMapRunModuleSummary>,
+    next_cursor: Option<DeepMapModuleCursor>,
+}
+
+impl DeepMapRunModulePage {
+    /// Creates a page within the fixed dashboard bound.
+    pub fn new(
+        modules: Vec<DeepMapRunModuleSummary>,
+        next_cursor: Option<DeepMapModuleCursor>,
+    ) -> Result<Self, DeepMapRunJournalFailure> {
+        if modules.len() > usize::from(DEEP_MAP_MODULE_PAGE_LIMIT) {
+            return Err(DeepMapRunJournalFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            modules,
+            next_cursor,
+        })
+    }
+    /// Returns module summaries in canonical identity order.
+    #[must_use]
+    pub fn modules(&self) -> &[DeepMapRunModuleSummary] {
+        &self.modules
+    }
+    /// Returns the next exclusive module cursor.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<DeepMapModuleCursor> {
+        self.next_cursor
+    }
+}
+
+/// Bounded planner-step page for one module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeepMapModuleStepPage {
+    steps: Vec<DeepMapPlanStep>,
+    next_after_position: Option<u64>,
+}
+
+impl DeepMapModuleStepPage {
+    /// Creates a canonical page within the fixed dashboard bound.
+    pub fn new(
+        steps: Vec<DeepMapPlanStep>,
+        next_after_position: Option<u64>,
+    ) -> Result<Self, DeepMapRunJournalFailure> {
+        if steps.len() > usize::from(DEEP_MAP_MODULE_STEP_PAGE_LIMIT)
+            || steps
+                .windows(2)
+                .any(|pair| pair[0].position() >= pair[1].position())
+        {
+            return Err(DeepMapRunJournalFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            steps,
+            next_after_position,
+        })
+    }
+    /// Returns steps in planner order.
+    #[must_use]
+    pub fn steps(&self) -> &[DeepMapPlanStep] {
+        &self.steps
+    }
+    /// Returns the exclusive next position.
+    #[must_use]
+    pub const fn next_after_position(&self) -> Option<u64> {
+        self.next_after_position
+    }
+}
 
 /// Immutable metadata captured before a Deep-Map worker can start.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -577,6 +816,27 @@ pub trait DeepMapRunJournalStore: fmt::Debug + Send + Sync {
         project: &'a ProjectIdentity,
         cursor: Option<DeepMapRunCursor>,
     ) -> DeepMapRunJournalFuture<'a, DeepMapRunPage>;
+    /// Loads one exact project-bound run summary.
+    fn load_run<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+    ) -> DeepMapRunJournalFuture<'a, Option<DeepMapRunSummary>>;
+    /// Loads one bounded canonical page of modules represented in the plan.
+    fn list_run_modules<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        cursor: Option<DeepMapModuleCursor>,
+    ) -> DeepMapRunJournalFuture<'a, DeepMapRunModulePage>;
+    /// Loads one bounded page of safe plan details for a module.
+    fn list_module_steps<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: DeepMapRunId,
+        module_id: ModuleId,
+        after_position: Option<u64>,
+    ) -> DeepMapRunJournalFuture<'a, DeepMapModuleStepPage>;
     /// Loads one project-bound chronological event page.
     fn list_entries<'a>(
         &'a self,

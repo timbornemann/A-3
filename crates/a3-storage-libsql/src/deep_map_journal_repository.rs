@@ -1,15 +1,18 @@
 use a3_application::{
-    DEEP_MAP_ENTRY_PAGE_LIMIT, DEEP_MAP_RUN_PAGE_LIMIT, DeepMapEntryDetail, DeepMapEntryPage,
-    DeepMapEventResult, DeepMapJournalEvent, DeepMapModelDescriptor, DeepMapPhase,
-    DeepMapPublicationAnchor, DeepMapPublicationResult, DeepMapRunCursor, DeepMapRunJournalFailure,
-    DeepMapRunPage, DeepMapRunStart, DeepMapRunSummary, DeepMapSafeAction, DeepMapStepDetail,
-    DeepMapTargetKind,
+    DEEP_MAP_ENTRY_PAGE_LIMIT, DEEP_MAP_MODULE_PAGE_LIMIT, DEEP_MAP_MODULE_STEP_PAGE_LIMIT,
+    DEEP_MAP_RUN_PAGE_LIMIT, DeepMapEntryDetail, DeepMapEntryPage, DeepMapEventResult,
+    DeepMapJournalEvent, DeepMapModelDescriptor, DeepMapModuleCursor, DeepMapModuleStepPage,
+    DeepMapPhase, DeepMapPlanStep, DeepMapPlanTargetReference, DeepMapPublicationAnchor,
+    DeepMapPublicationResult, DeepMapRunCursor, DeepMapRunJournalFailure, DeepMapRunModulePage,
+    DeepMapRunModuleSummary, DeepMapRunPage, DeepMapRunStart, DeepMapRunSummary, DeepMapSafeAction,
+    DeepMapStepDetail, DeepMapTargetKind,
 };
 use a3_domain::{
     DeepMapDiagnosticCode, DeepMapEventSequence, DeepMapMode, DeepMapRunId, DeepMapRunState,
     DeepMapRunTimestamp, ExploreCost, ExploreEvidenceRequirement, ExplorePlan,
-    ExplorePlanStopReason, ExploreSeedReason, ExploreTarget, ExploreVerificationMethod, IndexRunId,
-    ModelProfileId, ModelProfileReference, ModelProfileVersion, ModuleId, SnapshotId, WorktreeId,
+    ExplorePlanStopReason, ExploreSeedReason, ExploreTarget, ExploreVerificationMethod,
+    FileRevision, IndexRunId, ModelProfileId, ModelProfileReference, ModelProfileVersion,
+    ModuleCardEvidenceId, ModuleCardField, ModuleId, SnapshotId, SymbolId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 
@@ -130,6 +133,43 @@ pub(crate) async fn record_plan(
             )
             .await
             .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+        let (reference_kind, reference_id) = encode_plan_target_reference(step.target());
+        transaction
+            .execute(
+                "INSERT INTO deep_map_step_targets (
+                 worktree_id, run_id, step_position, reference_kind, reference_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    bytes(worktree_id.as_bytes()),
+                    bytes(run_id.as_bytes()),
+                    i64::from(step.sequence()),
+                    reference_kind,
+                    bytes(reference_id.as_bytes()),
+                ],
+            )
+            .await
+            .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+        for (field_index, field) in step.coverage_fields().iter().copied().enumerate() {
+            let field_position = field_index
+                .checked_add(1)
+                .and_then(|value| i64::try_from(value).ok())
+                .ok_or(DeepMapRunJournalFailure::InvalidInput)?;
+            transaction
+                .execute(
+                    "INSERT INTO deep_map_step_fields (
+                     worktree_id, run_id, step_position, field_position, field_kind
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        bytes(worktree_id.as_bytes()),
+                        bytes(run_id.as_bytes()),
+                        i64::from(step.sequence()),
+                        field_position,
+                        encode_module_card_field(field),
+                    ],
+                )
+                .await
+                .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+        }
     }
     commit(transaction).await
 }
@@ -354,6 +394,216 @@ pub(crate) async fn list_runs(
         None
     };
     DeepMapRunPage::new(runs, next)
+}
+
+pub(crate) async fn load_run(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+) -> Result<Option<DeepMapRunSummary>, DeepMapRunJournalFailure> {
+    let sql =
+        format!("SELECT {RUN_COLUMNS} FROM deep_map_runs WHERE worktree_id = ?1 AND run_id = ?2");
+    let mut rows = connection
+        .query(
+            &sql,
+            params![bytes(worktree_id.as_bytes()), bytes(run_id.as_bytes())],
+        )
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+    rows.next()
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?
+        .map(|row| decode_run(&row))
+        .transpose()
+}
+
+pub(crate) async fn list_run_modules(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    cursor: Option<DeepMapModuleCursor>,
+) -> Result<DeepMapRunModulePage, DeepMapRunJournalFailure> {
+    let mut rows = connection
+        .query(
+            "SELECT module_id, COUNT(*), SUM(confirmed) FROM deep_map_steps
+             WHERE worktree_id = ?1 AND run_id = ?2 AND (?3 IS NULL OR module_id > ?3)
+             GROUP BY module_id ORDER BY module_id LIMIT ?4",
+            params![
+                bytes(worktree_id.as_bytes()),
+                bytes(run_id.as_bytes()),
+                cursor.map(|value| bytes(value.module_id().as_bytes())),
+                i64::from(DEEP_MAP_MODULE_PAGE_LIMIT) + 1,
+            ],
+        )
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+    let mut modules = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?
+    {
+        modules.push(DeepMapRunModuleSummary::new(
+            parse_id(read_bytes(&row, 0)?, ModuleId::from_bytes)?,
+            as_u64(read_i64(&row, 1)?)?,
+            as_u64(read_i64(&row, 2)?)?,
+        )?);
+    }
+    let has_more = modules.len() > usize::from(DEEP_MAP_MODULE_PAGE_LIMIT);
+    if has_more {
+        modules.pop();
+    }
+    let next_cursor = has_more
+        .then(|| {
+            modules
+                .last()
+                .copied()
+                .map(|item| DeepMapModuleCursor::new(item.module_id()))
+        })
+        .flatten();
+    DeepMapRunModulePage::new(modules, next_cursor)
+}
+
+pub(crate) async fn list_module_steps(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    after_position: Option<u64>,
+) -> Result<DeepMapModuleStepPage, DeepMapRunJournalFailure> {
+    let mut rows = connection
+        .query(
+            "SELECT step_position, target_kind, seed_reason, confirmed FROM deep_map_steps
+             WHERE worktree_id = ?1 AND run_id = ?2 AND module_id = ?3
+               AND (?4 IS NULL OR step_position > ?4)
+             ORDER BY step_position LIMIT ?5",
+            params![
+                bytes(worktree_id.as_bytes()),
+                bytes(run_id.as_bytes()),
+                bytes(module_id.as_bytes()),
+                after_position.map(as_i64).transpose()?,
+                i64::from(DEEP_MAP_MODULE_STEP_PAGE_LIMIT) + 1,
+            ],
+        )
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+    let mut base_rows = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?
+    {
+        base_rows.push((
+            as_u64(read_i64(&row, 0)?)?,
+            decode_target(&read_string(&row, 1)?)?,
+            decode_seed_reason(&read_string(&row, 2)?)?,
+            read_i64(&row, 3)? == 1,
+        ));
+    }
+    drop(rows);
+    let has_more = base_rows.len() > usize::from(DEEP_MAP_MODULE_STEP_PAGE_LIMIT);
+    if has_more {
+        base_rows.pop();
+    }
+    let mut steps = Vec::with_capacity(base_rows.len());
+    for (position, target_kind, seed_reason, confirmed) in base_rows {
+        let target_reference =
+            load_plan_target_reference(connection, worktree_id, run_id, position).await?;
+        let coverage_fields = if target_reference.is_some() {
+            Some(load_plan_fields(connection, worktree_id, run_id, position).await?)
+        } else {
+            None
+        };
+        steps.push(DeepMapPlanStep::new(
+            position,
+            module_id,
+            target_kind,
+            target_reference,
+            seed_reason,
+            coverage_fields,
+            confirmed,
+        )?);
+    }
+    let next_after_position = has_more
+        .then(|| steps.last().map(DeepMapPlanStep::position))
+        .flatten();
+    DeepMapModuleStepPage::new(steps, next_after_position)
+}
+
+async fn load_plan_target_reference(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    position: u64,
+) -> Result<Option<DeepMapPlanTargetReference>, DeepMapRunJournalFailure> {
+    let mut rows = connection
+        .query(
+            "SELECT reference_kind, reference_id FROM deep_map_step_targets
+             WHERE worktree_id = ?1 AND run_id = ?2 AND step_position = ?3",
+            params![
+                bytes(worktree_id.as_bytes()),
+                bytes(run_id.as_bytes()),
+                as_i64(position)?,
+            ],
+        )
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+    rows.next()
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?
+        .map(|row| {
+            let kind = read_string(&row, 0)?;
+            let id = read_bytes(&row, 1)?;
+            match kind.as_str() {
+                "module" => {
+                    parse_id(id, ModuleId::from_bytes).map(DeepMapPlanTargetReference::Module)
+                }
+                "file-evidence" => parse_id(id, ModuleCardEvidenceId::from_bytes)
+                    .map(DeepMapPlanTargetReference::FileEvidence),
+                "symbol" => {
+                    parse_id(id, SymbolId::from_bytes).map(DeepMapPlanTargetReference::Symbol)
+                }
+                _ => Err(DeepMapRunJournalFailure::InvalidStoredData),
+            }
+        })
+        .transpose()
+}
+
+async fn load_plan_fields(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    position: u64,
+) -> Result<Vec<ModuleCardField>, DeepMapRunJournalFailure> {
+    let mut rows = connection
+        .query(
+            "SELECT field_position, field_kind FROM deep_map_step_fields
+             WHERE worktree_id = ?1 AND run_id = ?2 AND step_position = ?3
+             ORDER BY field_position",
+            params![
+                bytes(worktree_id.as_bytes()),
+                bytes(run_id.as_bytes()),
+                as_i64(position)?,
+            ],
+        )
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?;
+    let mut fields = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| DeepMapRunJournalFailure::Unavailable)?
+    {
+        let expected_position = i64::try_from(fields.len())
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .ok_or(DeepMapRunJournalFailure::InvalidStoredData)?;
+        if read_i64(&row, 0)? != expected_position {
+            return Err(DeepMapRunJournalFailure::InvalidStoredData);
+        }
+        fields.push(decode_module_card_field(&read_string(&row, 1)?)?);
+    }
+    Ok(fields)
 }
 
 const EVENT_COLUMNS: &str = "sequence, occurred_at_unix_millis, state, phase, target_kind,\n\
@@ -800,6 +1050,58 @@ const fn encode_explore_target(value: &ExploreTarget) -> &'static str {
         ExploreTarget::Module(_) => "module",
         ExploreTarget::Manifest { .. } => "manifest",
         ExploreTarget::Symbol(_) => "symbol",
+    }
+}
+fn encode_plan_target_reference(value: &ExploreTarget) -> (&'static str, ModuleCardEvidenceId) {
+    match value {
+        ExploreTarget::Module(module_id) => (
+            "module",
+            ModuleCardEvidenceId::from_bytes(*module_id.as_bytes()),
+        ),
+        ExploreTarget::Manifest { path, content_hash } => (
+            "file-evidence",
+            ModuleCardEvidenceId::for_file_revision_v1(&FileRevision::new(
+                path.clone(),
+                *content_hash,
+            )),
+        ),
+        ExploreTarget::Symbol(symbol_id) => (
+            "symbol",
+            ModuleCardEvidenceId::from_bytes(*symbol_id.as_bytes()),
+        ),
+    }
+}
+const fn encode_module_card_field(value: ModuleCardField) -> &'static str {
+    match value {
+        ModuleCardField::Title => "title",
+        ModuleCardField::Paths => "paths",
+        ModuleCardField::Purpose => "purpose",
+        ModuleCardField::Responsibilities => "responsibilities",
+        ModuleCardField::PublicSurface => "public-surface",
+        ModuleCardField::Entrypoints => "entrypoints",
+        ModuleCardField::Dependencies => "dependencies",
+        ModuleCardField::DataFlows => "data-flows",
+        ModuleCardField::Invariants => "invariants",
+        ModuleCardField::Tests => "tests",
+        ModuleCardField::Risks => "risks",
+        ModuleCardField::OpenQuestions => "open-questions",
+    }
+}
+fn decode_module_card_field(value: &str) -> Result<ModuleCardField, DeepMapRunJournalFailure> {
+    match value {
+        "title" => Ok(ModuleCardField::Title),
+        "paths" => Ok(ModuleCardField::Paths),
+        "purpose" => Ok(ModuleCardField::Purpose),
+        "responsibilities" => Ok(ModuleCardField::Responsibilities),
+        "public-surface" => Ok(ModuleCardField::PublicSurface),
+        "entrypoints" => Ok(ModuleCardField::Entrypoints),
+        "dependencies" => Ok(ModuleCardField::Dependencies),
+        "data-flows" => Ok(ModuleCardField::DataFlows),
+        "invariants" => Ok(ModuleCardField::Invariants),
+        "tests" => Ok(ModuleCardField::Tests),
+        "risks" => Ok(ModuleCardField::Risks),
+        "open-questions" => Ok(ModuleCardField::OpenQuestions),
+        _ => Err(DeepMapRunJournalFailure::InvalidStoredData),
     }
 }
 const fn encode_seed_reason(value: ExploreSeedReason) -> &'static str {

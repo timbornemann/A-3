@@ -69,6 +69,17 @@ Die geschlossenen V3-Diagnosen trennen insbesondere stale Index, Provider-Ablehn
 Publication-Rejection, Storage, Timeout und Progress. Ein fehlgeschlagener Status ist damit ein
 sicherer Schlüssel für die Detailansicht und keine Projektion eines rohen Adapterfehlers.
 
+ADR-0036 ergänzt die normale Detailansicht um vier projektgebundene V1-Read-Modelle:
+`query_deep_map_run_dashboard` liefert die fünf Produktphasen, aktuellen verständlichen Arbeitsbezug,
+Fortschritt und Freshness; `query_deep_map_run_modules` liefert höchstens 20 Module pro Seite;
+`query_deep_map_module_steps` löst höchstens 50 Erkundungsziele pro Seite gegen den exakten
+Laufindex auf; `query_deep_map_atlas_impact` liefert höchstens 50 exakt passende aktuelle
+Atlas-Auswirkungen. Card-Inhalt wird nicht dupliziert, sondern über `query_module_card_detail` mit
+der Core-ausgegebenen Run-/Modulselektion nachgeladen. Die vier Dashboard-Antworten enthalten keine
+internen IDs, Provider-/Modellnamen, Budgets, Snapshots, Prompts, Modellantworten, Quelltexte oder
+numerischen Vertrauenswerte. Historische beziehungsweise nicht mehr auflösbare Ziele bleiben ohne
+technische Ersatzkennung sichtbar eingeschränkt.
+
 ### Historische Statusprojektion V2
 
 `query_deep_map` liefert genau `noProject`, `unavailable` oder `available`. Nur `available` enthält

@@ -24,6 +24,7 @@ mod project_reconciliation_dialog;
 mod project_settings_manager;
 mod repository_index_manager;
 
+use a3_application::ModuleCardLifecycle;
 use a3_application::{
     ActivateCatalogProject, ActivateCatalogProjectError, AgentActionStore, AgentActivity,
     AgentActivityLoadResult, AgentApprovalBuffer, AgentApprovalControlAction,
@@ -183,6 +184,15 @@ use a3_protocol::{
     TaskLensTasksResponseV1, TaskLensV1, UiPreferencesResponseV1,
 };
 use a3_protocol::{
+    DeepMapAtlasImpactItemV1, DeepMapAtlasImpactKindV1, DeepMapAtlasImpactResponseV1,
+    DeepMapAtlasImpactResultV1, DeepMapAtlasImpactSummaryV1, DeepMapCardFieldV1,
+    DeepMapCurrentActivityV1, DeepMapDashboardFailureV1, DeepMapDashboardFreshnessV1,
+    DeepMapDashboardPhaseProgressV1, DeepMapDashboardPhaseStateV1, DeepMapDashboardPhaseV1,
+    DeepMapDashboardStateV1, DeepMapModuleStateV1, DeepMapModuleStepV1,
+    DeepMapModuleStepsResponseV1, DeepMapPlanStepStateV1, DeepMapRunDashboardResponseV1,
+    DeepMapRunModuleV1, DeepMapRunModulesResponseV1, DeepMapSelectionReasonV1, ProtocolVersion,
+};
+use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
     ProjectMapFlowSceneResponseV1, ProjectMapInventoryPageResponseV1,
 };
@@ -223,6 +233,7 @@ use repository_index_manager::{
     RepositoryIndexActivity, RepositoryIndexActivityState, RepositoryIndexDeactivationError,
     RepositoryIndexManager, RepositoryIndexRebuildRequestError, RepositoryIndexRebuildState,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -282,6 +293,7 @@ pub struct CompositionRoot {
     deep_map_runtime: Option<DeepMapRuntime>,
     deep_map_publication_state: Option<Arc<dyn DeepMapPublicationStateStore>>,
     deep_map_journal: Option<Arc<dyn DeepMapRunJournalStore>>,
+    deep_map_dashboard_index: Option<Arc<dyn KnowledgeIndexStore>>,
     agent_run_manager: Option<Arc<AgentRunManager>>,
     agent_sessions: Option<AgentSessionManager>,
     ui_preferences: Option<Arc<dyn UiPreferencesStore>>,
@@ -1027,6 +1039,39 @@ impl CompositionRoot {
                     ModuleCardDetailResponseV1::available(map_module_card_detail_to_v1(&detail))
                 }
             })
+    }
+
+    /// Returns a current Card selected only through project-bound Deep-Map tokens.
+    pub async fn query_deep_map_module_card_detail(
+        &self,
+        run_selection: &str,
+        module_selection: &str,
+    ) -> Result<ModuleCardDetailResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(ModuleCardDetailResponseV1::no_project());
+        };
+        let worktree_id = active.project.worktree().id();
+        let run_id = decode_deep_map_run_selection(worktree_id, run_selection)
+            .map_err(|_| invalid_module_card_detail_query())?;
+        let module_id = decode_deep_map_module_selection(worktree_id, run_id, module_selection)
+            .map_err(|_| invalid_module_card_detail_query())?;
+        let run = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(invalid_module_card_detail_query)?
+            .load_run(&active.project, run_id)
+            .await
+            .map_err(|_| invalid_module_card_detail_query())?
+            .ok_or_else(invalid_module_card_detail_query)?;
+        let index = self.load_deep_map_dashboard_index(&active.project).await?;
+        if !index.is_some_and(|value| {
+            value.run().id() == run.start().anchor().index_run_id()
+                && value.run().snapshot_id() == run.start().anchor().snapshot_id()
+        }) {
+            return Ok(ModuleCardDetailResponseV1::card_unavailable());
+        }
+        self.query_module_card_detail(&ModuleCardDetailQuery::new(module_id))
+            .await
     }
 
     /// Resolves one exact Evidence hook of the still-selected latest durable Card.
@@ -2441,6 +2486,434 @@ impl CompositionRoot {
         map_deep_map_entry_detail_to_v1(active.project.worktree().id(), &detail)
     }
 
+    /// Reads the user-facing five-phase dashboard without provider or budget metadata.
+    pub async fn query_deep_map_run_dashboard(
+        &self,
+        run_selection: &str,
+    ) -> Result<DeepMapRunDashboardResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let worktree_id = active.project.worktree().id();
+        let run_id = decode_deep_map_run_selection(worktree_id, run_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let run = journal
+            .load_run(&active.project, run_id)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let latest_event = journal
+            .list_entries(&active.project, run_id, None)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .entries()
+            .last()
+            .copied();
+        let index = self.load_deep_map_dashboard_index(&active.project).await?;
+        let current_anchor = index.as_ref().map(|value| {
+            a3_application::DeepMapPublicationAnchor::new(
+                value.run().id(),
+                value.run().snapshot_id(),
+            )
+        });
+        let dashboard =
+            a3_application::DeepMapRunDashboard::derive(&run, latest_event, current_anchor);
+        let current_activity =
+            if dashboard.freshness() == a3_application::DeepMapDashboardFreshness::Current {
+                self.map_deep_map_current_activity(
+                    &active.project,
+                    journal.as_ref(),
+                    run_id,
+                    dashboard.activity(),
+                    index.as_ref(),
+                )
+                .await?
+            } else {
+                dashboard
+                    .activity()
+                    .map(|activity| DeepMapCurrentActivityV1 {
+                        phase: map_dashboard_phase(activity.phase()),
+                        action: activity.action().map(map_deep_map_safe_action_to_v2),
+                        target_kind: activity.target_kind().map(map_deep_map_target_kind_to_v2),
+                        module_name: None,
+                        target_label: None,
+                        selection_reason: None,
+                        card_fields: Vec::new(),
+                    })
+            };
+        let historical_plan_limited = first_plan_step(journal.as_ref(), &active.project, run_id)
+            .await?
+            .is_some_and(|step| step.target_reference().is_none());
+        Ok(DeepMapRunDashboardResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            run_selection: run_selection.to_owned(),
+            state: map_dashboard_state(dashboard.state()),
+            freshness: map_dashboard_freshness(dashboard.freshness()),
+            phases: dashboard
+                .phases()
+                .iter()
+                .copied()
+                .map(|phase| DeepMapDashboardPhaseProgressV1 {
+                    phase: map_dashboard_phase(phase.phase()),
+                    state: map_dashboard_phase_state(phase.state()),
+                })
+                .collect(),
+            confirmed_steps: dashboard.confirmed_steps().to_string(),
+            total_steps: dashboard.total_steps().to_string(),
+            started_at_unix_millis: dashboard.started_at().unix_millis().to_string(),
+            updated_at_unix_millis: dashboard.updated_at().unix_millis().to_string(),
+            current_activity,
+            failure: dashboard
+                .diagnostic()
+                .map(|diagnostic| DeepMapDashboardFailureV1 {
+                    cause: map_deep_map_diagnostic_to_v3(diagnostic),
+                    confirmed_work_retained: dashboard.confirmed_steps() > 0,
+                    diagnostic_code: Some(deep_map_diagnostic_code(diagnostic).to_owned()),
+                }),
+            details_incomplete: dashboard.details_incomplete(),
+            historical_plan_limited,
+        })
+    }
+
+    /// Reads at most twenty module summaries with Core-derived product states.
+    pub async fn query_deep_map_run_modules(
+        &self,
+        run_selection: &str,
+        cursor: Option<&str>,
+    ) -> Result<DeepMapRunModulesResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let worktree_id = active.project.worktree().id();
+        let run_id = decode_deep_map_run_selection(worktree_id, run_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let run = journal
+            .load_run(&active.project, run_id)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let cursor = cursor
+            .map(|value| decode_deep_map_module_cursor(worktree_id, run_id, value))
+            .transpose()
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let page = journal
+            .list_run_modules(&active.project, run_id, cursor)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let latest_event = journal
+            .list_entries(&active.project, run_id, None)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .entries()
+            .last()
+            .copied();
+        let index = self.load_deep_map_dashboard_index(&active.project).await?;
+        let is_current = index.as_ref().is_some_and(|value| {
+            value.run().id() == run.start().anchor().index_run_id()
+                && value.run().snapshot_id() == run.start().anchor().snapshot_id()
+        });
+        let mut modules = Vec::with_capacity(page.modules().len());
+        for (page_index, module) in page.modules().iter().copied().enumerate() {
+            let card_available = if is_current {
+                self.current_card_for_run(&active.project, &run, module.module_id())
+                    .await?
+                    .is_some()
+            } else {
+                false
+            };
+            let display_name = index
+                .as_ref()
+                .filter(|_| is_current)
+                .and_then(|value| deep_map_module_display_name(value, module.module_id()))
+                .unwrap_or_else(|| format!("Historisches Modul {}", page_index + 1));
+            modules.push(DeepMapRunModuleV1 {
+                selection: encode_deep_map_module_selection(
+                    worktree_id,
+                    run_id,
+                    module.module_id(),
+                ),
+                display_name,
+                state: map_dashboard_module_state(a3_application::derive_deep_map_module_state(
+                    &run,
+                    latest_event,
+                    module,
+                    card_available,
+                )),
+                planned_steps: module.planned_steps().to_string(),
+                confirmed_steps: module.confirmed_steps().to_string(),
+                card_available,
+            });
+        }
+        Ok(DeepMapRunModulesResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            modules,
+            next_cursor: page
+                .next_cursor()
+                .map(|value| encode_deep_map_module_cursor(worktree_id, run_id, value)),
+        })
+    }
+
+    /// Reads at most fifty safe, understandable exploration targets for one module.
+    pub async fn query_deep_map_module_steps(
+        &self,
+        run_selection: &str,
+        module_selection: &str,
+        cursor: Option<&str>,
+    ) -> Result<DeepMapModuleStepsResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let worktree_id = active.project.worktree().id();
+        let run_id = decode_deep_map_run_selection(worktree_id, run_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let module_id = decode_deep_map_module_selection(worktree_id, run_id, module_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let after_position = cursor
+            .map(|value| decode_deep_map_step_cursor(worktree_id, run_id, module_id, value))
+            .transpose()
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let run = journal
+            .load_run(&active.project, run_id)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let page = journal
+            .list_module_steps(&active.project, run_id, module_id, after_position)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let latest_event = journal
+            .list_entries(&active.project, run_id, None)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .entries()
+            .last()
+            .copied();
+        let index = self.load_deep_map_dashboard_index(&active.project).await?;
+        let is_current = index.as_ref().is_some_and(|value| {
+            value.run().id() == run.start().anchor().index_run_id()
+                && value.run().snapshot_id() == run.start().anchor().snapshot_id()
+        });
+        let historical_details_limited = page
+            .steps()
+            .iter()
+            .any(|step| step.target_reference().is_none());
+        Ok(DeepMapModuleStepsResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            steps: page
+                .steps()
+                .iter()
+                .map(|step| DeepMapModuleStepV1 {
+                    position: step.position().to_string(),
+                    target_kind: map_deep_map_target_kind_to_v2(step.target_kind()),
+                    target_label: index
+                        .as_ref()
+                        .filter(|_| is_current)
+                        .and_then(|value| resolve_deep_map_target_label(value, step)),
+                    selection_reason: map_deep_map_selection_reason(step.seed_reason()),
+                    card_fields: step.coverage_fields().map(|fields| {
+                        fields
+                            .iter()
+                            .copied()
+                            .map(map_deep_map_card_field)
+                            .collect()
+                    }),
+                    state: if step.confirmed() {
+                        DeepMapPlanStepStateV1::Confirmed
+                    } else if latest_event.is_some_and(|event| {
+                        event.module_id() == Some(module_id)
+                            && event.step_position() == Some(step.position())
+                            && matches!(
+                                run.state(),
+                                a3_domain::DeepMapRunState::Running
+                                    | a3_domain::DeepMapRunState::Pausing
+                                    | a3_domain::DeepMapRunState::Paused
+                            )
+                    }) {
+                        DeepMapPlanStepStateV1::Exploring
+                    } else {
+                        DeepMapPlanStepStateV1::Planned
+                    },
+                })
+                .collect(),
+            next_cursor: page.next_after_position().map(|position| {
+                encode_deep_map_step_cursor(worktree_id, run_id, module_id, position)
+            }),
+            historical_details_limited,
+        })
+    }
+
+    /// Reads exact current verified Card evidence projected onto Atlas entities.
+    pub async fn query_deep_map_atlas_impact(
+        &self,
+        run_selection: &str,
+        module_selection: &str,
+        cursor: Option<&str>,
+    ) -> Result<DeepMapAtlasImpactResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Err(CommandErrorV1::deep_map(ErrorCodeV1::NoActiveProject));
+        };
+        let worktree_id = active.project.worktree().id();
+        let run_id = decode_deep_map_run_selection(worktree_id, run_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let module_id = decode_deep_map_module_selection(worktree_id, run_id, module_selection)
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let offset = cursor
+            .map(|value| decode_deep_map_impact_cursor(worktree_id, run_id, module_id, value))
+            .transpose()
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .unwrap_or(0);
+        let journal = self
+            .deep_map_journal
+            .as_ref()
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let run = journal
+            .load_run(&active.project, run_id)
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?
+            .ok_or_else(deep_map_dashboard_unavailable)?;
+        let index = self.load_deep_map_dashboard_index(&active.project).await?;
+        let Some(index) = index.filter(|value| {
+            value.run().id() == run.start().anchor().index_run_id()
+                && value.run().snapshot_id() == run.start().anchor().snapshot_id()
+        }) else {
+            return Ok(DeepMapAtlasImpactResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: DeepMapAtlasImpactResultV1::Historical,
+            });
+        };
+        let Some(card) = self
+            .current_card_for_run(&active.project, &run, module_id)
+            .await?
+        else {
+            return Ok(DeepMapAtlasImpactResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: DeepMapAtlasImpactResultV1::CardUnavailable,
+            });
+        };
+        let projection = build_deep_map_atlas_impact(&index, &card)?;
+        let start = usize::try_from(offset).map_err(|_| deep_map_dashboard_unavailable())?;
+        if start > projection.items.len() {
+            return Err(deep_map_dashboard_unavailable());
+        }
+        let end = start.saturating_add(50).min(projection.items.len());
+        let next_cursor = (end < projection.items.len()).then(|| {
+            encode_deep_map_impact_cursor(
+                worktree_id,
+                run_id,
+                module_id,
+                u64::try_from(end).unwrap_or(u64::MAX),
+            )
+        });
+        Ok(DeepMapAtlasImpactResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: DeepMapAtlasImpactResultV1::Available {
+                summary: projection.summary,
+                items: projection.items[start..end].to_vec(),
+                next_cursor,
+            },
+        })
+    }
+
+    async fn load_deep_map_dashboard_index(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Option<a3_domain::PublishedIndex>, CommandErrorV1> {
+        let Some(store) = self.deep_map_dashboard_index.as_ref() else {
+            return Ok(None);
+        };
+        store
+            .latest_published_index(project, &DesktopBoundedReadControl::new())
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())
+    }
+
+    async fn current_card_for_run(
+        &self,
+        project: &ProjectIdentity,
+        run: &DeepMapRunSummary,
+        module_id: ModuleId,
+    ) -> Result<Option<Box<ModuleCardDetail>>, CommandErrorV1> {
+        let Some(reader) = self.module_card_detail.as_ref() else {
+            return Ok(None);
+        };
+        let result = reader
+            .execute(
+                project,
+                &ModuleCardDetailQuery::new(module_id),
+                &DesktopBoundedReadControl::new(),
+            )
+            .await
+            .map_err(|_| deep_map_dashboard_unavailable())?;
+        let ModuleCardDetailLoadResult::Detail(detail) = result else {
+            return Ok(None);
+        };
+        Ok((matches!(detail.lifecycle(), ModuleCardLifecycle::Current)
+            && detail.source_index_run_id() == run.start().anchor().index_run_id()
+            && detail.source_snapshot_id() == run.start().anchor().snapshot_id())
+        .then_some(detail))
+    }
+
+    async fn map_deep_map_current_activity(
+        &self,
+        project: &ProjectIdentity,
+        journal: &dyn DeepMapRunJournalStore,
+        run_id: DeepMapRunId,
+        activity: Option<a3_application::DeepMapDashboardActivity>,
+        index: Option<&a3_domain::PublishedIndex>,
+    ) -> Result<Option<DeepMapCurrentActivityV1>, CommandErrorV1> {
+        let Some(activity) = activity else {
+            return Ok(None);
+        };
+        let step = if let (Some(module_id), Some(position)) =
+            (activity.module_id(), activity.step_position())
+        {
+            journal
+                .list_module_steps(project, run_id, module_id, position.checked_sub(1))
+                .await
+                .map_err(|_| deep_map_dashboard_unavailable())?
+                .steps()
+                .first()
+                .filter(|step| step.position() == position)
+                .cloned()
+        } else {
+            None
+        };
+        Ok(Some(DeepMapCurrentActivityV1 {
+            phase: map_dashboard_phase(activity.phase()),
+            action: activity.action().map(map_deep_map_safe_action_to_v2),
+            target_kind: activity.target_kind().map(map_deep_map_target_kind_to_v2),
+            module_name: activity.module_id().and_then(|module_id| {
+                index.and_then(|value| deep_map_module_display_name(value, module_id))
+            }),
+            target_label: step.as_ref().and_then(|step| {
+                index.and_then(|value| resolve_deep_map_target_label(value, step))
+            }),
+            selection_reason: step
+                .as_ref()
+                .map(|step| map_deep_map_selection_reason(step.seed_reason())),
+            card_fields: step
+                .as_ref()
+                .and_then(|step| step.coverage_fields())
+                .unwrap_or_default()
+                .iter()
+                .copied()
+                .map(map_deep_map_card_field)
+                .collect(),
+        }))
+    }
+
     /// Starts model work only after the explicit bounded WebView request was validated.
     pub fn start_deep_map(
         &self,
@@ -3824,6 +4297,7 @@ impl CompositionBase {
             deep_map_runtime,
             deep_map_publication_state: ports.deep_map_publication_state,
             deep_map_journal: ports.deep_map_journal,
+            deep_map_dashboard_index: ports.index_store,
             agent_run_manager,
             agent_sessions,
             ui_preferences,
@@ -3960,6 +4434,10 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_deep_map_runs,
             commands::query_deep_map_entries,
             commands::query_deep_map_entry_detail,
+            commands::query_deep_map_run_dashboard,
+            commands::query_deep_map_run_modules,
+            commands::query_deep_map_module_steps,
+            commands::query_deep_map_atlas_impact,
             commands::query_project_catalog,
             commands::query_project_status,
             commands::query_project_settings,
@@ -4288,9 +4766,13 @@ fn map_module_card_freshness_to_v1(freshness: &ModuleCardFreshness) -> ModuleCar
 pub(crate) fn map_module_card_detail_query_from_v1(
     request: &QueryModuleCardDetailRequestV1,
 ) -> Result<ModuleCardDetailQuery, CommandErrorV1> {
-    decode_module_id(request.module_id())
-        .map(ModuleCardDetailQuery::new)
-        .map_err(|()| invalid_module_card_detail_query())
+    decode_module_id(
+        request
+            .module_id()
+            .ok_or_else(invalid_module_card_detail_query)?,
+    )
+    .map(ModuleCardDetailQuery::new)
+    .map_err(|()| invalid_module_card_detail_query())
 }
 
 pub(crate) fn map_module_card_evidence_query_from_v1(
@@ -6796,6 +7278,339 @@ fn map_deep_map_step_detail_to_v1(
     }
 }
 
+fn deep_map_dashboard_unavailable() -> CommandErrorV1 {
+    CommandErrorV1::deep_map(ErrorCodeV1::DeepMapUnavailable)
+}
+
+async fn first_plan_step(
+    journal: &dyn DeepMapRunJournalStore,
+    project: &ProjectIdentity,
+    run_id: DeepMapRunId,
+) -> Result<Option<a3_application::DeepMapPlanStep>, CommandErrorV1> {
+    let modules = journal
+        .list_run_modules(project, run_id, None)
+        .await
+        .map_err(|_| deep_map_dashboard_unavailable())?;
+    let Some(module) = modules.modules().first() else {
+        return Ok(None);
+    };
+    journal
+        .list_module_steps(project, run_id, module.module_id(), None)
+        .await
+        .map_err(|_| deep_map_dashboard_unavailable())
+        .map(|page| page.steps().first().cloned())
+}
+
+const fn map_dashboard_state(
+    value: a3_application::DeepMapDashboardState,
+) -> DeepMapDashboardStateV1 {
+    match value {
+        a3_application::DeepMapDashboardState::Queued => DeepMapDashboardStateV1::Queued,
+        a3_application::DeepMapDashboardState::Running => DeepMapDashboardStateV1::Running,
+        a3_application::DeepMapDashboardState::Pausing => DeepMapDashboardStateV1::Pausing,
+        a3_application::DeepMapDashboardState::Paused => DeepMapDashboardStateV1::Paused,
+        a3_application::DeepMapDashboardState::Cancelling => DeepMapDashboardStateV1::Cancelling,
+        a3_application::DeepMapDashboardState::Completed => DeepMapDashboardStateV1::Completed,
+        a3_application::DeepMapDashboardState::AlreadyCurrent => {
+            DeepMapDashboardStateV1::AlreadyCurrent
+        }
+        a3_application::DeepMapDashboardState::Cancelled => DeepMapDashboardStateV1::Cancelled,
+        a3_application::DeepMapDashboardState::Failed => DeepMapDashboardStateV1::Failed,
+        a3_application::DeepMapDashboardState::Interrupted => DeepMapDashboardStateV1::Interrupted,
+    }
+}
+
+const fn map_dashboard_freshness(
+    value: a3_application::DeepMapDashboardFreshness,
+) -> DeepMapDashboardFreshnessV1 {
+    match value {
+        a3_application::DeepMapDashboardFreshness::Current => DeepMapDashboardFreshnessV1::Current,
+        a3_application::DeepMapDashboardFreshness::Historical => {
+            DeepMapDashboardFreshnessV1::Historical
+        }
+    }
+}
+
+const fn map_dashboard_phase(
+    value: a3_application::DeepMapDashboardPhase,
+) -> DeepMapDashboardPhaseV1 {
+    match value {
+        a3_application::DeepMapDashboardPhase::Planning => DeepMapDashboardPhaseV1::Planning,
+        a3_application::DeepMapDashboardPhase::Exploring => DeepMapDashboardPhaseV1::Exploring,
+        a3_application::DeepMapDashboardPhase::CreatingCards => {
+            DeepMapDashboardPhaseV1::CreatingCards
+        }
+        a3_application::DeepMapDashboardPhase::Verifying => DeepMapDashboardPhaseV1::Verifying,
+        a3_application::DeepMapDashboardPhase::UpdatingAtlas => {
+            DeepMapDashboardPhaseV1::UpdatingAtlas
+        }
+    }
+}
+
+const fn map_dashboard_phase_state(
+    value: a3_application::DeepMapDashboardPhaseState,
+) -> DeepMapDashboardPhaseStateV1 {
+    match value {
+        a3_application::DeepMapDashboardPhaseState::Pending => {
+            DeepMapDashboardPhaseStateV1::Pending
+        }
+        a3_application::DeepMapDashboardPhaseState::Active => DeepMapDashboardPhaseStateV1::Active,
+        a3_application::DeepMapDashboardPhaseState::Completed => {
+            DeepMapDashboardPhaseStateV1::Completed
+        }
+        a3_application::DeepMapDashboardPhaseState::Stopped => {
+            DeepMapDashboardPhaseStateV1::Stopped
+        }
+    }
+}
+
+const fn map_dashboard_module_state(
+    value: a3_application::DeepMapDashboardModuleState,
+) -> DeepMapModuleStateV1 {
+    match value {
+        a3_application::DeepMapDashboardModuleState::Planned => DeepMapModuleStateV1::Planned,
+        a3_application::DeepMapDashboardModuleState::Exploring => DeepMapModuleStateV1::Exploring,
+        a3_application::DeepMapDashboardModuleState::Verifying => DeepMapModuleStateV1::Verifying,
+        a3_application::DeepMapDashboardModuleState::Published => DeepMapModuleStateV1::Published,
+        a3_application::DeepMapDashboardModuleState::Incomplete => DeepMapModuleStateV1::Incomplete,
+    }
+}
+
+const fn map_deep_map_selection_reason(
+    value: a3_domain::ExploreSeedReason,
+) -> DeepMapSelectionReasonV1 {
+    match value {
+        a3_domain::ExploreSeedReason::Manifest => DeepMapSelectionReasonV1::Manifest,
+        a3_domain::ExploreSeedReason::Entrypoint => DeepMapSelectionReasonV1::Entrypoint,
+        a3_domain::ExploreSeedReason::CentralSymbol => DeepMapSelectionReasonV1::CentralSymbol,
+        a3_domain::ExploreSeedReason::TestRoot => DeepMapSelectionReasonV1::TestRoot,
+        a3_domain::ExploreSeedReason::GraphCommunity => DeepMapSelectionReasonV1::GraphCommunity,
+        a3_domain::ExploreSeedReason::UncoveredModule => DeepMapSelectionReasonV1::UncoveredModule,
+    }
+}
+
+const fn map_deep_map_card_field(value: ModuleCardField) -> DeepMapCardFieldV1 {
+    match value {
+        ModuleCardField::Title => DeepMapCardFieldV1::Title,
+        ModuleCardField::Paths => DeepMapCardFieldV1::Paths,
+        ModuleCardField::Purpose => DeepMapCardFieldV1::Purpose,
+        ModuleCardField::Responsibilities => DeepMapCardFieldV1::Responsibilities,
+        ModuleCardField::PublicSurface => DeepMapCardFieldV1::PublicSurface,
+        ModuleCardField::Entrypoints => DeepMapCardFieldV1::Entrypoints,
+        ModuleCardField::Dependencies => DeepMapCardFieldV1::Dependencies,
+        ModuleCardField::DataFlows => DeepMapCardFieldV1::DataFlows,
+        ModuleCardField::Invariants => DeepMapCardFieldV1::Invariants,
+        ModuleCardField::Tests => DeepMapCardFieldV1::Tests,
+        ModuleCardField::Risks => DeepMapCardFieldV1::Risks,
+        ModuleCardField::OpenQuestions => DeepMapCardFieldV1::OpenQuestions,
+    }
+}
+
+fn deep_map_module_display_name(
+    index: &a3_domain::PublishedIndex,
+    module_id: ModuleId,
+) -> Option<String> {
+    index
+        .publication()
+        .modules()
+        .modules()
+        .iter()
+        .find(|module| module.id() == module_id && module.kind().is_primary())
+        .map(|module| match module.root() {
+            Some(ModuleRoot::Repository) => "Repository".to_owned(),
+            Some(ModuleRoot::Directory(path)) => path
+                .as_bytes()
+                .rsplit(|byte| *byte == b'/')
+                .next()
+                .map(safe_path_display)
+                .unwrap_or_else(|| "Modul".to_owned()),
+            None => "Modul".to_owned(),
+        })
+}
+
+fn resolve_deep_map_target_label(
+    index: &a3_domain::PublishedIndex,
+    step: &a3_application::DeepMapPlanStep,
+) -> Option<String> {
+    match step.target_reference()? {
+        a3_application::DeepMapPlanTargetReference::Module(module_id) => {
+            deep_map_module_display_name(index, module_id)
+        }
+        a3_application::DeepMapPlanTargetReference::FileEvidence(evidence_id) => index
+            .publication()
+            .graph()
+            .files()
+            .iter()
+            .find(|revision| ModuleCardEvidenceId::for_file_revision_v1(revision) == evidence_id)
+            .map(|revision| safe_path_display(revision.path().as_bytes())),
+        a3_application::DeepMapPlanTargetReference::Symbol(symbol_id) => index
+            .publication()
+            .graph()
+            .symbols()
+            .iter()
+            .find(|symbol| symbol.id() == symbol_id)
+            .map(|symbol| {
+                format!(
+                    "{} · {}",
+                    symbol.parsed().name().as_str(),
+                    safe_path_display(symbol.revision().path().as_bytes())
+                )
+            }),
+    }
+}
+
+fn safe_path_display(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn deep_map_diagnostic_code(value: DeepMapDiagnosticCode) -> &'static str {
+    match value {
+        DeepMapDiagnosticCode::NoPublishedIndex => "DM-NO-INDEX",
+        DeepMapDiagnosticCode::StaleIndex => "DM-STALE-INDEX",
+        DeepMapDiagnosticCode::Planning => "DM-PLAN",
+        DeepMapDiagnosticCode::ModelUnavailable => "DM-MODEL-OFFLINE",
+        DeepMapDiagnosticCode::ModelRejected => "DM-MODEL-REJECTED",
+        DeepMapDiagnosticCode::ModelTimeout => "DM-MODEL-TIMEOUT",
+        DeepMapDiagnosticCode::InvalidModelResponse => "DM-INVALID-RESPONSE",
+        DeepMapDiagnosticCode::Read => "DM-READ",
+        DeepMapDiagnosticCode::Verification => "DM-VERIFY",
+        DeepMapDiagnosticCode::PublicationRejected => "DM-PUBLISH-REJECTED",
+        DeepMapDiagnosticCode::PublicationStorage => "DM-PUBLISH-STORAGE",
+        DeepMapDiagnosticCode::PublicationTimeout => "DM-PUBLISH-TIMEOUT",
+        DeepMapDiagnosticCode::PublicationProgress => "DM-PUBLISH-PROGRESS",
+        DeepMapDiagnosticCode::InvalidCheckpoint => "DM-CHECKPOINT",
+        DeepMapDiagnosticCode::ProgressUnavailable => "DM-PROGRESS",
+        DeepMapDiagnosticCode::Interrupted => "DM-INTERRUPTED",
+    }
+}
+
+struct DeepMapAtlasImpactProjection {
+    summary: DeepMapAtlasImpactSummaryV1,
+    items: Vec<DeepMapAtlasImpactItemV1>,
+}
+
+fn build_deep_map_atlas_impact(
+    index: &a3_domain::PublishedIndex,
+    card: &ModuleCardDetail,
+) -> Result<DeepMapAtlasImpactProjection, CommandErrorV1> {
+    let mut claims_by_evidence =
+        BTreeMap::<ModuleCardEvidenceId, BTreeSet<a3_domain::ModuleCardClaimId>>::new();
+    for value in card
+        .fields()
+        .iter()
+        .flat_map(a3_application::ModuleCardDetailField::values)
+    {
+        if value.claim().state() != ModuleCardClaimState::Current {
+            continue;
+        }
+        for evidence_id in value.claim().evidence_ids() {
+            claims_by_evidence
+                .entry(*evidence_id)
+                .or_default()
+                .insert(value.claim().id());
+        }
+    }
+    let purpose = card
+        .fields()
+        .iter()
+        .find(|field| field.field() == ModuleCardField::Purpose)
+        .and_then(|field| field.values().first())
+        .map(|value| value.value().to_owned());
+    let risk_count = card
+        .fields()
+        .iter()
+        .find(|field| field.field() == ModuleCardField::Risks)
+        .map_or(0_usize, |field| field.values().len());
+    let mut items = Vec::new();
+    let mut file_count = 0_u64;
+    let mut symbol_count = 0_u64;
+    let mut relation_count = 0_u64;
+    for revision in index.publication().graph().files() {
+        let evidence_id = ModuleCardEvidenceId::for_file_revision_v1(revision);
+        if let Some(claims) = claims_by_evidence.get(&evidence_id) {
+            file_count = file_count.saturating_add(1);
+            items.push(DeepMapAtlasImpactItemV1 {
+                kind: DeepMapAtlasImpactKindV1::File,
+                label: safe_path_display(revision.path().as_bytes()),
+                confirmed_claim_count: claims.len().to_string(),
+            });
+        }
+    }
+    for symbol in index.publication().graph().symbols() {
+        let evidence_id = ModuleCardEvidenceId::for_symbol_v1(symbol);
+        if let Some(claims) = claims_by_evidence.get(&evidence_id) {
+            symbol_count = symbol_count.saturating_add(1);
+            items.push(DeepMapAtlasImpactItemV1 {
+                kind: DeepMapAtlasImpactKindV1::Symbol,
+                label: format!(
+                    "{} · {}",
+                    symbol.parsed().name().as_str(),
+                    safe_path_display(symbol.revision().path().as_bytes())
+                ),
+                confirmed_claim_count: claims.len().to_string(),
+            });
+        }
+    }
+    for edge in index.publication().graph().edges() {
+        let evidence_id = ModuleCardEvidenceId::for_graph_edge_v1(edge);
+        if let Some(claims) = claims_by_evidence.get(&evidence_id) {
+            relation_count = relation_count.saturating_add(1);
+            items.push(DeepMapAtlasImpactItemV1 {
+                kind: DeepMapAtlasImpactKindV1::Relation,
+                label: format!(
+                    "{} → {} · {}",
+                    graph_endpoint_display(index, edge.source()),
+                    graph_endpoint_display(index, edge.target()),
+                    syntax_relation_display(edge.kind())
+                ),
+                confirmed_claim_count: claims.len().to_string(),
+            });
+        }
+    }
+    Ok(DeepMapAtlasImpactProjection {
+        summary: DeepMapAtlasImpactSummaryV1 {
+            purpose,
+            risk_count: risk_count.to_string(),
+            file_count: file_count.to_string(),
+            symbol_count: symbol_count.to_string(),
+            relation_count: relation_count.to_string(),
+        },
+        items,
+    })
+}
+
+fn graph_endpoint_display(index: &a3_domain::PublishedIndex, endpoint: &GraphEndpoint) -> String {
+    match endpoint {
+        GraphEndpoint::File(path) => safe_path_display(path.as_bytes()),
+        GraphEndpoint::Symbol(symbol_id) => index
+            .publication()
+            .graph()
+            .symbols()
+            .iter()
+            .find(|symbol| symbol.id() == *symbol_id)
+            .map(|symbol| symbol.parsed().name().as_str().to_owned())
+            .unwrap_or_else(|| "Symbol".to_owned()),
+    }
+}
+
+const fn syntax_relation_display(value: SyntaxRelationKind) -> &'static str {
+    match value {
+        SyntaxRelationKind::Contains => "enthält",
+        SyntaxRelationKind::Defines => "definiert",
+        SyntaxRelationKind::Imports => "importiert",
+        SyntaxRelationKind::Exports => "exportiert",
+        SyntaxRelationKind::Calls => "ruft auf",
+        SyntaxRelationKind::Implements => "implementiert",
+        SyntaxRelationKind::Extends => "erweitert",
+        SyntaxRelationKind::Reads => "liest",
+        SyntaxRelationKind::Writes => "schreibt",
+        SyntaxRelationKind::Configures => "konfiguriert",
+        SyntaxRelationKind::Tests => "testet",
+        SyntaxRelationKind::Builds => "baut",
+        SyntaxRelationKind::Documents => "dokumentiert",
+    }
+}
+
 const fn deep_map_plan_stop_label(value: a3_domain::ExplorePlanStopReason) -> &'static str {
     match value {
         a3_domain::ExplorePlanStopReason::CoveragePlanned => "coveragePlanned",
@@ -6957,6 +7772,206 @@ fn decode_deep_map_run_selection(worktree_id: WorktreeId, value: &str) -> Result
         return Err(());
     }
     Ok(run_id)
+}
+
+fn encode_deep_map_module_selection(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+) -> String {
+    let mut bytes = Vec::with_capacity(48);
+    bytes.extend_from_slice(module_id.as_bytes());
+    bytes.extend_from_slice(&deep_map_module_tag(
+        b"a3.deep-map.module-selection.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        None,
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_module_selection(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    value: &str,
+) -> Result<ModuleId, ()> {
+    let bytes = decode_hex(value, 48)?;
+    if bytes.len() != 48 {
+        return Err(());
+    }
+    let module_id = ModuleId::from_bytes(bytes[..32].try_into().map_err(|_| ())?);
+    let expected = deep_map_module_tag(
+        b"a3.deep-map.module-selection.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        None,
+    );
+    if bytes[32..] != expected {
+        return Err(());
+    }
+    Ok(module_id)
+}
+
+fn encode_deep_map_module_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    cursor: a3_application::DeepMapModuleCursor,
+) -> String {
+    let module_id = cursor.module_id();
+    let mut bytes = Vec::with_capacity(48);
+    bytes.extend_from_slice(module_id.as_bytes());
+    bytes.extend_from_slice(&deep_map_module_tag(
+        b"a3.deep-map.module-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        None,
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_module_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    value: &str,
+) -> Result<a3_application::DeepMapModuleCursor, ()> {
+    let bytes = decode_hex(value, 48)?;
+    if bytes.len() != 48 {
+        return Err(());
+    }
+    let module_id = ModuleId::from_bytes(bytes[..32].try_into().map_err(|_| ())?);
+    let expected = deep_map_module_tag(
+        b"a3.deep-map.module-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        None,
+    );
+    if bytes[32..] != expected {
+        return Err(());
+    }
+    Ok(a3_application::DeepMapModuleCursor::new(module_id))
+}
+
+fn encode_deep_map_step_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    position: u64,
+) -> String {
+    encode_deep_map_number_cursor(
+        b"a3.deep-map.step-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        position,
+    )
+}
+
+fn decode_deep_map_step_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    value: &str,
+) -> Result<u64, ()> {
+    decode_deep_map_number_cursor(
+        b"a3.deep-map.step-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        value,
+    )
+    .and_then(|position| (position > 0).then_some(position).ok_or(()))
+}
+
+fn encode_deep_map_impact_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    offset: u64,
+) -> String {
+    encode_deep_map_number_cursor(
+        b"a3.deep-map.impact-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        offset,
+    )
+}
+
+fn decode_deep_map_impact_cursor(
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    value: &str,
+) -> Result<u64, ()> {
+    decode_deep_map_number_cursor(
+        b"a3.deep-map.impact-cursor.v1\0",
+        worktree_id,
+        run_id,
+        module_id,
+        value,
+    )
+}
+
+fn encode_deep_map_number_cursor(
+    domain: &[u8],
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    number: u64,
+) -> String {
+    let mut bytes = Vec::with_capacity(24);
+    bytes.extend_from_slice(&number.to_be_bytes());
+    bytes.extend_from_slice(&deep_map_module_tag(
+        domain,
+        worktree_id,
+        run_id,
+        module_id,
+        Some(number),
+    ));
+    encode_hex(&bytes)
+}
+
+fn decode_deep_map_number_cursor(
+    domain: &[u8],
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    value: &str,
+) -> Result<u64, ()> {
+    let bytes = decode_hex(value, 24)?;
+    if bytes.len() != 24 {
+        return Err(());
+    }
+    let number = u64::from_be_bytes(bytes[..8].try_into().map_err(|_| ())?);
+    let expected = deep_map_module_tag(domain, worktree_id, run_id, module_id, Some(number));
+    if bytes[8..] != expected {
+        return Err(());
+    }
+    Ok(number)
+}
+
+fn deep_map_module_tag(
+    domain: &[u8],
+    worktree_id: WorktreeId,
+    run_id: DeepMapRunId,
+    module_id: ModuleId,
+    number: Option<u64>,
+) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(run_id.as_bytes());
+    hasher.update(module_id.as_bytes());
+    if let Some(number) = number {
+        hasher.update(&number.to_be_bytes());
+    }
+    let mut tag = [0_u8; 16];
+    tag.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    tag
 }
 
 fn encode_deep_map_entry_selection(
@@ -7852,8 +8867,11 @@ impl Error for DesktopRunError {
 mod tests {
     use super::{
         MAX_PROJECT_PATH_DISPLAY_CHARS, decode_deep_map_entry_selection,
-        decode_deep_map_run_cursor, decode_deep_map_run_selection, encode_deep_map_entry_selection,
-        encode_deep_map_run_cursor, encode_deep_map_run_selection, map_agent_goal_to_v1,
+        decode_deep_map_impact_cursor, decode_deep_map_module_selection,
+        decode_deep_map_run_cursor, decode_deep_map_run_selection, decode_deep_map_step_cursor,
+        encode_deep_map_entry_selection, encode_deep_map_impact_cursor,
+        encode_deep_map_module_selection, encode_deep_map_run_cursor,
+        encode_deep_map_run_selection, encode_deep_map_step_cursor, map_agent_goal_to_v1,
         map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1, project_path_display,
     };
     use a3_application::DeepMapRunCursor;
@@ -7863,8 +8881,8 @@ mod tests {
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
         AcceptanceCriterionStatement, DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp,
-        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, SuccessVerification,
-        TaskId, WorktreeId,
+        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModuleId,
+        SuccessVerification, TaskId, WorktreeId,
     };
     use a3_protocol::{AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1};
     use serde_json::json;
@@ -7935,6 +8953,38 @@ mod tests {
         assert!(decode_deep_map_run_cursor(second_worktree, &encoded).is_err());
         assert!(decode_deep_map_run_cursor(first_worktree, "00").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn deep_map_dashboard_module_and_number_cursors_are_bound_to_the_exact_scope() {
+        let worktree = WorktreeId::from_bytes([8; 32]);
+        let other_worktree = WorktreeId::from_bytes([9; 32]);
+        let run = DeepMapRunId::from_bytes([10; 32]);
+        let other_run = DeepMapRunId::from_bytes([11; 32]);
+        let module = ModuleId::from_bytes([12; 32]);
+        let other_module = ModuleId::from_bytes([13; 32]);
+
+        let selection = encode_deep_map_module_selection(worktree, run, module);
+        assert_eq!(
+            decode_deep_map_module_selection(worktree, run, &selection),
+            Ok(module)
+        );
+        assert!(decode_deep_map_module_selection(other_worktree, run, &selection).is_err());
+        assert!(decode_deep_map_module_selection(worktree, other_run, &selection).is_err());
+
+        let step = encode_deep_map_step_cursor(worktree, run, module, 50);
+        assert_eq!(
+            decode_deep_map_step_cursor(worktree, run, module, &step),
+            Ok(50)
+        );
+        assert!(decode_deep_map_step_cursor(worktree, run, other_module, &step).is_err());
+
+        let impact = encode_deep_map_impact_cursor(worktree, run, module, 50);
+        assert_eq!(
+            decode_deep_map_impact_cursor(worktree, run, module, &impact),
+            Ok(50)
+        );
+        assert!(decode_deep_map_step_cursor(worktree, run, module, &impact).is_err());
     }
 
     #[test]

@@ -211,6 +211,12 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   `IMMEDIATE`-Transaktion; stale Starts werden ohne Teilmutation abgewiesen und ein Überlauf wird vor
   der Indexarbeit typisiert beendet. Integritätsreads akzeptieren nach einem Rebuild eine lückenlose
   retained Runfolge, die größer als eins beginnt, verlangen jedoch weiterhin den exakten Marker.
+- Knowledge-Schema V29 ergänzt neue Deep-Map-Pläne um `deep_map_step_targets` und
+  `deep_map_step_fields`. Pro Schritt wird genau eine geschlossene Modul-, Symbol- oder
+  Datei-Evidence-Referenz sowie die kanonische Folge vorgesehener `ModuleCardField`-Werte in
+  derselben Plantransaktion gespeichert. Card-Inhalte, Source und Modellantworten verbleiben
+  außerhalb des Journals. Historische V28-Pläne bleiben unverändert lesbar und liefern bewusst
+  keine erfundenen Ziel- oder Felddetails.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich

@@ -173,6 +173,7 @@ Abhängigkeiten: Fast Index, Deep Map
 - [x] Dateien, Symbole, Diagnostics und Coverage
 - [x] Deep Map bewusst starten, pausieren, fortsetzen und abbrechen
 - [x] feste Schnell-/Standard-/Gründlich-Budgets vor Start
+- [x] Deep-Map-Details als verständliches Live-Informationssystem für Plan, Cards und Atlas-Wirkung
 - [x] stale und NeedsReview sichtbar
 - [x] Indexfehler pro Datei statt globalem Blank State
 
@@ -939,9 +940,9 @@ Akzeptanz:
 - Nutzer erkennt beim Öffnen Module, Abhängigkeiten, Mappingstatus und Begrenzungen ohne eine
   technische Unterseite auswählen zu müssen;
 - Suche, Task Lens, Moduldetails, Runtime-Flows und Evidence fokussieren dieselbe Kartenfläche;
-- Deep Map zeigt Schritt, sichere Aktion und bestätigten Fortschritt kompakt, startet aber
-  weiterhin nur explizit und veröffentlicht erst nach Verifikation; ein Current-Index verursacht
-  keine erneuten Modellkosten;
+- Deep Map zeigt fünf verständliche Phasen, aktuelle Erkundung, modulgruppierten Plan,
+  ausschließlich veröffentlichte Cards und die exakte Atlas-Wirkung; es startet weiterhin nur
+  explizit und ein Current-Index verursacht keine erneuten Modellkosten;
 - Source-Vorschau akzeptiert keine freien Pfade und liefert ausschließlich aktuellen,
   evidence-gebundenen Plain Text innerhalb der festen ADR-0030-Grenzen;
 - Übersicht, Fokus und paginiertes Laufjournal überschreiten weder Core-, IPC-, DOM- noch

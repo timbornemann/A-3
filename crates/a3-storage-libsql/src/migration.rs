@@ -2807,6 +2807,53 @@ const KNOWLEDGE_MONOTONE_INDEX_RUN_SEQUENCE_MIGRATION: Migration = Migration {
       SELECT worktree_id, MAX(run_sequence) FROM index_runs GROUP BY worktree_id;",
 };
 
+const KNOWLEDGE_DEEP_MAP_PLAN_DETAILS_MIGRATION: Migration = Migration {
+    version: 29,
+    name: "deep_map_safe_plan_details",
+    sql: "CREATE TABLE deep_map_step_targets (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      step_position INTEGER NOT NULL CHECK (step_position > 0),\n\
+      reference_kind TEXT NOT NULL CHECK (reference_kind IN\n\
+        ('module', 'file-evidence', 'symbol')),\n\
+      reference_id BLOB NOT NULL CHECK (length(reference_id) = 32),\n\
+      PRIMARY KEY (worktree_id, run_id, step_position),\n\
+      FOREIGN KEY (worktree_id, run_id, step_position)\n\
+        REFERENCES deep_map_steps(worktree_id, run_id, step_position)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TABLE deep_map_step_fields (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      run_id BLOB NOT NULL CHECK (length(run_id) = 32),\n\
+      step_position INTEGER NOT NULL CHECK (step_position > 0),\n\
+      field_position INTEGER NOT NULL CHECK (field_position > 0),\n\
+      field_kind TEXT NOT NULL CHECK (field_kind IN\n\
+        ('title', 'paths', 'purpose', 'responsibilities', 'public-surface', 'entrypoints',\n\
+         'dependencies', 'data-flows', 'invariants', 'tests', 'risks', 'open-questions')),\n\
+      PRIMARY KEY (worktree_id, run_id, step_position, field_position),\n\
+      UNIQUE (worktree_id, run_id, step_position, field_kind),\n\
+      FOREIGN KEY (worktree_id, run_id, step_position)\n\
+        REFERENCES deep_map_steps(worktree_id, run_id, step_position)\n\
+        ON UPDATE RESTRICT ON DELETE RESTRICT\n\
+      ) STRICT;\n\
+      CREATE TRIGGER deep_map_step_targets_update_guard\n\
+      BEFORE UPDATE ON deep_map_step_targets BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map plan targets are immutable');\n\
+      END;\n\
+      CREATE TRIGGER deep_map_step_targets_delete_guard\n\
+      BEFORE DELETE ON deep_map_step_targets BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map plan targets are immutable');\n\
+      END;\n\
+      CREATE TRIGGER deep_map_step_fields_update_guard\n\
+      BEFORE UPDATE ON deep_map_step_fields BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map plan fields are immutable');\n\
+      END;\n\
+      CREATE TRIGGER deep_map_step_fields_delete_guard\n\
+      BEFORE DELETE ON deep_map_step_fields BEGIN\n\
+        SELECT RAISE(ABORT, 'Deep-Map plan fields are immutable');\n\
+      END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2836,6 +2883,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_CARD_SEARCH_REPAIR_MIGRATION,
     KNOWLEDGE_RECURRENT_CARD_SEARCH_REPAIR_MIGRATION,
     KNOWLEDGE_MONOTONE_INDEX_RUN_SEQUENCE_MIGRATION,
+    KNOWLEDGE_DEEP_MAP_PLAN_DETAILS_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2868,7 +2916,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(28);
+    pub const CURRENT: Self = Self::new(29);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3288,11 +3336,12 @@ mod tests {
                      'verification_user_confirmations', 'verification_evidence_dependencies',\n\
                      'agent_session_revisions', 'agent_session_entries',\n\
                      'deep_map_runs', 'deep_map_steps', 'deep_map_events',\n\
-                     'index_run_sequence_cursors'\n\
+                     'index_run_sequence_cursors', 'deep_map_step_targets',\n\
+                     'deep_map_step_fields'\n\
                      )",
                 )
                 .await?,
-                70
+                72
             );
             assert_eq!(
                 query_i64(
@@ -3481,6 +3530,7 @@ mod tests {
         (knowledge_upgrades_from_v25, 25),
         (knowledge_upgrades_from_v26, 26),
         (knowledge_upgrades_from_v27, 27),
+        (knowledge_upgrades_from_v28, 28),
     );
 
     #[test]
@@ -5266,7 +5316,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 28);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 29);
             assert_eq!(
                 query_string(&connection, "SELECT purpose FROM card_fts").await?,
                 "Legacy purpose\nSecond purpose line"
@@ -5380,7 +5430,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 28);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 29);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5435,6 +5485,115 @@ mod tests {
                 )
                 .await?,
                 1
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v29_adds_safe_deep_map_plan_details_without_backfilling_old_runs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [101; 32];
+            let worktree_id = [102; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..28],
+                28,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table'\n\
+                     AND name IN ('deep_map_step_targets', 'deep_map_step_fields')",
+                )
+                .await?,
+                0
+            );
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 29);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table'\n\
+                     AND name IN ('deep_map_step_targets', 'deep_map_step_fields')",
+                )
+                .await?,
+                2
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT (SELECT COUNT(*) FROM deep_map_step_targets)\n\
+                     + (SELECT COUNT(*) FROM deep_map_step_fields)",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v29_upgrade_preserves_the_v28_database()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [103; 32];
+            let worktree_id = [104; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..28],
+                28,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE deep_map_step_targets (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 29, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 28);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                28
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('deep_map_step_targets')\n\
+                     WHERE name = 'conflict'",
+                )
+                .await?,
+                1
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master\n\
+                     WHERE type = 'table' AND name = 'deep_map_step_fields'",
+                )
+                .await?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

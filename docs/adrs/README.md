@@ -60,6 +60,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0033](0033-chatbasierter-agent-workspace.md)                 | Chatbasierter Agent Workspace                              |
 | [0034](0034-deep-map-run-journal-and-current-index-lifecycle.md) | Deep-Map-Laufjournal und Current-Index-Lifecycle         |
 | [0035](0035-monotone-index-attempt-coordinate-across-rebuilds.md) | Monotone Index-Laufkoordinate über Rebuilds            |
+| [0036](0036-deep-map-user-facing-run-dashboard.md)                 | Nutzerorientiertes Deep-Map-Laufdashboard              |
 
 ## Neue ADRs
 

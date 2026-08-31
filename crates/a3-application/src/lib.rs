@@ -19,6 +19,7 @@ mod command_discovery;
 mod context_compiler;
 mod deep_map_action_codec;
 mod deep_map_activity;
+mod deep_map_dashboard;
 mod deep_map_execution;
 mod deep_map_explorer;
 mod deep_map_journal;
@@ -171,6 +172,11 @@ pub use deep_map_activity::{
     DeepMapActivityObserver, DeepMapActivityUpdate, DeepMapPhase, DeepMapSafeAction,
     DeepMapTargetKind, IgnoreDeepMapActivity,
 };
+pub use deep_map_dashboard::{
+    DeepMapDashboardActivity, DeepMapDashboardFreshness, DeepMapDashboardModuleState,
+    DeepMapDashboardPhase, DeepMapDashboardPhaseProgress, DeepMapDashboardPhaseState,
+    DeepMapDashboardState, DeepMapRunDashboard, derive_deep_map_module_state,
+};
 pub use deep_map_execution::{
     DeepMapExecutionFailure, DeepMapExecutionFuture, DeepMapExecutionOutcome,
     DeepMapExecutionRequest, DeepMapExecutor, DeepMapModelDescriptor, DeepMapModelDescriptorError,
@@ -181,10 +187,13 @@ pub use deep_map_explorer::{
     ExploreDeepMap,
 };
 pub use deep_map_journal::{
-    DEEP_MAP_ENTRY_PAGE_LIMIT, DEEP_MAP_RUN_PAGE_LIMIT, DeepMapEntryDetail, DeepMapEntryPage,
-    DeepMapEventResult, DeepMapJournalEvent, DeepMapPublicationResult, DeepMapRunCursor,
-    DeepMapRunJournalFailure, DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage,
-    DeepMapRunStart, DeepMapRunSummary, DeepMapStepDetail,
+    DEEP_MAP_ENTRY_PAGE_LIMIT, DEEP_MAP_MODULE_PAGE_LIMIT, DEEP_MAP_MODULE_STEP_PAGE_LIMIT,
+    DEEP_MAP_RUN_PAGE_LIMIT, DeepMapEntryDetail, DeepMapEntryPage, DeepMapEventResult,
+    DeepMapJournalEvent, DeepMapModuleCursor, DeepMapModuleStepPage, DeepMapPlanStep,
+    DeepMapPlanTargetReference, DeepMapPublicationResult, DeepMapRunCursor,
+    DeepMapRunJournalFailure, DeepMapRunJournalFuture, DeepMapRunJournalStore,
+    DeepMapRunModulePage, DeepMapRunModuleSummary, DeepMapRunPage, DeepMapRunStart,
+    DeepMapRunSummary, DeepMapStepDetail,
 };
 pub use deep_map_model_adapter::ModelBackedExplorerProvider;
 pub use deep_map_planner::PlanDeepMap;
