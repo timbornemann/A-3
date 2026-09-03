@@ -1054,6 +1054,8 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] serverseitige Suche, Archivierung, Rename und Presentation Delete
 - [x] Scheduler-Eigentum, Fortschritt, Cancellation und Projektwechsel-Quiesce für Conversationjobs
 - [x] evidence-gebundener Ask-Lauf mit ausschließlich read-only Werkzeugen
+- [x] nachvollziehbarer adaptiver Ask-Rechercheweg mit aktueller TODO-/FIXME-Suche
+- [x] persistente verwendete und zusätzlich bereitgestellte Ask-Quellen mit sicherer Vorschau
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
 - [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
 - [x] Component-, Accessibility-, responsive und native UX-Verifikation
@@ -1061,6 +1063,10 @@ Abhängigkeiten: ADR-0033, Gate M8
 Akzeptanz:
 
 - Ask kann Repositoryfragen beantworten, ohne eine mutierende Capability zu besitzen;
+- einfache Ask-Fragen bleiben bei einem Modellturn; nur fehlende Evidence löst genau eine weitere
+  begrenzte Read-only-Runde aus;
+- jeder laufende und abgeschlossene Ask-Turn zeigt verständlich Suche, Task-Lens-Auswahlgrund,
+  Vollständigkeit und die tatsächlich für die Antwort angegebenen Quellen;
 - Plan hält Rückfragen und jede vollständige Planrevision im Verlauf und startet erst nach Review;
 - Agent bindet jede Ausführung an Goal, Ledger, Run, Snapshot und aktuelle Evidence und zeigt
   Activity, Inspection, Approval und Verification in derselben Session;
@@ -1092,6 +1098,17 @@ AgentAction-Ausgaben laufen beide über den nativen Responses-Adapter. Ablehnung
 Timeout und Nichterreichbarkeit bleiben bis zur Conversation-Grenze getrennte geschlossene
 Fehlerklassen. Die Session zeigt dazu sichere konkrete Abhilfe statt des bisherigen pauschalen
 `nicht verfügbar`, ohne Providertexte, Promptinhalte oder Credentials zu übernehmen.
+
+Erweiterung vom 2026-09-03 nach ADR-0037: Ask bindet sich vor dem ersten Modellturn an einen
+veröffentlichten Index, liest Symbol- und Span-Treffer an ihrer relevanten Stelle und durchsucht bei
+konkreten TODO-/FIXME-Fragen bis zu 2.000 sicher lesbare aktuelle Indexdateien. Das strikt
+validierte Antwortschema erlaubt entweder eine belegte Antwort oder genau eine weitere Runde mit
+höchstens vier geschlossenen Read-only-Aktionen und turnweit einem Reparaturversuch. Knowledge V30
+speichert nur inhaltsfreie Rechercheevents, File-Revisions und Zitatbezüge; Antwort, Zitate und
+terminales Event committen atomar. Die aufklappbare Live-Karte bleibt nach Abschluss als
+„Recherche & Quellen“ erhalten, unterscheidet vollständige von begrenzten Suchen und sperrt
+Source-Vorschauen nach einem Indexwechsel. Rohes Chain-of-Thought, Providertranskripte, Prompts,
+Modellrohantworten und persistierter Quelltext bleiben ausgeschlossen.
 
 ## Gate M8
 

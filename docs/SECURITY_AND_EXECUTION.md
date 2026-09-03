@@ -59,6 +59,8 @@ Normale README-Dateien, Quellcodekommentare, Tests, Issues und Toolausgaben sind
   `query_task_lens_tasks`, `query_task_lens_task`, `compile_task_lens`, `query_agent_goal`,
   `create_agent_goal`, `revise_agent_goal`, `query_agent_activity`, `query_agent_inspection`,
   `query_agent_inspection_log`,
+  `query_agent_ask_research_turns`, `query_agent_ask_research_detail`,
+  `query_agent_ask_research_sources`, `query_agent_ask_research_source_preview`,
   `query_agent_task_recovery`, `control_agent_task_run`, `query_deep_map`,
   `query_deep_map_run_dashboard`, `query_deep_map_run_modules`,
   `query_deep_map_module_steps`, `query_deep_map_atlas_impact`, `start_deep_map`,
@@ -756,3 +758,14 @@ mutierenden Capabilities. `Agent` erhält ebenfalls keine WebView-Datei- oder Sh
 Chattext wird nur in Core-eigene Goal-/Ledger-Anker überführt und jede konkrete Aktion erneut durch
 Schemas, kanonische Worktree-Pfade, zentrale Policy, Approval, Tooladapter und Verification
 geprüft. Presentation Delete löscht keine Auditdaten.
+
+Die adaptive Ask-Recherche erweitert diese Grenze ausschließlich um endliche Reads. Genau ein
+gebundener veröffentlichter Index versorgt Task Lens, optionale Source-Suche und sichere
+Inspektionen; das Modell kann höchstens eine Runde mit vier Aktionen aus `searchIndex`,
+`searchSourceText`, `inspectPath` und `inspectSource` anfordern. `searchSourceText` verarbeitet
+höchstens acht Literale, 100 Treffer, 2.000 aktuelle Indexdateien, 32 MiB und 30 Sekunden. Der
+sichere Reader verweigert Symlinks außerhalb des Roots, Binary-, Generated-, Secret-, zu große und
+stale Inhalte. Ask besitzt weiterhin keine Mutation, Shell-, Prozess-, Netzwerk- oder freie
+Dateifähigkeit. Persistenter und über IPC sichtbarer Trace besteht nur aus geschlossenen Phasen,
+sicheren Aktionen, Auswahlgründen und hashgebundenen Source-Metadaten; Rohprompt, Modelltranskript,
+Chain-of-Thought und Source-Inhalt bleiben ausgeschlossen.

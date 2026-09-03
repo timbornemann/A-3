@@ -385,6 +385,29 @@ committet den dauerhaften Sessionzustand `Cancelled` und gibt die neu geladene P
 Polling bleibt rein lesend und wiederholt einen transient fehlgeschlagenen Read, solange die letzte
 verifizierte Projektion noch einen laufenden Zustand zeigt.
 
+### Ask-Recherche und Quellen V1
+
+`query_agent_ask_research_turns` akzeptiert ausschließlich `protocolVersion` und die ausgewählte
+`sessionId` und liefert höchstens 32 Recherche-Turns. `query_agent_ask_research_detail` ergänzt nur
+die sichtbare positive `userSequence` und liefert höchstens 64 inhaltsfreie Schritte mit
+geschlossener Phase, Zustand, verständlicher Aktion, optionalem Suchtext und `complete | limited |
+notApplicable`. Für Ask-Nachrichten vor Knowledge V30 lautet der eigene Zustand `notRecorded`.
+
+`query_agent_ask_research_sources` liefert höchstens 50 Source-Metadatensätze pro Seite. Sein
+optionaler opaker Cursor ist an Worktree, Session, Turn, aktuelle Trace-Revision und heutigen
+Indexanker gebunden. Jeder Eintrag enthält ausschließlich eine opake `sourceRef`, sichere
+Pfadanzeige, optionale Zeilen und Symbolanzeige, geschlossene Quellenart und Auswahlgrund sowie die
+Kennzeichnung `usedForAnswer`. Gefundene und vom Modell tatsächlich zitierte Sources bleiben damit
+unterscheidbar.
+
+`query_agent_ask_research_source_preview` akzeptiert neben Session und Usersequenz nur diese opake
+`sourceRef`. Der Core löst sie innerhalb desselben Projekts und Turns auf und verwendet die sichere
+ADR-0030-Vorschau mit maximal 64 Zeilen und 16 KiB. Nach einem Indexwechsel liefert der Read
+`stale`, statt heutigen Quelltext an eine historische Antwort anzuhängen. Keiner der vier Requests
+akzeptiert Pfad, Range, Evidence-, Index-, Snapshot-, Worktree- oder Provider-ID. Keine Response
+enthält Quelltext ohne den bewussten Preview-Klick, Prompts, Modellrohantworten, Chain-of-Thought,
+Providerdaten, Budgets, Vertrauenswerte oder interne IDs.
+
 ## Agent Diff und Verification Inspector V1
 
 `query_agent_inspection` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake
@@ -598,7 +621,7 @@ Provider-Credentials verwenden zusätzlich die stabilen Codes `providerCredentia
 Die Desktop-Capability `main-capability` erlaubt dem Hauptfenster ausschließlich die dokumentierten
 Health-, Project-, Settings-, Provider-Model-Catalog-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-, Project-Map-, Task-Lens-, Agent-Goal-, Agent-Activity-,
-Agent-Recovery-, Agent-Approval- und Deep-Map-Commands. Repository- und
+Agent-Recovery-, Agent-Approval-, Agent-Ask-Recherche- und Deep-Map-Commands. Repository- und
 Modulbaum besitzen
 ausschließlich `allow-query-repository-tree` beziehungsweise `allow-query-module-tree`; der
 Abhängigkeitsgraph besitzt nur `allow-query-module-dependency-graph`, die Freshness-Capability ist
@@ -610,6 +633,9 @@ eine stabile Modul-ID. Für Deep Map sind das
 `allow-query-deep-map-entry-detail`, `allow-start-deep-map`, `allow-pause-deep-map`,
 `allow-resume-deep-map` und `allow-cancel-deep-map`. Es gibt keine generische Datei-, Dialog-,
 Shell-, Provider-, Netzwerk- oder SQL-Capability.
+Für Ask-Recherche sind ausschließlich `allow-query-agent-ask-research-turns`,
+`allow-query-agent-ask-research-detail`, `allow-query-agent-ask-research-sources` und
+`allow-query-agent-ask-research-source-preview` freigeschaltet.
 Der Projektkatalog besitzt ausschließlich `allow-query-project-catalog`,
 `allow-activate-catalog-project`, `allow-restore-last-project` und
 `allow-remove-catalog-project`; keine dieser Capabilities akzeptiert einen Pfad.

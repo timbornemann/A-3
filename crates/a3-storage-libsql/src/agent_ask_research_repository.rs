@@ -1,0 +1,835 @@
+use crate::agent_session_repository;
+use crate::catalog::is_corruption;
+use a3_application::{
+    AskResearchDetail, AskResearchEvent, AskResearchSource, AskResearchSourcePage,
+    AskResearchStoreFailure, AskResearchTurn, AskResearchTurnPage,
+};
+use a3_domain::{
+    AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision, AgentSessionSequence,
+    AgentSessionTimestamp, AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason,
+    AskResearchSourceId, AskResearchSourceKind, AskResearchState, ContentHash, FileRevision,
+    IndexRunId, RepositoryPath, SnapshotId, SourcePosition, SourceRange, WorktreeId,
+};
+use libsql::{Connection, Transaction, TransactionBehavior, params};
+
+pub(crate) async fn begin(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    turn: &AskResearchTurn,
+    first_event: &AskResearchEvent,
+) -> Result<(), AskResearchRepositoryError> {
+    if first_event.session_id() != turn.session_id()
+        || first_event.user_sequence() != turn.user_sequence()
+        || first_event.sequence() != 1
+        || first_event.state() != AskResearchState::Running
+    {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        transaction.execute(
+            "INSERT INTO agent_ask_research_turns (worktree_id, session_id, user_sequence, index_run_id, snapshot_id, started_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![worktree_id.as_bytes().to_vec(), turn.session_id().as_bytes().to_vec(), u64_i64(turn.user_sequence().get())?, turn.index_run_id().as_bytes().to_vec(), turn.snapshot_id().as_bytes().to_vec(), u64_i64(turn.started_at().unix_millis())?],
+        ).await.map_err(AskResearchRepositoryError::Write)?;
+        insert_event(&transaction, worktree_id, first_event).await
+    }.await;
+    close(transaction, result).await
+}
+
+pub(crate) async fn append_event(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    event: &AskResearchEvent,
+) -> Result<(), AskResearchRepositoryError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        require_next_event(&transaction, worktree_id, event).await?;
+        insert_event(&transaction, worktree_id, event).await
+    }
+    .await;
+    close(transaction, result).await
+}
+
+pub(crate) async fn append_sources(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    sources: &[AskResearchSource],
+) -> Result<(), AskResearchRepositoryError> {
+    if sources.is_empty() || sources.len() > 200 {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let first = &sources[0];
+    if sources.iter().enumerate().any(|(offset, source)| {
+        source.session_id() != first.session_id()
+            || source.user_sequence() != first.user_sequence()
+            || source.ordinal()
+                != first
+                    .ordinal()
+                    .saturating_add(u32::try_from(offset).unwrap_or(u32::MAX))
+    }) {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        let current = max_source_ordinal(
+            &transaction,
+            worktree_id,
+            first.session_id(),
+            first.user_sequence(),
+        )
+        .await?;
+        if first.ordinal() != current.saturating_add(1)
+            || usize::try_from(current)
+                .unwrap_or(usize::MAX)
+                .saturating_add(sources.len())
+                > 200
+        {
+            return Err(AskResearchRepositoryError::Conflict);
+        }
+        for source in sources {
+            insert_source(&transaction, worktree_id, source).await?;
+        }
+        Ok(())
+    }
+    .await;
+    close(transaction, result).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_session_revision: AgentSessionRevision,
+    session: &AgentSession,
+    answer: &AgentSessionEntry,
+    event: &AskResearchEvent,
+    citations: &[AskResearchSourceId],
+) -> Result<(), AskResearchRepositoryError> {
+    if answer.session_id() != event.session_id()
+        || event.state() != AskResearchState::Completed
+        || citations.len() > 200
+    {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        agent_session_repository::require_latest_revision(&transaction, worktree_id, session.id(), expected_session_revision).await.map_err(AskResearchRepositoryError::Session)?;
+        require_next_event(&transaction, worktree_id, event).await?;
+        agent_session_repository::insert_revision(&transaction, worktree_id, session).await.map_err(AskResearchRepositoryError::Session)?;
+        agent_session_repository::insert_entry(&transaction, worktree_id, session.revision(), answer).await.map_err(AskResearchRepositoryError::Session)?;
+        insert_event(&transaction, worktree_id, event).await?;
+        for (index, source_id) in citations.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO agent_ask_research_citations (worktree_id, session_id, user_sequence, citation_position, source_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::try_from(index + 1).map_err(|_| AskResearchRepositoryError::InvalidInput)?, source_id.as_bytes().to_vec()],
+            ).await.map_err(AskResearchRepositoryError::Write)?;
+        }
+        Ok(())
+    }.await;
+    close(transaction, result).await
+}
+
+pub(crate) async fn list_turns(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    limit: u16,
+) -> Result<AskResearchTurnPage, AskResearchRepositoryError> {
+    if limit == 0 || limit > 32 {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let mut rows = connection.query(
+        "SELECT user_sequence FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2 ORDER BY user_sequence DESC LIMIT ?3",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), i64::from(limit)],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let mut sequences = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        sequences.push(read_u64(&row, 0)?);
+    }
+    let mut details = Vec::with_capacity(sequences.len());
+    for sequence in sequences {
+        let sequence = AgentSessionSequence::new(sequence)
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+        let detail = load_detail(connection, worktree_id, session_id, sequence)
+            .await?
+            .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+        details.push(detail);
+    }
+    AskResearchTurnPage::new(details).map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn load_detail(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<Option<AskResearchDetail>, AskResearchRepositoryError> {
+    let mut rows = connection.query(
+        "SELECT index_run_id, snapshot_id, started_at_unix_millis FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    else {
+        return Ok(None);
+    };
+    let turn = AskResearchTurn::new(
+        session_id,
+        user_sequence,
+        IndexRunId::from_bytes(read_id(&row, 0)?),
+        SnapshotId::from_bytes(read_id(&row, 1)?),
+        AgentSessionTimestamp::from_unix_millis(read_u64(&row, 2)?)
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+    );
+    let mut event_rows = connection.query(
+        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let mut events = Vec::new();
+    while let Some(row) = event_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        events.push(
+            AskResearchEvent::new(
+                session_id,
+                user_sequence,
+                read_u32(&row, 0)?,
+                decode_phase(&read_string(&row, 1)?)?,
+                decode_state(&read_string(&row, 2)?)?,
+                read_string(&row, 3)?,
+                read_optional_string(&row, 4)?,
+                decode_completeness(&read_string(&row, 5)?)?,
+                AgentSessionTimestamp::from_unix_millis(read_u64(&row, 6)?)
+                    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+            )
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+        );
+    }
+    let mut citation_rows = connection.query(
+        "SELECT source_id FROM agent_ask_research_citations WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY citation_position",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let mut citations = Vec::new();
+    while let Some(row) = citation_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        citations.push(AskResearchSourceId::from_bytes(read_id(&row, 0)?));
+    }
+    AskResearchDetail::new(turn, events, citations)
+        .map(Some)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn list_sources(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    after_ordinal: Option<u32>,
+    limit: u16,
+) -> Result<AskResearchSourcePage, AskResearchRepositoryError> {
+    if limit == 0 || limit > 50 {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let mut rows = connection.query(
+        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND ordinal > ?4 ORDER BY ordinal LIMIT ?5",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, i64::from(after_ordinal.unwrap_or(0)), i64::from(limit) + 1],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let mut sources = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        sources.push(decode_source(session_id, user_sequence, &row)?);
+    }
+    let has_more = sources.len() > usize::from(limit);
+    sources.truncate(usize::from(limit));
+    AskResearchSourcePage::new(sources, has_more)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn load_source(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    source_id: AskResearchSourceId,
+) -> Result<Option<AskResearchSource>, AskResearchRepositoryError> {
+    let mut rows = connection.query(
+        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND source_id = ?4",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, source_id.as_bytes().to_vec()],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    rows.next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+        .map(|row| decode_source(session_id, user_sequence, &row))
+        .transpose()
+}
+
+async fn require_next_event(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    event: &AskResearchEvent,
+) -> Result<(), AskResearchRepositoryError> {
+    let mut rows = transaction.query(
+        "SELECT event_sequence, state FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence DESC LIMIT 1",
+        params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    else {
+        return Err(AskResearchRepositoryError::Conflict);
+    };
+    let current = read_u32(&row, 0)?;
+    if current.saturating_add(1) != event.sequence()
+        || decode_state(&read_string(&row, 1)?)? != AskResearchState::Running
+    {
+        return Err(AskResearchRepositoryError::Conflict);
+    }
+    Ok(())
+}
+
+async fn max_source_ordinal(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<u32, AskResearchRepositoryError> {
+    let mut rows = transaction.query("SELECT COALESCE(MAX(ordinal), 0) FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3", params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?]).await.map_err(AskResearchRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+        .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+    read_u32(&row, 0)
+}
+
+async fn insert_event(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    event: &AskResearchEvent,
+) -> Result<(), AskResearchRepositoryError> {
+    transaction.execute(
+        "INSERT INTO agent_ask_research_events (worktree_id, session_id, user_sequence, event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::from(event.sequence()), encode_phase(event.phase()), encode_state(event.state()), event.action(), event.query(), encode_completeness(event.completeness()), u64_i64(event.occurred_at().unix_millis())?],
+    ).await.map_err(AskResearchRepositoryError::Write)?;
+    Ok(())
+}
+
+async fn insert_source(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    source: &AskResearchSource,
+) -> Result<(), AskResearchRepositoryError> {
+    let (start_byte, end_byte, start_line, start_column, end_line, end_column) =
+        match source.range() {
+            Some(range) => (
+                Some(i64::from(range.start_byte())),
+                Some(i64::from(range.end_byte())),
+                Some(i64::from(range.start_position().row())),
+                Some(i64::from(range.start_position().column())),
+                Some(i64::from(range.end_position().row())),
+                Some(i64::from(range.end_position().column())),
+            ),
+            None => (None, None, None, None, None, None),
+        };
+    transaction.execute(
+        "INSERT INTO agent_ask_research_sources (worktree_id, session_id, user_sequence, source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![worktree_id.as_bytes().to_vec(), source.session_id().as_bytes().to_vec(), u64_i64(source.user_sequence().get())?, source.id().as_bytes().to_vec(), i64::from(source.ordinal()), source.revision().path().as_bytes().to_vec(), source.revision().content_hash().as_bytes().to_vec(), start_byte, end_byte, start_line, start_column, end_line, end_column, source.symbol(), encode_source_kind(source.kind()), encode_reason(source.reason())],
+    ).await.map_err(AskResearchRepositoryError::Write)?;
+    Ok(())
+}
+
+fn decode_source(
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    row: &libsql::Row,
+) -> Result<AskResearchSource, AskResearchRepositoryError> {
+    let revision = FileRevision::new(
+        RepositoryPath::try_from_bytes(read_bytes(row, 2)?)
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+        ContentHash::from_bytes(read_id(row, 3)?),
+    );
+    let range = match read_optional_u64(row, 4)? {
+        Some(start_byte) => Some(
+            SourceRange::new(
+                usize::try_from(start_byte)
+                    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+                usize::try_from(read_u64(row, 5)?)
+                    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+                SourcePosition::new(read_u32(row, 6)?, read_u32(row, 7)?),
+                SourcePosition::new(read_u32(row, 8)?, read_u32(row, 9)?),
+            )
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+        ),
+        None => None,
+    };
+    AskResearchSource::new(
+        session_id,
+        user_sequence,
+        AskResearchSourceId::from_bytes(read_id(row, 0)?),
+        read_u32(row, 1)?,
+        revision,
+        range,
+        read_optional_string(row, 10)?,
+        decode_source_kind(&read_string(row, 11)?)?,
+        decode_reason(&read_string(row, 12)?)?,
+    )
+    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
+fn encode_phase(value: AskResearchPhase) -> &'static str {
+    match value {
+        AskResearchPhase::Preparing => "preparing",
+        AskResearchPhase::SelectingEvidence => "selecting_evidence",
+        AskResearchPhase::SearchingSource => "searching_source",
+        AskResearchPhase::InspectingSource => "inspecting_source",
+        AskResearchPhase::Answering => "answering",
+        AskResearchPhase::Completed => "completed",
+    }
+}
+fn decode_phase(value: &str) -> Result<AskResearchPhase, AskResearchRepositoryError> {
+    match value {
+        "preparing" => Ok(AskResearchPhase::Preparing),
+        "selecting_evidence" => Ok(AskResearchPhase::SelectingEvidence),
+        "searching_source" => Ok(AskResearchPhase::SearchingSource),
+        "inspecting_source" => Ok(AskResearchPhase::InspectingSource),
+        "answering" => Ok(AskResearchPhase::Answering),
+        "completed" => Ok(AskResearchPhase::Completed),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+fn encode_state(value: AskResearchState) -> &'static str {
+    match value {
+        AskResearchState::Running => "running",
+        AskResearchState::Completed => "completed",
+        AskResearchState::Failed => "failed",
+        AskResearchState::Cancelled => "cancelled",
+    }
+}
+fn decode_state(value: &str) -> Result<AskResearchState, AskResearchRepositoryError> {
+    match value {
+        "running" => Ok(AskResearchState::Running),
+        "completed" => Ok(AskResearchState::Completed),
+        "failed" => Ok(AskResearchState::Failed),
+        "cancelled" => Ok(AskResearchState::Cancelled),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+fn encode_completeness(value: AskResearchCompleteness) -> &'static str {
+    match value {
+        AskResearchCompleteness::Complete => "complete",
+        AskResearchCompleteness::Limited => "limited",
+        AskResearchCompleteness::NotApplicable => "not_applicable",
+    }
+}
+fn decode_completeness(value: &str) -> Result<AskResearchCompleteness, AskResearchRepositoryError> {
+    match value {
+        "complete" => Ok(AskResearchCompleteness::Complete),
+        "limited" => Ok(AskResearchCompleteness::Limited),
+        "not_applicable" => Ok(AskResearchCompleteness::NotApplicable),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+fn encode_source_kind(value: AskResearchSourceKind) -> &'static str {
+    match value {
+        AskResearchSourceKind::File => "file",
+        AskResearchSourceKind::Symbol => "symbol",
+        AskResearchSourceKind::Relationship => "relationship",
+        AskResearchSourceKind::VerifiedClaim => "verified_claim",
+    }
+}
+fn decode_source_kind(value: &str) -> Result<AskResearchSourceKind, AskResearchRepositoryError> {
+    match value {
+        "file" => Ok(AskResearchSourceKind::File),
+        "symbol" => Ok(AskResearchSourceKind::Symbol),
+        "relationship" => Ok(AskResearchSourceKind::Relationship),
+        "verified_claim" => Ok(AskResearchSourceKind::VerifiedClaim),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+fn encode_reason(value: AskResearchSelectionReason) -> &'static str {
+    match value {
+        AskResearchSelectionReason::ExactNameOrPath => "exact_name_or_path",
+        AskResearchSelectionReason::IndexedText => "indexed_text",
+        AskResearchSelectionReason::Relationship => "relationship",
+        AskResearchSelectionReason::Test => "test",
+        AskResearchSelectionReason::VerifiedModuleKnowledge => "verified_module_knowledge",
+        AskResearchSelectionReason::SemanticCandidate => "semantic_candidate",
+        AskResearchSelectionReason::SourceText => "source_text",
+    }
+}
+fn decode_reason(value: &str) -> Result<AskResearchSelectionReason, AskResearchRepositoryError> {
+    match value {
+        "exact_name_or_path" => Ok(AskResearchSelectionReason::ExactNameOrPath),
+        "indexed_text" => Ok(AskResearchSelectionReason::IndexedText),
+        "relationship" => Ok(AskResearchSelectionReason::Relationship),
+        "test" => Ok(AskResearchSelectionReason::Test),
+        "verified_module_knowledge" => Ok(AskResearchSelectionReason::VerifiedModuleKnowledge),
+        "semantic_candidate" => Ok(AskResearchSelectionReason::SemanticCandidate),
+        "source_text" => Ok(AskResearchSelectionReason::SourceText),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+
+fn read_bytes(row: &libsql::Row, index: i32) -> Result<Vec<u8>, AskResearchRepositoryError> {
+    row.get(index).map_err(AskResearchRepositoryError::Read)
+}
+fn read_id(row: &libsql::Row, index: i32) -> Result<[u8; 32], AskResearchRepositoryError> {
+    <[u8; 32]>::try_from(read_bytes(row, index)?)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+fn read_string(row: &libsql::Row, index: i32) -> Result<String, AskResearchRepositoryError> {
+    row.get(index).map_err(AskResearchRepositoryError::Read)
+}
+fn read_optional_string(
+    row: &libsql::Row,
+    index: i32,
+) -> Result<Option<String>, AskResearchRepositoryError> {
+    row.get(index).map_err(AskResearchRepositoryError::Read)
+}
+fn read_u64(row: &libsql::Row, index: i32) -> Result<u64, AskResearchRepositoryError> {
+    let value: i64 = row.get(index).map_err(AskResearchRepositoryError::Read)?;
+    u64::try_from(value).map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+fn read_optional_u64(
+    row: &libsql::Row,
+    index: i32,
+) -> Result<Option<u64>, AskResearchRepositoryError> {
+    let value: Option<i64> = row.get(index).map_err(AskResearchRepositoryError::Read)?;
+    value
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+fn read_u32(row: &libsql::Row, index: i32) -> Result<u32, AskResearchRepositoryError> {
+    u32::try_from(read_u64(row, index)?).map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+fn u64_i64(value: u64) -> Result<i64, AskResearchRepositoryError> {
+    i64::try_from(value).map_err(|_| AskResearchRepositoryError::InvalidInput)
+}
+
+async fn close<T>(
+    transaction: Transaction,
+    result: Result<T, AskResearchRepositoryError>,
+) -> Result<T, AskResearchRepositoryError> {
+    match result {
+        Ok(value) => {
+            transaction
+                .commit()
+                .await
+                .map_err(AskResearchRepositoryError::Commit)?;
+            Ok(value)
+        }
+        Err(error) => match transaction.rollback().await {
+            Ok(()) => Err(error),
+            Err(source) => Err(AskResearchRepositoryError::Rollback(source)),
+        },
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum AskResearchRepositoryError {
+    Begin(libsql::Error),
+    Read(libsql::Error),
+    Write(libsql::Error),
+    Commit(libsql::Error),
+    Rollback(libsql::Error),
+    Session(agent_session_repository::AgentSessionRepositoryError),
+    Conflict,
+    InvalidInput,
+    InvalidStoredData,
+}
+impl AskResearchRepositoryError {
+    pub(crate) fn classify(&self) -> AskResearchStoreFailure {
+        match self {
+            Self::Conflict => AskResearchStoreFailure::Conflict,
+            Self::InvalidInput => AskResearchStoreFailure::InvalidInput,
+            Self::InvalidStoredData => AskResearchStoreFailure::InvalidStoredData,
+            Self::Session(error) => match error.classify() {
+                a3_application::AgentSessionStoreFailure::Conflict => {
+                    AskResearchStoreFailure::Conflict
+                }
+                a3_application::AgentSessionStoreFailure::InvalidInput => {
+                    AskResearchStoreFailure::InvalidInput
+                }
+                a3_application::AgentSessionStoreFailure::InvalidStoredData => {
+                    AskResearchStoreFailure::InvalidStoredData
+                }
+                a3_application::AgentSessionStoreFailure::Unavailable => {
+                    AskResearchStoreFailure::Unavailable
+                }
+            },
+            Self::Begin(error)
+            | Self::Read(error)
+            | Self::Write(error)
+            | Self::Commit(error)
+            | Self::Rollback(error) => {
+                if is_corruption(error) {
+                    AskResearchStoreFailure::InvalidStoredData
+                } else {
+                    AskResearchStoreFailure::Unavailable
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append_sources, begin, complete, list_sources, load_detail};
+    use crate::agent_session_repository;
+    use a3_application::{AskResearchEvent, AskResearchSource};
+    use a3_domain::{
+        AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
+        AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
+        AgentSessionTimestamp, AgentSessionTitle, AskResearchCompleteness, AskResearchPhase,
+        AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+        ContentHash, FileRevision, IndexRunId, RepositoryPath, SnapshotId, WorktreeId,
+    };
+
+    #[test]
+    fn answer_event_citations_and_session_revision_commit_atomically_and_delete_together()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let worktree_id = WorktreeId::from_bytes([2; 32]);
+            crate::migration::migrate_knowledge(&connection, &[1; 32], worktree_id.as_bytes())
+                .await?;
+            let session_id = AgentSessionId::from_bytes([3; 32]);
+            let user_sequence = AgentSessionSequence::new(1)?;
+            let running = session(
+                session_id,
+                1,
+                AgentSessionState::Running,
+                10,
+                Some(user_sequence),
+                false,
+            )?;
+            let user = entry(
+                session_id,
+                user_sequence,
+                AgentSessionEntryKind::UserMessage,
+                "Welche TODOs gibt es?",
+                10,
+            )?;
+            agent_session_repository::create(&connection, worktree_id, &running, Some(&user))
+                .await
+                .map_err(|error| error.classify())?;
+
+            let first_event = AskResearchEvent::new(
+                session_id,
+                user_sequence,
+                1,
+                AskResearchPhase::Preparing,
+                AskResearchState::Running,
+                "Projektstand binden".to_owned(),
+                None,
+                AskResearchCompleteness::NotApplicable,
+                AgentSessionTimestamp::from_unix_millis(11)?,
+            )?;
+            let turn = a3_application::AskResearchTurn::new(
+                session_id,
+                user_sequence,
+                IndexRunId::from_bytes([4; 32]),
+                SnapshotId::from_bytes([5; 32]),
+                AgentSessionTimestamp::from_unix_millis(11)?,
+            );
+            begin(&connection, worktree_id, &turn, &first_event)
+                .await
+                .map_err(|error| error.classify())?;
+            let source_id = AskResearchSourceId::from_bytes([6; 32]);
+            let source = AskResearchSource::new(
+                session_id,
+                user_sequence,
+                source_id,
+                1,
+                FileRevision::new(
+                    RepositoryPath::try_from_bytes(b"src/lib.rs".to_vec())?,
+                    ContentHash::from_bytes([7; 32]),
+                ),
+                None,
+                None,
+                AskResearchSourceKind::File,
+                AskResearchSelectionReason::SourceText,
+            )?;
+            append_sources(&connection, worktree_id, std::slice::from_ref(&source))
+                .await
+                .map_err(|error| error.classify())?;
+
+            let completed = session(
+                session_id,
+                2,
+                AgentSessionState::Completed,
+                12,
+                Some(AgentSessionSequence::new(2)?),
+                false,
+            )?;
+            let answer = entry(
+                session_id,
+                AgentSessionSequence::new(2)?,
+                AgentSessionEntryKind::FinalReport,
+                "Ein TODO wurde gefunden.",
+                12,
+            )?;
+            let terminal = AskResearchEvent::new(
+                session_id,
+                user_sequence,
+                2,
+                AskResearchPhase::Completed,
+                AskResearchState::Completed,
+                "Antwort veröffentlicht".to_owned(),
+                None,
+                AskResearchCompleteness::Complete,
+                AgentSessionTimestamp::from_unix_millis(12)?,
+            )?;
+
+            assert!(
+                complete(
+                    &connection,
+                    worktree_id,
+                    AgentSessionRevision::INITIAL,
+                    &completed,
+                    &answer,
+                    &terminal,
+                    &[AskResearchSourceId::from_bytes([8; 32])],
+                )
+                .await
+                .is_err()
+            );
+            let unchanged =
+                agent_session_repository::load(&connection, worktree_id, session_id, None, 10)
+                    .await
+                    .map_err(|error| error.classify())?
+                    .ok_or("session missing")?;
+            assert_eq!(
+                unchanged.session().revision(),
+                AgentSessionRevision::INITIAL
+            );
+            let trace = load_detail(&connection, worktree_id, session_id, user_sequence)
+                .await
+                .map_err(|error| error.classify())?
+                .ok_or("trace missing")?;
+            assert_eq!(trace.events().len(), 1);
+            assert!(trace.cited_sources().is_empty());
+
+            complete(
+                &connection,
+                worktree_id,
+                AgentSessionRevision::INITIAL,
+                &completed,
+                &answer,
+                &terminal,
+                &[source_id],
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            let trace = load_detail(&connection, worktree_id, session_id, user_sequence)
+                .await
+                .map_err(|error| error.classify())?
+                .ok_or("trace missing")?;
+            assert_eq!(trace.events().len(), 2);
+            assert_eq!(trace.cited_sources(), &[source_id]);
+            assert_eq!(
+                list_sources(
+                    &connection,
+                    worktree_id,
+                    session_id,
+                    user_sequence,
+                    None,
+                    50
+                )
+                .await
+                .map_err(|error| error.classify())?
+                .sources(),
+                &[source]
+            );
+
+            let tombstone = session(session_id, 3, AgentSessionState::Archived, 13, None, true)?;
+            agent_session_repository::delete_presentation(
+                &connection,
+                worktree_id,
+                session_id,
+                AgentSessionRevision::new(2)?,
+                &tombstone,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert!(
+                load_detail(&connection, worktree_id, session_id, user_sequence)
+                    .await
+                    .map_err(|error| error.classify())?
+                    .is_none()
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    fn session(
+        id: AgentSessionId,
+        revision: u64,
+        state: AgentSessionState,
+        updated_at: u64,
+        latest_sequence: Option<AgentSessionSequence>,
+        deleted: bool,
+    ) -> Result<AgentSession, Box<dyn std::error::Error>> {
+        Ok(AgentSession::from_parts(
+            id,
+            AgentSessionRevision::new(revision)?,
+            AgentSessionTitle::try_from_string("Ask research".to_owned())?,
+            AgentSessionMode::Ask,
+            state,
+            AgentSessionTimestamp::from_unix_millis(10)?,
+            AgentSessionTimestamp::from_unix_millis(updated_at)?,
+            latest_sequence,
+            None,
+            None,
+            deleted,
+        ))
+    }
+
+    fn entry(
+        session_id: AgentSessionId,
+        sequence: AgentSessionSequence,
+        kind: AgentSessionEntryKind,
+        text: &str,
+        created_at: u64,
+    ) -> Result<AgentSessionEntry, Box<dyn std::error::Error>> {
+        Ok(AgentSessionEntry::new(
+            session_id,
+            sequence,
+            kind,
+            AgentSessionText::try_from_string(text.to_owned())?,
+            AgentSessionTimestamp::from_unix_millis(created_at)?,
+            None,
+            None,
+            None,
+        ))
+    }
+}

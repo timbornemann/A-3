@@ -224,6 +224,18 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   derselben Plantransaktion gespeichert. Card-Inhalte, Source und Modellantworten verbleiben
   außerhalb des Journals. Historische V28-Pläne bleiben unverändert lesbar und liefern bewusst
   keine erfundenen Ziel- oder Felddetails.
+- Knowledge-Schema V30 ergänzt die append-only Tabellen `agent_ask_research_turns`,
+  `agent_ask_research_events`, `agent_ask_research_sources` und
+  `agent_ask_research_citations`. Ein Turn bindet genau eine sichtbare Ask-Usernachricht an den
+  damaligen veröffentlichten Indexanker. Events enthalten nur geschlossene Phase, Zustand,
+  sichere Aktionsbeschreibung, optionalen Suchtext und Vollständigkeit; Quellen enthalten nur
+  `FileRevision`, optionalen Range/Symbol sowie geschlossene Art und Auswahlgrund. Antwort,
+  terminales Event und die Teilmenge tatsächlich zitierter Source-Referenzen committen zusammen
+  mit der nächsten Sessionrevision in einer `IMMEDIATE`-Transaktion. Die Migration erzeugt für
+  alte Ask-Sessions keine Traces. Presentation Delete entfernt die referenzierenden V30-Zeilen per
+  Session-Entry-Cascade; Archivierung lässt sie bestehen. Quelltext, Prompt, Modellrohantwort,
+  Chain-of-Thought, Providerdaten, Budgets, interne Scores und historische Source-Snapshots werden
+  nicht gespeichert.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

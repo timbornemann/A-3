@@ -1,0 +1,356 @@
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
+import {
+  parseProjectMapSourcePreviewV1,
+  type ProjectMapSourcePreviewV1,
+} from './project-map-source-preview';
+
+const STABLE_ID = /^[0-9a-f]{64}$/u;
+const DECIMAL = /^(?:0|[1-9][0-9]{0,18})$/u;
+const PHASES = [
+  'preparing',
+  'selectingEvidence',
+  'searchingSource',
+  'inspectingSource',
+  'answering',
+  'completed',
+] as const;
+const STATES = ['running', 'completed', 'failed', 'cancelled'] as const;
+const COMPLETENESS = ['complete', 'limited', 'notApplicable'] as const;
+const SOURCE_KINDS = ['file', 'symbol', 'relationship', 'verifiedClaim'] as const;
+const REASONS = [
+  'exactNameOrPath',
+  'indexedText',
+  'relationship',
+  'test',
+  'verifiedModuleKnowledge',
+  'semanticCandidate',
+  'sourceText',
+] as const;
+
+export type AgentAskResearchPhaseV1 = (typeof PHASES)[number];
+export type AgentAskResearchStateV1 = (typeof STATES)[number];
+export type AgentAskResearchCompletenessV1 = (typeof COMPLETENESS)[number];
+export type AgentAskResearchSourceKindV1 = (typeof SOURCE_KINDS)[number];
+export type AgentAskResearchSelectionReasonV1 = (typeof REASONS)[number];
+
+export interface AgentAskResearchStepV1 {
+  action: string;
+  completeness: AgentAskResearchCompletenessV1;
+  occurredAtUnixMillis: string;
+  phase: AgentAskResearchPhaseV1;
+  query: string | null;
+  state: AgentAskResearchStateV1;
+}
+export interface AgentAskResearchTurnV1 {
+  action: string;
+  citedSourceCount: number;
+  phase: AgentAskResearchPhaseV1;
+  sourceCount: number;
+  stale: boolean;
+  startedAtUnixMillis: string;
+  state: AgentAskResearchStateV1;
+  userSequence: string;
+}
+export interface AgentAskResearchDetailV1 {
+  citedSourceCount: number;
+  sourceCount: number;
+  stale: boolean;
+  steps: AgentAskResearchStepV1[];
+  userSequence: string;
+}
+export interface AgentAskResearchSourceV1 {
+  endLine: number | null;
+  kind: AgentAskResearchSourceKindV1;
+  path: string;
+  reason: AgentAskResearchSelectionReasonV1;
+  sourceRef: string;
+  startLine: number | null;
+  symbol: string | null;
+  usedForAnswer: boolean;
+}
+
+export type AgentAskResearchTurnsResponseV1 = {
+  protocolVersion: 1;
+  result:
+    { status: 'noProject' | 'notFound' } | { status: 'available'; turns: AgentAskResearchTurnV1[] };
+};
+export type AgentAskResearchDetailResponseV1 = {
+  protocolVersion: 1;
+  result:
+    | { status: 'noProject' | 'notFound' | 'notRecorded' }
+    | { status: 'available'; detail: AgentAskResearchDetailV1 };
+};
+export type AgentAskResearchSourcesResponseV1 = {
+  protocolVersion: 1;
+  result:
+    | { status: 'noProject' | 'notFound' }
+    | { status: 'available'; sources: AgentAskResearchSourceV1[]; nextCursor: string | null };
+};
+export type AgentAskResearchSourcePreviewResponseV1 = {
+  protocolVersion: 1;
+  result:
+    | { status: 'noProject' | 'notFound' | 'stale' }
+    | { status: 'available'; preview: ProjectMapSourcePreviewV1 };
+};
+
+const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
+  tauriInvoke<unknown>(command, arguments_);
+
+export async function queryAgentAskResearchTurns(
+  sessionId: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentAskResearchTurnsResponseV1> {
+  stable(sessionId);
+  return parseTurns(
+    await invokeCommand('query_agent_ask_research_turns', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId },
+    }),
+  );
+}
+
+export async function queryAgentAskResearchDetail(
+  sessionId: string,
+  userSequence: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentAskResearchDetailResponseV1> {
+  stable(sessionId);
+  decimal(userSequence, false);
+  return parseDetail(
+    await invokeCommand('query_agent_ask_research_detail', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
+    }),
+  );
+}
+
+export async function queryAgentAskResearchSources(
+  sessionId: string,
+  userSequence: string,
+  cursor: string | null = null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentAskResearchSourcesResponseV1> {
+  stable(sessionId);
+  decimal(userSequence, false);
+  if (cursor !== null) stable(cursor);
+  return parseSources(
+    await invokeCommand('query_agent_ask_research_sources', {
+      request: { cursor, protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
+    }),
+  );
+}
+
+export async function queryAgentAskResearchSourcePreview(
+  sessionId: string,
+  userSequence: string,
+  sourceRef: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentAskResearchSourcePreviewResponseV1> {
+  stable(sessionId);
+  decimal(userSequence, false);
+  stable(sourceRef);
+  return parsePreview(
+    await invokeCommand('query_agent_ask_research_source_preview', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, sourceRef, userSequence },
+    }),
+  );
+}
+
+function parseTurns(payload: unknown): AgentAskResearchTurnsResponseV1 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (status === 'noProject' || status === 'notFound') {
+    exact(result, ['status']);
+    return root as AgentAskResearchTurnsResponseV1;
+  }
+  exact(result, ['status', 'turns']);
+  if (status !== 'available' || !Array.isArray(result.turns) || result.turns.length > 32) invalid();
+  return { protocolVersion: 1, result: { status: 'available', turns: result.turns.map(turn) } };
+}
+
+function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (status === 'noProject' || status === 'notFound' || status === 'notRecorded') {
+    exact(result, ['status']);
+    return root as AgentAskResearchDetailResponseV1;
+  }
+  exact(result, ['detail', 'status']);
+  if (status !== 'available') invalid();
+  const value = record(result.detail);
+  exact(value, ['citedSourceCount', 'sourceCount', 'stale', 'steps', 'userSequence']);
+  decimal(value.userSequence, false);
+  if (
+    !count(value.sourceCount, 200) ||
+    !count(value.citedSourceCount, 200) ||
+    typeof value.stale !== 'boolean' ||
+    !Array.isArray(value.steps) ||
+    value.steps.length > 64
+  )
+    invalid();
+  return {
+    protocolVersion: 1,
+    result: {
+      status: 'available',
+      detail: {
+        citedSourceCount: value.citedSourceCount,
+        sourceCount: value.sourceCount,
+        stale: value.stale,
+        steps: value.steps.map(step),
+        userSequence: value.userSequence,
+      } as AgentAskResearchDetailV1,
+    },
+  };
+}
+
+function parseSources(payload: unknown): AgentAskResearchSourcesResponseV1 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (status === 'noProject' || status === 'notFound') {
+    exact(result, ['status']);
+    return root as AgentAskResearchSourcesResponseV1;
+  }
+  exact(result, ['nextCursor', 'sources', 'status']);
+  if (
+    status !== 'available' ||
+    !Array.isArray(result.sources) ||
+    result.sources.length > 50 ||
+    (result.nextCursor !== null &&
+      (typeof result.nextCursor !== 'string' || !STABLE_ID.test(result.nextCursor)))
+  )
+    invalid();
+  return {
+    protocolVersion: 1,
+    result: {
+      status: 'available',
+      nextCursor: result.nextCursor as string | null,
+      sources: result.sources.map(source),
+    },
+  };
+}
+
+function parsePreview(payload: unknown): AgentAskResearchSourcePreviewResponseV1 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (status === 'noProject' || status === 'notFound' || status === 'stale') {
+    exact(result, ['status']);
+    return root as AgentAskResearchSourcePreviewResponseV1;
+  }
+  exact(result, ['preview', 'status']);
+  if (status !== 'available') invalid();
+  return {
+    protocolVersion: 1,
+    result: { status: 'available', preview: parseProjectMapSourcePreviewV1(result.preview) },
+  };
+}
+
+function turn(payload: unknown): AgentAskResearchTurnV1 {
+  const value = record(payload);
+  exact(value, [
+    'action',
+    'citedSourceCount',
+    'phase',
+    'sourceCount',
+    'stale',
+    'startedAtUnixMillis',
+    'state',
+    'userSequence',
+  ]);
+  text(value.action, 512);
+  decimal(value.startedAtUnixMillis, true);
+  decimal(value.userSequence, false);
+  if (
+    !PHASES.includes(value.phase as never) ||
+    !STATES.includes(value.state as never) ||
+    !count(value.sourceCount, 200) ||
+    !count(value.citedSourceCount, 200) ||
+    typeof value.stale !== 'boolean'
+  )
+    invalid();
+  return value as unknown as AgentAskResearchTurnV1;
+}
+function step(payload: unknown): AgentAskResearchStepV1 {
+  const value = record(payload);
+  exact(value, ['action', 'completeness', 'occurredAtUnixMillis', 'phase', 'query', 'state']);
+  text(value.action, 512);
+  if (value.query !== null) text(value.query, 4096);
+  decimal(value.occurredAtUnixMillis, true);
+  if (
+    !PHASES.includes(value.phase as never) ||
+    !STATES.includes(value.state as never) ||
+    !COMPLETENESS.includes(value.completeness as never)
+  )
+    invalid();
+  return value as unknown as AgentAskResearchStepV1;
+}
+function source(payload: unknown): AgentAskResearchSourceV1 {
+  const value = record(payload);
+  exact(value, [
+    'endLine',
+    'kind',
+    'path',
+    'reason',
+    'sourceRef',
+    'startLine',
+    'symbol',
+    'usedForAnswer',
+  ]);
+  stable(value.sourceRef);
+  text(value.path, 4096);
+  if (value.symbol !== null) text(value.symbol, 512);
+  if (
+    !SOURCE_KINDS.includes(value.kind as never) ||
+    !REASONS.includes(value.reason as never) ||
+    typeof value.usedForAnswer !== 'boolean' ||
+    !nullableLine(value.startLine) ||
+    !nullableLine(value.endLine) ||
+    (value.startLine === null) !== (value.endLine === null)
+  )
+    invalid();
+  return value as unknown as AgentAskResearchSourceV1;
+}
+function response(payload: unknown): Record<string, unknown> {
+  const value = record(payload);
+  exact(value, ['protocolVersion', 'result']);
+  if (value.protocolVersion !== CURRENT_PROTOCOL_VERSION) invalid();
+  return value;
+}
+function record(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid();
+  return value as Record<string, unknown>;
+}
+function exact(value: Record<string, unknown>, keys: string[]): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index]))
+    invalid();
+}
+function stable(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !STABLE_ID.test(value)) invalid();
+}
+function decimal(value: unknown, zero: boolean): asserts value is string {
+  if (typeof value !== 'string' || !DECIMAL.test(value) || (!zero && value === '0')) invalid();
+}
+function text(value: unknown, max: number): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length === 0 ||
+    new TextEncoder().encode(value).length > max
+  )
+    invalid();
+}
+function count(value: unknown, max: number): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= max;
+}
+function nullableLine(value: unknown): boolean {
+  return (
+    value === null ||
+    (Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 4_294_967_295)
+  );
+}
+function invalid(): never {
+  throw new Error('Ask research response does not match V1.');
+}

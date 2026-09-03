@@ -3,14 +3,15 @@ use crate::{
     KnowledgeSearchStore, KnowledgeStoreFailure,
 };
 use a3_domain::{
-    CandidateFreshness, CandidateTokenCost, ExactSearchPageSize, ExactSearchQuery,
-    ExactSearchTarget, ExactSearchTerm, FusionError, FusionPolicy, FusionResultLimit,
-    GraphEndpoint, IndexRunId, LexicalSearchPageSize, LexicalSearchQuery, LexicalSearchTerm,
-    ModuleCardClaimId, NormalizedRetrievalSignal, Progress, ProjectIdentity, PublishedIndex,
-    RetrievalCandidate, RetrievalCandidateSet, RetrievalCandidateSetError, RetrievalCandidateSets,
-    RetrievalCandidateSetsError, RetrievalCandidateSignals, RetrievalTargetId, SnapshotId,
-    SourceChannel, TaskLens, TaskLensClaim, TaskLensCompileError, TaskLensPolicy, TaskLensSeed,
-    TaskLensSeedSet, TaskLensTokenBudget, TraversalQuery, TraversalResultLimit,
+    CandidateFreshness, CandidateSetCompleteness, CandidateTokenCost, ExactSearchPageSize,
+    ExactSearchQuery, ExactSearchTarget, ExactSearchTerm, FusionError, FusionPolicy,
+    FusionResultLimit, GraphEndpoint, IndexRunId, LexicalSearchPageSize, LexicalSearchQuery,
+    LexicalSearchTerm, ModuleCardClaimId, NormalizedRetrievalSignal, Progress, ProjectIdentity,
+    PublishedIndex, RetrievalCandidate, RetrievalCandidateSet, RetrievalCandidateSetError,
+    RetrievalCandidateSets, RetrievalCandidateSetsError, RetrievalCandidateSignals,
+    RetrievalTargetId, SnapshotId, SourceChannel, TaskLens, TaskLensClaim, TaskLensCompileError,
+    TaskLensEntryReason, TaskLensPolicy, TaskLensSeed, TaskLensSeedSet, TaskLensTokenBudget,
+    TraversalQuery, TraversalResultLimit,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -440,6 +441,63 @@ pub struct CompileTaskLens<'a> {
     timeout: TaskLensTimeout,
 }
 
+/// Content-free accounting for one deterministic Task Lens retrieval channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskLensChannelTrace {
+    channel: SourceChannel,
+    candidates: u16,
+    selected: u16,
+    truncated: bool,
+}
+
+impl TaskLensChannelTrace {
+    /// Returns the searched deterministic channel.
+    #[must_use]
+    pub const fn channel(self) -> SourceChannel {
+        self.channel
+    }
+    /// Returns candidates admitted before cross-channel fusion.
+    #[must_use]
+    pub const fn candidates(self) -> u16 {
+        self.candidates
+    }
+    /// Returns final Lens entries supported by this channel.
+    #[must_use]
+    pub const fn selected(self) -> u16 {
+        self.selected
+    }
+    /// Returns whether the producer or final context boundary omitted results.
+    #[must_use]
+    pub const fn truncated(self) -> bool {
+        self.truncated
+    }
+}
+
+/// Compatible Task Lens result plus its safe channel-selection trace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskLensCompilationTrace {
+    lens: TaskLens,
+    channels: Vec<TaskLensChannelTrace>,
+}
+
+impl TaskLensCompilationTrace {
+    /// Returns the unchanged deterministic Lens used by existing callers.
+    #[must_use]
+    pub const fn lens(&self) -> &TaskLens {
+        &self.lens
+    }
+    /// Returns channels in their fixed retrieval order.
+    #[must_use]
+    pub fn channels(&self) -> &[TaskLensChannelTrace] {
+        &self.channels
+    }
+    /// Consumes the trace into its unchanged Lens.
+    #[must_use]
+    pub fn into_lens(self) -> TaskLens {
+        self.lens
+    }
+}
+
 impl<'a> CompileTaskLens<'a> {
     /// Composes deterministic index/search and current verified-claim boundaries.
     #[must_use]
@@ -485,6 +543,19 @@ impl<'a> CompileTaskLens<'a> {
         token_budget: TaskLensTokenBudget,
         control: &dyn TaskLensControl,
     ) -> Result<TaskLens, CompileTaskLensFailure> {
+        self.execute_with_trace(project, seeds, token_budget, control)
+            .await
+            .map(TaskLensCompilationTrace::into_lens)
+    }
+
+    /// Executes the same policy while retaining content-free channel and selection accounting.
+    pub async fn execute_with_trace(
+        self,
+        project: &ProjectIdentity,
+        seeds: TaskLensSeedSet,
+        token_budget: TaskLensTokenBudget,
+        control: &dyn TaskLensControl,
+    ) -> Result<TaskLensCompilationTrace, CompileTaskLensFailure> {
         let deadline = TaskLensDeadline::new(control, self.timeout);
         deadline.report(0)?;
         let published = self
@@ -536,6 +607,7 @@ impl<'a> CompileTaskLens<'a> {
         deadline.check()?;
         deadline.report(5)?;
 
+        let semantic_enabled = self.semantic.is_some();
         let semantic = match self.semantic {
             Some(provider) => {
                 let result = provider
@@ -568,6 +640,38 @@ impl<'a> CompileTaskLens<'a> {
         if let Some(semantic) = semantic {
             sets.push(semantic);
         }
+        let mut traced_channels = vec![
+            SourceChannel::Exact,
+            SourceChannel::Lexical,
+            SourceChannel::Graph,
+            SourceChannel::Test,
+            SourceChannel::Memory,
+        ];
+        if semantic_enabled {
+            traced_channels.push(SourceChannel::Semantic);
+        }
+        let channel_counts = traced_channels
+            .into_iter()
+            .map(|channel| {
+                if channel == SourceChannel::Memory {
+                    (
+                        channel,
+                        claim_result.claims().len(),
+                        claim_result.truncated(),
+                    )
+                } else {
+                    sets.iter()
+                        .find(|set| set.source_channel() == channel)
+                        .map_or((channel, 0, false), |set| {
+                            (
+                                channel,
+                                set.candidates().len(),
+                                set.completeness() == CandidateSetCompleteness::Truncated,
+                            )
+                        })
+                }
+            })
+            .collect::<Vec<_>>();
         let fused = FusionPolicy::v1().fuse(
             RetrievalCandidateSets::new(published.run().id(), published.run().snapshot_id(), sets)?,
             FusionResultLimit::new(32).map_err(|_| CompileTaskLensFailure::ResourceLimit)?,
@@ -582,7 +686,30 @@ impl<'a> CompileTaskLens<'a> {
             token_budget,
         )?;
         deadline.report(TASK_LENS_PROGRESS_TOTAL)?;
-        Ok(lens)
+        let channels = channel_counts
+            .into_iter()
+            .map(|(channel, candidates, truncated)| {
+                let selected = lens
+                    .entries()
+                    .iter()
+                    .filter(|entry| match entry.reason() {
+                        TaskLensEntryReason::RepositoryAnchor => false,
+                        TaskLensEntryReason::Claim(_) => channel == SourceChannel::Memory,
+                        TaskLensEntryReason::Retrieval { explanation, .. } => explanation
+                            .sources()
+                            .iter()
+                            .any(|source| source.reason().source_channel() == channel),
+                    })
+                    .count();
+                TaskLensChannelTrace {
+                    channel,
+                    candidates: u16::try_from(candidates).unwrap_or(u16::MAX),
+                    selected: u16::try_from(selected).unwrap_or(u16::MAX),
+                    truncated: truncated || lens.truncated(),
+                }
+            })
+            .collect();
+        Ok(TaskLensCompilationTrace { lens, channels })
     }
 }
 

@@ -35,6 +35,7 @@
   import type { GlobalRunStatus } from './global-status';
   import AgentApprovalCenter from './AgentApprovalCenter.svelte';
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
+  import AgentAskResearch from './AgentAskResearch.svelte';
   import { parseChatMarkdown } from './chat-markdown';
 
   interface Props {
@@ -131,10 +132,14 @@
   let sessionRequest = 0;
   let sessionsRequest = 0;
   let activityRequest = 0;
+  let researchRefresh = $state(0);
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
+  const latestAskSequence = $derived(
+    selectedSession?.summary.mode === 'ask' ? latestUserSequence(selectedSession.entries) : null,
+  );
   const presentationCanBeHidden = $derived(
     selectedSummary !== null &&
       !['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state),
@@ -290,6 +295,7 @@
       const response = await sessionLoader(sessionId);
       if (selectedSessionId !== sessionId || response.result.status !== 'available') return;
       sessionView = { kind: 'available', session: response.result.session };
+      if (response.result.session.summary.mode === 'ask') researchRefresh += 1;
       if (response.result.session.activeTaskId) {
         await loadActivity(response.result.session.activeTaskId);
       }
@@ -334,6 +340,7 @@
       if (response.result.status === 'available') {
         selectedSessionId = response.result.session.summary.sessionId;
         sessionView = { kind: 'available', session: response.result.session };
+        if (response.result.session.summary.mode === 'ask') researchRefresh += 1;
         await loadSessions(selectedSessionId);
       } else {
         actionError = 'Das aktive Projekt ist nicht mehr verfügbar.';
@@ -353,6 +360,17 @@
       event.preventDefault();
       void submit();
     }
+  }
+
+  function latestUserSequence(entries: AgentSessionV1['entries']): string | null {
+    return [...entries].reverse().find((entry) => entry.kind === 'userMessage')?.sequence ?? null;
+  }
+
+  function precedingUserSequence(entries: AgentSessionV1['entries'], index: number): string | null {
+    for (let current = index - 1; current >= 0; current -= 1) {
+      if (entries[current].kind === 'userMessage') return entries[current].sequence;
+    }
+    return null;
   }
 
   async function applySessionAction(action: AgentSessionControlActionV1): Promise<void> {
@@ -735,7 +753,7 @@
           </div>
         {:else}
           <div class="messages">
-            {#each sessionView.session.entries as entry (entry.sequence)}
+            {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
               <article
                 class:user-message={entry.kind === 'userMessage'}
                 class:agent-message={entry.kind !== 'userMessage'}
@@ -774,6 +792,19 @@
                     {/if}
                   {/each}
                 </div>
+                {#if sessionView.session.summary.mode === 'ask' && entry.kind !== 'userMessage'}
+                  {@const askUserSequence = precedingUserSequence(
+                    sessionView.session.entries,
+                    entryIndex,
+                  )}
+                  {#if askUserSequence}
+                    <AgentAskResearch
+                      sessionId={sessionView.session.summary.sessionId}
+                      userSequence={askUserSequence}
+                      refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                    />
+                  {/if}
+                {/if}
                 {#if entry.kind === 'plan' && entry.planRevision === sessionView.session.summary.currentPlanRevision && sessionView.session.summary.mode === 'plan' && sessionView.session.summary.state === 'awaitingPlanReview'}
                   <div class="plan-actions">
                     <button
@@ -803,19 +834,28 @@
               </article>
             {/if}
             {#if pendingMessage || sessionView.session.summary.state === 'running'}
-              <article class="message agent-message working" role="status">
-                <span class="working-dot"></span>
-                <div>
-                  <strong>A^3 arbeitet</strong>
-                  <p>
-                    {sessionView.session.summary.mode === 'ask'
-                      ? 'Sammelt und prüft Informationen …'
-                      : sessionView.session.summary.mode === 'plan'
+              {#if sessionView.session.summary.mode === 'ask' && latestAskSequence}
+                <AgentAskResearch
+                  sessionId={sessionView.session.summary.sessionId}
+                  userSequence={latestAskSequence}
+                  refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                  live
+                />
+              {:else}
+                <article class="message agent-message working" role="status">
+                  <span class="working-dot"></span>
+                  <div>
+                    <strong>A^3 arbeitet</strong>
+                    <p>
+                      {sessionView.session.summary.mode === 'plan'
                         ? 'Strukturiert Entscheidungen und Prüfschritte …'
-                        : 'Analysiert Aufgabe, Kontext und sichere Ausführung …'}
-                  </p>
-                </div>
-              </article>
+                        : sessionView.session.summary.mode === 'ask'
+                          ? 'Recherche wird vorbereitet …'
+                          : 'Analysiert Aufgabe, Kontext und sichere Ausführung …'}
+                    </p>
+                  </div>
+                </article>
+              {/if}
             {/if}
           </div>
         {/if}
@@ -910,25 +950,43 @@
           aria-label="Inspector einklappen">›</button
         >
       </header>
-      <nav class="inspector-tabs" aria-label="Inspector Ansichten">
-        <button
-          type="button"
-          aria-current={inspectorTab === 'progress' ? 'page' : undefined}
-          onclick={() => (inspectorTab = 'progress')}>Fortschritt</button
+      {#if selectedSummary?.mode !== 'ask'}<nav
+          class="inspector-tabs"
+          aria-label="Inspector Ansichten"
         >
-        <button
-          type="button"
-          aria-current={inspectorTab === 'changes' ? 'page' : undefined}
-          onclick={() => (inspectorTab = 'changes')}>Änderungen</button
-        >
-        <button
-          type="button"
-          aria-current={inspectorTab === 'review' ? 'page' : undefined}
-          onclick={() => (inspectorTab = 'review')}>Review</button
-        >
-      </nav>
+          <button
+            type="button"
+            aria-current={inspectorTab === 'progress' ? 'page' : undefined}
+            onclick={() => (inspectorTab = 'progress')}>Fortschritt</button
+          >
+          <button
+            type="button"
+            aria-current={inspectorTab === 'changes' ? 'page' : undefined}
+            onclick={() => (inspectorTab = 'changes')}>Änderungen</button
+          >
+          <button
+            type="button"
+            aria-current={inspectorTab === 'review' ? 'page' : undefined}
+            onclick={() => (inspectorTab = 'review')}>Review</button
+          >
+        </nav>{/if}
       <div class="inspector-content">
-        {#if !activeTaskId}
+        {#if selectedSummary?.mode === 'ask'}
+          {#if latestAskSequence}
+            <AgentAskResearch
+              compact
+              sessionId={selectedSummary.sessionId}
+              userSequence={latestAskSequence}
+              refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
+              live={selectedSummary.state === 'running'}
+            />
+          {:else}
+            <div class="inspector-empty">
+              <span aria-hidden="true">⌕</span>
+              <p>Der Rechercheweg erscheint nach der ersten Ask-Frage.</p>
+            </div>
+          {/if}
+        {:else if !activeTaskId}
           <div class="inspector-empty">
             <span aria-hidden="true">◎</span>
             <p>Run-Details erscheinen hier, sobald eine geprüfte Agent-Ausführung startet.</p>

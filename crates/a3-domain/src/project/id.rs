@@ -79,6 +79,10 @@ stable_id!(
     AgentSessionId
 );
 stable_id!(
+    /// Opaque identity of one source disclosed by a bounded Ask research turn.
+    AskResearchSourceId
+);
+stable_id!(
     /// Stable identity of one task-bearing work item within an Agent conversation.
     AgentWorkItemId
 );
@@ -154,10 +158,11 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 mod tests {
     use super::{
         AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-        ApprovalRequestId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId,
-        PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
-        SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
-        VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+        ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId,
+        DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId,
+        RemoteIdentity, RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId,
+        TaskId, TaskStepId, ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId,
+        WorktreeId,
     };
 
     #[test]
@@ -177,6 +182,7 @@ mod tests {
         assert_eq!(DeepMapRunId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentSessionId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AskResearchSourceId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentWorkItemId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AcceptanceCriterionId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskStepId::from_bytes(bytes).as_bytes(), &bytes);

@@ -35,19 +35,19 @@ use a3_application::{
     AgentLogPageOffset, AgentRecoveryChoice, AgentRecoveryError, AgentRecoveryOutcomeKind,
     AgentRecoveryStore, AgentRunExecutionRequest, AgentRunExecutor, AgentSessionDetail,
     AgentSessionListQuery, AgentSessionStore, AgentTaskControlFailure, AgentTaskControlResult,
-    AgentTaskRecovery, AgentTaskRecoveryLoadResult, AgentWorkspaceLayout, CompileWorkspaceTaskLens,
-    CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult, ControlAgentApproval,
-    ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure, DeepMapExecutionFailure,
-    DeepMapExecutor, DeepMapJournalEvent, DeepMapPhase, DeepMapPublicationState,
-    DeepMapPublicationStateStore, DeepMapRunCursor, DeepMapRunJournalStore, DeepMapRunSummary,
-    DeepMapSafeAction, DeepMapTargetKind, GetAgentActivity, GetAgentActivityFailure,
-    GetAgentApprovalCenter, GetAgentGoal, GetHealth, GetModuleCardDetail, GetModuleCardEvidence,
-    GetModuleCardFreshness, GetModuleDependencyGraph, GetModuleRuntimeMap, GetModuleTreePage,
-    GetProjectIndexStatus, GetProjectIndexStatusError, GetProjectMapScene,
-    GetProjectMapSourcePreview, GetProjectStorageUsage, GetProjectStorageUsageError,
-    GetPublishedIndexOverview, GetPublishedIndexOverviewError, GetRepositoryTreePage,
-    GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore, HealthQuery,
-    IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
+    AgentTaskRecovery, AgentTaskRecoveryLoadResult, AgentWorkspaceLayout, AskResearchStore,
+    CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,
+    ControlAgentApproval, ControlAgentTaskRun, CreateAgentGoal, CreateAgentGoalFailure,
+    DeepMapExecutionFailure, DeepMapExecutor, DeepMapJournalEvent, DeepMapPhase,
+    DeepMapPublicationState, DeepMapPublicationStateStore, DeepMapRunCursor,
+    DeepMapRunJournalStore, DeepMapRunSummary, DeepMapSafeAction, DeepMapTargetKind,
+    GetAgentActivity, GetAgentActivityFailure, GetAgentApprovalCenter, GetAgentGoal, GetHealth,
+    GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
+    GetModuleRuntimeMap, GetModuleTreePage, GetProjectIndexStatus, GetProjectIndexStatusError,
+    GetProjectMapScene, GetProjectMapSourcePreview, GetProjectStorageUsage,
+    GetProjectStorageUsageError, GetPublishedIndexOverview, GetPublishedIndexOverviewError,
+    GetRepositoryTreePage, GetTaskLensTask, GetTaskVerificationInspection, GoalContractStore,
+    HealthQuery, IndexPersistenceControl, IndexPersistenceControlError, InspectAgentTaskRecovery,
     JobEventStream, JobScheduler, JobSchedulerConfig, JobSchedulerConfigError,
     JobSchedulerCreateError, KnowledgeIndexFailure, KnowledgeIndexStore, KnowledgeSearchControl,
     KnowledgeSearchStore, KnowledgeStore, KnowledgeStoreFailure, ListRecentProjects,
@@ -431,6 +431,280 @@ impl CompositionRoot {
             )),
             None => Ok(AgentSessionResponseV1::not_found()),
         }
+    }
+
+    /// Lists the safe persistent research trail for Ask turns in one session.
+    pub async fn query_agent_ask_research_turns(
+        &self,
+        session_id: AgentSessionId,
+    ) -> Result<a3_protocol::AgentAskResearchTurnsResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentAskResearchTurnsResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchTurnsResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        if manager
+            .load(&active.project, session_id, None, 1)
+            .await
+            .map_err(map_agent_session_failure)?
+            .is_none()
+        {
+            return Ok(a3_protocol::AgentAskResearchTurnsResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchTurnsResultV1::NotFound,
+            });
+        }
+        let page = manager
+            .research_turns(&active.project, session_id)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let mut turns = Vec::with_capacity(page.turns().len());
+        for detail in page.turns() {
+            let source_count = research_source_count(
+                manager,
+                &active.project,
+                session_id,
+                detail.turn().user_sequence(),
+            )
+            .await?;
+            let last = detail.events().last().ok_or_else(|| {
+                CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable)
+            })?;
+            turns.push(a3_protocol::AgentAskResearchTurnV1::new(
+                detail.turn().user_sequence().get().to_string(),
+                map_ask_phase(last.phase()),
+                map_ask_state(last.state()),
+                last.action().to_owned(),
+                detail.turn().started_at().unix_millis().to_string(),
+                source_count,
+                u16::try_from(detail.cited_sources().len()).unwrap_or(u16::MAX),
+                research_stale(detail, current.as_ref()),
+            ));
+        }
+        Ok(a3_protocol::AgentAskResearchTurnsResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentAskResearchTurnsResultV1::Available { turns },
+        })
+    }
+
+    /// Loads one safe chronological Ask research trail.
+    pub async fn query_agent_ask_research_detail(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> Result<a3_protocol::AgentAskResearchDetailResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentAskResearchDetailResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchDetailResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let session = manager
+            .load(&active.project, session_id, None, 128)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let Some(session) = session else {
+            return Ok(a3_protocol::AgentAskResearchDetailResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchDetailResultV1::NotFound,
+            });
+        };
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            let was_ask_message = session.entries().iter().any(|entry| {
+                entry.sequence() == user_sequence
+                    && entry.kind() == AgentSessionEntryKind::UserMessage
+            }) && session.session().mode() == AgentSessionMode::Ask;
+            return Ok(a3_protocol::AgentAskResearchDetailResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: if was_ask_message {
+                    a3_protocol::AgentAskResearchDetailResultV1::NotRecorded
+                } else {
+                    a3_protocol::AgentAskResearchDetailResultV1::NotFound
+                },
+            });
+        };
+        let source_count =
+            research_source_count(manager, &active.project, session_id, user_sequence).await?;
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let steps = detail
+            .events()
+            .iter()
+            .map(|event| {
+                a3_protocol::AgentAskResearchStepV1::new(
+                    map_ask_phase(event.phase()),
+                    map_ask_state(event.state()),
+                    event.action().to_owned(),
+                    event.query().map(ToOwned::to_owned),
+                    map_ask_completeness(event.completeness()),
+                    event.occurred_at().unix_millis().to_string(),
+                )
+            })
+            .collect();
+        Ok(a3_protocol::AgentAskResearchDetailResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentAskResearchDetailResultV1::Available {
+                detail: a3_protocol::AgentAskResearchDetailV1::new(
+                    user_sequence.get().to_string(),
+                    steps,
+                    source_count,
+                    u16::try_from(detail.cited_sources().len()).unwrap_or(u16::MAX),
+                    research_stale(&detail, current.as_ref()),
+                ),
+            },
+        })
+    }
+
+    /// Lists one cursor-bound page of metadata-only Ask sources.
+    pub async fn query_agent_ask_research_sources(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        cursor: Option<&str>,
+    ) -> Result<a3_protocol::AgentAskResearchSourcesResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentAskResearchSourcesResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcesResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentAskResearchSourcesResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcesResultV1::NotFound,
+            });
+        };
+        let revision = detail
+            .events()
+            .last()
+            .map(|event| event.sequence())
+            .unwrap_or(0);
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let after = cursor
+            .map(|value| {
+                decode_research_cursor(
+                    value,
+                    active.project.worktree().id(),
+                    session_id,
+                    user_sequence,
+                    revision,
+                    current.as_ref(),
+                )
+            })
+            .transpose()?;
+        let page = manager
+            .research_sources(&active.project, session_id, user_sequence, after)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let cited = detail.cited_sources();
+        let sources = page
+            .sources()
+            .iter()
+            .map(|source| map_ask_source(source, cited.contains(&source.id())))
+            .collect::<Vec<_>>();
+        let next_cursor = if page.has_more() {
+            page.sources().last().map(|source| {
+                research_cursor(
+                    active.project.worktree().id(),
+                    session_id,
+                    user_sequence,
+                    revision,
+                    source.ordinal(),
+                    current.as_ref(),
+                )
+            })
+        } else {
+            None
+        };
+        Ok(a3_protocol::AgentAskResearchSourcesResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentAskResearchSourcesResultV1::Available {
+                sources,
+                next_cursor,
+            },
+        })
+    }
+
+    /// Loads one safe current preview through an opaque Ask source capability.
+    pub async fn query_agent_ask_research_source_preview(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        source_id: a3_domain::AskResearchSourceId,
+    ) -> Result<a3_protocol::AgentAskResearchSourcePreviewResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentAskResearchSourcePreviewResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcePreviewResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentAskResearchSourcePreviewResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcePreviewResultV1::NotFound,
+            });
+        };
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        if research_stale(&detail, current.as_ref()) {
+            return Ok(a3_protocol::AgentAskResearchSourcePreviewResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcePreviewResultV1::Stale,
+            });
+        }
+        let Some(source) = manager
+            .research_source(&active.project, session_id, user_sequence, source_id)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentAskResearchSourcePreviewResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentAskResearchSourcePreviewResultV1::NotFound,
+            });
+        };
+        let preview = a3_application::read_current_source_preview(
+            &WorkspaceAgentSourceReader,
+            &active.project,
+            source.revision(),
+            source.range(),
+            &DesktopBoundedReadControl::new(),
+        )
+        .await
+        .map_err(map_project_map_source_preview_error_to_v1)?;
+        Ok(a3_protocol::AgentAskResearchSourcePreviewResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentAskResearchSourcePreviewResultV1::Available {
+                preview: map_project_map_source_preview_to_v1(&preview),
+            },
+        })
     }
 
     /// Persists one message and completes its bounded read-only conversation turn.
@@ -3725,6 +3999,7 @@ struct OptionalCompositionPorts {
     settings_store: Option<Arc<dyn a3_application::DesktopSettingsStore>>,
     credential_store: Option<Arc<dyn a3_application::ProviderCredentialStore>>,
     agent_session_store: Option<Arc<dyn AgentSessionStore>>,
+    ask_research_store: Option<Arc<dyn AskResearchStore>>,
     ui_preferences_store: Option<Arc<dyn UiPreferencesStore>>,
     command_allowlist_store: Option<Arc<dyn a3_application::CommandAllowlistStore>>,
     project_ignore_settings_source: Option<Arc<dyn a3_application::ProjectIgnoreSettingsSource>>,
@@ -3762,6 +4037,7 @@ struct IndexingCompositionPorts {
     settings_store: Arc<dyn a3_application::DesktopSettingsStore>,
     credential_store: Arc<dyn a3_application::ProviderCredentialStore>,
     agent_session_store: Arc<dyn AgentSessionStore>,
+    ask_research_store: Arc<dyn AskResearchStore>,
     ui_preferences_store: Arc<dyn UiPreferencesStore>,
     command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore>,
     project_ignore_settings_source: Arc<dyn a3_application::ProjectIgnoreSettingsSource>,
@@ -3847,6 +4123,7 @@ impl CompositionBase {
                 settings_store: Some(ports.settings_store),
                 credential_store: Some(ports.credential_store),
                 agent_session_store: Some(ports.agent_session_store),
+                ask_research_store: Some(ports.ask_research_store),
                 ui_preferences_store: Some(ports.ui_preferences_store),
                 command_allowlist_store: Some(ports.command_allowlist_store),
                 project_ignore_settings_source: Some(ports.project_ignore_settings_source),
@@ -4004,12 +4281,16 @@ impl CompositionBase {
             ports.task_lens_index_store.as_ref(),
             ports.knowledge_search_store.as_ref(),
             ports.task_lens_claim_store.as_ref(),
+            ports.ask_research_store.as_ref(),
         ) {
-            (Some(index), Some(search), Some(claims)) => Some(AgentAskResearcher::new(
-                Arc::clone(index),
-                Arc::clone(search),
-                Arc::clone(claims),
-            )),
+            (Some(index), Some(search), Some(claims), Some(trace)) => {
+                Some(AgentAskResearcher::new(
+                    Arc::clone(index),
+                    Arc::clone(search),
+                    Arc::clone(claims),
+                    Arc::clone(trace),
+                ))
+            }
             _ => None,
         };
         let production_agent_run_executor = match (
@@ -4232,6 +4513,7 @@ impl CompositionBase {
                     run_manager: agent_run_manager.clone(),
                     reporter: agent_session_reporter,
                     researcher: agent_ask_researcher,
+                    research_store: ports.ask_research_store.clone(),
                 }))
             }
             _ => None,
@@ -4323,6 +4605,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             let credential_store: Arc<dyn a3_application::ProviderCredentialStore> =
                 Arc::new(NativeProviderCredentialStore::new());
             let agent_session_store: Arc<dyn AgentSessionStore> = store.clone();
+            let ask_research_store: Arc<dyn AskResearchStore> = store.clone();
             let ui_preferences_store: Arc<dyn UiPreferencesStore> = store.clone();
             let command_allowlist_store: Arc<dyn a3_application::CommandAllowlistStore> =
                 store.clone();
@@ -4375,6 +4658,7 @@ pub fn run() -> Result<(), DesktopRunError> {
                     settings_store,
                     credential_store,
                     agent_session_store,
+                    ask_research_store,
                     ui_preferences_store,
                     command_allowlist_store,
                     project_ignore_settings_source,
@@ -4455,6 +4739,10 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_agent_approval,
             commands::query_agent_session,
             commands::query_agent_sessions,
+            commands::query_agent_ask_research_turns,
+            commands::query_agent_ask_research_detail,
+            commands::query_agent_ask_research_sources,
+            commands::query_agent_ask_research_source_preview,
             commands::query_agent_inspection,
             commands::query_agent_inspection_log,
             commands::query_agent_goal,
@@ -4974,6 +5262,195 @@ fn map_project_map_source_preview_to_v1(
         preview.truncated_before(),
         preview.truncated_after(),
     )
+}
+
+async fn research_source_count(
+    manager: &AgentSessionManager,
+    project: &ProjectIdentity,
+    session_id: AgentSessionId,
+    user_sequence: a3_domain::AgentSessionSequence,
+) -> Result<u16, CommandErrorV1> {
+    let mut after = None;
+    let mut count = 0usize;
+    loop {
+        let page = manager
+            .research_sources(project, session_id, user_sequence, after)
+            .await
+            .map_err(map_agent_session_failure)?;
+        count = count.saturating_add(page.sources().len());
+        if !page.has_more() {
+            break;
+        }
+        after = page
+            .sources()
+            .last()
+            .map(a3_application::AskResearchSource::ordinal);
+        if after.is_none() {
+            return Err(CommandErrorV1::agent_session(
+                ErrorCodeV1::AgentSessionUnavailable,
+            ));
+        }
+    }
+    Ok(u16::try_from(count).unwrap_or(u16::MAX))
+}
+
+fn research_stale(
+    detail: &a3_application::AskResearchDetail,
+    current: Option<&a3_domain::PublishedIndex>,
+) -> bool {
+    current.is_none_or(|index| {
+        index.run().id() != detail.turn().index_run_id()
+            || index.run().snapshot_id() != detail.turn().snapshot_id()
+    })
+}
+
+const fn map_ask_phase(value: a3_domain::AskResearchPhase) -> a3_protocol::AgentAskResearchPhaseV1 {
+    match value {
+        a3_domain::AskResearchPhase::Preparing => a3_protocol::AgentAskResearchPhaseV1::Preparing,
+        a3_domain::AskResearchPhase::SelectingEvidence => {
+            a3_protocol::AgentAskResearchPhaseV1::SelectingEvidence
+        }
+        a3_domain::AskResearchPhase::SearchingSource => {
+            a3_protocol::AgentAskResearchPhaseV1::SearchingSource
+        }
+        a3_domain::AskResearchPhase::InspectingSource => {
+            a3_protocol::AgentAskResearchPhaseV1::InspectingSource
+        }
+        a3_domain::AskResearchPhase::Answering => a3_protocol::AgentAskResearchPhaseV1::Answering,
+        a3_domain::AskResearchPhase::Completed => a3_protocol::AgentAskResearchPhaseV1::Completed,
+    }
+}
+
+const fn map_ask_state(value: a3_domain::AskResearchState) -> a3_protocol::AgentAskResearchStateV1 {
+    match value {
+        a3_domain::AskResearchState::Running => a3_protocol::AgentAskResearchStateV1::Running,
+        a3_domain::AskResearchState::Completed => a3_protocol::AgentAskResearchStateV1::Completed,
+        a3_domain::AskResearchState::Failed => a3_protocol::AgentAskResearchStateV1::Failed,
+        a3_domain::AskResearchState::Cancelled => a3_protocol::AgentAskResearchStateV1::Cancelled,
+    }
+}
+
+const fn map_ask_completeness(
+    value: a3_domain::AskResearchCompleteness,
+) -> a3_protocol::AgentAskResearchCompletenessV1 {
+    match value {
+        a3_domain::AskResearchCompleteness::Complete => {
+            a3_protocol::AgentAskResearchCompletenessV1::Complete
+        }
+        a3_domain::AskResearchCompleteness::Limited => {
+            a3_protocol::AgentAskResearchCompletenessV1::Limited
+        }
+        a3_domain::AskResearchCompleteness::NotApplicable => {
+            a3_protocol::AgentAskResearchCompletenessV1::NotApplicable
+        }
+    }
+}
+
+fn map_ask_source(
+    source: &a3_application::AskResearchSource,
+    used_for_answer: bool,
+) -> a3_protocol::AgentAskResearchSourceV1 {
+    let (start_line, end_line) = source.range().map_or((None, None), |range| {
+        (
+            Some(range.start_position().row().saturating_add(1)),
+            Some(range.end_position().row().saturating_add(1)),
+        )
+    });
+    a3_protocol::AgentAskResearchSourceV1::new(
+        source.id().to_string(),
+        repository_path_display(source.revision().path()),
+        start_line,
+        end_line,
+        source.symbol().map(ToOwned::to_owned),
+        match source.kind() {
+            a3_domain::AskResearchSourceKind::File => {
+                a3_protocol::AgentAskResearchSourceKindV1::File
+            }
+            a3_domain::AskResearchSourceKind::Symbol => {
+                a3_protocol::AgentAskResearchSourceKindV1::Symbol
+            }
+            a3_domain::AskResearchSourceKind::Relationship => {
+                a3_protocol::AgentAskResearchSourceKindV1::Relationship
+            }
+            a3_domain::AskResearchSourceKind::VerifiedClaim => {
+                a3_protocol::AgentAskResearchSourceKindV1::VerifiedClaim
+            }
+        },
+        match source.reason() {
+            a3_domain::AskResearchSelectionReason::ExactNameOrPath => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::ExactNameOrPath
+            }
+            a3_domain::AskResearchSelectionReason::IndexedText => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::IndexedText
+            }
+            a3_domain::AskResearchSelectionReason::Relationship => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::Relationship
+            }
+            a3_domain::AskResearchSelectionReason::Test => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::Test
+            }
+            a3_domain::AskResearchSelectionReason::VerifiedModuleKnowledge => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::VerifiedModuleKnowledge
+            }
+            a3_domain::AskResearchSelectionReason::SemanticCandidate => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::SemanticCandidate
+            }
+            a3_domain::AskResearchSelectionReason::SourceText => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::SourceText
+            }
+        },
+        used_for_answer,
+    )
+}
+
+fn research_cursor(
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: a3_domain::AgentSessionSequence,
+    revision: u32,
+    ordinal: u32,
+    current: Option<&a3_domain::PublishedIndex>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"a3.ask-research-cursor.v1");
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(session_id.as_bytes());
+    hasher.update(&user_sequence.get().to_be_bytes());
+    hasher.update(&revision.to_be_bytes());
+    hasher.update(&ordinal.to_be_bytes());
+    match current {
+        Some(index) => {
+            hasher.update(&[1]);
+            hasher.update(index.run().id().as_bytes());
+            hasher.update(index.run().snapshot_id().as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+fn decode_research_cursor(
+    value: &str,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: a3_domain::AgentSessionSequence,
+    revision: u32,
+    current: Option<&a3_domain::PublishedIndex>,
+) -> Result<u32, CommandErrorV1> {
+    (1..=200)
+        .find(|ordinal| {
+            research_cursor(
+                worktree_id,
+                session_id,
+                user_sequence,
+                revision,
+                *ordinal,
+                current,
+            ) == value
+        })
+        .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::InvalidAgentSessionRequest))
 }
 
 fn map_module_card_evidence_to_v1(detail: &ModuleCardEvidenceDetail) -> ModuleCardEvidenceV1 {
@@ -8870,11 +9347,11 @@ mod tests {
         MAX_PROJECT_PATH_DISPLAY_CHARS, decode_deep_map_entry_selection,
         decode_deep_map_impact_cursor, decode_deep_map_module_selection,
         decode_deep_map_run_cursor, decode_deep_map_run_selection, decode_deep_map_step_cursor,
-        encode_deep_map_entry_selection, encode_deep_map_impact_cursor,
+        decode_research_cursor, encode_deep_map_entry_selection, encode_deep_map_impact_cursor,
         encode_deep_map_module_selection, encode_deep_map_run_cursor,
         encode_deep_map_run_selection, encode_deep_map_step_cursor, map_agent_goal_to_v1,
         map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1, project_path_display,
-        publication_read_failure_lifecycle,
+        publication_read_failure_lifecycle, repository_path_display, research_cursor,
     };
     use a3_application::DeepMapRunCursor;
     use a3_application::{
@@ -8882,9 +9359,9 @@ mod tests {
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
-        AcceptanceCriterionStatement, DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp,
-        GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModuleId,
-        SuccessVerification, TaskId, WorktreeId,
+        AcceptanceCriterionStatement, AgentSessionId, AgentSessionSequence, DeepMapEventSequence,
+        DeepMapRunId, DeepMapRunTimestamp, GoalContract, GoalContractDraft, GoalContractTimestamp,
+        GoalObjective, ModuleId, RepositoryPath, SuccessVerification, TaskId, WorktreeId,
     };
     use a3_protocol::{
         AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1, DeepMapCompactProgressV3,
@@ -8917,6 +9394,63 @@ mod tests {
         assert_eq!(display.chars().count(), MAX_PROJECT_PATH_DISPLAY_CHARS);
         assert!(!display.chars().any(char::is_control));
         assert!(display.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn ask_research_path_display_is_control_free() -> Result<(), Box<dyn Error>> {
+        let path = RepositoryPath::try_from_bytes(b"src/\nmodule.rs".to_vec())?;
+
+        assert_eq!(repository_path_display(&path), "src/\u{fffd}module.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn ask_research_cursor_is_bound_to_worktree_session_turn_and_trace_revision()
+    -> Result<(), Box<dyn Error>> {
+        let worktree = WorktreeId::from_bytes([1; 32]);
+        let session = AgentSessionId::from_bytes([2; 32]);
+        let sequence = AgentSessionSequence::new(3)?;
+        let cursor = research_cursor(worktree, session, sequence, 4, 5, None);
+
+        assert_eq!(
+            decode_research_cursor(&cursor, worktree, session, sequence, 4, None),
+            Ok(5)
+        );
+        assert!(
+            decode_research_cursor(
+                &cursor,
+                WorktreeId::from_bytes([9; 32]),
+                session,
+                sequence,
+                4,
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            decode_research_cursor(
+                &cursor,
+                worktree,
+                AgentSessionId::from_bytes([8; 32]),
+                sequence,
+                4,
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            decode_research_cursor(
+                &cursor,
+                worktree,
+                session,
+                AgentSessionSequence::new(7)?,
+                4,
+                None,
+            )
+            .is_err()
+        );
+        assert!(decode_research_cursor(&cursor, worktree, session, sequence, 6, None).is_err());
+        Ok(())
     }
 
     #[test]

@@ -208,7 +208,8 @@ pnpm tauri build --no-bundle
 Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, explizit allowlisteten
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence-, Deep-Map-,
-Project-Map-Search-, Task-Lens-, Agent-Goal- und Agent-Activity-Commands aufrufen.
+Project-Map-Search-, Task-Lens-, Agent-Goal-, Agent-Activity- und projektgebundene
+Ask-Recherche-Commands aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte
@@ -243,6 +244,13 @@ höchstens die letzten 64 zusammenhängenden Journalereignisse und prüft Task-,
 Run-Anker nach dem Read erneut. Die WebView kann weder eine Run-/Snapshot-ID wählen noch Journal-,
 Storage- oder Toolfähigkeiten erlangen; eine gleichzeitige Änderung wird als eigener
 `activityChanged`-Zustand zurückgegeben.
+`query_agent_ask_research_turns`, `query_agent_ask_research_detail` und
+`query_agent_ask_research_sources` liefern ausschließlich begrenzte inhaltsfreie Phasen,
+Task-Lens-Auswahlgründe und aktuelle hashgebundene Source-Metadaten. Der vierte Read
+`query_agent_ask_research_source_preview` akzeptiert nur eine zuvor ausgegebene opake
+Source-Referenz und lädt bewusst höchstens 64 Zeilen beziehungsweise 16 KiB über den sicheren
+Reader. Kein Request akzeptiert einen Pfad oder Evidence-/Index-/Snapshot-/Provideranker; nach
+einem Indexwechsel bleiben historische Metadaten sichtbar, Quelltext wird aber gesperrt.
 `query_agent_task_recovery` und `control_agent_task_run` leiten den steuerbaren Run ebenfalls
 ausschließlich aus dieser Task-ID ab. Resume, Replan und Cancel laufen über den bestehenden
 atomaren H11/E8-Vertrag; die Mutation trägt nur die sichtbare Ledgerrevision/-Storeversion und

@@ -82,6 +82,15 @@ Wert zurücksetzen. Nach Annahme einer Nachricht wird jede laufende Session daue
 auch bei einem Workerfehler, einer vollen Queue und einem Abbruch ohne noch sichtbaren Job-Snapshot;
 ein konkurrierender Abschluss wird über die Session-Revision idempotent aufgelöst.
 
+Ask besitzt innerhalb dieses Conversationjobs einen endlichen Unterablauf: gebundenen Index laden,
+Task Lens und optionalen aktuellen Source-Text lesen, Antwort erzeugen. Nur wenn der erste strikt
+strukturierte Modellturn fehlende Evidence meldet, folgt genau eine weitere Read-only-Aktionsrunde
+mit höchstens vier Aktionen. Über beide Modellturns ist nur ein Schema-Reparaturversuch erlaubt.
+Jeder Recherchefortschritt wird sofort als inhaltsfreies V30-Event gespeichert; Cancellation oder
+Fehler schließen den Trace bestmöglich terminal, ohne bereits gefundene Source-Metadaten zu
+verlieren. Der erfolgreiche Abschluss committet Antwort, Zitate, terminales Event und
+Sessionrevision atomar. Kein Ask-Worker wird detached und kein UI-Poll startet neue Arbeit.
+
 Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
 auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine
 erfolgreiche H11/E8-Inspektion eines weiterhin nichtterminalen Runs. Resume beziehungsweise

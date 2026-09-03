@@ -46,10 +46,10 @@ fn channels_run_in_order_and_claims_are_packed_before_optional_semantic_candidat
         calls: &calls,
     };
     let control = RecordingControl::default();
-    let lens = block_on(
+    let trace = block_on(
         CompileTaskLens::new(&store, &store, &store)
             .with_semantic(&store)
-            .execute(
+            .execute_with_trace(
                 &project()?,
                 TaskLensSeedSet::new(
                     seed("fix broken parser")?,
@@ -63,6 +63,7 @@ fn channels_run_in_order_and_claims_are_packed_before_optional_semantic_candidat
                 &control,
             ),
     )?;
+    let lens = trace.lens();
 
     let calls = calls
         .lock()
@@ -107,6 +108,28 @@ fn channels_run_in_order_and_claims_are_packed_before_optional_semantic_candidat
     assert_eq!(lens.claims().len(), 1);
     assert_eq!(lens.claims()[0].kind(), VerifiedClaimKind::Hypothesis);
     assert!(lens.truncated());
+    assert_eq!(
+        trace
+            .channels()
+            .iter()
+            .map(|channel| channel.channel())
+            .collect::<Vec<_>>(),
+        vec![
+            SourceChannel::Exact,
+            SourceChannel::Lexical,
+            SourceChannel::Graph,
+            SourceChannel::Test,
+            SourceChannel::Memory,
+            SourceChannel::Semantic,
+        ]
+    );
+    assert!(
+        trace
+            .channels()
+            .iter()
+            .find(|channel| channel.channel() == SourceChannel::Exact)
+            .is_some_and(|channel| channel.candidates() > 0 && channel.selected() > 0)
+    );
     Ok(())
 }
 

@@ -4,6 +4,7 @@ mod agent_action_codec;
 mod agent_actions;
 mod agent_activity;
 mod agent_approval;
+mod agent_ask_research;
 mod agent_controller;
 mod agent_goal;
 mod agent_inspection;
@@ -15,6 +16,7 @@ mod agent_session;
 mod agent_source_reader;
 mod agent_task_control;
 mod agent_turn;
+mod ask_research_action_codec;
 mod command_discovery;
 mod context_compiler;
 mod deep_map_action_codec;
@@ -108,6 +110,13 @@ pub use agent_activity::{
     GetAgentActivityFailure,
 };
 pub use agent_approval::*;
+pub use agent_ask_research::{
+    AskResearchDataError, AskResearchDetail, AskResearchEvent, AskResearchSource,
+    AskResearchSourcePage, AskResearchStore, AskResearchStoreFailure, AskResearchStoreFuture,
+    AskResearchTurn, AskResearchTurnPage, AskSourceSearchControl, AskSourceSearchFailure,
+    AskSourceSearcher, AskSourceSearcherFuture, AskSourceTextHit, AskSourceTextSearch,
+    AskSourceTextSearchResult,
+};
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
     AcceptanceVerifier, AcceptanceVerifierFailure, AcceptanceVerifierFuture,
@@ -152,6 +161,10 @@ pub use agent_turn::{
     AgentReadAction, AgentReadTimeout, AgentReadTimeoutError, AgentReadToolFailure, AgentReadTools,
     AgentReadToolsFuture, AgentTurnExecution, AgentTurnOutcome, AgentTurnRejectionReason,
     ExecuteAgentTurn, ExecuteAgentTurnFailure, ExecuteReadOnlyAgentTurn, RejectedAgentTurn,
+};
+pub use ask_research_action_codec::{
+    AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,
+    AskResearchDecisionJsonSchema, DecodeAskResearchDecision,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
@@ -383,6 +396,7 @@ pub use project_map_source_preview::{
     GetProjectMapSourcePreview, ProjectMapSourceHighlight, ProjectMapSourcePreview,
     ProjectMapSourcePreviewControl, ProjectMapSourcePreviewControlError,
     ProjectMapSourcePreviewFailure, ProjectMapSourcePreviewQuery, ProjectMapSourcePreviewResult,
+    read_current_source_preview,
 };
 pub use project_reconciliation::{
     ProjectCatalogRevision, ProjectCatalogRevisionError, ProjectOpenPreparation,
@@ -458,12 +472,13 @@ pub use task_ledger::{
     TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,
 };
 pub use task_lens::{
-    CompileTaskLens, CompileTaskLensFailure, TaskLensClaimLimit, TaskLensClaimReadFuture,
-    TaskLensClaimResult, TaskLensClaimResultError, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
-    TaskLensIndexStoreFuture, TaskLensSemanticHit, TaskLensSemanticLimit, TaskLensSemanticResult,
-    TaskLensSemanticResultError, TaskLensSemanticSearch, TaskLensSemanticSearchFailure,
-    TaskLensSemanticSearchFuture, TaskLensTimeout, TaskLensTimeoutError,
+    CompileTaskLens, CompileTaskLensFailure, TaskLensChannelTrace, TaskLensClaimLimit,
+    TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimResultError, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensCompilationTrace, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensSemanticHit,
+    TaskLensSemanticLimit, TaskLensSemanticResult, TaskLensSemanticResultError,
+    TaskLensSemanticSearch, TaskLensSemanticSearchFailure, TaskLensSemanticSearchFuture,
+    TaskLensTimeout, TaskLensTimeoutError,
 };
 pub use task_lens_workspace::{
     CompileWorkspaceTaskLens, CompileWorkspaceTaskLensFailure, CompileWorkspaceTaskLensResult,

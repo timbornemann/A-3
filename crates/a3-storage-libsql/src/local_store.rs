@@ -4,11 +4,11 @@ use crate::{
     ProjectStorageLayoutError, StorageLayout,
 };
 use crate::{
-    agent_recovery_repository, agent_session_repository, command_allowlist_repository,
-    deep_map_journal_repository, deep_map_repository, exact_search_repository,
-    goal_contract_repository, graph_traversal_repository, index_publication, index_repository,
-    index_repository::IndexRepositoryError, lexical_search_repository,
-    module_card_detail_repository, module_card_evidence_repository,
+    agent_ask_research_repository, agent_recovery_repository, agent_session_repository,
+    command_allowlist_repository, deep_map_journal_repository, deep_map_repository,
+    exact_search_repository, goal_contract_repository, graph_traversal_repository,
+    index_publication, index_repository, index_repository::IndexRepositoryError,
+    lexical_search_repository, module_card_detail_repository, module_card_evidence_repository,
     module_card_freshness_repository, module_card_repository, module_dependency_graph_repository,
     module_remap_queue_repository, module_runtime_repository, module_tree_repository,
     policy_repository, project_map_atlas_insight_repository, project_map_scene_repository,
@@ -22,11 +22,13 @@ use a3_application::{
     AgentMutationResultRecord, AgentRecoveryChoice, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
     AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture, AgentWorkspaceLayout,
-    CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,
-    CommandAllowlistStoreVersion, DeepMapEntryPage, DeepMapJournalEvent,
-    DeepMapPublicationStateFuture, DeepMapPublicationStateStore, DeepMapRunCursor,
-    DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage, DeepMapRunStart,
-    DesktopSettingsStore, DesktopSettingsStoreFuture, DesktopSettingsStoreVersion,
+    AskResearchDetail, AskResearchEvent, AskResearchSource, AskResearchSourcePage,
+    AskResearchStore, AskResearchStoreFailure, AskResearchStoreFuture, AskResearchTurn,
+    AskResearchTurnPage, CommandAllowlistStore, CommandAllowlistStoreFailure,
+    CommandAllowlistStoreFuture, CommandAllowlistStoreVersion, DeepMapEntryPage,
+    DeepMapJournalEvent, DeepMapPublicationStateFuture, DeepMapPublicationStateStore,
+    DeepMapRunCursor, DeepMapRunJournalFuture, DeepMapRunJournalStore, DeepMapRunPage,
+    DeepMapRunStart, DesktopSettingsStore, DesktopSettingsStoreFuture, DesktopSettingsStoreVersion,
     EmbeddingOperationControl, EvaluatedPolicyAction, GoalContractStore, GoalContractStoreFailure,
     GoalContractStoreFuture, IndexPersistenceControl, KnowledgeIndexFailure, KnowledgeIndexFuture,
     KnowledgeIndexStore, KnowledgeSearchControl, KnowledgeSearchFailure, KnowledgeSearchFuture,
@@ -76,8 +78,8 @@ use a3_domain::{
     AgentRunTimestamp, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision,
     AgentToolAttempt, AgentToolAttemptNumber, AgentToolAttemptStatus, AgentToolEvidence,
     ApprovalGrant, ApprovalGrantState, ApprovalId, ApprovalRequest, ApprovalRequestId,
-    DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp, EmbeddingCacheKey,
-    EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
+    AskResearchSourceId, DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp,
+    EmbeddingCacheKey, EmbeddingModelProfile, EmbeddingVector, ExactSearchCursor, ExactSearchPage,
     ExactSearchPageSize, ExactSearchQuery, ExactSearchTarget, ExplorePlan, GoalContract,
     GoalContractRevision, GraphTraversalResult, IndexPublication, IndexRunId, IndexRunRecord,
     IndexRunSequence, IndexRunStart, IndexRunTerminalOutcome, LexicalSearchCursor,
@@ -480,6 +482,224 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             .map_err(|error| error.classify())
         })
     }
+}
+
+impl AskResearchStore for LibsqlKnowledgeStore {
+    fn begin_turn<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        turn: &'a AskResearchTurn,
+        first_event: &'a AskResearchEvent,
+    ) -> AskResearchStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::begin(
+                &connection,
+                project.worktree().id(),
+                turn,
+                first_event,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_event<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        event: &'a AskResearchEvent,
+    ) -> AskResearchStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::append_event(&connection, project.worktree().id(), event)
+                .await
+                .map_err(|error| error.classify())
+        })
+    }
+
+    fn append_sources<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        sources: &'a [AskResearchSource],
+    ) -> AskResearchStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::append_sources(
+                &connection,
+                project.worktree().id(),
+                sources,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn complete_turn<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_session_revision: AgentSessionRevision,
+        session: &'a AgentSession,
+        answer: &'a AgentSessionEntry,
+        event: &'a AskResearchEvent,
+        cited_sources: &'a [AskResearchSourceId],
+    ) -> AskResearchStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::complete(
+                &connection,
+                project.worktree().id(),
+                expected_session_revision,
+                session,
+                answer,
+                event,
+                cited_sources,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_turns<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        limit: u16,
+    ) -> AskResearchStoreFuture<'a, AskResearchTurnPage> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::list_turns(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_detail<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> AskResearchStoreFuture<'a, Option<AskResearchDetail>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_detail(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_sources<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        after_ordinal: Option<u32>,
+        limit: u16,
+    ) -> AskResearchStoreFuture<'a, AskResearchSourcePage> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::list_sources(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+                after_ordinal,
+                limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_source<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        source_id: AskResearchSourceId,
+    ) -> AskResearchStoreFuture<'a, Option<AskResearchSource>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_source(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+                source_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+}
+
+fn map_ask_open_failure(_failure: AgentSessionStoreFailure) -> AskResearchStoreFailure {
+    AskResearchStoreFailure::Unavailable
 }
 
 impl KnowledgeStore for LibsqlKnowledgeStore {

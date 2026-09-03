@@ -754,6 +754,16 @@ gelten einschließlich aller Adapteraufrufe. Semantic ist eine optionale Capabil
 die vollständige deterministische Lens verfügbar. Similarity erzeugt ausschließlich Kandidaten und
 wird weder Evidence noch Fact.
 
+Für Ask ergänzt `execute_with_trace` dieselbe Lens kompatibel um eine inhaltsfreie Kanalprojektion:
+durchsuchter Kanal, zugelassene Kandidaten, schließlich ausgewählte Ziele und Trunkierung. Die Lens
+und ihr Ranking ändern sich dadurch nicht. Der Ask-Orchestrator stellt für den gesamten Turn einen
+zu Beginn gebundenen `PublishedIndex` als unveränderliche Index-Capability bereit, löst explizite
+`@pfad`-Nennungen zuerst auf und liest Symbol- beziehungsweise Span-Treffer an ihrer relevanten
+Range. Auswahlgründe werden geschlossen als exakter Name/Pfad, indexierter Text, Beziehung, Test,
+verifiziertes Modulwissen oder nach aktueller Source-Inspektion semantischer Kandidat projiziert.
+Nur die Metadaten dieses Zuschnitts werden dauerhaft; die Task Lens selbst, Source-Inhalt und
+Rankingwerte bleiben flüchtig.
+
 Der libSQL-Claim-Adapter liest nur Claims des exakt übergebenen aktuellen Runs in Claim-ID-Reihenfolge
 und macht eine Begrenzung als `truncated` sichtbar. Persistierte Evidence-Zeilen sind dabei keine
 Autorität: Evidence IDs werden gegen die vollständigen typisierten Objekte des unveränderlichen

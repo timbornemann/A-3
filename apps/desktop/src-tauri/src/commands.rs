@@ -25,7 +25,9 @@ use a3_application::{AgentSessionListQuery, AgentWorkspaceLayout, UiPreferencesS
 use a3_domain::{AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode};
 use a3_protocol::{
     ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
-    AgentApprovalResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
+    AgentApprovalResponseV1, AgentAskResearchDetailResponseV1,
+    AgentAskResearchSourcePreviewResponseV1, AgentAskResearchSourcesResponseV1,
+    AgentAskResearchTurnsResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
     AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSessionControlActionV1,
     AgentSessionModeV1, AgentSessionResponseV1, AgentSessionsResponseV1, AgentTaskControlActionV1,
     AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1,
@@ -45,9 +47,11 @@ use a3_protocol::{
     ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
     ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
     ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
-    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentGoalRequestV1,
-    QueryAgentInspectionLogRequestV1, QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1,
-    QueryAgentSessionsRequestV1, QueryAgentTaskRecoveryRequestV1, QueryDeepMapAtlasImpactRequestV1,
+    QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentAskResearchDetailRequestV1,
+    QueryAgentAskResearchSourcePreviewRequestV1, QueryAgentAskResearchSourcesRequestV1,
+    QueryAgentAskResearchTurnsRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
+    QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1, QueryAgentSessionsRequestV1,
+    QueryAgentTaskRecoveryRequestV1, QueryDeepMapAtlasImpactRequestV1,
     QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
     QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunDashboardRequestV1,
     QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1, QueryIndexActivityRequestV1,
@@ -314,6 +318,42 @@ pub async fn query_agent_session(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
     execute_query_agent_session(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Lists persistent research turns without exposing index or provider identities.
+pub async fn query_agent_ask_research_turns(
+    request: QueryAgentAskResearchTurnsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentAskResearchTurnsResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_turns(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads one safe chronological Ask research projection.
+pub async fn query_agent_ask_research_detail(
+    request: QueryAgentAskResearchDetailRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentAskResearchDetailResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_detail(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Lists one bound page of sources found or used by Ask.
+pub async fn query_agent_ask_research_sources(
+    request: QueryAgentAskResearchSourcesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentAskResearchSourcesResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_sources(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads a safe source preview through an opaque research source reference.
+pub async fn query_agent_ask_research_source_preview(
+    request: QueryAgentAskResearchSourcePreviewRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentAskResearchSourcePreviewResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_source_preview(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -1158,6 +1198,79 @@ async fn execute_query_agent_session(
         return Err(invalid_agent_session());
     }
     root.query_agent_session(session_id, before, request.limit())
+        .await
+}
+
+async fn execute_query_agent_ask_research_turns(
+    request: QueryAgentAskResearchTurnsRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentAskResearchTurnsResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let session_id = AgentSessionId::from_bytes(
+        decode_stable_id(request.session_id()).map_err(|_| invalid_agent_session())?,
+    );
+    root.query_agent_ask_research_turns(session_id).await
+}
+
+async fn execute_query_agent_ask_research_detail(
+    request: QueryAgentAskResearchDetailRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentAskResearchDetailResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let session_id = AgentSessionId::from_bytes(
+        decode_stable_id(request.session_id()).map_err(|_| invalid_agent_session())?,
+    );
+    let sequence = a3_domain::AgentSessionSequence::new(
+        parse_canonical_positive_u64(request.user_sequence())
+            .map_err(|_| invalid_agent_session())?,
+    )
+    .map_err(|_| invalid_agent_session())?;
+    root.query_agent_ask_research_detail(session_id, sequence)
+        .await
+}
+
+async fn execute_query_agent_ask_research_sources(
+    request: QueryAgentAskResearchSourcesRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentAskResearchSourcesResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let session_id = AgentSessionId::from_bytes(
+        decode_stable_id(request.session_id()).map_err(|_| invalid_agent_session())?,
+    );
+    let sequence = a3_domain::AgentSessionSequence::new(
+        parse_canonical_positive_u64(request.user_sequence())
+            .map_err(|_| invalid_agent_session())?,
+    )
+    .map_err(|_| invalid_agent_session())?;
+    root.query_agent_ask_research_sources(session_id, sequence, request.cursor())
+        .await
+}
+
+async fn execute_query_agent_ask_research_source_preview(
+    request: QueryAgentAskResearchSourcePreviewRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentAskResearchSourcePreviewResponseV1, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let session_id = AgentSessionId::from_bytes(
+        decode_stable_id(request.session_id()).map_err(|_| invalid_agent_session())?,
+    );
+    let sequence = a3_domain::AgentSessionSequence::new(
+        parse_canonical_positive_u64(request.user_sequence())
+            .map_err(|_| invalid_agent_session())?,
+    )
+    .map_err(|_| invalid_agent_session())?;
+    let source_id = a3_domain::AskResearchSourceId::from_bytes(
+        decode_stable_id(request.source_ref()).map_err(|_| invalid_agent_session())?,
+    );
+    root.query_agent_ask_research_source_preview(session_id, sequence, source_id)
         .await
 }
 

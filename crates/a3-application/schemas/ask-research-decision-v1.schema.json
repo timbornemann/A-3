@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "decision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "markdown", "source_refs"],
+          "properties": {
+            "kind": { "const": "answer" },
+            "markdown": { "type": "string", "minLength": 1, "maxLength": 262144 },
+            "source_refs": {
+              "type": "array",
+              "maxItems": 200,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^S(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|200)$" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "actions"],
+          "properties": {
+            "kind": { "const": "research" },
+            "actions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "query"],
+                    "properties": { "kind": { "const": "searchIndex" }, "query": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "literals"],
+                    "properties": {
+                      "kind": { "const": "searchSourceText" },
+                      "literals": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "path"],
+                    "properties": { "kind": { "const": "inspectPath" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "source_ref"],
+                    "properties": { "kind": { "const": "inspectSource" }, "source_ref": { "type": "string", "pattern": "^S(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|200)$" } }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

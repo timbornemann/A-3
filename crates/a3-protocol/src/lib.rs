@@ -2,6 +2,7 @@
 
 mod agent_activity;
 mod agent_approval;
+mod agent_ask_research;
 mod agent_control;
 mod agent_goal;
 mod agent_inspection;
@@ -43,6 +44,7 @@ pub use agent_activity::{
     QueryAgentActivityRequestV1,
 };
 pub use agent_approval::*;
+pub use agent_ask_research::*;
 pub use agent_control::{
     AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
     AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,

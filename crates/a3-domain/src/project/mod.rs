@@ -1,4 +1,5 @@
 mod agent_action;
+mod agent_ask_research;
 mod agent_controller;
 mod agent_run;
 mod agent_session;
@@ -51,6 +52,10 @@ pub use agent_action::{
     AgentInspectAction, AgentInspectTarget, AgentLedgerUpdate, AgentRunAction, AgentSearchAction,
     AgentSearchLimit, AgentSearchLimitError, AgentSearchQuery, AgentTestSelector,
     AgentUpdateLedgerAction,
+};
+pub use agent_ask_research::{
+    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceKind,
+    AskResearchState,
 };
 pub use agent_controller::{
     AcceptanceCriterionVerification, AcceptanceVerificationError, AcceptanceVerificationReceipt,
@@ -161,9 +166,9 @@ pub use graph_retrieval::{
 };
 pub use id::{
     AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-    ApprovalRequestId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId,
-    PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId,
-    SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
+    ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId,
+    IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId,
+    RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
     VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};

@@ -107,7 +107,7 @@ function parseResult(value: unknown): ProjectMapSourcePreviewResultV1 {
     if (value.status === status && hasExactKeys(value, ['status'])) return { status };
   }
   if (value.status === 'available' && hasExactKeys(value, ['preview', 'status'])) {
-    return { preview: parsePreview(value.preview), status: 'available' };
+    return { preview: parseProjectMapSourcePreviewV1(value.preview), status: 'available' };
   }
   return invalidResult();
 }
@@ -116,7 +116,7 @@ function invalidResult(): never {
   throw new Error('Project Map source-preview response contains an invalid result.');
 }
 
-function parsePreview(value: unknown): ProjectMapSourcePreviewV1 {
+export function parseProjectMapSourcePreviewV1(value: unknown): ProjectMapSourcePreviewV1 {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [

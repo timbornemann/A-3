@@ -236,7 +236,7 @@ pub(crate) async fn load(
         .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
 }
 
-async fn require_latest_revision(
+pub(crate) async fn require_latest_revision(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     session_id: AgentSessionId,
@@ -265,7 +265,7 @@ async fn require_latest_revision(
     Ok(())
 }
 
-async fn insert_revision(
+pub(crate) async fn insert_revision(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     session: &AgentSession,
@@ -304,7 +304,7 @@ async fn insert_revision(
     Ok(())
 }
 
-async fn insert_entry(
+pub(crate) async fn insert_entry(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     session_revision: AgentSessionRevision,
@@ -521,7 +521,7 @@ fn u64_to_i64(value: u64) -> Result<i64, AgentSessionRepositoryError> {
     i64::try_from(value).map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
 }
 
-async fn close<T>(
+pub(crate) async fn close<T>(
     transaction: Transaction,
     result: Result<T, AgentSessionRepositoryError>,
 ) -> Result<T, AgentSessionRepositoryError> {

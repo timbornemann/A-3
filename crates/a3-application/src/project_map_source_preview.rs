@@ -340,39 +340,56 @@ impl GetProjectMapSourcePreview {
                 }
             }
         };
-        checkpoint(control)?;
-        let (start_line, line_count) = preview_window(evidence_range)?;
-        let request = AgentFileInspection::new(revision.path().clone(), start_line, line_count);
-        let page = self
-            .source
-            .read_page(project, &revision, &request, &PreviewSourceControl(control))
-            .await
-            .map_err(map_source_failure)?;
-        checkpoint(control)?;
-        if page.revision() != &revision
-            || page.start_line() != start_line
-            || page.text().len() > MAX_PREVIEW_BYTES
-        {
-            return Err(ProjectMapSourcePreviewFailure::InvalidProjection);
-        }
-        let actual_line_count = source_line_count(page.text())?;
-        if actual_line_count > MAX_PREVIEW_LINES {
-            return Err(ProjectMapSourcePreviewFailure::InvalidProjection);
-        }
-        let preview = ProjectMapSourcePreview {
-            language: language_for_path(revision.path()),
-            path_display: path_display(revision.path()),
-            start_line: start_line.get(),
-            line_count: actual_line_count,
-            highlight: evidence_range
-                .and_then(|range| visible_highlight(range, start_line.get(), actual_line_count)),
-            text: page.text().to_owned(),
-            truncated_before: start_line.get() > 1,
-            truncated_after: page.truncated(),
-        };
+        let preview = read_current_source_preview(
+            self.source.as_ref(),
+            project,
+            &revision,
+            evidence_range,
+            control,
+        )
+        .await?;
         report(control, 2)?;
         Ok(ProjectMapSourcePreviewResult::Available(preview))
     }
+}
+
+/// Reads one already-authorized current revision through the shared 64-line/16-KiB preview policy.
+pub async fn read_current_source_preview(
+    source: &dyn AgentSourceReader,
+    project: &ProjectIdentity,
+    revision: &FileRevision,
+    evidence_range: Option<SourceRange>,
+    control: &dyn ProjectMapSourcePreviewControl,
+) -> Result<ProjectMapSourcePreview, ProjectMapSourcePreviewFailure> {
+    checkpoint(control)?;
+    let (start_line, line_count) = preview_window(evidence_range)?;
+    let request = AgentFileInspection::new(revision.path().clone(), start_line, line_count);
+    let page = source
+        .read_page(project, revision, &request, &PreviewSourceControl(control))
+        .await
+        .map_err(map_source_failure)?;
+    checkpoint(control)?;
+    if page.revision() != revision
+        || page.start_line() != start_line
+        || page.text().len() > MAX_PREVIEW_BYTES
+    {
+        return Err(ProjectMapSourcePreviewFailure::InvalidProjection);
+    }
+    let actual_line_count = source_line_count(page.text())?;
+    if actual_line_count > MAX_PREVIEW_LINES {
+        return Err(ProjectMapSourcePreviewFailure::InvalidProjection);
+    }
+    Ok(ProjectMapSourcePreview {
+        language: language_for_path(revision.path()),
+        path_display: path_display(revision.path()),
+        start_line: start_line.get(),
+        line_count: actual_line_count,
+        highlight: evidence_range
+            .and_then(|range| visible_highlight(range, start_line.get(), actual_line_count)),
+        text: page.text().to_owned(),
+        truncated_before: start_line.get() > 1,
+        truncated_after: page.truncated(),
+    })
 }
 
 #[derive(Debug)]
