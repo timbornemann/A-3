@@ -72,6 +72,16 @@ Wahrheitsquelle. Polling und WebView-Mount erzeugen keine Arbeit. Während ein W
 Recovery ausschließlich Task-, Ledger- und Produktzustand aus einem read-only Core-Read und führt
 keine H11-Neustartinspektion aus.
 
+Ask-, Plan- und Agent-Vorbereitung besitzen je Job genau eine feste, monotone äußere
+Fortschrittsskala. Task-Lens-Phasen werden in den dafür reservierten Abschnitt dieser Skala
+übersetzt; Indexmaterialisierung meldet dort nur Cancellation. Ein produktiver Agentenversuch
+besitzt entsprechend ausschließlich die monotone Turn-Skala. Untergeordnete Kontext-, Index-,
+Patch- und Prozessoperationen dürfen diese Scheduler-Skala weder ersetzen noch auf einen kleineren
+Wert zurücksetzen. Nach Annahme einer Nachricht wird jede laufende Session dauerhaft in
+`Completed`, `AwaitingUser`, `AwaitingPlanReview`, `Failed` oder `Cancelled` überführt. Das gilt
+auch bei einem Workerfehler, einer vollen Queue und einem Abbruch ohne noch sichtbaren Job-Snapshot;
+ein konkurrierender Abschluss wird über die Session-Revision idempotent aufgelöst.
+
 Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
 auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine
 erfolgreiche H11/E8-Inspektion eines weiterhin nichtterminalen Runs. Resume beziehungsweise

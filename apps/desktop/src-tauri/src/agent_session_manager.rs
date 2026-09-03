@@ -6,8 +6,8 @@ use a3_application::{
     AgentSessionListQuery, AgentSessionPage, AgentSessionStore, AgentSessionStoreFailure,
     AppendRunEvent, CompileTaskLens, CreateAgentRun, CreateGoalContract, CreateTaskLedger,
     GoalContractStore, JobCompletion, JobContext, JobSubmitter, KnowledgeIndexStore,
-    KnowledgeSearchStore, RunJournalStore, TaskLedgerStore, TaskLensClaimStore, TaskLensIndexStore,
-    validate_agent_session_transition,
+    KnowledgeSearchStore, RunJournalStore, TaskLedgerStore, TaskLensClaimStore, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, validate_agent_session_transition,
 };
 use a3_application::{AgentSourceReader, DiscoverProjectCommands, ModelMessageRole};
 use a3_domain::{
@@ -32,6 +32,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SESSION_PAGE_LIMIT: u16 = 128;
 const AGENT_CONVERSATION_JOB_OWNER: JobOwner = JobOwner::new(4);
+const CONVERSATION_PROGRESS_TOTAL: u64 = 10;
+const TASK_LENS_PROGRESS_END: u64 = 7;
 
 /// Core task persistence required to turn one reviewed plan into authoritative harness anchors.
 #[derive(Clone)]
@@ -64,7 +66,7 @@ impl AgentTaskMaterializer {
         objective: &str,
         reviewed_plan: &str,
         profile: a3_domain::ModelProfile,
-        control: &JobContext,
+        control: &dyn a3_application::IndexPersistenceControl,
     ) -> Result<MaterializedAgentTask, AgentSessionManagerFailure> {
         let published = self
             .index
@@ -275,12 +277,13 @@ impl AgentAskResearcher {
             .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
         let seeds = TaskLensSeedSet::new(seed.clone(), seed, Vec::new())
             .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
+        let lens_control = ConversationTaskLensControl { context: control };
         let lens = CompileTaskLens::new(
             self.index.as_ref(),
             self.search.as_ref(),
             self.claims.as_ref(),
         )
-        .execute(project, seeds, TaskLensTokenBudget::DEFAULT, control)
+        .execute(project, seeds, TaskLensTokenBudget::DEFAULT, &lens_control)
         .await
         .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
         let source = WorkspaceAgentSourceReader;
@@ -358,6 +361,51 @@ impl fmt::Debug for AgentAskResearcher {
         formatter
             .debug_struct("AgentAskResearcher")
             .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+struct ConversationTaskLensControl<'a> {
+    context: &'a JobContext,
+}
+
+#[derive(Debug)]
+struct ConversationIndexControl<'a> {
+    context: &'a JobContext,
+}
+
+impl a3_application::IndexPersistenceControl for ConversationIndexControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_progress(
+        &self,
+        _progress: Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
+impl TaskLensControl for ConversationTaskLensControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_progress(&self, progress: Progress) -> Result<(), TaskLensControlError> {
+        let completed = match (progress.completed(), progress.total()) {
+            (Some(completed), Some(total)) if total > 0 => completed
+                .saturating_mul(TASK_LENS_PROGRESS_END)
+                .checked_div(total)
+                .unwrap_or(0)
+                .min(TASK_LENS_PROGRESS_END),
+            _ => return Err(TaskLensControlError::Unavailable),
+        };
+        let progress = Progress::determinate(completed, CONVERSATION_PROGRESS_TOTAL)
+            .map_err(|_| TaskLensControlError::Unavailable)?;
+        self.context
+            .report_progress(progress)
+            .map_err(|_| TaskLensControlError::Unavailable)
     }
 }
 
@@ -557,20 +605,42 @@ impl AgentSessionManager {
     }
 
     /// Requests cooperative cancellation of the currently owned Ask/Plan preparation job.
-    pub(crate) fn cancel_conversation(
+    pub(crate) async fn cancel_conversation(
         &self,
+        project: &ProjectIdentity,
         session_id: AgentSessionId,
     ) -> Result<(), AgentSessionManagerFailure> {
         self.release_terminal_job();
         let job_id = lock_recovering_poison(&self.active_session)
             .as_ref()
             .filter(|active| active.session_id == session_id)
-            .and_then(|active| active.job_id)
-            .ok_or(AgentSessionManagerFailure::Conflict)?;
-        self.submitter
-            .cancel(job_id)
-            .map(|_result| ())
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)
+            .and_then(|active| active.job_id);
+        if let Some(job_id) = job_id {
+            self.submitter
+                .cancel(job_id)
+                .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+        }
+        settle_unfinished_conversation(
+            &self.store,
+            project,
+            session_id,
+            ConversationTerminal::Cancelled,
+        )
+        .await?;
+        let mut active = lock_recovering_poison(&self.active_session);
+        let can_release = job_id.is_none_or(|job_id| {
+            self.submitter
+                .snapshot(job_id)
+                .is_none_or(|snapshot| snapshot.status().is_terminal())
+        });
+        if can_release
+            && active
+                .as_ref()
+                .is_some_and(|conversation| conversation.session_id == session_id)
+        {
+            *active = None;
+        }
+        Ok(())
     }
 
     pub(crate) async fn submit(
@@ -701,10 +771,25 @@ impl AgentSessionManager {
             })
             .collect::<Vec<_>>();
         let objective = user_entry.text().as_str().to_owned();
-        let job_id = self
-            .job_ids
-            .allocate()
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+        let job_id = match self.job_ids.allocate() {
+            Ok(job_id) => job_id,
+            Err(_) => {
+                settle_unfinished_conversation(
+                    &self.store,
+                    project,
+                    operation_session_id,
+                    ConversationTerminal::Failed(
+                        "Die lokale Laufzeit konnte keinen neuen Arbeitsauftrag anlegen. Starte A^3 neu und versuche es erneut.",
+                    ),
+                )
+                .await?;
+                return self
+                    .store
+                    .load_session(project, operation_session_id, None, SESSION_PAGE_LIMIT)
+                    .await?
+                    .ok_or(AgentSessionManagerFailure::NotFound);
+            }
+        };
         let store = Arc::clone(&self.store);
         let runtime = self.runtime.clone();
         let materializer = self.materializer.clone();
@@ -714,28 +799,42 @@ impl AgentSessionManager {
         let job_project = project.clone();
         let scheduled_session = session.clone();
         let user_sequence = user_entry.sequence();
-        self.submitter
-            .submit(
-                job_id,
-                AGENT_CONVERSATION_JOB_OWNER,
-                move |context: JobContext| {
-                    tauri::async_runtime::block_on(complete_scheduled_session(
-                        store,
-                        runtime,
-                        job_project,
-                        scheduled_session,
-                        user_sequence,
-                        objective,
-                        transcript,
-                        materializer,
-                        run_manager,
-                        reporter,
-                        researcher,
-                        context,
-                    ))
-                },
+        let scheduled = self.submitter.submit(
+            job_id,
+            AGENT_CONVERSATION_JOB_OWNER,
+            move |context: JobContext| {
+                tauri::async_runtime::block_on(complete_scheduled_session(
+                    store,
+                    runtime,
+                    job_project,
+                    scheduled_session,
+                    user_sequence,
+                    objective,
+                    transcript,
+                    materializer,
+                    run_manager,
+                    reporter,
+                    researcher,
+                    context,
+                ))
+            },
+        );
+        if scheduled.is_err() {
+            settle_unfinished_conversation(
+                &self.store,
+                project,
+                operation_session_id,
+                ConversationTerminal::Failed(
+                    "Die lokale Laufzeit konnte die Verarbeitung nicht starten. Versuche es erneut, sobald der aktuelle Lauf beendet ist.",
+                ),
             )
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+            .await?;
+            return self
+                .store
+                .load_session(project, operation_session_id, None, SESSION_PAGE_LIMIT)
+                .await?
+                .ok_or(AgentSessionManagerFailure::NotFound);
+        }
         operation.activate(job_id);
         Ok(detail)
     }
@@ -912,34 +1011,63 @@ impl AgentSessionManager {
         self.store
             .append_session_revision(project, expected, &running, None)
             .await?;
-        let job_id = self
-            .job_ids
-            .allocate()
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+        let job_id = match self.job_ids.allocate() {
+            Ok(job_id) => job_id,
+            Err(_) => {
+                settle_unfinished_conversation(
+                    &self.store,
+                    project,
+                    session_id,
+                    ConversationTerminal::Failed(
+                        "Die lokale Laufzeit konnte keinen neuen Agentenlauf anlegen. Der geprüfte Plan bleibt in dieser Session erhalten.",
+                    ),
+                )
+                .await?;
+                return self
+                    .store
+                    .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+                    .await?
+                    .ok_or(AgentSessionManagerFailure::NotFound);
+            }
+        };
         let store = Arc::clone(&self.store);
         let runtime = self.runtime.clone();
         let job_project = project.clone();
         let scheduled_session = running.clone();
-        self.submitter
-            .submit(
-                job_id,
-                AGENT_CONVERSATION_JOB_OWNER,
-                move |context: JobContext| {
-                    tauri::async_runtime::block_on(complete_plan_implementation(
-                        store,
-                        runtime,
-                        materializer,
-                        run_manager,
-                        reporter,
-                        job_project,
-                        scheduled_session,
-                        objective,
-                        plan,
-                        context,
-                    ))
-                },
+        let scheduled = self.submitter.submit(
+            job_id,
+            AGENT_CONVERSATION_JOB_OWNER,
+            move |context: JobContext| {
+                tauri::async_runtime::block_on(complete_plan_implementation(
+                    store,
+                    runtime,
+                    materializer,
+                    run_manager,
+                    reporter,
+                    job_project,
+                    scheduled_session,
+                    objective,
+                    plan,
+                    context,
+                ))
+            },
+        );
+        if scheduled.is_err() {
+            settle_unfinished_conversation(
+                &self.store,
+                project,
+                session_id,
+                ConversationTerminal::Failed(
+                    "Die lokale Laufzeit konnte den Agentenlauf nicht starten. Der geprüfte Plan bleibt in dieser Session erhalten.",
+                ),
             )
-            .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+            .await?;
+            return self
+                .store
+                .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+                .await?
+                .ok_or(AgentSessionManagerFailure::NotFound);
+        }
         operation.activate(job_id);
         self.store
             .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
@@ -1023,15 +1151,26 @@ async fn complete_plan_implementation(
     context: JobContext,
 ) -> JobCompletion {
     if context.cancellation_token().is_cancelled() {
+        let _settled = settle_unfinished_conversation(
+            &store,
+            &project,
+            session.id(),
+            ConversationTerminal::Cancelled,
+        )
+        .await;
         return JobCompletion::Cancelled;
     }
+    let recovery_store = Arc::clone(&store);
+    let recovery_project = project.clone();
+    let recovery_session_id = session.id();
     let result = async {
+        let index_control = ConversationIndexControl { context: &context };
         let (_, profile) = runtime
             .execution_model()
             .await
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
         let task = materializer
-            .materialize(&project, &objective, &plan, profile, &context)
+            .materialize(&project, &objective, &plan, profile, &index_control)
             .await?;
         let sequence = next_sequence(session.latest_sequence())?;
         let now = timestamp()?;
@@ -1073,8 +1212,26 @@ async fn complete_plan_implementation(
     .await;
     match result {
         Ok(()) => JobCompletion::Succeeded,
-        Err(_) if context.cancellation_token().is_cancelled() => JobCompletion::Cancelled,
-        Err(_) => JobCompletion::Failed,
+        Err(_) if context.cancellation_token().is_cancelled() => {
+            let _settled = settle_unfinished_conversation(
+                &recovery_store,
+                &recovery_project,
+                recovery_session_id,
+                ConversationTerminal::Cancelled,
+            )
+            .await;
+            JobCompletion::Cancelled
+        }
+        Err(error) => {
+            let _settled = settle_unfinished_conversation(
+                &recovery_store,
+                &recovery_project,
+                recovery_session_id,
+                ConversationTerminal::Failed(safe_manager_failure_message(error)),
+            )
+            .await;
+            JobCompletion::Failed
+        }
     }
 }
 
@@ -1093,6 +1250,9 @@ async fn complete_scheduled_session(
     researcher: Option<AgentAskResearcher>,
     context: JobContext,
 ) -> JobCompletion {
+    let recovery_store = Arc::clone(&store);
+    let recovery_project = project.clone();
+    let recovery_session_id = session.id();
     match complete_scheduled_session_inner(
         store,
         runtime,
@@ -1110,7 +1270,26 @@ async fn complete_scheduled_session(
     .await
     {
         Ok(completion) => completion,
-        Err(_) => JobCompletion::Failed,
+        Err(error) => {
+            let terminal = if context.cancellation_token().is_cancelled() {
+                ConversationTerminal::Cancelled
+            } else {
+                ConversationTerminal::Failed(safe_manager_failure_message(error))
+            };
+            let completion = if terminal == ConversationTerminal::Cancelled {
+                JobCompletion::Cancelled
+            } else {
+                JobCompletion::Failed
+            };
+            let _settled = settle_unfinished_conversation(
+                &recovery_store,
+                &recovery_project,
+                recovery_session_id,
+                terminal,
+            )
+            .await;
+            completion
+        }
     }
 }
 
@@ -1129,7 +1308,8 @@ async fn complete_scheduled_session_inner(
     researcher: Option<AgentAskResearcher>,
     context: &JobContext,
 ) -> Result<JobCompletion, AgentSessionManagerFailure> {
-    report_progress(context, 1)?;
+    report_progress(context, 0)?;
+    let index_control = ConversationIndexControl { context };
     if session.mode() == AgentSessionMode::Ask {
         let evidence = researcher
             .ok_or(AgentSessionManagerFailure::Unavailable)?
@@ -1142,12 +1322,13 @@ async fn complete_scheduled_session_inner(
             ),
         ));
     }
+    report_progress(context, 8)?;
     let output = if context.cancellation_token().is_cancelled() {
         Err(AgentConversationFailure::Unavailable)
     } else {
         runtime.complete(session.mode(), &transcript, context).await
     };
-    report_progress(context, 2)?;
+    report_progress(context, 9)?;
     let cancelled = context.cancellation_token().is_cancelled();
     let completed_at = timestamp()?;
     let sequence = user_sequence
@@ -1214,7 +1395,13 @@ async fn complete_scheduled_session_inner(
                                 .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
                             Some(
                                 materializer
-                                    .materialize(&project, &objective, &content, profile, context)
+                                    .materialize(
+                                        &project,
+                                        &objective,
+                                        &content,
+                                        profile,
+                                        &index_control,
+                                    )
                                     .await?,
                             )
                         }
@@ -1300,16 +1487,93 @@ async fn complete_scheduled_session_inner(
             .start_attempt(request)
             .map_err(|_| AgentSessionManagerFailure::Busy)?;
     }
-    report_progress(context, 3)?;
+    let _reported = report_progress(context, CONVERSATION_PROGRESS_TOTAL);
     Ok(completion)
 }
 
 fn report_progress(context: &JobContext, completed: u64) -> Result<(), AgentSessionManagerFailure> {
-    let progress =
-        Progress::determinate(completed, 3).map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+    let progress = Progress::determinate(completed, CONVERSATION_PROGRESS_TOTAL)
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
     context
         .report_progress(progress)
         .map_err(|_| AgentSessionManagerFailure::Unavailable)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConversationTerminal {
+    Cancelled,
+    Failed(&'static str),
+}
+
+async fn settle_unfinished_conversation(
+    store: &Arc<dyn AgentSessionStore>,
+    project: &ProjectIdentity,
+    session_id: AgentSessionId,
+    terminal: ConversationTerminal,
+) -> Result<(), AgentSessionManagerFailure> {
+    for _attempt in 0..2 {
+        let detail = store
+            .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+            .await?
+            .ok_or(AgentSessionManagerFailure::NotFound)?;
+        if detail.session().state() != AgentSessionState::Running {
+            return Ok(());
+        }
+        let (state, message) = match terminal {
+            ConversationTerminal::Cancelled => (
+                AgentSessionState::Cancelled,
+                "Die aktuelle Verarbeitung wurde abgebrochen.",
+            ),
+            ConversationTerminal::Failed(message) => (AgentSessionState::Failed, message),
+        };
+        let sequence = next_sequence(detail.session().latest_sequence())?;
+        let completed_at = timestamp()?;
+        let next = successor(
+            detail.session(),
+            SessionSuccessor {
+                title: detail.session().title().as_str().to_owned(),
+                mode: detail.session().mode(),
+                state,
+                updated_at: completed_at,
+                latest_sequence: Some(sequence),
+                active_work_item: detail.session().active_work_item(),
+                plan_revision: detail.session().current_plan_revision(),
+                presentation_deleted: false,
+            },
+        )?;
+        let entry = AgentSessionEntry::new(
+            session_id,
+            sequence,
+            AgentSessionEntryKind::FinalReport,
+            AgentSessionText::try_from_string(message.to_owned())
+                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+            completed_at,
+            detail.session().active_work_item().map(AgentWorkItem::id),
+            detail
+                .session()
+                .active_work_item()
+                .map(AgentWorkItem::task_id),
+            detail.session().current_plan_revision(),
+        );
+        validate_agent_session_transition(detail.session(), &next)?;
+        match store
+            .append_session_revision(project, detail.session().revision(), &next, Some(&entry))
+            .await
+        {
+            Ok(()) => return Ok(()),
+            Err(AgentSessionStoreFailure::Conflict) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let latest = store
+        .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+        .await?
+        .ok_or(AgentSessionManagerFailure::NotFound)?;
+    if latest.session().state() == AgentSessionState::Running {
+        Err(AgentSessionManagerFailure::Conflict)
+    } else {
+        Ok(())
+    }
 }
 
 struct SessionSuccessor {
@@ -1477,6 +1741,23 @@ const fn safe_failure_message(error: AgentConversationFailure) -> &'static str {
     }
 }
 
+const fn safe_manager_failure_message(error: AgentSessionManagerFailure) -> &'static str {
+    match error {
+        AgentSessionManagerFailure::InvalidInput | AgentSessionManagerFailure::InvalidOutput => {
+            "A^3 konnte die vorbereiteten Informationen nicht sicher verarbeiten. Prüfe den Projektindex und versuche es erneut."
+        }
+        AgentSessionManagerFailure::NotFound | AgentSessionManagerFailure::Conflict => {
+            "Die Session hat sich während der Verarbeitung geändert. Der zuletzt sicher gespeicherte Stand bleibt erhalten."
+        }
+        AgentSessionManagerFailure::Busy => {
+            "Ein anderer Agentenlauf belegt die lokale Laufzeit. Warte auf dessen Abschluss und versuche es erneut."
+        }
+        AgentSessionManagerFailure::Unavailable => {
+            "A^3 konnte das aktuelle Projektwissen nicht laden. Aktualisiere den Projektindex, prüfe das Coding-Modell und versuche es erneut."
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ActiveConversation {
     session_id: AgentSessionId,
@@ -1592,10 +1873,24 @@ impl Drop for AgentSessionManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentConversationFailure, PlanConversationResponse, classify_plan_response,
-        presentation_can_be_hidden, safe_failure_message,
+        AgentConversationFailure, ConversationTaskLensControl, ConversationTerminal,
+        PlanConversationResponse, classify_plan_response, presentation_can_be_hidden,
+        safe_failure_message, settle_unfinished_conversation,
     };
-    use a3_domain::AgentSessionState;
+    use a3_application::{
+        AgentSessionDetail, AgentSessionListQuery, AgentSessionPage, AgentSessionStore,
+        AgentSessionStoreFailure, AgentSessionStoreFuture, JobClock, JobCompletion, JobContext,
+        JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, TaskLensControl,
+    };
+    use a3_domain::{
+        AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
+        AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
+        AgentSessionTimestamp, AgentSessionTitle, JobId, JobOwner, Progress, ProjectIdentity,
+        RepositoryId, RepositoryIdentity, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    };
+    use futures::executor::block_on;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     #[test]
     fn plan_marker_is_removed_before_the_revision_is_persisted() {
@@ -1639,5 +1934,255 @@ mod tests {
         let timed_out = safe_failure_message(AgentConversationFailure::ModelTimedOut);
         assert!(timed_out.contains("feste Deadline"));
         assert!(timed_out.contains("schnelleres Coding-Modell"));
+    }
+
+    #[test]
+    fn ask_research_progress_stays_on_the_owning_conversation_scale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (scheduler, events) =
+            JobScheduler::new(JobSchedulerConfig::new(1, 2, 32)?, Arc::new(FixedClock))?;
+        scheduler.submit(JobId::new(91), JobOwner::new(4), |context: JobContext| {
+            if context
+                .report_progress(Progress::determinate(0, 10).unwrap_or(Progress::Indeterminate))
+                .is_err()
+            {
+                return JobCompletion::Failed;
+            }
+            let nested = ConversationTaskLensControl { context: &context };
+            for completed in 0..=7 {
+                let progress =
+                    Progress::determinate(completed, 7).unwrap_or(Progress::Indeterminate);
+                if nested.report_progress(progress).is_err() {
+                    return JobCompletion::Failed;
+                }
+            }
+            for completed in [8, 9, 10] {
+                if context
+                    .report_progress(
+                        Progress::determinate(completed, 10).unwrap_or(Progress::Indeterminate),
+                    )
+                    .is_err()
+                {
+                    return JobCompletion::Failed;
+                }
+            }
+            JobCompletion::Succeeded
+        })?;
+
+        let mut succeeded = false;
+        while let Some(event) = events.next_timeout(Duration::from_secs(2))? {
+            if event.kind() == JobEventKind::Succeeded {
+                succeeded = true;
+                break;
+            }
+            if matches!(event.kind(), JobEventKind::Failed | JobEventKind::Cancelled) {
+                break;
+            }
+        }
+        assert!(succeeded);
+        Ok(())
+    }
+
+    #[test]
+    fn unfinished_conversation_is_durably_failed_instead_of_remaining_running()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (session_id, concrete) = running_session_store(12)?;
+        let store: Arc<dyn AgentSessionStore> = concrete.clone();
+        let project = project();
+        block_on(settle_unfinished_conversation(
+            &store,
+            &project,
+            session_id,
+            ConversationTerminal::Failed("Projektwissen konnte nicht geladen werden."),
+        ))?;
+        block_on(settle_unfinished_conversation(
+            &store,
+            &project,
+            session_id,
+            ConversationTerminal::Cancelled,
+        ))?;
+
+        let detail = concrete.detail();
+        assert_eq!(detail.session().state(), AgentSessionState::Failed);
+        assert_eq!(detail.session().revision().get(), 2);
+        assert_eq!(detail.entries().len(), 2);
+        assert_eq!(
+            detail.entries()[1].text().as_str(),
+            "Projektwissen konnte nicht geladen werden."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unfinished_conversation_can_be_cancelled_without_an_active_scheduler_job()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (session_id, concrete) = running_session_store(13)?;
+        let store: Arc<dyn AgentSessionStore> = concrete.clone();
+
+        block_on(settle_unfinished_conversation(
+            &store,
+            &project(),
+            session_id,
+            ConversationTerminal::Cancelled,
+        ))?;
+
+        let detail = concrete.detail();
+        assert_eq!(detail.session().state(), AgentSessionState::Cancelled);
+        assert_eq!(detail.session().revision().get(), 2);
+        assert_eq!(detail.entries().len(), 2);
+        assert_eq!(
+            detail.entries()[1].text().as_str(),
+            "Die aktuelle Verarbeitung wurde abgebrochen."
+        );
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct FixedClock;
+
+    impl JobClock for FixedClock {
+        fn now(&self) -> JobTimestamp {
+            JobTimestamp::from_millis(1)
+        }
+    }
+
+    #[derive(Debug)]
+    struct MemorySessionStore {
+        value: Mutex<(AgentSession, Vec<AgentSessionEntry>)>,
+    }
+
+    impl MemorySessionStore {
+        fn new(session: AgentSession, entry: AgentSessionEntry) -> Self {
+            Self {
+                value: Mutex::new((session, vec![entry])),
+            }
+        }
+
+        fn detail(&self) -> AgentSessionDetail {
+            let value = self.value.lock().unwrap_or_else(|error| error.into_inner());
+            AgentSessionDetail::new(value.0.clone(), value.1.clone(), false)
+                .unwrap_or_else(|_| unreachable!())
+        }
+    }
+
+    impl AgentSessionStore for MemorySessionStore {
+        fn create_session<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session: &'a AgentSession,
+            _first_entry: Option<&'a AgentSessionEntry>,
+        ) -> AgentSessionStoreFuture<'a, ()> {
+            Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
+        }
+
+        fn append_session_revision<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            expected_revision: AgentSessionRevision,
+            session: &'a AgentSession,
+            entry: Option<&'a AgentSessionEntry>,
+        ) -> AgentSessionStoreFuture<'a, ()> {
+            Box::pin(async move {
+                let mut value = self.value.lock().unwrap_or_else(|error| error.into_inner());
+                if value.0.revision() != expected_revision {
+                    return Err(AgentSessionStoreFailure::Conflict);
+                }
+                value.0 = session.clone();
+                if let Some(entry) = entry {
+                    value.1.push(entry.clone());
+                }
+                Ok(())
+            })
+        }
+
+        fn list_sessions<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _query: &'a AgentSessionListQuery,
+        ) -> AgentSessionStoreFuture<'a, AgentSessionPage> {
+            Box::pin(async { AgentSessionPage::new(Vec::new(), false) })
+        }
+
+        fn load_session<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+            _before_sequence: Option<u64>,
+            _limit: u16,
+        ) -> AgentSessionStoreFuture<'a, Option<AgentSessionDetail>> {
+            Box::pin(async move { Ok(Some(self.detail())) })
+        }
+
+        fn delete_presentation<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+            _expected_revision: AgentSessionRevision,
+            _tombstone: &'a AgentSession,
+        ) -> AgentSessionStoreFuture<'a, ()> {
+            Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
+        }
+    }
+
+    fn running_session_store(
+        id_byte: u8,
+    ) -> Result<(AgentSessionId, Arc<MemorySessionStore>), Box<dyn std::error::Error>> {
+        let session_id = AgentSessionId::from_bytes([id_byte; 32]);
+        let timestamp = AgentSessionTimestamp::from_unix_millis(1)?;
+        let session = AgentSession::from_parts(
+            session_id,
+            AgentSessionRevision::INITIAL,
+            AgentSessionTitle::try_from_string("Ask".to_owned())?,
+            AgentSessionMode::Ask,
+            AgentSessionState::Running,
+            timestamp,
+            timestamp,
+            Some(AgentSessionSequence::FIRST),
+            None,
+            None,
+            false,
+        );
+        let entry = AgentSessionEntry::new(
+            session_id,
+            AgentSessionSequence::FIRST,
+            AgentSessionEntryKind::UserMessage,
+            AgentSessionText::try_from_string("Was macht A^3?".to_owned())?,
+            timestamp,
+            None,
+            None,
+            None,
+        );
+        Ok((
+            session_id,
+            Arc::new(MemorySessionStore::new(session, entry)),
+        ))
+    }
+
+    fn project() -> ProjectIdentity {
+        let repository_id = RepositoryId::from_bytes([1; 32]);
+        ProjectIdentity::new(
+            RepositoryIdentity::new(
+                repository_id,
+                a3_domain::CanonicalDirectory::from_canonicalized(
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                )
+                .unwrap_or_else(|_| unreachable!()),
+                None,
+            ),
+            WorktreeIdentity::new(
+                WorktreeId::from_bytes([2; 32]),
+                WorktreeAnchorId::from_bytes([3; 32]),
+                repository_id,
+                a3_domain::CanonicalDirectory::from_canonicalized(
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                )
+                .unwrap_or_else(|_| unreachable!()),
+            ),
+            a3_domain::GitHead::Unborn {
+                reference: a3_domain::GitReferenceName::try_from_full_name("refs/heads/main")
+                    .unwrap_or_else(|_| unreachable!()),
+            },
+        )
+        .unwrap_or_else(|_| unreachable!())
     }
 }

@@ -554,7 +554,8 @@ impl CompositionRoot {
                 ));
             }
             sessions
-                .cancel_conversation(session_id)
+                .cancel_conversation(&active.project, session_id)
+                .await
                 .map_err(map_agent_session_failure)?;
             return self.query_agent_session(session_id, None, 128).await;
         };

@@ -46,6 +46,46 @@ const reviewedPlan = (): AgentSessionResponseV1 => ({
   },
 });
 
+const askSession = (state: 'running' | 'completed'): AgentSessionResponseV1 => ({
+  protocolVersion: 1,
+  result: {
+    session: {
+      activeTaskId: null,
+      entries: [
+        {
+          createdAtUnixMillis: '100',
+          kind: 'userMessage',
+          planRevision: null,
+          sequence: '1',
+          text: 'Was macht A^3?',
+        },
+        ...(state === 'completed'
+          ? [
+              {
+                createdAtUnixMillis: '101',
+                kind: 'finalReport' as const,
+                planRevision: null,
+                sequence: '2',
+                text: 'A^3 ist ein evidenzgebundener Coding-Agent.',
+              },
+            ]
+          : []),
+      ],
+      hasOlderEntries: false,
+      summary: {
+        currentPlanRevision: null,
+        mode: 'ask',
+        revision: state === 'completed' ? '2' : '1',
+        sessionId,
+        state,
+        title: 'Was macht A^3?',
+        updatedAtUnixMillis: state === 'completed' ? '101' : '100',
+      },
+    },
+    status: 'available',
+  },
+});
+
 describe('AgentWorkspace', () => {
   it('keeps every Core boundary closed without an active project', () => {
     const sessionsLoader = vi.fn<() => Promise<AgentSessionsResponseV1>>();
@@ -157,5 +197,35 @@ describe('AgentWorkspace', () => {
     await waitFor(() =>
       expect(sessionController).toHaveBeenCalledWith(sessionId, '2', { kind: 'switchToPlan' }),
     );
+  });
+
+  it('keeps polling a running Ask session after a transient read failure', async () => {
+    const running = askSession('running');
+    const completed = askSession('completed');
+    if (running.result.status !== 'available') throw new Error('fixture must be available');
+    const runningSummary = running.result.session.summary;
+    let detailReads = 0;
+    const sessionLoader = vi.fn(async () => {
+      detailReads += 1;
+      if (detailReads === 2) throw new Error('transient read failure');
+      return detailReads >= 3 ? completed : running;
+    });
+    render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 5,
+      sessionLoader,
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [runningSummary],
+          status: 'available',
+        },
+      })),
+    });
+
+    await screen.findByText('Sammelt und prüft Informationen …');
+    await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
+    expect(detailReads).toBeGreaterThanOrEqual(3);
   });
 });

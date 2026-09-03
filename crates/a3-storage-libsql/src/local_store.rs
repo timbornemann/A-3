@@ -366,8 +366,12 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_agent_session(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
             agent_session_repository::create(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 session,
                 first_entry,
@@ -388,8 +392,12 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_agent_session(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
             agent_session_repository::append(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_revision,
                 session,
@@ -409,7 +417,11 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_agent_session(project)
                 .await?;
-            agent_session_repository::list(database.connection(), project.worktree().id(), query)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::list(&connection, project.worktree().id(), query)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -426,8 +438,12 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_agent_session(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
             agent_session_repository::load(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 session_id,
                 before_sequence,
@@ -449,8 +465,12 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_agent_session(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
             agent_session_repository::delete_presentation(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 session_id,
                 expected_revision,
@@ -712,13 +732,13 @@ impl GoalContractStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_goal_contract(project)
                 .await?;
-            goal_contract_repository::create(
-                database.connection(),
-                project.worktree().id(),
-                contract,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::create(&connection, project.worktree().id(), contract)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 
@@ -731,8 +751,12 @@ impl GoalContractStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_goal_contract(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
             goal_contract_repository::append_revision(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 contract,
             )
@@ -750,13 +774,13 @@ impl GoalContractStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_goal_contract(project)
                 .await?;
-            goal_contract_repository::load_current(
-                database.connection(),
-                project.worktree().id(),
-                task_id,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
+            goal_contract_repository::load_current(&connection, project.worktree().id(), task_id)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 
@@ -770,8 +794,12 @@ impl GoalContractStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_goal_contract(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| GoalContractStoreFailure::Unavailable)?;
             goal_contract_repository::load_revision(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 task_id,
                 revision,
@@ -790,7 +818,11 @@ impl TaskLedgerStore for LibsqlKnowledgeStore {
     ) -> TaskLedgerStoreFuture<'a, TaskLedgerStoreVersion> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_task_ledger(project).await?;
-            task_ledger_repository::create(database.connection(), project.worktree().id(), ledger)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| TaskLedgerStoreFailure::Unavailable)?;
+            task_ledger_repository::create(&connection, project.worktree().id(), ledger)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -804,8 +836,12 @@ impl TaskLedgerStore for LibsqlKnowledgeStore {
     ) -> TaskLedgerStoreFuture<'a, TaskLedgerStoreVersion> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_task_ledger(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| TaskLedgerStoreFailure::Unavailable)?;
             task_ledger_repository::replace(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_version,
                 ledger,
@@ -822,7 +858,11 @@ impl TaskLedgerStore for LibsqlKnowledgeStore {
     ) -> TaskLedgerStoreFuture<'a, Option<a3_application::StoredTaskLedger>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_task_ledger(project).await?;
-            task_ledger_repository::load(database.connection(), project.worktree().id(), task_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| TaskLedgerStoreFailure::Unavailable)?;
+            task_ledger_repository::load(&connection, project.worktree().id(), task_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -892,14 +932,13 @@ impl RunJournalStore for LibsqlKnowledgeStore {
     ) -> RunJournalStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_run_journal(project).await?;
-            run_journal_repository::create(
-                database.connection(),
-                project.worktree().id(),
-                run,
-                start_event,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
+            run_journal_repository::create(&connection, project.worktree().id(), run, start_event)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 
@@ -912,8 +951,12 @@ impl RunJournalStore for LibsqlKnowledgeStore {
     ) -> RunJournalStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
             run_journal_repository::append(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -933,8 +976,12 @@ impl RunJournalStore for LibsqlKnowledgeStore {
     ) -> RunJournalStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
             run_journal_repository::append_agent_read(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -952,7 +999,11 @@ impl RunJournalStore for LibsqlKnowledgeStore {
     ) -> RunJournalStoreFuture<'a, Option<AgentRun>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_run_journal(project).await?;
-            run_journal_repository::load_run(database.connection(), project.worktree().id(), run_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
+            run_journal_repository::load_run(&connection, project.worktree().id(), run_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -967,8 +1018,12 @@ impl RunJournalStore for LibsqlKnowledgeStore {
     ) -> RunJournalStoreFuture<'a, RunEventPage> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
             run_journal_repository::load_events(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 after_sequence,
@@ -990,8 +1045,12 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
             policy_repository::record_evaluation(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1009,7 +1068,11 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, Option<ApprovalRequest>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
-            policy_repository::load_request(database.connection(), request_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
+            policy_repository::load_request(&connection, request_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -1022,7 +1085,11 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
-            policy_repository::load_approval(database.connection(), approval_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
+            policy_repository::load_approval(&connection, approval_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -1035,7 +1102,11 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, Option<ApprovalGrant>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
-            policy_repository::load_approval_for_request(database.connection(), request_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
+            policy_repository::load_approval_for_request(&connection, request_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -1048,7 +1119,11 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, Option<PolicyDecision>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
-            policy_repository::load_decision(database.connection(), decision_id)
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
+            policy_repository::load_decision(&connection, decision_id)
                 .await
                 .map_err(|error| error.classify())
         })
@@ -1064,8 +1139,12 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
             policy_repository::grant(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1088,8 +1167,12 @@ impl PolicyStore for LibsqlKnowledgeStore {
     ) -> PolicyStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_policy(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| PolicyStoreFailure::Unavailable)?;
             policy_repository::revoke(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1112,12 +1195,13 @@ impl CommandAllowlistStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_command_allowlist(project)
                 .await?;
-            command_allowlist_repository::load_current(
-                database.connection(),
-                project.worktree().id(),
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| CommandAllowlistStoreFailure::Unavailable)?;
+            command_allowlist_repository::load_current(&connection, project.worktree().id())
+                .await
+                .map_err(|error| error.classify())
         })
     }
 
@@ -1131,8 +1215,12 @@ impl CommandAllowlistStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_command_allowlist(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| CommandAllowlistStoreFailure::Unavailable)?;
             command_allowlist_repository::append(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected,
                 confirmation,
@@ -1154,8 +1242,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::begin_tool_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 snapshot_id,
@@ -1179,8 +1271,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::begin_mutation_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 snapshot_id,
@@ -1204,8 +1300,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::finish_tool_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 tool_run_id,
                 attempt,
@@ -1228,8 +1328,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::finish_mutation_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 tool_run_id,
                 attempt,
@@ -1253,8 +1357,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentToolAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::complete_tool_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1279,8 +1387,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::complete_mutation_attempt(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1302,8 +1414,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, u32> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::interrupt_tool_attempts(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 interrupted_at,
@@ -1320,8 +1436,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, Vec<AgentMutationAttempt>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::load_mutation_attempts(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
             )
@@ -1341,8 +1461,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, AgentMutationAttempt> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::reconcile_mutation(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_last_sequence,
                 run,
@@ -1363,8 +1487,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, Vec<AgentToolEvidence>> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::load_tool_evidence(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 evidence_ids,
@@ -1387,8 +1515,12 @@ impl AgentRecoveryStore for LibsqlKnowledgeStore {
     ) -> AgentRecoveryStoreFuture<'a, TaskLedgerStoreVersion> {
         Box::pin(async move {
             let database = self.open_project_knowledge_for_recovery(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentRecoveryStoreFailure::Unavailable)?;
             agent_recovery_repository::commit_recovery(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 choice,
                 expected_published_snapshot,
@@ -1419,8 +1551,12 @@ impl AgentActionStore for LibsqlKnowledgeStore {
                 .open_project_knowledge_for_run_journal(project)
                 .await
                 .map_err(classify_run_journal_for_agent_action)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentActionStoreFailure::Unavailable)?;
             run_journal_repository::append_ledger_action(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 expected_ledger_version,
                 expected_last_sequence,
@@ -1442,13 +1578,14 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, ()> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::append_snapshot(
-                knowledge.connection(),
-                project.worktree().id(),
-                snapshot,
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::append_snapshot(&connection, project.worktree().id(), snapshot)
+                .await
+                .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -1492,12 +1629,14 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, IndexRunSequence> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::next_index_run_sequence(
-                knowledge.connection(),
-                project.worktree().id(),
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::next_index_run_sequence(&connection, project.worktree().id())
+                .await
+                .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -1508,13 +1647,14 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::start_index_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                request,
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::start_index_run(&connection, project.worktree().id(), request)
+                .await
+                .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -1526,8 +1666,13 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
             index_repository::finish_index_run(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 outcome,
@@ -1546,8 +1691,13 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
             let published = index_publication::publish_index(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 publication,
@@ -1644,8 +1794,13 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
     ) -> KnowledgeIndexFuture<'a, ()> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
             index_publication::rebuild_regenerable_index(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 control,
             )
@@ -1674,13 +1829,19 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(classify_verification_index_failure)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)
+                .map_err(classify_verification_index_failure)?;
             operation.checkpoint()?;
             let remaining = timeout
                 .checked_sub(operation.elapsed())
                 .filter(|remaining| !remaining.is_zero())
                 .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
             verification_evidence_repository::append(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 evidence,
                 remaining,
@@ -1709,9 +1870,15 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(classify_verification_index_failure)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)
+                .map_err(classify_verification_index_failure)?;
             operation.checkpoint()?;
             let published = index_publication::latest_published_index(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 &operation,
             )
@@ -1724,7 +1891,7 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 .filter(|remaining| !remaining.is_zero())
                 .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
             verification_evidence_repository::load_state(
-                knowledge.connection(),
+                &connection,
                 verification_evidence_repository::VerificationStateQuery::new(
                     project.worktree().id(),
                     task_id,
@@ -1757,9 +1924,15 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(classify_verification_index_failure)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)
+                .map_err(classify_verification_index_failure)?;
             operation.checkpoint()?;
             let published = index_publication::latest_published_index(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 &operation,
             )
@@ -1772,7 +1945,7 @@ impl VerificationEvidenceStore for LibsqlKnowledgeStore {
                 .filter(|remaining| !remaining.is_zero())
                 .ok_or(VerificationEvidenceStoreFailure::TimedOut)?;
             verification_evidence_repository::load_state(
-                knowledge.connection(),
+                &connection,
                 verification_evidence_repository::VerificationStateQuery::for_inspection(
                     project.worktree().id(),
                     task_id,
@@ -4052,6 +4225,106 @@ mod tests {
 
             transaction.rollback().await?;
             assert_eq!(result, ProjectMapSceneLoadResult::NoPublishedIndex);
+            Ok::<(), Box<dyn std::error::Error>>(())
+        });
+        let cleanup = fs::remove_dir_all(&root);
+        outcome?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_persistence_does_not_share_an_unrelated_transaction_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let sequence = NEXT_LOCAL_STORE_TEST.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "a3-agent-persistence-connection-test-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root)?;
+        let outcome = block_on(async {
+            let layout = StorageLayout::prepare(root.join("app-data"))?;
+            let common_path = root.join("common-git");
+            let worktree_path = root.join("worktree");
+            fs::create_dir(&common_path)?;
+            fs::create_dir(&worktree_path)?;
+            let repository_id = RepositoryId::from_bytes([211; 32]);
+            let project = ProjectIdentity::new(
+                RepositoryIdentity::new(
+                    repository_id,
+                    CanonicalDirectory::from_canonicalized(fs::canonicalize(&common_path)?)?,
+                    None,
+                ),
+                WorktreeIdentity::new(
+                    WorktreeId::from_bytes([212; 32]),
+                    WorktreeAnchorId::from_bytes([213; 32]),
+                    repository_id,
+                    CanonicalDirectory::from_canonicalized(fs::canonicalize(&worktree_path)?)?,
+                ),
+                GitHead::Unborn {
+                    reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
+                },
+            )?;
+            let store = LibsqlKnowledgeStore::open(&layout).await?;
+            let shared = store
+                .open_project_knowledge_for_agent_session(&project)
+                .await?;
+            let unrelated = shared
+                .connection()
+                .transaction_with_behavior(TransactionBehavior::Deferred)
+                .await?;
+            let session_id = AgentSessionId::from_bytes([214; 32]);
+            let timestamp = a3_domain::AgentSessionTimestamp::from_unix_millis(1)?;
+            let session = AgentSession::from_parts(
+                session_id,
+                AgentSessionRevision::INITIAL,
+                a3_domain::AgentSessionTitle::try_from_string("Ask".to_owned())?,
+                a3_domain::AgentSessionMode::Ask,
+                a3_domain::AgentSessionState::Running,
+                timestamp,
+                timestamp,
+                Some(a3_domain::AgentSessionSequence::FIRST),
+                None,
+                None,
+                false,
+            );
+            let entry = AgentSessionEntry::new(
+                session_id,
+                a3_domain::AgentSessionSequence::FIRST,
+                a3_domain::AgentSessionEntryKind::UserMessage,
+                a3_domain::AgentSessionText::try_from_string("Was macht A^3?".to_owned())?,
+                timestamp,
+                None,
+                None,
+                None,
+            );
+
+            let missing_task = TaskId::from_bytes([215; 32]);
+            let missing_run = AgentRunId::from_bytes([216; 32]);
+            assert!(
+                GoalContractStore::load_current_goal_contract(&store, &project, missing_task)
+                    .await?
+                    .is_none()
+            );
+            assert!(
+                TaskLedgerStore::load_task_ledger(&store, &project, missing_task)
+                    .await?
+                    .is_none()
+            );
+            assert!(
+                RunJournalStore::load_agent_run(&store, &project, missing_run)
+                    .await?
+                    .is_none()
+            );
+            AgentSessionStore::create_session(&store, &project, &session, Some(&entry)).await?;
+            let loaded =
+                AgentSessionStore::load_session(&store, &project, session_id, None, 10).await?;
+
+            unrelated.rollback().await?;
+            assert_eq!(
+                loaded.as_ref().map(|detail| detail.session().state()),
+                Some(a3_domain::AgentSessionState::Running)
+            );
             Ok::<(), Box<dyn std::error::Error>>(())
         });
         let cleanup = fs::remove_dir_all(&root);

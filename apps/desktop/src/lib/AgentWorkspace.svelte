@@ -71,6 +71,7 @@
       mode?: AgentSessionModeV1;
       sessionId?: string | null;
     }) => Promise<AgentSessionResponseV1>;
+    pollIntervalMs?: number;
   }
 
   type SessionsView =
@@ -99,6 +100,7 @@
     sessionLoader = queryAgentSession,
     sessionsLoader = queryAgentSessions,
     messageSubmitter = submitAgentMessage,
+    pollIntervalMs = 700,
   }: Props = $props();
 
   let sessionsView = $state<SessionsView>({ kind: 'idle' });
@@ -174,8 +176,19 @@
         ? selectedSummary.sessionId
         : null;
     if (!sessionId) return;
-    const timer = window.setTimeout(() => void pollSession(sessionId), 700);
-    return () => window.clearTimeout(timer);
+    let stopped = false;
+    let timer: number | undefined;
+    const schedule = (): void => {
+      timer = window.setTimeout(async () => {
+        await pollSession(sessionId);
+        if (!stopped) schedule();
+      }, pollIntervalMs);
+    };
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   });
 
   $effect(() => {

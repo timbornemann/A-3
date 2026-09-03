@@ -6,14 +6,17 @@ use a3_application::{
     AgentRunExecutionFuture, AgentRunExecutionOutcome, AgentRunExecutionRequest,
     AgentRunExecutionTrigger, AgentRunExecutor, AgentTurnOutcome, AgentTurnRejectionReason,
     AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, CommandAllowlistStore,
-    CompileTaskLens, ConservativeProcessVerificationEvidenceFactory,
-    DeterministicAcceptanceVerifier, DiscoverProjectCommands, ExecuteAgentTurn,
-    ExecuteMutatingAgentAction, IndexPersistenceControl, KnowledgeIndexStore, KnowledgeSearchStore,
-    LoadProjectCommandAllowlist, MutationCommandSelection, MutationContextSeed,
-    MutationControllerOutcome, MutationExecutionIds, PersistAgentLedgerMutation, PolicyStore,
-    ProcessEventSink, ProcessEventSinkError, RefreshRepositoryIndex, RequestAgentFinish,
-    RunJournalStore, TaskLensClaimStore, TaskLensIndexStore, TaskLensWorkspaceStore,
-    VerificationEvidenceStore, VerifyAgentAcceptance, WorktreeMutationCoordinator,
+    CompileTaskLens, ConservativeProcessVerificationEvidenceFactory, ContextCompileControl,
+    ContextCompilePhase, DeterministicAcceptanceVerifier, DiscoverProjectCommands,
+    ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
+    IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchStore,
+    LoadProjectCommandAllowlist, ModelCancellationFuture, ModelOperationControl,
+    MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
+    PersistAgentLedgerMutation, PolicyStore, ProcessEventSink, ProcessEventSinkError,
+    ProcessRunControl, RefreshRepositoryIndex, RepositoryIndexControl, RepositoryIndexControlError,
+    RequestAgentFinish, RunJournalStore, TaskLensClaimStore, TaskLensControlError,
+    TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore, VerifyAgentAcceptance,
+    WorkspacePatchControl, WorkspacePatchProgressError, WorktreeMutationCoordinator,
 };
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
@@ -33,7 +36,7 @@ use a3_workspace::{
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_AGENT_TURNS_PER_ATTEMPT: u64 = 64;
 const APPROVAL_LIFETIME_MILLIS: u64 = 10 * 60 * 1_000;
@@ -102,6 +105,7 @@ impl ProductionAgentRunExecutor {
         if control.cancellation_token().is_cancelled() {
             return Ok(AgentRunExecutionOutcome::Cancelled);
         }
+        let attempt_control = AgentAttemptControl { context: control };
         let task = self
             .ports
             .workspace
@@ -206,7 +210,8 @@ impl ProductionAgentRunExecutor {
                 .await
                 .map_err(|_| AgentRunExecutionFailure::Unavailable)?
                 .ok_or(AgentRunExecutionFailure::InvalidState)?;
-            let published = current_index(self.ports.index.as_ref(), project, control).await?;
+            let published =
+                current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
             let outcome = self
                 .execute_mutation(
                     project,
@@ -219,7 +224,7 @@ impl ProductionAgentRunExecutor {
                     &context_seed,
                     &mut index_compiler,
                     &mutation_controller,
-                    control,
+                    &attempt_control,
                 )
                 .await?;
             if self.handle_mutation_outcome(request.task_id(), outcome)? {
@@ -247,7 +252,7 @@ impl ProductionAgentRunExecutor {
                         &mut run,
                         &ledger,
                         task.goal_contract(),
-                        control,
+                        &attempt_control,
                     )
                     .await?;
                     return Ok(AgentRunExecutionOutcome::Completed);
@@ -280,7 +285,7 @@ impl ProductionAgentRunExecutor {
                 &read_tools,
                 self.ports.recovery.as_ref(),
             )
-            .execute(&run, &input, observed_at, control)
+            .execute(&run, &input, observed_at, &attempt_control)
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
             let expected_sequence = run.last_event_sequence();
@@ -343,7 +348,7 @@ impl ProductionAgentRunExecutor {
                 }
                 AgentAction::ApplyPatch(_) | AgentAction::Run(_) => {
                     let published =
-                        current_index(self.ports.index.as_ref(), project, control).await?;
+                        current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
                     let replay = action.clone();
                     let outcome = self
                         .execute_mutation(
@@ -357,7 +362,7 @@ impl ProductionAgentRunExecutor {
                             &context_seed,
                             &mut index_compiler,
                             &mutation_controller,
-                            control,
+                            &attempt_control,
                         )
                         .await?;
                     if matches!(outcome, MutationControllerOutcome::AwaitingApproval(_)) {
@@ -382,7 +387,7 @@ impl ProductionAgentRunExecutor {
                             run_event_id()?,
                             snapshot_id,
                             timestamp()?,
-                            control,
+                            &attempt_control,
                         )
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
                     ledger_version = PersistAgentLedgerMutation::new(self.ports.actions.as_ref())
@@ -407,7 +412,7 @@ impl ProductionAgentRunExecutor {
                             run_event_id()?,
                             snapshot_id,
                             timestamp()?,
-                            control,
+                            &attempt_control,
                         )
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
                     AppendRunEvent::new(self.ports.journal.as_ref())
@@ -433,7 +438,7 @@ impl ProductionAgentRunExecutor {
         context_seed: &MutationContextSeed,
         index_compiler: &mut BuiltinIncrementalIndexCompiler,
         controller: &ExecuteMutatingAgentAction<'_>,
-        control: &a3_application::JobContext,
+        control: &AgentAttemptControl<'_>,
     ) -> Result<MutationControllerOutcome, AgentRunExecutionFailure> {
         let catalog = DiscoverProjectCommands
             .execute(project.worktree().id(), published)
@@ -493,7 +498,7 @@ impl ProductionAgentRunExecutor {
         run: &mut AgentRun,
         ledger: &TaskLedger,
         goal: &a3_domain::GoalContract,
-        control: &a3_application::JobContext,
+        control: &AgentAttemptControl<'_>,
     ) -> Result<(), AgentRunExecutionFailure> {
         let published = current_index(self.ports.index.as_ref(), project, control).await?;
         let memory = RunMemoryCheckpoint::compile(goal, ledger, run, &published, Vec::new())
@@ -675,6 +680,82 @@ async fn current_index(
         .ok_or(AgentRunExecutionFailure::AnchorsChanged)
 }
 
+/// Keeps nested context, patch, process, and index progress inside one Agent-turn scope.
+/// The owning job reports only the monotone turn count, so a nested operation can never
+/// replace the scheduler's fixed total or regress it when the next turn begins.
+#[derive(Debug)]
+struct AgentAttemptControl<'a> {
+    context: &'a a3_application::JobContext,
+}
+
+impl a3_application::AgentControllerControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+}
+
+impl ContextCompileControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_phase(&self, _phase: ContextCompilePhase) -> Result<(), TaskLensControlError> {
+        Ok(())
+    }
+}
+
+impl ModelOperationControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn cancelled(&self) -> ModelCancellationFuture<'_> {
+        Box::pin(self.context.cancellation_token().cancelled())
+    }
+}
+
+impl IndexPersistenceControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
+impl RepositoryIndexControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), RepositoryIndexControlError> {
+        Ok(())
+    }
+}
+
+impl WorkspacePatchControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn report_progress(&self, _progress: Progress) -> Result<(), WorkspacePatchProgressError> {
+        Ok(())
+    }
+}
+
+impl ProcessRunControl for AgentAttemptControl<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.context.cancellation_token().is_cancelled()
+    }
+
+    fn wait_cancelled_timeout(&self, timeout: Duration) -> bool {
+        self.context
+            .cancellation_token()
+            .wait_cancelled_timeout(timeout)
+    }
+}
+
 fn mutation_ids() -> Result<MutationExecutionIds, AgentRunExecutionFailure> {
     Ok(MutationExecutionIds::new(
         PolicyDecisionId::from_bytes(random_id()?),
@@ -727,4 +808,77 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentAttemptControl;
+    use a3_application::{
+        ContextCompileControl, ContextCompilePhase, JobClock, JobCompletion, JobContext,
+        JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, RepositoryIndexControl,
+        WorkspacePatchControl,
+    };
+    use a3_domain::{JobId, JobOwner, Progress};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct FixedClock;
+
+    impl JobClock for FixedClock {
+        fn now(&self) -> JobTimestamp {
+            JobTimestamp::from_millis(1)
+        }
+    }
+
+    #[test]
+    fn nested_agent_operations_cannot_replace_the_attempt_progress_scale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (scheduler, events) =
+            JobScheduler::new(JobSchedulerConfig::new(1, 2, 32)?, Arc::new(FixedClock))?;
+        scheduler.submit(JobId::new(92), JobOwner::new(3), |context: JobContext| {
+            if context
+                .report_progress(Progress::determinate(1, 64).unwrap_or(Progress::Indeterminate))
+                .is_err()
+            {
+                return JobCompletion::Failed;
+            }
+            let nested = AgentAttemptControl { context: &context };
+            if ContextCompileControl::report_phase(&nested, ContextCompilePhase::Anchor).is_err()
+                || ContextCompileControl::report_phase(&nested, ContextCompilePhase::Complete)
+                    .is_err()
+                || RepositoryIndexControl::report_progress(
+                    &nested,
+                    Progress::determinate(0, 6).unwrap_or(Progress::Indeterminate),
+                )
+                .is_err()
+                || WorkspacePatchControl::report_progress(
+                    &nested,
+                    Progress::determinate(0, 2).unwrap_or(Progress::Indeterminate),
+                )
+                .is_err()
+                || context
+                    .report_progress(
+                        Progress::determinate(2, 64).unwrap_or(Progress::Indeterminate),
+                    )
+                    .is_err()
+            {
+                return JobCompletion::Failed;
+            }
+            JobCompletion::Succeeded
+        })?;
+
+        let mut succeeded = false;
+        while let Some(event) = events.next_timeout(Duration::from_secs(2))? {
+            if event.kind() == JobEventKind::Succeeded {
+                succeeded = true;
+                break;
+            }
+            if matches!(event.kind(), JobEventKind::Failed | JobEventKind::Cancelled) {
+                break;
+            }
+        }
+        assert!(succeeded);
+        Ok(())
+    }
 }

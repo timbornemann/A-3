@@ -376,6 +376,15 @@ fachlichen Controls werden im Core gegen aktuelle Task-/Ledger-/Runanker aufgel�
 und -updates transportieren ausschließlich revisionierte Breiten und Collapse-Zustände innerhalb
 fester Grenzen.
 
+Eine angenommene neue Nachricht liefert die bereits dauerhaft angelegte und ausgewählte Session,
+bevor der besessene Hintergrundjob arbeitet. Ein nicht einreihbarer Job wird als sichere
+fehlgeschlagene Abschlussnachricht in genau dieser Session sichtbar und hinterlässt keinen
+`Running`-Datensatz ohne Besitzer. Cancel ist für eine laufende Ask-/Plan-Vorbereitung auch dann
+idempotent, wenn der Schedulerjob bereits terminal oder nicht mehr auffindbar ist: Der Core
+committet den dauerhaften Sessionzustand `Cancelled` und gibt die neu geladene Projektion zurück.
+Polling bleibt rein lesend und wiederholt einen transient fehlgeschlagenen Read, solange die letzte
+verifizierte Projektion noch einen laufenden Zustand zeigt.
+
 ## Agent Diff und Verification Inspector V1
 
 `query_agent_inspection` akzeptiert genau `protocolVersion` und die bereits ausgewählte opake

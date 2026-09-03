@@ -212,6 +212,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   reproduzierbare 64-Knoten-/128-Routen-Profil berichtet Mount, Auswahl, Pan/Zoom, Feed-Bursts,
   DOM-Obergrenze, Long Tasks sowie initialen und lazy Chunk; Performancegewinne werden nur aus
   Messdaten behauptet.
+- Der Agent-Session-Contract prüft, dass eine angenommene Ask-, Plan- oder Agent-Nachricht sofort
+  als ausgewählte dauerhafte Session sichtbar ist und genau einen besessenen Job erhält. Die feste
+  Scheduler-Fortschrittsskala darf durch Task Lens, Kontextkompilierung, Indexmaterialisierung,
+  Patch oder Prozessausführung weder ihr Total wechseln noch regressieren. Worker-, Queue- und
+  Persistenzfehler müssen eine laufende Session dauerhaft mit einer sicheren nutzerlesbaren
+  Abschlussnachricht beenden. Cancel muss auch ohne aktiven Job sowie bei einem konkurrierenden
+  Abschluss idempotent werden. Session-Reads und -Writes verwenden voneinander unabhängige
+  libSQL-Operationsverbindungen; ein fremder offener Transaktionskontext darf sie nicht blockieren.
+  Component-Tests müssen nach einem transienten Readfehler weiter nicht überlappend pollen, bis die
+  terminale Antwort sichtbar ist. Mount und Polling starten weiterhin keine Evidenz- oder
+  Modellarbeit.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene
