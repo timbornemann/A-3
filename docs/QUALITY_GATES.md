@@ -236,6 +236,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   und Provider-IDs sowie Prompts, Rohantworten, Source-Inhalt und Chain-of-Thought bleiben aus der
   normalen Projektion ausgeschlossen. Component-Tests prüfen Live-Aktion, Task-Lens-Gründe,
   vollständige/begrenzte Suche, verwendete/zusätzliche Quellen, stale Preview und `notRecorded`.
+  Kontrollierte Timer prüfen zusätzlich die append-only Staffelung über höchstens 900 Millisekunden,
+  genau einen aktiven Timeline-Schritt, terminale Fehler-/Abbruchzustände, Turnwechsel ohne alte
+  Timer, das einmalige Einklappen nach 700 Millisekunden und sofortige Darstellung bei Reduced
+  Motion. Der Workspace-Test muss den Übergang von der Live-Karte zur frisch abgeschlossenen,
+  zunächst geöffneten Rechercheprojektion belegen.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

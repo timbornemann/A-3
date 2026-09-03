@@ -226,9 +226,13 @@ describe('AgentWorkspace', () => {
 
     await waitFor(() => expect(screen.getAllByText('A^3 arbeitet').length).toBeGreaterThan(0));
     await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
-    await waitFor(() =>
-      expect(screen.getAllByText('Recherche & Quellen').length).toBeGreaterThanOrEqual(2),
-    );
+    await waitFor(() => {
+      const researchSummaries = screen.getAllByText('Recherche & Quellen');
+      expect(researchSummaries.length).toBeGreaterThanOrEqual(2);
+      expect(researchSummaries.some((summary) => summary.closest('details')?.open === true)).toBe(
+        true,
+      );
+    });
     expect(detailReads).toBeGreaterThanOrEqual(3);
   });
 });

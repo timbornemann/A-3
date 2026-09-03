@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, onMount } from 'svelte';
   import {
     queryAgentAskResearchDetail,
     queryAgentAskResearchSourcePreview,
@@ -13,6 +14,7 @@
     detailLoader?: typeof queryAgentAskResearchDetail;
     live?: boolean;
     previewLoader?: typeof queryAgentAskResearchSourcePreview;
+    recentlyCompleted?: boolean;
     refreshKey: string;
     sessionId: string;
     sourcesLoader?: typeof queryAgentAskResearchSources;
@@ -24,6 +26,7 @@
     detailLoader = queryAgentAskResearchDetail,
     live = false,
     previewLoader = queryAgentAskResearchSourcePreview,
+    recentlyCompleted = false,
     refreshKey,
     sessionId,
     sourcesLoader = queryAgentAskResearchSources,
@@ -37,12 +40,26 @@
   let selectedSource = $state<string | null>(null);
   let preview = $state<ProjectMapSourcePreviewV1 | null>(null);
   let previewState = $state<'idle' | 'loading' | 'stale' | 'error'>('idle');
+  let visibleStepCount = $state(0);
+  let reducedMotion = $state(false);
   let request = 0;
   let loadInFlight = false;
   let loadQueued = false;
   let activeTurnKey = '';
+  let revealTarget = 0;
+  let revealTimer: ReturnType<typeof setTimeout> | null = null;
+  let collapseTimer: ReturnType<typeof setTimeout> | null = null;
+  let autoCollapseEligible = false;
+  let autoCollapseDone = false;
+  let terminalObserved = false;
+  let terminalDisclosureOverride = false;
+
+  const REVEAL_WINDOW_MILLIS = 900;
+  const MAX_REVEAL_INTERVAL_MILLIS = 180;
+  const TERMINAL_DWELL_MILLIS = 700;
 
   const latest = $derived(detail?.steps.at(-1) ?? null);
+  const visibleSteps = $derived(detail?.steps.slice(0, visibleStepCount) ?? []);
   const searchLimited = $derived(
     detail?.steps.some((step) => step.completeness === 'limited') ?? false,
   );
@@ -51,19 +68,39 @@
     const turnKey = `${sessionId}:${userSequence}`;
     if (turnKey !== activeTurnKey) {
       activeTurnKey = turnKey;
+      resetPresentation();
       detail = null;
       sources = [];
       selectedSource = null;
       preview = null;
       previewState = 'idle';
       loadState = 'loading';
+      expansionInitialized = false;
     }
     if (!expansionInitialized) {
-      expanded = live;
+      expanded = live || recentlyCompleted;
       expansionInitialized = true;
     }
+    if (live || recentlyCompleted) autoCollapseEligible = true;
     void refreshKey;
     requestResearchLoad();
+  });
+
+  onMount(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = (): void => {
+      reducedMotion = query.matches;
+      if (reducedMotion && detail) synchronizeVisibleSteps(detail.steps.length);
+    };
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  });
+
+  onDestroy(() => {
+    clearRevealTimer();
+    clearCollapseTimer();
   });
 
   function requestResearchLoad(): void {
@@ -101,8 +138,14 @@
         loadState = 'missing';
         return;
       }
-      detail = response.result.detail;
+      const nextDetail = response.result.detail;
+      if (detail && !isAppendOnlyUpdate(detail.steps, nextDetail.steps)) {
+        resetPresentation();
+        autoCollapseEligible = live || recentlyCompleted;
+      }
+      detail = nextDetail;
       loadState = 'available';
+      synchronizeVisibleSteps(nextDetail.steps.length);
       const found: AgentAskResearchSourceV1[] = [];
       let cursor: string | null = null;
       do {
@@ -116,6 +159,107 @@
     } catch {
       if (current === request && detail === null) loadState = 'error';
     }
+  }
+
+  function isAppendOnlyUpdate(
+    previous: AgentAskResearchDetailV1['steps'],
+    next: AgentAskResearchDetailV1['steps'],
+  ): boolean {
+    if (next.length < previous.length) return false;
+    return previous.every((step, index) => stepKey(step, index) === stepKey(next[index], index));
+  }
+
+  function stepKey(step: AgentAskResearchDetailV1['steps'][number], index: number): string {
+    return `${index}:${step.occurredAtUnixMillis}:${step.phase}:${step.state}:${step.action}:${step.query ?? ''}`;
+  }
+
+  function synchronizeVisibleSteps(stepCount: number): void {
+    revealTarget = stepCount;
+    if (stepCount === 0) {
+      visibleStepCount = 0;
+      clearRevealTimer();
+      return;
+    }
+    if (!(live || recentlyCompleted) || reducedMotion) {
+      clearRevealTimer();
+      visibleStepCount = stepCount;
+      observeTerminalState();
+      return;
+    }
+    if (visibleStepCount === 0) visibleStepCount = 1;
+    if (visibleStepCount < revealTarget) scheduleRemainingSteps();
+    else observeTerminalState();
+  }
+
+  function scheduleRemainingSteps(): void {
+    clearRevealTimer();
+    const remaining = revealTarget - visibleStepCount;
+    if (remaining <= 0) {
+      observeTerminalState();
+      return;
+    }
+    const interval = Math.min(
+      MAX_REVEAL_INTERVAL_MILLIS,
+      Math.max(1, Math.floor(REVEAL_WINDOW_MILLIS / remaining)),
+    );
+    const revealNext = (): void => {
+      revealTimer = null;
+      visibleStepCount = Math.min(visibleStepCount + 1, revealTarget);
+      if (visibleStepCount < revealTarget) revealTimer = setTimeout(revealNext, interval);
+      else observeTerminalState();
+    };
+    revealTimer = setTimeout(revealNext, interval);
+  }
+
+  function observeTerminalState(): void {
+    if (!detail || visibleStepCount < detail.steps.length || !isTerminal(detail.steps.at(-1)))
+      return;
+    terminalObserved = true;
+    if (
+      !autoCollapseEligible ||
+      autoCollapseDone ||
+      terminalDisclosureOverride ||
+      collapseTimer !== null
+    )
+      return;
+    collapseTimer = setTimeout(() => {
+      collapseTimer = null;
+      if (!terminalDisclosureOverride) expanded = false;
+      autoCollapseDone = true;
+    }, TERMINAL_DWELL_MILLIS);
+  }
+
+  function isTerminal(step: AgentAskResearchDetailV1['steps'][number] | undefined): boolean {
+    return step !== undefined && (step.state !== 'running' || step.phase === 'completed');
+  }
+
+  function handleDisclosureClick(): void {
+    if (!terminalObserved) return;
+    terminalDisclosureOverride = true;
+    clearCollapseTimer();
+  }
+
+  function resetPresentation(): void {
+    clearRevealTimer();
+    clearCollapseTimer();
+    visibleStepCount = 0;
+    revealTarget = 0;
+    autoCollapseEligible = false;
+    autoCollapseDone = false;
+    terminalObserved = false;
+    terminalDisclosureOverride = false;
+  }
+
+  function clearRevealTimer(): void {
+    if (revealTimer === null) return;
+    clearTimeout(revealTimer);
+    revealTimer = null;
+  }
+
+  function clearCollapseTimer(): void {
+    if (collapseTimer === null) return;
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
   }
 
   async function showSource(sourceRef: string): Promise<void> {
@@ -165,10 +309,43 @@
       verifiedModuleKnowledge: 'Verifiziertes Modulwissen',
     }[reason];
   }
+
+  type PresentationState = 'active' | 'cancelled' | 'completed' | 'failed';
+
+  function presentationState(index: number): PresentationState {
+    if (!detail) return 'completed';
+    const step = detail.steps[index];
+    if (step.state === 'failed') return 'failed';
+    if (step.state === 'cancelled') return 'cancelled';
+    if (index < visibleStepCount - 1) return 'completed';
+    if (step.state === 'completed' || step.phase === 'completed') return 'completed';
+    return 'active';
+  }
+
+  function presentationLabel(state: PresentationState, terminal: boolean): string {
+    if (state === 'active') return 'In Arbeit';
+    if (state === 'failed') return 'Fehlgeschlagen';
+    if (state === 'cancelled') return 'Abgebrochen';
+    return terminal ? 'Abgeschlossen' : 'Erledigt';
+  }
+
+  function markerLabel(state: PresentationState): string {
+    if (state === 'completed') return '✓';
+    if (state === 'failed') return '!';
+    if (state === 'cancelled') return '–';
+    return '';
+  }
+
+  function sourceFeedback(): string {
+    if (!detail) return '';
+    const found = `${detail.sourceCount} ${detail.sourceCount === 1 ? 'Quelle' : 'Quellen'} gefunden`;
+    if (detail.citedSourceCount === 0) return found;
+    return `${found} · ${detail.citedSourceCount} für die Antwort verwendet`;
+  }
 </script>
 
 <details class:compact class="ask-research" bind:open={expanded}>
-  <summary>
+  <summary onclick={handleDisclosureClick}>
     <span class:live-dot={live}></span>
     <span>
       <strong>{live ? 'A^3 arbeitet' : 'Recherche & Quellen'}</strong>
@@ -204,11 +381,12 @@
         </p>
       {/if}
       {#if latest}
-        <section class="current-action">
-          <span>Was passiert gerade?</span>
+        <section class="current-action" role="status" aria-live="polite" aria-atomic="true">
+          <span>{isTerminal(latest) ? 'Aktueller Stand' : 'Was passiert gerade?'}</span>
           <strong>{stepLabel(latest.phase, latest.state)}</strong>
           <p>{latest.action}</p>
           {#if latest.query}<code>{latest.query}</code>{/if}
+          <small class="source-feedback">{sourceFeedback()}</small>
           {#if latest.completeness !== 'notApplicable'}
             <small class="completeness"
               >{latest.completeness === 'complete' ? 'Suche vollständig' : 'Suche begrenzt'}</small
@@ -221,11 +399,26 @@
         </section>
       {/if}
       <ol class="research-steps" aria-label="Rechercheverlauf">
-        {#each detail.steps as step, index (`${step.occurredAtUnixMillis}-${index}`)}
-          <li class:active={step === latest && step.state === 'running'}>
-            <span></span>
-            <div>
-              <strong>{stepLabel(step.phase, step.state)}</strong>
+        {#each visibleSteps as step, index (`${step.occurredAtUnixMillis}-${index}`)}
+          {@const displayState = presentationState(index)}
+          {@const terminalStep = index === detail.steps.length - 1 && isTerminal(step)}
+          <li
+            class:active={displayState === 'active'}
+            class:cancelled={displayState === 'cancelled'}
+            class:completed={displayState === 'completed'}
+            class:failed={displayState === 'failed'}
+            class:animate={(live || recentlyCompleted) && !reducedMotion}
+            aria-current={displayState === 'active' ? 'step' : undefined}
+            data-step-state={displayState}
+          >
+            <span class="step-rail" aria-hidden="true">
+              <span class="step-marker">{markerLabel(displayState)}</span>
+            </span>
+            <div class="step-content">
+              <div class="step-heading">
+                <strong>{stepLabel(step.phase, step.state)}</strong>
+                <small class="step-state">{presentationLabel(displayState, terminalStep)}</small>
+              </div>
               <p>{step.action}</p>
               {#if step.query}<code>{step.query}</code
                 >{/if}{#if step.completeness !== 'notApplicable'}<small class="completeness"
@@ -342,6 +535,10 @@
     font-size: var(--font-size-xs);
     text-transform: uppercase;
   }
+  .source-feedback {
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
   code {
     overflow-wrap: anywhere;
     font-family: var(--font-mono);
@@ -369,20 +566,113 @@
     gap: var(--space-2);
     list-style: none;
   }
+  .research-steps {
+    gap: var(--space-1);
+  }
   .research-steps li {
     display: grid;
-    grid-template-columns: 0.65rem minmax(0, 1fr);
+    position: relative;
+    grid-template-columns: 1.35rem minmax(0, 1fr);
+    min-width: 0;
+    padding-bottom: var(--space-2);
     gap: var(--space-2);
   }
-  .research-steps li > span {
-    width: 0.45rem;
-    height: 0.45rem;
-    margin-top: 0.35rem;
-    border-radius: 50%;
-    background: var(--color-border-strong);
+  .research-steps li.animate {
+    animation: research-step-in 180ms ease-out both;
   }
-  .research-steps li.active > span {
+  .step-rail {
+    display: flex;
+    position: relative;
+    justify-content: center;
+    padding-top: 0.1rem;
+  }
+  .step-rail::after {
+    position: absolute;
+    z-index: 0;
+    top: 1.15rem;
+    bottom: calc(-1 * var(--space-1));
+    left: calc(50% - 1px);
+    width: 2px;
+    background: var(--color-border-soft);
+    content: '';
+  }
+  .research-steps li:last-child .step-rail::after {
+    display: none;
+  }
+  .research-steps li.completed .step-rail::after {
+    background: var(--color-status-ready);
+  }
+  .step-marker {
+    display: grid;
+    position: relative;
+    z-index: 1;
+    place-items: center;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--color-border-strong);
+    border-radius: 50%;
+    color: var(--color-surface);
+    background: var(--color-surface);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .research-steps li.completed .step-marker {
+    border-color: var(--color-status-ready);
+    background: var(--color-status-ready);
+  }
+  .research-steps li.active .step-marker {
+    border-color: var(--color-status-pending);
+    box-shadow: 0 0 0 4px var(--color-status-pending-ring);
+    animation: research-active-pulse 1.4s ease-in-out infinite;
+  }
+  .research-steps li.active .step-marker::before {
+    width: 0.35rem;
+    height: 0.35rem;
+    border-radius: 50%;
     background: var(--color-status-pending);
+    content: '';
+  }
+  .research-steps li.failed .step-marker {
+    border-color: var(--color-status-failed);
+    background: var(--color-status-failed);
+  }
+  .research-steps li.cancelled .step-marker {
+    border-color: var(--color-warning-strong);
+    background: var(--color-warning-strong);
+  }
+  .step-content {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+  .step-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .step-heading strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .step-state {
+    flex: 0 0 auto;
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .research-steps li.active .step-state {
+    color: var(--color-status-pending);
+  }
+  .research-steps li.completed .step-state {
+    color: var(--color-status-ready);
+  }
+  .research-steps li.failed .step-state {
+    color: var(--color-status-failed);
+  }
+  .research-steps li.cancelled .step-state {
+    color: var(--color-warning);
   }
   .research-steps p {
     margin-top: 0.15rem;
@@ -441,9 +731,32 @@
   .compact summary em {
     grid-column: 2;
   }
+  @keyframes research-step-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.25rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes research-active-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 3px var(--color-status-pending-ring);
+    }
+    50% {
+      box-shadow: 0 0 0 6px var(--color-status-pending-ring);
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     * {
       scroll-behavior: auto !important;
+    }
+    .research-steps li.animate,
+    .research-steps li.active .step-marker {
+      animation: none;
     }
   }
 </style>

@@ -1066,7 +1066,8 @@ Akzeptanz:
 - einfache Ask-Fragen bleiben bei einem Modellturn; nur fehlende Evidence löst genau eine weitere
   begrenzte Read-only-Runde aus;
 - jeder laufende und abgeschlossene Ask-Turn zeigt verständlich Suche, Task-Lens-Auswahlgrund,
-  Vollständigkeit und die tatsächlich für die Antwort angegebenen Quellen;
+  Vollständigkeit und die tatsächlich für die Antwort angegebenen Quellen; neue Live-Schritte
+  erscheinen nacheinander in einer verbundenen Timeline mit genau einem sichtbaren aktiven Schritt;
 - Plan hält Rückfragen und jede vollständige Planrevision im Verlauf und startet erst nach Review;
 - Agent bindet jede Ausführung an Goal, Ledger, Run, Snapshot und aktuelle Evidence und zeigt
   Activity, Inspection, Approval und Verification in derselben Session;
@@ -1109,6 +1110,14 @@ terminales Event committen atomar. Die aufklappbare Live-Karte bleibt nach Absch
 „Recherche & Quellen“ erhalten, unterscheidet vollständige von begrenzten Suchen und sperrt
 Source-Vorschauen nach einem Indexwechsel. Rohes Chain-of-Thought, Providertranskripte, Prompts,
 Modellrohantworten und persistierter Quelltext bleiben ausgeschlossen.
+
+Timeline-Erweiterung vom 2026-09-03: Die append-only V30-Ereignisse werden während eines aktiven
+Ask-Turns in höchstens 900 Millisekunden schrittweise eingeblendet. Eine verbundene Statuslinie
+kennzeichnet erledigte, aktive, fehlgeschlagene und abgebrochene Arbeit auch textuell; nur der
+aktuelle sichere Stand wird per `aria-live` angekündigt. Reduced Motion überspringt Staffelung und
+Animation. Nach einem frisch beobachteten Abschluss bleibt der terminale Zustand 700 Millisekunden
+sichtbar und die Karte klappt anschließend einmalig ein, ohne spätere Nutzerinteraktion zu
+überschreiben. Persistenz und V1-Reads bleiben unverändert.
 
 ## Gate M8
 

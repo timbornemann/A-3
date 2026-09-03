@@ -133,6 +133,7 @@
   let sessionsRequest = 0;
   let activityRequest = 0;
   let researchRefresh = $state(0);
+  let recentlyCompletedAskSequence = $state<string | null>(null);
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
@@ -233,6 +234,7 @@
     composer = '';
     pendingMessage = null;
     activity = null;
+    recentlyCompletedAskSequence = null;
   }
 
   async function loadPreferences(): Promise<void> {
@@ -274,6 +276,7 @@
 
   async function selectSession(sessionId: string): Promise<void> {
     const request = ++sessionRequest;
+    if (selectedSessionId !== sessionId) recentlyCompletedAskSequence = null;
     selectedSessionId = sessionId;
     sessionMenuOpen = false;
     actionError = null;
@@ -294,14 +297,22 @@
     try {
       const response = await sessionLoader(sessionId);
       if (selectedSessionId !== sessionId || response.result.status !== 'available') return;
-      sessionView = { kind: 'available', session: response.result.session };
-      if (response.result.session.summary.mode === 'ask') researchRefresh += 1;
-      if (response.result.session.activeTaskId) {
-        await loadActivity(response.result.session.activeTaskId);
-      }
+      const previous = selectedSession;
+      const next = response.result.session;
       if (
-        !['running', 'awaitingApproval', 'paused'].includes(response.result.session.summary.state)
+        previous?.summary.mode === 'ask' &&
+        previous.summary.state === 'running' &&
+        next.summary.mode === 'ask' &&
+        next.summary.state !== 'running'
       ) {
+        recentlyCompletedAskSequence = latestUserSequence(next.entries);
+      }
+      sessionView = { kind: 'available', session: next };
+      if (next.summary.mode === 'ask') researchRefresh += 1;
+      if (next.activeTaskId) {
+        await loadActivity(next.activeTaskId);
+      }
+      if (!['running', 'awaitingApproval', 'paused'].includes(next.summary.state)) {
         await loadSessions(sessionId);
       }
     } catch {
@@ -317,6 +328,7 @@
     pendingMessage = null;
     actionError = null;
     sessionMenuOpen = false;
+    recentlyCompletedAskSequence = null;
   }
 
   async function submit(): Promise<void> {
@@ -327,6 +339,7 @@
     pendingMessage = message;
     submitting = true;
     actionError = null;
+    recentlyCompletedAskSequence = null;
     try {
       const response = await messageSubmitter(
         current
@@ -802,6 +815,7 @@
                       sessionId={sessionView.session.summary.sessionId}
                       userSequence={askUserSequence}
                       refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                      recentlyCompleted={askUserSequence === recentlyCompletedAskSequence}
                     />
                   {/if}
                 {/if}
@@ -979,6 +993,7 @@
               userSequence={latestAskSequence}
               refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
               live={selectedSummary.state === 'running'}
+              recentlyCompleted={latestAskSequence === recentlyCompletedAskSequence}
             />
           {:else}
             <div class="inspector-empty">
