@@ -3,7 +3,8 @@
 mod support;
 
 use a3_application::{
-    CompileTaskLens, DeepMapPublicationState, DeepMapPublicationStateStore, ExploreProjectMapAtlas,
+    CompileTaskLens, DeepMapModelDescriptor, DeepMapPublicationAnchor, DeepMapPublicationState,
+    DeepMapPublicationStateStore, DeepMapRunJournalStore, DeepMapRunStart, ExploreProjectMapAtlas,
     GetModuleCardDetail, GetModuleCardEvidence, GetModuleCardFreshness, GetModuleDependencyGraph,
     GetModuleRuntimeMap, GetModuleTreePage, GetProjectMapScene, GetRepositoryTreePage,
     IndexPersistenceControl, IndexPersistenceControlError, KnowledgeIndexFailure,
@@ -32,22 +33,24 @@ use a3_application::{
     TraceModuleRuntimeFlow, VerifiedModuleCardPublisherFailure,
 };
 use a3_domain::{
-    CanonicalDirectory, Centrality, Confidence, ContentHash, DiagnosticMessage, EvidenceRef,
-    FileRevision, GitHead, GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage,
-    IndexPublication, IndexRunId, IndexRunSequence, IndexRunStart, IndexRunStatus,
-    IndexRunTerminalOutcome, IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason,
-    LanguageAdapterRevision, LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId,
-    MapperProfileVersion, ModuleCardClaimId, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
-    ModuleCardProposal, ModuleCardProposalEnvelope, ModuleCardSchemaVersion,
-    ModuleCardVerificationCandidate, ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership,
-    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
-    ParseCoverage, ParseDiagnostic, ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol,
-    ProjectIdentity, ProposedModuleCardField, PublishedIndex, RankProjection, RankScore,
-    RankingPolicyVersion, RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity,
-    RepositoryModule, RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet,
-    Snapshot, SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange,
-    SymbolId, SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SyntaxProvider,
+    CanonicalDirectory, Centrality, Confidence, ContentHash, DeepMapEventSequence, DeepMapMode,
+    DeepMapRunId, DeepMapRunTimestamp, DiagnosticMessage, EvidenceRef, FileRevision, GitHead,
+    GitReferenceName, GraphEdge, GraphEndpoint, GraphSymbol, IndexLanguage, IndexPublication,
+    IndexRunId, IndexRunSequence, IndexRunStart, IndexRunStatus, IndexRunTerminalOutcome,
+    IndexSchemaVersion, IndexedFileAnalysis, InvalidationReason, LanguageAdapterRevision,
+    LanguageAdapterVersion, LinkResolution, LinkedGraph, LocalSymbolId, MapperProfileVersion,
+    ModelProfileId, ModelProfileReference, ModelProfileVersion, ModuleCardClaimId,
+    ModuleCardEvidenceId, ModuleCardField, ModuleCardId, ModuleCardProposal,
+    ModuleCardProposalEnvelope, ModuleCardSchemaVersion, ModuleCardVerificationCandidate,
+    ModuleCardVerifier, ModuleClaimEnvelope, ModuleClaimPolarity, ModuleClaimPredicate,
+    ModuleClaimProposal, ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence,
+    ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet, ParseCoverage,
+    ParseDiagnostic, ParseDiagnosticCode, ParseDiagnosticSeverity, ParsedSymbol, ProjectIdentity,
+    ProposedModuleCardField, PublishedIndex, RankProjection, RankScore, RankingPolicyVersion,
+    RemapPriority, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
+    RepositoryPath, ResolvedModuleCardEvidence, ResolvedModuleCardEvidenceSet, Snapshot,
+    SnapshotChange, SnapshotChangeKind, SnapshotId, SourcePosition, SourceRange, SymbolId,
+    SymbolKind, SymbolName, SymbolRank, SymbolRankSignals, SymbolRole, SyntaxProvider,
     SyntaxRelationKind, TaskLensSeed, TaskLensSeedSet, TaskLensSeedText, TaskLensTokenBudget,
     TraversalResultLimit, VerifiedClaimKind, VerifiedModuleCardBatch, WorktreeAnchorId,
     WorktreeGeneration, WorktreeId, WorktreeIdentity,
@@ -58,7 +61,8 @@ use std::fs;
 use std::future::Future;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::Duration;
 use support::TempDirectory;
 
 // libSQL's Windows native test runtime is not safe when separate local database
@@ -88,6 +92,81 @@ impl IndexPersistenceControl for TestIndexControl {
             .lock()
             .map_err(|_| IndexPersistenceControlError::Unavailable)?
             .push(progress);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct BlockingPublishControl {
+    state: Mutex<BlockingPublishState>,
+    changed: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct BlockingPublishState {
+    reports: u64,
+    write_is_blocked: bool,
+    released: bool,
+}
+
+impl BlockingPublishControl {
+    fn wait_until_write_is_blocked(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("blocking publication state was poisoned"))?;
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                !state.write_is_blocked
+            })
+            .map_err(|_| io::Error::other("blocking publication state was poisoned"))?;
+        if timeout.timed_out() || !state.write_is_blocked {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "publication did not reach its open write transaction",
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn release(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("blocking publication state was poisoned"))?;
+        state.released = true;
+        self.changed.notify_all();
+        Ok(())
+    }
+}
+
+impl IndexPersistenceControl for BlockingPublishControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: a3_domain::Progress,
+    ) -> Result<(), IndexPersistenceControlError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| IndexPersistenceControlError::Unavailable)?;
+        state.reports = state.reports.saturating_add(1);
+        if state.reports < 2 {
+            return Ok(());
+        }
+        state.write_is_blocked = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self
+                .changed
+                .wait(state)
+                .map_err(|_| IndexPersistenceControlError::Unavailable)?;
+        }
         Ok(())
     }
 }
@@ -491,6 +570,103 @@ fn snapshot_roundtrip_retains_canonical_reproducibility_state()
         assert_eq!(read_count(&knowledge_path, "repositories").await?, 1);
         assert_eq!(read_count(&knowledge_path, "worktrees").await?, 1);
         assert_eq!(read_count(&knowledge_path, "snapshot_changes").await?, 2);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
+fn deep_map_live_reads_remain_available_during_an_index_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([111; 32], [112; 32])?;
+        let store = Arc::new(LibsqlKnowledgeStore::open(&fixture.layout).await?);
+        let snapshot = snapshot(
+            [113; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            Vec::new(),
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let index_run = store
+            .start_index_run(&fixture.project, run([114; 32], snapshot.id(), 1)?)
+            .await?;
+        let deep_map_run_id = DeepMapRunId::from_bytes([115; 32]);
+        let model = DeepMapModelDescriptor::from_stored_parts(
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([116; 32]),
+                ModelProfileVersion::V1,
+            ),
+            "local".to_owned(),
+            "test-model".to_owned(),
+            4_096,
+            1_024,
+        )?;
+        store
+            .create_run(
+                &fixture.project,
+                &DeepMapRunStart::new(
+                    deep_map_run_id,
+                    DeepMapPublicationAnchor::new(index_run.id(), snapshot.id()),
+                    DeepMapMode::Fast,
+                    model,
+                    DeepMapRunTimestamp::new(1_000)?,
+                ),
+            )
+            .await?;
+
+        let control = Arc::new(BlockingPublishControl::default());
+        let publisher_store = Arc::clone(&store);
+        let publisher_project = fixture.project.clone();
+        let publisher_control = Arc::clone(&control);
+        let publication = empty_publication(snapshot.id())?;
+        let publisher = std::thread::spawn(move || {
+            block_on(publisher_store.publish_index(
+                &publisher_project,
+                index_run.id(),
+                &publication,
+                publisher_control.as_ref(),
+            ))
+        });
+        control.wait_until_write_is_blocked()?;
+
+        let journal_store = Arc::clone(&store);
+        let journal_project = fixture.project.clone();
+        let journal_writer = std::thread::spawn(move || {
+            block_on(journal_store.mark_details_incomplete(&journal_project, deep_map_run_id))
+        });
+
+        let publication_state = store
+            .load_deep_map_publication_state(&fixture.project)
+            .await;
+        let journal_entry = store
+            .load_entry(
+                &fixture.project,
+                deep_map_run_id,
+                DeepMapEventSequence::new(1)?,
+            )
+            .await;
+        let latest_index = store
+            .latest_published_index(&fixture.project, &TestIndexControl::default())
+            .await;
+
+        control.release()?;
+        let published = publisher
+            .join()
+            .map_err(|_| io::Error::other("publication worker panicked"))??;
+        let journal_write = journal_writer
+            .join()
+            .map_err(|_| io::Error::other("journal worker panicked"))?;
+
+        assert_eq!(
+            publication_state?,
+            DeepMapPublicationState::NoPublishedIndex
+        );
+        assert!(journal_entry?.is_some());
+        assert_eq!(latest_index?, None);
+        journal_write?;
+        assert_eq!(published.status(), IndexRunStatus::Published);
         Ok::<(), Box<dyn std::error::Error>>(())
     })
 }

@@ -899,6 +899,16 @@ Läufe, 20 Module sowie je 50 Planschritte, Atlas-Auswirkungen und chronologisch
 Er zeigt Plan, aktuelle Arbeit, veröffentlichte Cards und Atlas-Wirkung in Produktsprache;
 Rohprompts, Modellantworten, Source, Providerdaten, Budgets und interne Kennungen bleiben außerhalb
 dieser normalen Ansicht. `Im Atlas zeigen` fokussiert anschließend den bestehenden Atlas-Inspector.
+Nach einem angenommenen Start öffnet der Desktop diesen Inspector, lädt die neueste Laufseite neu
+und wählt den soeben erzeugten Lauf statt einer zuvor betrachteten Historie. Status-, Dashboard-,
+Plan- und Verlauf-Reads laufen jeweils ohne Überlappung; ein aufgeklapptes Modul bleibt ausgewählt
+und seine sichtbaren Planschritte werden während eines aktiven Laufs nachgeführt. Die Auswahl
+verwendet den Core-ausgegebenen stabilen Laufbezug statt einer veränderlichen Listenposition.
+Backendseitig besitzt jede unabhängige Map-, Journal- und Publish-Operation einen eigenen
+Transaktionskontext auf dem geprüften lokalen Datenbank-Handle. Live-Reads bleiben damit auch
+während eines Index- oder Card-Publish möglich; konkurrierende Writes werden begrenzt
+serialisiert. Der aktuelle veröffentlichte Index wird bei exakt passendem Run-Anker aus der
+geprüften Store-Projektion wiederverwendet, statt ihn in jedem Poll erneut vollständig aufzubauen.
 
 Die Source-Vorschau aus ADR-0030 löst ausschließlich eine zuvor sichtbare Card-Evidence-Auswahl
 erneut auf. Der sichere Source-Reader liefert acht Kontextzeilen je Seite, höchstens 64 Zeilen und

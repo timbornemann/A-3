@@ -232,15 +232,26 @@ impl DeepMapRunDashboard {
                 state: phase_state,
             }
         });
-        let activity = latest_event.and_then(|event| {
-            event.phase().map(|phase| DeepMapDashboardActivity {
-                phase: phase.into(),
-                action: event.action(),
-                target_kind: event.target_kind(),
-                module_id: event.module_id(),
-                step_position: event.step_position(),
+        let activity = matches!(
+            state,
+            DeepMapDashboardState::Queued
+                | DeepMapDashboardState::Running
+                | DeepMapDashboardState::Pausing
+                | DeepMapDashboardState::Paused
+                | DeepMapDashboardState::Cancelling
+        )
+        .then(|| {
+            latest_event.and_then(|event| {
+                event.phase().map(|phase| DeepMapDashboardActivity {
+                    phase: phase.into(),
+                    action: event.action(),
+                    target_kind: event.target_kind(),
+                    module_id: event.module_id(),
+                    step_position: event.step_position(),
+                })
             })
-        });
+        })
+        .flatten();
         Self {
             state,
             freshness,
@@ -445,9 +456,23 @@ mod tests {
             Some(DeepMapPublicationResult::Published),
             run_anchor,
         )?;
+        let final_event = DeepMapJournalEvent::new(
+            DeepMapEventSequence::new(4)?,
+            DeepMapRunTimestamp::new(1_200)?,
+            DeepMapRunState::Succeeded,
+            Some(DeepMapPhase::Publishing),
+            Some(DeepMapTargetKind::Project),
+            Some(DeepMapSafeAction::PublishCards),
+            None,
+            None,
+            None,
+            true,
+            DeepMapEventResult::Published,
+            None,
+        )?;
         let dashboard = DeepMapRunDashboard::derive(
             &run,
-            None,
+            Some(final_event),
             Some(DeepMapPublicationAnchor::new(
                 IndexRunId::from_bytes([21; 32]),
                 SnapshotId::from_bytes([22; 32]),
@@ -455,6 +480,7 @@ mod tests {
         );
         assert_eq!(dashboard.state(), DeepMapDashboardState::Completed);
         assert_eq!(dashboard.freshness(), DeepMapDashboardFreshness::Historical);
+        assert_eq!(dashboard.activity(), None);
         assert!(
             dashboard
                 .phases()

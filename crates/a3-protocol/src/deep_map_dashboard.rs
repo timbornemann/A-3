@@ -448,6 +448,7 @@ pub enum DeepMapAtlasImpactResultV1 {
         /// Bounded exact hints.
         items: Vec<DeepMapAtlasImpactItemV1>,
         /// Core-issued cursor for the next page.
+        #[serde(rename = "nextCursor")]
         next_cursor: Option<String>,
     },
 }
@@ -475,6 +476,30 @@ mod tests {
         });
 
         assert!(serde_json::from_value::<QueryDeepMapRunDashboardRequestV1>(payload).is_err());
+    }
+
+    #[test]
+    fn atlas_impact_serializes_its_variant_cursor_in_camel_case()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = DeepMapAtlasImpactResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: DeepMapAtlasImpactResultV1::Available {
+                summary: DeepMapAtlasImpactSummaryV1 {
+                    purpose: None,
+                    risk_count: "0".to_owned(),
+                    file_count: "0".to_owned(),
+                    symbol_count: "0".to_owned(),
+                    relation_count: "0".to_owned(),
+                },
+                items: Vec::new(),
+                next_cursor: Some("cursor".to_owned()),
+            },
+        };
+
+        let payload = serde_json::to_value(response)?;
+        assert_eq!(payload["result"]["nextCursor"], "cursor");
+        assert!(payload["result"].get("next_cursor").is_none());
+        Ok(())
     }
 
     #[test]

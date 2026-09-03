@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { createFrameCoalescedResize } from './frame-coalesced-resize';
   import { atlasRelationKey, layoutAtlasNodes } from './map-atlas-layout';
   import type {
     ProjectMapAtlasNodeV1,
@@ -57,12 +58,20 @@
     width = Math.max(320, host.clientWidth || width);
     height = Math.max(280, host.clientHeight || height);
     if (typeof ResizeObserver === 'undefined') return;
+    const resize = createFrameCoalescedResize((size) => {
+      const nextWidth = Math.max(320, size.width);
+      const nextHeight = Math.max(280, size.height);
+      if (width !== nextWidth) width = nextWidth;
+      if (height !== nextHeight) height = nextHeight;
+    });
     const observer = new ResizeObserver(([entry]) => {
-      width = Math.max(320, entry.contentRect.width);
-      height = Math.max(280, entry.contentRect.height);
+      resize.schedule({ height: entry.contentRect.height, width: entry.contentRect.width });
     });
     observer.observe(host);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      resize.dispose();
+    };
   });
 
   function relationKey(relation: ProjectMapAtlasRelationV1): string {

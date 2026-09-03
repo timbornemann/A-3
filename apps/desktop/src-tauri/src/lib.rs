@@ -2296,18 +2296,12 @@ impl CompositionRoot {
         {
             Ok(publication) => publication,
             Err(_) => {
+                let lifecycle = publication_read_failure_lifecycle(map_deep_map_lifecycle_to_v3(
+                    &manager.activity(),
+                ));
                 return DeepMapStatusResponseV3::available(
                     map_deep_map_model_to_v1(&model),
-                    DeepMapLifecycleV3::Failed {
-                        progress: DeepMapCompactProgressV3::new(
-                            "0".to_owned(),
-                            "0".to_owned(),
-                            None,
-                            None,
-                        ),
-                        failure: DeepMapFailureV3::PublicationStorage,
-                        details_incomplete: true,
-                    },
+                    lifecycle,
                 );
             }
         };
@@ -7144,6 +7138,12 @@ fn map_deep_map_lifecycle_to_v3(activity: &DeepMapActivity) -> DeepMapLifecycleV
     }
 }
 
+fn publication_read_failure_lifecycle(lifecycle: DeepMapLifecycleV3) -> DeepMapLifecycleV3 {
+    // Publication-state availability and execution success are independent signals. Keep this
+    // policy explicit so a read failure cannot silently become a terminal Deep-Map failure again.
+    lifecycle
+}
+
 fn map_deep_map_run_page_to_v1(
     worktree_id: WorktreeId,
     page: &a3_application::DeepMapRunPage,
@@ -8873,6 +8873,7 @@ mod tests {
         encode_deep_map_module_selection, encode_deep_map_run_cursor,
         encode_deep_map_run_selection, encode_deep_map_step_cursor, map_agent_goal_to_v1,
         map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1, project_path_display,
+        publication_read_failure_lifecycle,
     };
     use a3_application::DeepMapRunCursor;
     use a3_application::{
@@ -8884,10 +8885,27 @@ mod tests {
         GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, ModuleId,
         SuccessVerification, TaskId, WorktreeId,
     };
-    use a3_protocol::{AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1};
+    use a3_protocol::{
+        AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1, DeepMapCompactProgressV3,
+        DeepMapLifecycleV3,
+    };
     use serde_json::json;
     use std::error::Error;
     use std::path::Path;
+
+    #[test]
+    fn deep_map_status_preserves_live_work_during_a_transient_publication_read_failure() {
+        let running = DeepMapLifecycleV3::Running {
+            progress: DeepMapCompactProgressV3::new("2".to_owned(), "5".to_owned(), None, None),
+            details_incomplete: false,
+        };
+
+        assert_eq!(publication_read_failure_lifecycle(running.clone()), running);
+        assert_eq!(
+            publication_read_failure_lifecycle(DeepMapLifecycleV3::Ready),
+            DeepMapLifecycleV3::Ready
+        );
+    }
 
     #[test]
     fn project_path_display_is_bounded_and_contains_no_control_characters() {

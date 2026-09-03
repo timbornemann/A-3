@@ -486,6 +486,8 @@ describe('U12 progressive Code Atlas workspace', () => {
     ]);
     await fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(props.deepMapStarter).toHaveBeenCalledWith('standard'));
+    expect(await screen.findByRole('complementary', { name: 'Deep-Map-Details' })).toBeTruthy();
+    await waitFor(() => expect(props.deepMapRunsLoader).toHaveBeenCalledTimes(1));
   });
 
   it('keeps one accessible Inspector and switches between code and Deep Map', async () => {

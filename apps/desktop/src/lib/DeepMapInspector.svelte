@@ -15,6 +15,7 @@
     queryDeepMapRunModules,
     type DeepMapAtlasImpactResponseV1,
     type DeepMapCardFieldV1,
+    type DeepMapCurrentActivityV1,
     type DeepMapDashboardPhaseV1,
     type DeepMapModuleStepsResponseV1,
     type DeepMapRunDashboardResponseV1,
@@ -49,6 +50,7 @@
       cursor?: string | null,
     ) => Promise<DeepMapEntryPageResponseV1>;
     focusFailureEpoch?: number;
+    runStartedEpoch?: number;
     modulesLoader?: (
       runSelection: string,
       cursor?: string | null,
@@ -70,6 +72,7 @@
   const {
     open,
     focusFailureEpoch = 0,
+    runStartedEpoch = 0,
     onclose,
     onshowinatlas = () => undefined,
     runsLoader = queryDeepMapRuns,
@@ -96,14 +99,17 @@
   let previewKey = $state<string | null>(null);
   let busy = $state(false);
   let failed = $state(false);
+  let failedArea = $state<'runs' | 'dashboard' | 'modules' | 'history' | null>(null);
   let pollTick = $state(0);
   let generation = 0;
   let seenFailureEpoch = 0;
+  let seenRunStartedEpoch = 0;
   let previouslyOpen = false;
 
   const activeRun = $derived(
-    dashboard !== null &&
-      ['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(dashboard.state),
+    ['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(
+      dashboard?.state ?? selectedRun?.state ?? '',
+    ),
   );
   const expanded = $derived(
     expandedModule === null
@@ -112,8 +118,11 @@
   );
 
   $effect(() => {
-    if (open && !previouslyOpen) void loadRuns(null, false);
+    const opened = open && !previouslyOpen;
+    const started = open && runStartedEpoch > seenRunStartedEpoch;
+    if (runStartedEpoch > seenRunStartedEpoch) seenRunStartedEpoch = runStartedEpoch;
     previouslyOpen = open;
+    if (opened || started) void loadRuns(null, false);
   });
 
   $effect(() => {
@@ -136,6 +145,7 @@
     const request = ++generation;
     busy = true;
     failed = false;
+    failedArea = null;
     try {
       const page = await runsLoader(cursor);
       if (request !== generation) return;
@@ -145,7 +155,10 @@
         : (page.runs[0] ?? null);
       await chooseRun(run, request);
     } catch {
-      if (request === generation) failed = true;
+      if (request === generation) {
+        failed = true;
+        failedArea = 'runs';
+      }
     } finally {
       if (request === generation) busy = false;
     }
@@ -172,14 +185,26 @@
     if (run === null) return;
     if (!silent) busy = true;
     failed = false;
+    failedArea = null;
     try {
-      const [nextDashboard, nextModules, nextEntries] = await Promise.all([
-        dashboardLoader(run.selection),
-        modulesLoader(run.selection, null),
-        entriesLoader(run.selection, null),
-      ]);
+      const dashboardResult = await settle(() => dashboardLoader(run.selection));
+      const modulesResult = await settle(() => modulesLoader(run.selection, null));
+      const entriesResult = await settle(() => entriesLoader(run.selection, null));
       if (request !== generation) return;
-      dashboard = nextDashboard;
+      const rejectedArea =
+        dashboardResult.status === 'rejected'
+          ? 'dashboard'
+          : modulesResult.status === 'rejected'
+            ? 'modules'
+            : entriesResult.status === 'rejected'
+              ? 'history'
+              : null;
+      failed = rejectedArea !== null;
+      failedArea = rejectedArea;
+      if (dashboardResult.status === 'fulfilled') dashboard = dashboardResult.value;
+      if (entriesResult.status === 'fulfilled') entryPage = entriesResult.value;
+      if (modulesResult.status === 'rejected') return;
+      const nextModules = modulesResult.value;
       const retainedExpanded = silent
         ? modules.find(
             (item) =>
@@ -192,16 +217,31 @@
           ? nextModules.modules
           : [...nextModules.modules, retainedExpanded];
       moduleCursor = nextModules.nextCursor;
-      entryPage = nextEntries;
       if (expandedModule !== null) {
         const module = modules.find((item) => item.selection === expandedModule);
-        if (module !== undefined) await loadModuleDetails(module, request);
+        if (module !== undefined) await loadModuleDetails(module, request, silent);
       }
     } catch {
-      if (request === generation) failed = true;
+      if (request === generation) {
+        failed = true;
+        failedArea = 'dashboard';
+      }
     } finally {
       if (request === generation && !silent) busy = false;
     }
+  }
+
+  async function settle<T>(load: () => Promise<T>): Promise<PromiseSettledResult<T>> {
+    try {
+      return { status: 'fulfilled', value: await load() };
+    } catch (reason) {
+      return { reason, status: 'rejected' };
+    }
+  }
+
+  async function retryLoad(): Promise<void> {
+    if (failedArea === 'runs' || selectedRun === null) await loadRuns(null, false);
+    else await refreshSelectedRun(false);
   }
 
   async function loadMoreModules(): Promise<void> {
@@ -289,50 +329,51 @@
   async function loadModuleDetails(
     module: DeepMapRunModuleV1,
     request = generation,
+    refreshSteps = false,
   ): Promise<void> {
     const run = selectedRun;
     if (run === null) return;
-    const work: Promise<unknown>[] = [];
-    if (stepsByModule[module.selection] === undefined) {
-      work.push(
-        stepsLoader(run.selection, module.selection, null).then((response) => {
-          if (request === generation)
-            stepsByModule = { ...stepsByModule, [module.selection]: response };
-        }),
-      );
+    const work: Array<() => Promise<void>> = [];
+    if (refreshSteps || stepsByModule[module.selection] === undefined) {
+      work.push(async () => {
+        const response = await stepsLoader(run.selection, module.selection, null);
+        if (request === generation)
+          stepsByModule = { ...stepsByModule, [module.selection]: response };
+      });
     }
     if (module.cardAvailable && cardsByModule[module.selection] === undefined) {
-      work.push(
-        cardLoader({ runSelection: run.selection, moduleSelection: module.selection }).then(
-          (response) => {
-            if (request === generation)
-              cardsByModule = { ...cardsByModule, [module.selection]: response };
-          },
-        ),
-      );
+      work.push(async () => {
+        const response = await cardLoader({
+          runSelection: run.selection,
+          moduleSelection: module.selection,
+        });
+        if (request === generation)
+          cardsByModule = { ...cardsByModule, [module.selection]: response };
+      });
     }
     if (module.cardAvailable && impactsByModule[module.selection] === undefined) {
-      work.push(
-        atlasImpactLoader(run.selection, module.selection, null).then((response) => {
-          if (request === generation)
-            impactsByModule = { ...impactsByModule, [module.selection]: response };
-        }),
-      );
+      work.push(async () => {
+        const response = await atlasImpactLoader(run.selection, module.selection, null);
+        if (request === generation)
+          impactsByModule = { ...impactsByModule, [module.selection]: response };
+      });
     }
     if (work.length === 0) return;
     busy = true;
     try {
-      await Promise.all(work);
-    } catch {
-      if (request === generation) failed = true;
+      let detailFailed = false;
+      for (const load of work) {
+        if ((await settle(load)).status === 'rejected') detailFailed = true;
+      }
+      if (request === generation && detailFailed) failed = true;
     } finally {
       if (request === generation) busy = false;
     }
   }
 
   async function selectRun(event: Event): Promise<void> {
-    const index = Number((event.currentTarget as HTMLSelectElement).value);
-    const run = Number.isInteger(index) && index >= 0 ? (runPage?.runs[index] ?? null) : null;
+    const selection = (event.currentTarget as HTMLSelectElement).value;
+    const run = runPage?.runs.find((item) => item.selection === selection) ?? null;
     await chooseRun(run);
   }
 
@@ -485,6 +526,18 @@
     }[value];
   }
 
+  function activityLabel(action: DeepMapCurrentActivityV1['action']): string {
+    return {
+      buildPlan: 'A^3 erstellt den Erkundungsplan.',
+      inspect: 'A^3 liest die vorhandenen Strukturhinweise zu diesem Ziel.',
+      search: 'A^3 durchsucht den Projektindex nach passenden Hinweisen.',
+      propose: 'A^3 ordnet die gefundenen Hinweise den Feldern der Module Card zu.',
+      generateClaims: 'A^3 erstellt aus den Ergebnissen Aussagen für die Module Card.',
+      verifyEvidence: 'A^3 prüft jede Aussage gegen ihre Quellen.',
+      publishCards: 'A^3 veröffentlicht bestätigte Module Cards und ergänzt damit den Atlas.',
+    }[action ?? 'buildPlan'];
+  }
+
   function eventSentence(entry: DeepMapEntryV1): string {
     const action =
       (
@@ -590,8 +643,18 @@
     <div class="content">
       {#if failed}
         <div class="notice error" role="alert">
-          <strong>Die aktuellen Informationen konnten nicht vollständig geladen werden.</strong>
-          <button type="button" onclick={() => refreshSelectedRun(false)}>Erneut laden</button>
+          <strong>
+            {failedArea === 'runs'
+              ? 'Die gespeicherten Deep-Map-Läufe konnten nicht geladen werden.'
+              : failedArea === 'dashboard'
+                ? 'Der aktuelle Deep-Map-Stand konnte nicht geladen werden.'
+                : failedArea === 'modules'
+                  ? 'Der Deep-Map-Plan konnte nicht geladen werden.'
+                  : failedArea === 'history'
+                    ? 'Der Deep-Map-Verlauf konnte nicht geladen werden.'
+                    : 'Ein Teil der aktuellen Deep-Map-Informationen konnte nicht geladen werden.'}
+          </strong>
+          <button type="button" onclick={retryLoad}>Erneut laden</button>
         </div>
       {/if}
 
@@ -600,15 +663,15 @@
         <div>
           <select
             id="deep-map-run-heading"
-            value={String(
-              runPage?.runs.findIndex((run) => run.selection === selectedRun?.selection) ?? -1,
-            )}
+            value={selectedRun?.selection ?? ''}
             onchange={selectRun}
           >
             {#if runPage?.runs.length === 0}<option value="">Noch kein Lauf vorhanden</option>{/if}
-            {#each runPage?.runs ?? [] as run, runIndex (run.selection)}
-              <option value={runIndex}
-                >{formatTime(run.startedAtUnixMillis)} · {stateLabel(run.state)}</option
+            {#each runPage?.runs ?? [] as run (run.selection)}
+              <option value={run.selection}
+                >{formatTime(run.startedAtUnixMillis)} · {stateLabel(
+                  dashboard?.runSelection === run.selection ? dashboard.state : run.state,
+                )}</option
               >
             {/each}
           </select>
@@ -704,6 +767,10 @@
                 : 'Dieser Lauf arbeitet gerade nicht')}
           </h4>
           {#if dashboard.currentActivity !== null}
+            <p>
+              <b>{phaseLabel(dashboard.currentActivity.phase)}:</b>
+              {activityLabel(dashboard.currentActivity.action)}
+            </p>
             {#if dashboard.currentActivity.targetLabel}<p>
                 <b>Untersucht wird:</b>
                 {dashboard.currentActivity.targetLabel}

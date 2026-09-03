@@ -17,6 +17,7 @@
     canceller?: () => Promise<DeepMapControlResponseV1>;
     ondetails?: (focusFailure: boolean) => void;
     onpublished?: () => void;
+    onrunstarted?: () => void;
     pauser?: () => Promise<DeepMapControlResponseV1>;
     resumer?: () => Promise<DeepMapControlResponseV1>;
     starter?: (mode: DeepMapModeV2) => Promise<DeepMapStartResponseV2>;
@@ -31,6 +32,7 @@
     canceller = cancelDeepMap,
     ondetails = () => {},
     onpublished = () => {},
+    onrunstarted = () => {},
   }: Props = $props();
 
   let result = $state<DeepMapStatusResponseV3['result'] | null>(null);
@@ -39,6 +41,7 @@
   let readFailed = $state(false);
   let actionFailed = $state(false);
   let wasCurrent = $state(false);
+  let statusLoadQueue: Promise<void> = Promise.resolve();
 
   const lifecycle = $derived(
     result?.status === 'available' ? result.lifecycle : ({ state: 'ready' } as const),
@@ -56,15 +59,23 @@
 
   onMount(() => {
     let mounted = true;
-    void load();
-    const timer = window.setInterval(() => {
-      if (mounted) void load(true);
-    }, 1_500);
+    let timer: number | null = null;
+    const poll = async (silent: boolean): Promise<void> => {
+      await queueStatusLoad(silent);
+      if (mounted) timer = window.setTimeout(() => void poll(true), 1_500);
+    };
+    void poll(false);
     return () => {
       mounted = false;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearTimeout(timer);
     };
   });
+
+  function queueStatusLoad(silent = false): Promise<void> {
+    const scheduled = statusLoadQueue.then(() => load(silent));
+    statusLoadQueue = scheduled.catch(() => undefined);
+    return scheduled;
+  }
 
   async function load(silent = false): Promise<void> {
     if (!silent) readFailed = false;
@@ -83,11 +94,12 @@
     readFailed = false;
     actionFailed = false;
     try {
-      await starter(mode);
-      await load();
+      const response = await starter(mode);
+      await queueStatusLoad();
+      if (response.outcome === 'queued') onrunstarted();
     } catch {
       actionFailed = true;
-      await load();
+      await queueStatusLoad();
     } finally {
       busy = false;
     }
@@ -99,10 +111,10 @@
     actionFailed = false;
     try {
       await action();
-      await load();
+      await queueStatusLoad();
     } catch {
       actionFailed = true;
-      await load();
+      await queueStatusLoad();
     } finally {
       busy = false;
     }

@@ -419,6 +419,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Fehlen von Prompts, Modellantworten, Source, Providerdaten, Budgets, Snapshots sowie internen IDs.
   Komponentenprüfungen decken Live-Aktualisierung ohne überlappende Reads, erhaltene Auswahl,
   veröffentlichte Cards, Fehlerhilfe, kompakte Historie und Atlas-Fokus bei 720×520 und 680×760 ab.
+  Zeitgesteuerte Regressionen prüfen zusätzlich, dass ein angenommener Start den neuesten Lauf
+  auswählt, verständliche aktuelle Aktivität und fortgeschriebene Planschritte sichtbar werden,
+  der Gesamtzustand bis zum Abschluss nachzieht und weder ein langsamer Status-Read einen zweiten
+  Read startet noch ein temporärer Publikations-Read-Fehler einen Managerzustand fälschlich als
+  terminalen Ausführungsfehler ausgibt. Storage-Regressionen halten dazu eine echte
+  Index-Publish-Transaktion offen und belegen, dass Live-Journal, Publikationsstatus und aktuelle
+  Indexprojektion weiterhin über getrennte Transaktionskontexte lesbar bleiben; ein paralleler
+  Journal-Write wartet begrenzt und wird anschließend erfolgreich abgeschlossen. Resize-Updates
+  von Atlas und Inspector-Split werden außerhalb des `ResizeObserver`-Delivery-Zyklus auf genau
+  einen Frame zusammengeführt, damit das Öffnen der Live-Details keine rekursive Layoutschleife
+  erzeugt.
 - Der Windows-libSQL-Test-Harness führt native In-Memory-Tests, jede unabhängige
   Storage-Contract-Phase und jeden libSQL-basierten inkrementellen Index-Contract in einem eigenen
   Worker aus; dieselbe Isolation schützt die Retrieval-Evalbaseline. Erfolg gilt erst nach dem

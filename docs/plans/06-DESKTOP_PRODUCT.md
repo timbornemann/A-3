@@ -967,6 +967,15 @@ Diese Messung belegt das aktuelle Budget, behauptet aber keine Verbesserung gege
 entfernten Legacy-Oberfläche. Der native Windows-Smoke bestand mit einem echten 976 × 719 großen
 WebView2-Fenster und einem 50.500-Byte-Screenshot.
 
+Deep-Map-Livekorrektur vom 2026-09-03: Ein angenommener Start öffnet das Informationssystem und
+wählt den neu erzeugten Lauf auch dann, wenn zuvor ein alter Lauf betrachtet wurde. Dashboard,
+Module, Verlauf und aufgeklappte Planschritte werden nicht überlappend aktualisiert; die konkrete
+sichere Aktivitätsklasse wird in einem verständlichen Satz erklärt. Ein temporär blockierter
+Publikations-Read überblendet keinen Manager-Lifecycle mehr als falsches `Fehlgeschlagen`, sodass
+kompakte Leiste, Gesamtzustand und spätere Card-Publikation denselben Lauf konsistent abbilden. Die
+laufenden Map-, Journal- und Card-Zugriffe verwenden getrennte Transaktionskontexte; damit kann ein
+Publish keine Live-Abfrage durch eine bereits aktive Transaktion derselben Connection ausschließen.
+
 ## U12 Progressiver Code Atlas
 
 Abhängigkeiten: U11, ADR-0025, ADR-0030, ADR-0031

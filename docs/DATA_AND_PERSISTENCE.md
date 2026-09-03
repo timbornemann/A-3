@@ -22,6 +22,13 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
 - Der Adapter verwendet die stabile libSQL-Version 0.9.29 ausschließlich mit dem lokalen `core`-Feature. Remote-, Replikations- und Synchronisationsfunktionen sind nicht aktiviert.
 - Ein vorhandener Katalog oder eine vorhandene Worktree-Datenbank wird zunächst mit `SQLITE_OPEN_READ_ONLY` auf Schema-Version und Integrität geprüft. Eine unbekannt neuere Version wird vor Connection-Konfiguration oder Migration abgelehnt und nicht verändert.
 - Schreibende Connections erzwingen `foreign_keys = ON`, WAL-Journaling, `synchronous = NORMAL`, einen Busy-Timeout von fünf Sekunden und `trusted_schema = OFF`; die Werte werden nach dem Setzen zurückgelesen.
+- Der Adapter cached pro Projekt den geprüften lokalen Datenbank-Handle, teilt aber keine aktive
+  Transaktions-Connection zwischen unabhängigen Operationen. Map-/Deep-Map-Reads, Journalwrites,
+  Index-Publish und Module-Card-Publish beziehen je einen konfigurierten Operationskontext. WAL
+  hält Reads während eines Writes verfügbar; konkurrierende Writer werden über den begrenzten
+  Busy-Timeout serialisiert. Dadurch können Polling, Journal und Veröffentlichung weder eine
+  verschachtelte Transaktion auf derselben Connection erzeugen noch einander fälschlich als
+  Laufzeitfehler erscheinen lassen.
 - `PRAGMA user_version` ist die monotone Schema-Version. `schema_migrations` hält zusätzlich Name und versionierten BLAKE3-Checksum jeder Migration fest.
 - Jede Migration läuft in einer eigenen `IMMEDIATE`-Transaktion. Ein fehlgeschlagener Migrationskörper wird explizit zurückgerollt.
 - Knowledge-Schema V1 persistiert genau eine unveränderliche Bindung aus `RepositoryId` und
@@ -217,6 +224,9 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   derselben Plantransaktion gespeichert. Card-Inhalte, Source und Modellantworten verbleiben
   außerhalb des Journals. Historische V28-Pläne bleiben unverändert lesbar und liefern bewusst
   keine erfundenen Ziel- oder Felddetails.
+- Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
+  Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
+  Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-
   Isolation, Publish, Rebuild, IndexRun-Übergänge, Policy-/Approval-Lifecycle, die
   projektbezogene Command-Allowlist und alle fünf Verification-Evidence-Varianten ausschließlich

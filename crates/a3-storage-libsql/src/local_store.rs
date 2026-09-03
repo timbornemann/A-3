@@ -129,8 +129,13 @@ impl LibsqlKnowledgeStore {
         let knowledge = self
             .open_project_knowledge_for_project_map_atlas(project)
             .await?;
+        let connection = knowledge
+            .connection_for_operation()
+            .await
+            .map_err(classify_knowledge_open_error)
+            .map_err(ProjectMapAtlasFailure::Storage)?;
         let mut insights = project_map_atlas_insight_repository::load_summaries(
-            knowledge.connection(),
+            &connection,
             project.worktree().id(),
             index.run().id(),
             &module_ids,
@@ -161,7 +166,7 @@ impl LibsqlKnowledgeStore {
             return Ok(Some(insights));
         }
         let detail = module_card_detail_repository::load(
-            knowledge.connection(),
+            &connection,
             project.worktree().id(),
             &ModuleCardDetailQuery::new(module_id),
             &AtlasModuleCardControl {
@@ -204,19 +209,20 @@ impl LibsqlKnowledgeStore {
         let knowledge = self
             .open_project_knowledge_for_project_map_atlas(project)
             .await?;
-        let latest = index_repository::latest_index_run(
-            knowledge.connection(),
-            project.worktree().id(),
-            true,
-        )
-        .await
-        .map_err(IndexRepositoryError::classify)
-        .map_err(|error| {
-            map_atlas_index_failure(
-                error,
-                started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION,
-            )
-        })?;
+        let connection = knowledge
+            .connection_for_operation()
+            .await
+            .map_err(classify_knowledge_open_error)
+            .map_err(ProjectMapAtlasFailure::Storage)?;
+        let latest = index_repository::latest_index_run(&connection, project.worktree().id(), true)
+            .await
+            .map_err(IndexRepositoryError::classify)
+            .map_err(|error| {
+                map_atlas_index_failure(
+                    error,
+                    started_at.elapsed() >= MAX_PROJECT_MAP_ATLAS_READ_DURATION,
+                )
+            })?;
         if control.is_cancelled() {
             return Err(ProjectMapAtlasFailure::Cancelled);
         }
@@ -236,7 +242,7 @@ impl LibsqlKnowledgeStore {
             deadline: MAX_PROJECT_MAP_ATLAS_READ_DURATION,
         };
         let published = index_publication::latest_published_index(
-            knowledge.connection(),
+            &connection,
             project.worktree().id(),
             &index_control,
         )
@@ -834,8 +840,13 @@ impl TaskLensWorkspaceStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_task_lens_workspace(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_task_lens_workspace_storage_failure)?;
             task_lens_workspace_repository::list_current_goal_contracts(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 limit,
                 control,
@@ -855,8 +866,13 @@ impl TaskLensWorkspaceStore for LibsqlKnowledgeStore {
             let database = self
                 .open_project_knowledge_for_task_lens_workspace(project)
                 .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(classify_task_lens_workspace_storage_failure)?;
             task_lens_workspace_repository::load_current_task(
-                database.connection(),
+                &connection,
                 project.worktree().id(),
                 task_id,
                 control,
@@ -1441,8 +1457,13 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, Option<Snapshot>> {
         Box::pin(async move {
-            let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::latest_snapshot(knowledge.connection(), project.worktree().id())
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::latest_snapshot(&connection, project.worktree().id())
                 .await
                 .map_err(IndexRepositoryError::classify)
         })
@@ -1453,8 +1474,13 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, a3_domain::RepositoryFileState> {
         Box::pin(async move {
-            let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::current_file_state(knowledge.connection(), project.worktree().id())
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::current_file_state(&connection, project.worktree().id())
                 .await
                 .map_err(IndexRepositoryError::classify)
         })
@@ -1540,14 +1566,15 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, Option<IndexRunRecord>> {
         Box::pin(async move {
-            let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::latest_index_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                false,
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::latest_index_run(&connection, project.worktree().id(), false)
+                .await
+                .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -1556,14 +1583,15 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         project: &'a ProjectIdentity,
     ) -> KnowledgeIndexFuture<'a, Option<IndexRunRecord>> {
         Box::pin(async move {
-            let knowledge = self.open_project_knowledge(project).await?;
-            index_repository::latest_index_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                true,
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            index_repository::latest_index_run(&connection, project.worktree().id(), true)
+                .await
+                .map_err(IndexRepositoryError::classify)
         })
     }
 
@@ -1573,14 +1601,39 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         control: &'a dyn IndexPersistenceControl,
     ) -> KnowledgeIndexFuture<'a, Option<PublishedIndex>> {
         Box::pin(async move {
-            let knowledge = self.open_project_knowledge(project).await?;
-            index_publication::latest_published_index(
-                knowledge.connection(),
+            if control.is_cancelled() {
+                return Err(KnowledgeIndexFailure::Cancelled);
+            }
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            let latest =
+                index_repository::latest_index_run(&connection, project.worktree().id(), true)
+                    .await
+                    .map_err(IndexRepositoryError::classify)?;
+            if control.is_cancelled() {
+                return Err(KnowledgeIndexFailure::Cancelled);
+            }
+            let Some(record) = latest else {
+                self.remove_cached_published_index(project);
+                return Ok(None);
+            };
+            if let Some(index) = self.shared_cached_published_index(project, record) {
+                return Ok(Some(index.as_ref().clone()));
+            }
+            let published = index_publication::latest_published_index(
+                &connection,
                 project.worktree().id(),
                 control,
             )
             .await
-            .map_err(|error| error.classify())
+            .map_err(|error| error.classify())?
+            .ok_or(KnowledgeIndexFailure::InvalidIndexRunTransition)?;
+            self.cache_published_index(project, published.clone());
+            Ok(Some(published))
         })
     }
 
@@ -1748,8 +1801,12 @@ impl VerifiedModuleCardPublisher for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::VerifiedModuleCardPublisherFailure::Storage)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::VerifiedModuleCardPublisherFailure::Storage)?;
             module_card_repository::publish_verified_module_cards(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 batch,
                 timeout,
@@ -1768,14 +1825,14 @@ impl DeepMapPublicationStateStore for LibsqlKnowledgeStore {
     ) -> DeepMapPublicationStateFuture<'a> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
                 .await
                 .map_err(|_| a3_application::DeepMapPublicationStateFailure::Storage)?;
-            deep_map_repository::load_publication_state(
-                knowledge.connection(),
-                project.worktree().id(),
-            )
-            .await
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapPublicationStateFailure::Storage)?;
+            deep_map_repository::load_publication_state(&connection, project.worktree().id()).await
         })
     }
 }
@@ -1791,12 +1848,11 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
-            deep_map_journal_repository::create_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                run,
-            )
-            .await
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::create_run(&connection, project.worktree().id(), run).await
         })
     }
 
@@ -1811,8 +1867,12 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::record_plan(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 plan,
@@ -1832,8 +1892,12 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::append_event(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 event,
@@ -1852,8 +1916,12 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::mark_details_incomplete(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
             )
@@ -1871,8 +1939,12 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
                 .open_project_knowledge(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::reconcile_interrupted(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 occurred_at,
             )
@@ -1887,15 +1959,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, DeepMapRunPage> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
-            deep_map_journal_repository::list_runs(
-                knowledge.connection(),
-                project.worktree().id(),
-                cursor,
-            )
-            .await
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::list_runs(&connection, project.worktree().id(), cursor)
+                .await
         })
     }
 
@@ -1906,15 +1978,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, Option<a3_application::DeepMapRunSummary>> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
-            deep_map_journal_repository::load_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                run_id,
-            )
-            .await
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            deep_map_journal_repository::load_run(&connection, project.worktree().id(), run_id)
+                .await
         })
     }
 
@@ -1926,11 +1998,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, a3_application::DeepMapRunModulePage> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::list_run_modules(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 cursor,
@@ -1948,11 +2024,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, a3_application::DeepMapModuleStepPage> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::list_module_steps(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 module_id,
@@ -1970,11 +2050,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, DeepMapEntryPage> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::list_entries(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 before_sequence,
@@ -1991,11 +2075,15 @@ impl DeepMapRunJournalStore for LibsqlKnowledgeStore {
     ) -> DeepMapRunJournalFuture<'a, Option<a3_application::DeepMapEntryDetail>> {
         Box::pin(async move {
             let knowledge = self
-                .open_project_knowledge(project)
+                .open_project_knowledge_for_deep_map_read(project)
+                .await
+                .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
+            let connection = knowledge
+                .connection_for_operation()
                 .await
                 .map_err(|_| a3_application::DeepMapRunJournalFailure::Unavailable)?;
             deep_map_journal_repository::load_entry(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 run_id,
                 sequence,
@@ -2015,16 +2103,16 @@ impl TaskLensIndexStore for LibsqlKnowledgeStore {
             if control.is_cancelled() {
                 return Err(KnowledgeIndexFailure::Cancelled);
             }
-            let knowledge = self
-                .open_project_knowledge_for_task_lens_index(project)
-                .await?;
-            let latest = index_repository::latest_index_run(
-                knowledge.connection(),
-                project.worktree().id(),
-                true,
-            )
-            .await
-            .map_err(IndexRepositoryError::classify)?;
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            let latest =
+                index_repository::latest_index_run(&connection, project.worktree().id(), true)
+                    .await
+                    .map_err(IndexRepositoryError::classify)?;
             if control.is_cancelled() {
                 return Err(KnowledgeIndexFailure::Cancelled);
             }
@@ -2037,7 +2125,7 @@ impl TaskLensIndexStore for LibsqlKnowledgeStore {
             }
             let index_control = SharedIndexControl(control);
             let published = index_publication::latest_published_index(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 &index_control,
             )
@@ -2061,8 +2149,13 @@ impl TaskLensClaimStore for LibsqlKnowledgeStore {
     ) -> TaskLensClaimStoreFuture<'a> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_task_lens(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(TaskLensClaimStoreFailure::Storage)?;
             task_lens_claim_repository::load_claims(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 published,
                 limit.get(),
@@ -2082,8 +2175,13 @@ impl TaskLensClaimStore for LibsqlKnowledgeStore {
     ) -> TaskLensClaimReadFuture<'a> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_task_lens(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(TaskLensClaimStoreFailure::Storage)?;
             task_lens_claim_repository::load_claim(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 published,
                 claim_id,
@@ -2104,8 +2202,13 @@ impl ModuleRemapQueueStore for LibsqlKnowledgeStore {
     ) -> ModuleRemapQueueFuture<'a> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_remap_queue(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleRemapQueueFailure::Storage)?;
             module_remap_queue_repository::load_pending(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 limit,
                 control,
@@ -2126,13 +2229,14 @@ impl ModuleCardFreshnessStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_card_freshness(project)
                 .await?;
-            module_card_freshness_repository::load(
-                knowledge.connection(),
-                project.worktree().id(),
-                control,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleCardFreshnessFailure::Storage)?;
+            module_card_freshness_repository::load(&connection, project.worktree().id(), control)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 }
@@ -2148,14 +2252,14 @@ impl RepositoryTreeStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_repository_tree(project)
                 .await?;
-            repository_tree_repository::load(
-                knowledge.connection(),
-                project.worktree().id(),
-                query,
-                control,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(RepositoryTreeFailure::Storage)?;
+            repository_tree_repository::load(&connection, project.worktree().id(), query, control)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 }
@@ -2169,14 +2273,14 @@ impl ModuleTreeStore for LibsqlKnowledgeStore {
     ) -> ModuleTreeFuture<'a> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_module_tree(project).await?;
-            module_tree_repository::load(
-                knowledge.connection(),
-                project.worktree().id(),
-                query,
-                control,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleTreeFailure::Storage)?;
+            module_tree_repository::load(&connection, project.worktree().id(), query, control)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 }
@@ -2192,8 +2296,13 @@ impl ModuleCardDetailStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_card_detail(project)
                 .await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleCardDetailFailure::Storage)?;
             module_card_detail_repository::load(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -2215,8 +2324,13 @@ impl ModuleCardEvidenceStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_card_evidence(project)
                 .await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleCardEvidenceFailure::Storage)?;
             module_card_evidence_repository::load(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -2238,8 +2352,13 @@ impl ModuleDependencyGraphStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_dependency_graph(project)
                 .await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleDependencyGraphFailure::Storage)?;
             module_dependency_graph_repository::load(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -2261,14 +2380,14 @@ impl ProjectMapSceneStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_project_map_scene(project)
                 .await?;
-            project_map_scene_repository::load(
-                knowledge.connection(),
-                project.worktree().id(),
-                query,
-                control,
-            )
-            .await
-            .map_err(|error| error.classify())
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ProjectMapSceneFailure::Storage)?;
+            project_map_scene_repository::load(&connection, project.worktree().id(), query, control)
+                .await
+                .map_err(|error| error.classify())
         })
     }
 }
@@ -2476,8 +2595,13 @@ impl ModuleRuntimeStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_runtime(project)
                 .await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleRuntimeFailure::Storage)?;
             module_runtime_repository::load_map(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -2497,8 +2621,13 @@ impl ModuleRuntimeStore for LibsqlKnowledgeStore {
             let knowledge = self
                 .open_project_knowledge_for_module_runtime(project)
                 .await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(ModuleRuntimeFailure::Storage)?;
             module_runtime_repository::validate_flow_root(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -2520,8 +2649,13 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     ) -> KnowledgeSearchFuture<'a, ExactSearchPage> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_search(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeSearchFailure::Storage)?;
             exact_search_repository::search_exact(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 page_size,
@@ -2543,8 +2677,13 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     ) -> KnowledgeSearchFuture<'a, LexicalSearchPage> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_search(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeSearchFailure::Storage)?;
             lexical_search_repository::search_lexical(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 page_size,
@@ -2565,13 +2704,13 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     ) -> KnowledgeSearchFuture<'a, Vec<Option<ModuleId>>> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_search(project).await?;
-            project_map_search_repository::bind_modules(
-                knowledge.connection(),
-                index_run_id,
-                targets,
-                control,
-            )
-            .await
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeSearchFailure::Storage)?;
+            project_map_search_repository::bind_modules(&connection, index_run_id, targets, control)
+                .await
         })
     }
 
@@ -2583,8 +2722,13 @@ impl KnowledgeSearchStore for LibsqlKnowledgeStore {
     ) -> KnowledgeSearchFuture<'a, GraphTraversalResult> {
         Box::pin(async move {
             let knowledge = self.open_project_knowledge_for_search(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeSearchFailure::Storage)?;
             graph_traversal_repository::traverse_graph(
-                knowledge.connection(),
+                &connection,
                 project.worktree().id(),
                 query,
                 control,
@@ -3183,7 +3327,7 @@ impl LibsqlKnowledgeStore {
         Ok(self.cache_search_database(database))
     }
 
-    async fn open_project_knowledge_for_task_lens_index(
+    async fn open_project_knowledge_for_index_read(
         &self,
         project: &ProjectIdentity,
     ) -> Result<Arc<KnowledgeDatabase>, KnowledgeIndexFailure> {
@@ -3204,6 +3348,13 @@ impl LibsqlKnowledgeStore {
                 .map_err(KnowledgeIndexFailure::Storage)?,
         );
         Ok(self.cache_search_database(database))
+    }
+
+    async fn open_project_knowledge_for_deep_map_read(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<Arc<KnowledgeDatabase>, KnowledgeIndexFailure> {
+        self.open_project_knowledge_for_index_read(project).await
     }
 
     async fn semantic_vector_capability(
@@ -3788,6 +3939,17 @@ const fn classify_run_journal_for_agent_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use a3_application::{ProjectMapSceneControlError, ProjectMapSceneLoadResult};
+    use a3_domain::{
+        CanonicalDirectory, GitHead, GitReferenceName, RepositoryIdentity, WorktreeAnchorId,
+        WorktreeIdentity,
+    };
+    use futures::executor::block_on;
+    use libsql::TransactionBehavior;
+    use std::fs;
+    use std::sync::atomic::AtomicU64;
+
+    static NEXT_LOCAL_STORE_TEST: AtomicU64 = AtomicU64::new(0);
 
     #[derive(Debug)]
     struct AtlasTestControl {
@@ -3807,6 +3969,22 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct SceneTestControl;
+
+    impl ProjectMapSceneControl for SceneTestControl {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+
+        fn report_progress(
+            &self,
+            _progress: a3_domain::Progress,
+        ) -> Result<(), ProjectMapSceneControlError> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn atlas_read_checkpoint_distinguishes_cancellation_and_deadline() {
         assert_eq!(
@@ -3820,5 +3998,65 @@ mod tests {
             ),
             Err(ProjectMapAtlasFailure::TimedOut)
         );
+    }
+
+    #[test]
+    fn concurrent_map_reads_use_independent_transaction_contexts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let sequence = NEXT_LOCAL_STORE_TEST.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "a3-local-store-read-test-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root)?;
+        let outcome = block_on(async {
+            let layout = StorageLayout::prepare(root.join("app-data"))?;
+            let common_path = root.join("common-git");
+            let worktree_path = root.join("worktree");
+            fs::create_dir(&common_path)?;
+            fs::create_dir(&worktree_path)?;
+            let repository_id = RepositoryId::from_bytes([201; 32]);
+            let worktree_id = WorktreeId::from_bytes([202; 32]);
+            let project = ProjectIdentity::new(
+                RepositoryIdentity::new(
+                    repository_id,
+                    CanonicalDirectory::from_canonicalized(fs::canonicalize(&common_path)?)?,
+                    None,
+                ),
+                WorktreeIdentity::new(
+                    worktree_id,
+                    WorktreeAnchorId::from_bytes([203; 32]),
+                    repository_id,
+                    CanonicalDirectory::from_canonicalized(fs::canonicalize(&worktree_path)?)?,
+                ),
+                GitHead::Unborn {
+                    reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
+                },
+            )?;
+            let store = LibsqlKnowledgeStore::open(&layout).await?;
+            let shared = store
+                .open_project_knowledge_for_project_map_scene(&project)
+                .await?;
+            let transaction = shared
+                .connection()
+                .transaction_with_behavior(TransactionBehavior::Deferred)
+                .await?;
+
+            let result = store
+                .load_project_map_scene(
+                    &project,
+                    &ProjectMapSceneQuery::new(None),
+                    &SceneTestControl,
+                )
+                .await?;
+
+            transaction.rollback().await?;
+            assert_eq!(result, ProjectMapSceneLoadResult::NoPublishedIndex);
+            Ok::<(), Box<dyn std::error::Error>>(())
+        });
+        let cleanup = fs::remove_dir_all(&root);
+        outcome?;
+        cleanup?;
+        Ok(())
     }
 }

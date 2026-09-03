@@ -55,6 +55,13 @@ Ereignisfeed. Der Lifecycle unterscheidet `ready`, `current`, `queued`, `running
 Module-Card-Publikation an den neuesten Fast Index. Neue Fast-Index-Publikationen ohne aktuelle
 Cards führen wieder zu `ready`.
 
+Ein vorübergehend nicht verfügbarer Read der Publikationsprojektion darf keinen bekannten
+Manager-Lifecycle als terminales `failed` überblenden. Deshalb bleibt auch bei `ready` der
+Managerzustand maßgeblich; ein Status-Read ist kein Ausführungsfehler der Deep Map. Der nächste
+Polling-Zyklus liest die Projektion erneut, und `start_deep_map` prüft sie vor einer Planung ohnehin
+noch einmal autoritativ. Dadurch zeigt die kompakte Leiste keinen Scheinfehler, obwohl kein Lauf
+fehlgeschlagen ist oder derselbe Lauf nachweislich weiterarbeitet.
+
 Die content-freien Detaildaten werden ausschließlich über getrennte V1-Reads geladen:
 `query_deep_map_runs` liefert neueste 20 Läufe, `query_deep_map_entries` höchstens 50 chronologische
 Einträge und `query_deep_map_entry_detail` genau einen ausgewählten Eintrag. Cursor sowie Run- und

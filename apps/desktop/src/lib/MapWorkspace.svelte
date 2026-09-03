@@ -3,6 +3,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import DeepMapDock from './DeepMapDock.svelte';
   import DeepMapInspector from './DeepMapInspector.svelte';
+  import { createFrameCoalescedResize } from './frame-coalesced-resize';
   import MapAtlasCanvas from './MapAtlasCanvas.svelte';
   import MapInspector from './MapInspector.svelte';
   import type { IndexActivityStateV1 } from './index-activity';
@@ -203,6 +204,7 @@
   let resizingInspector = $state(false);
   let inspectorMode = $state<'code' | 'deepMap' | null>(null);
   let deepMapFailureFocusEpoch = $state(0);
+  let deepMapRunStartedEpoch = $state(0);
   let inspectorResizePointerId: number | null = null;
   let inspectorResizeHandle: HTMLElement | null = null;
   let requestGeneration = 0;
@@ -262,25 +264,36 @@
         else void goBack();
       }
     };
-    const updateWorkspaceWidth = () => {
-      workspaceBodyWidth = workspaceBody?.clientWidth ?? 0;
+    const updateWorkspaceWidth = (width: number) => {
+      if (workspaceBodyWidth !== width) workspaceBodyWidth = width;
     };
+    const resize = createFrameCoalescedResize((size) => updateWorkspaceWidth(size.width));
+    const scheduleWorkspaceMeasurement = () =>
+      resize.schedule({
+        height: workspaceBody?.clientHeight ?? 0,
+        width: workspaceBody?.clientWidth ?? 0,
+      });
     const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateWorkspaceWidth);
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(([entry]) =>
+            resize.schedule({ height: entry.contentRect.height, width: entry.contentRect.width }),
+          );
     if (workspaceBody !== null) resizeObserver?.observe(workspaceBody);
-    updateWorkspaceWidth();
+    updateWorkspaceWidth(workspaceBody?.clientWidth ?? 0);
     window.addEventListener('keydown', keydown);
     window.addEventListener('pointermove', continueInspectorResize);
     window.addEventListener('pointerup', stopInspectorResize);
     window.addEventListener('pointercancel', stopInspectorResize);
-    window.addEventListener('resize', updateWorkspaceWidth);
+    window.addEventListener('resize', scheduleWorkspaceMeasurement);
     return () => {
       resizeObserver?.disconnect();
+      resize.dispose();
       window.removeEventListener('keydown', keydown);
       window.removeEventListener('pointermove', continueInspectorResize);
       window.removeEventListener('pointerup', stopInspectorResize);
       window.removeEventListener('pointercancel', stopInspectorResize);
-      window.removeEventListener('resize', updateWorkspaceWidth);
+      window.removeEventListener('resize', scheduleWorkspaceMeasurement);
     };
   });
 
@@ -705,6 +718,11 @@
     }
     inspectorMode = inspectorMode === 'deepMap' ? null : 'deepMap';
   }
+
+  function showStartedDeepMapRun(): void {
+    inspectorMode = 'deepMap';
+    deepMapRunStartedEpoch += 1;
+  }
 </script>
 
 <section
@@ -896,6 +914,7 @@
     <DeepMapInspector
       open={inspectorMode === 'deepMap'}
       focusFailureEpoch={deepMapFailureFocusEpoch}
+      runStartedEpoch={deepMapRunStartedEpoch}
       runsLoader={deepMapRunsLoader}
       entriesLoader={deepMapEntriesLoader}
       dashboardLoader={deepMapDashboardLoader}
@@ -917,6 +936,7 @@
     canceller={deepMapCanceller}
     ondetails={toggleDeepMapInspector}
     onpublished={reloadPublished}
+    onrunstarted={showStartedDeepMapRun}
   />
 </section>
 

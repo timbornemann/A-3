@@ -164,6 +164,23 @@ impl KnowledgeDatabase {
         &self.connection
     }
 
+    /// Opens an independently owned connection for one bounded operation.
+    ///
+    /// libSQL transactions belong to a connection. Reusing the mutation
+    /// connection concurrently can therefore make a harmless read or journal
+    /// append look like a nested transaction while another operation is in
+    /// progress. SQLite still serializes writers through its configured busy
+    /// timeout; this method only prevents unrelated calls from sharing one
+    /// transaction context.
+    pub(crate) async fn connection_for_operation(&self) -> Result<Connection, KnowledgeOpenError> {
+        let connection = self._database.connect().map_err(classify_connect_error)?;
+        configure_connection(&connection)
+            .await
+            .map_err(classify_configuration_error)?;
+        verify_connection_policy(&connection).await?;
+        Ok(connection)
+    }
+
     pub(crate) const fn repository_id(&self) -> RepositoryId {
         self.repository_id
     }
