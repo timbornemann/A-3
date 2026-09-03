@@ -4,6 +4,7 @@ import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
 const STABLE_ID = /^[0-9a-f]{64}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]{0,18})$/u;
 const MODES = ['ask', 'plan', 'agent'] as const;
+const RESEARCH_DEPTHS = ['standard', 'thorough'] as const;
 const STATES = [
   'draft',
   'running',
@@ -20,6 +21,7 @@ const ENTRY_KINDS = ['userMessage', 'assistantSummary', 'plan', 'finalReport', '
 const utf8 = new TextEncoder();
 
 export type AgentSessionModeV1 = (typeof MODES)[number];
+export type AgentResearchDepthV1 = (typeof RESEARCH_DEPTHS)[number];
 export type AgentSessionStateV1 = (typeof STATES)[number];
 export type AgentSessionEntryKindV1 = (typeof ENTRY_KINDS)[number];
 
@@ -129,6 +131,7 @@ export async function submitAgentMessage(
     expectedSessionRevision?: string | null;
     message: string;
     mode?: AgentSessionModeV1;
+    researchDepth?: AgentResearchDepthV1;
     sessionId?: string | null;
   },
   invokeCommand: InvokeCommand = invokeThroughTauri,
@@ -140,10 +143,29 @@ export async function submitAgentMessage(
     expectedSessionRevision: input.expectedSessionRevision ?? null,
     message,
     protocolVersion: CURRENT_PROTOCOL_VERSION,
+    researchDepth: input.researchDepth ?? 'standard',
     sessionId: input.sessionId ?? null,
     startMode: input.sessionId ? null : (input.mode ?? 'agent'),
   };
-  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message', { request }));
+  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message_v2', { request }));
+}
+
+export async function continueAgentResearch(
+  sessionId: string,
+  expectedSessionRevision: string,
+  researchDepth: AgentResearchDepthV1,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionResponseV1> {
+  requireStableId(sessionId, 'Agent session');
+  requireDecimal(expectedSessionRevision, 'Agent session revision', false);
+  if (!RESEARCH_DEPTHS.includes(researchDepth)) throw new Error('Invalid research depth.');
+  const request = {
+    expectedSessionRevision,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    researchDepth,
+    sessionId,
+  };
+  return parseAgentSessionResponseV1(await invokeCommand('continue_agent_research', { request }));
 }
 
 export async function controlAgentSession(

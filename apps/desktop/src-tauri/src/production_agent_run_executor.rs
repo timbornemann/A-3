@@ -5,16 +5,16 @@ use a3_application::{
     AgentContextCompileInput, AgentControllerSignal, AgentRecoveryStore, AgentRunExecutionFailure,
     AgentRunExecutionFuture, AgentRunExecutionOutcome, AgentRunExecutionRequest,
     AgentRunExecutionTrigger, AgentRunExecutor, AgentTurnOutcome, AgentTurnRejectionReason,
-    AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, CommandAllowlistStore,
-    CompileTaskLens, ConservativeProcessVerificationEvidenceFactory, ContextCompileControl,
-    ContextCompilePhase, DeterministicAcceptanceVerifier, DiscoverProjectCommands,
-    ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
+    AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, AskResearchStore,
+    CommandAllowlistStore, CompileTaskLens, ConservativeProcessVerificationEvidenceFactory,
+    ContextCompileControl, ContextCompilePhase, DeterministicAcceptanceVerifier,
+    DiscoverProjectCommands, ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchStore,
     LoadProjectCommandAllowlist, ModelCancellationFuture, ModelOperationControl,
     MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
     PersistAgentLedgerMutation, PolicyStore, ProcessEventSink, ProcessEventSinkError,
     ProcessRunControl, RefreshRepositoryIndex, RepositoryIndexControl, RepositoryIndexControlError,
-    RequestAgentFinish, RunJournalStore, TaskLensClaimStore, TaskLensControlError,
+    RequestAgentFinish, ResearchHandoff, RunJournalStore, TaskLensClaimStore, TaskLensControlError,
     TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore, VerifyAgentAcceptance,
     WorkspacePatchControl, WorkspacePatchProgressError, WorktreeMutationCoordinator,
 };
@@ -55,6 +55,7 @@ pub(crate) struct ProductionAgentRunPorts {
     pub(crate) search: Arc<dyn KnowledgeSearchStore>,
     pub(crate) claims: Arc<dyn TaskLensClaimStore>,
     pub(crate) allowlist: Arc<dyn CommandAllowlistStore>,
+    pub(crate) research: Option<Arc<dyn AskResearchStore>>,
 }
 
 /// Complete production executor. It never gives the WebView a tool or provider capability.
@@ -147,6 +148,13 @@ impl ProductionAgentRunExecutor {
             .execution_model()
             .await
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        let initial_research_handoff = match &self.ports.research {
+            Some(store) => store
+                .load_handoff_for_task(project, request.task_id())
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            None => None,
+        };
         if run.model_profile() != Some(profile.reference()) {
             return Err(AgentRunExecutionFailure::AnchorsChanged);
         }
@@ -278,6 +286,14 @@ impl ProductionAgentRunExecutor {
                 context_results.clone(),
             )
             .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?;
+            let input = match &initial_research_handoff {
+                Some(handoff) => {
+                    let published =
+                        current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
+                    input.with_research_handoff(revalidate_research_handoff(handoff, &published)?)
+                }
+                None => input,
+            };
             let observed_at = timestamp()?;
             let turn_outcome = ExecuteAgentTurn::new(
                 &context_compiler,
@@ -678,6 +694,27 @@ async fn current_index(
         .await
         .map_err(|_| AgentRunExecutionFailure::Unavailable)?
         .ok_or(AgentRunExecutionFailure::AnchorsChanged)
+}
+
+fn revalidate_research_handoff(
+    handoff: &ResearchHandoff,
+    current: &a3_domain::PublishedIndex,
+) -> Result<ResearchHandoff, AgentRunExecutionFailure> {
+    let revisions = handoff
+        .revisions()
+        .iter()
+        .filter(|revision| {
+            current
+                .publication()
+                .graph()
+                .files()
+                .iter()
+                .any(|candidate| candidate == *revision)
+        })
+        .cloned()
+        .collect();
+    ResearchHandoff::new(current.run().id(), current.run().snapshot_id(), revisions)
+        .map_err(|_| AgentRunExecutionFailure::Unavailable)
 }
 
 /// Keeps nested context, patch, process, and index progress inside one Agent-turn scope.

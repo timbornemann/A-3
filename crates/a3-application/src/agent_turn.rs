@@ -1,10 +1,10 @@
 use crate::{
     AgentActionPrimaryOutcome, AgentContextCompileInput, AgentContextCompiler,
     AgentControllerControl, AgentControllerPreflightFailure, AgentReadResult, AgentRecoveryStore,
-    AgentRecoveryStoreFailure, ContextCompileControl, ContextCompileFailure, DecodeAgentActionTurn,
-    ModelFinishReason, ModelMessageError, ModelOperationControl, ModelProvider,
-    ModelProviderFailure, ModelProviderRequest, ModelProviderRequestError, ModelRequestTimeout,
-    ProviderEvent,
+    AgentRecoveryStoreFailure, AskResearchDecisionNote, ContextCompileControl,
+    ContextCompileFailure, DecodeAgentActionTurn, ModelFinishReason, ModelMessageError,
+    ModelOperationControl, ModelProvider, ModelProviderFailure, ModelProviderRequest,
+    ModelProviderRequestError, ModelRequestTimeout, ProviderEvent,
 };
 use a3_domain::{
     AgentAction, AgentInspectAction, AgentRun, AgentRunError, AgentRunTimestamp, AgentSearchAction,
@@ -124,6 +124,7 @@ impl Error for AgentReadToolFailure {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTurnExecution {
     action: AgentAction,
+    public_note: Option<AskResearchDecisionNote>,
     charge: AgentTurnCharge,
     context_digest: ContextDigest,
     snapshot_id: SnapshotId,
@@ -137,6 +138,12 @@ impl AgentTurnExecution {
     #[must_use]
     pub const fn action(&self) -> &AgentAction {
         &self.action
+    }
+
+    /// Returns the bounded presentation-only work note emitted beside the action.
+    #[must_use]
+    pub const fn public_note(&self) -> Option<&AskResearchDecisionNote> {
+        self.public_note.as_ref()
     }
 
     /// Returns the complete primary-plus-repair resource charge.
@@ -360,7 +367,7 @@ impl<'a> ExecuteAgentTurn<'a> {
                 observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
             }));
         }
-        let (action, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
+        let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
             match DecodeAgentActionTurn::current().decode_primary(&primary.raw) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
                     action,
@@ -439,6 +446,7 @@ impl<'a> ExecuteAgentTurn<'a> {
                     )
                 }
             };
+        let (action, public_note) = decoded.into_parts();
         let action_class = AgentTurnActionClass::from_action(&action);
         let charge = AgentTurnCharge::new(prompt_tokens, output_tokens, Some(action_class), repair);
         if AgentControllerControl::is_cancelled(control) {
@@ -541,6 +549,7 @@ impl<'a> ExecuteAgentTurn<'a> {
         };
         Ok(AgentTurnOutcome::Executed(Box::new(AgentTurnExecution {
             action,
+            public_note,
             charge,
             context_digest,
             snapshot_id,
@@ -1169,7 +1178,7 @@ mod tests {
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":2,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":3,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1195,6 +1204,10 @@ mod tests {
             return Err("valid search was rejected".into());
         };
         assert!(matches!(execution.action(), AgentAction::Search(_)));
+        assert_eq!(
+            execution.public_note().map(|note| note.goal.as_str()),
+            Some("Controller finden")
+        );
         assert_eq!(
             execution.charge().action(),
             Some(AgentTurnActionClass::Search)
@@ -1275,7 +1288,7 @@ mod tests {
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
         let fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":2,"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":3,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {

@@ -7,6 +7,7 @@ mod agent_control;
 mod agent_goal;
 mod agent_inspection;
 mod agent_session;
+mod agent_work_trace;
 mod deep_map;
 mod deep_map_dashboard;
 mod error;
@@ -59,6 +60,7 @@ pub use agent_goal::{
 };
 pub use agent_inspection::*;
 pub use agent_session::*;
+pub use agent_work_trace::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapActivityV2,
     DeepMapBudgetV1, DeepMapCompactProgressV3, DeepMapConfigurationV1, DeepMapControlResponseV1,

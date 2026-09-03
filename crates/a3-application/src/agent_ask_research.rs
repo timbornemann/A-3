@@ -1,8 +1,8 @@
 use a3_domain::{
-    AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision, AgentSessionSequence,
-    AgentSessionTimestamp, AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason,
-    AskResearchSourceId, AskResearchSourceKind, AskResearchState, FileRevision, IndexRunId,
-    ProjectIdentity, SnapshotId, SourceRange,
+    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionMode,
+    AgentSessionRevision, AgentSessionSequence, AgentSessionTimestamp, AskResearchCompleteness,
+    AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind,
+    AskResearchState, FileRevision, IndexRunId, ProjectIdentity, SnapshotId, SourceRange, TaskId,
 };
 use std::error::Error;
 use std::fmt;
@@ -176,6 +176,9 @@ pub struct AskResearchTurn {
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     started_at: AgentSessionTimestamp,
+    mode: AgentSessionMode,
+    depth: AgentResearchDepth,
+    legacy: bool,
 }
 
 impl AskResearchTurn {
@@ -188,12 +191,38 @@ impl AskResearchTurn {
         snapshot_id: SnapshotId,
         started_at: AgentSessionTimestamp,
     ) -> Self {
+        Self::new_for_mode(
+            session_id,
+            user_sequence,
+            index_run_id,
+            snapshot_id,
+            started_at,
+            AgentSessionMode::Ask,
+            AgentResearchDepth::Standard,
+        )
+    }
+
+    /// Creates one generic Ask, Plan, or Agent-preparation research section.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new_for_mode(
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+        index_run_id: IndexRunId,
+        snapshot_id: SnapshotId,
+        started_at: AgentSessionTimestamp,
+        mode: AgentSessionMode,
+        depth: AgentResearchDepth,
+    ) -> Self {
         Self {
             session_id,
             user_sequence,
             index_run_id,
             snapshot_id,
             started_at,
+            mode,
+            depth,
+            legacy: false,
         }
     }
 
@@ -222,6 +251,109 @@ impl AskResearchTurn {
     pub const fn started_at(&self) -> AgentSessionTimestamp {
         self.started_at
     }
+    /// Returns the conversation mode that owns this section.
+    #[must_use]
+    pub const fn mode(&self) -> AgentSessionMode {
+        self.mode
+    }
+    /// Returns the fixed per-message depth.
+    #[must_use]
+    pub const fn depth(&self) -> AgentResearchDepth {
+        self.depth
+    }
+    /// Marks a V30 Ask trace reconstructed without generic notes or depth metadata.
+    #[must_use]
+    pub const fn as_legacy(mut self) -> Self {
+        self.legacy = true;
+        self
+    }
+    /// Returns whether this was reconstructed from the V30 Ask-only schema.
+    #[must_use]
+    pub const fn legacy(&self) -> bool {
+        self.legacy
+    }
+}
+
+/// Persistable epistemic kind of a public work note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskResearchPublicFindingKind {
+    /// Direct current Evidence observation.
+    Observation,
+    /// Explicitly unproven search lead.
+    Hypothesis,
+    /// Conclusion supported by current Evidence.
+    Conclusion,
+}
+
+/// Bounded public work note, structurally separate from every executable action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskResearchPublicNote {
+    goal: String,
+    finding_kind: AskResearchPublicFindingKind,
+    finding: String,
+    source_ids: Vec<AskResearchSourceId>,
+    gap: String,
+    next_step: String,
+}
+
+impl AskResearchPublicNote {
+    /// Creates one safe note without prompts, provider output, or hidden reasoning.
+    pub fn new(
+        goal: String,
+        finding_kind: AskResearchPublicFindingKind,
+        finding: String,
+        source_ids: Vec<AskResearchSourceId>,
+        gap: String,
+        next_step: String,
+    ) -> Result<Self, AskResearchDataError> {
+        if !safe_text(&goal, 1024)
+            || !safe_text(&finding, 4096)
+            || !safe_text(&gap, 1024)
+            || !safe_text(&next_step, 1024)
+            || source_ids.len() > 32
+            || (finding_kind != AskResearchPublicFindingKind::Hypothesis && source_ids.is_empty())
+        {
+            return Err(AskResearchDataError::InvalidEvent);
+        }
+        Ok(Self {
+            goal,
+            finding_kind,
+            finding,
+            source_ids,
+            gap,
+            next_step,
+        })
+    }
+    #[must_use]
+    /// Returns the current bounded subgoal.
+    pub fn goal(&self) -> &str {
+        &self.goal
+    }
+    #[must_use]
+    /// Returns the epistemic classification of the finding.
+    pub const fn finding_kind(&self) -> AskResearchPublicFindingKind {
+        self.finding_kind
+    }
+    #[must_use]
+    /// Returns the public observation, hypothesis, or conclusion.
+    pub fn finding(&self) -> &str {
+        &self.finding
+    }
+    #[must_use]
+    /// Returns the original source chain supporting this finding.
+    pub fn source_ids(&self) -> &[AskResearchSourceId] {
+        &self.source_ids
+    }
+    #[must_use]
+    /// Returns the remaining Evidence gap.
+    pub fn gap(&self) -> &str {
+        &self.gap
+    }
+    #[must_use]
+    /// Returns the purpose of the next action.
+    pub fn next_step(&self) -> &str {
+        &self.next_step
+    }
 }
 
 /// One append-only, content-free live event in an Ask research turn.
@@ -236,6 +368,7 @@ pub struct AskResearchEvent {
     query: Option<String>,
     completeness: AskResearchCompleteness,
     occurred_at: AgentSessionTimestamp,
+    public_note: Option<AskResearchPublicNote>,
 }
 
 impl AskResearchEvent {
@@ -271,7 +404,15 @@ impl AskResearchEvent {
             query,
             completeness,
             occurred_at,
+            public_note: None,
         })
+    }
+
+    /// Attaches one already validated public note without changing action authority.
+    #[must_use]
+    pub fn with_public_note(mut self, note: AskResearchPublicNote) -> Self {
+        self.public_note = Some(note);
+        self
     }
 
     /// Returns the owning session.
@@ -318,6 +459,11 @@ impl AskResearchEvent {
     #[must_use]
     pub const fn occurred_at(&self) -> AgentSessionTimestamp {
         self.occurred_at
+    }
+    /// Returns the optional public, non-authoritative work note.
+    #[must_use]
+    pub const fn public_note(&self) -> Option<&AskResearchPublicNote> {
+        self.public_note.as_ref()
     }
 }
 
@@ -552,6 +698,16 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         event: &'a AskResearchEvent,
         cited_sources: &'a [AskResearchSourceId],
     ) -> AskResearchStoreFuture<'a, ()>;
+    /// Links a previously completed Plan research section to the internal task created after the
+    /// user explicitly accepts that plan. This is an internal persistence operation; identifiers
+    /// are never accepted from or returned to the WebView.
+    fn link_task_to_turn<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+        task_id: TaskId,
+    ) -> AskResearchStoreFuture<'a, ()>;
     /// Lists at most 32 recorded turns for a session.
     fn list_turns<'a>(
         &'a self,
@@ -583,6 +739,15 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         user_sequence: AgentSessionSequence,
         source_id: AskResearchSourceId,
     ) -> AskResearchStoreFuture<'a, Option<AskResearchSource>>;
+    /// Reconstructs the current, typed research handoff linked to one internal Agent task.
+    ///
+    /// The task identity never crosses the WebView boundary. Missing or legacy trace data yields
+    /// `None`; callers must still revalidate every returned anchor against the current index.
+    fn load_handoff_for_task<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> AskResearchStoreFuture<'a, Option<crate::ResearchHandoff>>;
 }
 
 /// Stable Ask research persistence failure.

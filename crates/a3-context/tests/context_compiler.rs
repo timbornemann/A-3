@@ -3,10 +3,10 @@
 use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, CompileTaskLens, ContextCompileControl,
     ContextCompileFailure, ContextCompilePhase, KnowledgeSearchControl, KnowledgeSearchFailure,
-    KnowledgeSearchFuture, KnowledgeSearchStore, ModelMessageRole, TaskLensClaimLimit,
-    TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimStore, TaskLensClaimStoreFailure,
-    TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError, TaskLensIndexStore,
-    TaskLensIndexStoreFuture,
+    KnowledgeSearchFuture, KnowledgeSearchStore, ModelMessageRole, ResearchHandoff,
+    TaskLensClaimLimit, TaskLensClaimReadFuture, TaskLensClaimResult, TaskLensClaimStore,
+    TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl, TaskLensControlError,
+    TaskLensIndexStore, TaskLensIndexStoreFuture,
 };
 use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
@@ -63,7 +63,7 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
 
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
-    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V3);
+    assert_eq!(first.policy_version(), ContextCompilerPolicyVersion::V4);
     assert_eq!(first.snapshot_id(), fixture.snapshot_id);
     assert_eq!(first.excluded_stale_claims(), 1);
     assert_eq!(first.budget_plan().context_limit(), 16_384);
@@ -124,6 +124,43 @@ fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error
             .map_err(|_| TestError("call lock was poisoned"))?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let revision = fixture.published.publication().graph().files()[0].clone();
+    let handoff = ResearchHandoff::new(
+        fixture.published.run().id(),
+        fixture.snapshot_id,
+        vec![revision.clone()],
+    )?;
+    let plain =
+        block_on(compiler.compile(&input(fixture.snapshot_id)?, &RecordingControl::default()))?;
+    let grounded_input = input(fixture.snapshot_id)?.with_research_handoff(handoff);
+    let grounded = block_on(compiler.compile(&grounded_input, &RecordingControl::default()))?;
+    assert_ne!(plain.digest(), grounded.digest());
+
+    let stale_input = input(fixture.snapshot_id)?.with_research_handoff(ResearchHandoff::new(
+        IndexRunId::from_bytes([101; 32]),
+        fixture.snapshot_id,
+        vec![revision],
+    )?);
+    assert!(matches!(
+        block_on(compiler.compile(&stale_input, &RecordingControl::default())),
+        Err(ContextCompileFailure::StaleOrMismatchedInput)
+    ));
     Ok(())
 }
 

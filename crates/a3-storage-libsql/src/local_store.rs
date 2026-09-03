@@ -57,17 +57,18 @@ use a3_application::{
     ProjectStorageFuture, ProjectStorageStore, ProjectStorageUsage, RecentProject,
     RecentProjectLimit, RecordedAgentRead, RemapQueueControl, RemapQueueLimit,
     RepositoryTreeControl, RepositoryTreeFailure, RepositoryTreeFuture, RepositoryTreeQuery,
-    RepositoryTreeStore, RunEventPage, RunEventPageLimit, RunJournalStore, RunJournalStoreFailure,
-    RunJournalStoreFuture, SemanticCacheRebuildControl, SemanticEmbeddingStore,
-    SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture, StoredDesktopSettings,
-    StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore, TaskLedgerStoreFailure,
-    TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit, TaskLensClaimReadFuture,
-    TaskLensClaimStore, TaskLensClaimStoreFailure, TaskLensClaimStoreFuture, TaskLensControl,
-    TaskLensIndexStore, TaskLensIndexStoreFuture, TaskLensWorkspaceControl,
-    TaskLensWorkspaceFailure, TaskLensWorkspaceFuture, TaskLensWorkspaceGoalPage,
-    TaskLensWorkspaceStore, TaskLensWorkspaceTask, TaskLensWorkspaceTaskLimit, UiPreferencesStore,
-    UiPreferencesStoreFuture, UiPreferencesStoreVersion, VerificationEvidenceStore,
-    VerificationEvidenceStoreFailure, VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
+    RepositoryTreeStore, ResearchHandoff, RunEventPage, RunEventPageLimit, RunJournalStore,
+    RunJournalStoreFailure, RunJournalStoreFuture, SemanticCacheRebuildControl,
+    SemanticEmbeddingStore, SemanticEmbeddingStoreFailure, SemanticEmbeddingStoreFuture,
+    StoredDesktopSettings, StoredProjectCommandAllowlist, StoredProjectTarget, TaskLedgerStore,
+    TaskLedgerStoreFailure, TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLensClaimLimit,
+    TaskLensClaimReadFuture, TaskLensClaimStore, TaskLensClaimStoreFailure,
+    TaskLensClaimStoreFuture, TaskLensControl, TaskLensIndexStore, TaskLensIndexStoreFuture,
+    TaskLensWorkspaceControl, TaskLensWorkspaceFailure, TaskLensWorkspaceFuture,
+    TaskLensWorkspaceGoalPage, TaskLensWorkspaceStore, TaskLensWorkspaceTask,
+    TaskLensWorkspaceTaskLimit, UiPreferencesStore, UiPreferencesStoreFuture,
+    UiPreferencesStoreVersion, VerificationEvidenceStore, VerificationEvidenceStoreFailure,
+    VerificationEvidenceStoreFuture, VerifiedModuleCardPublisher,
     VerifiedModuleCardPublisherFuture, build_project_map_atlas_scene,
     build_project_map_atlas_scene_with_insights, build_project_map_entity_context_with_insights,
     build_project_map_flow_scene_with_insights, build_project_map_inventory_page_with_insights,
@@ -587,6 +588,34 @@ impl AskResearchStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn link_task_to_turn<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        task_id: TaskId,
+    ) -> AskResearchStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::link_task_to_turn(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+                task_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn list_turns<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -691,6 +720,30 @@ impl AskResearchStore for LibsqlKnowledgeStore {
                 session_id,
                 user_sequence,
                 source_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_handoff_for_task<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        task_id: TaskId,
+    ) -> AskResearchStoreFuture<'a, Option<ResearchHandoff>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_handoff_for_task(
+                &connection,
+                project.worktree().id(),
+                task_id,
             )
             .await
             .map_err(|error| error.classify())

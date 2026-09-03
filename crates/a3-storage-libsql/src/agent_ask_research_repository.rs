@@ -1,14 +1,16 @@
 use crate::agent_session_repository;
 use crate::catalog::is_corruption;
 use a3_application::{
-    AskResearchDetail, AskResearchEvent, AskResearchSource, AskResearchSourcePage,
-    AskResearchStoreFailure, AskResearchTurn, AskResearchTurnPage,
+    AskResearchDetail, AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote,
+    AskResearchSource, AskResearchSourcePage, AskResearchStoreFailure, AskResearchTurn,
+    AskResearchTurnPage, ResearchHandoff,
 };
 use a3_domain::{
-    AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision, AgentSessionSequence,
-    AgentSessionTimestamp, AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason,
-    AskResearchSourceId, AskResearchSourceKind, AskResearchState, ContentHash, FileRevision,
-    IndexRunId, RepositoryPath, SnapshotId, SourcePosition, SourceRange, WorktreeId,
+    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionMode,
+    AgentSessionRevision, AgentSessionSequence, AgentSessionTimestamp, AskResearchCompleteness,
+    AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind,
+    AskResearchState, ContentHash, FileRevision, IndexRunId, RepositoryPath, SnapshotId,
+    SourcePosition, SourceRange, TaskId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 
@@ -31,8 +33,8 @@ pub(crate) async fn begin(
         .map_err(AskResearchRepositoryError::Begin)?;
     let result = async {
         transaction.execute(
-            "INSERT INTO agent_ask_research_turns (worktree_id, session_id, user_sequence, index_run_id, snapshot_id, started_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![worktree_id.as_bytes().to_vec(), turn.session_id().as_bytes().to_vec(), u64_i64(turn.user_sequence().get())?, turn.index_run_id().as_bytes().to_vec(), turn.snapshot_id().as_bytes().to_vec(), u64_i64(turn.started_at().unix_millis())?],
+            "INSERT INTO agent_work_trace_turns (worktree_id, session_id, user_sequence, mode, depth, index_run_id, snapshot_id, started_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![worktree_id.as_bytes().to_vec(), turn.session_id().as_bytes().to_vec(), u64_i64(turn.user_sequence().get())?, encode_mode(turn.mode()), encode_depth(turn.depth()), turn.index_run_id().as_bytes().to_vec(), turn.snapshot_id().as_bytes().to_vec(), u64_i64(turn.started_at().unix_millis())?],
         ).await.map_err(AskResearchRepositoryError::Write)?;
         insert_event(&transaction, worktree_id, first_event).await
     }.await;
@@ -115,8 +117,12 @@ pub(crate) async fn complete(
     citations: &[AskResearchSourceId],
 ) -> Result<(), AskResearchRepositoryError> {
     if answer.session_id() != event.session_id()
-        || event.state() != AskResearchState::Completed
+        || !matches!(
+            event.state(),
+            AskResearchState::Completed | AskResearchState::AwaitingContinuation
+        )
         || citations.len() > 200
+        || (answer.task_id().is_some() && session.mode() != AgentSessionMode::Agent)
     {
         return Err(AskResearchRepositoryError::InvalidInput);
     }
@@ -132,13 +138,135 @@ pub(crate) async fn complete(
         insert_event(&transaction, worktree_id, event).await?;
         for (index, source_id) in citations.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO agent_ask_research_citations (worktree_id, session_id, user_sequence, citation_position, source_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO agent_work_trace_citations (worktree_id, session_id, user_sequence, citation_position, source_id) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::try_from(index + 1).map_err(|_| AskResearchRepositoryError::InvalidInput)?, source_id.as_bytes().to_vec()],
             ).await.map_err(AskResearchRepositoryError::Write)?;
+        }
+        if let Some(task_id) = answer.task_id() {
+            require_turn_mode(
+                &transaction,
+                worktree_id,
+                event.session_id(),
+                event.user_sequence(),
+                AgentSessionMode::Agent,
+            )
+            .await?;
+            insert_task_links(
+                &transaction,
+                worktree_id,
+                event.session_id(),
+                event.user_sequence(),
+                task_id,
+            )
+            .await?;
         }
         Ok(())
     }.await;
     close(transaction, result).await
+}
+
+async fn require_turn_mode(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    expected: AgentSessionMode,
+) -> Result<(), AskResearchRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT mode FROM agent_work_trace_turns WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 LIMIT 1",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    else {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    };
+    if decode_mode(&read_string(&row, 0)?)? != expected {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    Ok(())
+}
+
+pub(crate) async fn link_task_to_turn(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    task_id: TaskId,
+) -> Result<(), AskResearchRepositoryError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        require_turn_mode(
+            &transaction,
+            worktree_id,
+            session_id,
+            user_sequence,
+            AgentSessionMode::Plan,
+        )
+        .await?;
+        insert_task_links(
+            &transaction,
+            worktree_id,
+            session_id,
+            user_sequence,
+            task_id,
+        )
+        .await
+    }
+    .await;
+    close(transaction, result).await
+}
+
+async fn insert_task_links(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    task_id: TaskId,
+) -> Result<(), AskResearchRepositoryError> {
+    let mut existing = transaction.query(
+        "SELECT 1 FROM agent_work_trace_links WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND link_kind = 'task' LIMIT 1",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    if existing
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+        .is_some()
+    {
+        return Err(AskResearchRepositoryError::Conflict);
+    }
+    transaction.execute(
+        "INSERT INTO agent_work_trace_links (worktree_id, session_id, user_sequence, link_position, link_kind, link_id) VALUES (?1, ?2, ?3, 1, 'task', ?4)",
+        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, task_id.as_bytes().to_vec()],
+    ).await.map_err(AskResearchRepositoryError::Write)?;
+    let mut run_rows = transaction.query(
+        "SELECT run_id FROM agent_runs WHERE task_id = ?1 ORDER BY created_at_unix_millis DESC, run_id DESC LIMIT 1",
+        params![task_id.as_bytes().to_vec()],
+    ).await.map_err(AskResearchRepositoryError::Read)?;
+    if let Some(run_row) = run_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        transaction.execute(
+            "INSERT INTO agent_work_trace_links (worktree_id, session_id, user_sequence, link_position, link_kind, link_id) VALUES (?1, ?2, ?3, 2, 'run', ?4)",
+            params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, read_id(&run_row, 0)?.to_vec()],
+        ).await.map_err(AskResearchRepositoryError::Write)?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn list_turns(
@@ -151,7 +279,10 @@ pub(crate) async fn list_turns(
         return Err(AskResearchRepositoryError::InvalidInput);
     }
     let mut rows = connection.query(
-        "SELECT user_sequence FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2 ORDER BY user_sequence DESC LIMIT ?3",
+        "SELECT user_sequence FROM (\n\
+           SELECT user_sequence FROM agent_work_trace_turns WHERE worktree_id = ?1 AND session_id = ?2\n\
+           UNION SELECT user_sequence FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2\n\
+         ) ORDER BY user_sequence DESC LIMIT ?3",
         params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), i64::from(limit)],
     ).await.map_err(AskResearchRepositoryError::Read)?;
     let mut sequences = Vec::new();
@@ -181,7 +312,10 @@ pub(crate) async fn load_detail(
     user_sequence: AgentSessionSequence,
 ) -> Result<Option<AskResearchDetail>, AskResearchRepositoryError> {
     let mut rows = connection.query(
-        "SELECT index_run_id, snapshot_id, started_at_unix_millis FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3",
+        "SELECT index_run_id, snapshot_id, started_at_unix_millis, mode, depth, 0 AS legacy FROM agent_work_trace_turns WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+         UNION ALL\n\
+         SELECT index_run_id, snapshot_id, started_at_unix_millis, 'ask', 'standard', 1 FROM agent_ask_research_turns WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+         LIMIT 1",
         params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
     ).await.map_err(AskResearchRepositoryError::Read)?;
     let Some(row) = rows
@@ -191,44 +325,85 @@ pub(crate) async fn load_detail(
     else {
         return Ok(None);
     };
-    let turn = AskResearchTurn::new(
+    let mut turn = AskResearchTurn::new_for_mode(
         session_id,
         user_sequence,
         IndexRunId::from_bytes(read_id(&row, 0)?),
         SnapshotId::from_bytes(read_id(&row, 1)?),
         AgentSessionTimestamp::from_unix_millis(read_u64(&row, 2)?)
             .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+        decode_mode(&read_string(&row, 3)?)?,
+        decode_depth(&read_string(&row, 4)?)?,
     );
-    let mut event_rows = connection.query(
-        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence",
-        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
-    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let legacy = read_u64(&row, 5)? != 0;
+    if legacy {
+        turn = turn.as_legacy();
+    }
+    let event_query = if legacy {
+        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence"
+    } else {
+        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_work_trace_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence"
+    };
+    let mut event_rows = connection
+        .query(
+            event_query,
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
     let mut events = Vec::new();
     while let Some(row) = event_rows
         .next()
         .await
         .map_err(AskResearchRepositoryError::Read)?
     {
-        events.push(
-            AskResearchEvent::new(
+        let mut event = AskResearchEvent::new(
+            session_id,
+            user_sequence,
+            read_u32(&row, 0)?,
+            decode_phase(&read_string(&row, 1)?)?,
+            decode_state(&read_string(&row, 2)?)?,
+            read_string(&row, 3)?,
+            read_optional_string(&row, 4)?,
+            decode_completeness(&read_string(&row, 5)?)?,
+            AgentSessionTimestamp::from_unix_millis(read_u64(&row, 6)?)
+                .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+        )
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+        if !legacy
+            && let Some(note) = load_note(
+                connection,
+                worktree_id,
                 session_id,
                 user_sequence,
-                read_u32(&row, 0)?,
-                decode_phase(&read_string(&row, 1)?)?,
-                decode_state(&read_string(&row, 2)?)?,
-                read_string(&row, 3)?,
-                read_optional_string(&row, 4)?,
-                decode_completeness(&read_string(&row, 5)?)?,
-                AgentSessionTimestamp::from_unix_millis(read_u64(&row, 6)?)
-                    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+                event.sequence(),
             )
-            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
-        );
+            .await?
+        {
+            event = event.with_public_note(note);
+        }
+        events.push(event);
     }
-    let mut citation_rows = connection.query(
-        "SELECT source_id FROM agent_ask_research_citations WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY citation_position",
-        params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?],
-    ).await.map_err(AskResearchRepositoryError::Read)?;
+    let citation_query = if legacy {
+        "SELECT source_id FROM agent_ask_research_citations WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY citation_position"
+    } else {
+        "SELECT source_id FROM agent_work_trace_citations WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY citation_position"
+    };
+    let mut citation_rows = connection
+        .query(
+            citation_query,
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
     let mut citations = Vec::new();
     while let Some(row) = citation_rows
         .next()
@@ -254,7 +429,10 @@ pub(crate) async fn list_sources(
         return Err(AskResearchRepositoryError::InvalidInput);
     }
     let mut rows = connection.query(
-        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND ordinal > ?4 ORDER BY ordinal LIMIT ?5",
+        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM (\n\
+           SELECT * FROM agent_work_trace_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+           UNION ALL SELECT * FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+         ) WHERE ordinal > ?4 ORDER BY ordinal LIMIT ?5",
         params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, i64::from(after_ordinal.unwrap_or(0)), i64::from(limit) + 1],
     ).await.map_err(AskResearchRepositoryError::Read)?;
     let mut sources = Vec::new();
@@ -279,7 +457,10 @@ pub(crate) async fn load_source(
     source_id: AskResearchSourceId,
 ) -> Result<Option<AskResearchSource>, AskResearchRepositoryError> {
     let mut rows = connection.query(
-        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND source_id = ?4",
+        "SELECT source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason FROM (\n\
+           SELECT * FROM agent_work_trace_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+           UNION ALL SELECT * FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+         ) WHERE source_id = ?4 LIMIT 1",
         params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, source_id.as_bytes().to_vec()],
     ).await.map_err(AskResearchRepositoryError::Read)?;
     rows.next()
@@ -289,13 +470,79 @@ pub(crate) async fn load_source(
         .transpose()
 }
 
+pub(crate) async fn load_handoff_for_task(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    task_id: TaskId,
+) -> Result<Option<ResearchHandoff>, AskResearchRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT t.session_id, t.user_sequence, t.index_run_id, t.snapshot_id \
+             FROM agent_work_trace_links AS l \
+             INNER JOIN agent_work_trace_turns AS t \
+               ON t.worktree_id = l.worktree_id \
+              AND t.session_id = l.session_id \
+              AND t.user_sequence = l.user_sequence \
+             WHERE l.worktree_id = ?1 AND l.link_kind = 'task' AND l.link_id = ?2 \
+             ORDER BY t.started_at_unix_millis DESC LIMIT 1",
+            params![worktree_id.as_bytes().to_vec(), task_id.as_bytes().to_vec()],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    else {
+        return Ok(None);
+    };
+    let session_id = AgentSessionId::from_bytes(read_id(&row, 0)?);
+    let user_sequence = AgentSessionSequence::new(read_u64(&row, 1)?)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+    let index_run_id = IndexRunId::from_bytes(read_id(&row, 2)?);
+    let snapshot_id = SnapshotId::from_bytes(read_id(&row, 3)?);
+    drop(rows);
+
+    let mut source_rows = connection
+        .query(
+            "SELECT path, content_hash FROM agent_work_trace_sources \
+             WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 \
+             ORDER BY ordinal LIMIT 200",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let mut revisions = Vec::new();
+    while let Some(source_row) = source_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        let revision = FileRevision::new(
+            RepositoryPath::try_from_bytes(read_bytes(&source_row, 0)?)
+                .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+            ContentHash::from_bytes(read_id(&source_row, 1)?),
+        );
+        if !revisions.contains(&revision) {
+            revisions.push(revision);
+        }
+    }
+    ResearchHandoff::new(index_run_id, snapshot_id, revisions)
+        .map(Some)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
 async fn require_next_event(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     event: &AskResearchEvent,
 ) -> Result<(), AskResearchRepositoryError> {
     let mut rows = transaction.query(
-        "SELECT event_sequence, state FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence DESC LIMIT 1",
+        "SELECT event_sequence, state FROM agent_work_trace_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence DESC LIMIT 1",
         params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?],
     ).await.map_err(AskResearchRepositoryError::Read)?;
     let Some(row) = rows
@@ -320,7 +567,7 @@ async fn max_source_ordinal(
     session_id: AgentSessionId,
     user_sequence: AgentSessionSequence,
 ) -> Result<u32, AskResearchRepositoryError> {
-    let mut rows = transaction.query("SELECT COALESCE(MAX(ordinal), 0) FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3", params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?]).await.map_err(AskResearchRepositoryError::Read)?;
+    let mut rows = transaction.query("SELECT COALESCE(MAX(ordinal), 0) FROM agent_work_trace_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3", params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?]).await.map_err(AskResearchRepositoryError::Read)?;
     let row = rows
         .next()
         .await
@@ -335,10 +582,84 @@ async fn insert_event(
     event: &AskResearchEvent,
 ) -> Result<(), AskResearchRepositoryError> {
     transaction.execute(
-        "INSERT INTO agent_ask_research_events (worktree_id, session_id, user_sequence, event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO agent_work_trace_events (worktree_id, session_id, user_sequence, event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::from(event.sequence()), encode_phase(event.phase()), encode_state(event.state()), event.action(), event.query(), encode_completeness(event.completeness()), u64_i64(event.occurred_at().unix_millis())?],
     ).await.map_err(AskResearchRepositoryError::Write)?;
+    if let Some(note) = event.public_note() {
+        insert_note(transaction, worktree_id, event, note).await?;
+    }
     Ok(())
+}
+
+async fn insert_note(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    event: &AskResearchEvent,
+    note: &AskResearchPublicNote,
+) -> Result<(), AskResearchRepositoryError> {
+    transaction
+        .execute(
+            "INSERT INTO agent_work_trace_notes (worktree_id, session_id, user_sequence, event_sequence, goal, finding_kind, finding, gap, next_step) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::from(event.sequence()), note.goal(), encode_finding_kind(note.finding_kind()), note.finding(), note.gap(), note.next_step()],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Write)?;
+    for (index, source_id) in note.source_ids().iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO agent_work_trace_note_sources (worktree_id, session_id, user_sequence, event_sequence, source_position, source_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::from(event.sequence()), i64::try_from(index + 1).map_err(|_| AskResearchRepositoryError::InvalidInput)?, source_id.as_bytes().to_vec()],
+            )
+            .await
+            .map_err(AskResearchRepositoryError::Write)?;
+    }
+    Ok(())
+}
+
+async fn load_note(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    event_sequence: u32,
+) -> Result<Option<AskResearchPublicNote>, AskResearchRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT goal, finding_kind, finding, gap, next_step FROM agent_work_trace_notes WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND event_sequence = ?4",
+            params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, i64::from(event_sequence)],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    else {
+        return Ok(None);
+    };
+    let goal = read_string(&row, 0)?;
+    let finding_kind = decode_finding_kind(&read_string(&row, 1)?)?;
+    let finding = read_string(&row, 2)?;
+    let gap = read_string(&row, 3)?;
+    let next_step = read_string(&row, 4)?;
+    let mut source_rows = connection
+        .query(
+            "SELECT source_id FROM agent_work_trace_note_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND event_sequence = ?4 ORDER BY source_position",
+            params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec(), u64_i64(user_sequence.get())?, i64::from(event_sequence)],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let mut source_ids = Vec::new();
+    while let Some(source_row) = source_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        source_ids.push(AskResearchSourceId::from_bytes(read_id(&source_row, 0)?));
+    }
+    AskResearchPublicNote::new(goal, finding_kind, finding, source_ids, gap, next_step)
+        .map(Some)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
 }
 
 async fn insert_source(
@@ -359,7 +680,7 @@ async fn insert_source(
             None => (None, None, None, None, None, None),
         };
     transaction.execute(
-        "INSERT INTO agent_ask_research_sources (worktree_id, session_id, user_sequence, source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        "INSERT INTO agent_work_trace_sources (worktree_id, session_id, user_sequence, source_id, ordinal, path, content_hash, start_byte, end_byte, start_line, start_column, end_line, end_column, symbol, source_kind, selection_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![worktree_id.as_bytes().to_vec(), source.session_id().as_bytes().to_vec(), u64_i64(source.user_sequence().get())?, source.id().as_bytes().to_vec(), i64::from(source.ordinal()), source.revision().path().as_bytes().to_vec(), source.revision().content_hash().as_bytes().to_vec(), start_byte, end_byte, start_line, start_column, end_line, end_column, source.symbol(), encode_source_kind(source.kind()), encode_reason(source.reason())],
     ).await.map_err(AskResearchRepositoryError::Write)?;
     Ok(())
@@ -406,6 +727,11 @@ fn decode_source(
 fn encode_phase(value: AskResearchPhase) -> &'static str {
     match value {
         AskResearchPhase::Preparing => "preparing",
+        AskResearchPhase::Locating => "locating",
+        AskResearchPhase::Deciding => "deciding",
+        AskResearchPhase::Reading => "reading",
+        AskResearchPhase::Evaluating => "evaluating",
+        AskResearchPhase::AnsweringOrPlanning => "answering_or_planning",
         AskResearchPhase::SelectingEvidence => "selecting_evidence",
         AskResearchPhase::SearchingSource => "searching_source",
         AskResearchPhase::InspectingSource => "inspecting_source",
@@ -416,6 +742,11 @@ fn encode_phase(value: AskResearchPhase) -> &'static str {
 fn decode_phase(value: &str) -> Result<AskResearchPhase, AskResearchRepositoryError> {
     match value {
         "preparing" => Ok(AskResearchPhase::Preparing),
+        "locating" => Ok(AskResearchPhase::Locating),
+        "deciding" => Ok(AskResearchPhase::Deciding),
+        "reading" => Ok(AskResearchPhase::Reading),
+        "evaluating" => Ok(AskResearchPhase::Evaluating),
+        "answering_or_planning" => Ok(AskResearchPhase::AnsweringOrPlanning),
         "selecting_evidence" => Ok(AskResearchPhase::SelectingEvidence),
         "searching_source" => Ok(AskResearchPhase::SearchingSource),
         "inspecting_source" => Ok(AskResearchPhase::InspectingSource),
@@ -430,6 +761,7 @@ fn encode_state(value: AskResearchState) -> &'static str {
         AskResearchState::Completed => "completed",
         AskResearchState::Failed => "failed",
         AskResearchState::Cancelled => "cancelled",
+        AskResearchState::AwaitingContinuation => "awaiting_continuation",
     }
 }
 fn decode_state(value: &str) -> Result<AskResearchState, AskResearchRepositoryError> {
@@ -438,6 +770,53 @@ fn decode_state(value: &str) -> Result<AskResearchState, AskResearchRepositoryEr
         "completed" => Ok(AskResearchState::Completed),
         "failed" => Ok(AskResearchState::Failed),
         "cancelled" => Ok(AskResearchState::Cancelled),
+        "awaiting_continuation" => Ok(AskResearchState::AwaitingContinuation),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+
+const fn encode_mode(value: AgentSessionMode) -> &'static str {
+    match value {
+        AgentSessionMode::Ask => "ask",
+        AgentSessionMode::Plan => "plan",
+        AgentSessionMode::Agent => "agent",
+    }
+}
+fn decode_mode(value: &str) -> Result<AgentSessionMode, AskResearchRepositoryError> {
+    match value {
+        "ask" => Ok(AgentSessionMode::Ask),
+        "plan" => Ok(AgentSessionMode::Plan),
+        "agent" => Ok(AgentSessionMode::Agent),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+const fn encode_depth(value: AgentResearchDepth) -> &'static str {
+    match value {
+        AgentResearchDepth::Standard => "standard",
+        AgentResearchDepth::Thorough => "thorough",
+    }
+}
+fn decode_depth(value: &str) -> Result<AgentResearchDepth, AskResearchRepositoryError> {
+    match value {
+        "standard" => Ok(AgentResearchDepth::Standard),
+        "thorough" => Ok(AgentResearchDepth::Thorough),
+        _ => Err(AskResearchRepositoryError::InvalidStoredData),
+    }
+}
+const fn encode_finding_kind(value: AskResearchPublicFindingKind) -> &'static str {
+    match value {
+        AskResearchPublicFindingKind::Observation => "observation",
+        AskResearchPublicFindingKind::Hypothesis => "hypothesis",
+        AskResearchPublicFindingKind::Conclusion => "conclusion",
+    }
+}
+fn decode_finding_kind(
+    value: &str,
+) -> Result<AskResearchPublicFindingKind, AskResearchRepositoryError> {
+    match value {
+        "observation" => Ok(AskResearchPublicFindingKind::Observation),
+        "hypothesis" => Ok(AskResearchPublicFindingKind::Hypothesis),
+        "conclusion" => Ok(AskResearchPublicFindingKind::Conclusion),
         _ => Err(AskResearchRepositoryError::InvalidStoredData),
     }
 }
@@ -602,15 +981,21 @@ impl AskResearchRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_sources, begin, complete, list_sources, load_detail};
+    use super::{
+        append_event, append_sources, begin, complete, list_sources, load_detail,
+        load_handoff_for_task,
+    };
     use crate::agent_session_repository;
-    use a3_application::{AskResearchEvent, AskResearchSource};
+    use a3_application::{
+        AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote, AskResearchSource,
+    };
     use a3_domain::{
-        AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
-        AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-        AgentSessionTimestamp, AgentSessionTitle, AskResearchCompleteness, AskResearchPhase,
-        AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
-        ContentHash, FileRevision, IndexRunId, RepositoryPath, SnapshotId, WorktreeId,
+        AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
+        AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
+        AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItemId,
+        AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
+        AskResearchSourceKind, AskResearchState, ContentHash, FileRevision, IndexRunId,
+        RepositoryPath, SnapshotId, TaskId, WorktreeId,
     };
 
     #[test]
@@ -654,12 +1039,14 @@ mod tests {
                 AskResearchCompleteness::NotApplicable,
                 AgentSessionTimestamp::from_unix_millis(11)?,
             )?;
-            let turn = a3_application::AskResearchTurn::new(
+            let turn = a3_application::AskResearchTurn::new_for_mode(
                 session_id,
                 user_sequence,
                 IndexRunId::from_bytes([4; 32]),
                 SnapshotId::from_bytes([5; 32]),
                 AgentSessionTimestamp::from_unix_millis(11)?,
+                AgentSessionMode::Agent,
+                AgentResearchDepth::Standard,
             );
             begin(&connection, worktree_id, &turn, &first_event)
                 .await
@@ -682,6 +1069,29 @@ mod tests {
             append_sources(&connection, worktree_id, std::slice::from_ref(&source))
                 .await
                 .map_err(|error| error.classify())?;
+            let note = AskResearchPublicNote::new(
+                "TODOs lokalisieren".to_owned(),
+                AskResearchPublicFindingKind::Observation,
+                "Ein aktueller Treffer wurde gelesen".to_owned(),
+                vec![source_id],
+                "Weitere Aufrufstellen sind offen".to_owned(),
+                "Direkte Beziehungen prüfen".to_owned(),
+            )?;
+            let note_event = AskResearchEvent::new(
+                session_id,
+                user_sequence,
+                2,
+                AskResearchPhase::Evaluating,
+                AskResearchState::Running,
+                "Zwischenbefund auswerten".to_owned(),
+                None,
+                AskResearchCompleteness::NotApplicable,
+                AgentSessionTimestamp::from_unix_millis(11)?,
+            )?
+            .with_public_note(note.clone());
+            append_event(&connection, worktree_id, &note_event)
+                .await
+                .map_err(|error| error.classify())?;
 
             let completed = session(
                 session_id,
@@ -691,17 +1101,21 @@ mod tests {
                 Some(AgentSessionSequence::new(2)?),
                 false,
             )?;
-            let answer = entry(
+            let task_id = TaskId::from_bytes([9; 32]);
+            let answer = AgentSessionEntry::new(
                 session_id,
                 AgentSessionSequence::new(2)?,
                 AgentSessionEntryKind::FinalReport,
-                "Ein TODO wurde gefunden.",
-                12,
-            )?;
+                AgentSessionText::try_from_string("Ein TODO wurde gefunden.".to_owned())?,
+                AgentSessionTimestamp::from_unix_millis(12)?,
+                Some(AgentWorkItemId::from_bytes([10; 32])),
+                Some(task_id),
+                None,
+            );
             let terminal = AskResearchEvent::new(
                 session_id,
                 user_sequence,
-                2,
+                3,
                 AskResearchPhase::Completed,
                 AskResearchState::Completed,
                 "Antwort veröffentlicht".to_owned(),
@@ -736,7 +1150,8 @@ mod tests {
                 .await
                 .map_err(|error| error.classify())?
                 .ok_or("trace missing")?;
-            assert_eq!(trace.events().len(), 1);
+            assert_eq!(trace.events().len(), 2);
+            assert_eq!(trace.events()[1].public_note(), Some(&note));
             assert!(trace.cited_sources().is_empty());
 
             complete(
@@ -754,8 +1169,15 @@ mod tests {
                 .await
                 .map_err(|error| error.classify())?
                 .ok_or("trace missing")?;
-            assert_eq!(trace.events().len(), 2);
+            assert_eq!(trace.events().len(), 3);
             assert_eq!(trace.cited_sources(), &[source_id]);
+            let handoff = load_handoff_for_task(&connection, worktree_id, task_id)
+                .await
+                .map_err(|error| error.classify())?
+                .ok_or("research handoff missing")?;
+            assert_eq!(handoff.index_run_id(), turn.index_run_id());
+            assert_eq!(handoff.snapshot_id(), turn.snapshot_id());
+            assert_eq!(handoff.revisions(), &[source.revision().clone()]);
             assert_eq!(
                 list_sources(
                     &connection,
@@ -787,6 +1209,12 @@ mod tests {
                     .map_err(|error| error.classify())?
                     .is_none()
             );
+            assert!(
+                load_handoff_for_task(&connection, worktree_id, task_id)
+                    .await
+                    .map_err(|error| error.classify())?
+                    .is_none()
+            );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }
@@ -803,7 +1231,7 @@ mod tests {
             id,
             AgentSessionRevision::new(revision)?,
             AgentSessionTitle::try_from_string("Ask research".to_owned())?,
-            AgentSessionMode::Ask,
+            AgentSessionMode::Agent,
             state,
             AgentSessionTimestamp::from_unix_millis(10)?,
             AgentSessionTimestamp::from_unix_millis(updated_at)?,

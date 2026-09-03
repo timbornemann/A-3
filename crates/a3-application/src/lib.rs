@@ -11,6 +11,7 @@ mod agent_inspection;
 mod agent_prompt;
 mod agent_read_result;
 mod agent_recovery;
+mod agent_research_controller;
 mod agent_runtime;
 mod agent_session;
 mod agent_source_reader;
@@ -99,6 +100,7 @@ mod workspace_patch;
 pub use a3_domain::{MutationActionFingerprint, MutationActionFingerprintError};
 pub use agent_action_codec::{
     AgentActionDecodeError, AgentActionJsonSchema, AgentActionSchemaError, DecodeAgentAction,
+    DecodedAgentAction,
 };
 pub use agent_actions::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
@@ -111,11 +113,11 @@ pub use agent_activity::{
 };
 pub use agent_approval::*;
 pub use agent_ask_research::{
-    AskResearchDataError, AskResearchDetail, AskResearchEvent, AskResearchSource,
-    AskResearchSourcePage, AskResearchStore, AskResearchStoreFailure, AskResearchStoreFuture,
-    AskResearchTurn, AskResearchTurnPage, AskSourceSearchControl, AskSourceSearchFailure,
-    AskSourceSearcher, AskSourceSearcherFuture, AskSourceTextHit, AskSourceTextSearch,
-    AskSourceTextSearchResult,
+    AskResearchDataError, AskResearchDetail, AskResearchEvent, AskResearchPublicFindingKind,
+    AskResearchPublicNote, AskResearchSource, AskResearchSourcePage, AskResearchStore,
+    AskResearchStoreFailure, AskResearchStoreFuture, AskResearchTurn, AskResearchTurnPage,
+    AskSourceSearchControl, AskSourceSearchFailure, AskSourceSearcher, AskSourceSearcherFuture,
+    AskSourceTextHit, AskSourceTextSearch, AskSourceTextSearchResult,
 };
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
@@ -141,6 +143,11 @@ pub use agent_recovery::{
     AgentRecoveryOutcome, AgentRecoveryOutcomeKind, AgentRecoveryStore, AgentRecoveryStoreFailure,
     AgentRecoveryStoreFuture, InspectAgentRunRecovery, RecoverAgentRun,
 };
+pub use agent_research_controller::{
+    BeginResearchDecision, BoundedResearchController, ResearchActionBatch, ResearchControllerError,
+    ResearchHandoff, ResearchLimits, ResearchMemoryCheckpoint, ResearchMemoryFinding,
+    ResearchMemoryFindingKind, memory_finding_from_note,
+};
 pub use agent_runtime::{
     AgentRunExecutionFailure, AgentRunExecutionFuture, AgentRunExecutionOutcome,
     AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
@@ -164,7 +171,8 @@ pub use agent_turn::{
 };
 pub use ask_research_action_codec::{
     AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,
-    AskResearchDecisionJsonSchema, DecodeAskResearchDecision,
+    AskResearchDecisionJsonSchema, AskResearchDecisionNote, AskResearchFindingKind,
+    AskResearchRelation, DecodeAskResearchDecision,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,

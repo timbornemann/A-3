@@ -472,8 +472,9 @@ Profil auf Ollama-Optionen ab.
 ### AgentAction und Promptvertrag
 
 `AgentActionSchemaVersion::V1` bleibt der lesbare historische Vertrag der read-only Harnessphase
-mit `Search`, `Inspect`, `UpdateLedger` und `Finish`. `AgentActionSchemaVersion::V2` ist der aktuelle
-geschlossene Vertrag und ergänzt ausschließlich `ApplyPatch` und `Run`.
+mit `Search`, `Inspect`, `UpdateLedger` und `Finish`. `AgentActionSchemaVersion::V2` ergänzt
+ausschließlich `ApplyPatch` und `Run`. Der aktuelle geschlossene V3-Vertrag behält exakt diese
+Aktionsautorität und ergänzt daneben nur die begrenzte öffentliche Arbeitsnotiz aus ADR-0038.
 `Search` übergibt eine begrenzte Query und ein Limit an die spätere deterministische Retrieval-
 Pipeline, ohne einen Vertrauenskanal wählen zu können. `Inspect` adressiert genau eine begrenzte
 Dateiseite, eine Symbol-ID, eine typisierte Graphtraversierung, eine Claim-ID oder einen
@@ -491,11 +492,11 @@ der Modellausgabe entstehen. `ExecuteAgentTurn` autorisiert selbst weiterhin nur
 `AgentReadTools`-Port für `Search` und `Inspect` und gibt beide Mutationstypen unausgeführt an den
 E7-Controller weiter.
 
-Die eingebetteten `agent-action-v1`- und `agent-action-v2`-JSON-Schemas setzen auf jeder
+Die eingebetteten `agent-action-v1`-, `agent-action-v2`- und `agent-action-v3`-JSON-Schemas setzen auf jeder
 Objektebene `additionalProperties: false`; getrennte Runtime-Decoder prüfen das vollständige
 Dokument bis 64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen-,
-Text- und Patchgrößen sowie Domaininvarianten. V1 bleibt rückwärtskompatibel decodierbar, während
-neu kompilierter Kontext ausschließlich V2 verlangt. Der aktuelle statische Systemvertrag kostet
+Text- und Patchgrößen sowie Domaininvarianten. V1 und V2 bleiben rückwärtskompatibel decodierbar,
+während neu kompilierter Kontext ausschließlich V3 verlangt. Der aktuelle statische Systemvertrag kostet
 mit der konservativen Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
 Structured Output vorbereitet werden. Profilabhängiges Schema-Grounding wiederholt bei Bedarf
 dieselbe kanonische Schemafassung. Ein ungültiges Primärergebnis erzeugt genau eine nicht clonebare,

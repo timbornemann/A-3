@@ -27,8 +27,11 @@ impl ContextCompilerPolicyVersion {
     /// E6 policy that injects Must/Should mappings and executable verification targets.
     pub const V3: Self = Self(3);
 
+    /// ADR-0038 policy that revalidates and injects current research handoff paths.
+    pub const V4: Self = Self(4);
+
     /// Policy emitted by the current deterministic compiler implementation.
-    pub const CURRENT: Self = Self::V3;
+    pub const CURRENT: Self = Self::V4;
 
     /// Returns the stable persisted integer.
     #[must_use]
@@ -387,7 +390,7 @@ mod tests {
     fn sixteen_k_budget_matches_the_documented_v1_profile() -> Result<(), Box<dyn Error>> {
         assert_eq!(
             ContextCompilerPolicyVersion::CURRENT,
-            ContextCompilerPolicyVersion::V3
+            ContextCompilerPolicyVersion::V4
         );
         let plan = ContextBudgetPlan::for_profile(&profile(16_384, 4_096)?)?;
         assert_eq!(plan.allowance(ContextSection::SystemAndTools), 900);

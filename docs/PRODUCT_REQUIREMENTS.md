@@ -79,6 +79,9 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-072** Nutzer MÜSSEN Index- und Deep-Map-Jobs pausieren oder abbrechen können.
 - **FR-073** Diff, Toolresultate, Evidence und Verification MÜSSEN nachvollziehbar sein.
 - **FR-074** Der Kernworkflow MUSS vollständig per Tastatur nutzbar sein.
+- **FR-075** Ask, Plan und Agent-Vorbereitung MÜSSEN ihren endlichen Evidence-Arbeitsweg mit
+  öffentlichen Befunden und Quellen nachvollziehbar anzeigen; internes Chain-of-Thought bleibt
+  ausgeschlossen.
 
 ## Nichtfunktionale Anforderungen
 
@@ -118,4 +121,3 @@ Eine Anforderung gilt nur als erfüllt, wenn ein automatisierter Test, ein repro
 - Nutzer sehen laufenden Status, aktuelle Tätigkeit, notwendige Freigaben, verifizierte Änderungen
   und den Abschlussreview und können danach im selben Kontext nachfragen oder eine neue Session
   beginnen.
-

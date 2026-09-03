@@ -22,17 +22,20 @@ use crate::{
     parse_canonical_positive_u64,
 };
 use a3_application::{AgentSessionListQuery, AgentWorkspaceLayout, UiPreferencesStoreVersion};
-use a3_domain::{AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode};
+use a3_domain::{
+    AgentResearchDepth, AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode,
+};
 use a3_protocol::{
     ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
     AgentApprovalResponseV1, AgentAskResearchDetailResponseV1,
     AgentAskResearchSourcePreviewResponseV1, AgentAskResearchSourcesResponseV1,
     AgentAskResearchTurnsResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSessionControlActionV1,
-    AgentSessionModeV1, AgentSessionResponseV1, AgentSessionsResponseV1, AgentTaskControlActionV1,
-    AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1,
-    CancelModelProbeResponseV1, CommandErrorV1, CompileTaskLensRequestV1,
-    ConfigureModelProviderRequestV1, ConfirmProjectCommandAllowlistRequestV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentResearchDepthV1,
+    AgentSessionControlActionV1, AgentSessionModeV1, AgentSessionResponseV1,
+    AgentSessionsResponseV1, AgentTaskControlActionV1, AgentTaskControlResponseV1,
+    AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1, CancelModelProbeResponseV1,
+    CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
+    ConfirmProjectCommandAllowlistRequestV1, ContinueAgentResearchRequestV1,
     ControlAgentApprovalRequestV1, ControlAgentSessionRequestV1, ControlAgentTaskRunRequestV1,
     ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1,
     DeepMapControlResponseV1, DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1,
@@ -66,8 +69,9 @@ use a3_protocol::{
     RemoveCatalogProjectRequestV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
     RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
     SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV2,
-    SubmitAgentMessageRequestV1, TaskLensCompileResponseV1, TaskLensTaskResponseV1,
-    TaskLensTasksResponseV1, UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
+    SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2, TaskLensCompileResponseV1,
+    TaskLensTaskResponseV1, TaskLensTasksResponseV1, UiPreferencesResponseV1,
+    UpdateAgentWorkspaceLayoutRequestV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -357,12 +361,77 @@ pub async fn query_agent_ask_research_source_preview(
 }
 
 #[tauri::command]
+/// Lists generic Ask, Plan, and Agent-preparation work traces.
+pub async fn query_agent_work_trace_turns(
+    request: a3_protocol::QueryAgentWorkTraceTurnsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceTurnsResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.query_agent_work_trace_turns(decode_agent_session_id(request.session_id())?)
+        .await
+}
+
+#[tauri::command]
+/// Loads public notes and bounded events for one work-trace turn.
+pub async fn query_agent_work_trace_detail(
+    request: a3_protocol::QueryAgentWorkTraceDetailRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceDetailResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.query_agent_work_trace_detail(
+        decode_agent_session_id(request.session_id())?,
+        a3_domain::AgentSessionSequence::new(
+            parse_canonical_positive_u64(request.user_sequence())
+                .map_err(|_| invalid_agent_session())?,
+        )
+        .map_err(|_| invalid_agent_session())?,
+    )
+    .await
+}
+
+#[tauri::command]
+/// Lists one cursor-bound generic work-trace source page.
+pub async fn query_agent_work_trace_sources(
+    request: a3_protocol::QueryAgentWorkTraceSourcesRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceSourcesResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_sources(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads one safe preview through an opaque generic work-trace source reference.
+pub async fn query_agent_work_trace_source_preview(
+    request: a3_protocol::QueryAgentWorkTraceSourcePreviewRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceSourcePreviewResponseV1, CommandErrorV1> {
+    execute_query_agent_ask_research_source_preview(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Submits one bounded message to a new or existing project-local Agent conversation.
 pub async fn submit_agent_message(
     request: SubmitAgentMessageRequestV1,
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
     execute_submit_agent_message(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Submits one message with an explicit finite research depth.
+pub async fn submit_agent_message_v2(
+    request: SubmitAgentMessageRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_submit_agent_message_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Continues only the newest continuation-ready research section.
+pub async fn continue_agent_research(
+    request: ContinueAgentResearchRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_continue_agent_research(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -1267,10 +1336,8 @@ async fn execute_query_agent_ask_research_source_preview(
             .map_err(|_| invalid_agent_session())?,
     )
     .map_err(|_| invalid_agent_session())?;
-    let source_id = a3_domain::AskResearchSourceId::from_bytes(
-        decode_stable_id(request.source_ref()).map_err(|_| invalid_agent_session())?,
-    );
-    root.query_agent_ask_research_source_preview(session_id, sequence, source_id)
+    decode_stable_id(request.source_ref()).map_err(|_| invalid_agent_session())?;
+    root.query_agent_ask_research_source_preview(session_id, sequence, request.source_ref())
         .await
 }
 
@@ -1300,6 +1367,64 @@ async fn execute_submit_agent_message(
     }
     root.submit_agent_message(session_id, expected, mode, request.message().to_owned())
         .await
+}
+
+async fn execute_submit_agent_message_v2(
+    request: SubmitAgentMessageRequestV2,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    if !request.context_references().is_empty() {
+        return Err(invalid_agent_session());
+    }
+    let session_id = request
+        .session_id()
+        .map(decode_agent_session_id)
+        .transpose()?;
+    let expected = request
+        .expected_session_revision()
+        .map(parse_agent_session_revision)
+        .transpose()?;
+    let mode = request.start_mode().map(map_session_mode);
+    if session_id.is_some() != expected.is_some() || session_id.is_some() == mode.is_some() {
+        return Err(invalid_agent_session());
+    }
+    root.submit_agent_message_v2(
+        session_id,
+        expected,
+        mode,
+        map_research_depth(request.research_depth()),
+        request.message().to_owned(),
+    )
+    .await
+}
+
+async fn execute_continue_agent_research(
+    request: ContinueAgentResearchRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.continue_agent_research(
+        decode_agent_session_id(request.session_id())?,
+        parse_agent_session_revision(request.expected_session_revision())?,
+        map_research_depth(request.research_depth()),
+    )
+    .await
+}
+
+const fn map_session_mode(mode: AgentSessionModeV1) -> AgentSessionMode {
+    match mode {
+        AgentSessionModeV1::Ask => AgentSessionMode::Ask,
+        AgentSessionModeV1::Plan => AgentSessionMode::Plan,
+        AgentSessionModeV1::Agent => AgentSessionMode::Agent,
+    }
+}
+
+const fn map_research_depth(depth: AgentResearchDepthV1) -> AgentResearchDepth {
+    match depth {
+        AgentResearchDepthV1::Standard => AgentResearchDepth::Standard,
+        AgentResearchDepthV1::Thorough => AgentResearchDepth::Thorough,
+    }
 }
 
 async fn execute_control_agent_session(

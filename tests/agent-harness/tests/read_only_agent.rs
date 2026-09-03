@@ -156,6 +156,37 @@ const PYTHON_FILES: &[(&str, &[u8])] = &[
     ),
 ];
 
+const AGENTIC_RESEARCH_FILES: &[(&str, &[u8])] = &[
+    (
+        "package.json",
+        include_bytes!("../../../fixtures/agentic-research-v1/package.json"),
+    ),
+    (
+        "src/api/task-controller.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/src/api/task-controller.ts"),
+    ),
+    (
+        "src/domain/create-task.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/src/domain/create-task.ts"),
+    ),
+    (
+        "src/reporting/create-task.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/src/reporting/create-task.ts"),
+    ),
+    (
+        "src/services/task-service.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/src/services/task-service.ts"),
+    ),
+    (
+        "src/workers/backfill.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/src/workers/backfill.ts"),
+    ),
+    (
+        "tests/create-task.test.ts",
+        include_bytes!("../../../fixtures/agentic-research-v1/tests/create-task.test.ts"),
+    ),
+];
+
 #[derive(Debug, Clone, Copy)]
 struct FixtureDefinition {
     seed: u8,
@@ -191,11 +222,18 @@ const FIXTURES: &[FixtureDefinition] = &[
         expected_path: "src/sample/service.py",
         files: PYTHON_FILES,
     },
+    FixtureDefinition {
+        seed: 4,
+        name: "agentic-research-v1",
+        language: IndexLanguage::TypeScriptJavaScript,
+        query: "createTask",
+        expected_path: "src/domain/create-task.ts",
+        files: AGENTIC_RESEARCH_FILES,
+    },
 ];
 
 #[test]
-fn read_only_agent_reaches_verified_done_on_three_fixture_languages() -> Result<(), Box<dyn Error>>
-{
+fn read_only_agent_reaches_verified_done_on_all_fixture_languages() -> Result<(), Box<dyn Error>> {
     run_libsql_test(async {
         for fixture in FIXTURES {
             if let Err(error) = evaluate_fixture(*fixture).await {
@@ -319,7 +357,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),
         StubModelProviderBehavior::Events(provider_events(&format!(
-            r#"{{"schema_version":2,"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
+            r#"{{"schema_version":3,"public_note":{{"goal":"Relevante Implementierung finden","finding_kind":"hypothesis","finding":"Die Implementierung ist noch nicht lokalisiert.","finding_source_refs":[],"gap":"Aktuelle Source-Evidence","next_step":"Gezielt im Index suchen"}},"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
             fixture.definition.query
         ))?),
     );
@@ -382,7 +420,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .await?;
 
     let update_document = format!(
-        r#"{{"schema_version":2,"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
+        r#"{{"schema_version":3,"public_note":{{"goal":"Zwischenbefund festhalten","finding_kind":"hypothesis","finding":"Die aktuelle Suche lieferte eine relevante Quelle; der Controller prüft sie separat.","finding_source_refs":[],"gap":"Deterministische Verifikation","next_step":"Unverifiziertes Ergebnis im Ledger festhalten"}},"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
         durable.step_id, fixture.definition.query
     );
     let update_provider = StubModelProvider::new(

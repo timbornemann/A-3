@@ -15,6 +15,9 @@ const detailResponse = (steps: AgentAskResearchDetailV1['steps']) => ({
   result: {
     detail: {
       citedSourceCount: 0,
+      depth: 'standard' as const,
+      legacy: false,
+      mode: 'ask' as const,
       sourceCount: 3,
       stale: false,
       steps,
@@ -27,12 +30,13 @@ const detailResponse = (steps: AgentAskResearchDetailV1['steps']) => ({
 const step = (
   action: string,
   occurredAtUnixMillis: string,
-  phase: AgentAskResearchDetailV1['steps'][number]['phase'] = 'selectingEvidence',
+  phase: AgentAskResearchDetailV1['steps'][number]['phase'] = 'locating',
   state: AgentAskResearchDetailV1['steps'][number]['state'] = 'running',
 ): AgentAskResearchDetailV1['steps'][number] => ({
   action,
   completeness: 'notApplicable',
   occurredAtUnixMillis,
+  note: null,
   phase,
   query: null,
   state,
@@ -74,6 +78,9 @@ describe('AgentAskResearch', () => {
         result: {
           detail: {
             citedSourceCount: 1,
+            depth: 'standard' as const,
+            legacy: false,
+            mode: 'ask' as const,
             sourceCount: 1,
             stale: false,
             steps: [
@@ -81,7 +88,8 @@ describe('AgentAskResearch', () => {
                 action: 'Aktuelle indexierte Dateien nach konkretem Text durchsuchen',
                 completeness: 'limited' as const,
                 occurredAtUnixMillis: '100',
-                phase: 'searchingSource' as const,
+                note: null,
+                phase: 'reading' as const,
                 query: 'TODO',
                 state: 'running' as const,
               },
@@ -89,6 +97,7 @@ describe('AgentAskResearch', () => {
                 action: 'Antwort und verwendete Quellen veröffentlicht',
                 completeness: 'notApplicable' as const,
                 occurredAtUnixMillis: '101',
+                note: null,
                 phase: 'completed' as const,
                 query: null,
                 state: 'completed' as const,
@@ -126,7 +135,7 @@ describe('AgentAskResearch', () => {
 
     await fireEvent.click(await screen.findByText('Recherche & Quellen'));
     expect(await screen.findByText('Gefundene und verwendete Quellen')).toBeTruthy();
-    expect(await screen.findByText(/Für Antwort verwendet/)).toBeTruthy();
+    expect(await screen.findByText(/Für Ergebnis verwendet/)).toBeTruthy();
     expect(screen.getByText(/feste Sicherheits- oder Ressourcengrenze/)).toBeTruthy();
     expect(screen.queryByText(/provider|token|snapshot/i)).toBeNull();
 
@@ -172,8 +181,8 @@ describe('AgentAskResearch', () => {
         detailResponse([
           step('Projektstand binden', '100', 'preparing'),
           step('Task Lens auswerten', '101'),
-          step('Quellen prüfen', '102', 'inspectingSource'),
-          step('Antwort belegen', '103', 'answering'),
+          step('Quellen prüfen', '102', 'reading'),
+          step('Antwort belegen', '103', 'answeringOrPlanning'),
         ]),
       ),
       live: true,
@@ -292,7 +301,7 @@ describe('AgentAskResearch', () => {
       detailLoader: vi.fn(async () =>
         detailResponse([
           step('Evidence auswählen', '100'),
-          step(`Recherche ${state}`, '101', 'answering', state),
+          step(`Recherche ${state}`, '101', 'answeringOrPlanning', state),
         ]),
       ),
       refreshKey: '2',
@@ -307,6 +316,35 @@ describe('AgentAskResearch', () => {
     expect(
       timelineAction(`Recherche ${state}`).closest('li')?.getAttribute('data-step-state'),
     ).toBe(state);
+  });
+
+  it('shows public work notes and keeps continuation-ready research open', async () => {
+    const oncontinue = vi.fn();
+    const noted = step('Direkte Aufrufer prüfen', '100', 'evaluating', 'awaitingContinuation');
+    noted.note = {
+      finding: 'Die indirekten Aufrufstellen sind noch nicht vollständig belegt.',
+      findingKind: 'hypothesis',
+      gap: 'Aufrufer in weiteren Modulen',
+      goal: 'Aufgabenerzeugung nachvollziehen',
+      nextStep: 'Mit neuem Budget die Beziehungen weiter verfolgen',
+      sourceRefs: [],
+    };
+    const view = render(AgentAskResearch, {
+      detailLoader: vi.fn(async () => detailResponse([noted])),
+      oncontinue,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: emptySources,
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    expect(await screen.findByText('Aufgabenerzeugung nachvollziehen')).toBeTruthy();
+    expect(screen.getByText(/Hypothese/)).toBeTruthy();
+    expect(screen.getByText('Aufrufer in weiteren Modulen')).toBeTruthy();
+    expect(view.container.querySelector('details')?.open).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Recherche fortsetzen' }));
+    expect(oncontinue).toHaveBeenCalledOnce();
   });
 
   it('clears a pending reveal when the selected turn changes', async () => {
@@ -359,7 +397,7 @@ describe('AgentAskResearch', () => {
         detailResponse([
           step('Projektstand binden', '100', 'preparing'),
           step('Task Lens auswerten', '101'),
-          step('Antwort belegen', '102', 'answering'),
+          step('Antwort belegen', '102', 'answeringOrPlanning'),
         ]),
       ),
       live: true,

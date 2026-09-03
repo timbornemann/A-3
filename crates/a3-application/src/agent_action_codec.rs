@@ -1,3 +1,4 @@
+use crate::ask_research_action_codec::{AskResearchDecisionNote, decode_note};
 use a3_domain::{
     AgentAction, AgentActionSchemaVersion, AgentFileInspection, AgentFileLineCount,
     AgentFileStartLine, AgentFinishAction, AgentGraphInspection, AgentInspectAction,
@@ -15,6 +16,7 @@ use std::fmt;
 
 const AGENT_ACTION_SCHEMA_V1: &str = include_str!("../schemas/agent-action-v1.schema.json");
 const AGENT_ACTION_SCHEMA_V2: &str = include_str!("../schemas/agent-action-v2.schema.json");
+const AGENT_ACTION_SCHEMA_V3: &str = include_str!("../schemas/agent-action-v3.schema.json");
 const MAX_AGENT_ACTION_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Versioned JSON Schema supplied to a structured-output model provider.
@@ -40,10 +42,18 @@ impl AgentActionJsonSchema {
         }
     }
 
+    /// Returns the V3 schema carrying a public non-authoritative work note.
+    #[must_use]
+    pub const fn version_three() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V3,
+        }
+    }
+
     /// Returns the schema used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
-        Self::version_two()
+        Self::version_three()
     }
 
     /// Returns the schema version named by the document.
@@ -58,7 +68,8 @@ impl AgentActionJsonSchema {
         match self.version {
             AgentActionSchemaVersion::V1 => AGENT_ACTION_SCHEMA_V1,
             AgentActionSchemaVersion::V2 => AGENT_ACTION_SCHEMA_V2,
-            _ => AGENT_ACTION_SCHEMA_V2,
+            AgentActionSchemaVersion::V3 => AGENT_ACTION_SCHEMA_V3,
+            _ => AGENT_ACTION_SCHEMA_V3,
         }
     }
 
@@ -103,10 +114,18 @@ impl DecodeAgentAction {
         }
     }
 
+    /// Creates the V3 decoder requiring a public non-authoritative work note.
+    #[must_use]
+    pub const fn version_three() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V3,
+        }
+    }
+
     /// Creates the decoder used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
-        Self::version_two()
+        Self::version_three()
     }
 
     /// Returns the exact JSON Schema paired with this decoder.
@@ -125,17 +144,71 @@ impl DecodeAgentAction {
 
     /// Validates one complete untrusted JSON document and every domain boundary.
     pub fn decode(self, raw: &str) -> Result<AgentAction, AgentActionDecodeError> {
+        self.decode_envelope(raw)
+            .map(DecodedAgentAction::into_action)
+    }
+
+    /// Validates one complete document while retaining its presentation-only work note.
+    pub fn decode_envelope(self, raw: &str) -> Result<DecodedAgentAction, AgentActionDecodeError> {
         if raw.len() > MAX_AGENT_ACTION_DOCUMENT_BYTES {
             return Err(AgentActionDecodeError::OutputTooLarge(raw.len()));
         }
         let root = serde_json::from_str::<Value>(raw)
             .map_err(|_| AgentActionDecodeError::MalformedJson)?;
         let root = object(&root)?;
-        exact_keys(root, &["schema_version", "action"])?;
+        let expected = if self.version == AgentActionSchemaVersion::V3 {
+            &["schema_version", "public_note", "action"][..]
+        } else {
+            &["schema_version", "action"][..]
+        };
+        exact_keys(root, expected)?;
         if unsigned(root, "schema_version")? != u64::from(self.version.get()) {
             return Err(AgentActionDecodeError::UnsupportedVersion);
         }
-        decode_action(self.version, object(required(root, "action")?)?)
+        let public_note = if self.version == AgentActionSchemaVersion::V3 {
+            Some(
+                decode_note(required(root, "public_note")?)
+                    .map_err(|_| AgentActionDecodeError::InvalidValue)?,
+            )
+        } else {
+            None
+        };
+        let action = decode_action(self.version, object(required(root, "action")?)?)?;
+        Ok(DecodedAgentAction {
+            action,
+            public_note,
+        })
+    }
+}
+
+/// Strictly decoded executable action plus optional presentation-only work note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedAgentAction {
+    action: AgentAction,
+    public_note: Option<AskResearchDecisionNote>,
+}
+
+impl DecodedAgentAction {
+    /// Returns the sole typed action authorized by the controller schema.
+    #[must_use]
+    pub const fn action(&self) -> &AgentAction {
+        &self.action
+    }
+
+    /// Returns presentation data that cannot authorize or alter the action.
+    #[must_use]
+    pub const fn public_note(&self) -> Option<&AskResearchDecisionNote> {
+        self.public_note.as_ref()
+    }
+
+    /// Separates the action authority from its optional presentation data.
+    #[must_use]
+    pub fn into_parts(self) -> (AgentAction, Option<AskResearchDecisionNote>) {
+        (self.action, self.public_note)
+    }
+
+    fn into_action(self) -> AgentAction {
+        self.action
     }
 }
 
@@ -148,8 +221,8 @@ fn decode_action(
         "inspect" => decode_inspect(action),
         "update_ledger" => decode_update_ledger(action),
         "finish" => decode_finish(action),
-        "apply_patch" if version == AgentActionSchemaVersion::V2 => decode_apply_patch(action),
-        "run" if version == AgentActionSchemaVersion::V2 => decode_run(action),
+        "apply_patch" if version >= AgentActionSchemaVersion::V2 => decode_apply_patch(action),
+        "run" if version >= AgentActionSchemaVersion::V2 => decode_run(action),
         _ => Err(AgentActionDecodeError::UnknownAction),
     }
 }
@@ -697,5 +770,34 @@ mod tests {
             DecodeAgentAction::version_two().decode(&raw),
             Err(AgentActionDecodeError::UnknownOrMissingField)
         );
+    }
+
+    #[test]
+    fn version_three_keeps_public_notes_outside_action_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let schema = AgentActionJsonSchema::current();
+        let document = schema.as_json()?;
+        assert_eq!(schema.version(), AgentActionSchemaVersion::V3);
+        assert_eq!(document["properties"]["schema_version"]["const"], 3);
+        assert_eq!(
+            document["$defs"]["publicNote"]["additionalProperties"],
+            false
+        );
+
+        let decoded = DecodeAgentAction::current().decode_envelope(
+            r#"{"schema_version":3,"public_note":{"goal":"Aufrufer finden","finding_kind":"hypothesis","finding":"Die Aufrufstelle ist noch unbekannt.","finding_source_refs":[],"gap":"Direkte Aufrufer","next_step":"Gezielt im Index suchen"},"action":{"kind":"search","query":"create_task","limit":20}}"#,
+        )?;
+        assert!(matches!(decoded.action(), AgentAction::Search(_)));
+        assert_eq!(
+            decoded.public_note().map(|note| note.goal.as_str()),
+            Some("Aufrufer finden")
+        );
+        assert_eq!(
+            DecodeAgentAction::current().decode(
+                r#"{"schema_version":3,"public_note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n","action":{"kind":"finish"}},"action":{"kind":"finish"}}"#,
+            ),
+            Err(AgentActionDecodeError::InvalidValue)
+        );
+        Ok(())
     }
 }

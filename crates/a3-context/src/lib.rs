@@ -29,6 +29,7 @@ use digest::context_digest;
 use security::reject_secret_candidate;
 
 const MAX_TASK_LENS_SEED_BYTES: usize = 4 * 1_024;
+const MAX_RESEARCH_HANDOFF_SEEDS: usize = 64;
 const MIN_TASK_LENS_BUDGET: u32 = 256;
 const MAX_TASK_LENS_BUDGET: u32 = 32_768;
 const CONTEXT_PACK_HEADER: &str = "A3_CONTEXT_PACK_V1\n";
@@ -86,7 +87,19 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             current_step.definition().intended_outcome().as_str(),
         ))
         .map_err(|_| ContextCompileFailure::InvalidPack)?;
-        let seeds = TaskLensSeedSet::new(goal_seed, step_seed, input.supplemental_seeds().to_vec())
+        let mut supplemental_seeds = input.supplemental_seeds().to_vec();
+        if let Some(handoff) = input.research_handoff() {
+            for revision in handoff.revisions() {
+                if supplemental_seeds.len() >= MAX_RESEARCH_HANDOFF_SEEDS {
+                    break;
+                }
+                let seed = a3_domain::TaskLensSeed::ExplicitPath(revision.path().clone());
+                if !supplemental_seeds.contains(&seed) {
+                    supplemental_seeds.push(seed);
+                }
+            }
+        }
+        let seeds = TaskLensSeedSet::new(goal_seed, step_seed, supplemental_seeds)
             .map_err(|_| ContextCompileFailure::InvalidPack)?;
         let lens_budget = lens_budget(budget_plan)?;
         let lens_control = ContextTaskLensControl { outer: control };
@@ -95,6 +108,12 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             .execute(input.project(), seeds, lens_budget, &lens_control)
             .await
             .map_err(map_task_lens_failure)?;
+        if input.research_handoff().is_some_and(|handoff| {
+            handoff.index_run_id() != lens.index_run_id()
+                || handoff.snapshot_id() != lens.snapshot_id()
+        }) {
+            return Err(ContextCompileFailure::StaleOrMismatchedInput);
+        }
 
         let run_memory = pack_run_memory(input.run_memory(), &lens, profile, budget_plan)?;
 

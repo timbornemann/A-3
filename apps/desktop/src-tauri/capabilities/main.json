@@ -33,6 +33,10 @@
     "allow-query-agent-ask-research-detail",
     "allow-query-agent-ask-research-sources",
     "allow-query-agent-ask-research-source-preview",
+    "allow-query-agent-work-trace-turns",
+    "allow-query-agent-work-trace-detail",
+    "allow-query-agent-work-trace-sources",
+    "allow-query-agent-work-trace-source-preview",
     "allow-query-agent-session",
     "allow-query-agent-sessions",
     "allow-query-agent-inspection",
@@ -74,6 +78,8 @@
     "allow-start-deep-map",
     "allow-set-model-provider-credential",
     "allow-submit-agent-message",
+    "allow-submit-agent-message-v2",
+    "allow-continue-agent-research",
     "allow-update-agent-workspace-layout"
   ]
 }

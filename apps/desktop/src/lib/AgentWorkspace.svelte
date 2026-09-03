@@ -1,13 +1,16 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import {
     controlAgentSession,
+    continueAgentResearch,
     queryAgentSession,
     queryAgentSessions,
     queryUiPreferences,
     submitAgentMessage,
     updateAgentWorkspaceLayout,
     type AgentSessionControlActionV1,
+    type AgentResearchDepthV1,
     type AgentSessionModeV1,
     type AgentSessionResponseV1,
     type AgentSessionsResponseV1,
@@ -18,8 +21,11 @@
   } from './agent-session';
   import {
     queryAgentActivity,
+    type AgentActivityEventV1,
     type AgentActivityResponseV1,
     type AgentActivityV1,
+    type AgentControllerStateV1,
+    type AgentSelectedActionV1,
   } from './agent-activity';
   import type {
     AgentApprovalControlActionV1,
@@ -70,8 +76,14 @@
       expectedSessionRevision?: string | null;
       message: string;
       mode?: AgentSessionModeV1;
+      researchDepth?: AgentResearchDepthV1;
       sessionId?: string | null;
     }) => Promise<AgentSessionResponseV1>;
+    researchContinuer?: (
+      sessionId: string,
+      revision: string,
+      depth: AgentResearchDepthV1,
+    ) => Promise<AgentSessionResponseV1>;
     pollIntervalMs?: number;
   }
 
@@ -101,6 +113,7 @@
     sessionLoader = queryAgentSession,
     sessionsLoader = queryAgentSessions,
     messageSubmitter = submitAgentMessage,
+    researchContinuer = continueAgentResearch,
     pollIntervalMs = 700,
   }: Props = $props();
 
@@ -108,6 +121,8 @@
   let sessionView = $state<SessionView>({ kind: 'new' });
   let selectedSessionId = $state<string | null>(null);
   let newMode = $state<AgentSessionModeV1>('agent');
+  let researchDepth = $state<AgentResearchDepthV1>('standard');
+  const researchDepthBySession = new SvelteMap<string, AgentResearchDepthV1>();
   let composer = $state('');
   let pendingMessage = $state<string | null>(null);
   let submitting = $state(false);
@@ -133,13 +148,16 @@
   let sessionsRequest = 0;
   let activityRequest = 0;
   let researchRefresh = $state(0);
-  let recentlyCompletedAskSequence = $state<string | null>(null);
+  let recentlyCompletedResearchSequence = $state<string | null>(null);
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
-  const latestAskSequence = $derived(
-    selectedSession?.summary.mode === 'ask' ? latestUserSequence(selectedSession.entries) : null,
+  const latestResearchSequence = $derived(
+    selectedSession ? latestUserSequence(selectedSession.entries) : null,
+  );
+  const latestResearchHasResponse = $derived(
+    selectedSession?.entries.at(-1)?.kind !== 'userMessage',
   );
   const presentationCanBeHidden = $derived(
     selectedSummary !== null &&
@@ -228,13 +246,15 @@
   }
 
   function reset(): void {
+    researchDepthBySession.clear();
+    researchDepth = 'standard';
     sessionsView = { kind: 'noProject' };
     sessionView = { kind: 'new' };
     selectedSessionId = null;
     composer = '';
     pendingMessage = null;
     activity = null;
-    recentlyCompletedAskSequence = null;
+    recentlyCompletedResearchSequence = null;
   }
 
   async function loadPreferences(): Promise<void> {
@@ -276,8 +296,9 @@
 
   async function selectSession(sessionId: string): Promise<void> {
     const request = ++sessionRequest;
-    if (selectedSessionId !== sessionId) recentlyCompletedAskSequence = null;
+    if (selectedSessionId !== sessionId) recentlyCompletedResearchSequence = null;
     selectedSessionId = sessionId;
+    researchDepth = researchDepthBySession.get(sessionId) ?? 'standard';
     sessionMenuOpen = false;
     actionError = null;
     sessionView = { kind: 'loading' };
@@ -299,16 +320,11 @@
       if (selectedSessionId !== sessionId || response.result.status !== 'available') return;
       const previous = selectedSession;
       const next = response.result.session;
-      if (
-        previous?.summary.mode === 'ask' &&
-        previous.summary.state === 'running' &&
-        next.summary.mode === 'ask' &&
-        next.summary.state !== 'running'
-      ) {
-        recentlyCompletedAskSequence = latestUserSequence(next.entries);
+      if (previous?.summary.state === 'running' && next.summary.state !== 'running') {
+        recentlyCompletedResearchSequence = latestUserSequence(next.entries);
       }
       sessionView = { kind: 'available', session: next };
-      if (next.summary.mode === 'ask') researchRefresh += 1;
+      researchRefresh += 1;
       if (next.activeTaskId) {
         await loadActivity(next.activeTaskId);
       }
@@ -323,12 +339,13 @@
   function startNewSession(): void {
     sessionRequest += 1;
     selectedSessionId = null;
+    researchDepth = 'standard';
     sessionView = { kind: 'new' };
     composer = '';
     pendingMessage = null;
     actionError = null;
     sessionMenuOpen = false;
-    recentlyCompletedAskSequence = null;
+    recentlyCompletedResearchSequence = null;
   }
 
   async function submit(): Promise<void> {
@@ -339,21 +356,23 @@
     pendingMessage = message;
     submitting = true;
     actionError = null;
-    recentlyCompletedAskSequence = null;
+    recentlyCompletedResearchSequence = null;
     try {
       const response = await messageSubmitter(
         current
           ? {
               expectedSessionRevision: current.summary.revision,
               message,
+              researchDepth,
               sessionId: current.summary.sessionId,
             }
-          : { message, mode: newMode },
+          : { message, mode: newMode, researchDepth },
       );
       if (response.result.status === 'available') {
         selectedSessionId = response.result.session.summary.sessionId;
+        researchDepthBySession.set(response.result.session.summary.sessionId, researchDepth);
         sessionView = { kind: 'available', session: response.result.session };
-        if (response.result.session.summary.mode === 'ask') researchRefresh += 1;
+        researchRefresh += 1;
         await loadSessions(selectedSessionId);
       } else {
         actionError = 'Das aktive Projekt ist nicht mehr verfügbar.';
@@ -368,11 +387,42 @@
     }
   }
 
+  async function continueResearch(): Promise<void> {
+    const current = selectedSession;
+    if (!current || submitting) return;
+    submitting = true;
+    actionError = null;
+    try {
+      researchDepthBySession.set(current.summary.sessionId, researchDepth);
+      const response = await researchContinuer(
+        current.summary.sessionId,
+        current.summary.revision,
+        researchDepth,
+      );
+      if (response.result.status !== 'available') {
+        actionError = 'Die Recherche kann für diese Session nicht fortgesetzt werden.';
+        return;
+      }
+      sessionView = { kind: 'available', session: response.result.session };
+      researchRefresh += 1;
+      await loadSessions(response.result.session.summary.sessionId);
+    } catch {
+      actionError = 'Die Recherche konnte nicht sicher fortgesetzt werden.';
+    } finally {
+      submitting = false;
+    }
+  }
+
   function composerKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submit();
     }
+  }
+
+  function selectResearchDepth(depth: AgentResearchDepthV1): void {
+    researchDepth = depth;
+    if (selectedSessionId) researchDepthBySession.set(selectedSessionId, depth);
   }
 
   function latestUserSequence(entries: AgentSessionV1['entries']): string | null {
@@ -384,6 +434,10 @@
       if (entries[current].kind === 'userMessage') return entries[current].sequence;
     }
     return null;
+  }
+
+  function directlyAnswersUser(entries: AgentSessionV1['entries'], index: number): boolean {
+    return index > 0 && entries[index - 1]?.kind === 'userMessage';
   }
 
   async function applySessionAction(action: AgentSessionControlActionV1): Promise<void> {
@@ -518,6 +572,99 @@
       default:
         return 'Entwurf';
     }
+  }
+
+  function controllerStateLabel(state: AgentControllerStateV1): string {
+    const labels: Record<AgentControllerStateV1, string> = {
+      intake: 'Aufgabe wird aufgenommen',
+      localize: 'Relevante Stellen werden gesucht',
+      plan: 'Vorgehen wird vorbereitet',
+      execute: 'Änderungen werden umgesetzt',
+      verify: 'Ergebnis wird geprüft',
+      replan: 'Vorgehen wird angepasst',
+      awaitApproval: 'Wartet auf deine Freigabe',
+      done: 'Erfolgreich abgeschlossen',
+      failed: 'Konnte nicht abgeschlossen werden',
+      cancelled: 'Abgebrochen',
+    };
+    return labels[state];
+  }
+
+  function selectedActionLabel(action: AgentSelectedActionV1): string {
+    const labels: Record<AgentSelectedActionV1, string> = {
+      search: 'Weitere Belege suchen',
+      inspect: 'Relevanten Code lesen',
+      updateLedger: 'Vorgehen anpassen',
+      finish: 'Abschluss prüfen',
+      applyPatch: 'Änderung anwenden',
+      run: 'Prüfung ausführen',
+    };
+    return labels[action];
+  }
+
+  function activityEventLabel(item: AgentActivityEventV1): string {
+    const event = item.event;
+    switch (event.kind) {
+      case 'runStarted':
+        return 'Umsetzung vorbereitet';
+      case 'stateTransition':
+        return controllerStateLabel(event.to);
+      case 'contextCompiled':
+        return 'Arbeitskontext zusammengestellt';
+      case 'modelInteraction':
+        return event.turn?.selectedAction
+          ? selectedActionLabel(event.turn.selectedAction)
+          : 'Nächsten sicheren Schritt bestimmt';
+      case 'toolAction':
+        return 'Sichere Aktion ausgeführt';
+      case 'ledgerUpdated':
+        return 'Vorgehen an neue Erkenntnisse angepasst';
+      case 'verificationRecorded':
+        return 'Ergebnis anhand der Kriterien geprüft';
+      case 'approvalRecorded':
+        return 'Freigabe verarbeitet';
+      case 'diagnostic':
+        return 'Arbeitszustand geprüft';
+    }
+  }
+
+  function activityEventFeedback(item: AgentActivityEventV1): string {
+    if (item.outcome === 'failed') return 'Fehlgeschlagen – der Arbeitsstand bleibt erhalten.';
+    if (item.outcome === 'denied') return 'Nicht erlaubt – es wurde nichts ausgeführt.';
+    if (item.outcome === 'cancelled') return 'Abgebrochen – es folgen keine weiteren Aktionen.';
+    switch (item.code) {
+      case 'timeout':
+        return 'Das Zeitlimit wurde erreicht.';
+      case 'invalidModelOutput':
+        return 'Der Vorschlag war nicht sicher ausführbar.';
+      case 'toolFailure':
+        return 'Die Aktion konnte nicht sicher abgeschlossen werden.';
+      case 'verificationFailure':
+        return 'Die Prüfung hat noch offene Probleme gefunden.';
+      case 'policyDecision':
+        return 'Die Sicherheitsregeln wurden vor der Ausführung geprüft.';
+      case 'stateRecovered':
+        return 'Der letzte sichere Arbeitsstand wurde wiederhergestellt.';
+      case 'cancellation':
+        return 'Der Abbruch wurde verarbeitet.';
+      case 'userRequest':
+        return 'Aus deiner bestätigten Aufgabe abgeleitet.';
+      case 'controllerDecision':
+        return 'Vom sicheren Ablaufcontroller bestätigt.';
+      case 'none':
+        return item.outcome === 'succeeded' ? 'Erledigt.' : 'Wird verarbeitet.';
+    }
+  }
+
+  function activityEventState(
+    item: AgentActivityEventV1,
+    latestSequence: string | undefined,
+    terminal: boolean,
+  ): 'active' | 'cancelled' | 'done' | 'failed' {
+    if (item.outcome === 'failed' || item.outcome === 'denied') return 'failed';
+    if (item.outcome === 'cancelled') return 'cancelled';
+    if (!terminal && item.sequence === latestSequence) return 'active';
+    return 'done';
   }
 
   function relativeTime(value: string): string {
@@ -805,7 +952,7 @@
                     {/if}
                   {/each}
                 </div>
-                {#if sessionView.session.summary.mode === 'ask' && entry.kind !== 'userMessage'}
+                {#if entry.kind !== 'userMessage' && directlyAnswersUser(sessionView.session.entries, entryIndex)}
                   {@const askUserSequence = precedingUserSequence(
                     sessionView.session.entries,
                     entryIndex,
@@ -815,7 +962,8 @@
                       sessionId={sessionView.session.summary.sessionId}
                       userSequence={askUserSequence}
                       refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                      recentlyCompleted={askUserSequence === recentlyCompletedAskSequence}
+                      recentlyCompleted={askUserSequence === recentlyCompletedResearchSequence}
+                      oncontinue={() => void continueResearch()}
                     />
                   {/if}
                 {/if}
@@ -848,12 +996,13 @@
               </article>
             {/if}
             {#if pendingMessage || sessionView.session.summary.state === 'running'}
-              {#if sessionView.session.summary.mode === 'ask' && latestAskSequence}
+              {#if latestResearchSequence && !latestResearchHasResponse}
                 <AgentAskResearch
                   sessionId={sessionView.session.summary.sessionId}
-                  userSequence={latestAskSequence}
+                  userSequence={latestResearchSequence}
                   refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
                   live
+                  oncontinue={() => void continueResearch()}
                 />
               {:else}
                 <article class="message agent-message working" role="status">
@@ -926,6 +1075,18 @@
             <div>
               <span class="context-note">● Aktiver Worktree · aktueller Indexkontext</span>
             </div>
+            <div class="research-depth" aria-label="Recherche-Tiefe">
+              <button
+                type="button"
+                aria-pressed={researchDepth === 'standard'}
+                onclick={() => selectResearchDepth('standard')}>Standard</button
+              >
+              <button
+                type="button"
+                aria-pressed={researchDepth === 'thorough'}
+                onclick={() => selectResearchDepth('thorough')}>Gründlich</button
+              >
+            </div>
             <button
               class="send-button"
               type="button"
@@ -964,10 +1125,7 @@
           aria-label="Inspector einklappen">›</button
         >
       </header>
-      {#if selectedSummary?.mode !== 'ask'}<nav
-          class="inspector-tabs"
-          aria-label="Inspector Ansichten"
-        >
+      {#if activeTaskId}<nav class="inspector-tabs" aria-label="Inspector Ansichten">
           <button
             type="button"
             aria-current={inspectorTab === 'progress' ? 'page' : undefined}
@@ -985,44 +1143,44 @@
           >
         </nav>{/if}
       <div class="inspector-content">
-        {#if selectedSummary?.mode === 'ask'}
-          {#if latestAskSequence}
-            <AgentAskResearch
-              compact
-              sessionId={selectedSummary.sessionId}
-              userSequence={latestAskSequence}
-              refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
-              live={selectedSummary.state === 'running'}
-              recentlyCompleted={latestAskSequence === recentlyCompletedAskSequence}
-            />
-          {:else}
+        {#if latestResearchSequence && selectedSummary && (!activeTaskId || inspectorTab === 'progress')}
+          <AgentAskResearch
+            compact
+            sessionId={selectedSummary.sessionId}
+            userSequence={latestResearchSequence}
+            refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
+            live={selectedSummary.state === 'running' && !activeTaskId}
+            recentlyCompleted={latestResearchSequence === recentlyCompletedResearchSequence}
+            oncontinue={() => void continueResearch()}
+          />
+        {/if}
+        {#if !activeTaskId}
+          {#if !latestResearchSequence}
             <div class="inspector-empty">
               <span aria-hidden="true">⌕</span>
-              <p>Der Rechercheweg erscheint nach der ersten Ask-Frage.</p>
+              <p>Der Arbeitsweg erscheint nach der ersten Nachricht.</p>
             </div>
           {/if}
-        {:else if !activeTaskId}
-          <div class="inspector-empty">
-            <span aria-hidden="true">◎</span>
-            <p>Run-Details erscheinen hier, sobald eine geprüfte Agent-Ausführung startet.</p>
-          </div>
         {:else if inspectorTab === 'progress'}
           {#if activityLoading}<p role="status">Fortschritt wird geladen …</p>
           {:else if activity?.run}
             <section class="run-summary">
-              <p class="section-label">Aktueller Run</p>
-              <h3>{activity.run.state}</h3>
-              <p>
-                Schritt {activity.run.stepId.slice(0, 8)} · Run {activity.run.runId.slice(0, 8)}
-              </p>
+              <p class="section-label">Umsetzung & Prüfung</p>
+              <h3>{controllerStateLabel(activity.run.state)}</h3>
+              <p>Der sichere Agent arbeitet den belegten Plan schrittweise ab.</p>
             </section>
             <ol class="activity-timeline">
               {#each activity.run.timeline as event (event.sequence)}
-                <li>
-                  <span></span>
+                {@const eventState = activityEventState(
+                  event,
+                  activity.run.timeline.at(-1)?.sequence,
+                  activity.run.terminal,
+                )}
+                <li class={eventState} aria-current={eventState === 'active' ? 'step' : undefined}>
+                  <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
                   <div>
-                    <strong>{event.code}</strong>
-                    <p>{event.event.kind}</p>
+                    <strong>{activityEventLabel(event)}</strong>
+                    <p>{activityEventFeedback(event)}</p>
                   </div>
                 </li>
               {/each}
@@ -1540,6 +1698,28 @@
     align-items: center;
     gap: var(--space-2);
   }
+  .research-depth {
+    display: flex;
+    padding: 0.15rem;
+    border: 1px solid var(--color-border-soft);
+    border-radius: var(--radius-control);
+    background: var(--color-surface-subtle);
+  }
+  .research-depth button {
+    min-height: 1.9rem;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: calc(var(--radius-control) - 2px);
+    color: var(--color-muted);
+    background: transparent;
+    cursor: pointer;
+    font-size: var(--font-size-xs);
+  }
+  .research-depth button[aria-pressed='true'] {
+    color: var(--color-heading);
+    background: var(--color-surface);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--color-shadow) 20%, transparent);
+  }
   .context-note {
     color: var(--color-subtle);
     font-size: var(--font-size-xs);
@@ -1632,7 +1812,6 @@
   }
   .run-summary > p:last-child {
     color: var(--color-muted);
-    font-family: var(--font-mono);
     font-size: var(--font-size-xs);
   }
   .activity-timeline {
@@ -1643,16 +1822,48 @@
     list-style: none;
   }
   .activity-timeline li {
+    position: relative;
     display: grid;
     grid-template-columns: 0.7rem minmax(0, 1fr);
     gap: var(--space-2);
   }
+  .activity-timeline li:not(:last-child)::before {
+    position: absolute;
+    top: 0.85rem;
+    bottom: calc(-1 * var(--space-3) - 0.35rem);
+    left: 0.225rem;
+    width: 1px;
+    content: '';
+    background: var(--color-border-strong);
+  }
   .activity-timeline li > span {
+    z-index: 1;
+    display: grid;
     width: 0.5rem;
     height: 0.5rem;
     margin-top: 0.35rem;
+    place-items: center;
     border-radius: 50%;
+    color: var(--color-on-accent);
     background: var(--color-border-strong);
+    font-size: 0.42rem;
+    line-height: 1;
+  }
+  .activity-timeline li.done > span,
+  .activity-timeline li.done::before {
+    background: var(--color-status-success);
+  }
+  .activity-timeline li.active > span {
+    background: var(--color-status-pending);
+    box-shadow: 0 0 0 4px var(--color-status-pending-ring);
+  }
+  .activity-timeline li.failed > span,
+  .activity-timeline li.failed::before {
+    background: var(--color-danger);
+  }
+  .activity-timeline li.cancelled > span,
+  .activity-timeline li.cancelled::before {
+    background: var(--color-warning);
   }
   .activity-timeline p {
     margin: var(--space-1) 0 0;

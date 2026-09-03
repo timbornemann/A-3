@@ -1,0 +1,7 @@
+{
+  "name": "agentic-research-fixture",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  }
+}

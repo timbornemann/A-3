@@ -14,6 +14,16 @@ pub enum AgentSessionModeV1 {
     Agent,
 }
 
+/// User-selected finite research depth for one message.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentResearchDepthV1 {
+    /// Up to six model decisions and twelve reads.
+    Standard,
+    /// Up to twelve model decisions and twenty-four reads.
+    Thorough,
+}
+
 /// User-facing lifecycle projection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,6 +209,103 @@ impl SubmitAgentMessageRequestV1 {
     #[must_use]
     pub fn context_references(&self) -> &[AgentContextReferenceV1] {
         &self.context_references
+    }
+}
+
+/// V2 message submission with an explicit per-message research depth.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SubmitAgentMessageRequestV2 {
+    protocol_version: ProtocolVersion,
+    session_id: Option<String>,
+    expected_session_revision: Option<String>,
+    start_mode: Option<AgentSessionModeV1>,
+    research_depth: AgentResearchDepthV1,
+    message: String,
+    context_references: Vec<AgentContextReferenceV1>,
+}
+
+impl fmt::Debug for SubmitAgentMessageRequestV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SubmitAgentMessageRequestV2")
+            .field("protocol_version", &self.protocol_version)
+            .field("has_session_id", &self.session_id.is_some())
+            .field("research_depth", &self.research_depth)
+            .field("message_bytes", &self.message.len())
+            .field("context_references", &self.context_references.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SubmitAgentMessageRequestV2 {
+    #[must_use]
+    /// Returns the requested protocol version.
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    #[must_use]
+    /// Returns the optional existing session capability.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+    #[must_use]
+    /// Returns the optional optimistic session revision.
+    pub fn expected_session_revision(&self) -> Option<&str> {
+        self.expected_session_revision.as_deref()
+    }
+    #[must_use]
+    /// Returns the mode required only when creating a session.
+    pub const fn start_mode(&self) -> Option<AgentSessionModeV1> {
+        self.start_mode
+    }
+    #[must_use]
+    /// Returns the user-selected research depth.
+    pub const fn research_depth(&self) -> AgentResearchDepthV1 {
+        self.research_depth
+    }
+    #[must_use]
+    /// Returns the bounded user-authored message.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+    #[must_use]
+    /// Returns reserved opaque context capabilities.
+    pub fn context_references(&self) -> &[AgentContextReferenceV1] {
+        &self.context_references
+    }
+}
+
+/// Requests continuation of the newest continuation-ready research section.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ContinueAgentResearchRequestV1 {
+    protocol_version: ProtocolVersion,
+    session_id: String,
+    expected_session_revision: String,
+    research_depth: AgentResearchDepthV1,
+}
+
+impl ContinueAgentResearchRequestV1 {
+    #[must_use]
+    /// Returns the requested protocol version.
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    #[must_use]
+    /// Returns the visible session capability.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+    #[must_use]
+    /// Returns the optimistic visible session revision.
+    pub fn expected_session_revision(&self) -> &str {
+        &self.expected_session_revision
+    }
+    #[must_use]
+    /// Returns the new fixed research depth.
+    pub const fn research_depth(&self) -> AgentResearchDepthV1 {
+        self.research_depth
     }
 }
 

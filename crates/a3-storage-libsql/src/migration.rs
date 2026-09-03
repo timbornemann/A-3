@@ -2936,6 +2936,141 @@ const KNOWLEDGE_AGENT_ASK_RESEARCH_MIGRATION: Migration = Migration {
         SELECT RAISE(ABORT, 'Ask research citations are immutable'); END;",
 };
 
+const KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION: Migration = Migration {
+    version: 31,
+    name: "agent_multi_round_work_trace",
+    sql: "CREATE TABLE agent_work_trace_turns (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      mode TEXT NOT NULL CHECK (mode IN ('ask', 'plan', 'agent')),\n\
+      depth TEXT NOT NULL CHECK (depth IN ('standard', 'thorough')),\n\
+      index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),\n\
+      snapshot_id BLOB NOT NULL CHECK (length(snapshot_id) = 32),\n\
+      started_at_unix_millis INTEGER NOT NULL CHECK (started_at_unix_millis >= 0),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_session_entries(worktree_id, session_id, sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX agent_work_trace_turns_recent_idx ON agent_work_trace_turns\n\
+        (worktree_id, session_id, user_sequence DESC);\n\
+      CREATE TABLE agent_work_trace_events (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      event_sequence INTEGER NOT NULL CHECK (event_sequence BETWEEN 1 AND 64),\n\
+      phase TEXT NOT NULL CHECK (phase IN\n\
+        ('preparing', 'locating', 'deciding', 'reading', 'evaluating', 'answering_or_planning',\n\
+         'selecting_evidence', 'searching_source', 'inspecting_source', 'answering', 'completed')),\n\
+      state TEXT NOT NULL CHECK (state IN\n\
+        ('running', 'completed', 'failed', 'cancelled', 'awaiting_continuation')),\n\
+      action TEXT NOT NULL CHECK (length(CAST(action AS BLOB)) BETWEEN 1 AND 512),\n\
+      query_text TEXT CHECK (query_text IS NULL OR length(CAST(query_text AS BLOB)) BETWEEN 1 AND 4096),\n\
+      completeness TEXT NOT NULL CHECK (completeness IN ('complete', 'limited', 'not_applicable')),\n\
+      occurred_at_unix_millis INTEGER NOT NULL CHECK (occurred_at_unix_millis >= 0),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, event_sequence),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_work_trace_turns(worktree_id, session_id, user_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_work_trace_notes (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      event_sequence INTEGER NOT NULL CHECK (event_sequence BETWEEN 1 AND 64),\n\
+      goal TEXT NOT NULL CHECK (length(CAST(goal AS BLOB)) BETWEEN 1 AND 1024),\n\
+      finding_kind TEXT NOT NULL CHECK (finding_kind IN ('observation', 'hypothesis', 'conclusion')),\n\
+      finding TEXT NOT NULL CHECK (length(CAST(finding AS BLOB)) BETWEEN 1 AND 4096),\n\
+      gap TEXT NOT NULL CHECK (length(CAST(gap AS BLOB)) BETWEEN 1 AND 1024),\n\
+      next_step TEXT NOT NULL CHECK (length(CAST(next_step AS BLOB)) BETWEEN 1 AND 1024),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, event_sequence),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, event_sequence)\n\
+        REFERENCES agent_work_trace_events(worktree_id, session_id, user_sequence, event_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_work_trace_sources (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      source_id BLOB NOT NULL CHECK (length(source_id) = 32),\n\
+      ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 200),\n\
+      path BLOB NOT NULL CHECK (length(path) BETWEEN 1 AND 4096),\n\
+      content_hash BLOB NOT NULL CHECK (length(content_hash) = 32),\n\
+      start_byte INTEGER, end_byte INTEGER, start_line INTEGER, start_column INTEGER,\n\
+      end_line INTEGER, end_column INTEGER,\n\
+      symbol TEXT CHECK (symbol IS NULL OR length(CAST(symbol AS BLOB)) BETWEEN 1 AND 512),\n\
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'symbol', 'relationship', 'verified_claim')),\n\
+      selection_reason TEXT NOT NULL CHECK (selection_reason IN\n\
+        ('exact_name_or_path', 'indexed_text', 'relationship', 'test',\n\
+         'verified_module_knowledge', 'semantic_candidate', 'source_text')),\n\
+      CHECK ((start_byte IS NULL AND end_byte IS NULL AND start_line IS NULL AND start_column IS NULL\n\
+          AND end_line IS NULL AND end_column IS NULL) OR\n\
+        (start_byte IS NOT NULL AND end_byte IS NOT NULL AND start_line IS NOT NULL\n\
+          AND start_column IS NOT NULL AND end_line IS NOT NULL AND end_column IS NOT NULL)),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, source_id),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, ordinal),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_work_trace_turns(worktree_id, session_id, user_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_work_trace_note_sources (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      event_sequence INTEGER NOT NULL CHECK (event_sequence BETWEEN 1 AND 64),\n\
+      source_position INTEGER NOT NULL CHECK (source_position BETWEEN 1 AND 32),\n\
+      source_id BLOB NOT NULL CHECK (length(source_id) = 32),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, event_sequence, source_position),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, event_sequence, source_id),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, event_sequence)\n\
+        REFERENCES agent_work_trace_notes(worktree_id, session_id, user_sequence, event_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, source_id)\n\
+        REFERENCES agent_work_trace_sources(worktree_id, session_id, user_sequence, source_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_work_trace_citations (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      citation_position INTEGER NOT NULL CHECK (citation_position BETWEEN 1 AND 200),\n\
+      source_id BLOB NOT NULL CHECK (length(source_id) = 32),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, citation_position),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, source_id),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, source_id)\n\
+        REFERENCES agent_work_trace_sources(worktree_id, session_id, user_sequence, source_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_work_trace_links (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      link_position INTEGER NOT NULL CHECK (link_position BETWEEN 1 AND 2),\n\
+      link_kind TEXT NOT NULL CHECK (link_kind IN ('task', 'run')),\n\
+      link_id BLOB NOT NULL CHECK (length(link_id) = 32),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, link_position),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, link_kind),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_work_trace_turns(worktree_id, session_id, user_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TRIGGER agent_work_trace_turns_update_guard BEFORE UPDATE ON agent_work_trace_turns BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace turns are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_events_update_guard BEFORE UPDATE ON agent_work_trace_events BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace events are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_notes_update_guard BEFORE UPDATE ON agent_work_trace_notes BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace notes are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_sources_update_guard BEFORE UPDATE ON agent_work_trace_sources BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace sources are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_note_sources_update_guard BEFORE UPDATE ON agent_work_trace_note_sources BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace note sources are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_citations_update_guard BEFORE UPDATE ON agent_work_trace_citations BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace citations are immutable'); END;\n\
+      CREATE TRIGGER agent_work_trace_links_update_guard BEFORE UPDATE ON agent_work_trace_links BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent work trace links are immutable'); END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -2967,6 +3102,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_MONOTONE_INDEX_RUN_SEQUENCE_MIGRATION,
     KNOWLEDGE_DEEP_MAP_PLAN_DETAILS_MIGRATION,
     KNOWLEDGE_AGENT_ASK_RESEARCH_MIGRATION,
+    KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -2999,7 +3135,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(30);
+    pub const CURRENT: Self = Self::new(31);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3422,11 +3558,14 @@ mod tests {
                      'index_run_sequence_cursors', 'deep_map_step_targets',\n\
                      'deep_map_step_fields', 'agent_ask_research_turns',\n\
                      'agent_ask_research_events', 'agent_ask_research_sources',\n\
-                     'agent_ask_research_citations'\n\
+                     'agent_ask_research_citations', 'agent_work_trace_turns',\n\
+                     'agent_work_trace_events', 'agent_work_trace_notes',\n\
+                     'agent_work_trace_sources', 'agent_work_trace_note_sources',\n\
+                     'agent_work_trace_citations', 'agent_work_trace_links'\n\
                      )",
                 )
                 .await?,
-                76
+                83
             );
             assert_eq!(
                 query_i64(
@@ -3622,6 +3761,7 @@ mod tests {
         (knowledge_upgrades_from_v27, 27),
         (knowledge_upgrades_from_v28, 28),
         (knowledge_upgrades_from_v29, 29),
+        (knowledge_upgrades_from_v30, 30),
     );
 
     #[test]
@@ -5407,7 +5547,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 30);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
             assert_eq!(
                 query_string(&connection, "SELECT purpose FROM card_fts").await?,
                 "Legacy purpose\nSecond purpose line"
@@ -5521,7 +5661,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 30);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5613,7 +5753,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 30);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5734,7 +5874,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 30);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5801,6 +5941,92 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master
                      WHERE type = 'table' AND name = 'agent_ask_research_events'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v31_adds_generic_work_trace_without_backfilling_v30()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [110; 32];
+            let worktree_id = [111; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..30],
+                30,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
+                       'agent_work_trace_turns', 'agent_work_trace_events',
+                       'agent_work_trace_notes', 'agent_work_trace_sources',
+                       'agent_work_trace_note_sources', 'agent_work_trace_citations',
+                       'agent_work_trace_links')",
+                )
+                .await?,
+                7
+            );
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM agent_work_trace_turns").await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v31_upgrade_preserves_the_v30_database()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [112; 32];
+            let worktree_id = [113; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..30],
+                30,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute("CREATE TABLE agent_work_trace_turns (conflict INTEGER)", ())
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 31, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 30);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                30
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'agent_work_trace_events'",
                 )
                 .await?,
                 0

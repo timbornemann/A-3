@@ -1,10 +1,29 @@
 use std::fmt;
 
+/// User-selected bounded research depth for one submitted message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AgentResearchDepth {
+    /// Fast default with up to six decisions and twelve reads.
+    Standard,
+    /// Larger explicit budget with up to twelve decisions and twenty-four reads.
+    Thorough,
+}
+
 /// Closed user-facing phase of one bounded Ask research turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AskResearchPhase {
     /// The current published index and explicit references are being resolved.
     Preparing,
+    /// Candidate names, paths, symbols, and relations are being localized.
+    Locating,
+    /// The next bounded read-only action batch is being selected.
+    Deciding,
+    /// Current hash-bound source or graph information is being read.
+    Reading,
+    /// Newly read Evidence is being evaluated against the open gap.
+    Evaluating,
+    /// A final answer, question, or plan is being produced.
+    AnsweringOrPlanning,
     /// Deterministic Task Lens channels are selecting likely evidence.
     SelectingEvidence,
     /// Current repository text is being searched with fixed read-only limits.
@@ -28,6 +47,8 @@ pub enum AskResearchState {
     Failed,
     /// The user cancelled the owning conversation job.
     Cancelled,
+    /// The bounded section retained evidence and needs explicit user continuation.
+    AwaitingContinuation,
 }
 
 /// Closed explanation for why a source entered the temporary Ask context.
@@ -77,6 +98,11 @@ impl fmt::Display for AskResearchPhase {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Preparing => "preparing",
+            Self::Locating => "locating",
+            Self::Deciding => "deciding",
+            Self::Reading => "reading",
+            Self::Evaluating => "evaluating",
+            Self::AnsweringOrPlanning => "answering-or-planning",
             Self::SelectingEvidence => "selecting-evidence",
             Self::SearchingSource => "searching-source",
             Self::InspectingSource => "inspecting-source",

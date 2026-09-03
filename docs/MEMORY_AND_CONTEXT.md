@@ -157,10 +157,11 @@ validiert das Domain-Aggregat erneut.
 ## Context Compiler
 
 Der vorgezogene H6-Systemvertrag bleibt mit der konservativen ModelProfile-Zählung unter 900
-Tokens. Neu kompilierter Kontext verwendet das geschlossene `AgentAction`-V2-Schema für Search,
+Tokens. Neu kompilierter Kontext verwendet das geschlossene `AgentAction`-V3-Schema für Search,
 Inspect, vollständig gebundene ApplyPatch-Aktionen, ausschließlich per `DiscoveredCommandId`
-adressierte Runs, sichere Ledger-Intents und eine Finish-Anforderung. Der historische V1-Vertrag
-bleibt separat lesbar. Repository- und Context-Inhalte werden darin
+adressierte Runs, sichere Ledger-Intents und eine Finish-Anforderung. Die öffentliche V3-Notiz
+bleibt von dieser Aktionsautorität getrennt. Die historischen V1-/V2-Verträge
+bleiben separat lesbar. Repository- und Context-Inhalte werden darin
 explizit als untrusted data bezeichnet. Das Structured-Output-Schema liegt gleichzeitig im
 Provider-Formatfeld; nur Profile mit `RepeatSchemaInPrompt` erhalten zusätzlich dieselbe
 kanonische Schemafassung als getrennte User-Nachricht. Diese optionale Nachricht zählt der
@@ -249,14 +250,17 @@ Code/Evidence und Toolresultate werden lückenlos genau einer Sektion zugerechne
 bleiben 900 Tokens Sicherheitsreserve frei. Eine ungekürzte Pflichtsektion, die ihre Grenze
 überschreitet, bricht den Compile ab, statt still Inhalte zu verlieren.
 
-`ContextCompilerPolicyVersion::V3` behält den vollständigen kompakten L0-Repository-Anchor aus V2
-vor
-allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
+`ContextCompilerPolicyVersion::V4` behält den vollständigen kompakten L0-Repository-Anchor aus V2
+vor allen optionalen gerankten L1-/L2-Einträgen. Package- und Entrypointmengen erscheinen in L0 als
 Anzahlen; konkrete IDs werden nicht dort und später erneut bezahlt, sondern bleiben in den
 evidenzgebundenen Modul- und Symboleinträgen. Die relative Retrievalreihenfolge innerhalb der
 Anchor- beziehungsweise Detailgruppe bleibt stabil. V3 injiziert zusätzlich Must-/Should-Status,
 Criterion-Mappings und operationalen Verification-Scope samt erwarteter Semantik vollständig in
-Goal/Ledger. V3 besitzt eine getrennte Digest-Domäne.
+Goal/Ledger. V4 übernimmt außerdem höchstens 64 eindeutige Pfade aus einem typisierten
+`ResearchHandoff` als exakte Retrieval-Seeds. Vor der Provideranfrage müssen dessen IndexRun- und
+Snapshot-Anker mit der aktuellen Task Lens übereinstimmen; nach einer Indexänderung werden nur
+weiterhin exakt passende `FileRevision`s an einen neuen Handoff gebunden. V4 besitzt dafür eine
+eigene Digest-Domäne, die Indexanker, Pfade und Content-Hashes der Übergabe bindet.
 
 Packregeln:
 
@@ -283,8 +287,9 @@ Vor dem Modellaufruf:
 
 Der V1-Digest ist BLAKE3-domänensepariert und bindet Compilerpolicy, Modellprofil, Goal- und
 Ledgerrevision, aktuellen Step, IndexRun, Snapshot, Task-Lens-Digest, den optionalen
-Run-Memory-Digest, Budgetplan, tatsächliche Sektionkosten, Nachrichteninhalt und Structured-
-Output-Schema. Aktive Claims werden vor dem Packen erneut gegen Modul und konkrete Evidence des
+Run-Memory-Digest, den optionalen Research-Handoff, Budgetplan, tatsächliche Sektionkosten,
+Nachrichteninhalt und Structured-Output-Schema. Aktive Claims werden vor dem Packen erneut gegen
+Modul und konkrete Evidence des
 aktuellen Published Index geprüft; stale oder evidence-inkompatible Claims gelangen nicht in den
 Faktenabschnitt. Toolresultate sind journalgeordnet, auf den aktuellen Vorher-/Nachher-Snapshot
 gebunden und werden unter dem harten Bereichsbudget von neu nach alt ausgewählt. Überlappende
@@ -418,6 +423,15 @@ Der Checkpoint ist regenerierbar und erhält deshalb keine zweite Persistenzwahr
 Ledger, Run Journal und Knowledge Index. Seine Kompilierung besitzt nur unveränderliche
 Referenzen und kann das append-only Journal weder kürzen noch umschreiben. Nach Neustart wird
 dieselbe Projektion aus den dauerhaften Quellen neu aufgebaut.
+
+Vor jedem Ask-, Plan- oder Agent-Vorbereitungs-Modellturn erzeugt der Application-Core zusätzlich
+einen `ResearchMemoryCheckpoint` aus der aktuellen Frage, den öffentlichen Befunden, offenen
+Evidence-Lücken und den ursprünglichen Source-Referenzen. Er ist keine Summary-of-Summary und keine
+fachliche Evidence. Frühere Beobachtungen und Schlussfolgerungen werden nur nach exakter
+Revalidierung ihrer `FileRevision` gegen den neu gebundenen Index übernommen; Hypothesen dürfen nur
+als Suchhinweis fortleben. Für die Agent-Materialisierung übergibt ein typisierter
+`ResearchHandoff` ausschließlich Index-, Snapshot- und revalidierte Revisionsanker. Goal, Ledger,
+`RunMemoryCheckpoint`, Verification und das Run Journal bleiben danach die Autorität.
 
 Im nächsten Context Pack steht `[RUN_MEMORY]` direkt nach dem vollständigen Anchor. Metadaten,
 offene Fehler und offene Hypothesen sind Pflichtinhalt; passen sie nicht in das harte Budget, wird

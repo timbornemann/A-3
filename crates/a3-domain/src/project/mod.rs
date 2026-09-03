@@ -54,8 +54,8 @@ pub use agent_action::{
     AgentUpdateLedgerAction,
 };
 pub use agent_ask_research::{
-    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceKind,
-    AskResearchState,
+    AgentResearchDepth, AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason,
+    AskResearchSourceKind, AskResearchState,
 };
 pub use agent_controller::{
     AcceptanceCriterionVerification, AcceptanceVerificationError, AcceptanceVerificationReceipt,

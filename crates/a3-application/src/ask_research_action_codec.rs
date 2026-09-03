@@ -3,15 +3,15 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v1.schema.json");
+const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v2.schema.json");
 const MAX_OUTPUT_BYTES: usize = 320 * 1024;
 
-/// Static strict JSON Schema for one adaptive Ask decision.
+/// Static strict JSON Schema for one bounded multi-round research decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AskResearchDecisionJsonSchema;
 
 impl AskResearchDecisionJsonSchema {
-    /// Returns the version-one provider-neutral JSON Schema document.
+    /// Returns the version-two provider-neutral JSON Schema document.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         SCHEMA
@@ -23,7 +23,7 @@ impl AskResearchDecisionJsonSchema {
 }
 
 /// One strictly bounded, read-only follow-up action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AskResearchAction {
     /// Recompile Task Lens with a more specific query.
     SearchIndex(String),
@@ -33,9 +33,61 @@ pub enum AskResearchAction {
     InspectPath(String),
     /// Inspect a previously issued turn-local source reference.
     InspectSource(u16),
+    /// Follow one closed relationship class from a known source.
+    InspectRelations {
+        /// Turn-local source ordinal used as the traversal anchor.
+        source_ordinal: u16,
+        /// Closed relation direction or semantic kind.
+        relation: AskResearchRelation,
+    },
+    /// List direct indexed children below one repository directory.
+    ListDirectory(String),
 }
 
-/// Validated answer or one permitted adaptive read-only round.
+/// Closed relationship that the read-only research controller may inspect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AskResearchRelation {
+    /// Symbols that call the selected symbol.
+    Callers,
+    /// Symbols called by the selected symbol.
+    Callees,
+    /// Direct import relationships.
+    Imports,
+    /// Direct export relationships.
+    Exports,
+    /// Direct test relationships.
+    Tests,
+}
+
+/// Epistemic classification of one public research finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskResearchFindingKind {
+    /// Directly observed in current source or index evidence.
+    Observation,
+    /// Explicitly unproven search lead.
+    Hypothesis,
+    /// Evidence-backed conclusion across one or more sources.
+    Conclusion,
+}
+
+/// Bounded public work note. This is presentation data and never executable input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskResearchDecisionNote {
+    /// Current sub-goal.
+    pub goal: String,
+    /// Epistemic status of the finding.
+    pub finding_kind: AskResearchFindingKind,
+    /// Public observation, hypothesis, or conclusion.
+    pub finding: String,
+    /// Turn-local sources supporting an observation or conclusion.
+    pub source_ordinals: Vec<u16>,
+    /// Evidence still missing.
+    pub gap: String,
+    /// Purpose of the next action or final response.
+    pub next_step: String,
+}
+
+/// Validated answer or one bounded read-only research round.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AskResearchDecision {
     /// Final user-facing Markdown plus the source ordinals claimed by the model.
@@ -44,12 +96,19 @@ pub enum AskResearchDecision {
         markdown: String,
         /// Turn-local source ordinals explicitly used by the answer.
         source_ordinals: Vec<u16>,
+        /// Public, non-authoritative work note for this decision.
+        note: AskResearchDecisionNote,
     },
     /// One to four bounded read-only actions.
-    Research(Vec<AskResearchAction>),
+    Research {
+        /// Public, non-authoritative work note for this decision.
+        note: AskResearchDecisionNote,
+        /// Sequentially executed read-only actions.
+        actions: Vec<AskResearchAction>,
+    },
 }
 
-/// Strict version-one decoder paired with the provider schema.
+/// Strict version-two decoder paired with the provider schema.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAskResearchDecision;
 
@@ -69,7 +128,7 @@ impl DecodeAskResearchDecision {
             serde_json::from_str(raw).map_err(|_| AskResearchDecisionDecodeError::MalformedJson)?;
         let root = object(&root)?;
         exact(root, &["schema_version", "decision"])?;
-        if root.get("schema_version").and_then(Value::as_u64) != Some(1) {
+        if root.get("schema_version").and_then(Value::as_u64) != Some(2) {
             return Err(AskResearchDecisionDecodeError::UnsupportedVersion);
         }
         let decision = object(
@@ -87,7 +146,12 @@ impl DecodeAskResearchDecision {
 fn decode_answer(
     value: &Map<String, Value>,
 ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
-    exact(value, &["kind", "markdown", "source_refs"])?;
+    exact(value, &["kind", "note", "markdown", "source_refs"])?;
+    let note = decode_note(
+        value
+            .get("note")
+            .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+    )?;
     let markdown = string(value, "markdown")?.trim().to_owned();
     if markdown.is_empty() || markdown.len() > 256 * 1024 {
         return Err(AskResearchDecisionDecodeError::InvalidValue);
@@ -112,13 +176,19 @@ fn decode_answer(
     Ok(AskResearchDecision::Answer {
         markdown,
         source_ordinals: ordinals,
+        note,
     })
 }
 
 fn decode_research(
     value: &Map<String, Value>,
 ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
-    exact(value, &["kind", "actions"])?;
+    exact(value, &["kind", "note", "actions"])?;
+    let note = decode_note(
+        value
+            .get("note")
+            .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+    )?;
     let values = array(value, "actions")?;
     if values.is_empty() || values.len() > 4 {
         return Err(AskResearchDecisionDecodeError::InvalidValue);
@@ -161,10 +231,82 @@ fn decode_research(
                 exact(action, &["kind", "source_ref"])?;
                 AskResearchAction::InspectSource(source_ordinal(string(action, "source_ref")?)?)
             }
+            "inspectRelations" => {
+                exact(action, &["kind", "source_ref", "relation"])?;
+                AskResearchAction::InspectRelations {
+                    source_ordinal: source_ordinal(string(action, "source_ref")?)?,
+                    relation: match string(action, "relation")? {
+                        "callers" => AskResearchRelation::Callers,
+                        "callees" => AskResearchRelation::Callees,
+                        "imports" => AskResearchRelation::Imports,
+                        "exports" => AskResearchRelation::Exports,
+                        "tests" => AskResearchRelation::Tests,
+                        _ => return Err(AskResearchDecisionDecodeError::InvalidValue),
+                    },
+                }
+            }
+            "listDirectory" => {
+                exact(action, &["kind", "path"])?;
+                AskResearchAction::ListDirectory(bounded_allow_empty(
+                    string(action, "path")?,
+                    4096,
+                )?)
+            }
             _ => return Err(AskResearchDecisionDecodeError::InvalidValue),
         });
     }
-    Ok(AskResearchDecision::Research(actions))
+    Ok(AskResearchDecision::Research { note, actions })
+}
+
+pub(crate) fn decode_note(
+    value: &Value,
+) -> Result<AskResearchDecisionNote, AskResearchDecisionDecodeError> {
+    let note = object(value)?;
+    exact(
+        note,
+        &[
+            "goal",
+            "finding_kind",
+            "finding",
+            "finding_source_refs",
+            "gap",
+            "next_step",
+        ],
+    )?;
+    let finding_kind = match string(note, "finding_kind")? {
+        "observation" => AskResearchFindingKind::Observation,
+        "hypothesis" => AskResearchFindingKind::Hypothesis,
+        "conclusion" => AskResearchFindingKind::Conclusion,
+        _ => return Err(AskResearchDecisionDecodeError::InvalidValue),
+    };
+    let refs = array(note, "finding_source_refs")?;
+    if refs.len() > 32 {
+        return Err(AskResearchDecisionDecodeError::InvalidValue);
+    }
+    let mut seen = BTreeSet::new();
+    let mut source_ordinals = Vec::with_capacity(refs.len());
+    for reference in refs {
+        let ordinal = source_ordinal(
+            reference
+                .as_str()
+                .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+        )?;
+        if !seen.insert(ordinal) {
+            return Err(AskResearchDecisionDecodeError::InvalidValue);
+        }
+        source_ordinals.push(ordinal);
+    }
+    if finding_kind != AskResearchFindingKind::Hypothesis && source_ordinals.is_empty() {
+        return Err(AskResearchDecisionDecodeError::InvalidValue);
+    }
+    Ok(AskResearchDecisionNote {
+        goal: bounded(string(note, "goal")?, 1024)?,
+        finding_kind,
+        finding: bounded(string(note, "finding")?, 4096)?,
+        source_ordinals,
+        gap: bounded(string(note, "gap")?, 1024)?,
+        next_step: bounded(string(note, "next_step")?, 1024)?,
+    })
 }
 
 fn bounded(value: &str, maximum: usize) -> Result<String, AskResearchDecisionDecodeError> {
@@ -179,6 +321,22 @@ fn bounded(value: &str, maximum: usize) -> Result<String, AskResearchDecisionDec
         Err(AskResearchDecisionDecodeError::InvalidValue)
     } else {
         Ok(value.to_owned())
+    }
+}
+
+fn bounded_allow_empty(
+    value: &str,
+    maximum: usize,
+) -> Result<String, AskResearchDecisionDecodeError> {
+    if value.len() > maximum
+        || value.chars().any(|character| {
+            character == '\0'
+                || (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        })
+    {
+        Err(AskResearchDecisionDecodeError::InvalidValue)
+    } else {
+        Ok(value.trim().to_owned())
     }
 }
 fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDecodeError> {
@@ -259,24 +417,37 @@ mod tests {
     use super::*;
     #[test]
     fn decoder_accepts_answer_and_rejects_unknown_fields() -> Result<(), Box<dyn Error>> {
-        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":1,"decision":{"kind":"answer","markdown":"Fertig","source_refs":["S2"]}}"#)?;
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"Frage beantworten","finding_kind":"observation","finding":"Quelle gelesen","finding_source_refs":["S2"],"gap":"Keine","next_step":"Antworten"},"markdown":"Fertig","source_refs":["S2"]}}"#)?;
         assert_eq!(
             decoded,
             AskResearchDecision::Answer {
                 markdown: "Fertig".to_owned(),
-                source_ordinals: vec![2]
+                source_ordinals: vec![2],
+                note: AskResearchDecisionNote {
+                    goal: "Frage beantworten".to_owned(),
+                    finding_kind: AskResearchFindingKind::Observation,
+                    finding: "Quelle gelesen".to_owned(),
+                    source_ordinals: vec![2],
+                    gap: "Keine".to_owned(),
+                    next_step: "Antworten".to_owned(),
+                }
             }
         );
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":1,"decision":{"kind":"answer","markdown":"x","source_refs":[],"thought":"secret"}}"#).is_err());
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"markdown":"x","source_refs":[],"thought":"secret"}}"#).is_err());
         Ok(())
     }
     #[test]
     fn decoder_bounds_one_read_only_round() {
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":1,"decision":{"kind":"research","actions":[{"kind":"searchSourceText","literals":["TODO","FIXME"]}]}}"#).is_ok());
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Aufrufe finden","finding_kind":"hypothesis","finding":"Aufrufer sind noch unbekannt","finding_source_refs":[],"gap":"Aufrufstellen","next_step":"Symbol und Aufrufer suchen"},"actions":[{"kind":"searchSourceText","literals":["TODO","FIXME"]},{"kind":"listDirectory","path":"src"}]}}"#).is_ok());
         assert!(
             DecodeAskResearchDecision
-                .decode(r#"{"schema_version":1,"decision":{"kind":"research","actions":[]}}"#)
+                .decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[]}}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn decoder_requires_sources_for_public_observations() {
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[{"kind":"searchIndex","query":"q"}]}}"#).is_err());
     }
 }

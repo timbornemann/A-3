@@ -1790,6 +1790,7 @@ mod tests {
         for schema in [
             AgentActionJsonSchema::version_one(),
             AgentActionJsonSchema::version_two(),
+            AgentActionJsonSchema::version_three(),
         ] {
             translate_response_json_schema(&schema.as_json()?)?;
         }

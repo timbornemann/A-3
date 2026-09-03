@@ -209,7 +209,7 @@ Die WebView ist unprivilegiert. Sie darf ausschließlich die eng typisierten, ex
 Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Graph-,
 Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence-, Deep-Map-,
 Project-Map-Search-, Task-Lens-, Agent-Goal-, Agent-Activity- und projektgebundene
-Ask-Recherche-Commands aufrufen.
+Arbeitsweg- und sichere Quellen-Commands für Ask, Plan und Agent-Vorbereitung aufrufen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte

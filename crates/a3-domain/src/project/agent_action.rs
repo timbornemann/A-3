@@ -21,14 +21,17 @@ impl AgentActionSchemaVersion {
     pub const V1: Self = Self(1);
     /// Editing-phase schema adding structured patch and discovered-command actions.
     pub const V2: Self = Self(2);
+    /// Editing-phase schema adding a non-authoritative public work note beside the action.
+    pub const V3: Self = Self(3);
     /// Schema emitted for newly compiled mutating-controller turns.
-    pub const CURRENT: Self = Self::V2;
+    pub const CURRENT: Self = Self::V3;
 
     /// Reconstructs a schema version understood by this build.
     pub const fn from_u16(value: u16) -> Result<Self, AgentActionSchemaVersionError> {
         match value {
             1 => Ok(Self::V1),
             2 => Ok(Self::V2),
+            3 => Ok(Self::V3),
             _ => Err(AgentActionSchemaVersionError { value }),
         }
     }

@@ -838,6 +838,12 @@ zusätzlich Text oder strukturierte Semantik.
 
 ## Parallelität
 
+Der gemeinsame Recherchecontroller ist ein Application-Use-Case hinter Ports. Desktop verdrahtet
+Modell, Index, sichere Reader und V31-Persistenz, während Domain weder Tauri noch libSQL kennt.
+Ask und Plan führen ausschließlich gebundene Reads aus. Die Agent-Vorbereitung darf einen
+`ResearchHandoff` liefern, ersetzt aber niemals den ADR-0010-Controller: Im eigentlichen Agent-Run
+wird weiterhin pro Controllerturn höchstens eine typisierte Aktion geprüft und ausgeführt.
+
 - Pro Worktree existiert genau ein Mutations-Lock.
 - Read-only Suche, Indexabfragen und UI-Queries dürfen parallel laufen.
 - Index-Commits erfolgen transaktional und snapshotbezogen.

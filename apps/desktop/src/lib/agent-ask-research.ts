@@ -9,13 +9,17 @@ const STABLE_ID = /^[0-9a-f]{64}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]{0,18})$/u;
 const PHASES = [
   'preparing',
-  'selectingEvidence',
-  'searchingSource',
-  'inspectingSource',
-  'answering',
+  'locating',
+  'deciding',
+  'reading',
+  'evaluating',
+  'answeringOrPlanning',
   'completed',
 ] as const;
-const STATES = ['running', 'completed', 'failed', 'cancelled'] as const;
+const STATES = ['running', 'completed', 'awaitingContinuation', 'failed', 'cancelled'] as const;
+const MODES = ['ask', 'plan', 'agent'] as const;
+const DEPTHS = ['standard', 'thorough'] as const;
+const FINDING_KINDS = ['observation', 'hypothesis', 'conclusion'] as const;
 const COMPLETENESS = ['complete', 'limited', 'notApplicable'] as const;
 const SOURCE_KINDS = ['file', 'symbol', 'relationship', 'verifiedClaim'] as const;
 const REASONS = [
@@ -33,6 +37,18 @@ export type AgentAskResearchStateV1 = (typeof STATES)[number];
 export type AgentAskResearchCompletenessV1 = (typeof COMPLETENESS)[number];
 export type AgentAskResearchSourceKindV1 = (typeof SOURCE_KINDS)[number];
 export type AgentAskResearchSelectionReasonV1 = (typeof REASONS)[number];
+export type AgentWorkTraceModeV1 = (typeof MODES)[number];
+export type AgentWorkTraceDepthV1 = (typeof DEPTHS)[number];
+export type AgentWorkTraceFindingKindV1 = (typeof FINDING_KINDS)[number];
+
+export interface AgentWorkTraceNoteV1 {
+  finding: string;
+  findingKind: AgentWorkTraceFindingKindV1;
+  gap: string;
+  goal: string;
+  nextStep: string;
+  sourceRefs: string[];
+}
 
 export interface AgentAskResearchStepV1 {
   action: string;
@@ -41,6 +57,7 @@ export interface AgentAskResearchStepV1 {
   phase: AgentAskResearchPhaseV1;
   query: string | null;
   state: AgentAskResearchStateV1;
+  note: AgentWorkTraceNoteV1 | null;
 }
 export interface AgentAskResearchTurnV1 {
   action: string;
@@ -51,6 +68,9 @@ export interface AgentAskResearchTurnV1 {
   startedAtUnixMillis: string;
   state: AgentAskResearchStateV1;
   userSequence: string;
+  mode: AgentWorkTraceModeV1;
+  depth: AgentWorkTraceDepthV1;
+  legacy: boolean;
 }
 export interface AgentAskResearchDetailV1 {
   citedSourceCount: number;
@@ -58,6 +78,9 @@ export interface AgentAskResearchDetailV1 {
   stale: boolean;
   steps: AgentAskResearchStepV1[];
   userSequence: string;
+  mode: AgentWorkTraceModeV1;
+  depth: AgentWorkTraceDepthV1;
+  legacy: boolean;
 }
 export interface AgentAskResearchSourceV1 {
   endLine: number | null;
@@ -103,7 +126,7 @@ export async function queryAgentAskResearchTurns(
 ): Promise<AgentAskResearchTurnsResponseV1> {
   stable(sessionId);
   return parseTurns(
-    await invokeCommand('query_agent_ask_research_turns', {
+    await invokeCommand('query_agent_work_trace_turns', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId },
     }),
   );
@@ -117,7 +140,7 @@ export async function queryAgentAskResearchDetail(
   stable(sessionId);
   decimal(userSequence, false);
   return parseDetail(
-    await invokeCommand('query_agent_ask_research_detail', {
+    await invokeCommand('query_agent_work_trace_detail', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
     }),
   );
@@ -133,7 +156,7 @@ export async function queryAgentAskResearchSources(
   decimal(userSequence, false);
   if (cursor !== null) stable(cursor);
   return parseSources(
-    await invokeCommand('query_agent_ask_research_sources', {
+    await invokeCommand('query_agent_work_trace_sources', {
       request: { cursor, protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
     }),
   );
@@ -149,7 +172,7 @@ export async function queryAgentAskResearchSourcePreview(
   decimal(userSequence, false);
   stable(sourceRef);
   return parsePreview(
-    await invokeCommand('query_agent_ask_research_source_preview', {
+    await invokeCommand('query_agent_work_trace_source_preview', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, sourceRef, userSequence },
     }),
   );
@@ -179,12 +202,24 @@ function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
   exact(result, ['detail', 'status']);
   if (status !== 'available') invalid();
   const value = record(result.detail);
-  exact(value, ['citedSourceCount', 'sourceCount', 'stale', 'steps', 'userSequence']);
+  exact(value, [
+    'citedSourceCount',
+    'depth',
+    'legacy',
+    'mode',
+    'sourceCount',
+    'stale',
+    'steps',
+    'userSequence',
+  ]);
   decimal(value.userSequence, false);
   if (
     !count(value.sourceCount, 200) ||
     !count(value.citedSourceCount, 200) ||
     typeof value.stale !== 'boolean' ||
+    typeof value.legacy !== 'boolean' ||
+    !MODES.includes(value.mode as never) ||
+    !DEPTHS.includes(value.depth as never) ||
     !Array.isArray(value.steps) ||
     value.steps.length > 64
   )
@@ -197,6 +232,9 @@ function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
         citedSourceCount: value.citedSourceCount,
         sourceCount: value.sourceCount,
         stale: value.stale,
+        legacy: value.legacy,
+        mode: value.mode,
+        depth: value.depth,
         steps: value.steps.map(step),
         userSequence: value.userSequence,
       } as AgentAskResearchDetailV1,
@@ -258,6 +296,9 @@ function turn(payload: unknown): AgentAskResearchTurnV1 {
     'startedAtUnixMillis',
     'state',
     'userSequence',
+    'mode',
+    'depth',
+    'legacy',
   ]);
   text(value.action, 512);
   decimal(value.startedAtUnixMillis, true);
@@ -267,14 +308,25 @@ function turn(payload: unknown): AgentAskResearchTurnV1 {
     !STATES.includes(value.state as never) ||
     !count(value.sourceCount, 200) ||
     !count(value.citedSourceCount, 200) ||
-    typeof value.stale !== 'boolean'
+    typeof value.stale !== 'boolean' ||
+    typeof value.legacy !== 'boolean' ||
+    !MODES.includes(value.mode as never) ||
+    !DEPTHS.includes(value.depth as never)
   )
     invalid();
   return value as unknown as AgentAskResearchTurnV1;
 }
 function step(payload: unknown): AgentAskResearchStepV1 {
   const value = record(payload);
-  exact(value, ['action', 'completeness', 'occurredAtUnixMillis', 'phase', 'query', 'state']);
+  exact(value, [
+    'action',
+    'completeness',
+    'note',
+    'occurredAtUnixMillis',
+    'phase',
+    'query',
+    'state',
+  ]);
   text(value.action, 512);
   if (value.query !== null) text(value.query, 4096);
   decimal(value.occurredAtUnixMillis, true);
@@ -284,7 +336,27 @@ function step(payload: unknown): AgentAskResearchStepV1 {
     !COMPLETENESS.includes(value.completeness as never)
   )
     invalid();
-  return value as unknown as AgentAskResearchStepV1;
+  return {
+    ...(value as unknown as Omit<AgentAskResearchStepV1, 'note'>),
+    note: value.note === null ? null : note(value.note),
+  };
+}
+
+function note(payload: unknown): AgentWorkTraceNoteV1 {
+  const value = record(payload);
+  exact(value, ['finding', 'findingKind', 'gap', 'goal', 'nextStep', 'sourceRefs']);
+  text(value.goal, 1024);
+  text(value.finding, 4096);
+  text(value.gap, 1024);
+  text(value.nextStep, 1024);
+  if (
+    !FINDING_KINDS.includes(value.findingKind as never) ||
+    !Array.isArray(value.sourceRefs) ||
+    value.sourceRefs.length > 32
+  )
+    invalid();
+  for (const sourceRef of value.sourceRefs) stable(sourceRef);
+  return value as unknown as AgentWorkTraceNoteV1;
 }
 function source(payload: unknown): AgentAskResearchSourceV1 {
   const value = record(payload);

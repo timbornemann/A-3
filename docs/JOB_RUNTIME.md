@@ -82,14 +82,16 @@ Wert zurücksetzen. Nach Annahme einer Nachricht wird jede laufende Session daue
 auch bei einem Workerfehler, einer vollen Queue und einem Abbruch ohne noch sichtbaren Job-Snapshot;
 ein konkurrierender Abschluss wird über die Session-Revision idempotent aufgelöst.
 
-Ask besitzt innerhalb dieses Conversationjobs einen endlichen Unterablauf: gebundenen Index laden,
-Task Lens und optionalen aktuellen Source-Text lesen, Antwort erzeugen. Nur wenn der erste strikt
-strukturierte Modellturn fehlende Evidence meldet, folgt genau eine weitere Read-only-Aktionsrunde
-mit höchstens vier Aktionen. Über beide Modellturns ist nur ein Schema-Reparaturversuch erlaubt.
-Jeder Recherchefortschritt wird sofort als inhaltsfreies V30-Event gespeichert; Cancellation oder
-Fehler schließen den Trace bestmöglich terminal, ohne bereits gefundene Source-Metadaten zu
-verlieren. Der erfolgreiche Abschluss committet Antwort, Zitate, terminales Event und
-Sessionrevision atomar. Kein Ask-Worker wird detached und kein UI-Poll startet neue Arbeit.
+Ask, Plan und Agent-Vorbereitung verwenden innerhalb des Conversationjobs denselben endlichen
+Read-only-Controller. `Standard` erlaubt höchstens 6 Modellentscheidungen, 12 Read-Aktionen und 5
+Minuten; `Gründlich` höchstens 12 Entscheidungen, 24 Reads und 15 Minuten. Pro Entscheidung werden
+ein bis vier Aktionen sequenziell ausgeführt. Identische Aktionen werden belastet, aber nicht
+erneut ausgeführt; zwei Runden ohne neue Evidence enden in `AwaitingContinuation`. Die letzte
+Entscheidung darf keine weitere Suche anfordern, und über den ganzen Abschnitt existiert genau ein
+Schema-Reparaturversuch. Jeder Fortschritt und jede öffentliche Notiz wird sofort als V31-Event
+gespeichert; Cancellation, Timeout oder Fehler erhalten bereits gefundene Source-Metadaten. Der
+erfolgreiche Abschluss committet Ergebnis, Zitate, terminales Event und Sessionrevision atomar.
+Kein Worker wird detached und kein UI-Poll startet neue Arbeit.
 
 Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
 auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine

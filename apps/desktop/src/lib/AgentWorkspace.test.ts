@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
+import type { AgentActivityResponseV1 } from './agent-activity';
 import type { AgentSessionResponseV1, AgentSessionsResponseV1 } from './agent-session';
 
 const sessionId = 'a'.repeat(64);
@@ -86,6 +87,94 @@ const askSession = (state: 'running' | 'completed'): AgentSessionResponseV1 => (
   },
 });
 
+const activeAgentSession = (): AgentSessionResponseV1 => ({
+  protocolVersion: 1,
+  result: {
+    session: {
+      activeTaskId: 'b'.repeat(64),
+      entries: [
+        {
+          createdAtUnixMillis: '100',
+          kind: 'userMessage',
+          planRevision: null,
+          sequence: '1',
+          text: 'Setze die geprüfte Änderung um',
+        },
+      ],
+      hasOlderEntries: false,
+      summary: {
+        currentPlanRevision: null,
+        mode: 'agent',
+        revision: '1',
+        sessionId,
+        state: 'running',
+        title: 'Geprüfte Änderung umsetzen',
+        updatedAtUnixMillis: '100',
+      },
+    },
+    status: 'available',
+  },
+});
+
+const activeAgentActivity = (): AgentActivityResponseV1 => ({
+  protocolVersion: 1,
+  result: {
+    activity: {
+      blockers: [],
+      currentLedgerRevision: 1,
+      ledgerStoreVersion: '1',
+      run: {
+        attemptNumber: 1,
+        budget: {
+          actionLimit: 8,
+          durationLimitMillis: '60000',
+          outputTokenLimit: '2000',
+          promptTokenLimit: '8000',
+          repairLimit: 1,
+          turnLimit: 8,
+        },
+        createdAtUnixMillis: '100',
+        currentSnapshotId: 'c'.repeat(64),
+        earlierEventsOmitted: false,
+        ledgerRevision: 1,
+        ledgerRevisionMatchesCurrent: true,
+        runId: 'd'.repeat(64),
+        state: 'execute',
+        stepId: 'e'.repeat(64),
+        terminal: false,
+        timeline: [
+          {
+            code: 'controllerDecision',
+            event: { kind: 'runStarted' },
+            occurredAtUnixMillis: '100',
+            outcome: 'succeeded',
+            sequence: '1',
+            snapshotId: 'c'.repeat(64),
+          },
+          {
+            code: 'policyDecision',
+            event: { kind: 'toolAction' },
+            occurredAtUnixMillis: '101',
+            outcome: null,
+            sequence: '2',
+            snapshotId: 'c'.repeat(64),
+          },
+        ],
+        updatedAtUnixMillis: '101',
+        usage: {
+          actionCount: 1,
+          elapsedAtLastEventMillis: '1',
+          outputTokens: '10',
+          promptTokens: '20',
+          repairCount: 0,
+          turnCount: 1,
+        },
+      },
+    },
+    status: 'available',
+  },
+});
+
 describe('AgentWorkspace', () => {
   it('keeps every Core boundary closed without an active project', () => {
     const sessionsLoader = vi.fn<() => Promise<AgentSessionsResponseV1>>();
@@ -112,7 +201,7 @@ describe('AgentWorkspace', () => {
     expect(screen.getByRole('button', { name: /Plan\s*Gemeinsam ausarbeiten/u })).toBeTruthy();
   });
 
-  it('sends only the selected new-session mode and visible message', async () => {
+  it('sends the selected mode, visible message, and per-message research depth', async () => {
     const messageSubmitter = vi.fn(async () => ({
       protocolVersion: 1 as const,
       result: { status: 'noProject' as const },
@@ -124,6 +213,7 @@ describe('AgentWorkspace', () => {
     });
     await screen.findByText('Woran möchtest du arbeiten?');
     await fireEvent.click(screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Gründlich' }));
     await fireEvent.input(screen.getByLabelText('Nachricht an A^3'), {
       target: { value: 'Wie funktioniert der Index?' },
     });
@@ -133,6 +223,7 @@ describe('AgentWorkspace', () => {
       expect(messageSubmitter).toHaveBeenCalledWith({
         message: 'Wie funktioniert der Index?',
         mode: 'ask',
+        researchDepth: 'thorough',
       }),
     );
   });
@@ -234,5 +325,33 @@ describe('AgentWorkspace', () => {
       );
     });
     expect(detailReads).toBeGreaterThanOrEqual(3);
+  });
+
+  it('projects Agent execution without internal identifiers or raw event codes', async () => {
+    const response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const session = response.result.session;
+    render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader: vi.fn(async () => activeAgentActivity()),
+      pollIntervalMs: 60_000,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [session.summary],
+          status: 'available',
+        },
+      })),
+    });
+
+    expect(await screen.findByText('Änderungen werden umgesetzt')).toBeTruthy();
+    expect(screen.getByText('Umsetzung vorbereitet')).toBeTruthy();
+    expect(screen.getByText('Sichere Aktion ausgeführt')).toBeTruthy();
+    expect(screen.queryByText('controllerDecision')).toBeNull();
+    expect(screen.queryByText('policyDecision')).toBeNull();
+    expect(screen.queryByText(/dddddddd/u)).toBeNull();
+    expect(screen.queryByText(/eeeeeeee/u)).toBeNull();
   });
 });

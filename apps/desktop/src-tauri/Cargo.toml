@@ -23,6 +23,7 @@ futures.workspace = true
 getrandom.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+tokio = { workspace = true, features = ["time"] }
 
 [build-dependencies]
 tauri-build.workspace = true

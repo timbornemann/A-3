@@ -90,12 +90,13 @@ describe('Agent session V1', () => {
   it('submits only the narrow new-session contract', async () => {
     const invoke = vi.fn(async () => ({ protocolVersion: 1, result: { status: 'noProject' } }));
     await submitAgentMessage({ message: 'Explain the index', mode: 'ask' }, invoke);
-    expect(invoke).toHaveBeenCalledWith('submit_agent_message', {
+    expect(invoke).toHaveBeenCalledWith('submit_agent_message_v2', {
       request: {
         contextReferences: [],
         expectedSessionRevision: null,
         message: 'Explain the index',
         protocolVersion: 1,
+        researchDepth: 'standard',
         sessionId: null,
         startMode: 'ask',
       },

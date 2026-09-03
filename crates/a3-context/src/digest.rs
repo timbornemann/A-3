@@ -6,7 +6,7 @@ use a3_domain::{
     ContextSection, ModelProfile, TaskLens,
 };
 
-const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v3";
+const CONTEXT_DIGEST_DOMAIN: &[u8] = b"a3.context-pack.v4";
 
 pub(super) fn context_digest(
     profile: &ModelProfile,
@@ -33,6 +33,20 @@ pub(super) fn context_digest(
         Some(checkpoint) => {
             hasher.update(&[1]);
             hash_bytes(&mut hasher, &checkpoint.digest().as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+    match input.research_handoff() {
+        Some(handoff) => {
+            hasher.update(&[1]);
+            hash_bytes(&mut hasher, handoff.index_run_id().as_bytes());
+            hash_bytes(&mut hasher, handoff.snapshot_id().as_bytes());
+            for revision in handoff.revisions() {
+                hash_bytes(&mut hasher, revision.path().as_bytes());
+                hash_bytes(&mut hasher, revision.content_hash().as_bytes());
+            }
         }
         None => {
             hasher.update(&[0]);

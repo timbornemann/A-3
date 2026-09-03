@@ -223,15 +223,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Component-Tests müssen nach einem transienten Readfehler weiter nicht überlappend pollen, bis die
   terminale Antwort sichtbar ist. Mount und Polling starten weiterhin keine Evidenz- oder
   Modellarbeit.
-- Der adaptive Ask-Recherche-Contract bindet jeden Turn vor dem Modellaufruf an genau einen
-  veröffentlichten Index und prüft, dass auch eine zusätzliche Task-Lens-Runde denselben Anker
-  verwendet. Decoder- und Runtime-Tests erzwingen Antwort oder höchstens vier Read-only-Aktionen,
-  genau eine Aktionsrunde und turnweit höchstens einen Reparaturversuch. Vertrags- und
+- Der gemeinsame Recherche-Contract bindet jeden Ask-, Plan- und Agent-Vorbereitungsturn vor dem
+  Modellaufruf an genau einen veröffentlichten Index. Controllerverträge prüfen den Ein-Turn-Pfad,
+  mehrstufige Symbol-/Aufrufer-/Source-Folgen, die exakten Standard-/Gründlich-Grenzen, höchstens
+  vier sequenzielle Aktionen pro Entscheidung, genau einen Reparaturversuch, Deduplizierung, zwei
+  stagnierende Runden, Timeout, Cancellation und Fortsetzung mit neuem Indexanker. Vertrags- und
   Source-Search-Tests prüfen case-insensitive TODO-/FIXME-Treffer außerhalb eines Dateipräfixes,
   Treffer- und Ergebnisgrenzen sowie ehrliche `limited`-Negativaussagen; die Implementierung
-  erzwingt zusätzlich 2.000 Dateien, 32 MiB, 30 Sekunden und Cancellation. V30-Migrations- und
-  Storagetests prüfen Neuinstallation, V29→V30 ohne Backfill, atomaren Antwort-/Zitatabschluss,
-  Rollback und Presentation Delete. Rust-IPC, TypeScript und Capabilitytests erlauben nur Session,
+  erzwingt zusätzlich 2.000 Dateien, 32 MiB, 30 Sekunden und Cancellation. V31-Migrations- und
+  Storagetests prüfen Neuinstallation, V30→V31 ohne Backfill, Legacy-Lesbarkeit, öffentliche
+  Notizquellen, atomaren Ergebnis-/Zitatabschluss, Rollback und Presentation Delete. Rust-IPC,
+  TypeScript und Capabilitytests erlauben nur Session,
   Usersequenz und opake Cursor/Source-Referenzen; Pfade, Evidence-, Snapshot-, Index-, Worktree-
   und Provider-IDs sowie Prompts, Rohantworten, Source-Inhalt und Chain-of-Thought bleiben aus der
   normalen Projektion ausgeschlossen. Component-Tests prüfen Live-Aktion, Task-Lens-Gründe,

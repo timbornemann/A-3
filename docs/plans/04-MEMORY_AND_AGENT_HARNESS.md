@@ -389,6 +389,14 @@ Prettier, ESLint, Svelte-Typecheck, 20 Frontendtests, Build und vier Tooltests; 
 
 ## Gate M6
 
+ADR-0038-Erweiterung: Vor Ask, Plan und Agent-Materialisierung läuft derselbe endliche
+Read-only-Recherchecontroller. Sein `ResearchMemoryCheckpoint` wird vor jeder Modellentscheidung
+deterministisch aus aktueller Frage, öffentlichen Befunden, Evidence-Lücken und den ursprünglichen
+Source-Ketten aufgebaut. Ein `ResearchHandoff` revalidiert die aktuellen Revisionsanker vor der
+Agent-Materialisierung; der eigentliche Run bleibt vollständig unter Goal, Ledger,
+`RunMemoryCheckpoint`, ADR-0010-Controller und Verification. Öffentliche Arbeitsnotizen können
+keine Aktion oder Zustandsänderung autorisieren.
+
 - [x] read-only End-to-End-Agent auf drei Fixture-Sprachen
 - [x] Goal-Retention- und Compaction-Eval grün
 - [x] ungültige Modellausgaben werden nie ausgeführt

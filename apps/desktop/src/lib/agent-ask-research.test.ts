@@ -30,11 +30,11 @@ describe('Ask research V1 client', () => {
 
     expect(invoke.mock.calls).toEqual([
       [
-        'query_agent_ask_research_detail',
+        'query_agent_work_trace_detail',
         { request: { protocolVersion: 1, sessionId: id('1'), userSequence: '7' } },
       ],
       [
-        'query_agent_ask_research_sources',
+        'query_agent_work_trace_sources',
         {
           request: {
             cursor: id('2'),
@@ -45,7 +45,7 @@ describe('Ask research V1 client', () => {
         },
       ],
       [
-        'query_agent_ask_research_source_preview',
+        'query_agent_work_trace_source_preview',
         {
           request: {
             protocolVersion: 1,

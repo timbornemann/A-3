@@ -62,6 +62,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0035](0035-monotone-index-attempt-coordinate-across-rebuilds.md) | Monotone Index-Laufkoordinate über Rebuilds            |
 | [0036](0036-deep-map-user-facing-run-dashboard.md)                 | Nutzerorientiertes Deep-Map-Laufdashboard              |
 | [0037](0037-nachvollziehbare-adaptive-ask-recherche.md)            | Nachvollziehbare adaptive Ask-Recherche                 |
+| [0038](0038-agentische-mehr-runden-recherche.md)                   | Agentische Mehr-Runden-Recherche                       |
 
 ## Neue ADRs
 

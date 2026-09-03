@@ -1056,6 +1056,8 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] evidence-gebundener Ask-Lauf mit ausschließlich read-only Werkzeugen
 - [x] nachvollziehbarer adaptiver Ask-Rechercheweg mit aktueller TODO-/FIXME-Suche
 - [x] persistente verwendete und zusätzlich bereitgestellte Ask-Quellen mit sicherer Vorschau
+- [x] gemeinsame endliche Mehr-Runden-Recherche für Ask, Plan und Agent-Vorbereitung
+- [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
 - [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
 - [x] Component-, Accessibility-, responsive und native UX-Verifikation
@@ -1063,10 +1065,11 @@ Abhängigkeiten: ADR-0033, Gate M8
 Akzeptanz:
 
 - Ask kann Repositoryfragen beantworten, ohne eine mutierende Capability zu besitzen;
-- einfache Ask-Fragen bleiben bei einem Modellturn; nur fehlende Evidence löst genau eine weitere
-  begrenzte Read-only-Runde aus;
-- jeder laufende und abgeschlossene Ask-Turn zeigt verständlich Suche, Task-Lens-Auswahlgrund,
-  Vollständigkeit und die tatsächlich für die Antwort angegebenen Quellen; neue Live-Schritte
+- einfache Fragen bleiben bei einem Modellturn; nur offene Evidence-Lücken lösen innerhalb des
+  gewählten festen Standard-/Gründlich-Profils weitere begrenzte Read-only-Runden aus;
+- jeder laufende und abgeschlossene Turn zeigt in Ask, Plan und Agent-Vorbereitung verständlich
+  Suche, Task-Lens-Auswahlgrund, öffentliche Befunde, offene Lücken, Vollständigkeit und die für das
+  Ergebnis angegebenen Quellen; neue Live-Schritte
   erscheinen nacheinander in einer verbundenen Timeline mit genau einem sichtbaren aktiven Schritt;
 - Plan hält Rückfragen und jede vollständige Planrevision im Verlauf und startet erst nach Review;
 - Agent bindet jede Ausführung an Goal, Ledger, Run, Snapshot und aktuelle Evidence und zeigt
@@ -1118,6 +1121,15 @@ aktuelle sichere Stand wird per `aria-live` angekündigt. Reduced Motion übersp
 Animation. Nach einem frisch beobachteten Abschluss bleibt der terminale Zustand 700 Millisekunden
 sichtbar und die Karte klappt anschließend einmalig ein, ohne spätere Nutzerinteraktion zu
 überschreiben. Persistenz und V1-Reads bleiben unverändert.
+
+Mehr-Runden-Erweiterung vom 2026-09-03 nach ADR-0038: `Standard` und `Gründlich` wählen pro
+Nachricht einen festen endlichen Entscheidungs-, Read- und Zeitrahmen. Der gemeinsame
+Application-Controller kann Evidence-Lücken über mehrere sequenzielle Such-, Source-, Relations-
+und Verzeichnisreads schließen, dedupliziert identische Aktionen und beendet zwei stagnierende
+Runden ehrlich mit einer expliziten Fortsetzungsaktion. Knowledge V31 speichert öffentliche
+Arbeitsnotizen mit ihren Source-Ketten für Ask, Plan und Agent-Vorbereitung; V30 bleibt als Legacy
+lesbar. Der Composer, Conversation-Block und Inspector verwenden dieselbe progressive Timeline.
+Rohes internes Denken bleibt ausgeschlossen.
 
 ## Gate M8
 

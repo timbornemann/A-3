@@ -579,7 +579,9 @@ Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktue
 taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
 LLM noch Storageadapter können den Success-Bool liefern.
 
-E7 lässt nur das geschlossene `AgentAction`-V2-Schema über die Modellgrenze. `ApplyPatch` enthält
+E7 lässt nur das geschlossene `AgentAction`-V3-Schema über die Modellgrenze. V3 ergänzt neben der
+unverändert typisierten Aktion ausschließlich eine begrenzte öffentliche Arbeitsnotiz ohne
+Ausführungsautorität. `ApplyPatch` enthält
 sämtliche bestehenden E3-Anker und vollständige Inhalte; `Run` enthält ausschließlich Step- und
 aktuelle kataloggebundene Command-ID. Rohe argv, Shell, Git, Netzwerk, Install und Publishing sind
 im Modellvertrag nicht darstellbar. Der Model-Turn besitzt selbst keine mutierende Capability.
@@ -759,13 +761,18 @@ Chattext wird nur in Core-eigene Goal-/Ledger-Anker überführt und jede konkret
 Schemas, kanonische Worktree-Pfade, zentrale Policy, Approval, Tooladapter und Verification
 geprüft. Presentation Delete löscht keine Auditdaten.
 
-Die adaptive Ask-Recherche erweitert diese Grenze ausschließlich um endliche Reads. Genau ein
-gebundener veröffentlichter Index versorgt Task Lens, optionale Source-Suche und sichere
-Inspektionen; das Modell kann höchstens eine Runde mit vier Aktionen aus `searchIndex`,
-`searchSourceText`, `inspectPath` und `inspectSource` anfordern. `searchSourceText` verarbeitet
+Die gemeinsame Recherche für Ask, Plan und Agent-Vorbereitung erweitert diese Grenze ausschließlich
+um endliche Reads. Genau ein gebundener veröffentlichter Index versorgt Task Lens, optionale
+Source-Suche und sichere Inspektionen; jede Modellentscheidung kann höchstens vier Aktionen aus
+`searchIndex`, `searchSourceText`, `inspectPath`, `inspectSource`, `inspectRelations` und
+`listDirectory` anfordern. Der Core begrenzt den gesamten Abschnitt durch das feste Standard- oder
+Gründlich-Profil, dedupliziert Wiederholungen, stoppt Stagnation und erlaubt genau eine
+Schema-Reparatur. `searchSourceText` verarbeitet
 höchstens acht Literale, 100 Treffer, 2.000 aktuelle Indexdateien, 32 MiB und 30 Sekunden. Der
 sichere Reader verweigert Symlinks außerhalb des Roots, Binary-, Generated-, Secret-, zu große und
-stale Inhalte. Ask besitzt weiterhin keine Mutation, Shell-, Prozess-, Netzwerk- oder freie
-Dateifähigkeit. Persistenter und über IPC sichtbarer Trace besteht nur aus geschlossenen Phasen,
-sicheren Aktionen, Auswahlgründen und hashgebundenen Source-Metadaten; Rohprompt, Modelltranskript,
-Chain-of-Thought und Source-Inhalt bleiben ausgeschlossen.
+stale Inhalte. Ask und Plan besitzen weiterhin keine Mutation, Shell-, Prozess-, Netzwerk- oder
+freie Dateifähigkeit. Öffentliche Arbeitsnotizen sind weder Evidence noch ausführbare Eingabe und
+können keine Mutation, Freigabe, Verification oder Ledgeränderung autorisieren. Persistenter und
+über IPC sichtbarer Trace besteht nur aus geschlossenen Phasen, sicheren Aktionen, begrenzten
+öffentlichen Notizen, Auswahlgründen und hashgebundenen Source-Metadaten; Rohprompt,
+Modelltranskript, Chain-of-Thought und Source-Inhalt bleiben ausgeschlossen.

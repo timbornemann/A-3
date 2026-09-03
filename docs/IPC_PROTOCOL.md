@@ -370,6 +370,12 @@ Teil des Vertrags. `contextReferences` ist in V1 ein reserviertes, zwingend leer
 späterer Kontextwähler benötigt zuerst einen eigenen Core-Resolver für ausschließlich stabile,
 aktuelle Indexreferenzen.
 
+`submit_agent_message_v2` behält dieselbe enge Grenze und ergänzt ausschließlich die pro Nachricht
+gewählte `researchDepth: standard | thorough`. Der kompatible V1-Command verwendet `standard`.
+`continue_agent_research` akzeptiert nur Session, deren erwartete Revision und die neue Tiefe; der
+Core löst damit ausschließlich den neuesten sichtbaren `awaitingContinuation`-Abschnitt auf und
+bindet ihn an den dann aktuellen Index.
+
 `control_agent_session` erlaubt ausschließlich Pause, Resume, Cancel, `Ask → Plan`, die Umsetzung
 der exakten aktuellen Planrevision sowie Rename, Archive, Unarchive und Presentation Delete. Die
 fachlichen Controls werden im Core gegen aktuelle Task-/Ledger-/Runanker aufgelöst. Layoutqueries
@@ -407,6 +413,18 @@ ADR-0030-Vorschau mit maximal 64 Zeilen und 16 KiB. Nach einem Indexwechsel lief
 akzeptiert Pfad, Range, Evidence-, Index-, Snapshot-, Worktree- oder Provider-ID. Keine Response
 enthält Quelltext ohne den bewussten Preview-Klick, Prompts, Modellrohantworten, Chain-of-Thought,
 Providerdaten, Budgets, Vertrauenswerte oder interne IDs.
+
+### Gemeinsamer Arbeitsweg V1
+
+`query_agent_work_trace_turns`, `query_agent_work_trace_detail`,
+`query_agent_work_trace_sources` und `query_agent_work_trace_source_preview` sind die
+projektgebundene V31-Projektion für Ask, Plan und Agent-Vorbereitung. Turnlisten enthalten höchstens
+32 Einträge, Detailseiten höchstens 64 Ereignisse und Source-Seiten höchstens 50 Einträge. Ein
+Schritt kann eine begrenzte öffentliche Notiz mit Ziel, epistemisch gekennzeichnetem Befund,
+Evidence-Lücke, nächstem Schritt und opaken Source-Referenzen tragen. `legacy=true` kennzeichnet
+V30-Ask-Daten ohne nachträglich erfundene Notizen. Requests akzeptieren weiterhin keine Pfade,
+Evidence-, Snapshot-, Provider-, Task- oder Run-IDs. Cursor und Source-Capabilities bleiben an
+Worktree, Session, Turn, Trace-Revision und aktuellen Index gebunden.
 
 ## Agent Diff und Verification Inspector V1
 

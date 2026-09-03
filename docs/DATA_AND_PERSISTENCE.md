@@ -236,6 +236,17 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Session-Entry-Cascade; Archivierung lässt sie bestehen. Quelltext, Prompt, Modellrohantwort,
   Chain-of-Thought, Providerdaten, Budgets, interne Scores und historische Source-Snapshots werden
   nicht gespeichert.
+- Knowledge-Schema V31 ergänzt die generischen append-only Tabellen `agent_work_trace_turns`,
+  `agent_work_trace_events`, `agent_work_trace_notes`, `agent_work_trace_sources`,
+  `agent_work_trace_note_sources`, `agent_work_trace_citations` und
+  `agent_work_trace_links`. Sie tragen Ask-, Plan- und Agent-Vorbereitung, die gewählte feste
+  Recherche-Tiefe und begrenzte öffentliche Arbeitsnotizen. Beobachtungen und Schlussfolgerungen
+  referenzieren ihre ursprünglichen aktuellen Sources; Hypothesen bleiben unbelegt. Task- und
+  Run-Verknüpfungen sind interne Navigation, keine WebView-Autorität. V30 bleibt unverändert
+  lesbar und wird ohne Backfill als Legacy projiziert. Ergebnis, Abschlussereignis, Zitate,
+  Sessionrevision und vorhandene interne Links committen atomar. Presentation Delete entfernt
+  V31 über die bestehende Session-Entry-Cascade, Archivieren erhält die Daten. Quelltext, Prompts,
+  Rohantworten und internes Denken werden weiterhin nicht persistiert.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

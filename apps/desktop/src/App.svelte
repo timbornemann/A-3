@@ -30,6 +30,7 @@
     AgentSessionModeV1,
     AgentSessionResponseV1,
     AgentSessionsResponseV1,
+    AgentResearchDepthV1,
   } from './lib/agent-session';
   import { projectActionRecoveryMessage, projectOpenRecoveryMessage } from './lib/command-error';
   import {
@@ -156,6 +157,7 @@
       expectedSessionRevision?: string | null;
       message: string;
       mode?: AgentSessionModeV1;
+      researchDepth?: AgentResearchDepthV1;
       sessionId?: string | null;
     }) => Promise<AgentSessionResponseV1>;
     agentRecoveryLoader?: (taskId: string) => Promise<AgentTaskRecoveryResponseV1>;

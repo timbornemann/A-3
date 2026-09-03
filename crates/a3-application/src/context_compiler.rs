@@ -1,4 +1,4 @@
-use crate::{JobContext, ModelProviderRequest, TaskLensControlError};
+use crate::{JobContext, ModelProviderRequest, ResearchHandoff, TaskLensControlError};
 use a3_domain::{
     ContextBudgetError, ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion,
     ContextDigest, GoalContract, GoalContractReference, IndexRunId, ModelProfile, Progress,
@@ -285,6 +285,7 @@ pub struct AgentContextCompileInput {
     current_step_id: TaskStepId,
     model_profile: ModelProfile,
     run_memory: Option<RunMemoryCheckpoint>,
+    research_handoff: Option<ResearchHandoff>,
     supplemental_seeds: Vec<TaskLensSeed>,
     tool_results: Vec<ContextToolResult>,
 }
@@ -352,9 +353,20 @@ impl AgentContextCompileInput {
             current_step_id,
             model_profile,
             run_memory,
+            research_handoff: None,
             supplemental_seeds,
             tool_results,
         })
+    }
+
+    /// Carries a previously revalidated research source set into the next Agent context compile.
+    ///
+    /// The compiler rechecks the immutable publication anchors before any provider request is
+    /// returned. The handoff remains retrieval input and never authorizes an action.
+    #[must_use]
+    pub fn with_research_handoff(mut self, handoff: ResearchHandoff) -> Self {
+        self.research_handoff = Some(handoff);
+        self
     }
 
     /// Returns the exact project whose current publication must be retrieved.
@@ -391,6 +403,12 @@ impl AgentContextCompileInput {
     #[must_use]
     pub const fn run_memory(&self) -> Option<&RunMemoryCheckpoint> {
         self.run_memory.as_ref()
+    }
+
+    /// Returns the optional current-index research handoff used only for retrieval grounding.
+    #[must_use]
+    pub const fn research_handoff(&self) -> Option<&ResearchHandoff> {
+        self.research_handoff.as_ref()
     }
 
     /// Returns canonical supplemental Task Lens seeds.

@@ -13,6 +13,7 @@
     compact?: boolean;
     detailLoader?: typeof queryAgentAskResearchDetail;
     live?: boolean;
+    oncontinue?: () => void;
     previewLoader?: typeof queryAgentAskResearchSourcePreview;
     recentlyCompleted?: boolean;
     refreshKey: string;
@@ -25,6 +26,7 @@
     compact = false,
     detailLoader = queryAgentAskResearchDetail,
     live = false,
+    oncontinue = () => {},
     previewLoader = queryAgentAskResearchSourcePreview,
     recentlyCompleted = false,
     refreshKey,
@@ -212,7 +214,11 @@
   }
 
   function observeTerminalState(): void {
-    if (!detail || visibleStepCount < detail.steps.length || !isTerminal(detail.steps.at(-1)))
+    if (
+      !detail ||
+      visibleStepCount < detail.steps.length ||
+      !isSuccessfulTerminal(detail.steps.at(-1))
+    )
       return;
     terminalObserved = true;
     if (
@@ -231,6 +237,12 @@
 
   function isTerminal(step: AgentAskResearchDetailV1['steps'][number] | undefined): boolean {
     return step !== undefined && (step.state !== 'running' || step.phase === 'completed');
+  }
+
+  function isSuccessfulTerminal(
+    step: AgentAskResearchDetailV1['steps'][number] | undefined,
+  ): boolean {
+    return step !== undefined && step.state === 'completed' && step.phase === 'completed';
   }
 
   function handleDisclosureClick(): void {
@@ -282,12 +294,13 @@
   function phaseLabel(phase: string): string {
     return (
       {
-        answering: 'Antwort wird belegt',
+        answeringOrPlanning: 'Ergebnis wird formuliert',
         completed: 'Recherche abgeschlossen',
-        inspectingSource: 'Quelle wird geprüft',
+        deciding: 'Nächster Schritt wird gewählt',
+        evaluating: 'Befunde werden ausgewertet',
+        locating: 'Suchraum wird lokalisiert',
         preparing: 'Projektstand wird gebunden',
-        searchingSource: 'Quelltext wird durchsucht',
-        selectingEvidence: 'Task Lens wählt Evidence',
+        reading: 'Quellen werden geprüft',
       }[phase] ?? phase
     );
   }
@@ -295,7 +308,30 @@
   function stepLabel(phase: string, state: string): string {
     if (state === 'failed') return 'Recherche fehlgeschlagen';
     if (state === 'cancelled') return 'Recherche abgebrochen';
+    if (state === 'awaitingContinuation') return 'Fortsetzung erforderlich';
     return phaseLabel(phase);
+  }
+
+  function modeLabel(mode: AgentAskResearchDetailV1['mode']): string {
+    return { agent: 'Agent-Vorbereitung', ask: 'Ask-Recherche', plan: 'Plan-Recherche' }[mode];
+  }
+
+  function depthLabel(depth: AgentAskResearchDetailV1['depth']): string {
+    return depth === 'thorough' ? 'Gründlich' : 'Standard';
+  }
+
+  function findingKindLabel(
+    kind: NonNullable<AgentAskResearchDetailV1['steps'][number]['note']>['findingKind'],
+  ): string {
+    return {
+      conclusion: 'Belegte Schlussfolgerung',
+      hypothesis: 'Hypothese · noch unbelegt',
+      observation: 'Beobachtung',
+    }[kind];
+  }
+
+  function sourceForRef(sourceRef: string): AgentAskResearchSourceV1 | undefined {
+    return sources.find((source) => source.sourceRef === sourceRef);
   }
 
   function reasonLabel(reason: AgentAskResearchSourceV1['reason']): string {
@@ -310,13 +346,14 @@
     }[reason];
   }
 
-  type PresentationState = 'active' | 'cancelled' | 'completed' | 'failed';
+  type PresentationState = 'active' | 'awaiting' | 'cancelled' | 'completed' | 'failed';
 
   function presentationState(index: number): PresentationState {
     if (!detail) return 'completed';
     const step = detail.steps[index];
     if (step.state === 'failed') return 'failed';
     if (step.state === 'cancelled') return 'cancelled';
+    if (step.state === 'awaitingContinuation') return 'awaiting';
     if (index < visibleStepCount - 1) return 'completed';
     if (step.state === 'completed' || step.phase === 'completed') return 'completed';
     return 'active';
@@ -326,6 +363,7 @@
     if (state === 'active') return 'In Arbeit';
     if (state === 'failed') return 'Fehlgeschlagen';
     if (state === 'cancelled') return 'Abgebrochen';
+    if (state === 'awaiting') return 'Fortsetzung nötig';
     return terminal ? 'Abgeschlossen' : 'Erledigt';
   }
 
@@ -333,6 +371,7 @@
     if (state === 'completed') return '✓';
     if (state === 'failed') return '!';
     if (state === 'cancelled') return '–';
+    if (state === 'awaiting') return '…';
     return '';
   }
 
@@ -340,7 +379,7 @@
     if (!detail) return '';
     const found = `${detail.sourceCount} ${detail.sourceCount === 1 ? 'Quelle' : 'Quellen'} gefunden`;
     if (detail.citedSourceCount === 0) return found;
-    return `${found} · ${detail.citedSourceCount} für die Antwort verwendet`;
+    return `${found} · ${detail.citedSourceCount} für das Ergebnis verwendet`;
   }
 </script>
 
@@ -357,7 +396,9 @@
             : 'Rechercheweg laden'}</small
       >
     </span>
-    {#if detail}<em>{detail.sourceCount} Quellen · {detail.citedSourceCount} verwendet</em>{/if}
+    {#if detail}<em
+        >{modeLabel(detail.mode)} · {depthLabel(detail.depth)} · {detail.sourceCount} Quellen</em
+      >{/if}
   </summary>
   <div class="research-body">
     {#if loadState === 'loading'}
@@ -369,7 +410,7 @@
         <p>Der Rechercheweg wurde bei dieser älteren Antwort noch nicht aufgezeichnet.</p>
       {/if}
     {:else if loadState === 'missing'}
-      <p>Für diesen Beitrag existiert kein Ask-Rechercheweg.</p>
+      <p>Für diesen Beitrag existiert kein aufgezeichneter Arbeitsweg.</p>
     {:else if loadState === 'error'}
       <p role="alert">Die Rechercheinformationen konnten gerade nicht geladen werden.</p>
       <button type="button" onclick={requestResearchLoad}>Erneut laden</button>
@@ -407,6 +448,7 @@
             class:cancelled={displayState === 'cancelled'}
             class:completed={displayState === 'completed'}
             class:failed={displayState === 'failed'}
+            class:awaiting={displayState === 'awaiting'}
             class:animate={(live || recentlyCompleted) && !reducedMotion}
             aria-current={displayState === 'active' ? 'step' : undefined}
             data-step-state={displayState}
@@ -420,6 +462,41 @@
                 <small class="step-state">{presentationLabel(displayState, terminalStep)}</small>
               </div>
               <p>{step.action}</p>
+              {#if step.note}
+                <section class="work-note" aria-label="Öffentliche Arbeitsnotiz">
+                  <div>
+                    <span>Ziel</span>
+                    <p>{step.note.goal}</p>
+                  </div>
+                  <div>
+                    <span>{findingKindLabel(step.note.findingKind)}</span>
+                    <p>{step.note.finding}</p>
+                  </div>
+                  <div>
+                    <span>Offene Evidenzlücke</span>
+                    <p>{step.note.gap}</p>
+                  </div>
+                  <div>
+                    <span>Nächster Schritt</span>
+                    <p>{step.note.nextStep}</p>
+                  </div>
+                  {#if step.note.sourceRefs.length > 0}
+                    <div class="note-sources">
+                      <span>Quellen dieses Befunds</span>
+                      <div>
+                        {#each step.note.sourceRefs as sourceRef (sourceRef)}
+                          {@const noteSource = sourceForRef(sourceRef)}
+                          <button type="button" onclick={() => void showSource(sourceRef)}>
+                            {noteSource
+                              ? `${noteSource.path}${noteSource.startLine ? `:${noteSource.startLine}` : ''}`
+                              : 'Quelle öffnen'}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </section>
+              {/if}
               {#if step.query}<code>{step.query}</code
                 >{/if}{#if step.completeness !== 'notApplicable'}<small class="completeness"
                   >{step.completeness === 'complete' ? 'Vollständig' : 'Begrenzt'}</small
@@ -428,6 +505,16 @@
           </li>
         {/each}
       </ol>
+      {#if latest?.state === 'awaitingContinuation'}
+        <section class="continuation-card">
+          <strong>Für eine belastbare Antwort ist weitere Recherche nötig.</strong>
+          <p>
+            Die bisherigen Befunde und Quellen bleiben erhalten. Eine Fortsetzung bindet den dann
+            aktuellen Projektstand neu.
+          </p>
+          <button type="button" onclick={oncontinue}>Recherche fortsetzen</button>
+        </section>
+      {/if}
       <section>
         <h4>Gefundene und verwendete Quellen</h4>
         {#if sources.length === 0}<p>Noch keine zitierbare aktuelle Quelle gefunden.</p>
@@ -444,7 +531,7 @@
                   {#if source.symbol}<span>{source.symbol}</span>{/if}
                   <small
                     >{reasonLabel(source.reason)} · {source.usedForAnswer
-                      ? 'Für Antwort verwendet'
+                      ? 'Für Ergebnis verwendet'
                       : 'Zusätzlich bereitgestellt'}</small
                   >
                 </button>
@@ -641,6 +728,11 @@
     border-color: var(--color-warning-strong);
     background: var(--color-warning-strong);
   }
+  .research-steps li.awaiting .step-marker {
+    border-color: var(--color-warning-strong);
+    color: var(--color-surface);
+    background: var(--color-warning-strong);
+  }
   .step-content {
     display: grid;
     min-width: 0;
@@ -673,6 +765,53 @@
   }
   .research-steps li.cancelled .step-state {
     color: var(--color-warning);
+  }
+  .research-steps li.awaiting .step-state {
+    color: var(--color-warning);
+  }
+  .work-note {
+    display: grid;
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+    gap: var(--space-2);
+    border: 1px solid var(--color-border-soft);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+  }
+  .work-note > div {
+    display: grid;
+    gap: 0.1rem;
+  }
+  .work-note span {
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+  }
+  .note-sources > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+  .note-sources button,
+  .continuation-card button {
+    min-height: 2rem;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    color: var(--color-heading);
+    background: var(--color-surface-subtle);
+    cursor: pointer;
+    font-size: var(--font-size-xs);
+  }
+  .continuation-card {
+    display: grid;
+    padding: var(--space-3);
+    gap: var(--space-2);
+    border-inline-start: 3px solid var(--color-warning);
+    background: var(--color-surface);
+  }
+  .continuation-card button {
+    width: fit-content;
   }
   .research-steps p {
     margin-top: 0.15rem;
