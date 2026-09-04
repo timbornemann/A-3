@@ -762,6 +762,32 @@ impl AskResearchStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn load_linked_task<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> AskResearchStoreFuture<'a, Option<TaskId>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_linked_task(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn list_turns<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -4821,7 +4847,7 @@ mod tests {
                 None,
                 false,
             );
-            let entry = AgentSessionEntry::new(
+            let entry = AgentSessionEntry::try_new(
                 session_id,
                 a3_domain::AgentSessionSequence::FIRST,
                 a3_domain::AgentSessionEntryKind::UserMessage,
@@ -4830,7 +4856,7 @@ mod tests {
                 None,
                 None,
                 None,
-            );
+            )?;
 
             let missing_task = TaskId::from_bytes([215; 32]);
             let missing_run = AgentRunId::from_bytes([216; 32]);

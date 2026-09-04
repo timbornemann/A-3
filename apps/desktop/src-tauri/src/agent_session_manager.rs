@@ -9,11 +9,11 @@ use a3_application::{
     AskResearchStore, AskResearchStoreFailure, AskResearchTurn, AskSourceSearcher,
     AskSourceTextSearch, BeginResearchDecision, BoundedResearchController, CompileTaskLens,
     CreateAgentRun, CreateGoalContract, CreateTaskLedger, DecodeAskResearchDecision,
-    DecodeEvidenceDiagrams, EvidenceDiagramArtifact, GoalContractStore, JobCompletion, JobContext,
-    JobSubmitter, KnowledgeIndexStore, KnowledgeSearchStore, ResearchHandoff,
-    ResearchMemoryCheckpoint, ResearchMemoryFinding, ResearchMemoryFindingKind, RunJournalStore,
-    SlashCommandExecutionProfile, TaskLedgerStore, TaskLensClaimStore, TaskLensControl,
-    TaskLensControlError, TaskLensIndexStore, memory_finding_from_note,
+    DecodeEvidenceDiagrams, EvidenceDiagramArtifact, GoalContractStore, JobCancellationError,
+    JobCompletion, JobContext, JobSubmitter, KnowledgeIndexStore, KnowledgeSearchStore,
+    ResearchHandoff, ResearchMemoryCheckpoint, ResearchMemoryFinding, ResearchMemoryFindingKind,
+    RunJournalStore, SlashCommandExecutionProfile, TaskLedgerStore, TaskLensClaimStore,
+    TaskLensControl, TaskLensControlError, TaskLensIndexStore, memory_finding_from_note,
     validate_agent_session_transition,
 };
 use a3_application::{AgentSourceReader, DiscoverProjectCommands, ModelMessageRole};
@@ -301,6 +301,77 @@ impl AgentTaskMaterializer {
                 AgentSessionMode::Agent,
             ),
             request: AgentRunExecutionRequest::new(task_id, ledger.revision(), ledger_version),
+        })
+    }
+
+    async fn adopt_interrupted(
+        &self,
+        project: &ProjectIdentity,
+        task_id: TaskId,
+        profile: a3_domain::ModelProfileReference,
+        research_handoff: &ResearchHandoff,
+        control: &dyn a3_application::IndexPersistenceControl,
+    ) -> Result<MaterializedAgentTask, AgentSessionManagerFailure> {
+        let published = self
+            .index
+            .latest_published_index(project, control)
+            .await
+            .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+            .ok_or(AgentSessionManagerFailure::Unavailable)?;
+        if !research_handoff_matches_index(research_handoff, &published) {
+            return Err(AgentSessionManagerFailure::Conflict);
+        }
+        let goal = self
+            .goals
+            .load_current_goal_contract(project, task_id)
+            .await
+            .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+            .ok_or(AgentSessionManagerFailure::Conflict)?;
+        let stored = self
+            .ledgers
+            .load_task_ledger(project, task_id)
+            .await
+            .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+            .ok_or(AgentSessionManagerFailure::Conflict)?;
+        let ledger = stored.ledger();
+        if ledger.goal_contract() != goal.reference() {
+            return Err(AgentSessionManagerFailure::Conflict);
+        }
+        let mut active_steps = ledger
+            .steps()
+            .filter(|step| step.status() == a3_domain::TaskStepStatus::InProgress);
+        let active_step = active_steps
+            .next()
+            .ok_or(AgentSessionManagerFailure::Conflict)?;
+        if active_steps.next().is_some() {
+            return Err(AgentSessionManagerFailure::Conflict);
+        }
+        let run_id = active_step
+            .attempts()
+            .last()
+            .map(a3_domain::TaskStepAttempt::run_id)
+            .ok_or(AgentSessionManagerFailure::Conflict)?;
+        let run = self
+            .journal
+            .load_agent_run(project, run_id)
+            .await
+            .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+            .ok_or(AgentSessionManagerFailure::Conflict)?;
+        if run.goal_contract() != goal.reference()
+            || run.task_ledger_revision() != ledger.revision()
+            || run.current_snapshot_id() != published.run().snapshot_id()
+            || run.model_profile() != Some(profile)
+            || run.state() != a3_domain::AgentControllerState::Execute
+        {
+            return Err(AgentSessionManagerFailure::Conflict);
+        }
+        Ok(MaterializedAgentTask {
+            work_item: AgentWorkItem::new(
+                AgentWorkItemId::from_bytes(random_id()?),
+                task_id,
+                AgentSessionMode::Agent,
+            ),
+            request: AgentRunExecutionRequest::new(task_id, ledger.revision(), stored.version()),
         })
     }
 }
@@ -1984,7 +2055,7 @@ impl AgentSessionRunReporter {
             AgentSessionEntryKind::Activity
         };
         let work_item = detail.session().active_work_item();
-        let entry = AgentSessionEntry::new(
+        let entry = AgentSessionEntry::try_new(
             session_id,
             sequence,
             kind,
@@ -1993,8 +2064,9 @@ impl AgentSessionRunReporter {
             now,
             work_item.map(AgentWorkItem::id),
             Some(task_id),
-            detail.session().current_plan_revision(),
-        );
+            None,
+        )
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         validate_agent_session_transition(detail.session(), &next)?;
         self.store
             .append_session_revision(
@@ -2175,10 +2247,61 @@ impl AgentSessionManager {
         query: &AgentSessionListQuery,
     ) -> Result<AgentSessionPage, AgentSessionManagerFailure> {
         self.release_terminal_job();
-        self.store
+        let page = self
+            .store
             .list_sessions(project, query)
             .await
-            .map_err(Into::into)
+            .map_err(AgentSessionManagerFailure::from)?;
+        let mut recovered = false;
+        for session in page.sessions() {
+            recovered |= self
+                .recover_interrupted_preparation(project, session)
+                .await?;
+        }
+        if recovered {
+            self.store
+                .list_sessions(project, query)
+                .await
+                .map_err(Into::into)
+        } else {
+            Ok(page)
+        }
+    }
+
+    pub(crate) async fn recover_interrupted_preparations(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<(), AgentSessionManagerFailure> {
+        self.release_terminal_job();
+        if lock_recovering_poison(&self.active_session).is_some() {
+            return Err(AgentSessionManagerFailure::Busy);
+        }
+        let mut before_updated_at = None;
+        loop {
+            let query = AgentSessionListQuery::new(None, false, before_updated_at, 50)
+                .map_err(AgentSessionManagerFailure::from)?;
+            let page = self
+                .store
+                .list_sessions(project, &query)
+                .await
+                .map_err(AgentSessionManagerFailure::from)?;
+            for session in page.sessions() {
+                let _recovered = self
+                    .recover_interrupted_preparation(project, session)
+                    .await?;
+            }
+            if !page.has_more() {
+                break;
+            }
+            before_updated_at = page
+                .sessions()
+                .last()
+                .map(|session| session.updated_at().unix_millis());
+            if before_updated_at.is_none() {
+                return Err(AgentSessionManagerFailure::InvalidOutput);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn load(
@@ -2189,11 +2312,22 @@ impl AgentSessionManager {
         limit: u16,
     ) -> Result<Option<AgentSessionDetail>, AgentSessionManagerFailure> {
         self.release_terminal_job();
-        let detail = self
+        let mut detail = self
             .store
             .load_session(project, session_id, before_sequence, limit)
             .await
             .map_err(AgentSessionManagerFailure::from)?;
+        if let Some(current) = detail.as_ref()
+            && self
+                .recover_interrupted_preparation(project, current.session())
+                .await?
+        {
+            detail = self
+                .store
+                .load_session(project, session_id, before_sequence, limit)
+                .await
+                .map_err(AgentSessionManagerFailure::from)?;
+        }
         if let (Some(reporter), Some(work_item)) = (
             self.reporter.as_ref(),
             detail
@@ -2203,6 +2337,32 @@ impl AgentSessionManager {
             reporter.link(work_item.task_id(), session_id);
         }
         Ok(detail)
+    }
+
+    async fn recover_interrupted_preparation(
+        &self,
+        project: &ProjectIdentity,
+        session: &AgentSession,
+    ) -> Result<bool, AgentSessionManagerFailure> {
+        if session.state() != AgentSessionState::Running
+            || session.active_work_item().is_some()
+            || lock_recovering_poison(&self.active_session)
+                .as_ref()
+                .is_some_and(|active| active.session_id == session.id())
+        {
+            return Ok(false);
+        }
+        let terminal = if session.mode() == AgentSessionMode::Agent
+            && session.current_plan_revision().is_some()
+        {
+            ConversationTerminal::AgentStartInterrupted
+        } else {
+            ConversationTerminal::Failed(
+                "Die vorherige Verarbeitung wurde unterbrochen. Der gespeicherte Stand bleibt erhalten; starte den Auftrag bitte erneut.",
+            )
+        };
+        settle_unfinished_conversation(&self.store, project, session.id(), terminal).await?;
+        Ok(true)
     }
 
     pub(crate) async fn load_commands(
@@ -2663,9 +2823,12 @@ impl AgentSessionManager {
             .filter(|active| active.session_id == session_id)
             .and_then(|active| active.job_id);
         if let Some(job_id) = job_id {
-            self.submitter
-                .cancel(job_id)
-                .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+            match self.submitter.cancel(job_id) {
+                Ok(_) | Err(JobCancellationError::JobAlreadyFinished { .. }) => {}
+                Err(
+                    JobCancellationError::ShuttingDown | JobCancellationError::UnknownJob { .. },
+                ) => return Err(AgentSessionManagerFailure::Unavailable),
+            }
         }
         settle_unfinished_conversation(
             &self.store,
@@ -2867,7 +3030,7 @@ impl AgentSessionManager {
                         presentation_deleted: false,
                     },
                 )?;
-                let entry = AgentSessionEntry::new(
+                let entry = AgentSessionEntry::try_new(
                     session_id,
                     sequence,
                     AgentSessionEntryKind::UserMessage,
@@ -2876,7 +3039,8 @@ impl AgentSessionManager {
                     None,
                     None,
                     None,
-                );
+                )
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
                 validate_agent_session_transition(current.session(), &next)?;
                 self.store
                     .append_session_revision(
@@ -2913,7 +3077,7 @@ impl AgentSessionManager {
                     None,
                     false,
                 );
-                let entry = AgentSessionEntry::new(
+                let entry = AgentSessionEntry::try_new(
                     session_id,
                     AgentSessionSequence::FIRST,
                     AgentSessionEntryKind::UserMessage,
@@ -2922,7 +3086,8 @@ impl AgentSessionManager {
                     None,
                     None,
                     None,
-                );
+                )
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
                 self.store
                     .create_session(
                         project,
@@ -3373,22 +3538,39 @@ impl AgentSessionManager {
         let objective = command_profile
             .as_ref()
             .map_or(objective, |profile| profile.objective().to_owned());
+        let preparation_sequence = next_sequence(detail.session().latest_sequence())?;
+        let preparation_started_at = timestamp()?;
         let running = successor(
             detail.session(),
             SessionSuccessor {
                 title: detail.session().title().as_str().to_owned(),
                 mode: AgentSessionMode::Agent,
                 state: AgentSessionState::Running,
-                updated_at: timestamp()?,
-                latest_sequence: detail.session().latest_sequence(),
+                updated_at: preparation_started_at,
+                latest_sequence: Some(preparation_sequence),
                 active_work_item: detail.session().active_work_item(),
                 plan_revision: detail.session().current_plan_revision(),
                 presentation_deleted: false,
             },
         )?;
+        let preparation_entry = AgentSessionEntry::try_new(
+            session_id,
+            preparation_sequence,
+            AgentSessionEntryKind::Activity,
+            AgentSessionText::try_from_string(
+                "Planfreigabe bestätigt. Projektstand und sichere Arbeitsanker werden geprüft."
+                    .to_owned(),
+            )
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+            preparation_started_at,
+            None,
+            None,
+            None,
+        )
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         validate_agent_session_transition(detail.session(), &running)?;
         self.store
-            .append_session_revision(project, expected, &running, None, None)
+            .append_session_revision(project, expected, &running, Some(&preparation_entry), None)
             .await?;
         let job_id = match self.job_ids.allocate() {
             Ok(job_id) => job_id,
@@ -3622,20 +3804,45 @@ async fn complete_plan_implementation(
             command_profile.as_ref(),
         )
         .await?;
-        let task = materializer
-            .materialize(AgentTaskMaterialization {
-                project: &project,
-                objective: &objective,
-                reviewed_plan: &plan,
-                profile,
-                research_handoff: prior_research.as_ref().map(|(_, handoff)| handoff),
-                verification_profile: command_profile
-                    .as_ref()
-                    .map(SlashCommandExecutionProfile::verification_profile),
-                control: &index_control,
-            })
-            .await?;
-        if let Some((user_sequence, _)) = prior_research {
+        let linked_task_id = match prior_research.as_ref() {
+            Some((user_sequence, _)) => {
+                research_store
+                    .load_linked_task(&project, session.id(), *user_sequence)
+                    .await?
+            }
+            None => None,
+        };
+        let task = match (linked_task_id, prior_research.as_ref()) {
+            (Some(task_id), Some((_, handoff))) => {
+                materializer
+                    .adopt_interrupted(
+                        &project,
+                        task_id,
+                        profile.reference(),
+                        handoff,
+                        &index_control,
+                    )
+                    .await?
+            }
+            _ => {
+                materializer
+                    .materialize(AgentTaskMaterialization {
+                        project: &project,
+                        objective: &objective,
+                        reviewed_plan: &plan,
+                        profile,
+                        research_handoff: prior_research.as_ref().map(|(_, handoff)| handoff),
+                        verification_profile: command_profile
+                            .as_ref()
+                            .map(SlashCommandExecutionProfile::verification_profile),
+                        control: &index_control,
+                    })
+                    .await?
+            }
+        };
+        if linked_task_id.is_none()
+            && let Some((user_sequence, _)) = prior_research
+        {
             research_store
                 .link_task_to_turn(
                     &project,
@@ -3660,7 +3867,7 @@ async fn complete_plan_implementation(
                 presentation_deleted: false,
             },
         )?;
-        let entry = AgentSessionEntry::new(
+        let entry = AgentSessionEntry::try_new(
             session.id(),
             sequence,
             AgentSessionEntryKind::Activity,
@@ -3671,8 +3878,9 @@ async fn complete_plan_implementation(
             now,
             Some(task.work_item.id()),
             Some(task.work_item.task_id()),
-            session.current_plan_revision(),
-        );
+            None,
+        )
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         validate_agent_session_transition(&session, &linked)?;
         store
             .append_session_revision(&project, session.revision(), &linked, Some(&entry), None)
@@ -4052,7 +4260,7 @@ async fn complete_command_clarification(
             presentation_deleted: false,
         },
     )?;
-    let entry = AgentSessionEntry::new(
+    let entry = AgentSessionEntry::try_new(
         session.id(),
         sequence,
         AgentSessionEntryKind::AssistantSummary,
@@ -4062,7 +4270,8 @@ async fn complete_command_clarification(
         None,
         None,
         None,
-    );
+    )
+    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
     validate_agent_session_transition(session, &next)?;
     store
         .append_session_revision(project, session.revision(), &next, Some(&entry), None)
@@ -4315,79 +4524,86 @@ async fn complete_scheduled_session_inner(
                         )
                     }
                 },
-                AgentSessionMode::Agent
-                    if !has_required_plan_sections(&content) || !has_research_citations =>
-                {
-                    (
-                    AgentSessionState::AwaitingUser,
-                    AgentSessionEntryKind::AssistantSummary,
-                    session.current_plan_revision(),
-                    "Die Vorbereitung ist noch nicht vollständig strukturiert und durch aktuelle Quellen belegt. Ergänze bitte den fehlenden Schwerpunkt oder setze die Recherche mit neuem Budget fort."
-                        .to_owned(),
-                    JobCompletion::Succeeded,
-                    None,
-                    None,
-                    )
-                }
-                AgentSessionMode::Agent => {
-                    let plan_revision = session
-                        .current_plan_revision()
-                        .unwrap_or(0)
-                        .saturating_add(1);
-                    let task = match (materializer, run_manager.as_ref()) {
-                        (Some(materializer), Some(_)) => {
-                            let (_, profile) = runtime
-                                .execution_model()
-                                .await
-                                .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
-                            Some(
-                                materializer
-                                    .materialize(AgentTaskMaterialization {
-                                        project: &project,
-                                        objective: &objective,
-                                        reviewed_plan: &content,
-                                        profile,
-                                        research_handoff: research_result
-                                            .as_ref()
-                                            .map(|result| &result.handoff),
-                                        verification_profile: command_profile
-                                            .as_ref()
-                                            .map(SlashCommandExecutionProfile::verification_profile),
-                                        control: &index_control,
-                                    })
-                                    .await?,
-                            )
+                AgentSessionMode::Agent => match classify_plan_response(&content) {
+                    PlanConversationResponse::Question(question) => (
+                        AgentSessionState::AwaitingUser,
+                        AgentSessionEntryKind::AssistantSummary,
+                        session.current_plan_revision(),
+                        question,
+                        JobCompletion::Succeeded,
+                        None,
+                        None,
+                    ),
+                    PlanConversationResponse::Plan(_) if !has_research_citations => (
+                        AgentSessionState::AwaitingUser,
+                        AgentSessionEntryKind::AssistantSummary,
+                        session.current_plan_revision(),
+                        "Die Vorbereitung ist noch nicht durch aktuelle Quellen belegt. Ergänze bitte den fehlenden Schwerpunkt oder setze die Recherche mit neuem Budget fort."
+                            .to_owned(),
+                        JobCompletion::Succeeded,
+                        None,
+                        None,
+                    ),
+                    PlanConversationResponse::Plan(plan) => {
+                        let plan_revision = session
+                            .current_plan_revision()
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        let task = match (materializer, run_manager.as_ref()) {
+                            (Some(materializer), Some(_)) => {
+                                let (_, profile) = runtime
+                                    .execution_model()
+                                    .await
+                                    .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+                                Some(
+                                    materializer
+                                        .materialize(AgentTaskMaterialization {
+                                            project: &project,
+                                            objective: &objective,
+                                            reviewed_plan: &plan,
+                                            profile,
+                                            research_handoff: research_result
+                                                .as_ref()
+                                                .map(|result| &result.handoff),
+                                            verification_profile: command_profile.as_ref().map(
+                                                SlashCommandExecutionProfile::verification_profile,
+                                            ),
+                                            control: &index_control,
+                                        })
+                                        .await?,
+                                )
+                            }
+                            _ => None,
+                        };
+                        match task {
+                            Some(task) => {
+                                let manager = run_manager
+                                    .as_ref()
+                                    .cloned()
+                                    .ok_or(AgentSessionManagerFailure::Unavailable)?;
+                                (
+                                    AgentSessionState::Running,
+                                    AgentSessionEntryKind::Plan,
+                                    Some(plan_revision),
+                                    plan,
+                                    JobCompletion::Succeeded,
+                                    Some(task.work_item),
+                                    Some((manager, task.request)),
+                                )
+                            }
+                            None => (
+                                AgentSessionState::Failed,
+                                AgentSessionEntryKind::FinalReport,
+                                session.current_plan_revision(),
+                                "Die deterministische Agent-Laufzeit ist derzeit nicht verfügbar."
+                                    .to_owned(),
+                                JobCompletion::Failed,
+                                None,
+                                None,
+                            ),
                         }
-                        _ => None,
-                    };
-                    match task {
-                        Some(task) => {
-                            let manager = run_manager
-                                .as_ref()
-                                .cloned()
-                                .ok_or(AgentSessionManagerFailure::Unavailable)?;
-                            (
-                                AgentSessionState::Running,
-                                AgentSessionEntryKind::Plan,
-                                Some(plan_revision),
-                                content,
-                                JobCompletion::Succeeded,
-                                Some(task.work_item),
-                                Some((manager, task.request)),
-                            )
-                        }
-                        None => (
-                            AgentSessionState::Failed,
-                            AgentSessionEntryKind::FinalReport,
-                            session.current_plan_revision(),
-                            "Die deterministische Agent-Laufzeit ist derzeit nicht verfügbar."
-                                .to_owned(),
-                            JobCompletion::Failed,
-                            None,
-                            None,
-                        ),
                     }
-                }
+                },
             },
             Err(error) => (
                 AgentSessionState::Failed,
@@ -4413,7 +4629,7 @@ async fn complete_scheduled_session_inner(
             presentation_deleted: false,
         },
     )?;
-    let assistant_entry = AgentSessionEntry::new(
+    let assistant_entry = AgentSessionEntry::try_new(
         session.id(),
         sequence,
         kind,
@@ -4423,7 +4639,8 @@ async fn complete_scheduled_session_inner(
         work_item.map(AgentWorkItem::id),
         work_item.map(AgentWorkItem::task_id),
         plan_revision.filter(|_| kind == AgentSessionEntryKind::Plan),
-    );
+    )
+    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
     validate_agent_session_transition(&session, &final_session)?;
     if completion == JobCompletion::Succeeded {
         let research = research_store
@@ -4515,6 +4732,7 @@ enum ConversationTerminal {
     Cancelled,
     Failed(&'static str),
     PlanNeedsRefresh,
+    AgentStartInterrupted,
 }
 
 async fn settle_unfinished_conversation(
@@ -4531,21 +4749,30 @@ async fn settle_unfinished_conversation(
         if detail.session().state() != AgentSessionState::Running {
             return Ok(());
         }
-        let (state, kind, message) = match terminal {
+        let (mode, state, kind, message) = match terminal {
             ConversationTerminal::Cancelled => (
+                detail.session().mode(),
                 AgentSessionState::Cancelled,
                 AgentSessionEntryKind::FinalReport,
                 "Die aktuelle Verarbeitung wurde abgebrochen.",
             ),
             ConversationTerminal::Failed(message) => (
+                detail.session().mode(),
                 AgentSessionState::Failed,
                 AgentSessionEntryKind::FinalReport,
                 message,
             ),
             ConversationTerminal::PlanNeedsRefresh => (
+                detail.session().mode(),
                 AgentSessionState::AwaitingUser,
                 AgentSessionEntryKind::AssistantSummary,
                 "Der Projektstand hat sich seit der Planrecherche geändert. Der bisherige Plan bleibt sichtbar, muss aber mit aktuellen Quellen neu geprüft werden.",
+            ),
+            ConversationTerminal::AgentStartInterrupted => (
+                AgentSessionMode::Plan,
+                AgentSessionState::AwaitingPlanReview,
+                AgentSessionEntryKind::AssistantSummary,
+                "Der Agentenstart wurde unterbrochen, bevor der Lauf sicher mit der Session verbunden war. Der geprüfte Plan bleibt erhalten und kann erneut gestartet werden.",
             ),
         };
         let sequence = next_sequence(detail.session().latest_sequence())?;
@@ -4554,7 +4781,7 @@ async fn settle_unfinished_conversation(
             detail.session(),
             SessionSuccessor {
                 title: detail.session().title().as_str().to_owned(),
-                mode: detail.session().mode(),
+                mode,
                 state,
                 updated_at: completed_at,
                 latest_sequence: Some(sequence),
@@ -4563,7 +4790,7 @@ async fn settle_unfinished_conversation(
                 presentation_deleted: false,
             },
         )?;
-        let entry = AgentSessionEntry::new(
+        let entry = AgentSessionEntry::try_new(
             session_id,
             sequence,
             kind,
@@ -4575,8 +4802,9 @@ async fn settle_unfinished_conversation(
                 .session()
                 .active_work_item()
                 .map(AgentWorkItem::task_id),
-            detail.session().current_plan_revision(),
-        );
+            None,
+        )
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         validate_agent_session_transition(detail.session(), &next)?;
         match store
             .append_session_revision(
@@ -5357,11 +5585,13 @@ fn classify_plan_response(content: &str) -> PlanConversationResponse {
 }
 
 fn response_requires_citations(mode: AgentSessionMode, content: &str) -> bool {
-    mode != AgentSessionMode::Plan
-        || matches!(
+    match mode {
+        AgentSessionMode::Ask => true,
+        AgentSessionMode::Plan | AgentSessionMode::Agent => matches!(
             classify_plan_response(content),
             PlanConversationResponse::Plan(_)
-        )
+        ),
+    }
 }
 
 fn has_required_plan_sections(plan: &str) -> bool {
@@ -5738,6 +5968,10 @@ mod tests {
             AgentSessionMode::Plan,
             "QUESTION: Welche Plattform ist relevant?"
         ));
+        assert!(!response_requires_citations(
+            AgentSessionMode::Agent,
+            "QUESTION: Soll die bestehende API kompatibel bleiben?"
+        ));
     }
 
     #[test]
@@ -6004,6 +6238,65 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn interrupted_agent_start_returns_to_the_exact_reviewed_plan()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let session_id = AgentSessionId::from_bytes([15; 32]);
+        let timestamp = AgentSessionTimestamp::from_unix_millis(1)?;
+        let session = AgentSession::from_parts(
+            session_id,
+            AgentSessionRevision::INITIAL,
+            AgentSessionTitle::try_from_string("Plan".to_owned())?,
+            AgentSessionMode::Agent,
+            AgentSessionState::Running,
+            timestamp,
+            timestamp,
+            Some(AgentSessionSequence::FIRST),
+            None,
+            Some(1),
+            false,
+        );
+        let entry = AgentSessionEntry::try_new(
+            session_id,
+            AgentSessionSequence::FIRST,
+            AgentSessionEntryKind::Plan,
+            AgentSessionText::try_from_string("Planinhalt".to_owned())?,
+            timestamp,
+            None,
+            None,
+            Some(1),
+        )?;
+        let concrete = Arc::new(MemorySessionStore::new(session, entry));
+        let store: Arc<dyn AgentSessionStore> = concrete.clone();
+
+        block_on(settle_unfinished_conversation(
+            &store,
+            &project(),
+            session_id,
+            ConversationTerminal::AgentStartInterrupted,
+        ))?;
+
+        let detail = concrete.detail();
+        assert_eq!(detail.session().mode(), AgentSessionMode::Plan);
+        assert_eq!(
+            detail.session().state(),
+            AgentSessionState::AwaitingPlanReview
+        );
+        assert_eq!(detail.session().current_plan_revision(), Some(1));
+        assert_eq!(
+            detail.entries()[1].kind(),
+            AgentSessionEntryKind::AssistantSummary
+        );
+        assert_eq!(detail.entries()[1].plan_revision(), None);
+        assert!(
+            detail.entries()[1]
+                .text()
+                .as_str()
+                .contains("erneut gestartet")
+        );
+        Ok(())
+    }
+
     #[derive(Debug)]
     struct FixedClock;
 
@@ -6166,7 +6459,7 @@ mod tests {
             None,
             false,
         );
-        let entry = AgentSessionEntry::new(
+        let entry = AgentSessionEntry::try_new(
             session_id,
             AgentSessionSequence::FIRST,
             AgentSessionEntryKind::UserMessage,
@@ -6175,7 +6468,7 @@ mod tests {
             None,
             None,
             None,
-        );
+        )?;
         Ok((
             session_id,
             Arc::new(MemorySessionStore::new(session, entry)),

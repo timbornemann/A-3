@@ -268,6 +268,30 @@ pub(crate) async fn link_task_to_turn(
     close(transaction, result).await
 }
 
+pub(crate) async fn load_linked_task(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<Option<TaskId>, AskResearchRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT link_id FROM agent_work_trace_links WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 AND link_kind = 'task' LIMIT 1",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    rows.next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+        .map(|row| read_id(&row, 0).map(TaskId::from_bytes))
+        .transpose()
+}
+
 async fn insert_task_links(
     transaction: &Transaction,
     worktree_id: WorktreeId,
@@ -1416,7 +1440,8 @@ impl AskResearchRepositoryError {
 mod tests {
     use super::{
         append_event, append_sources, begin, complete, list_diagrams, list_session_diagrams,
-        list_sources, load_detail, load_diagram, load_handoff_for_task, load_projection,
+        list_sources, load_detail, load_diagram, load_handoff_for_task, load_linked_task,
+        load_projection,
     };
     use crate::agent_session_repository;
     use a3_application::{
@@ -1554,7 +1579,7 @@ mod tests {
                 false,
             )?;
             let task_id = TaskId::from_bytes([9; 32]);
-            let answer = AgentSessionEntry::new(
+            let answer = AgentSessionEntry::try_new(
                 session_id,
                 AgentSessionSequence::new(2)?,
                 AgentSessionEntryKind::FinalReport,
@@ -1563,7 +1588,7 @@ mod tests {
                 Some(AgentWorkItemId::from_bytes([10; 32])),
                 Some(task_id),
                 None,
-            );
+            )?;
             let terminal = AskResearchEvent::new(
                 session_id,
                 user_sequence,
@@ -1677,6 +1702,12 @@ mod tests {
             assert_eq!(command.primary(), SlashCommand::Review);
             assert_eq!(command.lenses(), &[SlashCommandLens::Security]);
             assert_eq!(
+                load_linked_task(&connection, worktree_id, session_id, user_sequence)
+                    .await
+                    .map_err(|error| error.classify())?,
+                Some(task_id)
+            );
+            assert_eq!(
                 list_sources(
                     &connection,
                     worktree_id,
@@ -1712,6 +1743,12 @@ mod tests {
                     .await
                     .map_err(|error| error.classify())?
                     .is_none()
+            );
+            assert_eq!(
+                load_linked_task(&connection, worktree_id, session_id, user_sequence)
+                    .await
+                    .map_err(|error| error.classify())?,
+                None
             );
             assert!(
                 list_diagrams(&connection, worktree_id, session_id, user_sequence)
@@ -1753,7 +1790,7 @@ mod tests {
         text: &str,
         created_at: u64,
     ) -> Result<AgentSessionEntry, Box<dyn std::error::Error>> {
-        Ok(AgentSessionEntry::new(
+        Ok(AgentSessionEntry::try_new(
             session_id,
             sequence,
             kind,
@@ -1762,6 +1799,6 @@ mod tests {
             None,
             None,
             None,
-        ))
+        )?)
     }
 }

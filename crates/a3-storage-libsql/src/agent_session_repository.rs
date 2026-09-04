@@ -798,7 +798,7 @@ fn decode_entry(
     if work_item_id.is_some() != task_id.is_some() {
         return Err(AgentSessionRepositoryError::InvalidStoredData);
     }
-    Ok(AgentSessionEntry::new(
+    AgentSessionEntry::try_new(
         session_id,
         AgentSessionSequence::new(read_u64(row, 0)?)
             .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)?,
@@ -813,7 +813,8 @@ fn decode_entry(
             .map(u32::try_from)
             .transpose()
             .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)?,
-    ))
+    )
+    .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
 }
 
 const fn encode_mode(value: AgentSessionMode) -> &'static str {
@@ -1598,7 +1599,7 @@ mod tests {
         created_at: u64,
         plan_revision: Option<u32>,
     ) -> Result<AgentSessionEntry, Box<dyn std::error::Error>> {
-        Ok(AgentSessionEntry::new(
+        Ok(AgentSessionEntry::try_new(
             session_id,
             AgentSessionSequence::new(sequence)?,
             kind,
@@ -1607,6 +1608,6 @@ mod tests {
             None,
             None,
             plan_revision,
-        ))
+        )?)
     }
 }

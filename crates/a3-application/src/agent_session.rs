@@ -402,7 +402,16 @@ pub fn validate_agent_session_transition(
             && next.state() == AgentSessionState::Running
             && next.active_work_item().is_none()
             && next.current_plan_revision().is_none();
-        if !starts_independent_work_item {
+        let rolls_back_interrupted_agent_preparation = current.mode()
+            == a3_domain::AgentSessionMode::Agent
+            && current.state() == AgentSessionState::Running
+            && current.active_work_item().is_none()
+            && current.current_plan_revision().is_some()
+            && next.mode() == a3_domain::AgentSessionMode::Plan
+            && next.state() == AgentSessionState::AwaitingPlanReview
+            && next.active_work_item().is_none()
+            && next.current_plan_revision() == current.current_plan_revision();
+        if !starts_independent_work_item && !rolls_back_interrupted_agent_preparation {
             return Err(AgentSessionStoreFailure::InvalidInput);
         }
     }
@@ -468,5 +477,38 @@ mod tests {
                 .mode()
                 .can_select_for_next_message(AgentSessionMode::Ask)
         );
+    }
+
+    #[test]
+    fn interrupted_agent_preparation_may_return_to_plan_review() {
+        let base = session_with_state(1, AgentSessionMode::Agent, AgentSessionState::Running);
+        let current = AgentSession::from_parts(
+            base.id(),
+            base.revision(),
+            base.title().clone(),
+            base.mode(),
+            base.state(),
+            base.created_at(),
+            base.updated_at(),
+            base.latest_sequence(),
+            None,
+            Some(3),
+            false,
+        );
+        let next = AgentSession::from_parts(
+            current.id(),
+            AgentSessionRevision::new(2).unwrap_or(AgentSessionRevision::INITIAL),
+            current.title().clone(),
+            AgentSessionMode::Plan,
+            AgentSessionState::AwaitingPlanReview,
+            current.created_at(),
+            AgentSessionTimestamp::from_unix_millis(2).unwrap_or_else(|_| unreachable!()),
+            current.latest_sequence(),
+            None,
+            Some(3),
+            false,
+        );
+
+        assert_eq!(validate_agent_session_transition(&current, &next), Ok(()));
     }
 }

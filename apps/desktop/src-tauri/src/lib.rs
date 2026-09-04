@@ -2123,7 +2123,8 @@ impl CompositionRoot {
                 project.as_ref().clone(),
                 *project_id,
                 CommandErrorV1::project_open,
-            )?;
+            )
+            .await?;
         }
         Ok(map_open_project_to_v1(outcome))
     }
@@ -4423,7 +4424,7 @@ impl CompositionRoot {
         Ok(RemoveProjectResponseV1::removed())
     }
 
-    fn activate_project_runtime(
+    async fn activate_project_runtime(
         &self,
         project: ProjectIdentity,
         project_id: ProjectId,
@@ -4455,6 +4456,15 @@ impl CompositionRoot {
             self.restore_runtime_after_failed_activation(previous.as_ref());
             return Err(error(ErrorCodeV1::AgentTaskControlUnavailable));
         }
+        if let Some(manager) = &self.agent_sessions
+            && manager
+                .recover_interrupted_preparations(&project)
+                .await
+                .is_err()
+        {
+            self.restore_runtime_after_failed_activation(previous.as_ref());
+            return Err(error(ErrorCodeV1::AgentSessionUnavailable));
+        }
         self.agent_inspection.activate_project(&project);
         self.agent_approval.activate_project(&project);
         *lock_recovering_poison(&self.active_project) = Some(ActiveProject {
@@ -4470,7 +4480,8 @@ impl CompositionRoot {
         project_id: ProjectId,
     ) -> Result<(), CommandErrorV1> {
         let previous = lock_recovering_poison(&self.active_project).clone();
-        self.activate_project_runtime(project.clone(), project_id, CommandErrorV1::project_open)?;
+        self.activate_project_runtime(project.clone(), project_id, CommandErrorV1::project_open)
+            .await?;
         let recorded_project_id = match self
             .project_catalog_store
             .record_opened_project(project)

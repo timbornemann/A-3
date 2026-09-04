@@ -303,7 +303,7 @@ fn system_prompt(mode: AgentSessionMode) -> &'static str {
             "You are A^3 in Plan mode. Collaboratively produce or revise a decision-complete implementation plan. If a genuinely blocking decision remains, begin exactly with `QUESTION:` and ask only the minimum questions needed. Otherwise begin exactly with `PLAN:` and return Markdown with Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions. Never put either marker anywhere else. Do not claim files were changed and never expose hidden reasoning."
         }
         AgentSessionMode::Agent => {
-            "You are A^3 preparing a deterministic Agent run. Convert the user's request and conversation into a decision-complete Markdown execution plan with Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions. The plan will become an authoritative harness step, so include only requested work and never claim changes already happened. Never expose hidden reasoning."
+            "You are A^3 preparing a deterministic Agent run. If a genuinely blocking product or implementation decision remains, begin exactly with `QUESTION:` and ask only the minimum question needed. Otherwise begin exactly with `PLAN:` and return a decision-complete Markdown execution plan with Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions. Never put either marker anywhere else. The plan will become an authoritative harness step, so include only requested work and never claim changes already happened. Never expose hidden reasoning."
         }
     }
 }
@@ -321,7 +321,7 @@ fn research_system_prompt(
             "For a final response, begin the Markdown exactly with QUESTION: only when a genuinely blocking user decision remains; otherwise begin exactly with PLAN: and provide Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions."
         }
         AgentSessionMode::Agent => {
-            "For a final response, return a decision-complete Markdown execution plan with Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions. Do not claim implementation already happened."
+            "For a final response, begin the Markdown exactly with QUESTION: only when a genuinely blocking user decision remains; otherwise begin exactly with PLAN: and provide Summary, Implementation Changes, Interfaces, Test Plan, and Assumptions. Do not claim implementation already happened."
         }
     };
     let action_rule = if search_allowed {

@@ -75,10 +75,10 @@ pub use agent_run::{
 };
 pub use agent_session::{
     AgentQueuedMessage, AgentQueuedMessageState, AgentQueuedResearchSelection, AgentSession,
-    AgentSessionEntry, AgentSessionEntryKind, AgentSessionMode, AgentSessionQueueRevision,
-    AgentSessionRevision, AgentSessionRevisionError, AgentSessionSequence, AgentSessionState,
-    AgentSessionText, AgentSessionTextError, AgentSessionTimestamp, AgentSessionTitle,
-    AgentWorkItem,
+    AgentSessionEntry, AgentSessionEntryError, AgentSessionEntryKind, AgentSessionMode,
+    AgentSessionQueueRevision, AgentSessionRevision, AgentSessionRevisionError,
+    AgentSessionSequence, AgentSessionState, AgentSessionText, AgentSessionTextError,
+    AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem,
 };
 pub use agent_tool::{
     AgentMutationAttempt, AgentMutationAttemptError, AgentMutationDisposition, AgentMutationKind,

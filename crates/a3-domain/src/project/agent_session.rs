@@ -563,8 +563,7 @@ pub struct AgentSessionEntry {
 impl AgentSessionEntry {
     /// Creates one already bounded immutable entry.
     #[allow(clippy::too_many_arguments)]
-    #[must_use]
-    pub const fn new(
+    pub fn try_new(
         session_id: AgentSessionId,
         sequence: AgentSessionSequence,
         kind: AgentSessionEntryKind,
@@ -573,8 +572,14 @@ impl AgentSessionEntry {
         work_item_id: Option<AgentWorkItemId>,
         task_id: Option<TaskId>,
         plan_revision: Option<u32>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, AgentSessionEntryError> {
+        if work_item_id.is_some() != task_id.is_some()
+            || matches!(plan_revision, Some(0))
+            || (matches!(kind, AgentSessionEntryKind::Plan) != plan_revision.is_some())
+        {
+            return Err(AgentSessionEntryError);
+        }
+        Ok(Self {
             session_id,
             sequence,
             kind,
@@ -583,7 +588,7 @@ impl AgentSessionEntry {
             work_item_id,
             task_id,
             plan_revision,
-        }
+        })
     }
 
     /// Returns the owning session.
@@ -628,9 +633,26 @@ impl AgentSessionEntry {
     }
 }
 
+/// Invalid cross-field anchors on one durable conversation entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentSessionEntryError;
+
+impl fmt::Display for AgentSessionEntryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "Agent session entries require paired work anchors and a plan revision only for plans",
+        )
+    }
+}
+
+impl Error for AgentSessionEntryError {}
+
 #[cfg(test)]
 mod tests {
-    use super::{AgentSessionMode, AgentSessionText, AgentSessionTitle};
+    use super::{
+        AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
+        AgentSessionSequence, AgentSessionText, AgentSessionTimestamp, AgentSessionTitle,
+    };
 
     #[test]
     fn modes_only_move_forward_inside_one_work_item() {
@@ -644,5 +666,41 @@ mod tests {
         assert!(AgentSessionTitle::try_from_string("Refactor index".to_owned()).is_ok());
         assert!(AgentSessionTitle::try_from_string("Refactor\nindex".to_owned()).is_err());
         assert!(AgentSessionText::try_from_string("First\nSecond".to_owned()).is_ok());
+    }
+
+    #[test]
+    fn entry_anchors_make_plan_revisions_unambiguous() {
+        let session_id = AgentSessionId::from_bytes([1; 32]);
+        let text = AgentSessionText::try_from_string("Status".to_owned())
+            .unwrap_or_else(|_| unreachable!());
+        let timestamp =
+            AgentSessionTimestamp::from_unix_millis(1).unwrap_or_else(|_| unreachable!());
+
+        assert!(
+            AgentSessionEntry::try_new(
+                session_id,
+                AgentSessionSequence::FIRST,
+                AgentSessionEntryKind::Activity,
+                text.clone(),
+                timestamp,
+                None,
+                None,
+                Some(1),
+            )
+            .is_err()
+        );
+        assert!(
+            AgentSessionEntry::try_new(
+                session_id,
+                AgentSessionSequence::FIRST,
+                AgentSessionEntryKind::Plan,
+                text,
+                timestamp,
+                None,
+                None,
+                None,
+            )
+            .is_err()
+        );
     }
 }

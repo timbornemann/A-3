@@ -755,6 +755,17 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         user_sequence: AgentSessionSequence,
         task_id: TaskId,
     ) -> AskResearchStoreFuture<'a, ()>;
+    /// Loads the internal task already linked to one research turn.
+    ///
+    /// This read supports crash-safe adoption when task materialization committed before the
+    /// conversation session could record its presentation work item. The task identity remains
+    /// behind the trusted application boundary and is never accepted from the WebView.
+    fn load_linked_task<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+    ) -> AskResearchStoreFuture<'a, Option<TaskId>>;
     /// Lists at most 32 recorded turns for a session.
     fn list_turns<'a>(
         &'a self,

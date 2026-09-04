@@ -1184,6 +1184,22 @@ Seitenleiste erst mit einer materialisierten Task und der Header ordnet Menü, L
 Seitenleistenschalter ohne Überlagerung an. Terminale Agent-Runs belegen den Planstart nicht mehr;
 die kurze Abschlussübergabe wartet auf den noch auslaufenden Conversationbesitzer.
 
+Agentstart-Recovery-Korrektur vom 2026-09-04: Planfreigabe, Task-Materialisierung und
+AgentRun-Status verwenden nun ausschließlich zum jeweiligen Eintrag passende Anker; insbesondere
+tragen Aktivitäts- und Abschlussmeldungen niemals die nur für Planartefakte zulässige
+Planrevision. Der Planstart veröffentlicht vor der Materialisierung einen sichtbaren
+Vorbereitungsschritt. Nach einem Prozessabbruch werden laufende Vorbereitungen ohne gebundenen
+Task beim nächsten Projektstart deterministisch beendet; eine unterbrochene Planfreigabe kehrt
+mit unveränderter Planrevision zu `AwaitingPlanReview` zurück. Damit bleiben weder unsichtbare
+`Running`-Sessions noch ein wirkungsloser Abbruch zurück. Wurde Task, Ledger und Run bereits
+atomar angelegt, bevor die Session-Verknüpfung scheiterte, übernimmt ein erneuter Planstart genau
+diese index-, modell- und research-gebundenen Anker statt einen konkurrierenden zweiten Task zu
+erzeugen. Nur ein unveränderter, noch ausführbarer `Execute`-Stand darf übernommen werden.
+Plan- und Agent-Vorbereitung verwenden außerdem denselben geschlossenen `QUESTION:`-/`PLAN:`-
+Vertrag: Eine tatsächlich blockierende Richtungsentscheidung wird als konkrete Rückfrage sichtbar
+und benötigt keine erfundene Quellenangabe; nur ein vollständig strukturierter und aktuell belegter
+Plan darf Task, Ledger und Run materialisieren.
+
 Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
 Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,
 lokales Lazy Rendering, Sanitizer, Render-Retry und path-freien Export. Formatcheck, ESLint,
