@@ -1058,6 +1058,7 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] persistente verwendete und zusätzlich bereitgestellte Ask-Quellen mit sicherer Vorschau
 - [x] gemeinsame endliche Mehr-Runden-Recherche für Ask, Plan und Agent-Vorbereitung
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
+- [x] Core-gesteuerte Evidence-Vertiefung, abschnittsweise Dateireads und begrenztes Retry
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
 - [x] sichtbare nächste Moduswahl mit erneuter Planfreigabe nach unterbrochener Agent-Kontinuität
@@ -1073,6 +1074,10 @@ Akzeptanz:
 - Ask kann Repositoryfragen beantworten, ohne eine mutierende Capability zu besitzen;
 - einfache Fragen bleiben bei einem Modellturn; nur offene Evidence-Lücken lösen innerhalb des
   gewählten festen Standard-/Gründlich-Profils weitere begrenzte Read-only-Runden aus;
+- eine vom Modell ausgewiesene Evidence-Lücke oder eine noch nicht gelesene eindeutig genannte
+  Indexdatei kann keine vorschnelle Antwort abschließen; große Dateien werden bei Bedarf über
+  weitere gebundene Seiten gelesen und transiente Fehler setzen begrenzt am betroffenen Schritt
+  fort;
 - jeder laufende und abgeschlossene Turn zeigt in Ask, Plan und Agent-Vorbereitung verständlich
   Suche, Task-Lens-Auswahlgrund, öffentliche Befunde, offene Lücken, Vollständigkeit und die für das
   Ergebnis angegebenen Quellen; neue Live-Schritte

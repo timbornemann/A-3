@@ -243,6 +243,14 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Timer, das einmalige Einklappen nach 700 Millisekunden und sofortige Darstellung bei Reduced
   Motion. Der Workspace-Test muss den Übergang von der Live-Karte zur frisch abgeschlossenen,
   zunächst geöffneten Rechercheprojektion belegen.
+- Der ADR-0043-Contract verlangt Ask-Research-Decision V3 mit geschlossenem Evidence-Status und
+  paginiertem `inspectPath.start_line`. Eine als `incomplete` markierte Antwort sowie eine nicht
+  gelesene, eindeutig genannte Indexdatei müssen weitere Recherche oder
+  `AwaitingContinuation` auslösen. Regressionstests führen mindestens zwei Task-Lens-Runden in
+  demselben Conversationjob aus und verbieten regressierenden Schedulerfortschritt. Read-Retries
+  sind auf einmal pro Operation und vier pro Abschnitt begrenzt; ein Modell-Retry verbraucht eine
+  reguläre Entscheidung. Cancellation und nicht transiente Source-Ablehnungen dürfen niemals
+  wiederholt oder in einen Erfolg umgedeutet werden.
 - Der ADR-0039-Contract prüft den vollständigen Slash-Katalog, Modusmatrix, leere Themen, `//`-
   Escape, höchstens zwei unterschiedliche Linsen und die Ablehnung unbekannter oder mehrfacher
   Hauptaufträge vor Sessionappend und Jobstart. V32-Tests decken Neuinstallation, V31→V32,

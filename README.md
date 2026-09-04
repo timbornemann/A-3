@@ -218,6 +218,11 @@ Arbeitsweg- und sichere Quellen-Commands für Ask, Plan und Agent-Vorbereitung a
 Der sichtbare Arbeitsweg bleibt über mehrere Recherche-Runden und den Antwortübergang stabil,
 gruppiert Vorbereitung, Runden und Abschluss und verknüpft belegte `【S…】`-Angaben direkt mit
 Core-zugeordneten Dateien, Zeilen und der sicheren Vorschau.
+Nach ADR-0043 löst der Core auch ohne `@` eindeutig genannte Repositorydateien zuerst auf. Meldet
+eine Modellentscheidung noch eine wesentliche Evidence-Lücke, muss sie innerhalb des festen
+Profils weiter recherchieren; große Dateien können ab einer konkreten Zeile abschnittsweise
+gelesen werden. Vorübergehende Read- und Modellfehler setzen begrenzt am betroffenen Schritt fort,
+ohne Quellen, Arbeitsnotizen oder den laufenden Turn zu verwerfen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte

@@ -73,8 +73,9 @@ Recovery ausschließlich Task-, Ledger- und Produktzustand aus einem read-only C
 keine H11-Neustartinspektion aus.
 
 Ask-, Plan- und Agent-Vorbereitung besitzen je Job genau eine feste, monotone äußere
-Fortschrittsskala. Task-Lens-Phasen werden in den dafür reservierten Abschnitt dieser Skala
-übersetzt; Indexmaterialisierung meldet dort nur Cancellation. Ein produktiver Agentenversuch
+Fortschrittsskala. Wiederholte Task-Lens-Läufe übernehmen Cancellation, melden ihre pro Lauf neu
+beginnenden Phasen aber nicht in die äußere Scheduler-Skala; Indexmaterialisierung meldet dort nur
+Cancellation. Ein produktiver Agentenversuch
 besitzt entsprechend ausschließlich die monotone Turn-Skala. Untergeordnete Kontext-, Index-,
 Patch- und Prozessoperationen dürfen diese Scheduler-Skala weder ersetzen noch auf einen kleineren
 Wert zurücksetzen. Nach Annahme einer Nachricht wird jede laufende Session dauerhaft in
@@ -92,6 +93,14 @@ Schema-Reparaturversuch. Jeder Fortschritt und jede öffentliche Notiz wird sofo
 gespeichert; Cancellation, Timeout oder Fehler erhalten bereits gefundene Source-Metadaten. Der
 erfolgreiche Abschluss committet Ergebnis, Zitate, terminales Event und Sessionrevision atomar.
 Kein Worker wird detached und kein UI-Poll startet neue Arbeit.
+
+ADR-0043 ergänzt innerhalb dieses unveränderten Rahmens ein begrenztes Recovery-Verhalten.
+Vorübergehend nicht verfügbare Source-Reads und Quelltextsuchen werden einmal am selben Schritt
+wiederholt, insgesamt höchstens viermal je Rechercheabschnitt. Bleibt der Read erfolglos, wird das
+begrenzte Ergebnis der nächsten Entscheidung übergeben, damit ein anderer Read-only-Suchweg
+gewählt werden kann. Ein transienter Modellfehler darf genau einmal erneut versucht werden und
+verbraucht dabei eine reguläre Modellentscheidung. Cancellation, Zeitablauf, Schema-Reparatur,
+Stagnation und die festen Profilgrenzen werden dadurch nicht erweitert.
 
 Slash-Command-Nachrichten verwenden dieselben besessenen Conversationjobs und die festen
 ADR-0038-Budgets. Die zusätzlichen Analyseaktionen zählen wie bestehende Reads; ein Command

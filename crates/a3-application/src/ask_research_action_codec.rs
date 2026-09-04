@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v2.schema.json");
+const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v3.schema.json");
 const MAX_OUTPUT_BYTES: usize = 320 * 1024;
 
 /// Static strict JSON Schema for one bounded multi-round research decision.
@@ -11,7 +11,7 @@ const MAX_OUTPUT_BYTES: usize = 320 * 1024;
 pub struct AskResearchDecisionJsonSchema;
 
 impl AskResearchDecisionJsonSchema {
-    /// Returns the version-two provider-neutral JSON Schema document.
+    /// Returns the version-three provider-neutral JSON Schema document.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         SCHEMA
@@ -30,7 +30,12 @@ pub enum AskResearchAction {
     /// Search safe current source for one to eight literals.
     SearchSourceText(Vec<String>),
     /// Inspect an exact path resolved against the pinned index.
-    InspectPath(String),
+    InspectPath {
+        /// Repository-relative path resolved only against the pinned index.
+        path: String,
+        /// One-based line at which the next bounded page starts.
+        start_line: u32,
+    },
     /// Inspect a previously issued turn-local source reference.
     InspectSource(u16),
     /// Follow one closed relationship class from a known source.
@@ -80,6 +85,15 @@ pub enum AskResearchFindingKind {
     Conclusion,
 }
 
+/// Closed model assessment used by the Core to prevent premature final answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskResearchEvidenceStatus {
+    /// The supplied current evidence supports the requested final result.
+    Sufficient,
+    /// A material evidence gap remains and another bounded read should be attempted.
+    Incomplete,
+}
+
 /// Bounded public work note. This is presentation data and never executable input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskResearchDecisionNote {
@@ -108,6 +122,8 @@ pub enum AskResearchDecision {
         source_ordinals: Vec<u16>,
         /// Public, non-authoritative work note for this decision.
         note: AskResearchDecisionNote,
+        /// Whether the model reports that the requested result is fully supported.
+        evidence_status: AskResearchEvidenceStatus,
     },
     /// One to four bounded read-only actions.
     Research {
@@ -118,7 +134,7 @@ pub enum AskResearchDecision {
     },
 }
 
-/// Strict version-two decoder paired with the provider schema.
+/// Strict version-three decoder paired with the provider schema.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAskResearchDecision;
 
@@ -138,7 +154,7 @@ impl DecodeAskResearchDecision {
             serde_json::from_str(raw).map_err(|_| AskResearchDecisionDecodeError::MalformedJson)?;
         let root = object(&root)?;
         exact(root, &["schema_version", "decision"])?;
-        if root.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        if root.get("schema_version").and_then(Value::as_u64) != Some(3) {
             return Err(AskResearchDecisionDecodeError::UnsupportedVersion);
         }
         let decision = object(
@@ -156,7 +172,15 @@ impl DecodeAskResearchDecision {
 fn decode_answer(
     value: &Map<String, Value>,
 ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
-    exact(value, &["kind", "note", "markdown", "source_refs"])?;
+    exact(
+        value,
+        &["kind", "evidence_status", "note", "markdown", "source_refs"],
+    )?;
+    let evidence_status = match string(value, "evidence_status")? {
+        "sufficient" => AskResearchEvidenceStatus::Sufficient,
+        "incomplete" => AskResearchEvidenceStatus::Incomplete,
+        _ => return Err(AskResearchDecisionDecodeError::InvalidValue),
+    };
     let note = decode_note(
         value
             .get("note")
@@ -190,6 +214,7 @@ fn decode_answer(
         markdown,
         source_ordinals: ordinals,
         note,
+        evidence_status,
     })
 }
 
@@ -252,7 +277,10 @@ fn markdown_source_ordinals(
 fn decode_research(
     value: &Map<String, Value>,
 ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
-    exact(value, &["kind", "note", "actions"])?;
+    exact(value, &["kind", "evidence_status", "note", "actions"])?;
+    if string(value, "evidence_status")? != "incomplete" {
+        return Err(AskResearchDecisionDecodeError::InvalidValue);
+    }
     let note = decode_note(
         value
             .get("note")
@@ -293,8 +321,17 @@ fn decode_research(
                 AskResearchAction::SearchSourceText(decoded)
             }
             "inspectPath" => {
-                exact(action, &["kind", "path"])?;
-                AskResearchAction::InspectPath(bounded(string(action, "path")?, 4096)?)
+                exact(action, &["kind", "path", "start_line"])?;
+                let start_line = action
+                    .get("start_line")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .filter(|value| *value > 0)
+                    .ok_or(AskResearchDecisionDecodeError::InvalidValue)?;
+                AskResearchAction::InspectPath {
+                    path: bounded(string(action, "path")?, 4096)?,
+                    start_line,
+                }
             }
             "inspectSource" => {
                 exact(action, &["kind", "source_ref"])?;
@@ -489,7 +526,7 @@ pub enum AskResearchDecisionDecodeError {
     InvalidShape,
     /// A required field was absent or an unknown field was present.
     UnknownOrMissingField,
-    /// The document did not select schema version one.
+    /// The document did not select schema version three.
     UnsupportedVersion,
     /// A value crossed a closed enum or resource boundary.
     InvalidValue,
@@ -504,9 +541,28 @@ impl Error for AskResearchDecisionDecodeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_schema_requires_evidence_status_and_paged_path_reads() -> Result<(), Box<dyn Error>>
+    {
+        let document = AskResearchDecisionJsonSchema.as_json()?;
+        assert_eq!(document["properties"]["schema_version"]["const"], 3);
+        assert!(
+            AskResearchDecisionJsonSchema
+                .as_str()
+                .contains("evidence_status")
+        );
+        assert!(
+            AskResearchDecisionJsonSchema
+                .as_str()
+                .contains("start_line")
+        );
+        Ok(())
+    }
+
     #[test]
     fn decoder_accepts_answer_and_rejects_unknown_fields() -> Result<(), Box<dyn Error>> {
-        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"Frage beantworten","finding_kind":"observation","finding":"Quelle gelesen","finding_source_refs":["S2"],"gap":"Keine","next_step":"Antworten"},"markdown":"Fertig 【S2】","source_refs":["S2"]}}"#)?;
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"answer","evidence_status":"sufficient","note":{"goal":"Frage beantworten","finding_kind":"observation","finding":"Quelle gelesen","finding_source_refs":["S2"],"gap":"Keine","next_step":"Antworten"},"markdown":"Fertig 【S2】","source_refs":["S2"]}}"#)?;
         assert_eq!(
             decoded,
             AskResearchDecision::Answer {
@@ -519,25 +575,35 @@ mod tests {
                     source_ordinals: vec![2],
                     gap: "Keine".to_owned(),
                     next_step: "Antworten".to_owned(),
-                }
+                },
+                evidence_status: AskResearchEvidenceStatus::Sufficient,
             }
         );
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"markdown":"x","source_refs":[],"thought":"secret"}}"#).is_err());
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"answer","evidence_status":"incomplete","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"markdown":"x","source_refs":[],"thought":"secret"}}"#).is_err());
         Ok(())
     }
     #[test]
     fn decoder_bounds_one_read_only_round() {
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Aufrufe finden","finding_kind":"hypothesis","finding":"Aufrufer sind noch unbekannt","finding_source_refs":[],"gap":"Aufrufstellen","next_step":"Symbol und Aufrufer suchen"},"actions":[{"kind":"searchSourceText","literals":["TODO","FIXME"]},{"kind":"listDirectory","path":"src"}]}}"#).is_ok());
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"Aufrufe finden","finding_kind":"hypothesis","finding":"Aufrufer sind noch unbekannt","finding_source_refs":[],"gap":"Aufrufstellen","next_step":"Symbol und Aufrufer suchen"},"actions":[{"kind":"searchSourceText","literals":["TODO","FIXME"]},{"kind":"listDirectory","path":"src"},{"kind":"inspectPath","path":"src/manager.py","start_line":201}]}}"#);
+        assert!(matches!(
+            decoded,
+            Ok(AskResearchDecision::Research { actions, .. })
+                if actions.last() == Some(&AskResearchAction::InspectPath {
+                    path: "src/manager.py".to_owned(),
+                    start_line: 201,
+                })
+        ));
         assert!(
             DecodeAskResearchDecision
-                .decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[]}}"#)
+                .decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[]}}"#)
                 .is_err()
         );
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"sufficient","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[{"kind":"searchIndex","query":"q"}]}}"#).is_err());
     }
 
     #[test]
     fn decoder_accepts_only_closed_parameterless_analysis_actions() {
-        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Review","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Aktuelle Analyse","next_step":"Begrenzte Analysen ausführen"},"actions":[{"kind":"inspectWorkingChanges"},{"kind":"queryIndexDiagnostics"},{"kind":"inspectDependencyGraph"},{"kind":"inspectTestTopology"}]}}"#);
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"Review","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Aktuelle Analyse","next_step":"Begrenzte Analysen ausführen"},"actions":[{"kind":"inspectWorkingChanges"},{"kind":"queryIndexDiagnostics"},{"kind":"inspectDependencyGraph"},{"kind":"inspectTestTopology"}]}}"#);
         assert!(
             matches!(decoded, Ok(AskResearchDecision::Research { actions, .. }) if actions == vec![
                 AskResearchAction::InspectWorkingChanges,
@@ -546,21 +612,21 @@ mod tests {
                 AskResearchAction::InspectTestTopology,
             ])
         );
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Security","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Kandidaten","next_step":"Lokal scannen"},"actions":[{"kind":"scanSecurityCandidates","path":"."}]}}"#).is_err());
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"Security","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Kandidaten","next_step":"Lokal scannen"},"actions":[{"kind":"scanSecurityCandidates","path":"."}]}}"#).is_err());
     }
 
     #[test]
     fn decoder_requires_sources_for_public_observations() {
-        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[{"kind":"searchIndex","query":"q"}]}}"#).is_err());
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":3,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[{"kind":"searchIndex","query":"q"}]}}"#).is_err());
     }
 
     #[test]
     fn answer_markers_must_match_structured_sources_outside_code() {
-        let valid = r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1","S3"],"gap":"g","next_step":"n"},"markdown":"Text 【S1】 und 【S3】\n\n```text\n【S99】\n``` sowie `【S88】`","source_refs":["S1","S3"]}}"#;
+        let valid = r#"{"schema_version":3,"decision":{"kind":"answer","evidence_status":"sufficient","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1","S3"],"gap":"g","next_step":"n"},"markdown":"Text 【S1】 und 【S3】\n\n```text\n【S99】\n``` sowie `【S88】`","source_refs":["S1","S3"]}}"#;
         assert!(DecodeAskResearchDecision.decode(valid).is_ok());
         for invalid in [
-            r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text","source_refs":["S1"]}}"#,
-            r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text 【S2】","source_refs":["S1"]}}"#,
+            r#"{"schema_version":3,"decision":{"kind":"answer","evidence_status":"sufficient","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text","source_refs":["S1"]}}"#,
+            r#"{"schema_version":3,"decision":{"kind":"answer","evidence_status":"sufficient","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text 【S2】","source_refs":["S1"]}}"#,
         ] {
             assert!(DecodeAskResearchDecision.decode(invalid).is_err());
         }

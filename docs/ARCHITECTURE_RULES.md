@@ -150,6 +150,12 @@ Stand: 2026-08-03
     einfügen oder offene Schritte ersetzen; abgeschlossene Schritte werden weder umgeschrieben
     noch stillschweigend entwertet. Automatische Replans bleiben endlich und genau eine Mutation
     darf weiterhin den Worktree besitzen.
+18. Eine Conversation-Antwort DARF bei einer ausdrücklich als unvollständig ausgewiesenen
+    Evidence-Lage nicht abgeschlossen werden, solange das feste Rechercheprofil einen weiteren
+    Schritt zulässt. Eindeutig genannte aktuelle Indexdateien bilden eine Core-geprüfte
+    Mindestabdeckung. Transiente Read- und Modell-Retries MÜSSEN innerhalb der bestehenden
+    Entscheidungs-, Zeit- und Aktionsgrenzen bleiben; sie dürfen weder Cancellation noch eine
+    Source-, Policy- oder Capability-Ablehnung umgehen.
 
 ## 11. Tests
 

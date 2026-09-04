@@ -177,8 +177,8 @@ pub use agent_turn::{
 };
 pub use ask_research_action_codec::{
     AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,
-    AskResearchDecisionJsonSchema, AskResearchDecisionNote, AskResearchFindingKind,
-    AskResearchRelation, DecodeAskResearchDecision,
+    AskResearchDecisionJsonSchema, AskResearchDecisionNote, AskResearchEvidenceStatus,
+    AskResearchFindingKind, AskResearchRelation, DecodeAskResearchDecision,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,

@@ -376,6 +376,12 @@ gewählte `researchDepth: standard | thorough`. Der kompatible V1-Command verwen
 Core löst damit ausschließlich den neuesten sichtbaren `awaitingContinuation`-Abschnitt auf und
 bindet ihn an den dann aktuellen Index.
 
+ADR-0043 ändert keine WebView-Parameter. Intern verwendet der gemeinsame Conversation-Use-Case
+Ask-Research-Decision V3: `evidence_status` ist geschlossen, und `inspectPath` trägt eine positive
+`start_line` für die nächste begrenzte Source-Seite. Beide Werte stammen ausschließlich aus dem
+streng validierten Modellobjekt und werden anschließend im Core gegen Recherchebudget, gepinnten
+Index und sicheren Reader geprüft; sie werden nicht als neue IPC-Capability exponiert.
+
 `control_agent_session` erlaubt ausschließlich Pause, Resume, Cancel, `Ask → Plan`, die Umsetzung
 der exakten aktuellen Planrevision sowie Rename, Archive, Unarchive und Presentation Delete. Die
 fachlichen Controls werden im Core gegen aktuelle Task-/Ledger-/Runanker aufgelöst. Layoutqueries

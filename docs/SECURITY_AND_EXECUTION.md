@@ -794,6 +794,14 @@ können keine Mutation, Freigabe, Verification oder Ledgeränderung autorisieren
 öffentlichen Notizen, Auswahlgründen und hashgebundenen Source-Metadaten; Rohprompt,
 Modelltranskript, Chain-of-Thought und Source-Inhalt bleiben ausgeschlossen.
 
+ADR-0043 erweitert keine dieser Capabilities. Ask-Research-Decision V3 kann eine offene
+Evidence-Lage nur als `incomplete` kennzeichnen; der Core entscheidet daraufhin über weitere
+budgetierte Reads oder `AwaitingContinuation`. Eindeutige Dateinennungen werden ausschließlich
+gegen den gepinnten Index aufgelöst, und `inspectPath.start_line` erlaubt nur eine weitere
+höchstens 200-zeilige Seite derselben sicheren Reader-Grenze. Wiederholt werden nur transiente
+Nichtverfügbarkeit und höchstens innerhalb der festen Retry- und Profilbudgets. Cancellation,
+Stale-, Secret-, Binary-, Größen-, Pfad- oder Policy-Ablehnung bleiben fail-closed.
+
 Slash Commands nach ADR-0039 sind keine Prompt- oder Capability-Erweiterung. Der Rust-Core
 validiert Katalog, Modus, Linsen und Argumente vor jedem Write und leitet daraus ein typisiertes
 Arbeitsprofil ab. Die zusätzlichen Aktionen lesen nur aktuelle, begrenzte Working-Change-

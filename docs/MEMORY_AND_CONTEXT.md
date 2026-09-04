@@ -449,6 +449,14 @@ als Suchhinweis fortleben. Für die Agent-Materialisierung übergibt ein typisie
 `ResearchHandoff` ausschließlich Index-, Snapshot- und revalidierte Revisionsanker. Goal, Ledger,
 `RunMemoryCheckpoint`, Verification und das Run Journal bleiben danach die Autorität.
 
+Der in Ask-Research-Decision V3 enthaltene Evidence-Status ist ausschließlich ein geschlossener
+Controllerhinweis und wird nicht als Befund in den `ResearchMemoryCheckpoint` übernommen. Eine als
+`incomplete` ausgewiesene Antwort erzwingt weitere begrenzte Reads oder `AwaitingContinuation`.
+Eindeutig im Auftrag genannte Indexdateien müssen eine aktuelle sichere Source im Working Set
+besitzen. Abschnittsweise `inspectPath`-Reads erzeugen jeweils eine eigene exakte SourceRange; der
+nächste sichere Seitenanfang bleibt nur im aktuellen Working Set. Quelltext und Seiten-Cursor
+werden weiterhin weder im Checkpoint noch im Journal persistiert.
+
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum
 Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt; ein neuer
