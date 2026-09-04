@@ -223,6 +223,10 @@ eine Modellentscheidung noch eine wesentliche Evidence-Lücke, muss sie innerhal
 Profils weiter recherchieren; große Dateien können ab einer konkreten Zeile abschnittsweise
 gelesen werden. Vorübergehende Read- und Modellfehler setzen begrenzt am betroffenen Schritt fort,
 ohne Quellen, Arbeitsnotizen oder den laufenden Turn zu verwerfen.
+ADR-0044 priorisiert dabei aktuelle explizite Dateiziele und aktuelle Task-Lens-Treffer vor
+historischem Conversation-Kontext. Der Modellturn erhält die Core-aufgelöste Zuordnung von
+angefragtem Namen, aktuellem Repositorypfad und `S`-Quelle; adaptive Reads behalten reservierten
+Kontextplatz und eine dateihaltige `searchIndex`-Aktion liest das eindeutige Ziel direkt.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte

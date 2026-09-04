@@ -802,6 +802,13 @@ höchstens 200-zeilige Seite derselben sicheren Reader-Grenze. Wiederholt werden
 Nichtverfügbarkeit und höchstens innerhalb der festen Retry- und Profilbudgets. Cancellation,
 Stale-, Secret-, Binary-, Größen-, Pfad- oder Policy-Ablehnung bleiben fail-closed.
 
+ADR-0044 ändert nur die flüchtige Context-Reihenfolge. Explizite Namen werden weiterhin allein
+gegen den gepinnten Index aufgelöst und über denselben sicheren Reader gelesen. Die Core-erzeugte
+Zuordnung aus angefragtem Namen, aktuellem Repositorypfad und turnlokaler `S`-Quelle wird nur dem
+gebundenen Modellturn bereitgestellt; sie erzeugt keine WebView-Pfadcapability und wird nicht als
+Quelltext persistiert. Die nachrangige historische Revalidierung und die adaptive Kontextreserve
+lockern keine Datei-, Source-, Zeit-, Aktions-, Prozess- oder Netzwerkgrenze.
+
 Slash Commands nach ADR-0039 sind keine Prompt- oder Capability-Erweiterung. Der Rust-Core
 validiert Katalog, Modus, Linsen und Argumente vor jedem Write und leitet daraus ein typisiertes
 Arbeitsprofil ab. Die zusätzlichen Aktionen lesen nur aktuelle, begrenzte Working-Change-

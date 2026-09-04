@@ -1059,6 +1059,7 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] gemeinsame endliche Mehr-Runden-Recherche für Ask, Plan und Agent-Vorbereitung
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] Core-gesteuerte Evidence-Vertiefung, abschnittsweise Dateireads und begrenztes Retry
+- [x] priorisierter Recherchekontext mit deterministischer Zielauflösung und adaptiver Reserve
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
 - [x] sichtbare nächste Moduswahl mit erneuter Planfreigabe nach unterbrochener Agent-Kontinuität
@@ -1141,6 +1142,14 @@ Runden ehrlich mit einer expliziten Fortsetzungsaktion. Knowledge V31 speichert 
 Arbeitsnotizen mit ihren Source-Ketten für Ask, Plan und Agent-Vorbereitung; V30 bleibt als Legacy
 lesbar. Der Composer, Conversation-Block und Inspector verwenden dieselbe progressive Timeline.
 Rohes internes Denken bleibt ausgeschlossen.
+
+Recherchekontext-Korrektur vom 2026-09-05 nach ADR-0044: Eindeutig genannte aktuelle Dateien
+werden vor der aktuellen, auf zwölf gelesene Ziele begrenzten Task Lens aufgebaut; historische
+Quellen folgen mit höchstens acht Einträgen nur nachrangig und werden bei expliziten Dateizielen
+nicht pauschal übernommen. Der Modellkontext zeigt die Core-aufgelöste Zuordnung aus Anfrage,
+Repositorypfad und `S`-Quelle. Spätere adaptive Reads besitzen reservierten Kontextplatz;
+dateihaltige `searchIndex`-Aktionen lesen das eindeutige Ziel direkt. Die vorhandenen Standard-,
+Gründlich-, Stagnations- und Sicherheitsgrenzen bleiben unverändert.
 
 Slash-Command-Erweiterung vom 2026-09-04 nach ADR-0039: Ein `/` öffnet den vom Core gelieferten,
 modusgefilterten Katalog. Hauptauftrag und höchstens zwei Linsen erscheinen als entfernbare Chips;

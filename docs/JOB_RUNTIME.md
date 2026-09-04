@@ -102,6 +102,15 @@ gewählt werden kann. Ein transienter Modellfehler darf genau einmal erneut vers
 verbraucht dabei eine reguläre Modellentscheidung. Cancellation, Zeitablauf, Schema-Reparatur,
 Stagnation und die festen Profilgrenzen werden dadurch nicht erweitert.
 
+ADR-0044 ändert weder Scheduler- noch Profilgrenzen. Vor der ersten Modellentscheidung werden
+explizit genannte aktuelle Dateien vorrangig gelesen, danach höchstens zwölf aktuelle Task-Lens-
+Ziele und zuletzt höchstens acht revalidierte historische Quellen. Enthält eine spätere
+`searchIndex`-Aktion einen eindeutigen Dateinamen oder ein eindeutiges Pfadsuffix, führt der Core
+den sicheren Dateiread vor der erneuten Lens-Kompilierung aus. Eine Nullrunde erhält einen
+verpflichtenden Wechselhinweis; nur zwei aufeinanderfolgende Runden ohne neue Evidence führen
+weiterhin zu `AwaitingContinuation`. Runden mit Erkenntnisgewinn können das vollständige feste
+Profil nutzen.
+
 Slash-Command-Nachrichten verwenden dieselben besessenen Conversationjobs und die festen
 ADR-0038-Budgets. Die zusätzlichen Analyseaktionen zählen wie bestehende Reads; ein Command
 erzeugt keinen zweiten Scheduler und keinen eigenen offenen Loop. `/diagram` reserviert innerhalb

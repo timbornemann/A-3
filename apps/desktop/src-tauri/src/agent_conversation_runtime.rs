@@ -325,7 +325,7 @@ fn research_system_prompt(
         }
     };
     let action_rule = if search_allowed {
-        "If any material evidence is still missing, you MUST set evidence_status to incomplete and return kind research with one to four sequential read-only actions. Do not answer early and do not ask the user to provide a file that is already present in the pinned index. Prefer exact inspectPath reads for named files, searchSourceText for concrete identifiers, inspectRelations for callers or data flow, and continue large files with a later inspectPath start_line. Change the search approach when a previous read produced no new evidence."
+        "If any material evidence is still missing, you MUST set evidence_status to incomplete and return kind research with one to four sequential read-only actions. Do not answer early and do not ask the user to provide a file that is already present in the pinned index. Treat CORE-RESOLVED NAMED TARGETS as authoritative navigation hints: when a target already has an S source, use or inspect that source instead of searching for its filename again. Prefer exact inspectPath reads for unresolved named files, searchSourceText for concrete identifiers, inspectRelations for callers or data flow, and continue large files with a later inspectPath start_line. Change the access path when a previous read produced no new evidence; do not spend consecutive rounds rephrasing searchIndex queries for the same target."
     } else {
         "This is the final available model decision. You MUST return kind answer; do not request another action. Set evidence_status to sufficient only when current sources support the requested result. Otherwise set it to incomplete and give an honest bounded intermediate result; the Core will offer continuation."
     };
@@ -514,6 +514,8 @@ mod tests {
         assert!(searchable.contains("MUST set evidence_status to incomplete"));
         assert!(searchable.contains("continue large files"));
         assert!(searchable.contains("Do not answer early"));
+        assert!(searchable.contains("CORE-RESOLVED NAMED TARGETS"));
+        assert!(searchable.contains("do not spend consecutive rounds"));
 
         let final_only = research_system_prompt(AgentSessionMode::Plan, false, None);
         assert!(final_only.contains("the Core will offer continuation"));

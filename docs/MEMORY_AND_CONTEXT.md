@@ -457,6 +457,15 @@ besitzen. Abschnittsweise `inspectPath`-Reads erzeugen jeweils eine eigene exakt
 nächste sichere Seitenanfang bleibt nur im aktuellen Working Set. Quelltext und Seiten-Cursor
 werden weiterhin weder im Checkpoint noch im Journal persistiert.
 
+Der flüchtige Recherchekontext folgt ADR-0044: aktuelle explizite Repositoryziele stehen vor
+höchstens zwölf aktuellen Task-Lens-Zielen; höchstens acht revalidierte Quellen des vorherigen
+Turns folgen nur nachrangig und werden bei einem neuen Auftrag mit expliziten Dateizielen nicht
+pauschal übernommen. Ein Teil des Evidence-Fensters bleibt für adaptive Reads späterer Runden frei.
+Identische öffentliche Lücken werden im Modellcheckpoint dedupliziert und ältere Hinweise
+begrenzt, während die persistierte sichtbare Timeline unverändert vollständig bleibt. Die
+Core-Zielprojektion aus angefragtem Namen, aktuellem Pfad und turnlokalem `S`-Label ist
+Navigationsmetadatum und keine fachliche Evidence.
+
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum
 Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt; ein neuer

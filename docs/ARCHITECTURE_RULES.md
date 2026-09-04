@@ -156,6 +156,10 @@ Stand: 2026-08-03
     Mindestabdeckung. Transiente Read- und Modell-Retries MÜSSEN innerhalb der bestehenden
     Entscheidungs-, Zeit- und Aktionsgrenzen bleiben; sie dürfen weder Cancellation noch eine
     Source-, Policy- oder Capability-Ablehnung umgehen.
+19. Der flüchtige Conversation-Recherchekontext MUSS aktuelle explizite Repositoryziele vor
+    allgemeiner Task-Lens-Auswahl und historischem Sessionwissen priorisieren. Spätere adaptive
+    Reads MÜSSEN nutzbaren Kontextplatz erhalten. Revalidierte alte Evidence darf eine aktuelle
+    eindeutige Zielquelle weder verdrängen noch deren erneuten sicheren Read ersetzen.
 
 ## 11. Tests
 

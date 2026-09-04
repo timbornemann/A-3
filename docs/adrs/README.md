@@ -68,6 +68,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0041](0041-sichere-moduswechsel-und-dauerhafte-nachrichtenwarteschlange.md) | Sichere Moduswechsel und Queue                       |
 | [0042](0042-adaptiver-agent-arbeitsplan.md)                                  | Adaptiver Agent-Arbeitsplan                          |
 | [0043](0043-core-gesteuerte-evidence-vertiefung-und-retry.md)                | Core-gesteuerte Evidence-Vertiefung und Retry        |
+| [0044](0044-priorisierter-recherchekontext-und-zielauflösung.md)             | Priorisierter Recherchekontext und Zielauflösung     |
 
 ## Neue ADRs
 

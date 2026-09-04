@@ -251,6 +251,14 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   sind auf einmal pro Operation und vier pro Abschnitt begrenzt; ein Modell-Retry verbraucht eine
   reguläre Entscheidung. Cancellation und nicht transiente Source-Ablehnungen dürfen niemals
   wiederholt oder in einen Erfolg umgedeutet werden.
+- Der ADR-0044-Regressionsvertrag belegt, dass explizit genannte aktuelle Dateien vor Task Lens
+  und historischem Conversation-Kontext gelesen werden. Die Task-Lens-Baseline umfasst höchstens
+  zwölf, die historische Revalidierung höchstens acht Quellen; adaptive Reads behalten
+  Kontextkapazität. Tests mit kleinem Evidence-Fenster müssen zeigen, dass eine neue priorisierte
+  Quelle alten Baseline-Kontext verdrängt und als Core-aufgelöstes `S`-Ziel im nächsten
+  Modellturn erscheint. Eine dateihaltige `searchIndex`-Aktion muss das eindeutige Ziel direkt
+  lesen; eine Nullrunde muss den Zugang wechseln, ohne Stagnations-, Aktions- oder Zeitgrenzen zu
+  lockern.
 - Der ADR-0039-Contract prüft den vollständigen Slash-Katalog, Modusmatrix, leere Themen, `//`-
   Escape, höchstens zwei unterschiedliche Linsen und die Ablehnung unbekannter oder mehrfacher
   Hauptaufträge vor Sessionappend und Jobstart. V32-Tests decken Neuinstallation, V31→V32,
