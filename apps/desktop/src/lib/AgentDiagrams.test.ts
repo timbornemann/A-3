@@ -53,7 +53,11 @@ describe('AgentDiagrams', () => {
 
     expect(await screen.findByRole('img', { name: 'Ablauf' })).toBeTruthy();
     expect(mermaidMocks.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ securityLevel: 'strict', startOnLoad: false }),
+      expect.objectContaining({
+        htmlLabels: false,
+        securityLevel: 'strict',
+        startOnLoad: false,
+      }),
     );
     expect(container.querySelector('script, animate, image')).toBeNull();
     expect(container.querySelector('path[onload]')).toBeNull();

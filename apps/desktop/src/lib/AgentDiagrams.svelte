@@ -8,6 +8,7 @@
     type AgentDiagramExportThemeV1,
     type AgentDiagramSummaryV1,
   } from './agent-diagram';
+  import { mermaidConfig } from './agent-diagram-rendering';
 
   interface Props {
     artifactLoader?: typeof queryAgentDiagramArtifact;
@@ -105,14 +106,7 @@
   async function renderAll(current = request): Promise<void> {
     if (artifacts.length === 0) return;
     const mermaid = (await import('mermaid')).default;
-    mermaid.initialize({
-      class: { htmlLabels: false },
-      flowchart: { htmlLabels: false },
-      securityLevel: 'strict',
-      startOnLoad: false,
-      suppressErrorRendering: true,
-      theme: theme === 'dark' ? 'dark' : 'default',
-    });
+    mermaid.initialize(mermaidConfig(theme));
     for (let index = 0; index < artifacts.length; index += 1) {
       if (current !== request) return;
       try {
