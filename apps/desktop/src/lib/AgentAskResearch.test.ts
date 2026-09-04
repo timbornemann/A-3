@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentAskResearch from './AgentAskResearch.svelte';
@@ -169,6 +169,216 @@ describe('AgentAskResearch', () => {
     await fireEvent.click(await screen.findByText('Recherche & Quellen'));
     expect(await screen.findByText(/12 Quellen wurden gefunden/)).toBeTruthy();
     expect(screen.queryByText(/Noch keine zitierbare/)).toBeNull();
+  });
+
+  it('publishes paged sources atomically and retains the prior projection on revision change', async () => {
+    let reads = 0;
+    const stableDetail = {
+      ...detailResponse([step('Stabiler Recherchepfad', '100', 'reading')]).result.detail,
+      sourceCount: 1,
+    };
+    const nextDetail = {
+      ...detailResponse([
+        step('Stabiler Recherchepfad', '100', 'reading'),
+        step('Noch nicht atomarer Folgeschritt', '101', 'evaluating'),
+      ]).result.detail,
+      sourceCount: 2,
+    };
+    const projectionLoader = vi.fn(async () => {
+      reads += 1;
+      return {
+        protocolVersion: 1 as const,
+        result: {
+          detail: reads === 1 ? stableDetail : nextDetail,
+          nextCursor: reads === 1 ? null : id('8'),
+          projectionRef: reads === 1 ? id('6') : id('7'),
+          sources: [
+            {
+              endLine: 12,
+              kind: 'file' as const,
+              path: reads === 1 ? 'src/stable.rs' : 'src/transient.rs',
+              reason: 'sourceText' as const,
+              referenceLabel: 'S1',
+              sourceRef: reads === 1 ? id('2') : id('3'),
+              startLine: 10,
+              symbol: null,
+              usedForAnswer: false,
+            },
+          ],
+          status: 'available' as const,
+        },
+      };
+    });
+    let releasePage = (): void => {
+      throw new Error('source page was not requested');
+    };
+    let pageFinished = false;
+    const sourcesV2Loader = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      pageFinished = true;
+      return {
+        protocolVersion: 1 as const,
+        result: { status: 'projectionChanged' as const },
+      };
+    });
+    const props = {
+      projectionLoader,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesV2Loader,
+      userSequence: '1',
+    };
+    const view = render(AgentAskResearch, props);
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    await fireEvent.click(await screen.findByRole('button', { name: /Zusätzlich gefunden/u }));
+    const retainedStep = timelineAction('Stabiler Recherchepfad').closest('li');
+    expect(screen.getByRole('button', { name: /stable\.rs/u })).toBeTruthy();
+
+    await view.rerender({ ...props, refreshKey: '2' });
+    await waitFor(() => expect(sourcesV2Loader).toHaveBeenCalledOnce());
+    expect(timelineAction('Stabiler Recherchepfad').closest('li')).toBe(retainedStep);
+    expect(screen.queryByText('Noch nicht atomarer Folgeschritt')).toBeNull();
+    expect(screen.queryByRole('button', { name: /transient\.rs/u })).toBeNull();
+
+    releasePage();
+    await waitFor(() => expect(pageFinished).toBe(true));
+    expect(timelineAction('Stabiler Recherchepfad').closest('li')).toBe(retainedStep);
+    expect(screen.getByRole('button', { name: /stable\.rs/u })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /transient\.rs/u })).toBeNull();
+  });
+
+  it('does not starve a coherent projection when another live refresh arrives in flight', async () => {
+    let releaseFirst = (): void => {
+      throw new Error('first projection was not requested');
+    };
+    let releaseSecond = (): void => {
+      throw new Error('second projection was not requested');
+    };
+    let reads = 0;
+    const projectionLoader = vi.fn(async () => {
+      reads += 1;
+      const currentRead = reads;
+      await new Promise<void>((resolve) => {
+        if (currentRead === 1) releaseFirst = resolve;
+        else releaseSecond = resolve;
+      });
+      const steps = [
+        step('Erster konsistenter Stand', '100', 'preparing'),
+        ...(currentRead > 1 ? [step('Nachfolgender Stand', '101', 'deciding')] : []),
+      ];
+      return {
+        protocolVersion: 1 as const,
+        result: {
+          detail: { ...detailResponse(steps).result.detail, sourceCount: 0 },
+          nextCursor: null,
+          projectionRef: id(currentRead === 1 ? '6' : '7'),
+          sources: [],
+          status: 'available' as const,
+        },
+      };
+    });
+    const props = {
+      projectionLoader,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    };
+    const view = render(AgentAskResearch, props);
+    await waitFor(() => expect(projectionLoader).toHaveBeenCalledTimes(1));
+
+    await view.rerender({ ...props, refreshKey: '2' });
+    releaseFirst();
+
+    expect(await screen.findByText('Erster konsistenter Stand')).toBeTruthy();
+    await waitFor(() => expect(projectionLoader).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Nachfolgender Stand')).toBeNull();
+
+    releaseSecond();
+    await waitFor(() => expect(screen.getByText('Nachfolgender Stand')).toBeTruthy());
+  });
+
+  it('never stretches the timeline to a retained viewport height', async () => {
+    const { container } = render(AgentAskResearch, {
+      detailLoader: vi.fn(async () =>
+        detailResponse([step('Natürlich hoher Schritt', '100', 'preparing')]),
+      ),
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: emptySources,
+      userSequence: '1',
+    });
+
+    await screen.findByText('Natürlich hoher Schritt');
+    const timeline = container.querySelector<HTMLOListElement>('.research-steps');
+    expect(timeline).not.toBeNull();
+    expect(timeline?.style.minHeight).toBe('');
+    expect(timeline?.style.height).toBe('');
+  });
+
+  it('keeps additional sources behind one compact disclosure', async () => {
+    const response = detailResponse([
+      step('Antwort veröffentlicht', '101', 'completed', 'completed'),
+    ]);
+    response.result.detail.citedSourceCount = 1;
+    response.result.detail.sourceCount = 3;
+    render(AgentAskResearch, {
+      detailLoader: vi.fn(async () => response),
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: {
+          nextCursor: null,
+          sources: [
+            {
+              endLine: 12,
+              kind: 'symbol' as const,
+              path: 'src/used.rs',
+              reason: 'sourceText' as const,
+              sourceRef: id('2'),
+              startLine: 10,
+              symbol: 'used',
+              usedForAnswer: true,
+            },
+            {
+              endLine: 22,
+              kind: 'file' as const,
+              path: 'src/additional-one.rs',
+              reason: 'indexedText' as const,
+              sourceRef: id('3'),
+              startLine: 20,
+              symbol: null,
+              usedForAnswer: false,
+            },
+            {
+              endLine: null,
+              kind: 'file' as const,
+              path: 'src/additional-two.rs',
+              reason: 'relationship' as const,
+              sourceRef: id('4'),
+              startLine: null,
+              symbol: null,
+              usedForAnswer: false,
+            },
+          ],
+          status: 'available' as const,
+        },
+      })),
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    const toggle = await screen.findByRole('button', { name: /Zusätzlich gefunden/u });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: /additional-one\.rs/u })).toBeNull();
+
+    await fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: /additional-one\.rs/u })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /additional-two\.rs/u })).toBeTruthy();
   });
 
   it('restores disclosure, source selection, and preview when a turn changes placement', async () => {
@@ -370,9 +580,10 @@ describe('AgentAskResearch', () => {
       userSequence: '1',
     });
 
-    expect(await screen.findByText('Zusätzlich gefunden')).toBeTruthy();
+    const additionalSources = await screen.findByRole('button', { name: /Zusätzlich gefunden/u });
+    await fireEvent.click(additionalSources);
     expect(timelineAction('Projektstand wird gebunden')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /【S1】 src\/storage\.py:18–20/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Quelle S1: src\/storage\.py:18–20/u })).toBeTruthy();
     expect(screen.queryByText(/konnten gerade nicht geladen/)).toBeNull();
   });
 
@@ -462,6 +673,76 @@ describe('AgentAskResearch', () => {
     expect(
       timelineAction('Neu eingetroffener Schritt').closest('li')?.getAttribute('aria-current'),
     ).toBe('step');
+  });
+
+  it('keeps the last complete timeline when a live poll regresses temporarily', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const stableSteps = [
+      step('Projektstand binden', '100', 'preparing'),
+      step('Suchraum lokalisieren', '101', 'locating'),
+      step('Nächsten Schritt wählen', '102', 'deciding'),
+      step('Quellen prüfen', '103', 'reading'),
+      step('Befunde auswerten', '104', 'evaluating'),
+    ];
+    const detailLoader = vi.fn(async () => {
+      reads += 1;
+      return detailResponse(
+        reads === 1 ? stableSteps : [step('Unvollständiger Zwischenstand', '200', 'preparing')],
+      );
+    });
+    const props = {
+      detailLoader,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: emptySources,
+      userSequence: '1',
+    };
+    const view = render(AgentAskResearch, props);
+    await vi.advanceTimersByTimeAsync(900);
+    await tick();
+    const retainedStep = timelineAction('Quellen prüfen').closest('li');
+    expect(timelineAction('Befunde auswerten')).toBeTruthy();
+
+    await view.rerender({ ...props, refreshKey: '2' });
+    await vi.advanceTimersByTimeAsync(0);
+    await tick();
+
+    expect(screen.queryByText('Unvollständiger Zwischenstand')).toBeNull();
+    expect(timelineAction('Quellen prüfen').closest('li')).toBe(retainedStep);
+    expect(timelineAction('Befunde auswerten')).toBeTruthy();
+    expect(screen.queryByText(/neuesten Recherchestand abgeglichen/u)).toBeNull();
+  });
+
+  it('does not hide a loaded timeline behind a transient not-recorded response', async () => {
+    let reads = 0;
+    const detailLoader = vi.fn(async () => {
+      reads += 1;
+      return reads === 1
+        ? detailResponse([step('Sichtbarer Recherchefortschritt', '100', 'reading')])
+        : {
+            protocolVersion: 1 as const,
+            result: { status: 'notRecorded' as const },
+          };
+    });
+    const props = {
+      detailLoader,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: emptySources,
+      userSequence: '1',
+    };
+    const view = render(AgentAskResearch, props);
+    await screen.findByText('Sichtbarer Recherchefortschritt');
+    const retainedStep = timelineAction('Sichtbarer Recherchefortschritt').closest('li');
+
+    await view.rerender({ ...props, refreshKey: '2' });
+    await waitFor(() => expect(reads).toBe(2));
+
+    expect(timelineAction('Sichtbarer Recherchefortschritt').closest('li')).toBe(retainedStep);
+    expect(screen.queryByText(/damals noch nicht aufgezeichnet/u)).toBeNull();
   });
 
   it('shows the terminal checkpoint before collapsing once', async () => {

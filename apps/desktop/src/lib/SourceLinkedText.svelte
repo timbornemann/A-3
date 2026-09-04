@@ -23,18 +23,24 @@
 <style>
   .source-citation {
     display: inline;
-    padding: 0.05rem 0.18rem;
+    padding: 0 0.08rem;
     border: 0;
-    border-radius: 0.2rem;
-    color: var(--color-accent);
-    background: var(--color-accent-surface);
+    border-bottom: 1px dotted color-mix(in srgb, var(--color-muted) 55%, transparent);
+    border-radius: 0.1rem;
+    color: var(--color-muted);
+    background: transparent;
     font: inherit;
-    font-size: 0.92em;
-    font-weight: 600;
+    font-size: 0.76em;
+    font-weight: 500;
+    line-height: 1;
+    vertical-align: 0.08em;
     cursor: pointer;
+    opacity: 0.82;
   }
   .source-citation:hover,
   .source-citation:focus-visible {
+    color: var(--color-accent);
+    opacity: 1;
     text-decoration: underline;
   }
 </style>

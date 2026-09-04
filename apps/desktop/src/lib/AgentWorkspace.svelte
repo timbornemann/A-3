@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import {
     controlAgentSession,
@@ -178,6 +178,14 @@
     userSequence: string;
   } | null>(null);
   let researchSourceRequestNonce = 0;
+  let messageScrollElement = $state<HTMLDivElement | null>(null);
+  let messageContentElement = $state<HTMLDivElement | null>(null);
+  let followConversation = true;
+  let conversationResumeIntent = false;
+  let conversationTouchY: number | null = null;
+  let followFrame: number | null = null;
+
+  const CONVERSATION_END_TOLERANCE_PX = 12;
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
@@ -294,6 +302,17 @@
   });
 
   $effect(() => {
+    const viewport = messageScrollElement;
+    const content = messageContentElement;
+    if (!viewport || !content || typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(() => {
+      if (followConversation) scrollConversationToEnd(viewport);
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
     const sessionId =
       selectedSummary && ['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state)
         ? selectedSummary.sessionId
@@ -313,6 +332,79 @@
       if (timer !== undefined) window.clearTimeout(timer);
     };
   });
+
+  onDestroy(() => {
+    if (followFrame !== null) window.cancelAnimationFrame(followFrame);
+  });
+
+  function scrollConversationToEnd(viewport: HTMLDivElement): void {
+    viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  }
+
+  function queueConversationFollow(): void {
+    const viewport = messageScrollElement;
+    if (!viewport || !followConversation) return;
+    if (followFrame !== null) window.cancelAnimationFrame(followFrame);
+    followFrame = window.requestAnimationFrame(() => {
+      followFrame = null;
+      if (followConversation && viewport === messageScrollElement)
+        scrollConversationToEnd(viewport);
+    });
+  }
+
+  function resumeConversationFollow(): void {
+    followConversation = true;
+    conversationResumeIntent = false;
+    queueConversationFollow();
+  }
+
+  function handleConversationScroll(event: Event): void {
+    const viewport = event.currentTarget as HTMLDivElement;
+    const distanceFromEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    if (followConversation) {
+      followConversation = distanceFromEnd <= CONVERSATION_END_TOLERANCE_PX;
+      return;
+    }
+    if (conversationResumeIntent && distanceFromEnd <= 1) {
+      followConversation = true;
+      conversationResumeIntent = false;
+    }
+  }
+
+  function handleConversationWheel(event: WheelEvent): void {
+    if (event.deltaY < 0) {
+      followConversation = false;
+      conversationResumeIntent = false;
+    } else if (event.deltaY > 0 && !followConversation) conversationResumeIntent = true;
+  }
+
+  function handleConversationPointerDown(event: PointerEvent): void {
+    if (!followConversation && event.target === event.currentTarget)
+      conversationResumeIntent = true;
+  }
+
+  function handleConversationPointerEnd(): void {
+    if (!followConversation) conversationResumeIntent = false;
+  }
+
+  function handleConversationTouchStart(event: TouchEvent): void {
+    followConversation = false;
+    conversationResumeIntent = false;
+    conversationTouchY = event.touches.item(0)?.clientY ?? null;
+  }
+
+  function handleConversationTouchMove(event: TouchEvent): void {
+    const currentY = event.touches.item(0)?.clientY ?? null;
+    if (currentY === null || conversationTouchY === null) return;
+    if (currentY < conversationTouchY) conversationResumeIntent = true;
+    else if (currentY > conversationTouchY) conversationResumeIntent = false;
+    conversationTouchY = currentY;
+  }
+
+  function handleConversationTouchEnd(): void {
+    conversationTouchY = null;
+    if (!followConversation) conversationResumeIntent = false;
+  }
 
   $effect(() => {
     if (!activeProject) onRunStatusChange({ kind: 'noProject' });
@@ -438,7 +530,10 @@
 
   async function selectSession(sessionId: string): Promise<void> {
     const request = ++sessionRequest;
-    if (selectedSessionId !== sessionId) recentlyCompletedResearchSequence = null;
+    if (selectedSessionId !== sessionId) {
+      recentlyCompletedResearchSequence = null;
+      resumeConversationFollow();
+    }
     selectedSessionId = sessionId;
     researchDepth = researchDepthBySession.get(sessionId) ?? 'standard';
     sessionMenuOpen = false;
@@ -462,6 +557,7 @@
       if (selectedSessionId !== sessionId || response.result.status !== 'available') return;
       const previous = selectedSession;
       const next = response.result.session;
+      if (previous && !isMonotonicSessionProjection(previous, next)) return;
       if (previous?.summary.state === 'running' && next.summary.state !== 'running') {
         recentlyCompletedResearchSequence = latestUserSequence(next.entries);
       }
@@ -490,6 +586,7 @@
     actionError = null;
     sessionMenuOpen = false;
     recentlyCompletedResearchSequence = null;
+    resumeConversationFollow();
   }
 
   async function submit(): Promise<void> {
@@ -497,6 +594,7 @@
     const message = composer.trim();
     const submittedDepth = effectiveMessageDepth;
     const current = selectedSession;
+    resumeConversationFollow();
     composer = '';
     pendingMessage = message;
     submitting = true;
@@ -535,6 +633,7 @@
   async function continueResearch(): Promise<void> {
     const current = selectedSession;
     if (!current || submitting) return;
+    resumeConversationFollow();
     submitting = true;
     actionError = null;
     try {
@@ -724,6 +823,18 @@
 
   function latestUserSequence(entries: AgentSessionV1['entries']): string | null {
     return [...entries].reverse().find((entry) => entry.kind === 'userMessage')?.sequence ?? null;
+  }
+
+  function isMonotonicSessionProjection(previous: AgentSessionV1, next: AgentSessionV1): boolean {
+    if (previous.summary.sessionId !== next.summary.sessionId) return true;
+    const previousRevision = BigInt(previous.summary.revision);
+    const nextRevision = BigInt(next.summary.revision);
+    if (nextRevision < previousRevision) return false;
+    const previousTail = previous.entries.at(-1)?.sequence;
+    const nextTail = next.entries.at(-1)?.sequence;
+    if (previousTail === undefined) return true;
+    if (nextTail === undefined) return false;
+    return BigInt(nextTail) >= BigInt(previousTail);
   }
 
   function precedingUserSequence(entries: AgentSessionV1['entries'], index: number): string | null {
@@ -1159,7 +1270,20 @@
         {/if}
       </header>
 
-      <div class="message-scroll">
+      <div
+        class="message-scroll"
+        bind:this={messageScrollElement}
+        role="region"
+        aria-label="Nachrichtenverlauf"
+        onscroll={handleConversationScroll}
+        onwheel={handleConversationWheel}
+        onpointerdown={handleConversationPointerDown}
+        onpointerup={handleConversationPointerEnd}
+        onpointercancel={handleConversationPointerEnd}
+        ontouchstart={handleConversationTouchStart}
+        ontouchmove={handleConversationTouchMove}
+        ontouchend={handleConversationTouchEnd}
+      >
         {#if sessionView.kind === 'loading'}
           <div class="center-state" role="status">Session wird geladen …</div>
         {:else if sessionView.kind === 'missing'}
@@ -1209,7 +1333,7 @@
             </div>
           </div>
         {:else}
-          <div class="messages">
+          <div class="messages" bind:this={messageContentElement}>
             {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
               {@const entryCommands = entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
               {@const responseUserSequence =
@@ -1524,16 +1648,22 @@
             <div>
               <span class="context-note">● Aktiver Worktree · aktueller Indexkontext</span>
             </div>
-            <div class="research-depth" aria-label="Recherche-Tiefe">
+            <div class="research-depth" aria-label="Recherche-Tiefe für die nächste Nachricht">
               <button
                 type="button"
                 disabled={commandActive}
+                title={commandActive
+                  ? 'Der aktive Slash Command legt die Recherche-Tiefe fest.'
+                  : 'Standard für die nächste Nachricht verwenden'}
                 aria-pressed={displayedCommandDepth === 'standard'}
                 onclick={() => selectResearchDepth('standard')}>Standard</button
               >
               <button
                 type="button"
                 disabled={commandActive}
+                title={commandActive
+                  ? 'Der aktive Slash Command legt die Recherche-Tiefe fest.'
+                  : 'Gründlich für die nächste Nachricht verwenden'}
                 aria-pressed={displayedCommandDepth === 'thorough'}
                 onclick={() => selectResearchDepth('thorough')}>Gründlich</button
               >
@@ -1907,7 +2037,9 @@
   .message-scroll {
     min-height: 0;
     overflow-y: auto;
+    overflow-anchor: none;
     overscroll-behavior: contain;
+    scroll-behavior: auto;
   }
   .messages {
     width: min(100% - 2rem, 48rem);

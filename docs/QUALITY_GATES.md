@@ -261,6 +261,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   fehlenden Sourcedetails. Fake-Timer-Tests prüfen gruppierte Runden, logische Vorbereitung,
   Live→Antwort ohne Remount, genau einen Auto-Collapse und Reduced Motion. Marker-Tests lassen
   Code inert und verlangen außerhalb von Code die exakte Gleichheit zu `source_refs`.
+- Der Conversation-Scroll-Contract simuliert wachsende Live-Inhalte: Am Ende folgt der Viewport
+  deterministisch, eine Aufwärtsgeste hält die Position trotz weiterer Resize-Ereignisse stabil,
+  und erst die Rückkehr ans Ende aktiviert das Folgen wieder. Zusätzliche Quellen sind standardmäßig
+  kompakt eingeklappt; verwendete Quellen und Inline-Zitate bleiben direkt erreichbar. Ein bereits
+  sichtbarer Rechercheweg darf bei einem verkürzten, fehlenden oder älteren Poll-Ergebnis desselben
+  Turns weder aus dem DOM verschwinden noch seine sichtbaren Schritte zurücksetzen; erst eine
+  monotone append-only Projektion ersetzt den letzten vollständigen Stand. Mehrseitige Quellen
+  werden vor dem sichtbaren Austausch vollständig geladen, ohne die natürliche Höhe der Timeline
+  festzuschreiben. Ein Layout-Resize allein darf eine manuell gelöste Scrollbindung nicht
+  reaktivieren.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

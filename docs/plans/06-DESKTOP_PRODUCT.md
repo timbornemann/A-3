@@ -1151,6 +1151,25 @@ Antwortmarker zeigen Core-zugeordnete Dateinamen und Zeilen, öffnen die sichere
 Quellenliste trennt verwendete von zusätzlich gefundenen Quellen. Kohärente Projektionsreads
 verhindern, dass bekannte Quellen bei einem parallelen Poll fälschlich als leer erscheinen.
 
+Scroll- und Quellendichte-Korrektur vom 2026-09-04: Der Conversation-Viewport folgt wachsenden
+Live-Schritten nur, solange er am Ende steht. Aufwärts-Scrollen oder eine Touch-Geste löst die
+Bindung sofort; erst das bewusste Zurückkehren ans Ende aktiviert sie erneut. Browser-eigenes
+Scroll-Ankern ist in diesem Viewport deaktiviert, damit Timeline-Wachstum keinen wechselnden Anker
+erzeugt. Inline-Zitate bleiben vollständig zuordenbar, erscheinen aber typografisch zurückhaltend.
+Verwendete Quellen werden als kompakte, umbrechende Verweise gezeigt; zusätzliche Quellen bleiben
+hinter einer gezählten Disclosure, bis der Nutzer sie öffnet.
+
+Live-Projektionskorrektur vom 2026-09-04: Sobald ein Rechercheweg für einen Turn sichtbar ist,
+bleibt dieser letzte vollständige Stand bei `updating`, vorübergehend fehlenden Daten und
+verkürzten oder nicht append-only Poll-Ergebnissen unverändert im DOM. Nur eine monotone
+Erweiterung darf Timeline und Session-Tail ersetzen. Dadurch kann ein paralleler Read den Block
+nicht mehr ausblenden, auf einen Schritt verkürzen oder den Conversation-Viewport periodisch in
+der Höhe verschieben. Quellenpages werden vor dem sichtbaren Austausch vollständig zusammengesetzt;
+die Live-Timeline bleibt bis zum terminalen Einklappen als dieselbe Komponenteninstanz erhalten,
+ohne eine gemessene Layout-Höhe zu konservieren. Eine manuell gelöste Scrollbindung wird nur nach
+einer bewussten Abwärtsbewegung bis ans Ende wieder aktiviert, nicht durch programmatisches Scrollen
+oder ein schrumpfendes Layout.
+
 Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
 Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,
 lokales Lazy Rendering, Sanitizer, Render-Retry und path-freien Export. Formatcheck, ESLint,

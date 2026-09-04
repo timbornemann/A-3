@@ -79,6 +79,7 @@
   let terminalObserved = false;
   let terminalDisclosureOverride = false;
   let handledSourceRequest = 0;
+  let additionalSourcesExpanded = $state(false);
 
   const REVEAL_WINDOW_MILLIS = 900;
   const MAX_REVEAL_INTERVAL_MILLIS = 180;
@@ -101,12 +102,14 @@
     const turnKey = `${sessionId}:${userSequence}`;
     if (turnKey !== activeTurnKey) {
       activeTurnKey = turnKey;
+      request += 1;
       resetPresentation();
       detail = null;
       sources = [];
       selectedSource = null;
       preview = null;
       previewState = 'idle';
+      additionalSourcesExpanded = false;
       loadState = 'loading';
       sourceLoadState = 'loading';
       expansionInitialized = false;
@@ -172,7 +175,6 @@
   });
 
   function requestResearchLoad(): void {
-    request += 1;
     loadQueued = true;
     if (!loadInFlight) void drainResearchLoads();
   }
@@ -213,57 +215,57 @@
       )
         return;
       if (response.result.status === 'updating') {
+        if (hasLoadedProjection()) return;
         sourceLoadState = 'updating';
-        publishPresentation();
         return;
       }
       if (response.result.status === 'notRecorded') {
+        if (hasLoadedProjection()) return;
         loadState = 'notRecorded';
         return;
       }
       if (response.result.status !== 'available') {
+        if (hasLoadedProjection()) return;
         loadState = 'missing';
         return;
       }
       const nextDetail = response.result.detail;
       const nextTimeline = groupTimeline(nextDetail.steps);
       if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) {
-        resetPresentation();
-        autoCollapseEligible = live || recentlyCompleted;
+        return;
       }
-      detail = nextDetail;
-      loadState = 'available';
-      synchronizeVisibleSteps(nextTimeline.length);
+      const hadLoadedProjection = hasLoadedProjection();
       const found = [...response.result.sources];
       let cursor = response.result.nextCursor;
-      sources = found;
-      sourceLoadState = 'loading';
-      publishPresentation();
       while (cursor !== null && found.length < 200) {
-        const page = await sourcesV2Loader(
-          requestedSessionId,
-          requestedUserSequence,
-          response.result.projectionRef,
-          cursor,
-        );
+        let page: Awaited<ReturnType<typeof sourcesV2Loader>>;
+        try {
+          page = await sourcesV2Loader(
+            requestedSessionId,
+            requestedUserSequence,
+            response.result.projectionRef,
+            cursor,
+          );
+        } catch {
+          if (!hadLoadedProjection) commitProjection(nextDetail, found, 'error');
+          return;
+        }
         if (current !== request) return;
         if (page.result.status === 'projectionChanged') {
-          sourceLoadState = 'updating';
-          publishPresentation();
+          if (!hadLoadedProjection) sourceLoadState = 'updating';
           return;
         }
         if (page.result.status !== 'available') {
-          sourceLoadState = 'error';
-          publishPresentation();
+          if (!hadLoadedProjection) {
+            commitProjection(nextDetail, found, 'error');
+          }
           return;
         }
         found.push(...page.result.sources);
         cursor = page.result.nextCursor;
       }
-      sources = found;
-      sourceLoadState = 'available';
+      commitProjection(nextDetail, found, 'available');
       onprojectionchange({ detail: nextDetail, sources: found });
-      publishPresentation();
     } catch {
       if (current === request) {
         if (detail === null) loadState = 'error';
@@ -283,26 +285,34 @@
     const response = await detailLoader(requestedSessionId, requestedUserSequence);
     if (current !== request) return;
     if (response.result.status === 'notRecorded') {
+      if (hasLoadedProjection()) return;
       loadState = 'notRecorded';
       return;
     }
     if (response.result.status !== 'available') {
+      if (hasLoadedProjection()) return;
       loadState = 'missing';
       return;
     }
     const nextDetail = response.result.detail;
     const nextTimeline = groupTimeline(nextDetail.steps);
-    if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) resetPresentation();
-    detail = nextDetail;
-    loadState = 'available';
-    synchronizeVisibleSteps(nextTimeline.length);
+    if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) {
+      return;
+    }
+    const hadLoadedProjection = hasLoadedProjection();
     const found: AgentWorkTraceSourceV2[] = [];
     let cursor: string | null = null;
     do {
-      const page = await sourcesLoader(requestedSessionId, requestedUserSequence, cursor);
+      let page: Awaited<ReturnType<typeof sourcesLoader>>;
+      try {
+        page = await sourcesLoader(requestedSessionId, requestedUserSequence, cursor);
+      } catch {
+        if (!hadLoadedProjection) commitProjection(nextDetail, found, 'error');
+        return;
+      }
       if (current !== request) return;
       if (page.result.status !== 'available') {
-        sourceLoadState = 'error';
+        if (!hadLoadedProjection) commitProjection(nextDetail, found, 'error');
         return;
       }
       for (const source of page.result.sources) {
@@ -310,15 +320,30 @@
       }
       cursor = page.result.nextCursor;
     } while (cursor !== null && found.length < 200);
-    sources = found;
-    sourceLoadState = 'available';
+    commitProjection(nextDetail, found, 'available');
     onprojectionchange({ detail: nextDetail, sources: found });
-    publishPresentation();
   }
 
   function isAppendOnlyUpdate(previous: TimelineStep[], next: TimelineStep[]): boolean {
     if (next.length < previous.length) return false;
     return previous.every((step, index) => step.id === next[index]?.id);
+  }
+
+  function hasLoadedProjection(): boolean {
+    return detail !== null && loadState === 'available';
+  }
+
+  function commitProjection(
+    nextDetail: AgentAskResearchDetailV1,
+    nextSources: AgentWorkTraceSourceV2[],
+    nextSourceLoadState: 'available' | 'error',
+  ): void {
+    detail = nextDetail;
+    sources = nextSources;
+    loadState = 'available';
+    sourceLoadState = nextSourceLoadState;
+    synchronizeVisibleSteps(groupTimeline(nextDetail.steps).length);
+    publishPresentation();
   }
 
   function groupTimeline(steps: AgentAskResearchDetailV1['steps']): TimelineStep[] {
@@ -598,6 +623,11 @@
       return `${path}:${source.startLine}`;
     return `${path}:${source.startLine}–${source.endLine}`;
   }
+
+  function sourceAccessibleLabel(source: AgentWorkTraceSourceV2): string {
+    const symbol = source.symbol ? `, Symbol ${source.symbol}` : '';
+    return `Quelle ${source.referenceLabel}: ${sourceLocation(source)}${symbol}, ${reasonLabel(source.reason)} öffnen`;
+  }
 </script>
 
 <details class:compact class="ask-research" bind:open={expanded}>
@@ -696,10 +726,12 @@
                           <button
                             type="button"
                             disabled={!noteSource}
+                            title={noteSource ? sourceAccessibleLabel(noteSource) : undefined}
+                            aria-label={noteSource ? sourceAccessibleLabel(noteSource) : undefined}
                             onclick={() => void showSource(sourceRef)}
                           >
                             {noteSource
-                              ? `【${noteSource.referenceLabel}】 ${sourceLocation(noteSource)}`
+                              ? `【${noteSource.referenceLabel}】 ${sourceLocation(noteSource, true)}`
                               : 'Quelle wird geladen …'}
                           </button>
                         {/each}
@@ -730,7 +762,7 @@
           Mindestens eine Suche wurde durch eine feste Sicherheits- oder Ressourcengrenze beendet.
           Sie beweist nicht, dass es keine weiteren Treffer gibt.
         </p>{/if}
-      <section>
+      <section class="sources-section">
         <h4>Quellen</h4>
         {#if sourceLoadState === 'updating'}
           <p role="status">
@@ -748,40 +780,63 @@
           <p>Noch keine zitierbare aktuelle Quelle gefunden.</p>
         {/if}
         {#if usedSources.length > 0}
-          <h5>Für die Antwort verwendet</h5>
+          <div class="source-group-heading">
+            <h5>Für die Antwort verwendet</h5>
+            <span>{usedSources.length}</span>
+          </div>
           <ul class="source-list">
             {#each usedSources as source (source.sourceRef)}
               <li>
                 <button
                   type="button"
+                  title={sourceAccessibleLabel(source)}
+                  aria-label={sourceAccessibleLabel(source)}
                   onclick={() => void showSource(source.sourceRef)}
                   aria-pressed={selectedSource === source.sourceRef}
                 >
-                  <strong>【{source.referenceLabel}】 {sourceLocation(source)}</strong>
-                  {#if source.symbol}<span>{source.symbol}</span>{/if}
-                  <small>{reasonLabel(source.reason)}</small>
+                  <strong>【{source.referenceLabel}】</strong>
+                  <span class="source-location">{sourceLocation(source, true)}</span>
+                  <small
+                    >{source.symbol ? `${source.symbol} · ` : ''}{reasonLabel(source.reason)}</small
+                  >
                 </button>
               </li>
             {/each}
           </ul>
         {/if}
         {#if additionalSources.length > 0}
-          <h5>Zusätzlich gefunden</h5>
-          <ul class="source-list">
-            {#each additionalSources as source (source.sourceRef)}
-              <li>
-                <button
-                  type="button"
-                  onclick={() => void showSource(source.sourceRef)}
-                  aria-pressed={selectedSource === source.sourceRef}
-                >
-                  <strong>【{source.referenceLabel}】 {sourceLocation(source)}</strong>
-                  {#if source.symbol}<span>{source.symbol}</span>{/if}
-                  <small>{reasonLabel(source.reason)}</small>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <button
+            class="additional-sources-toggle"
+            type="button"
+            aria-expanded={additionalSourcesExpanded}
+            aria-label={`Zusätzlich gefunden: ${additionalSources.length} Quellen ${additionalSourcesExpanded ? 'einklappen' : 'anzeigen'}`}
+            onclick={() => (additionalSourcesExpanded = !additionalSourcesExpanded)}
+          >
+            <span>Zusätzlich gefunden</span><small>{additionalSources.length}</small>
+          </button>
+          {#if additionalSourcesExpanded}
+            <ul class="source-list additional-source-list">
+              {#each additionalSources as source (source.sourceRef)}
+                <li>
+                  <button
+                    type="button"
+                    title={sourceAccessibleLabel(source)}
+                    aria-label={sourceAccessibleLabel(source)}
+                    onclick={() => void showSource(source.sourceRef)}
+                    aria-pressed={selectedSource === source.sourceRef}
+                  >
+                    <strong>【{source.referenceLabel}】</strong>
+                    <span class="source-location">{sourceLocation(source, true)}</span>
+                    <small
+                      >{source.symbol ? `${source.symbol} · ` : ''}{reasonLabel(
+                        source.reason,
+                      )}</small
+                    >
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         {/if}
       </section>
       {#if previewState === 'loading'}<p role="status">Sicherer Quellenausschnitt wird geladen …</p>
@@ -884,8 +939,7 @@
     border-inline-start: 3px solid var(--color-warning);
     background: var(--color-surface);
   }
-  .research-steps,
-  .source-list {
+  .research-steps {
     display: grid;
     padding: 0;
     margin: 0;
@@ -1042,12 +1096,12 @@
   }
   .note-sources button,
   .continuation-card button {
-    min-height: 2rem;
-    padding: 0 var(--space-2);
+    min-height: 1.75rem;
+    padding: 0.15rem 0.4rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
-    color: var(--color-heading);
-    background: var(--color-surface-subtle);
+    color: var(--color-muted);
+    background: transparent;
     cursor: pointer;
     font-size: var(--font-size-xs);
   }
@@ -1060,6 +1114,10 @@
   }
   .continuation-card button {
     width: fit-content;
+    min-height: 2rem;
+    padding: 0 var(--space-2);
+    color: var(--color-heading);
+    background: var(--color-surface-subtle);
   }
   .research-steps p {
     margin-top: 0.15rem;
@@ -1070,9 +1128,9 @@
     margin: 0 0 var(--space-2);
   }
   h5 {
-    margin-top: var(--space-3);
+    margin: 0;
     color: var(--color-heading);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
   }
   .source-retry {
     display: grid;
@@ -1084,28 +1142,103 @@
   .source-retry button {
     width: fit-content;
   }
-  .source-list button {
+  .sources-section {
     display: grid;
-    width: 100%;
-    min-height: 3.1rem;
-    padding: var(--space-2);
-    gap: 0.15rem;
+    min-width: 0;
+    gap: var(--space-2);
+  }
+  .source-group-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .source-group-heading > span,
+  .additional-sources-toggle small {
+    min-width: 1.35rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 999px;
+    color: var(--color-muted);
+    background: var(--color-surface-muted);
+    font-size: 0.68rem;
+    line-height: 1.25;
+    text-align: center;
+  }
+  .source-list {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    gap: 0.35rem;
+    list-style: none;
+  }
+  .source-list li {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .source-list button {
+    display: inline-flex;
+    align-items: baseline;
+    width: auto;
+    max-width: 100%;
+    min-height: 1.8rem;
+    padding: 0.2rem 0.45rem;
+    gap: 0.3rem;
     border: 1px solid var(--color-border-soft);
     border-radius: var(--radius-control);
-    color: var(--color-text);
+    color: var(--color-muted);
     text-align: start;
-    background: var(--color-surface);
+    background: transparent;
     cursor: pointer;
+    font-size: var(--font-size-xs);
   }
   .source-list button[aria-pressed='true'] {
     border-color: var(--color-accent);
     background: var(--color-accent-surface);
   }
-  .source-list span,
+  .source-list strong {
+    flex: 0 0 auto;
+    color: var(--color-heading);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .source-location {
+    min-width: 0;
+    max-width: 16rem;
+    overflow: hidden;
+    color: var(--color-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .source-list small {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 13rem;
+    overflow: hidden;
     color: var(--color-muted);
+    font-size: 0.68rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .additional-sources-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    width: fit-content;
+    min-height: 1.8rem;
+    padding: 0.2rem 0.45rem;
+    gap: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--color-muted);
+    background: transparent;
+    cursor: pointer;
     font-size: var(--font-size-xs);
-    overflow-wrap: anywhere;
+  }
+  .additional-sources-toggle:hover,
+  .additional-sources-toggle:focus-visible {
+    color: var(--color-heading);
+    background: var(--color-surface-muted);
   }
   .source-preview {
     min-width: 0;

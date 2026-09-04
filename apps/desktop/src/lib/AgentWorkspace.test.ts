@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
 import type { AgentActivityResponseV1 } from './agent-activity';
 import type {
@@ -179,6 +179,11 @@ const activeAgentActivity = (): AgentActivityResponseV1 => ({
   },
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
 describe('AgentWorkspace', () => {
   it('keeps every Core boundary closed without an active project', () => {
     const sessionsLoader = vi.fn<() => Promise<AgentSessionsResponseV1>>();
@@ -229,6 +234,34 @@ describe('AgentWorkspace', () => {
         mode: 'ask',
         researchDepth: 'thorough',
       }),
+    );
+  });
+
+  it('allows choosing the depth for the next message while the current Ask turn is running', async () => {
+    const running = askSession('running');
+    if (running.result.status !== 'available') throw new Error('fixture must be available');
+    const runningSession = running.result.session;
+    render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 60_000,
+      sessionLoader: vi.fn(async () => running),
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [runningSession.summary],
+          status: 'available',
+        },
+      })),
+    });
+
+    await screen.findByText('Was macht A^3?');
+    const thorough = screen.getByRole('button', { name: 'Gründlich' });
+    expect((thorough as HTMLButtonElement).disabled).toBe(false);
+    await fireEvent.click(thorough);
+    expect(thorough.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Standard' }).getAttribute('aria-pressed')).toBe(
+      'false',
     );
   });
 
@@ -587,6 +620,118 @@ describe('AgentWorkspace', () => {
     });
     expect(container.querySelector('.messages details.ask-research')).toBe(liveResearch);
     expect(detailReads).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps the latest research turn mounted when a session poll regresses', async () => {
+    const running = askSession('running');
+    if (running.result.status !== 'available') throw new Error('fixture must be available');
+    const runningSummary = running.result.session.summary;
+    const regressive = structuredClone(running);
+    if (regressive.result.status !== 'available') throw new Error('fixture must be available');
+    regressive.result.session.entries = [];
+    regressive.result.session.summary.revision = '2';
+    let reads = 0;
+    const sessionLoader = vi.fn(async () => {
+      reads += 1;
+      return reads === 1 ? running : regressive;
+    });
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 5,
+      sessionLoader,
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [runningSummary],
+          status: 'available',
+        },
+      })),
+    });
+
+    await screen.findByText('Was macht A^3?');
+    const research = container.querySelector('.messages details.ask-research');
+    expect(research).not.toBeNull();
+    await waitFor(() => expect(reads).toBeGreaterThanOrEqual(2));
+    expect(container.querySelector('.messages .user-message')?.textContent).toContain(
+      'Was macht A^3?',
+    );
+    expect(container.querySelector('.messages details.ask-research')).toBe(research);
+  });
+
+  it('follows live growth only until the user scrolls away from the conversation end', async () => {
+    let observerReady = false;
+    let notifyResize = (): void => {
+      throw new Error('resize observer was not initialized');
+    };
+    class ResizeObserverMock {
+      private readonly callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observerReady = true;
+        notifyResize = () => this.callback([], this as unknown as ResizeObserver);
+      }
+
+      observe(): void {}
+      disconnect(): void {}
+      unobserve(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const session = response.result.session;
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 60_000,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [session.summary],
+          status: 'available',
+        },
+      })),
+    });
+
+    await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
+    await waitFor(() => expect(observerReady).toBe(true));
+    const viewport = container.querySelector<HTMLDivElement>('.message-scroll');
+    if (!viewport) throw new Error('scroll fixture was not initialized');
+    let scrollHeight = 1_000;
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 300 });
+    Object.defineProperty(viewport, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+
+    viewport.scrollTop = 700;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_200;
+    notifyResize();
+    expect(viewport.scrollTop).toBe(900);
+
+    await fireEvent.wheel(viewport, { deltaY: -60 });
+    viewport.scrollTop = 500;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_300;
+    notifyResize();
+    expect(viewport.scrollTop).toBe(500);
+
+    viewport.scrollTop = 1_000;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_400;
+    notifyResize();
+    expect(viewport.scrollTop).toBe(1_000);
+
+    await fireEvent.wheel(viewport, { deltaY: 60 });
+    viewport.scrollTop = 1_100;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_500;
+    notifyResize();
+    expect(viewport.scrollTop).toBe(1_200);
   });
 
   it('projects Agent execution without internal identifiers or raw event codes', async () => {
