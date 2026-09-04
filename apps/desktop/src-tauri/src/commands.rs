@@ -463,12 +463,46 @@ pub async fn query_agent_work_trace_detail_v2(
 }
 
 #[tauri::command]
+/// Loads detail, counts, and the first source page as one coherent presentation projection.
+pub async fn query_agent_work_trace_projection(
+    request: a3_protocol::QueryAgentWorkTraceProjectionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceProjectionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.query_agent_work_trace_projection(
+        decode_agent_session_id(request.session_id())?,
+        decode_agent_user_sequence(request.user_sequence())?,
+    )
+    .await
+}
+
+#[tauri::command]
 /// Lists one cursor-bound generic work-trace source page.
 pub async fn query_agent_work_trace_sources(
     request: a3_protocol::QueryAgentWorkTraceSourcesRequestV1,
     root: State<'_, CompositionRoot>,
 ) -> Result<a3_protocol::AgentWorkTraceSourcesResponseV1, CommandErrorV1> {
     execute_query_agent_ask_research_sources(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads a continuation source page bound to an unchanged coherent projection.
+pub async fn query_agent_work_trace_sources_v2(
+    request: a3_protocol::QueryAgentWorkTraceSourcesRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceSourcesResponseV2, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    decode_stable_id(request.projection_ref()).map_err(|_| invalid_agent_session())?;
+    if let Some(cursor) = request.cursor() {
+        decode_stable_id(cursor).map_err(|_| invalid_agent_session())?;
+    }
+    root.query_agent_work_trace_sources_v2(
+        decode_agent_session_id(request.session_id())?,
+        decode_agent_user_sequence(request.user_sequence())?,
+        request.projection_ref(),
+        request.cursor(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1815,6 +1849,15 @@ fn decode_agent_session_id(value: &str) -> Result<AgentSessionId, CommandErrorV1
     decode_stable_id(value)
         .map(AgentSessionId::from_bytes)
         .map_err(|()| invalid_agent_session())
+}
+
+fn decode_agent_user_sequence(
+    value: &str,
+) -> Result<a3_domain::AgentSessionSequence, CommandErrorV1> {
+    a3_domain::AgentSessionSequence::new(
+        parse_canonical_positive_u64(value).map_err(|_| invalid_agent_session())?,
+    )
+    .map_err(|_| invalid_agent_session())
 }
 
 fn parse_agent_session_revision(value: &str) -> Result<AgentSessionRevision, CommandErrorV1> {

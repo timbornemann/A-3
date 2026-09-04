@@ -519,7 +519,12 @@ impl AgentSessionEntryV1 {
 
 /// Session-list result for the active Core-owned project.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum AgentSessionsResultV1 {
     /// No project is active.
     NoProject,
@@ -799,7 +804,7 @@ impl UiPreferencesResponseV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentSessionModeV1, SubmitAgentMessageRequestV1};
+    use super::{AgentSessionModeV1, AgentSessionsResultV1, SubmitAgentMessageRequestV1};
     use crate::ProtocolVersion;
 
     #[test]
@@ -814,5 +819,23 @@ mod tests {
             "worktreePath": "C:/escape"
         });
         assert!(serde_json::from_value::<SubmitAgentMessageRequestV1>(value).is_err());
+    }
+
+    #[test]
+    fn session_page_cursor_uses_the_camel_case_wire_name() -> Result<(), serde_json::Error> {
+        let encoded = serde_json::to_value(AgentSessionsResultV1::Available {
+            sessions: Vec::new(),
+            next_cursor: Some("a".repeat(64)),
+        })?;
+        let object = encoded.as_object().ok_or_else(|| {
+            serde_json::Error::io(std::io::Error::other("session result is not an object"))
+        })?;
+
+        assert_eq!(
+            object.get("nextCursor"),
+            Some(&serde_json::json!("a".repeat(64)))
+        );
+        assert!(!object.contains_key("next_cursor"));
+        Ok(())
     }
 }

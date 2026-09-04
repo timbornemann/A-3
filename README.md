@@ -210,6 +210,9 @@ Health-, Project-, Index-, Repository-Tree-, Module-Tree-, Module-Dependency-Gra
 Module-Runtime-, Module-Card-Freshness-, Module-Card-Detail-, Module-Card-Evidence-, Deep-Map-,
 Project-Map-Search-, Task-Lens-, Agent-Goal-, Agent-Activity- und projektgebundene
 Arbeitsweg- und sichere Quellen-Commands für Ask, Plan und Agent-Vorbereitung aufrufen.
+Der sichtbare Arbeitsweg bleibt über mehrere Recherche-Runden und den Antwortübergang stabil,
+gruppiert Vorbereitung, Runden und Abschluss und verknüpft belegte `【S…】`-Angaben direkt mit
+Core-zugeordneten Dateien, Zeilen und der sicheren Vorschau.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte

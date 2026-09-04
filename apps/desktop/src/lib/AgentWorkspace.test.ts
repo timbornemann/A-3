@@ -560,7 +560,7 @@ describe('AgentWorkspace', () => {
       if (detailReads === 2) throw new Error('transient read failure');
       return detailReads >= 3 ? completed : running;
     });
-    render(AgentWorkspace, {
+    const { container } = render(AgentWorkspace, {
       activeProject: true,
       pollIntervalMs: 5,
       sessionLoader,
@@ -575,6 +575,8 @@ describe('AgentWorkspace', () => {
     });
 
     await waitFor(() => expect(screen.getAllByText('A^3 arbeitet').length).toBeGreaterThan(0));
+    const liveResearch = container.querySelector('.messages details.ask-research');
+    expect(liveResearch).not.toBeNull();
     await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
     await waitFor(() => {
       const researchSummaries = screen.getAllByText('Recherche & Quellen');
@@ -583,6 +585,7 @@ describe('AgentWorkspace', () => {
         true,
       );
     });
+    expect(container.querySelector('.messages details.ask-research')).toBe(liveResearch);
     expect(detailReads).toBeGreaterThanOrEqual(3);
   });
 

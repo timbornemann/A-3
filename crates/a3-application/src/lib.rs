@@ -116,11 +116,11 @@ pub use agent_activity::{
 };
 pub use agent_approval::*;
 pub use agent_ask_research::{
-    AskResearchDataError, AskResearchDetail, AskResearchEvent, AskResearchPublicFindingKind,
-    AskResearchPublicNote, AskResearchSource, AskResearchSourcePage, AskResearchStore,
-    AskResearchStoreFailure, AskResearchStoreFuture, AskResearchTurn, AskResearchTurnPage,
-    AskSourceSearchControl, AskSourceSearchFailure, AskSourceSearcher, AskSourceSearcherFuture,
-    AskSourceTextHit, AskSourceTextSearch, AskSourceTextSearchResult,
+    AskResearchDataError, AskResearchDetail, AskResearchEvent, AskResearchProjection,
+    AskResearchPublicFindingKind, AskResearchPublicNote, AskResearchSource, AskResearchSourcePage,
+    AskResearchStore, AskResearchStoreFailure, AskResearchStoreFuture, AskResearchTurn,
+    AskResearchTurnPage, AskSourceSearchControl, AskSourceSearchFailure, AskSourceSearcher,
+    AskSourceSearcherFuture, AskSourceTextHit, AskSourceTextSearch, AskSourceTextSearchResult,
     SessionEvidenceDiagramArtifact,
 };
 pub use agent_controller::{

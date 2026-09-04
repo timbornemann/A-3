@@ -701,6 +701,34 @@ impl AskResearchStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn load_projection<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        source_limit: u16,
+    ) -> AskResearchStoreFuture<'a, Option<a3_application::AskResearchProjection>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_projection(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+                source_limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn list_sources<'a>(
         &'a self,
         project: &'a ProjectIdentity,

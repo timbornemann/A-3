@@ -428,6 +428,14 @@ Worktree, Session, Turn, Trace-Revision und aktuellen Index gebunden.
 `query_agent_work_trace_detail_v2` behält dieselbe sichere Projektion und ist der neue
 Frontend-Read für die um fünf geschlossene Analyseaktionen erweiterte Modellschema-Version.
 
+ADR-0040 ergänzt `query_agent_work_trace_projection` V1 als bevorzugten UI-Read. Er liefert
+Detail, Zähler, eine opake Projektionsreferenz und die ersten höchstens 50 Quellen gemeinsam.
+`query_agent_work_trace_sources_v2` akzeptiert ausschließlich Session, Nutzersequenz, diese
+Projektionsreferenz und einen opaken Cursor. Ein zwischenzeitlicher Event-, Quellen- oder
+Indexwechsel liefert `updating` beziehungsweise `projectionChanged`; Pfade, Source-, Snapshot-,
+Task-, Run- und Provider-IDs bleiben als Requestparameter ausgeschlossen. Quellen tragen nur das
+öffentliche turnlokale Label `S1` bis `S200`; die vorhandenen V1-Reads bleiben kompatibel.
+
 ### Slash Commands und Diagrammartefakte
 
 `query_agent_slash_commands` V1 akzeptiert nur Protokollversion und Modus und liefert den festen

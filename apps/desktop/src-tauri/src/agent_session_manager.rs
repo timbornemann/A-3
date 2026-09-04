@@ -2113,6 +2113,20 @@ impl AgentSessionManager {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn research_projection(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+    ) -> Result<Option<a3_application::AskResearchProjection>, AgentSessionManagerFailure> {
+        self.research_store
+            .as_ref()
+            .ok_or(AgentSessionManagerFailure::Unavailable)?
+            .load_projection(project, session_id, user_sequence, 50)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn research_sources(
         &self,
         project: &ProjectIdentity,

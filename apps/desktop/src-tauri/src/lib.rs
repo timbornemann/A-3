@@ -858,6 +858,314 @@ impl CompositionRoot {
         })
     }
 
+    /// Loads one coherent work-trace detail and its first source page.
+    pub async fn query_agent_work_trace_projection(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> Result<a3_protocol::AgentWorkTraceProjectionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceProjectionResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let session = manager
+            .load(&active.project, session_id, None, 128)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let Some(session) = session else {
+            return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceProjectionResultV1::NotFound,
+            });
+        };
+        let Some(projection) = manager
+            .research_projection(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            let was_message = session.entries().iter().any(|entry| {
+                entry.sequence() == user_sequence
+                    && entry.kind() == AgentSessionEntryKind::UserMessage
+            });
+            return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: if was_message {
+                    a3_protocol::AgentWorkTraceProjectionResultV1::NotRecorded
+                } else {
+                    a3_protocol::AgentWorkTraceProjectionResultV1::NotFound
+                },
+            });
+        };
+        let current_before = match self.load_deep_map_dashboard_index(&active.project).await {
+            Ok(current) => current,
+            Err(_) => {
+                return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                    protocol_version: ProtocolVersion::CURRENT,
+                    result: a3_protocol::AgentWorkTraceProjectionResultV1::Updating,
+                });
+            }
+        };
+        let detail = projection.detail();
+        let revision = detail
+            .events()
+            .last()
+            .map(a3_application::AskResearchEvent::sequence)
+            .unwrap_or(0);
+        let source_count_before = projection.source_count();
+        let current_after = match self.load_deep_map_dashboard_index(&active.project).await {
+            Ok(current) => current,
+            Err(_) => {
+                return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                    protocol_version: ProtocolVersion::CURRENT,
+                    result: a3_protocol::AgentWorkTraceProjectionResultV1::Updating,
+                });
+            }
+        };
+        let projection_after = manager
+            .research_projection(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let unchanged = projection_after.as_ref().is_some_and(|next| {
+            next.detail()
+                .events()
+                .last()
+                .map(a3_application::AskResearchEvent::sequence)
+                == Some(revision)
+                && next.detail().cited_sources() == detail.cited_sources()
+                && next.source_count() == source_count_before
+        }) && same_published_index(current_before.as_ref(), current_after.as_ref());
+        if !unchanged {
+            return Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceProjectionResultV1::Updating,
+            });
+        }
+        let current = current_after.as_ref();
+        let steps = detail
+            .events()
+            .iter()
+            .map(|event| {
+                map_work_trace_step(
+                    event,
+                    active.project.worktree().id(),
+                    session_id,
+                    user_sequence,
+                    revision,
+                    current,
+                )
+            })
+            .collect::<Vec<_>>();
+        let sources = projection
+            .sources()
+            .sources()
+            .iter()
+            .map(|source| {
+                map_work_trace_source_v2(
+                    source,
+                    detail.cited_sources().contains(&source.id()),
+                    research_source_ref(
+                        active.project.worktree().id(),
+                        session_id,
+                        user_sequence,
+                        revision,
+                        source.id(),
+                        current,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let next_cursor = if projection.sources().has_more() {
+            projection.sources().sources().last().map(|source| {
+                research_cursor(
+                    active.project.worktree().id(),
+                    session_id,
+                    user_sequence,
+                    revision,
+                    source.ordinal(),
+                    current,
+                )
+            })
+        } else {
+            None
+        };
+        let projection_ref = research_projection_ref(
+            active.project.worktree().id(),
+            session_id,
+            user_sequence,
+            revision,
+            source_count_before,
+            current,
+        );
+        Ok(a3_protocol::AgentWorkTraceProjectionResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentWorkTraceProjectionResultV1::Available {
+                detail: a3_protocol::AgentWorkTraceDetailV1 {
+                    user_sequence: user_sequence.get().to_string(),
+                    mode: map_work_trace_mode(detail.turn().mode()),
+                    depth: map_work_trace_depth(detail.turn().depth()),
+                    steps,
+                    source_count: source_count_before,
+                    cited_source_count: u16::try_from(detail.cited_sources().len())
+                        .unwrap_or(u16::MAX),
+                    stale: research_stale(detail, current),
+                    legacy: detail.turn().legacy(),
+                },
+                projection_ref,
+                sources,
+                next_cursor,
+            },
+        })
+    }
+
+    /// Loads another source page only while the caller's coherent projection remains current.
+    pub async fn query_agent_work_trace_sources_v2(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+        projection_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<a3_protocol::AgentWorkTraceSourcesResponseV2, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceSourcesResultV2::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceSourcesResultV2::NotFound,
+            });
+        };
+        let revision = detail
+            .events()
+            .last()
+            .map(a3_application::AskResearchEvent::sequence)
+            .unwrap_or(0);
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let source_count =
+            research_source_count(manager, &active.project, session_id, user_sequence).await?;
+        let expected_projection_ref = research_projection_ref(
+            active.project.worktree().id(),
+            session_id,
+            user_sequence,
+            revision,
+            source_count,
+            current.as_ref(),
+        );
+        if expected_projection_ref != projection_ref {
+            return Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceSourcesResultV2::ProjectionChanged,
+            });
+        }
+        let after = match cursor {
+            Some(value) => match decode_research_cursor(
+                value,
+                active.project.worktree().id(),
+                session_id,
+                user_sequence,
+                revision,
+                current.as_ref(),
+            ) {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    return Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+                        protocol_version: ProtocolVersion::CURRENT,
+                        result: a3_protocol::AgentWorkTraceSourcesResultV2::ProjectionChanged,
+                    });
+                }
+            },
+            None => None,
+        };
+        let page = manager
+            .research_sources(&active.project, session_id, user_sequence, after)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let current_after = self.load_deep_map_dashboard_index(&active.project).await?;
+        let detail_after = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let source_count_after =
+            research_source_count(manager, &active.project, session_id, user_sequence).await?;
+        let still_bound = detail_after.as_ref().is_some_and(|next| {
+            next.events()
+                .last()
+                .map(a3_application::AskResearchEvent::sequence)
+                == Some(revision)
+                && next.cited_sources() == detail.cited_sources()
+        }) && source_count_after == source_count
+            && same_published_index(current.as_ref(), current_after.as_ref())
+            && research_projection_ref(
+                active.project.worktree().id(),
+                session_id,
+                user_sequence,
+                revision,
+                source_count_after,
+                current_after.as_ref(),
+            ) == projection_ref;
+        if !still_bound {
+            return Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentWorkTraceSourcesResultV2::ProjectionChanged,
+            });
+        }
+        let sources = page
+            .sources()
+            .iter()
+            .map(|source| {
+                map_work_trace_source_v2(
+                    source,
+                    detail.cited_sources().contains(&source.id()),
+                    research_source_ref(
+                        active.project.worktree().id(),
+                        session_id,
+                        user_sequence,
+                        revision,
+                        source.id(),
+                        current.as_ref(),
+                    ),
+                )
+            })
+            .collect();
+        let next_cursor = if page.has_more() {
+            page.sources().last().map(|source| {
+                research_cursor(
+                    active.project.worktree().id(),
+                    session_id,
+                    user_sequence,
+                    revision,
+                    source.ordinal(),
+                    current.as_ref(),
+                )
+            })
+        } else {
+            None
+        };
+        Ok(a3_protocol::AgentWorkTraceSourcesResponseV2 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentWorkTraceSourcesResultV2::Available {
+                sources,
+                next_cursor,
+            },
+        })
+    }
+
     /// Lists one cursor-bound page of metadata-only Ask sources.
     pub async fn query_agent_ask_research_sources(
         &self,
@@ -5269,7 +5577,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_agent_work_trace_turns,
             commands::query_agent_work_trace_detail,
             commands::query_agent_work_trace_detail_v2,
+            commands::query_agent_work_trace_projection,
             commands::query_agent_work_trace_sources,
+            commands::query_agent_work_trace_sources_v2,
             commands::query_agent_work_trace_source_preview,
             commands::query_agent_inspection,
             commands::query_agent_inspection_log,
@@ -6055,6 +6365,107 @@ fn map_ask_source(
         },
         used_for_answer,
     )
+}
+
+fn map_work_trace_source_v2(
+    source: &a3_application::AskResearchSource,
+    used_for_answer: bool,
+    source_ref: String,
+) -> a3_protocol::AgentWorkTraceSourceV2 {
+    let (start_line, end_line) = source.range().map_or((None, None), |range| {
+        (
+            Some(range.start_position().row().saturating_add(1)),
+            Some(range.end_position().row().saturating_add(1)),
+        )
+    });
+    a3_protocol::AgentWorkTraceSourceV2 {
+        source_ref,
+        reference_label: format!("S{}", source.ordinal()),
+        path: repository_path_display(source.revision().path()),
+        start_line,
+        end_line,
+        symbol: source.symbol().map(ToOwned::to_owned),
+        kind: match source.kind() {
+            a3_domain::AskResearchSourceKind::File => {
+                a3_protocol::AgentAskResearchSourceKindV1::File
+            }
+            a3_domain::AskResearchSourceKind::Symbol => {
+                a3_protocol::AgentAskResearchSourceKindV1::Symbol
+            }
+            a3_domain::AskResearchSourceKind::Relationship => {
+                a3_protocol::AgentAskResearchSourceKindV1::Relationship
+            }
+            a3_domain::AskResearchSourceKind::VerifiedClaim => {
+                a3_protocol::AgentAskResearchSourceKindV1::VerifiedClaim
+            }
+        },
+        reason: match source.reason() {
+            a3_domain::AskResearchSelectionReason::ExactNameOrPath => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::ExactNameOrPath
+            }
+            a3_domain::AskResearchSelectionReason::IndexedText => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::IndexedText
+            }
+            a3_domain::AskResearchSelectionReason::Relationship => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::Relationship
+            }
+            a3_domain::AskResearchSelectionReason::Test => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::Test
+            }
+            a3_domain::AskResearchSelectionReason::VerifiedModuleKnowledge => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::VerifiedModuleKnowledge
+            }
+            a3_domain::AskResearchSelectionReason::SemanticCandidate => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::SemanticCandidate
+            }
+            a3_domain::AskResearchSelectionReason::SourceText => {
+                a3_protocol::AgentAskResearchSelectionReasonV1::SourceText
+            }
+        },
+        used_for_answer,
+    }
+}
+
+fn same_published_index(
+    left: Option<&a3_domain::PublishedIndex>,
+    right: Option<&a3_domain::PublishedIndex>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.run().id() == right.run().id()
+                && left.run().snapshot_id() == right.run().snapshot_id()
+        }
+        _ => false,
+    }
+}
+
+fn research_projection_ref(
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: a3_domain::AgentSessionSequence,
+    revision: u32,
+    source_count: u16,
+    current: Option<&a3_domain::PublishedIndex>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"a3.agent-work-trace-projection.v1");
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(session_id.as_bytes());
+    hasher.update(&user_sequence.get().to_be_bytes());
+    hasher.update(&revision.to_be_bytes());
+    hasher.update(&source_count.to_be_bytes());
+    match current {
+        Some(index) => {
+            hasher.update(&[1]);
+            hasher.update(index.run().id().as_bytes());
+            hasher.update(index.run().snapshot_id().as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    };
+    hasher.finalize().to_hex().to_string()
 }
 
 fn research_cursor(
@@ -10187,7 +10598,7 @@ mod tests {
         encode_deep_map_run_cursor, encode_deep_map_run_selection, encode_deep_map_step_cursor,
         map_agent_goal_to_v1, map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1,
         project_path_display, publication_read_failure_lifecycle, repository_path_display,
-        research_cursor, research_source_ref,
+        research_cursor, research_projection_ref, research_source_ref,
     };
     use a3_application::DeepMapRunCursor;
     use a3_application::{
@@ -10314,6 +10725,37 @@ mod tests {
         assert_ne!(
             capability,
             research_source_ref(worktree, session, sequence, 6, source, None)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn work_trace_projection_reference_changes_with_revision_and_source_count()
+    -> Result<(), Box<dyn Error>> {
+        let worktree = WorktreeId::from_bytes([1; 32]);
+        let session = AgentSessionId::from_bytes([2; 32]);
+        let sequence = AgentSessionSequence::new(3)?;
+        let reference = research_projection_ref(worktree, session, sequence, 5, 12, None);
+
+        assert_eq!(reference.len(), 64);
+        assert_ne!(
+            reference,
+            research_projection_ref(worktree, session, sequence, 6, 12, None)
+        );
+        assert_ne!(
+            reference,
+            research_projection_ref(worktree, session, sequence, 5, 13, None)
+        );
+        assert_ne!(
+            reference,
+            research_projection_ref(
+                WorktreeId::from_bytes([9; 32]),
+                session,
+                sequence,
+                5,
+                12,
+                None,
+            )
         );
         Ok(())
     }

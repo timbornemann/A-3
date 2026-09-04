@@ -4,8 +4,11 @@
     queryAgentAskResearchDetail,
     queryAgentAskResearchSourcePreview,
     queryAgentAskResearchSources,
+    queryAgentWorkTraceProjection,
+    queryAgentWorkTraceSourcesV2,
     type AgentAskResearchDetailV1,
-    type AgentAskResearchSourceV1,
+    type AgentWorkTracePresentationV1,
+    type AgentWorkTraceSourceV2,
   } from './agent-ask-research';
   import type { ProjectMapSourcePreviewV1 } from './project-map-source-preview';
 
@@ -13,12 +16,23 @@
     compact?: boolean;
     detailLoader?: typeof queryAgentAskResearchDetail;
     live?: boolean;
+    mirror?: boolean;
     oncontinue?: () => void;
+    onpresentationchange?: (presentation: AgentWorkTracePresentationV1) => void;
+    onprojectionchange?: (projection: {
+      detail: AgentAskResearchDetailV1;
+      sources: AgentWorkTraceSourceV2[];
+    }) => void;
     previewLoader?: typeof queryAgentAskResearchSourcePreview;
+    presentation?: AgentWorkTracePresentationV1 | null;
+    projectionLoader?: typeof queryAgentWorkTraceProjection;
     recentlyCompleted?: boolean;
     refreshKey: string;
+    responseVisible?: boolean;
     sessionId: string;
+    sourceRequest?: { label: string; nonce: number; userSequence: string } | null;
     sourcesLoader?: typeof queryAgentAskResearchSources;
+    sourcesV2Loader?: typeof queryAgentWorkTraceSourcesV2;
     userSequence: string;
   }
 
@@ -26,19 +40,28 @@
     compact = false,
     detailLoader = queryAgentAskResearchDetail,
     live = false,
+    mirror = false,
     oncontinue = () => {},
+    onpresentationchange = () => {},
+    onprojectionchange = () => {},
     previewLoader = queryAgentAskResearchSourcePreview,
+    presentation = null,
+    projectionLoader = queryAgentWorkTraceProjection,
     recentlyCompleted = false,
     refreshKey,
+    responseVisible = false,
     sessionId,
+    sourceRequest = null,
     sourcesLoader = queryAgentAskResearchSources,
+    sourcesV2Loader = queryAgentWorkTraceSourcesV2,
     userSequence,
   }: Props = $props();
   let expanded = $state(false);
   let expansionInitialized = false;
   let detail = $state<AgentAskResearchDetailV1 | null>(null);
-  let sources = $state<AgentAskResearchSourceV1[]>([]);
+  let sources = $state<AgentWorkTraceSourceV2[]>([]);
   let loadState = $state<'loading' | 'available' | 'notRecorded' | 'missing' | 'error'>('loading');
+  let sourceLoadState = $state<'loading' | 'available' | 'updating' | 'error'>('loading');
   let selectedSource = $state<string | null>(null);
   let preview = $state<ProjectMapSourcePreviewV1 | null>(null);
   let previewState = $state<'idle' | 'loading' | 'stale' | 'error'>('idle');
@@ -55,13 +78,21 @@
   let autoCollapseDone = false;
   let terminalObserved = false;
   let terminalDisclosureOverride = false;
+  let handledSourceRequest = 0;
 
   const REVEAL_WINDOW_MILLIS = 900;
   const MAX_REVEAL_INTERVAL_MILLIS = 180;
   const TERMINAL_DWELL_MILLIS = 700;
 
-  const latest = $derived(detail?.steps.at(-1) ?? null);
-  const visibleSteps = $derived(detail?.steps.slice(0, visibleStepCount) ?? []);
+  type TimelineStep = AgentAskResearchDetailV1['steps'][number] & {
+    id: string;
+    section: string;
+  };
+  const timelineSteps = $derived(groupTimeline(detail?.steps ?? []));
+  const latest = $derived(timelineSteps.at(-1) ?? null);
+  const visibleSteps = $derived(timelineSteps.slice(0, visibleStepCount));
+  const usedSources = $derived(sources.filter((source) => source.usedForAnswer));
+  const additionalSources = $derived(sources.filter((source) => !source.usedForAnswer));
   const searchLimited = $derived(
     detail?.steps.some((step) => step.completeness === 'limited') ?? false,
   );
@@ -77,15 +108,50 @@
       preview = null;
       previewState = 'idle';
       loadState = 'loading';
+      sourceLoadState = 'loading';
       expansionInitialized = false;
+      if (presentation?.detail.userSequence === userSequence) {
+        restorePresentation(presentation);
+        expansionInitialized = true;
+      }
     }
     if (!expansionInitialized) {
       expanded = live || recentlyCompleted;
       expansionInitialized = true;
     }
     if (live || recentlyCompleted) autoCollapseEligible = true;
+    if (mirror) {
+      void presentation;
+      if (presentation) {
+        detail = presentation.detail;
+        loadState = presentation.loadState;
+        sourceLoadState = presentation.sourceLoadState;
+        sources = presentation.sources;
+        visibleStepCount = presentation.visibleStepCount;
+      }
+      return;
+    }
     void refreshKey;
     requestResearchLoad();
+  });
+
+  $effect(() => {
+    if (mirror) return;
+    if (!sourceRequest || sourceRequest.userSequence !== userSequence) return;
+    if (sourceRequest.nonce === handledSourceRequest) return;
+    handledSourceRequest = sourceRequest.nonce;
+    const source = sources.find((candidate) => candidate.referenceLabel === sourceRequest.label);
+    if (!source) return;
+    expanded = true;
+    terminalDisclosureOverride = true;
+    clearCollapseTimer();
+    publishPresentation();
+    void showSource(source.sourceRef);
+  });
+
+  $effect(() => {
+    void responseVisible;
+    observeTerminalState();
   });
 
   onMount(() => {
@@ -93,7 +159,7 @@
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
     const update = (): void => {
       reducedMotion = query.matches;
-      if (reducedMotion && detail) synchronizeVisibleSteps(detail.steps.length);
+      if (reducedMotion && detail) synchronizeVisibleSteps(timelineSteps.length);
     };
     update();
     query.addEventListener('change', update);
@@ -125,13 +191,32 @@
     const requestedUserSequence = userSequence;
     if (detail === null) loadState = 'loading';
     try {
-      const response = await detailLoader(requestedSessionId, requestedUserSequence);
+      const legacyLoaderWasProvided =
+        detailLoader !== queryAgentAskResearchDetail ||
+        sourcesLoader !== queryAgentAskResearchSources;
+      const projectionLoaderWasProvided = projectionLoader !== queryAgentWorkTraceProjection;
+      if (legacyLoaderWasProvided && !projectionLoaderWasProvided) {
+        await loadLegacyResearch(current, requestedSessionId, requestedUserSequence);
+        return;
+      }
+      let response;
+      try {
+        response = await projectionLoader(requestedSessionId, requestedUserSequence);
+      } catch {
+        await loadLegacyResearch(current, requestedSessionId, requestedUserSequence);
+        return;
+      }
       if (
         current !== request ||
         requestedSessionId !== sessionId ||
         requestedUserSequence !== userSequence
       )
         return;
+      if (response.result.status === 'updating') {
+        sourceLoadState = 'updating';
+        publishPresentation();
+        return;
+      }
       if (response.result.status === 'notRecorded') {
         loadState = 'notRecorded';
         return;
@@ -141,38 +226,129 @@
         return;
       }
       const nextDetail = response.result.detail;
-      if (detail && !isAppendOnlyUpdate(detail.steps, nextDetail.steps)) {
+      const nextTimeline = groupTimeline(nextDetail.steps);
+      if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) {
         resetPresentation();
         autoCollapseEligible = live || recentlyCompleted;
       }
       detail = nextDetail;
       loadState = 'available';
-      synchronizeVisibleSteps(nextDetail.steps.length);
-      const found: AgentAskResearchSourceV1[] = [];
-      let cursor: string | null = null;
-      do {
-        const page = await sourcesLoader(requestedSessionId, requestedUserSequence, cursor);
+      synchronizeVisibleSteps(nextTimeline.length);
+      const found = [...response.result.sources];
+      let cursor = response.result.nextCursor;
+      sources = found;
+      sourceLoadState = 'loading';
+      publishPresentation();
+      while (cursor !== null && found.length < 200) {
+        const page = await sourcesV2Loader(
+          requestedSessionId,
+          requestedUserSequence,
+          response.result.projectionRef,
+          cursor,
+        );
         if (current !== request) return;
-        if (page.result.status !== 'available') break;
+        if (page.result.status === 'projectionChanged') {
+          sourceLoadState = 'updating';
+          publishPresentation();
+          return;
+        }
+        if (page.result.status !== 'available') {
+          sourceLoadState = 'error';
+          publishPresentation();
+          return;
+        }
         found.push(...page.result.sources);
         cursor = page.result.nextCursor;
-      } while (cursor !== null && found.length < 200);
+      }
       sources = found;
+      sourceLoadState = 'available';
+      onprojectionchange({ detail: nextDetail, sources: found });
+      publishPresentation();
     } catch {
-      if (current === request && detail === null) loadState = 'error';
+      if (current === request) {
+        if (detail === null) loadState = 'error';
+        else {
+          sourceLoadState = 'error';
+          publishPresentation();
+        }
+      }
     }
   }
 
-  function isAppendOnlyUpdate(
-    previous: AgentAskResearchDetailV1['steps'],
-    next: AgentAskResearchDetailV1['steps'],
-  ): boolean {
-    if (next.length < previous.length) return false;
-    return previous.every((step, index) => stepKey(step, index) === stepKey(next[index], index));
+  async function loadLegacyResearch(
+    current: number,
+    requestedSessionId: string,
+    requestedUserSequence: string,
+  ): Promise<void> {
+    const response = await detailLoader(requestedSessionId, requestedUserSequence);
+    if (current !== request) return;
+    if (response.result.status === 'notRecorded') {
+      loadState = 'notRecorded';
+      return;
+    }
+    if (response.result.status !== 'available') {
+      loadState = 'missing';
+      return;
+    }
+    const nextDetail = response.result.detail;
+    const nextTimeline = groupTimeline(nextDetail.steps);
+    if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) resetPresentation();
+    detail = nextDetail;
+    loadState = 'available';
+    synchronizeVisibleSteps(nextTimeline.length);
+    const found: AgentWorkTraceSourceV2[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await sourcesLoader(requestedSessionId, requestedUserSequence, cursor);
+      if (current !== request) return;
+      if (page.result.status !== 'available') {
+        sourceLoadState = 'error';
+        return;
+      }
+      for (const source of page.result.sources) {
+        found.push({ ...source, referenceLabel: `S${found.length + 1}` });
+      }
+      cursor = page.result.nextCursor;
+    } while (cursor !== null && found.length < 200);
+    sources = found;
+    sourceLoadState = 'available';
+    onprojectionchange({ detail: nextDetail, sources: found });
+    publishPresentation();
   }
 
-  function stepKey(step: AgentAskResearchDetailV1['steps'][number], index: number): string {
-    return `${index}:${step.occurredAtUnixMillis}:${step.phase}:${step.state}:${step.action}:${step.query ?? ''}`;
+  function isAppendOnlyUpdate(previous: TimelineStep[], next: TimelineStep[]): boolean {
+    if (next.length < previous.length) return false;
+    return previous.every((step, index) => step.id === next[index]?.id);
+  }
+
+  function groupTimeline(steps: AgentAskResearchDetailV1['steps']): TimelineStep[] {
+    const grouped: TimelineStep[] = [];
+    let round = 0;
+    for (const [index, step] of steps.entries()) {
+      if (step.phase === 'deciding') round += 1;
+      const section =
+        step.phase === 'answeringOrPlanning' || step.phase === 'completed'
+          ? 'Abschluss'
+          : round > 0
+            ? `Recherche-Runde ${round}`
+            : 'Vorbereitung';
+      const previous = grouped.at(-1);
+      const mergePreparation =
+        section === 'Vorbereitung' &&
+        previous?.section === section &&
+        previous.phase === step.phase &&
+        (step.phase === 'preparing' || step.phase === 'locating');
+      if (mergePreparation && previous) {
+        grouped[grouped.length - 1] = { ...step, id: previous.id, section };
+      } else {
+        grouped.push({
+          ...step,
+          id: `${index}:${step.occurredAtUnixMillis}:${step.phase}`,
+          section,
+        });
+      }
+    }
+    return grouped;
   }
 
   function synchronizeVisibleSteps(stepCount: number): void {
@@ -186,9 +362,13 @@
       clearRevealTimer();
       visibleStepCount = stepCount;
       observeTerminalState();
+      publishPresentation();
       return;
     }
-    if (visibleStepCount === 0) visibleStepCount = 1;
+    if (visibleStepCount === 0) {
+      visibleStepCount = 1;
+      publishPresentation();
+    }
     if (visibleStepCount < revealTarget) scheduleRemainingSteps();
     else observeTerminalState();
   }
@@ -207,6 +387,7 @@
     const revealNext = (): void => {
       revealTimer = null;
       visibleStepCount = Math.min(visibleStepCount + 1, revealTarget);
+      publishPresentation();
       if (visibleStepCount < revealTarget) revealTimer = setTimeout(revealNext, interval);
       else observeTerminalState();
     };
@@ -216,13 +397,14 @@
   function observeTerminalState(): void {
     if (
       !detail ||
-      visibleStepCount < detail.steps.length ||
-      !isSuccessfulTerminal(detail.steps.at(-1))
+      visibleStepCount < timelineSteps.length ||
+      !isSuccessfulTerminal(timelineSteps.at(-1))
     )
       return;
     terminalObserved = true;
     if (
       !autoCollapseEligible ||
+      !responseVisible ||
       autoCollapseDone ||
       terminalDisclosureOverride ||
       collapseTimer !== null
@@ -232,6 +414,7 @@
       collapseTimer = null;
       if (!terminalDisclosureOverride) expanded = false;
       autoCollapseDone = true;
+      publishPresentation();
     }, TERMINAL_DWELL_MILLIS);
   }
 
@@ -245,10 +428,14 @@
     return step !== undefined && step.state === 'completed' && step.phase === 'completed';
   }
 
-  function handleDisclosureClick(): void {
-    if (!terminalObserved) return;
-    terminalDisclosureOverride = true;
-    clearCollapseTimer();
+  function handleDisclosureClick(event: MouseEvent): void {
+    event.preventDefault();
+    expanded = !expanded;
+    if (terminalObserved) {
+      terminalDisclosureOverride = true;
+      clearCollapseTimer();
+    }
+    publishPresentation();
   }
 
   function resetPresentation(): void {
@@ -274,10 +461,38 @@
     collapseTimer = null;
   }
 
+  function publishPresentation(): void {
+    if (mirror || !detail || loadState !== 'available') return;
+    onpresentationchange({
+      detail,
+      expanded,
+      loadState: 'available',
+      preview,
+      previewState,
+      selectedSource,
+      sourceLoadState,
+      sources,
+      visibleStepCount,
+    });
+  }
+
+  function restorePresentation(next: AgentWorkTracePresentationV1): void {
+    detail = next.detail;
+    expanded = next.expanded;
+    loadState = next.loadState;
+    preview = next.preview;
+    previewState = next.previewState;
+    selectedSource = next.selectedSource;
+    sourceLoadState = next.sourceLoadState;
+    sources = next.sources;
+    visibleStepCount = next.visibleStepCount;
+  }
+
   async function showSource(sourceRef: string): Promise<void> {
     selectedSource = sourceRef;
     preview = null;
     previewState = 'loading';
+    publishPresentation();
     try {
       const response = await previewLoader(sessionId, userSequence, sourceRef);
       if (selectedSource !== sourceRef) return;
@@ -289,6 +504,7 @@
     } catch {
       if (selectedSource === sourceRef) previewState = 'error';
     }
+    publishPresentation();
   }
 
   function phaseLabel(phase: string): string {
@@ -330,11 +546,11 @@
     }[kind];
   }
 
-  function sourceForRef(sourceRef: string): AgentAskResearchSourceV1 | undefined {
+  function sourceForRef(sourceRef: string): AgentWorkTraceSourceV2 | undefined {
     return sources.find((source) => source.sourceRef === sourceRef);
   }
 
-  function reasonLabel(reason: AgentAskResearchSourceV1['reason']): string {
+  function reasonLabel(reason: AgentWorkTraceSourceV2['reason']): string {
     return {
       exactNameOrPath: 'Exakter Name oder Pfad',
       indexedText: 'Indexierter Text',
@@ -349,8 +565,8 @@
   type PresentationState = 'active' | 'awaiting' | 'cancelled' | 'completed' | 'failed';
 
   function presentationState(index: number): PresentationState {
-    if (!detail) return 'completed';
-    const step = detail.steps[index];
+    const step = timelineSteps[index];
+    if (!step) return 'completed';
     if (step.state === 'failed') return 'failed';
     if (step.state === 'cancelled') return 'cancelled';
     if (step.state === 'awaitingContinuation') return 'awaiting';
@@ -375,11 +591,12 @@
     return '';
   }
 
-  function sourceFeedback(): string {
-    if (!detail) return '';
-    const found = `${detail.sourceCount} ${detail.sourceCount === 1 ? 'Quelle' : 'Quellen'} gefunden`;
-    if (detail.citedSourceCount === 0) return found;
-    return `${found} · ${detail.citedSourceCount} für das Ergebnis verwendet`;
+  function sourceLocation(source: AgentWorkTraceSourceV2, short = false): string {
+    const path = short ? (source.path.split(/[\\/]/u).at(-1) ?? source.path) : source.path;
+    if (source.startLine === null) return path;
+    if (source.endLine === null || source.endLine === source.startLine)
+      return `${path}:${source.startLine}`;
+    return `${path}:${source.startLine}–${source.endLine}`;
   }
 </script>
 
@@ -421,28 +638,15 @@
           Quelltextvorschauen sind gesperrt.
         </p>
       {/if}
-      {#if latest}
-        <section class="current-action" role="status" aria-live="polite" aria-atomic="true">
-          <span>{isTerminal(latest) ? 'Aktueller Stand' : 'Was passiert gerade?'}</span>
-          <strong>{stepLabel(latest.phase, latest.state)}</strong>
-          <p>{latest.action}</p>
-          {#if latest.query}<code>{latest.query}</code>{/if}
-          <small class="source-feedback">{sourceFeedback()}</small>
-          {#if latest.completeness !== 'notApplicable'}
-            <small class="completeness"
-              >{latest.completeness === 'complete' ? 'Suche vollständig' : 'Suche begrenzt'}</small
-            >
-          {/if}
-          {#if searchLimited}<p class="limited">
-              Mindestens eine Suche wurde durch eine feste Sicherheits- oder Ressourcengrenze
-              beendet. Sie beweist nicht, dass es keine weiteren Treffer gibt.
-            </p>{/if}
-        </section>
+      {#if !mirror && (live || recentlyCompleted)}
+        <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {latest ? `${stepLabel(latest.phase, latest.state)}: ${latest.action}` : ''}
+        </p>
       {/if}
       <ol class="research-steps" aria-label="Rechercheverlauf">
-        {#each visibleSteps as step, index (`${step.occurredAtUnixMillis}-${index}`)}
+        {#each visibleSteps as step, index (step.id)}
           {@const displayState = presentationState(index)}
-          {@const terminalStep = index === detail.steps.length - 1 && isTerminal(step)}
+          {@const terminalStep = index === timelineSteps.length - 1 && isTerminal(step)}
           <li
             class:active={displayState === 'active'}
             class:cancelled={displayState === 'cancelled'}
@@ -453,6 +657,9 @@
             aria-current={displayState === 'active' ? 'step' : undefined}
             data-step-state={displayState}
           >
+            {#if index === 0 || visibleSteps[index - 1]?.section !== step.section}
+              <div class="timeline-section">{step.section}</div>
+            {/if}
             <span class="step-rail" aria-hidden="true">
               <span class="step-marker">{markerLabel(displayState)}</span>
             </span>
@@ -486,10 +693,14 @@
                       <div>
                         {#each step.note.sourceRefs as sourceRef (sourceRef)}
                           {@const noteSource = sourceForRef(sourceRef)}
-                          <button type="button" onclick={() => void showSource(sourceRef)}>
+                          <button
+                            type="button"
+                            disabled={!noteSource}
+                            onclick={() => void showSource(sourceRef)}
+                          >
                             {noteSource
-                              ? `${noteSource.path}${noteSource.startLine ? `:${noteSource.startLine}` : ''}`
-                              : 'Quelle öffnen'}
+                              ? `【${noteSource.referenceLabel}】 ${sourceLocation(noteSource)}`
+                              : 'Quelle wird geladen …'}
                           </button>
                         {/each}
                       </div>
@@ -515,25 +726,58 @@
           <button type="button" onclick={oncontinue}>Recherche fortsetzen</button>
         </section>
       {/if}
+      {#if searchLimited}<p class="limited">
+          Mindestens eine Suche wurde durch eine feste Sicherheits- oder Ressourcengrenze beendet.
+          Sie beweist nicht, dass es keine weiteren Treffer gibt.
+        </p>{/if}
       <section>
-        <h4>Gefundene und verwendete Quellen</h4>
-        {#if sources.length === 0}<p>Noch keine zitierbare aktuelle Quelle gefunden.</p>
-        {:else}
+        <h4>Quellen</h4>
+        {#if sourceLoadState === 'updating'}
+          <p role="status">
+            Die Quellen werden gerade mit dem neuesten Recherchestand abgeglichen …
+          </p>
+        {:else if sourceLoadState === 'error' && detail.sourceCount > 0}
+          <div class="source-retry" role="alert">
+            <p>
+              {detail.sourceCount} Quellen wurden gefunden, ihre Details konnten noch nicht vollständig
+              geladen werden.
+            </p>
+            <button type="button" onclick={requestResearchLoad}>Erneut laden</button>
+          </div>
+        {:else if sourceLoadState === 'available' && detail.sourceCount === 0}
+          <p>Noch keine zitierbare aktuelle Quelle gefunden.</p>
+        {/if}
+        {#if usedSources.length > 0}
+          <h5>Für die Antwort verwendet</h5>
           <ul class="source-list">
-            {#each sources as source (source.sourceRef)}
+            {#each usedSources as source (source.sourceRef)}
               <li>
                 <button
                   type="button"
                   onclick={() => void showSource(source.sourceRef)}
                   aria-pressed={selectedSource === source.sourceRef}
                 >
-                  <strong>{source.path}{source.startLine ? `:${source.startLine}` : ''}</strong>
+                  <strong>【{source.referenceLabel}】 {sourceLocation(source)}</strong>
                   {#if source.symbol}<span>{source.symbol}</span>{/if}
-                  <small
-                    >{reasonLabel(source.reason)} · {source.usedForAnswer
-                      ? 'Für Ergebnis verwendet'
-                      : 'Zusätzlich bereitgestellt'}</small
-                  >
+                  <small>{reasonLabel(source.reason)}</small>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if additionalSources.length > 0}
+          <h5>Zusätzlich gefunden</h5>
+          <ul class="source-list">
+            {#each additionalSources as source (source.sourceRef)}
+              <li>
+                <button
+                  type="button"
+                  onclick={() => void showSource(source.sourceRef)}
+                  aria-pressed={selectedSource === source.sourceRef}
+                >
+                  <strong>【{source.referenceLabel}】 {sourceLocation(source)}</strong>
+                  {#if source.symbol}<span>{source.symbol}</span>{/if}
+                  <small>{reasonLabel(source.reason)}</small>
                 </button>
               </li>
             {/each}
@@ -610,21 +854,16 @@
     color: var(--color-muted);
     line-height: 1.45;
   }
-  .current-action {
-    display: grid;
-    padding: var(--space-3);
-    gap: var(--space-1);
-    border-radius: var(--radius-control);
-    background: var(--color-surface);
-  }
-  .current-action > span {
-    color: var(--color-muted);
-    font-size: var(--font-size-xs);
-    text-transform: uppercase;
-  }
-  .source-feedback {
-    color: var(--color-muted);
-    font-size: var(--font-size-xs);
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   code {
     overflow-wrap: anywhere;
@@ -663,6 +902,15 @@
     min-width: 0;
     padding-bottom: var(--space-2);
     gap: var(--space-2);
+  }
+  .timeline-section {
+    grid-column: 1 / -1;
+    margin-top: var(--space-1);
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .research-steps li.animate {
     animation: research-step-in 180ms ease-out both;
@@ -817,8 +1065,24 @@
     margin-top: 0.15rem;
     font-size: var(--font-size-xs);
   }
-  h4 {
+  h4,
+  h5 {
     margin: 0 0 var(--space-2);
+  }
+  h5 {
+    margin-top: var(--space-3);
+    color: var(--color-heading);
+    font-size: var(--font-size-sm);
+  }
+  .source-retry {
+    display: grid;
+    padding: var(--space-2);
+    gap: var(--space-2);
+    border-inline-start: 3px solid var(--color-warning);
+    background: var(--color-surface);
+  }
+  .source-retry button {
+    width: fit-content;
   }
   .source-list button {
     display: grid;

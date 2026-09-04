@@ -92,6 +92,20 @@ export interface AgentAskResearchSourceV1 {
   symbol: string | null;
   usedForAnswer: boolean;
 }
+export interface AgentWorkTraceSourceV2 extends AgentAskResearchSourceV1 {
+  referenceLabel: string;
+}
+export interface AgentWorkTracePresentationV1 {
+  detail: AgentAskResearchDetailV1;
+  expanded: boolean;
+  loadState: 'available';
+  preview: ProjectMapSourcePreviewV1 | null;
+  previewState: 'idle' | 'loading' | 'stale' | 'error';
+  selectedSource: string | null;
+  sourceLoadState: 'loading' | 'available' | 'updating' | 'error';
+  sources: AgentWorkTraceSourceV2[];
+  visibleStepCount: number;
+}
 
 export type AgentAskResearchTurnsResponseV1 = {
   protocolVersion: 1;
@@ -115,6 +129,24 @@ export type AgentAskResearchSourcePreviewResponseV1 = {
   result:
     | { status: 'noProject' | 'notFound' | 'stale' }
     | { status: 'available'; preview: ProjectMapSourcePreviewV1 };
+};
+export type AgentWorkTraceProjectionResponseV1 = {
+  protocolVersion: 1;
+  result:
+    | { status: 'noProject' | 'notFound' | 'notRecorded' | 'updating' }
+    | {
+        status: 'available';
+        detail: AgentAskResearchDetailV1;
+        projectionRef: string;
+        sources: AgentWorkTraceSourceV2[];
+        nextCursor: string | null;
+      };
+};
+export type AgentWorkTraceSourcesResponseV2 = {
+  protocolVersion: 1;
+  result:
+    | { status: 'noProject' | 'notFound' | 'projectionChanged' }
+    | { status: 'available'; sources: AgentWorkTraceSourceV2[]; nextCursor: string | null };
 };
 
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
@@ -174,6 +206,44 @@ export async function queryAgentAskResearchSourcePreview(
   return parsePreview(
     await invokeCommand('query_agent_work_trace_source_preview', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, sourceRef, userSequence },
+    }),
+  );
+}
+
+export async function queryAgentWorkTraceProjection(
+  sessionId: string,
+  userSequence: string,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentWorkTraceProjectionResponseV1> {
+  stable(sessionId);
+  decimal(userSequence, false);
+  return parseProjection(
+    await invokeCommand('query_agent_work_trace_projection', {
+      request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
+    }),
+  );
+}
+
+export async function queryAgentWorkTraceSourcesV2(
+  sessionId: string,
+  userSequence: string,
+  projectionRef: string,
+  cursor: string | null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentWorkTraceSourcesResponseV2> {
+  stable(sessionId);
+  decimal(userSequence, false);
+  stable(projectionRef);
+  if (cursor !== null) stable(cursor);
+  return parseSourcesV2(
+    await invokeCommand('query_agent_work_trace_sources_v2', {
+      request: {
+        cursor,
+        projectionRef,
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+        sessionId,
+        userSequence,
+      },
     }),
   );
 }
@@ -285,6 +355,73 @@ function parsePreview(payload: unknown): AgentAskResearchSourcePreviewResponseV1
   };
 }
 
+function parseProjection(payload: unknown): AgentWorkTraceProjectionResponseV1 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (
+    status === 'noProject' ||
+    status === 'notFound' ||
+    status === 'notRecorded' ||
+    status === 'updating'
+  ) {
+    exact(result, ['status']);
+    return root as AgentWorkTraceProjectionResponseV1;
+  }
+  exact(result, ['detail', 'nextCursor', 'projectionRef', 'sources', 'status']);
+  if (
+    status !== 'available' ||
+    !Array.isArray(result.sources) ||
+    result.sources.length > 50 ||
+    (result.nextCursor !== null &&
+      (typeof result.nextCursor !== 'string' || !STABLE_ID.test(result.nextCursor)))
+  )
+    invalid();
+  stable(result.projectionRef);
+  const detailResponse = parseDetail({
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { detail: result.detail, status: 'available' },
+  });
+  if (detailResponse.result.status !== 'available') invalid();
+  return {
+    protocolVersion: 1,
+    result: {
+      status: 'available',
+      detail: detailResponse.result.detail,
+      projectionRef: result.projectionRef,
+      sources: result.sources.map(sourceV2),
+      nextCursor: result.nextCursor as string | null,
+    },
+  };
+}
+
+function parseSourcesV2(payload: unknown): AgentWorkTraceSourcesResponseV2 {
+  const root = response(payload);
+  const result = record(root.result);
+  const status = result.status;
+  if (status === 'noProject' || status === 'notFound' || status === 'projectionChanged') {
+    exact(result, ['status']);
+    return root as AgentWorkTraceSourcesResponseV2;
+  }
+  exact(result, ['nextCursor', 'sources', 'status']);
+  if (
+    status !== 'available' ||
+    !Array.isArray(result.sources) ||
+    result.sources.length > 50 ||
+    (result.nextCursor !== null &&
+      (typeof result.nextCursor !== 'string' || !STABLE_ID.test(result.nextCursor)))
+  )
+    invalid();
+  return {
+    protocolVersion: 1,
+    result: {
+      status: 'available',
+      nextCursor: result.nextCursor as string | null,
+      sources: result.sources.map(sourceV2),
+    },
+  };
+}
+
 function turn(payload: unknown): AgentAskResearchTurnV1 {
   const value = record(payload);
   exact(value, [
@@ -383,6 +520,36 @@ function source(payload: unknown): AgentAskResearchSourceV1 {
   )
     invalid();
   return value as unknown as AgentAskResearchSourceV1;
+}
+function sourceV2(payload: unknown): AgentWorkTraceSourceV2 {
+  const value = record(payload);
+  exact(value, [
+    'endLine',
+    'kind',
+    'path',
+    'reason',
+    'referenceLabel',
+    'sourceRef',
+    'startLine',
+    'symbol',
+    'usedForAnswer',
+  ]);
+  const legacy = source({
+    endLine: value.endLine,
+    kind: value.kind,
+    path: value.path,
+    reason: value.reason,
+    sourceRef: value.sourceRef,
+    startLine: value.startLine,
+    symbol: value.symbol,
+    usedForAnswer: value.usedForAnswer,
+  });
+  if (
+    typeof value.referenceLabel !== 'string' ||
+    !/^S(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|200)$/u.test(value.referenceLabel)
+  )
+    invalid();
+  return { ...legacy, referenceLabel: value.referenceLabel };
 }
 function response(payload: unknown): Record<string, unknown> {
   const value = record(payload);

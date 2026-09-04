@@ -1,10 +1,10 @@
 use crate::agent_session_repository;
 use crate::catalog::is_corruption;
 use a3_application::{
-    AskResearchDetail, AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote,
-    AskResearchSource, AskResearchSourcePage, AskResearchStoreFailure, AskResearchTurn,
-    AskResearchTurnPage, EvidenceDiagramArtifact, EvidenceDiagramKind, ResearchHandoff,
-    SessionEvidenceDiagramArtifact,
+    AskResearchDetail, AskResearchEvent, AskResearchProjection, AskResearchPublicFindingKind,
+    AskResearchPublicNote, AskResearchSource, AskResearchSourcePage, AskResearchStoreFailure,
+    AskResearchTurn, AskResearchTurnPage, EvidenceDiagramArtifact, EvidenceDiagramKind,
+    ResearchHandoff, SessionEvidenceDiagramArtifact,
 };
 use a3_domain::{
     AgentDiagramArtifactId, AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId,
@@ -486,6 +486,85 @@ pub(crate) async fn list_sources(
     sources.truncate(usize::from(limit));
     AskResearchSourcePage::new(sources, has_more)
         .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn load_projection(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+    source_limit: u16,
+) -> Result<Option<AskResearchProjection>, AskResearchRepositoryError> {
+    connection
+        .execute("BEGIN DEFERRED", ())
+        .await
+        .map_err(AskResearchRepositoryError::Begin)?;
+    let result = async {
+        let Some(detail) = load_detail(connection, worktree_id, session_id, user_sequence).await?
+        else {
+            return Ok(None);
+        };
+        let sources = list_sources(
+            connection,
+            worktree_id,
+            session_id,
+            user_sequence,
+            None,
+            source_limit,
+        )
+        .await?;
+        let source_count =
+            count_sources(connection, worktree_id, session_id, user_sequence).await?;
+        AskResearchProjection::new(detail, sources, source_count)
+            .map(Some)
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+    }
+    .await;
+    match result {
+        Ok(value) => {
+            connection
+                .execute("COMMIT", ())
+                .await
+                .map_err(AskResearchRepositoryError::Commit)?;
+            Ok(value)
+        }
+        Err(error) => match connection.execute("ROLLBACK", ()).await {
+            Ok(_) => Err(error),
+            Err(source) => Err(AskResearchRepositoryError::Rollback(source)),
+        },
+    }
+}
+
+async fn count_sources(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<u16, AskResearchRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT COUNT(*) FROM (\n\
+               SELECT source_id FROM agent_work_trace_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+               UNION ALL SELECT source_id FROM agent_ask_research_sources WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3\n\
+             )",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+        .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+    let count = read_u64(&row, 0)?;
+    if count > 200 {
+        return Err(AskResearchRepositoryError::InvalidStoredData);
+    }
+    u16::try_from(count).map_err(|_| AskResearchRepositoryError::InvalidStoredData)
 }
 
 pub(crate) async fn load_source(
@@ -1337,7 +1416,7 @@ impl AskResearchRepositoryError {
 mod tests {
     use super::{
         append_event, append_sources, begin, complete, list_diagrams, list_session_diagrams,
-        list_sources, load_detail, load_diagram, load_handoff_for_task,
+        list_sources, load_detail, load_diagram, load_handoff_for_task, load_projection,
     };
     use crate::agent_session_repository;
     use a3_application::{
@@ -1394,6 +1473,12 @@ mod tests {
             )
             .await
             .map_err(|error| error.classify())?;
+            assert_eq!(
+                load_projection(&connection, worktree_id, session_id, user_sequence, 50)
+                    .await
+                    .map_err(|error| error.classify())?,
+                None
+            );
 
             let first_event = AskResearchEvent::new(
                 session_id,
@@ -1549,6 +1634,17 @@ mod tests {
                 .ok_or("trace missing")?;
             assert_eq!(trace.events().len(), 3);
             assert_eq!(trace.cited_sources(), &[source_id]);
+            let projection =
+                load_projection(&connection, worktree_id, session_id, user_sequence, 50)
+                    .await
+                    .map_err(|error| error.classify())?
+                    .ok_or("projection missing")?;
+            assert_eq!(projection.detail(), &trace);
+            assert_eq!(projection.source_count(), 1);
+            assert_eq!(
+                projection.sources().sources(),
+                std::slice::from_ref(&source)
+            );
             assert_eq!(
                 list_diagrams(&connection, worktree_id, session_id, user_sequence)
                     .await

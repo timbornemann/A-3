@@ -256,6 +256,11 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Tiefe, getrennte Darstellung des Auftrags, Render-Retry, Theme und Export. Die Mermaid-Lazy-
   Erweiterung muss initiales Bundle-, DOM-, Reduced-Motion- und Schmalfensterbudget weiterhin
   einhalten.
+- Der ADR-0040-Contract reproduziert einen Turn mit zwölf gefundenen und drei verwendeten Quellen,
+  erzwingt einen kohärenten Projektionsread und verbietet die falsche Leermeldung bei temporär
+  fehlenden Sourcedetails. Fake-Timer-Tests prüfen gruppierte Runden, logische Vorbereitung,
+  Live→Antwort ohne Remount, genau einen Auto-Collapse und Reduced Motion. Marker-Tests lassen
+  Code inert und verlangen außerhalb von Code die exakte Gleichheit zu `source_refs`.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

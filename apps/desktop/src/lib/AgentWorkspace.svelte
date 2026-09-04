@@ -47,6 +47,12 @@
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import AgentAskResearch from './AgentAskResearch.svelte';
   import AgentDiagrams from './AgentDiagrams.svelte';
+  import SourceLinkedText from './SourceLinkedText.svelte';
+  import type {
+    AgentAskResearchDetailV1,
+    AgentWorkTracePresentationV1,
+    AgentWorkTraceSourceV2,
+  } from './agent-ask-research';
   import { parseChatMarkdown } from './chat-markdown';
 
   interface Props {
@@ -162,6 +168,16 @@
   let activityRequest = 0;
   let researchRefresh = $state(0);
   let recentlyCompletedResearchSequence = $state<string | null>(null);
+  let researchProjections = $state<
+    Record<string, { detail: AgentAskResearchDetailV1; sources: AgentWorkTraceSourceV2[] }>
+  >({});
+  let researchPresentations = $state<Record<string, AgentWorkTracePresentationV1>>({});
+  let researchSourceRequest = $state<{
+    label: string;
+    nonce: number;
+    userSequence: string;
+  } | null>(null);
+  let researchSourceRequestNonce = 0;
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
@@ -190,6 +206,41 @@
   const latestResearchHasResponse = $derived(
     selectedSession?.entries.at(-1)?.kind !== 'userMessage',
   );
+
+  function rememberResearchProjection(
+    sessionId: string | undefined,
+    userSequence: string,
+    projection: { detail: AgentAskResearchDetailV1; sources: AgentWorkTraceSourceV2[] },
+  ): void {
+    if (!sessionId) return;
+    researchProjections = {
+      ...researchProjections,
+      [`${sessionId}:${userSequence}`]: projection,
+    };
+  }
+
+  function openResearchSource(userSequence: string, source: AgentWorkTraceSourceV2): void {
+    researchSourceRequestNonce += 1;
+    researchSourceRequest = {
+      label: source.referenceLabel,
+      nonce: researchSourceRequestNonce,
+      userSequence,
+    };
+  }
+
+  function rememberResearchPresentation(
+    sessionId: string | undefined,
+    userSequence: string,
+    presentation: AgentWorkTracePresentationV1,
+  ): void {
+    if (!sessionId) return;
+    const key = `${sessionId}:${userSequence}`;
+    researchPresentations = { ...researchPresentations, [key]: presentation };
+    researchProjections = {
+      ...researchProjections,
+      [key]: { detail: presentation.detail, sources: presentation.sources },
+    };
+  }
   const presentationCanBeHidden = $derived(
     selectedSummary !== null &&
       !['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state),
@@ -308,6 +359,10 @@
     pendingMessage = null;
     activity = null;
     recentlyCompletedResearchSequence = null;
+    researchProjections = {};
+    researchPresentations = {};
+    researchSourceRequest = null;
+    researchSourceRequestNonce = 0;
   }
 
   async function loadPreferences(): Promise<void> {
@@ -366,8 +421,16 @@
         preferredId && sessions.some((session) => session.sessionId === preferredId)
           ? preferredId
           : sessions[0]?.sessionId;
-      if (nextId) await selectSession(nextId);
-      else startNewSession();
+      const currentSessionAlreadyVisible =
+        nextId !== undefined &&
+        selectedSessionId === nextId &&
+        sessionView.kind === 'available' &&
+        sessionView.session.summary.sessionId === nextId;
+      if (nextId) {
+        if (!currentSessionAlreadyVisible) await selectSession(nextId);
+      } else {
+        startNewSession();
+      }
     } catch {
       if (request === sessionsRequest) sessionsView = { kind: 'error' };
     }
@@ -1096,7 +1159,7 @@
         {/if}
       </header>
 
-      <div class="message-scroll" aria-live="polite">
+      <div class="message-scroll">
         {#if sessionView.kind === 'loading'}
           <div class="center-state" role="status">Session wird geladen …</div>
         {:else if sessionView.kind === 'missing'}
@@ -1149,6 +1212,16 @@
           <div class="messages">
             {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
               {@const entryCommands = entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
+              {@const responseUserSequence =
+                entry.kind !== 'userMessage' &&
+                directlyAnswersUser(sessionView.session.entries, entryIndex)
+                  ? precedingUserSequence(sessionView.session.entries, entryIndex)
+                  : null}
+              {@const entryResearchSources = responseUserSequence
+                ? (researchProjections[
+                    `${sessionView.session.summary.sessionId}:${responseUserSequence}`
+                  ]?.sources ?? [])
+                : []}
               {@const displayedEntryText =
                 entryCommands.length > 0
                   ? commandSubjectText(entry.text, entryCommands)
@@ -1178,48 +1251,98 @@
                   {/if}
                   {#each parseChatMarkdown(displayedEntryText) as block, blockIndex (blockIndex)}
                     {#if block.kind === 'heading'}
-                      <div class="markdown-heading" data-level={block.level}>{block.text}</div>
+                      <div class="markdown-heading" data-level={block.level}>
+                        <SourceLinkedText
+                          text={block.text}
+                          sources={entryResearchSources}
+                          onsource={(source) =>
+                            responseUserSequence &&
+                            openResearchSource(responseUserSequence, source)}
+                        />
+                      </div>
                     {:else if block.kind === 'paragraph'}
-                      <p>{block.text}</p>
+                      <p>
+                        <SourceLinkedText
+                          text={block.text}
+                          sources={entryResearchSources}
+                          onsource={(source) =>
+                            responseUserSequence &&
+                            openResearchSource(responseUserSequence, source)}
+                        />
+                      </p>
                     {:else if block.kind === 'list'}
                       {#if block.ordered}
                         <ol>
-                          {#each block.items as item, itemIndex (itemIndex)}<li>{item}</li>{/each}
+                          {#each block.items as item, itemIndex (itemIndex)}<li>
+                              <SourceLinkedText
+                                text={item}
+                                sources={entryResearchSources}
+                                onsource={(source) =>
+                                  responseUserSequence &&
+                                  openResearchSource(responseUserSequence, source)}
+                              />
+                            </li>{/each}
                         </ol>
                       {:else}
                         <ul>
-                          {#each block.items as item, itemIndex (itemIndex)}<li>{item}</li>{/each}
+                          {#each block.items as item, itemIndex (itemIndex)}<li>
+                              <SourceLinkedText
+                                text={item}
+                                sources={entryResearchSources}
+                                onsource={(source) =>
+                                  responseUserSequence &&
+                                  openResearchSource(responseUserSequence, source)}
+                              />
+                            </li>{/each}
                         </ul>
                       {/if}
                     {:else if block.kind === 'quote'}
-                      <blockquote>{block.text}</blockquote>
+                      <blockquote>
+                        <SourceLinkedText
+                          text={block.text}
+                          sources={entryResearchSources}
+                          onsource={(source) =>
+                            responseUserSequence &&
+                            openResearchSource(responseUserSequence, source)}
+                        />
+                      </blockquote>
                     {:else}
                       <pre><code data-language={block.language}>{block.text}</code></pre>
                     {/if}
                   {/each}
                 </div>
-                {#if entry.kind !== 'userMessage' && directlyAnswersUser(sessionView.session.entries, entryIndex)}
-                  {@const askUserSequence = precedingUserSequence(
-                    sessionView.session.entries,
-                    entryIndex,
-                  )}
-                  {#if askUserSequence}
-                    <AgentAskResearch
-                      sessionId={sessionView.session.summary.sessionId}
-                      userSequence={askUserSequence}
-                      refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                      recentlyCompleted={askUserSequence === recentlyCompletedResearchSequence}
-                      oncontinue={() => void continueResearch()}
-                    />
-                    <AgentDiagrams
-                      sessionId={sessionView.session.summary.sessionId}
-                      userSequence={askUserSequence}
-                      refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                      summaries={sessionView.session.entries.find(
-                        (candidate) => candidate.sequence === askUserSequence,
-                      )?.diagrams}
-                    />
-                  {/if}
+                {#if responseUserSequence && responseUserSequence !== latestResearchSequence}
+                  <AgentAskResearch
+                    sessionId={sessionView.session.summary.sessionId}
+                    userSequence={responseUserSequence}
+                    refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                    responseVisible
+                    sourceRequest={researchSourceRequest}
+                    presentation={researchPresentations[
+                      `${sessionView.session.summary.sessionId}:${responseUserSequence}`
+                    ] ?? null}
+                    onprojectionchange={(projection) =>
+                      rememberResearchProjection(
+                        selectedSummary?.sessionId,
+                        responseUserSequence,
+                        projection,
+                      )}
+                    onpresentationchange={(presentation) =>
+                      rememberResearchPresentation(
+                        selectedSummary?.sessionId,
+                        responseUserSequence,
+                        presentation,
+                      )}
+                    oncontinue={() => void continueResearch()}
+                  />
+                  <AgentDiagrams
+                    sessionId={sessionView.session.summary.sessionId}
+                    userSequence={responseUserSequence}
+                    refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                    summaries={sessionView.session.entries.find(
+                      (candidate) => candidate.sequence === responseUserSequence,
+                    )?.diagrams}
+                  />
                 {/if}
                 {#if entry.kind === 'plan' && entry.planRevision === sessionView.session.summary.currentPlanRevision && sessionView.session.summary.mode === 'plan' && sessionView.session.summary.state === 'awaitingPlanReview'}
                   <div class="plan-actions">
@@ -1249,29 +1372,56 @@
                 <div class="message-text">{pendingMessage}</div>
               </article>
             {/if}
-            {#if pendingMessage || sessionView.session.summary.state === 'running'}
-              {#if latestResearchSequence && !latestResearchHasResponse}
-                <AgentAskResearch
+            {#if (pendingMessage || sessionView.session.summary.state === 'running') && !latestResearchSequence}
+              <article class="message agent-message working" role="status">
+                <span class="working-dot"></span>
+                <div>
+                  <strong>A^3 arbeitet</strong>
+                  <p>
+                    {sessionView.session.summary.mode === 'plan'
+                      ? 'Strukturiert Entscheidungen und Prüfschritte …'
+                      : sessionView.session.summary.mode === 'ask'
+                        ? 'Recherche wird vorbereitet …'
+                        : 'Analysiert Aufgabe, Kontext und sichere Ausführung …'}
+                  </p>
+                </div>
+              </article>
+            {/if}
+            {#if latestResearchSequence}
+              <AgentAskResearch
+                sessionId={sessionView.session.summary.sessionId}
+                userSequence={latestResearchSequence}
+                refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                live={!latestResearchHasResponse && sessionView.session.summary.state === 'running'}
+                recentlyCompleted={latestResearchSequence === recentlyCompletedResearchSequence}
+                responseVisible={latestResearchHasResponse}
+                sourceRequest={researchSourceRequest}
+                presentation={researchPresentations[
+                  `${sessionView.session.summary.sessionId}:${latestResearchSequence}`
+                ] ?? null}
+                onprojectionchange={(projection) =>
+                  rememberResearchProjection(
+                    selectedSummary?.sessionId,
+                    latestResearchSequence,
+                    projection,
+                  )}
+                onpresentationchange={(presentation) =>
+                  rememberResearchPresentation(
+                    selectedSummary?.sessionId,
+                    latestResearchSequence,
+                    presentation,
+                  )}
+                oncontinue={() => void continueResearch()}
+              />
+              {#if latestResearchHasResponse}
+                <AgentDiagrams
                   sessionId={sessionView.session.summary.sessionId}
                   userSequence={latestResearchSequence}
                   refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                  live
-                  oncontinue={() => void continueResearch()}
+                  summaries={sessionView.session.entries.find(
+                    (candidate) => candidate.sequence === latestResearchSequence,
+                  )?.diagrams}
                 />
-              {:else}
-                <article class="message agent-message working" role="status">
-                  <span class="working-dot"></span>
-                  <div>
-                    <strong>A^3 arbeitet</strong>
-                    <p>
-                      {sessionView.session.summary.mode === 'plan'
-                        ? 'Strukturiert Entscheidungen und Prüfschritte …'
-                        : sessionView.session.summary.mode === 'ask'
-                          ? 'Recherche wird vorbereitet …'
-                          : 'Analysiert Aufgabe, Kontext und sichere Ausführung …'}
-                    </p>
-                  </div>
-                </article>
               {/if}
             {/if}
           </div>
@@ -1447,11 +1597,17 @@
         {#if latestResearchSequence && selectedSummary && (!activeTaskId || inspectorTab === 'progress')}
           <AgentAskResearch
             compact
+            mirror
             sessionId={selectedSummary.sessionId}
             userSequence={latestResearchSequence}
             refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
             live={selectedSummary.state === 'running' && !activeTaskId}
             recentlyCompleted={latestResearchSequence === recentlyCompletedResearchSequence}
+            responseVisible={latestResearchHasResponse}
+            sourceRequest={researchSourceRequest}
+            presentation={researchPresentations[
+              `${selectedSummary.sessionId}:${latestResearchSequence}`
+            ] ?? null}
             oncontinue={() => void continueResearch()}
           />
         {/if}

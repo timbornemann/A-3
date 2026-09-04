@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentAskResearch from './AgentAskResearch.svelte';
-import type { AgentAskResearchDetailV1 } from './agent-ask-research';
+import type { AgentAskResearchDetailV1, AgentWorkTracePresentationV1 } from './agent-ask-research';
 
 const id = (digit: string): string => digit.repeat(64);
 const emptySources = vi.fn(async () => ({
@@ -134,14 +134,145 @@ describe('AgentAskResearch', () => {
     });
 
     await fireEvent.click(await screen.findByText('Recherche & Quellen'));
-    expect(await screen.findByText('Gefundene und verwendete Quellen')).toBeTruthy();
-    expect(await screen.findByText(/Für Ergebnis verwendet/)).toBeTruthy();
+    expect(await screen.findByText('Quellen')).toBeTruthy();
+    expect(await screen.findByText('Für die Antwort verwendet')).toBeTruthy();
     expect(screen.getByText(/feste Sicherheits- oder Ressourcengrenze/)).toBeTruthy();
     expect(screen.queryByText(/provider|token|snapshot/i)).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: /src\/late\.rs:201/ }));
     expect(await screen.findByText('// TODO')).toBeTruthy();
     expect(previewLoader).toHaveBeenCalledWith(id('1'), '1', id('2'));
+  });
+
+  it('keeps known source counts and shows retry instead of a false empty state', async () => {
+    render(AgentAskResearch, {
+      detailLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: {
+          detail: {
+            ...detailResponse([step('Antwort veröffentlicht', '101', 'completed', 'completed')])
+              .result.detail,
+            citedSourceCount: 3,
+            sourceCount: 12,
+          },
+          status: 'available' as const,
+        },
+      })),
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: vi.fn(async () => {
+        throw new Error('temporary source page failure');
+      }),
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    expect(await screen.findByText(/12 Quellen wurden gefunden/)).toBeTruthy();
+    expect(screen.queryByText(/Noch keine zitierbare/)).toBeNull();
+  });
+
+  it('restores disclosure, source selection, and preview when a turn changes placement', async () => {
+    let retained: AgentWorkTracePresentationV1 | null = null;
+    const detailLoader = vi.fn(async () =>
+      detailResponse([step('Antwort veröffentlicht', '101', 'completed', 'completed')]),
+    );
+    const sourcesLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        nextCursor: null,
+        sources: [
+          {
+            endLine: 20,
+            kind: 'file' as const,
+            path: 'src/storage.py',
+            reason: 'sourceText' as const,
+            sourceRef: id('2'),
+            startLine: 18,
+            symbol: null,
+            usedForAnswer: true,
+          },
+        ],
+        status: 'available' as const,
+      },
+    }));
+    const previewLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        preview: {
+          highlight: null,
+          language: 'python' as const,
+          lineCount: 3,
+          pathDisplay: 'src/storage.py',
+          startLine: 18,
+          text: 'def load_tasks():\n    return []\n',
+          truncatedAfter: false,
+          truncatedBefore: false,
+        },
+        status: 'available' as const,
+      },
+    }));
+    const first = render(AgentAskResearch, {
+      detailLoader,
+      onpresentationchange: (presentation) => (retained = presentation),
+      previewLoader,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader,
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    await fireEvent.click(await screen.findByRole('button', { name: /src\/storage\.py:18/ }));
+    expect(await screen.findByText(/def load_tasks/)).toBeTruthy();
+    expect(retained).not.toBeNull();
+    expect((retained as AgentWorkTracePresentationV1 | null)?.expanded).toBe(true);
+    first.unmount();
+
+    const restored = render(AgentAskResearch, {
+      detailLoader,
+      presentation: retained,
+      previewLoader,
+      refreshKey: '2',
+      sessionId: id('1'),
+      sourcesLoader,
+      userSequence: '1',
+    });
+    await tick();
+    expect(restored.container.querySelector('details')?.open).toBe(true);
+    expect(await screen.findByText(/def load_tasks/)).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /src\/storage\.py:18/ }).getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('groups repeated preparation events and numbers decision rounds', async () => {
+    render(AgentAskResearch, {
+      detailLoader: vi.fn(async () =>
+        detailResponse([
+          step('Projektstand wird gebunden', '100', 'preparing'),
+          step('Projektstand ist gebunden', '101', 'preparing'),
+          step('Task Lens startet', '102', 'locating'),
+          step('Task Lens ist fertig', '103', 'locating'),
+          step('Erste Entscheidung', '104', 'deciding'),
+          step('Erste Quelle lesen', '105', 'reading'),
+          step('Zweite Entscheidung', '106', 'deciding'),
+          step('Antwort formulieren', '107', 'answeringOrPlanning'),
+        ]),
+      ),
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader: emptySources,
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByText('Recherche & Quellen'));
+    expect(screen.queryByText('Projektstand wird gebunden', { selector: 'p' })).toBeNull();
+    expect(screen.getByText('Projektstand ist gebunden')).toBeTruthy();
+    expect(screen.queryByText('Task Lens startet', { selector: 'p' })).toBeNull();
+    expect(screen.getByText('Task Lens ist fertig')).toBeTruthy();
+    expect(screen.getByText('Recherche-Runde 1')).toBeTruthy();
+    expect(screen.getByText('Recherche-Runde 2')).toBeTruthy();
+    expect(screen.getByText('Abschluss')).toBeTruthy();
   });
 
   it('explains traces that predate V30', async () => {
@@ -174,6 +305,77 @@ describe('AgentAskResearch', () => {
     expect(screen.queryByText(/älteren Antwort/)).toBeNull();
   });
 
+  it('falls back to the compatible trace API when the coherent projection is unavailable', async () => {
+    const detailLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'notRecorded' as const },
+    }));
+    const projectionLoader = vi.fn(async () => {
+      throw new Error('query_agent_work_trace_projection is not available');
+    });
+    const sourcesLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { nextCursor: null, sources: [], status: 'available' as const },
+    }));
+    render(AgentAskResearch, {
+      detailLoader,
+      live: true,
+      projectionLoader,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader,
+      userSequence: '1',
+    });
+
+    expect(await screen.findByText(/Rechercheweg wird vorbereitet/)).toBeTruthy();
+    expect(screen.queryByText(/konnten gerade nicht geladen/)).toBeNull();
+    expect(projectionLoader).toHaveBeenCalledOnce();
+    expect(detailLoader).toHaveBeenCalledOnce();
+    expect(sourcesLoader).not.toHaveBeenCalled();
+  });
+
+  it('loads an existing trace through the compatible API after a projection failure', async () => {
+    const detailLoader = vi.fn(async () =>
+      detailResponse([step('Projektstand wird gebunden', '100', 'preparing')]),
+    );
+    const projectionLoader = vi.fn(async () => {
+      throw new Error('temporary projection read failure');
+    });
+    const sourcesLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        nextCursor: null,
+        sources: [
+          {
+            endLine: 20,
+            kind: 'file' as const,
+            path: 'src/storage.py',
+            reason: 'sourceText' as const,
+            sourceRef: id('2'),
+            startLine: 18,
+            symbol: null,
+            usedForAnswer: false,
+          },
+        ],
+        status: 'available' as const,
+      },
+    }));
+    render(AgentAskResearch, {
+      detailLoader,
+      live: true,
+      projectionLoader,
+      refreshKey: '1',
+      sessionId: id('1'),
+      sourcesLoader,
+      userSequence: '1',
+    });
+
+    expect(await screen.findByText('Zusätzlich gefunden')).toBeTruthy();
+    expect(timelineAction('Projektstand wird gebunden')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /【S1】 src\/storage\.py:18–20/ })).toBeTruthy();
+    expect(screen.queryByText(/konnten gerade nicht geladen/)).toBeNull();
+  });
+
   it('reveals a live batch step by step and advances the active marker', async () => {
     vi.useFakeTimers();
     render(AgentAskResearch, {
@@ -181,8 +383,9 @@ describe('AgentAskResearch', () => {
         detailResponse([
           step('Projektstand binden', '100', 'preparing'),
           step('Task Lens auswerten', '101'),
-          step('Quellen prüfen', '102', 'reading'),
-          step('Antwort belegen', '103', 'answeringOrPlanning'),
+          step('Nächsten Schritt wählen', '102', 'deciding'),
+          step('Quellen prüfen', '103', 'reading'),
+          step('Antwort belegen', '104', 'answeringOrPlanning'),
         ]),
       ),
       live: true,
@@ -208,13 +411,15 @@ describe('AgentAskResearch', () => {
       screen.getByText('Task Lens auswerten').closest('li')?.getAttribute('aria-current'),
     ).toBe('step');
 
-    await vi.advanceTimersByTimeAsync(360);
+    await vi.advanceTimersByTimeAsync(540);
     await tick();
     expect(timelineAction('Antwort belegen').closest('li')?.getAttribute('data-step-state')).toBe(
       'active',
     );
     expect(screen.getAllByText('In Arbeit')).toHaveLength(1);
-    expect(screen.getByText('3 Quellen gefunden')).toBeTruthy();
+    expect(screen.queryByText('Aktueller Stand')).toBeNull();
+    expect(screen.getByText('Recherche-Runde 1')).toBeTruthy();
+    expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
   });
 
   it('appends a newly polled step without replacing the visible timeline', async () => {
@@ -224,7 +429,7 @@ describe('AgentAskResearch', () => {
       reads += 1;
       return detailResponse([
         step('Bereits sichtbarer Schritt', '100', 'preparing'),
-        ...(reads > 1 ? [step('Neu eingetroffener Schritt', '101')] : []),
+        ...(reads > 1 ? [step('Neu eingetroffener Schritt', '101', 'locating')] : []),
       ]);
     });
     const props = {
@@ -245,7 +450,6 @@ describe('AgentAskResearch', () => {
     await view.rerender({ ...props, refreshKey: '2' });
     await vi.advanceTimersByTimeAsync(0);
     await tick();
-    expect(screen.queryAllByText('Neu eingetroffener Schritt')).toHaveLength(1);
     expect(
       timelineAction('Bereits sichtbarer Schritt').closest('li')?.getAttribute('aria-current'),
     ).toBe('step');
@@ -271,6 +475,7 @@ describe('AgentAskResearch', () => {
       ),
       recentlyCompleted: true,
       refreshKey: '2',
+      responseVisible: true,
       sessionId: id('1'),
       sourcesLoader: emptySources,
       userSequence: '1',
@@ -312,7 +517,7 @@ describe('AgentAskResearch', () => {
 
     await fireEvent.click(await screen.findByText('Recherche & Quellen'));
     expect(await screen.findByText(label)).toBeTruthy();
-    expect(screen.getByText('3 Quellen gefunden')).toBeTruthy();
+    expect(screen.queryByText('Aktueller Stand')).toBeNull();
     expect(
       timelineAction(`Recherche ${state}`).closest('li')?.getAttribute('data-step-state'),
     ).toBe(state);
@@ -353,9 +558,9 @@ describe('AgentAskResearch', () => {
       detailResponse(
         sequence === '1'
           ? [
-              step('Alter Schritt eins', '100'),
-              step('Alter Schritt zwei', '101'),
-              step('Alter Schritt drei', '102'),
+              step('Alter Schritt eins', '100', 'preparing'),
+              step('Alter Schritt zwei', '101', 'locating'),
+              step('Alter Schritt drei', '102', 'reading'),
             ]
           : [step('Neuer Schritt', '200', 'preparing')],
       ),

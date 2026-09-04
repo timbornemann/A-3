@@ -639,6 +639,52 @@ pub struct AskResearchSourcePage {
     has_more: bool,
 }
 
+/// One coherent presentation read containing the exact trace revision and its first source page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskResearchProjection {
+    detail: AskResearchDetail,
+    sources: AskResearchSourcePage,
+    source_count: u16,
+}
+
+impl AskResearchProjection {
+    /// Creates a projection only when every source belongs to the exact requested turn.
+    pub fn new(
+        detail: AskResearchDetail,
+        sources: AskResearchSourcePage,
+        source_count: u16,
+    ) -> Result<Self, AskResearchDataError> {
+        if sources.sources().iter().any(|source| {
+            source.session_id() != detail.turn().session_id()
+                || source.user_sequence() != detail.turn().user_sequence()
+        }) || usize::from(source_count) < sources.sources().len()
+            || sources.has_more() != (usize::from(source_count) > sources.sources().len())
+        {
+            return Err(AskResearchDataError::InvalidDetail);
+        }
+        Ok(Self {
+            detail,
+            sources,
+            source_count,
+        })
+    }
+    /// Returns the exact bounded event and citation projection.
+    #[must_use]
+    pub const fn detail(&self) -> &AskResearchDetail {
+        &self.detail
+    }
+    /// Returns the first bounded source page from the same read snapshot.
+    #[must_use]
+    pub const fn sources(&self) -> &AskResearchSourcePage {
+        &self.sources
+    }
+    /// Returns the total source count observed in the same read snapshot.
+    #[must_use]
+    pub const fn source_count(&self) -> u16 {
+        self.source_count
+    }
+}
+
 impl AskResearchSourcePage {
     /// Creates a page of at most 50 sources.
     pub fn new(
@@ -723,6 +769,42 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         session_id: AgentSessionId,
         user_sequence: AgentSessionSequence,
     ) -> AskResearchStoreFuture<'a, Option<AskResearchDetail>>;
+    /// Loads detail, citations, and the first source page from one consistent storage snapshot.
+    fn load_projection<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+        source_limit: u16,
+    ) -> AskResearchStoreFuture<'a, Option<AskResearchProjection>> {
+        Box::pin(async move {
+            let Some(detail) = self.load_detail(project, session_id, user_sequence).await? else {
+                return Ok(None);
+            };
+            let sources = self
+                .list_sources(project, session_id, user_sequence, None, source_limit)
+                .await?;
+            let mut source_count = sources.sources().len();
+            let mut after = sources.sources().last().map(AskResearchSource::ordinal);
+            let mut has_more = sources.has_more();
+            while has_more {
+                let page = self
+                    .list_sources(project, session_id, user_sequence, after, 50)
+                    .await?;
+                source_count = source_count.saturating_add(page.sources().len());
+                after = page.sources().last().map(AskResearchSource::ordinal);
+                has_more = page.has_more();
+                if after.is_none() || source_count > 200 {
+                    return Err(AskResearchStoreFailure::InvalidStoredData);
+                }
+            }
+            let source_count = u16::try_from(source_count)
+                .map_err(|_| AskResearchStoreFailure::InvalidStoredData)?;
+            AskResearchProjection::new(detail, sources, source_count)
+                .map(Some)
+                .map_err(|_| AskResearchStoreFailure::InvalidStoredData)
+        })
+    }
     /// Loads one bounded ordinal source page.
     fn list_sources<'a>(
         &'a self,

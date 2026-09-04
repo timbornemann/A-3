@@ -256,6 +256,10 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   persistiert. Antwort, Zitate und bis zu drei Diagramme schließen in derselben Transaktion ab.
   Presentation Delete entfernt V32 über die Session-Entry-Cascade, Archivieren erhält die Daten.
   Die Migration führt keinen Backfill für alte Nachrichten oder Diagramme aus.
+- ADR-0040 benötigt keine Knowledge-Migration. Detail, Zitate und erste Quellenpage werden aus
+  V30–V32 in einer gemeinsamen Read-Transaktion projiziert. Öffentliche `S`-Labels entstehen
+  flüchtig aus der vorhandenen turnlokalen Ordinalzahl; weder Labels noch Antwortanreicherung oder
+  Quelltext werden zusätzlich persistiert.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

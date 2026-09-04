@@ -64,6 +64,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0037](0037-nachvollziehbare-adaptive-ask-recherche.md)            | Nachvollziehbare adaptive Ask-Recherche                 |
 | [0038](0038-agentische-mehr-runden-recherche.md)                   | Agentische Mehr-Runden-Recherche                       |
 | [0039](0039-evidenzgebundene-slash-commands.md)                    | Evidenzgebundene Slash Commands                        |
+| [0040](0040-konsistente-arbeitsweg-projektion-und-quellenverweise.md) | Konsistente Arbeitsweg-Projektion und Quellenverweise |
 
 ## Neue ADRs
 

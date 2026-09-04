@@ -1143,6 +1143,14 @@ nativen Rust-Dialog, validiert den gerenderten Inhalt erneut und gibt der WebVie
 Knowledge V32 hält Command-Aufruf und Artefaktquellen über Reopen, während Presentation Delete sie
 entfernt und ein Indexwechsel den historischen Stand sichtbar kennzeichnet.
 
+Arbeitsweg-Beruhigung vom 2026-09-04 nach ADR-0040: Der neueste Turn behält vom ersten Live-Event
+bis zur Antwort dieselbe Rechercheinstanz. Timeline und Inspector verwenden eine gemeinsame
+progressive Projektion mit Vorbereitung, nummerierten Runden und Abschluss. Der redundante
+Statuskasten entfällt; erfolgreiche Läufe klappen nach sichtbarer Antwort einmalig ruhig ein.
+Antwortmarker zeigen Core-zugeordnete Dateinamen und Zeilen, öffnen die sichere Vorschau und die
+Quellenliste trennt verwendete von zusätzlich gefundenen Quellen. Kohärente Projektionsreads
+verhindern, dass bekannte Quellen bei einem parallelen Poll fälschlich als leer erscheinen.
+
 Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
 Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,
 lokales Lazy Rendering, Sanitizer, Render-Retry und path-freien Export. Formatcheck, ESLint,

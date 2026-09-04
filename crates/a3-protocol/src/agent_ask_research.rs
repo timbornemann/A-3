@@ -392,7 +392,11 @@ response!(
 
 /// Source-list availability.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", tag = "status")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum AgentAskResearchSourcesResultV1 {
     /// No project is active.
     NoProject,
@@ -450,6 +454,24 @@ mod tests {
         assert!(
             serde_json::from_str::<QueryAgentAskResearchSourcePreviewRequestV1>(preview).is_err()
         );
+    }
+
+    #[test]
+    fn source_page_cursor_uses_the_camel_case_wire_name() -> Result<(), serde_json::Error> {
+        let encoded = serde_json::to_value(AgentAskResearchSourcesResultV1::Available {
+            sources: Vec::new(),
+            next_cursor: Some("a".repeat(64)),
+        })?;
+        let object = encoded.as_object().ok_or_else(|| {
+            serde_json::Error::io(std::io::Error::other("source result is not an object"))
+        })?;
+
+        assert_eq!(
+            object.get("nextCursor"),
+            Some(&serde_json::json!("a".repeat(64)))
+        );
+        assert!(!object.contains_key("next_cursor"));
+        Ok(())
     }
 
     #[test]

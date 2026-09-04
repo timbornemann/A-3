@@ -3,6 +3,8 @@ import {
   queryAgentAskResearchDetail,
   queryAgentAskResearchSourcePreview,
   queryAgentAskResearchSources,
+  queryAgentWorkTraceProjection,
+  queryAgentWorkTraceSourcesV2,
 } from './agent-ask-research';
 
 const id = (digit: string): string => digit.repeat(64);
@@ -86,5 +88,63 @@ describe('Ask research V1 client', () => {
     await expect(
       queryAgentAskResearchSources(id('1'), '1', null, tooManySources),
     ).rejects.toThrow();
+  });
+
+  it('binds coherent source paging to the opaque projection reference', async () => {
+    const source = {
+      endLine: 20,
+      kind: 'symbol',
+      path: 'taskflow/storage/base.py',
+      reason: 'sourceText',
+      referenceLabel: 'S1',
+      sourceRef: id('3'),
+      startLine: 18,
+      symbol: 'save_tasks',
+      usedForAnswer: true,
+    };
+    const detail = {
+      citedSourceCount: 1,
+      depth: 'standard',
+      legacy: false,
+      mode: 'ask',
+      sourceCount: 1,
+      stale: false,
+      steps: [],
+      userSequence: '7',
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        protocolVersion: 1,
+        result: {
+          detail,
+          nextCursor: id('4'),
+          projectionRef: id('2'),
+          sources: [source],
+          status: 'available',
+        },
+      })
+      .mockResolvedValueOnce({
+        protocolVersion: 1,
+        result: { nextCursor: null, sources: [], status: 'available' },
+      });
+
+    const projection = await queryAgentWorkTraceProjection(id('1'), '7', invoke);
+    const page = await queryAgentWorkTraceSourcesV2(id('1'), '7', id('2'), id('4'), invoke);
+
+    expect(projection.result.status).toBe('available');
+    expect(page.result.status).toBe('available');
+    expect(invoke.mock.calls[1]).toEqual([
+      'query_agent_work_trace_sources_v2',
+      {
+        request: {
+          cursor: id('4'),
+          projectionRef: id('2'),
+          protocolVersion: 1,
+          sessionId: id('1'),
+          userSequence: '7',
+        },
+      },
+    ]);
   });
 });

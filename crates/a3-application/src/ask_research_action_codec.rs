@@ -183,11 +183,70 @@ fn decode_answer(
         }
         ordinals.push(ordinal);
     }
+    if markdown_source_ordinals(&markdown)? != seen {
+        return Err(AskResearchDecisionDecodeError::InvalidValue);
+    }
     Ok(AskResearchDecision::Answer {
         markdown,
         source_ordinals: ordinals,
         note,
     })
+}
+
+fn markdown_source_ordinals(
+    markdown: &str,
+) -> Result<BTreeSet<u16>, AskResearchDecisionDecodeError> {
+    let mut result = BTreeSet::new();
+    let mut fenced = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced || line.starts_with("    ") {
+            continue;
+        }
+        let characters = line.char_indices().collect::<Vec<_>>();
+        let mut index = 0usize;
+        let mut inline_delimiter = None;
+        while index < characters.len() {
+            if characters[index].1 == '`' {
+                let start = index;
+                while index < characters.len() && characters[index].1 == '`' {
+                    index += 1;
+                }
+                let width = index.saturating_sub(start);
+                inline_delimiter = match inline_delimiter {
+                    Some(open) if open == width => None,
+                    Some(open) => Some(open),
+                    None => Some(width),
+                };
+                continue;
+            }
+            if inline_delimiter.is_none() && characters[index].1 == '【' {
+                let byte_start = characters[index].0;
+                if let Some(rest) = line[byte_start..].strip_prefix("【S")
+                    && let Some(end) = rest.find('】')
+                {
+                    let marker = &rest[..end];
+                    if !marker.is_empty() && marker.bytes().all(|byte| byte.is_ascii_digit()) {
+                        let ordinal = source_ordinal(&format!("S{marker}"))?;
+                        result.insert(ordinal);
+                        let consumed_bytes = "【S".len() + end + '】'.len_utf8();
+                        while index < characters.len()
+                            && characters[index].0 < byte_start.saturating_add(consumed_bytes)
+                        {
+                            index += 1;
+                        }
+                        continue;
+                    }
+                }
+            }
+            index += 1;
+        }
+    }
+    Ok(result)
 }
 
 fn decode_research(
@@ -447,11 +506,11 @@ mod tests {
     use super::*;
     #[test]
     fn decoder_accepts_answer_and_rejects_unknown_fields() -> Result<(), Box<dyn Error>> {
-        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"Frage beantworten","finding_kind":"observation","finding":"Quelle gelesen","finding_source_refs":["S2"],"gap":"Keine","next_step":"Antworten"},"markdown":"Fertig","source_refs":["S2"]}}"#)?;
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"Frage beantworten","finding_kind":"observation","finding":"Quelle gelesen","finding_source_refs":["S2"],"gap":"Keine","next_step":"Antworten"},"markdown":"Fertig 【S2】","source_refs":["S2"]}}"#)?;
         assert_eq!(
             decoded,
             AskResearchDecision::Answer {
-                markdown: "Fertig".to_owned(),
+                markdown: "Fertig 【S2】".to_owned(),
                 source_ordinals: vec![2],
                 note: AskResearchDecisionNote {
                     goal: "Frage beantworten".to_owned(),
@@ -493,5 +552,17 @@ mod tests {
     #[test]
     fn decoder_requires_sources_for_public_observations() {
         assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[{"kind":"searchIndex","query":"q"}]}}"#).is_err());
+    }
+
+    #[test]
+    fn answer_markers_must_match_structured_sources_outside_code() {
+        let valid = r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1","S3"],"gap":"g","next_step":"n"},"markdown":"Text 【S1】 und 【S3】\n\n```text\n【S99】\n``` sowie `【S88】`","source_refs":["S1","S3"]}}"#;
+        assert!(DecodeAskResearchDecision.decode(valid).is_ok());
+        for invalid in [
+            r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text","source_refs":["S1"]}}"#,
+            r#"{"schema_version":2,"decision":{"kind":"answer","note":{"goal":"g","finding_kind":"observation","finding":"f","finding_source_refs":["S1"],"gap":"g","next_step":"n"},"markdown":"Text 【S2】","source_refs":["S1"]}}"#,
+        ] {
+            assert!(DecodeAskResearchDecision.decode(invalid).is_err());
+        }
     }
 }
