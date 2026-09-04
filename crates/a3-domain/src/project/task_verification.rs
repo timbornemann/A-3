@@ -394,6 +394,19 @@ pub struct VerificationSpec {
 }
 
 impl VerificationSpec {
+    /// Reuses one immutable verification contract for a newly introduced replan step.
+    ///
+    /// The target and requirement remain unchanged; only the Core-owned identity is replaced so
+    /// retained historical steps and their replacements cannot share a specification identity.
+    #[must_use]
+    pub fn reidentified(&self, id: VerificationSpecId) -> Self {
+        Self {
+            id,
+            target: self.target.clone(),
+            requirement: self.requirement.clone(),
+        }
+    }
+
     /// Reconstructs a historical H2 method-plus-text specification for audit and migration.
     ///
     /// Legacy specifications are deliberately not executable by the E6 verification engine.

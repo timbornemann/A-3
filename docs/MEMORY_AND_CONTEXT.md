@@ -140,6 +140,22 @@ Regeln:
 - Ein fehlgeschlagener Versuch wird nicht überschrieben.
 - Replan verändert zukünftige Schritte und erhält die Historie.
 
+ADR-0042 schließt die bisherige Lücke zwischen sichtbarem Conversation-Plan und Task Ledger. Der
+Core liest aus den verbindlichen Abschnitten `Implementation Changes` und `Test Plan` höchstens 64
+geordnete Ergebnisse. Für jedes Ergebnis erzeugt er eine eigene Step- und Verification-Identität,
+Begründung, erwartete Evidence und eine explizite Abhängigkeit zum Vorgänger. Ein normaler Plan ist
+damit nicht länger ein einzelner großer Ledger-Schritt; Implementierung und reale Tests werden
+einzeln ausgeführt und bestätigt.
+
+Fordert der aktuelle Agent-Turn aufgrund neuer Evidence einen Replan an, wird zuerst sein aktiver
+Versuch als blockiert abgeschlossen. Danach pensioniert eine atomare Ledger-Revision ausschließlich
+offene betroffene Schritte, fügt ein sichtbares adaptives Todo für die konkrete Planlücke ein und
+legt frische Ersatzschritte mit neuen Verification-Identitäten an. Bereits erfolgreich verifizierte
+Schritte und ihre ursprünglichen Evidence-Ketten bleiben unverändert. Der Run lokalisiert danach
+mit leerem flüchtigem Read-Kontext erneut und setzt denselben endlichen Controller fort. Eine
+fachliche Richtungsfrage wird als `AwaitingUser` sichtbar; sie ist weder Replan noch
+Policy-Freigabe.
+
 E6 macht `verification_spec` operational: Command, Test, DiffInvariant, Diagnostic und UserConfirm
 tragen statt bloßer Methodenbezeichnung ihre Command-ID, den Targeted-/Package-/Workspace-Scope
 und die jeweils nötige Test-, Pfad-, Diagnose- oder Confirmation-Semantik. Jeder neue Schritt

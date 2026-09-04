@@ -165,6 +165,14 @@
       ? selectCurrentStep(ledgerView.result.steps)
       : null,
   );
+  let ledgerProgress = $derived(
+    ledgerView.kind === 'result' && ledgerView.result.status === 'available'
+      ? {
+          completed: ledgerView.result.steps.filter((step) => step.status === 'completed').length,
+          total: ledgerView.result.steps.length,
+        }
+      : null,
+  );
 
   function projectedRunStatus(): GlobalRunStatus {
     if (!activeProject || taskView.kind === 'noProject') return { kind: 'noProject' };
@@ -517,7 +525,7 @@
   }
 
   function selectCurrentStep(steps: TaskLensStepV1[]): TaskLensStepV1 | null {
-    const priority = ['inProgress', 'awaitingApproval', 'verifying', 'blocked'] as const;
+    const priority = ['inProgress', 'awaitingApproval', 'verifying', 'blocked', 'ready'] as const;
     return (
       priority.map((status) => steps.find((step) => step.status === status)).find(Boolean) ?? null
     );
@@ -743,8 +751,8 @@
     {#if workspaceView === 'plan'}
       <section class="task-ledger" aria-labelledby="task-ledger-heading">
         <header>
-          <p>Durable Plan</p>
-          <h3 id="task-ledger-heading">Task Ledger</h3>
+          <p>Dauerhafte Todos</p>
+          <h3 id="task-ledger-heading">Arbeitsplan</h3>
         </header>
         {#if ledgerView.kind === 'loading'}
           <p role="status" aria-live="polite">Task Ledger wird geladen …</p>
@@ -769,13 +777,24 @@
           </p>
         {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'available'}
           <p class="ledger-metadata">
-            Ledger R{ledgerView.result.ledgerRevision} · Store {ledgerView.result
-              .ledgerStoreVersion}
+            Planrevision {ledgerView.result.ledgerRevision}
+            {#if ledgerProgress !== null}
+              · {ledgerProgress.completed} von {ledgerProgress.total} Schritten erledigt
+            {/if}
           </p>
+          {#if ledgerView.result.ledgerRevision > 1}
+            <p class="replan-note">
+              Der Arbeitsplan wurde anhand eines neuen Befunds angepasst. Bereits bestätigte
+              Ergebnisse bleiben erhalten.
+            </p>
+          {/if}
           <ol class="ledger-steps">
-            {#each ledgerView.result.steps as step (step.stepId)}
+            {#each ledgerView.result.steps as step, index (step.stepId)}
               <li class:current={step.stepId === currentLedgerStep?.stepId}>
-                <span>{stepStatusLabel(step.status)}</span>
+                <div>
+                  <span>Schritt {index + 1}</span>
+                  <strong>{stepStatusLabel(step.status)}</strong>
+                </div>
                 <p>{step.intendedOutcome}</p>
               </li>
             {/each}
@@ -1489,6 +1508,14 @@
     margin: 0;
   }
 
+  .replan-note {
+    background: color-mix(in srgb, var(--color-info-surface) 72%, transparent);
+    border-left: 0.2rem solid var(--color-info);
+    color: var(--color-muted);
+    margin: 0;
+    padding: 0.65rem 0.8rem;
+  }
+
   .ledger-steps {
     display: grid;
     gap: 0.55rem;
@@ -1502,7 +1529,7 @@
     border-radius: var(--radius-control);
     display: grid;
     gap: 0.55rem;
-    grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+    grid-template-columns: minmax(9rem, auto) minmax(0, 1fr);
     padding: 0.7rem;
   }
 
@@ -1510,7 +1537,19 @@
     border-color: var(--color-info);
   }
 
+  .ledger-steps li > div {
+    display: grid;
+    gap: 0.2rem;
+  }
+
   .ledger-steps span {
+    color: var(--color-muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .ledger-steps strong {
     font-weight: 700;
   }
 

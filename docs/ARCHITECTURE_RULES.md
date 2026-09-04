@@ -144,6 +144,12 @@ Stand: 2026-08-03
     und vor Persistenz sowie Start Core-validiert sein. Ein Wechsel aus Agent zu Ask oder Plan
     verwirft die Ausführbarkeit des früheren Plans; spätere Mutation benötigt eine neue exakte
     Planfreigabe.
+17. Ein bestätigter Conversation-Plan MUSS vor der Task-Materialisierung in einen begrenzten,
+    Core-validierten Arbeitsplan mit einzeln verifizierbaren Schritten übersetzt werden. Neue
+    Evidence darf ausschließlich über eine append-only Ledger-Revision weitere Schritte
+    einfügen oder offene Schritte ersetzen; abgeschlossene Schritte werden weder umgeschrieben
+    noch stillschweigend entwertet. Automatische Replans bleiben endlich und genau eine Mutation
+    darf weiterhin den Worktree besitzen.
 
 ## 11. Tests
 

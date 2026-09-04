@@ -299,7 +299,8 @@ describe('AgentGoalWorkspace', () => {
 
     expect(await screen.findByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Core-Grenze implementieren' })).toBeTruthy();
-    expect(screen.getByText('Ledger R3 · Store 7')).toBeTruthy();
+    expect(screen.getByText('Planrevision 3 · 0 von 2 Schritten erledigt')).toBeTruthy();
+    expect(screen.getByText(/Arbeitsplan wurde anhand eines neuen Befunds angepasst/)).toBeTruthy();
     expect(screen.getAllByText('In Arbeit')).toHaveLength(2);
     expect(screen.getByText('Gesamtgate ausführen')).toBeTruthy();
     expect(ledgerLoader).toHaveBeenCalledWith({ taskId });

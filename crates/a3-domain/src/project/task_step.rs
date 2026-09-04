@@ -1,6 +1,6 @@
 use super::{
     AcceptanceCriterionId, AgentRunId, ExpectedTaskEvidence, StepVerification, TaskEvidenceId,
-    TaskLedgerRevision, TaskLedgerTimestamp, TaskStepId, VerificationSpec,
+    TaskLedgerRevision, TaskLedgerTimestamp, TaskReplanReason, TaskStepId, VerificationSpec,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -69,6 +69,14 @@ step_text_type!(
     "task-step blocking reason",
     MAX_STEP_REASON_BYTES
 );
+
+impl TaskStepBlockingReason {
+    /// Carries one already validated replan reason into the active attempt's blocked outcome.
+    #[must_use]
+    pub fn from_replan_reason(reason: &TaskReplanReason) -> Self {
+        Self(reason.as_str().to_owned())
+    }
+}
 step_text_type!(
     /// Reason why one task-step attempt failed before successful verification.
     TaskStepFailureReason,

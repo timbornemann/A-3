@@ -4,9 +4,10 @@ use crate::{
 };
 use a3_domain::{
     AgentControllerState, AgentFinishAction, AgentLedgerUpdate, AgentRun, AgentRunTimestamp,
-    AgentToolEvidenceSet, AgentUpdateLedgerAction, ProjectIdentity, RunEvent, RunEventId,
-    RunEventSequence, SnapshotId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
-    TaskReplanReason, TaskStepId, TaskStepStatus,
+    AgentToolEvidenceSet, AgentUpdateLedgerAction, ProjectIdentity, RunEvent, RunEventCode,
+    RunEventId, RunEventOutcome, RunEventPayload, RunEventSequence, SnapshotId, TaskLedger,
+    TaskLedgerError, TaskLedgerTimestamp, TaskReplanReason, TaskStepDefinition, TaskStepId,
+    TaskStepStatus,
 };
 use std::error::Error;
 use std::fmt;
@@ -101,6 +102,7 @@ impl<'a> PersistAgentLedgerMutation<'a> {
             outcome.kind(),
             AgentLedgerActionOutcomeKind::VerificationPrepared
                 | AgentLedgerActionOutcomeKind::Blocked
+                | AgentLedgerActionOutcomeKind::ReplanRequested(_)
         ) {
             return Err(PersistAgentLedgerMutationError::LedgerWasNotMutated);
         }
@@ -262,10 +264,18 @@ impl ApplyAgentLedgerUpdate {
                     AgentControllerSignal::FatalFailure,
                 )
             }
-            AgentLedgerUpdate::RequestReplan(reason) => (
-                AgentLedgerActionOutcomeKind::ReplanRequested(reason.clone()),
-                AgentControllerSignal::TurnNeedsVerification,
-            ),
+            AgentLedgerUpdate::RequestReplan(reason) => {
+                next_ledger.block_step(
+                    action.step_id(),
+                    run.id(),
+                    a3_domain::TaskStepBlockingReason::from_replan_reason(reason),
+                    timestamp,
+                )?;
+                (
+                    AgentLedgerActionOutcomeKind::ReplanRequested(reason.clone()),
+                    AgentControllerSignal::ExecutionNeedsReplan,
+                )
+            }
         };
         let advance = AdvanceAgentController.execute(
             &mut next_run,
@@ -395,6 +405,126 @@ impl From<TaskLedgerError> for ApplyAgentLedgerUpdateError {
 impl From<AgentControllerError> for ApplyAgentLedgerUpdateError {
     fn from(value: AgentControllerError) -> Self {
         Self::Controller(value)
+    }
+}
+
+/// Atomically installs one immediate, Core-validated Task Ledger revision while a run replans.
+#[derive(Debug, Clone, Copy)]
+pub struct ApplyAgentPlanRevision<'a> {
+    store: &'a dyn AgentActionStore,
+}
+
+impl<'a> ApplyAgentPlanRevision<'a> {
+    /// Creates the use case from the existing atomic Ledger/run persistence boundary.
+    #[must_use]
+    pub const fn new(store: &'a dyn AgentActionStore) -> Self {
+        Self { store }
+    }
+
+    /// Retires only non-active historical candidates and advances the run's exact Ledger anchor.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute(
+        self,
+        project: &ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        retire_step_ids: Vec<TaskStepId>,
+        additions: Vec<TaskStepDefinition>,
+        reason: TaskReplanReason,
+        event_id: RunEventId,
+        observed_at: AgentRunTimestamp,
+        control: &dyn AgentControllerControl,
+    ) -> Result<TaskLedgerStoreVersion, ApplyAgentPlanRevisionError> {
+        if control.is_cancelled() {
+            return Err(ApplyAgentPlanRevisionError::Cancelled);
+        }
+        if run.state() != AgentControllerState::Replan
+            || run.goal_contract() != ledger.goal_contract()
+            || run.task_ledger_revision() != ledger.revision()
+        {
+            return Err(ApplyAgentPlanRevisionError::InvalidState);
+        }
+        let timestamp = TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
+            .map_err(|_| ApplyAgentPlanRevisionError::InvalidTimestamp)?;
+        let mut next_ledger = ledger.clone();
+        let next_revision = next_ledger.replan(retire_step_ids, additions, reason, timestamp)?;
+        let mut next_run = run.clone();
+        let event = next_run.record_ledger_update(
+            event_id,
+            next_revision,
+            RunEventPayload::new(
+                RunEventCode::ControllerDecision,
+                Some(RunEventOutcome::Succeeded),
+                None,
+            ),
+            run.current_snapshot_id(),
+            observed_at,
+        )?;
+        let next_version = self
+            .store
+            .commit_ledger_action(
+                project,
+                expected_ledger_version,
+                run.last_event_sequence(),
+                &next_ledger,
+                &next_run,
+                &event,
+            )
+            .await?;
+        *ledger = next_ledger;
+        *run = next_run;
+        Ok(next_version)
+    }
+}
+
+/// A proposed immediate Agent plan revision failed before any partial state became authoritative.
+#[derive(Debug)]
+pub enum ApplyAgentPlanRevisionError {
+    /// Run and Ledger were not the exact current replan pair.
+    InvalidState,
+    /// Cancellation won before the atomic persistence boundary.
+    Cancelled,
+    /// The monotone timestamp could not be represented.
+    InvalidTimestamp,
+    /// The new graph violated a Task Ledger invariant.
+    Ledger(TaskLedgerError),
+    /// The run rejected the immediate Ledger revision event.
+    Run(a3_domain::AgentRunError),
+    /// Compare-and-swap persistence rejected the update.
+    Storage(AgentActionStoreFailure),
+}
+
+impl fmt::Display for ApplyAgentPlanRevisionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidState => "Agent plan revision is not anchored to the current replan",
+            Self::Cancelled => "Agent plan revision was cancelled",
+            Self::InvalidTimestamp => "Agent plan revision timestamp is invalid",
+            Self::Ledger(_) => "Agent plan revision violates the Task Ledger",
+            Self::Run(_) => "Agent plan revision violates the durable run",
+            Self::Storage(_) => "Agent plan revision could not be committed atomically",
+        })
+    }
+}
+
+impl Error for ApplyAgentPlanRevisionError {}
+
+impl From<TaskLedgerError> for ApplyAgentPlanRevisionError {
+    fn from(value: TaskLedgerError) -> Self {
+        Self::Ledger(value)
+    }
+}
+
+impl From<a3_domain::AgentRunError> for ApplyAgentPlanRevisionError {
+    fn from(value: a3_domain::AgentRunError) -> Self {
+        Self::Run(value)
+    }
+}
+
+impl From<AgentActionStoreFailure> for ApplyAgentPlanRevisionError {
+    fn from(value: AgentActionStoreFailure) -> Self {
+        Self::Storage(value)
     }
 }
 
@@ -744,10 +874,8 @@ mod tests {
     }
 
     #[test]
-    fn replan_request_retains_reason_but_does_not_rewrite_the_ledger() -> Result<(), Box<dyn Error>>
-    {
+    fn replan_request_closes_the_attempt_before_the_plan_revision() -> Result<(), Box<dyn Error>> {
         let (mut run, mut ledger, step_id) = fixture()?;
-        let original_ledger = ledger.clone();
         let reason =
             TaskReplanReason::try_from_string("the inspected dependency changed shape".to_owned())?;
         let outcome = ApplyAgentLedgerUpdate.execute(
@@ -768,8 +896,83 @@ mod tests {
             outcome.kind(),
             &AgentLedgerActionOutcomeKind::ReplanRequested(reason)
         );
-        assert_eq!(ledger, original_ledger);
-        assert_eq!(run.state(), AgentControllerState::Verify);
+        assert_eq!(
+            ledger.step(step_id).map(|step| step.status()),
+            Some(TaskStepStatus::Blocked)
+        );
+        assert_eq!(run.state(), AgentControllerState::Replan);
+        assert!(ledger.replans().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn plan_revision_is_applied_atomically_after_a_replan_request() -> Result<(), Box<dyn Error>> {
+        let (mut run, mut ledger, step_id) = fixture()?;
+        let reason =
+            TaskReplanReason::try_from_string("an additional adapter is required".to_owned())?;
+        let outcome = ApplyAgentLedgerUpdate.execute(
+            &mut run,
+            &mut ledger,
+            &AgentUpdateLedgerAction::new(
+                step_id,
+                AgentLedgerUpdate::RequestReplan(reason.clone()),
+            ),
+            None,
+            event_id(6),
+            snapshot(),
+            timestamp(6)?,
+            &Active,
+        )?;
+        let store = RecordingActionStore::default();
+        let replacement_id = TaskStepId::from_bytes([31; 32]);
+        let replacement = TaskStepDefinition::new(
+            replacement_id,
+            None,
+            TaskStepOutcome::try_from_string("implement the required adapter".to_owned())?,
+            TaskStepRationale::try_from_string("new evidence changed the plan".to_owned())?,
+            Vec::new(),
+            vec![ExpectedTaskEvidence::try_from_string(
+                "adapter source and verification result".to_owned(),
+            )?],
+            VerificationSpec::new(
+                VerificationSpecId::from_bytes([32; 32]),
+                VerificationMethod::Diagnostic,
+                VerificationRequirement::try_from_string("run the adapter test".to_owned())?,
+            ),
+        )?;
+        let version = block_on(ApplyAgentPlanRevision::new(&store).execute(
+            &project()?,
+            TaskLedgerStoreVersion::INITIAL,
+            &mut run,
+            &mut ledger,
+            vec![step_id],
+            vec![replacement],
+            reason,
+            event_id(7),
+            timestamp(7)?,
+            &Active,
+        ))?;
+
+        assert_eq!(
+            outcome.kind(),
+            &AgentLedgerActionOutcomeKind::ReplanRequested(TaskReplanReason::try_from_string(
+                "an additional adapter is required".to_owned()
+            )?)
+        );
+        assert_eq!(version, TaskLedgerStoreVersion::new(2)?);
+        assert_eq!(run.state(), AgentControllerState::Replan);
+        assert_eq!(run.task_ledger_revision(), ledger.revision());
+        assert_eq!(ledger.replans().len(), 1);
+        assert_eq!(
+            ledger
+                .step(step_id)
+                .and_then(|step| step.retired_in_revision()),
+            Some(ledger.revision())
+        );
+        assert_eq!(
+            ledger.step(replacement_id).map(|step| step.status()),
+            Some(TaskStepStatus::Ready)
+        );
         Ok(())
     }
 

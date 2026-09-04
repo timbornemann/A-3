@@ -602,6 +602,14 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 
 ### AgentAction und Prompt
 
+- Der ADR-0042-Arbeitsplan-Contract kompiliert Listen- und nummerierte Einträge aus
+  `Implementation Changes` und `Test Plan` in höchstens 64 geordnete atomare Schritte, weist jede
+  Definition einer aktuellen Verification zu und lehnt leere beziehungsweise übergroße Pläne vor
+  Task-Erzeugung ab. Replan-Regressionen müssen den aktiven Versuch zuerst schließen, die neue
+  Ledger-Revision atomar persistieren, abgeschlossene Schritte erhalten und ein neues sichtbares
+  Planlücken-Todo vor den ersetzten Nachfolgern einfügen. Ein Richtungsblocker muss zu
+  `AwaitingUser`, ein interner Executorfehler weiterhin zu `Failed` führen.
+
 - Domain-Tests prüfen Grenzen und Redaction für Search, paged File Inspect, Testselektor,
   nicht-verifizierende Ledger-Intents sowie die eindeutige Mutationsklassifikation. V1 bleibt als
   read-only Historienvertrag lesbar; V2 ergänzt ausschließlich strukturierte ApplyPatch- und

@@ -424,6 +424,13 @@ mit `-D warnings` sind grün.
 - [x] Context Compile P95 innerhalb Budget
 - [x] Provider bleibt austauschbar durch Contract-Suite
 
+ADR-0042-Erweiterung vom 2026-09-04: Der geprüfte Conversation-Plan wird jetzt vor Task-Erzeugung
+als begrenzter `AgentWorkPlan` mit getrennten Implementierungs- und Testschritten kompiliert. Der
+produktive `RequestReplan`-Pfad schließt den aktuellen Versuch, schreibt die neue Ledger-Revision
+atomar, fügt ein adaptives Planlücken-Todo ein und setzt denselben endlichen Run über
+`Localize → Plan → Execute` fort. Verifizierte Schritte bleiben unverändert; neue IDs und
+Verification-Spezifikationen kommen ausschließlich aus dem Core.
+
 Verifiziert am 2026-08-06: Das dev-only `agent-harness`-Crate baut die drei Produkt-Fixtures in
 temporären Git-Worktrees auf, führt den realen Snapshot-, Parser-, Linker-, Ranking-, Modul- und
 atomaren libSQL-Publishpfad aus und komponiert darauf den V2-Context-Compiler, den neutralen

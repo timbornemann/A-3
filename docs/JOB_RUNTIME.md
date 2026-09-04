@@ -114,6 +114,15 @@ erfolgreich verifizierten Schritt committet `ContinueVerifiedAgentPlan` den näc
 läuft weiterhin höchstens eine mutierende Aktion im Worktree; erst ohne verbleibenden bereiten oder
 aktiven Schritt beginnt die Acceptance-Prüfung.
 
+ADR-0042 wendet diese sequenzielle Materialisierung auf jeden bestätigten Agent-Arbeitsplan an.
+Wechselt der produktive Controller nach einem neuen Befund in `Replan`, bleibt derselbe
+Schedulerjob Besitzer: Er schließt den aktiven Versuch, committet genau eine neue Ledgerrevision,
+durchläuft erneut `Localize → Plan` und startet dann den ersten neuen `Ready`-Schritt. Flüchtige
+Read-Ergebnisse werden vor diesem Neustart verworfen. Höchstens acht automatische Replans und das
+bestehende 64-Turn-Limit verhindern einen offenen Loop. Ein echter Richtungsblocker beendet den
+Worker erfolgreich am menschlichen Haltepunkt `AwaitingUser`; ein interner Executorfehler wird
+weiterhin als `Failed` projiziert.
+
 ADR-0041 ergänzt vor dem Conversation-Scheduler eine dauerhafte FIFO-Projektion. Während ein
 Conversationjob den Slot besitzt, validiert der Core weitere Nachrichten vollständig und
 persistiert sie, ohne den Besitzer zu unterbrechen. Ein erfolgreicher terminaler Abschluss gibt

@@ -43,6 +43,9 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-033** Ein Schritt DARF nur nach erfolgreicher Verification als Completed gelten.
 - **FR-034** Veraltete Evidence MUSS abhängige Claims und abgeschlossene Schritte invalidieren.
 - **FR-035** Ein Run MUSS nach Appneustart sicher fortsetzbar, neu planbar oder abbrechbar sein.
+- **FR-036** Ein bestätigter Agent-Plan MUSS als begrenzte Folge einzeln verifizierbarer
+  Implementierungs- und Testschritte materialisiert werden. Neue Evidence MUSS offene Arbeit über
+  eine historische Planrevision anpassen können, ohne abgeschlossene Schritte umzuschreiben.
 
 ### Modell und Kontext
 
@@ -63,6 +66,9 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-055** Prozesse MÜSSEN argv-basiert, begrenzt und abbrechbar sein.
 - **FR-056** Nach einer Mutation MUSS der Indexzustand vor weiterer Modellarbeit abgeglichen werden.
 - **FR-057** Done MUSS an aktuelle Muss-Akzeptanzkriterien und Evidence gebunden sein.
+- **FR-058** Fehlt innerhalb eines Runs eine fachliche Richtungsentscheidung, MUSS A^3 die konkrete
+  Frage als menschlichen Haltepunkt anzeigen; sie DARF weder als technischer Erfolg noch als
+  zusätzliche Ausführungsberechtigung behandelt werden.
 
 ### Freigaben und Sicherheit
 

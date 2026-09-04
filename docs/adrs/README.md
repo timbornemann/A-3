@@ -66,6 +66,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0039](0039-evidenzgebundene-slash-commands.md)                    | Evidenzgebundene Slash Commands                        |
 | [0040](0040-konsistente-arbeitsweg-projektion-und-quellenverweise.md) | Konsistente Arbeitsweg-Projektion und Quellenverweise |
 | [0041](0041-sichere-moduswechsel-und-dauerhafte-nachrichtenwarteschlange.md) | Sichere Moduswechsel und Queue                       |
+| [0042](0042-adaptiver-agent-arbeitsplan.md)                                  | Adaptiver Agent-Arbeitsplan                          |
 
 ## Neue ADRs
 

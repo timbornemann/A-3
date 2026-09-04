@@ -48,7 +48,7 @@ impl AgentControllerState {
             Self::Plan => matches!(next, Self::Execute | Self::Failed | Self::Cancelled),
             Self::Execute => matches!(
                 next,
-                Self::Verify | Self::AwaitApproval | Self::Failed | Self::Cancelled
+                Self::Verify | Self::Replan | Self::AwaitApproval | Self::Failed | Self::Cancelled
             ),
             Self::Verify => matches!(
                 next,

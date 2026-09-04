@@ -492,6 +492,15 @@ der Modellausgabe entstehen. `ExecuteAgentTurn` autorisiert selbst weiterhin nur
 `AgentReadTools`-Port für `Search` und `Inspect` und gibt beide Mutationstypen unausgeführt an den
 E7-Controller weiter.
 
+`AgentWorkPlan` ist die begrenzte Core-Zwischenform zwischen einem geprüften Conversation-Plan und
+dem autoritativen Ledger. Sie enthält höchstens 64 geordnete `AgentWorkPlanStep`-Werte mit Ergebnis,
+Begründung, erwarteter Evidence und der geschlossenen Verifikationsabsicht `Change | Test`.
+Identitäten, konkrete Commands und Abhängigkeiten weist erst die Materialisierung zu. Bei einem
+produktiven `RequestReplan` beendet der Application-Use-Case zuerst den aktiven Versuch; eine
+zweite atomare Operation pensioniert offene Schritte und hängt das adaptive Todo samt Ersatzgraph
+an. Ein Modell kann damit Bedarf und Grund melden, aber weder historische Schritte ändern noch
+seine eigene Verifikation festlegen.
+
 Die eingebetteten `agent-action-v1`-, `agent-action-v2`- und `agent-action-v3`-JSON-Schemas setzen auf jeder
 Objektebene `additionalProperties: false`; getrennte Runtime-Decoder prüfen das vollständige
 Dokument bis 64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen-,

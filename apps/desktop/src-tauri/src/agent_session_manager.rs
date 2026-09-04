@@ -25,16 +25,17 @@ use a3_domain::{
     AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
     AgentSessionQueueRevision, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
     AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
-    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
-    AskResearchSourceKind, AskResearchState, DiscoveredCommandKind, ExpectedTaskEvidence,
-    GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId,
-    JobOwner, ParsedSlashCommand, PolicyResourceId, Progress, ProjectIdentity, RunEventId,
-    SecretCandidateClassifierV1, SlashCommand, SlashCommandEmptyInput,
-    SlashCommandVerificationProfile, SourceChannel, StepDependency, SuccessVerification,
-    SyntaxRelationKind, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensEntryReason,
-    TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget, TaskStepDefinition,
-    TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationRequirement, VerificationScope,
-    VerificationSpec, VerificationSpecId, WorktreeId, parse_slash_command,
+    AgentWorkPlan, AgentWorkPlanVerificationIntent, AskResearchCompleteness, AskResearchPhase,
+    AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+    DiscoveredCommandKind, ExpectedTaskEvidence, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId, JobOwner, ParsedSlashCommand,
+    PolicyResourceId, Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1,
+    SlashCommand, SlashCommandEmptyInput, SlashCommandVerificationProfile, SourceChannel,
+    StepDependency, SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger,
+    TaskLedgerTimestamp, TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget,
+    TaskLensTokenBudget, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
+    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId, WorktreeId,
+    parse_slash_command,
 };
 use a3_workspace::{WorkspaceAgentSourceReader, WorkspaceAskSourceSearcher};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -154,31 +155,34 @@ impl AgentTaskMaterializer {
         let catalog = DiscoverProjectCommands
             .execute(project.worktree().id(), &published)
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
-        let preferred_verification = verification_profile.map_or(
-            &[
-                DiscoveredCommandKind::Test,
-                DiscoveredCommandKind::Lint,
-                DiscoveredCommandKind::Build,
-            ] as &[_],
-            verification_command_order,
-        );
-        let verification_command = preferred_verification.iter().find_map(|kind| {
-            catalog
-                .commands()
-                .iter()
-                .find(|command| command.kind() == *kind)
-        });
-        let step_outcomes = materialization_step_outcomes(
-            reviewed_plan,
-            research_handoff
-                .and_then(ResearchHandoff::command)
-                .is_some(),
-        );
-        let step_ids = (0..step_outcomes.len())
+        let work_plan = AgentWorkPlan::from_reviewed_markdown(reviewed_plan)
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        let step_ids = (0..work_plan.steps().len())
             .map(|_| random_id().map(TaskStepId::from_bytes))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut definitions = Vec::with_capacity(step_outcomes.len());
-        for (index, outcome) in step_outcomes.into_iter().enumerate() {
+        let mut definitions = Vec::with_capacity(work_plan.steps().len());
+        for (index, plan_step) in work_plan.steps().iter().enumerate() {
+            let default_order = match plan_step.verification_intent() {
+                AgentWorkPlanVerificationIntent::Change => [
+                    DiscoveredCommandKind::Lint,
+                    DiscoveredCommandKind::Build,
+                    DiscoveredCommandKind::Test,
+                ],
+                AgentWorkPlanVerificationIntent::Test => [
+                    DiscoveredCommandKind::Test,
+                    DiscoveredCommandKind::Lint,
+                    DiscoveredCommandKind::Build,
+                ],
+            };
+            let preferred_verification = verification_profile
+                .map(verification_command_order)
+                .unwrap_or(&default_order);
+            let verification_command = preferred_verification.iter().find_map(|kind| {
+                catalog
+                    .commands()
+                    .iter()
+                    .find(|command| command.kind() == *kind)
+            });
             let spec_id = VerificationSpecId::from_bytes(random_id()?);
             let verification = match verification_command {
                 Some(command) => VerificationSpec::command(
@@ -204,25 +208,14 @@ impl AgentTaskMaterializer {
             let definition = TaskStepDefinition::new(
                 step_ids[index],
                 None,
-                TaskStepOutcome::try_from_string(bounded_text(&outcome, 8 * 1024))
+                TaskStepOutcome::try_from_string(bounded_text(plan_step.outcome(), 8 * 1024))
                     .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-                TaskStepRationale::try_from_string(if step_ids.len() == 1 {
-                    "Setzt ausschließlich die vom Nutzer freigegebene Planrevision um.".to_owned()
-                } else {
-                    format!(
-                        "Setzt den eigenständig verifizierbaren Command-Schritt {} von {} um.",
-                        index.saturating_add(1),
-                        step_ids.len()
-                    )
-                })
-                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                TaskStepRationale::try_from_string(plan_step.rationale().to_owned())
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
                 dependencies,
                 vec![
-                    ExpectedTaskEvidence::try_from_string(
-                        "Aktuelles Ergebnis und eigene Verification dieses Änderungsschritts"
-                            .to_owned(),
-                    )
-                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                    ExpectedTaskEvidence::try_from_string(plan_step.expected_evidence().to_owned())
+                        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
                 ],
                 verification,
             )
@@ -2009,7 +2002,7 @@ impl AgentSessionRunReporter {
         project: &ProjectIdentity,
         task_id: TaskId,
         state: AgentSessionState,
-        message: &'static str,
+        message: &str,
     ) -> Result<(), AgentSessionManagerFailure> {
         let session_id = lock_recovering_poison(&self.links)
             .get(&task_id)
@@ -2046,13 +2039,12 @@ impl AgentSessionRunReporter {
                 presentation_deleted: false,
             },
         )?;
-        let kind = if matches!(
-            state,
-            AgentSessionState::Completed | AgentSessionState::Failed | AgentSessionState::Cancelled
-        ) {
-            AgentSessionEntryKind::FinalReport
-        } else {
-            AgentSessionEntryKind::Activity
+        let kind = match state {
+            AgentSessionState::Completed
+            | AgentSessionState::Failed
+            | AgentSessionState::Cancelled => AgentSessionEntryKind::FinalReport,
+            AgentSessionState::AwaitingUser => AgentSessionEntryKind::AssistantSummary,
+            _ => AgentSessionEntryKind::Activity,
         };
         let work_item = detail.session().active_work_item();
         let entry = AgentSessionEntry::try_new(
@@ -5010,70 +5002,6 @@ fn bounded_text(value: &str, max_bytes: usize) -> String {
     format!("{}{suffix}", &value[..end])
 }
 
-fn materialization_step_outcomes(reviewed_plan: &str, split_command_plan: bool) -> Vec<String> {
-    if !split_command_plan {
-        return vec![bounded_text(reviewed_plan, 8 * 1_024)];
-    }
-    let mut in_changes = false;
-    let mut current: Option<String> = None;
-    let mut outcomes = Vec::new();
-    for line in reviewed_plan.lines() {
-        let normalized_heading = line.trim_start_matches('#').trim();
-        if normalized_heading.eq_ignore_ascii_case("Implementation Changes") {
-            in_changes = true;
-            continue;
-        }
-        if !in_changes {
-            continue;
-        }
-        if line.trim_start().starts_with('#')
-            || ["Summary", "Interfaces", "Test Plan", "Assumptions"]
-                .iter()
-                .any(|heading| normalized_heading.eq_ignore_ascii_case(heading))
-        {
-            break;
-        }
-        if let Some(item) = top_level_markdown_item(line) {
-            if let Some(previous) = current.take() {
-                outcomes.push(bounded_text(&previous, 8 * 1_024));
-            }
-            current = Some(item.trim().to_owned());
-        } else if let Some(current) = current.as_mut()
-            && !line.trim().is_empty()
-        {
-            current.push('\n');
-            current.push_str(line.trim());
-        }
-    }
-    if let Some(last) = current {
-        outcomes.push(bounded_text(&last, 8 * 1_024));
-    }
-    let mut seen = BTreeSet::new();
-    outcomes.retain(|outcome| !outcome.is_empty() && seen.insert(outcome.clone()));
-    if outcomes.is_empty() || outcomes.len() > 64 {
-        vec![bounded_text(reviewed_plan, 8 * 1_024)]
-    } else {
-        outcomes
-    }
-}
-
-fn top_level_markdown_item(line: &str) -> Option<&str> {
-    if line.trim_start() != line {
-        return None;
-    }
-    for marker in ["- ", "* ", "+ "] {
-        if let Some(item) = line.strip_prefix(marker) {
-            return Some(item);
-        }
-    }
-    let (number, item) = line.split_once(". ")?;
-    if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) {
-        Some(item)
-    } else {
-        None
-    }
-}
-
 fn utf8_prefix(value: &str, maximum_bytes: usize) -> &str {
     let mut end = value.len().min(maximum_bytes);
     while end > 0 && !value.is_char_boundary(end) {
@@ -5807,12 +5735,11 @@ mod tests {
     use super::{
         AgentConversationFailure, ConversationTaskLensControl, ConversationTerminal,
         PlanConversationResponse, QueueDispatchTrigger, agent_run_blocks_plan_start,
-        classify_plan_response, command_clarification_question, command_message,
-        materialization_step_outcomes, model_safe_path, parse_working_change_paths,
-        presentation_can_be_hidden, queue_dispatch_allows_state, read_bounded_process_output,
-        resolve_next_message_mode, response_requires_citations, restore_command_profile,
-        safe_failure_message, settle_unfinished_conversation, verification_command_order,
-        visible_research_query,
+        classify_plan_response, command_clarification_question, command_message, model_safe_path,
+        parse_working_change_paths, presentation_can_be_hidden, queue_dispatch_allows_state,
+        read_bounded_process_output, resolve_next_message_mode, response_requires_citations,
+        restore_command_profile, safe_failure_message, settle_unfinished_conversation,
+        verification_command_order, visible_research_query,
     };
     use a3_application::{
         AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery,
@@ -5921,22 +5848,30 @@ mod tests {
     }
 
     #[test]
-    fn command_plan_materializes_each_top_level_change_as_one_bounded_step() {
+    fn every_reviewed_plan_materializes_atomic_change_and_test_steps()
+    -> Result<(), Box<dyn std::error::Error>> {
         let plan = "## Summary\nReview\n## Implementation Changes\n- [High] Fix path validation.\n  - Keep the canonical root check.\n- [Medium] Close the race before writing.\n## Interfaces\nNone\n## Test Plan\nRun tests\n## Assumptions\nCurrent index";
+        let compiled = a3_domain::AgentWorkPlan::from_reviewed_markdown(plan)?;
+        assert_eq!(compiled.steps().len(), 3);
         assert_eq!(
-            materialization_step_outcomes(plan, true),
-            vec![
-                "[High] Fix path validation.\n- Keep the canonical root check.",
-                "[Medium] Close the race before writing.",
-            ]
+            compiled.steps()[0].outcome(),
+            "[High] Fix path validation. Keep the canonical root check."
         );
-        assert_eq!(materialization_step_outcomes(plan, false), vec![plan]);
+        assert_eq!(
+            compiled.steps()[1].outcome(),
+            "[Medium] Close the race before writing."
+        );
+        assert_eq!(compiled.steps()[2].outcome(), "Run tests");
+        Ok(())
     }
 
     #[test]
-    fn command_plan_without_structured_change_items_remains_one_safe_step() {
+    fn reviewed_plan_without_list_items_still_separates_change_and_test()
+    -> Result<(), Box<dyn std::error::Error>> {
         let plan = "## Summary\nReview\n## Implementation Changes\nNo confirmed change is required.\n## Interfaces\nNone\n## Test Plan\nRun tests\n## Assumptions\nCurrent index";
-        assert_eq!(materialization_step_outcomes(plan, true), vec![plan]);
+        let compiled = a3_domain::AgentWorkPlan::from_reviewed_markdown(plan)?;
+        assert_eq!(compiled.steps().len(), 2);
+        Ok(())
     }
 
     #[test]

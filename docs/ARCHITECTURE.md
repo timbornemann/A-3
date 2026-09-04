@@ -555,6 +555,12 @@ weiterhin durch typisierte Adapter, zentrale Policy, Approval, frische Indexieru
 Verification. Projektwechsel quiesziert Conversation- und Agentjobs, bevor neue Projektanker aktiv
 werden.
 
+ADR-0042 kompiliert die geordneten Änderungs- und Testpunkte dieser bestätigten Planrevision vor
+der Materialisierung zu höchstens 64 einzeln verifizierbaren Ledger-Schritten. Ein produktiver
+`RequestReplan` schließt den aktiven Versuch und lässt den Core atomar ein adaptives
+Planlücken-Todo sowie frische Ersatzschritte einfügen. Der bestehende Run kehrt danach über
+`Localize → Plan → Execute` zurück; abgeschlossene Schritte und ihre Evidence bleiben erhalten.
+
 ADR-0041 behandelt den Modus als Capability des nächsten unabhängigen Work Items. Eine sichtbare
 Auswahl unterbricht den aktuellen Besitzer nicht. Validierte Folgenachrichten warten dauerhaft in
 einer begrenzten sessionlokalen FIFO; der Scheduler startet sie nacheinander und hält an
@@ -865,7 +871,9 @@ diese begrenzten Punkte auf eine sequenzielle Ledger-Kette mit eindeutigen Step-
 Verification-Spezifikationen ab. Ein Application-Use-Case startet nach erfolgreicher
 Schrittverifikation atomar höchstens den nächsten bereiten Schritt und führt den bestehenden Run
 von `Verify` nach `Execute` zurück. Erst ein vollständig abgeschlossenes Ledger erreicht die
-Acceptance-Prüfung; normale Agent-Nachrichten bleiben bei ihrem bisherigen einzelnen Planschritt.
+Acceptance-Prüfung. Nach ADR-0042 gilt dieselbe begrenzte Mehrschritt-Materialisierung auch für
+normale Plan- und Agent-Nachrichten; ein adaptiver Replan kann offene Schritte ersetzen, ohne die
+historische Revision oder bereits verifizierte Arbeit umzuschreiben.
 
 `/diagram` erzeugt im selben Recherchebudget ein typisiertes `EvidenceDiagramV1`. Jede sichtbare
 Einheit und Beziehung trägt turnlokale Quellen, der Core validiert die Topologie und kompiliert

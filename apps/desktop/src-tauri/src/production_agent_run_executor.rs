@@ -5,26 +5,29 @@ use a3_application::{
     AgentContextCompileInput, AgentControllerSignal, AgentRecoveryStore, AgentRunExecutionFailure,
     AgentRunExecutionFuture, AgentRunExecutionOutcome, AgentRunExecutionRequest,
     AgentRunExecutionTrigger, AgentRunExecutor, AgentTurnOutcome, AgentTurnRejectionReason,
-    AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, AskResearchStore,
-    CommandAllowlistStore, CompileTaskLens, ConservativeProcessVerificationEvidenceFactory,
-    ContextCompileControl, ContextCompilePhase, ContinueVerifiedAgentPlan,
-    ContinueVerifiedAgentPlanOutcome, DeterministicAcceptanceVerifier, DiscoverProjectCommands,
-    ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
+    AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, ApplyAgentPlanRevision,
+    AskResearchStore, CommandAllowlistStore, CompileTaskLens,
+    ConservativeProcessVerificationEvidenceFactory, ContextCompileControl, ContextCompilePhase,
+    ContinueVerifiedAgentPlan, ContinueVerifiedAgentPlanOutcome, DeterministicAcceptanceVerifier,
+    DiscoverProjectCommands, ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchStore,
     LoadProjectCommandAllowlist, ModelCancellationFuture, ModelOperationControl,
     MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
-    PersistAgentLedgerMutation, PolicyStore, ProcessEventSink, ProcessEventSinkError,
-    ProcessRunControl, RefreshRepositoryIndex, RepositoryIndexControl, RepositoryIndexControlError,
-    RequestAgentFinish, ResearchHandoff, RunJournalStore, TaskLensClaimStore, TaskLensControlError,
-    TaskLensIndexStore, TaskLensWorkspaceStore, VerificationEvidenceStore, VerifyAgentAcceptance,
-    WorkspacePatchControl, WorkspacePatchProgressError, WorktreeMutationCoordinator,
+    MutationFailureClass, PersistAgentLedgerMutation, PolicyStore, ProcessEventSink,
+    ProcessEventSinkError, ProcessRunControl, RefreshRepositoryIndex, RepositoryIndexControl,
+    RepositoryIndexControlError, RequestAgentFinish, ResearchHandoff, RunJournalStore,
+    TaskLensClaimStore, TaskLensControlError, TaskLensIndexStore, TaskLensWorkspaceStore,
+    VerificationEvidenceStore, VerifyAgentAcceptance, WorkspacePatchControl,
+    WorkspacePatchProgressError, WorktreeMutationCoordinator,
 };
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
     AgentAction, AgentControllerState, AgentRun, AgentRunTimestamp, AgentToolEvidenceSet,
-    ApprovalGrant, ApprovalRequestId, PolicyDecisionId, ProcessEnvironmentVariable, ProcessEvent,
-    Progress, ProjectIdentity, RunEventId, RunMemoryCheckpoint, StepVerificationId, TaskId,
-    TaskLedger, TaskStepId, TaskStepStatus, ToolRunId, VerificationRunId, WorkspacePolicy,
+    ApprovalGrant, ApprovalRequestId, ExpectedTaskEvidence, PolicyDecisionId,
+    ProcessEnvironmentVariable, ProcessEvent, Progress, ProjectIdentity, RunEventId,
+    RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger, TaskReplanReason,
+    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus, ToolRunId,
+    VerificationRunId, VerificationSpecId, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -34,12 +37,13 @@ use a3_workspace::{
     ProcessHostEnvironment, WorkspaceAgentSourceReader, WorkspacePatchAdapter,
     WorkspaceProcessRunner,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_AGENT_TURNS_PER_ATTEMPT: u64 = 64;
+const MAX_AUTOMATIC_REPLANS_PER_RUN: usize = 8;
 const APPROVAL_LIFETIME_MILLIS: u64 = 10 * 60 * 1_000;
 
 /// Narrow production capabilities used by the existing deterministic Agent harness.
@@ -207,6 +211,7 @@ impl ProductionAgentRunExecutor {
         );
         let mut context_results = Vec::new();
         let mut read_evidence: Option<AgentToolEvidenceSet> = None;
+        let mut pending_replan_reason: Option<TaskReplanReason> = None;
 
         if let AgentRunExecutionTrigger::ApprovalGranted(approval_id) = request.trigger() {
             let action = lock_recovering_poison(&self.pending_mutations)
@@ -249,6 +254,9 @@ impl ProductionAgentRunExecutor {
             {
                 step_id = next_step_id;
             }
+            if let MutationControllerOutcome::ReplanRequired { failure, .. } = &outcome {
+                pending_replan_reason = Some(replan_reason_for_failure(*failure)?);
+            }
             if self.handle_mutation_outcome(request.task_id(), outcome)? {
                 return Ok(AgentRunExecutionOutcome::Completed);
             }
@@ -268,6 +276,28 @@ impl ProductionAgentRunExecutor {
                 .map_err(|_| AgentRunExecutionFailure::ProgressUnavailable)?;
             match run.state() {
                 AgentControllerState::Execute => {}
+                AgentControllerState::Replan => {
+                    let reason = match pending_replan_reason.take() {
+                        Some(reason) => reason,
+                        None => TaskReplanReason::try_from_string(
+                            "Der letzte Schritt benötigt nach dem aktuellen Befund eine neue begrenzte Planung."
+                                .to_owned(),
+                        )
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                    };
+                    step_id = self
+                        .apply_automatic_replan(
+                            project,
+                            &mut run,
+                            &mut ledger,
+                            &mut ledger_version,
+                            reason,
+                            &attempt_control,
+                        )
+                        .await?;
+                    context_results.clear();
+                    read_evidence = None;
+                }
                 AgentControllerState::Verify => {
                     self.verify_acceptance(
                         project,
@@ -282,7 +312,6 @@ impl ProductionAgentRunExecutor {
                 AgentControllerState::Done
                 | AgentControllerState::Failed
                 | AgentControllerState::Cancelled
-                | AgentControllerState::Replan
                 | AgentControllerState::AwaitApproval => {
                     return Ok(AgentRunExecutionOutcome::Completed);
                 }
@@ -412,6 +441,9 @@ impl ProductionAgentRunExecutor {
                         lock_recovering_poison(&self.pending_mutations)
                             .insert(request.task_id(), replay);
                     }
+                    if let MutationControllerOutcome::ReplanRequired { failure, .. } = &outcome {
+                        pending_replan_reason = Some(replan_reason_for_failure(*failure)?);
+                    }
                     if self.handle_mutation_outcome(request.task_id(), outcome)? {
                         return Ok(AgentRunExecutionOutcome::Completed);
                     }
@@ -444,6 +476,11 @@ impl ProductionAgentRunExecutor {
                         )
                         .await
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    if let a3_application::AgentLedgerActionOutcomeKind::ReplanRequested(reason) =
+                        outcome.kind()
+                    {
+                        pending_replan_reason = Some(reason.clone());
+                    }
                 }
                 AgentAction::Finish(finish) => {
                     let expected_sequence = run.last_event_sequence();
@@ -498,6 +535,117 @@ impl ProductionAgentRunExecutor {
                 Ok(Some(step_id))
             }
         }
+    }
+
+    async fn apply_automatic_replan(
+        &self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        ledger_version: &mut a3_application::TaskLedgerStoreVersion,
+        reason: TaskReplanReason,
+        control: &AgentAttemptControl<'_>,
+    ) -> Result<TaskStepId, AgentRunExecutionFailure> {
+        if ledger.replans().len() >= MAX_AUTOMATIC_REPLANS_PER_RUN {
+            let expected_sequence = run.last_event_sequence();
+            let advance = AdvanceAgentController
+                .execute(
+                    run,
+                    AgentControllerSignal::FatalFailure,
+                    run_event_id()?,
+                    run.current_snapshot_id(),
+                    timestamp()?,
+                    false,
+                )
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            AppendRunEvent::new(self.ports.journal.as_ref())
+                .execute(project, expected_sequence, run, advance.event())
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            return Err(AgentRunExecutionFailure::InvalidState);
+        }
+
+        let (retire_step_ids, additions) = automatic_replan_steps(ledger, &reason)?;
+        *ledger_version = ApplyAgentPlanRevision::new(self.ports.actions.as_ref())
+            .execute(
+                project,
+                *ledger_version,
+                run,
+                ledger,
+                retire_step_ids,
+                additions,
+                reason,
+                run_event_id()?,
+                timestamp()?,
+                control,
+            )
+            .await
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+
+        for signal in [
+            AgentControllerSignal::ReplanApplied,
+            AgentControllerSignal::LocalizationComplete,
+        ] {
+            let expected_sequence = run.last_event_sequence();
+            let advance = AdvanceAgentController
+                .execute(
+                    run,
+                    signal,
+                    run_event_id()?,
+                    run.current_snapshot_id(),
+                    timestamp()?,
+                    false,
+                )
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            AppendRunEvent::new(self.ports.journal.as_ref())
+                .execute(project, expected_sequence, run, advance.event())
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        }
+
+        let next_step_id = ledger
+            .steps()
+            .find(|step| step.is_active_plan_step() && step.status() == TaskStepStatus::Ready)
+            .map(|step| step.definition().id())
+            .ok_or(AgentRunExecutionFailure::InvalidState)?;
+        let observed_at = timestamp()?;
+        let mut next_ledger = ledger.clone();
+        next_ledger
+            .start_step(
+                next_step_id,
+                run.id(),
+                a3_domain::TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        let expected_sequence = run.last_event_sequence();
+        let mut next_run = run.clone();
+        let advance = AdvanceAgentController
+            .execute(
+                &mut next_run,
+                AgentControllerSignal::PlanReady,
+                run_event_id()?,
+                run.current_snapshot_id(),
+                observed_at,
+                false,
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        *ledger_version = self
+            .ports
+            .actions
+            .commit_ledger_action(
+                project,
+                *ledger_version,
+                expected_sequence,
+                &next_ledger,
+                &next_run,
+                advance.event(),
+            )
+            .await
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        *ledger = next_ledger;
+        *run = next_run;
+        Ok(next_step_id)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -557,8 +705,8 @@ impl ProductionAgentRunExecutor {
             MutationControllerOutcome::AwaitingApproval(_) => true,
             MutationControllerOutcome::NextAction(_) => false,
             MutationControllerOutcome::StepVerified { .. } => false,
+            MutationControllerOutcome::ReplanRequired { .. } => false,
             MutationControllerOutcome::Denied
-            | MutationControllerOutcome::ReplanRequired { .. }
             | MutationControllerOutcome::ReconciliationRequired { .. }
             | MutationControllerOutcome::Stopped { .. } => {
                 lock_recovering_poison(&self.pending_mutations).remove(&task_id);
@@ -619,7 +767,7 @@ impl ProductionAgentRunExecutor {
                 .await;
             return;
         }
-        let state = match self
+        let (state, blocker) = match self
             .ports
             .workspace
             .load_current_task(project, task_id, control)
@@ -629,13 +777,22 @@ impl ProductionAgentRunExecutor {
             .and_then(|task| task.task_ledger().cloned())
         {
             Some(stored) => {
+                let blocker = stored
+                    .ledger()
+                    .steps()
+                    .filter(|step| step.is_active_plan_step())
+                    .find_map(|step| {
+                        step.blocking_reason()
+                            .map(|reason| reason.as_str().to_owned())
+                    });
                 let run_id = stored
                     .ledger()
                     .steps()
+                    .filter(|step| step.is_active_plan_step())
                     .filter_map(|step| step.attempts().last())
-                    .last()
+                    .next()
                     .map(a3_domain::TaskStepAttempt::run_id);
-                match run_id {
+                let state = match run_id {
                     Some(run_id) => self
                         .ports
                         .journal
@@ -645,46 +802,306 @@ impl ProductionAgentRunExecutor {
                         .flatten()
                         .map(|run| run.state()),
                     None => None,
-                }
+                };
+                (state, blocker)
             }
-            None => None,
+            None => (None, None),
         };
-        let (session_state, message) = match state {
-            Some(AgentControllerState::Done) => (
-                a3_domain::AgentSessionState::Completed,
-                "Die Aufgabe ist verifiziert abgeschlossen. Änderungen und Evidence stehen im Review bereit.",
+        let (session_state, message) =
+            session_outcome_for_run(state, blocker.as_deref(), outcome.is_ok());
+        let _reported = reporter
+            .report(project, task_id, session_state, &message)
+            .await;
+    }
+}
+
+fn session_outcome_for_run(
+    state: Option<AgentControllerState>,
+    blocker: Option<&str>,
+    executor_completed: bool,
+) -> (a3_domain::AgentSessionState, String) {
+    match (state, blocker) {
+        (Some(AgentControllerState::Done), _) => (
+            a3_domain::AgentSessionState::Completed,
+            "Die Aufgabe ist verifiziert abgeschlossen. Änderungen und Evidence stehen im Review bereit.".to_owned(),
+        ),
+        (Some(AgentControllerState::AwaitApproval), _) => (
+            a3_domain::AgentSessionState::AwaitingApproval,
+            "Der Agent wartet auf die exakte Freigabe der im Review sichtbaren Aktion.".to_owned(),
+        ),
+        (Some(AgentControllerState::Cancelled), _) => (
+            a3_domain::AgentSessionState::Cancelled,
+            "Der Agentenlauf wurde abgebrochen. Bereits verifizierte Auditdaten bleiben erhalten.".to_owned(),
+        ),
+        (Some(AgentControllerState::Replan), _) => (
+            a3_domain::AgentSessionState::Failed,
+            "Die aktuelle Ausführung benötigt eine neue Planung. Der bisherige Lauf bleibt prüfbar.".to_owned(),
+        ),
+        (Some(AgentControllerState::Failed), Some(blocker)) if executor_completed => (
+            a3_domain::AgentSessionState::AwaitingUser,
+            format!(
+                "Ich brauche deine Entscheidung, bevor ich sicher weiterarbeiten kann: {}",
+                bounded_utf8(blocker, 3 * 1_024)
             ),
-            Some(AgentControllerState::AwaitApproval) => (
-                a3_domain::AgentSessionState::AwaitingApproval,
-                "Der Agent wartet auf die exakte Freigabe der im Review sichtbaren Aktion.",
-            ),
-            Some(AgentControllerState::Cancelled) => (
-                a3_domain::AgentSessionState::Cancelled,
-                "Der Agentenlauf wurde abgebrochen. Bereits verifizierte Auditdaten bleiben erhalten.",
-            ),
-            Some(AgentControllerState::Replan) => (
-                a3_domain::AgentSessionState::Failed,
-                "Die aktuelle Ausführung benötigt eine neue Planung. Der bisherige Lauf bleibt prüfbar.",
-            ),
-            Some(AgentControllerState::Failed) => (
-                a3_domain::AgentSessionState::Failed,
-                "Der Agentenlauf wurde sicher angehalten. Details und Recovery stehen im Inspector bereit.",
-            ),
-            Some(AgentControllerState::Execute | AgentControllerState::Verify)
-            | Some(
+        ),
+        (Some(AgentControllerState::Failed), _) => (
+            a3_domain::AgentSessionState::Failed,
+            "Der Agentenlauf wurde sicher angehalten. Details und Recovery stehen im Inspector bereit.".to_owned(),
+        ),
+        (Some(AgentControllerState::Execute | AgentControllerState::Verify), _)
+        | (
+            Some(
                 AgentControllerState::Intake
                 | AgentControllerState::Localize
                 | AgentControllerState::Plan,
-            )
-            | None => (
-                a3_domain::AgentSessionState::Failed,
-                "Der Agentenlauf endete ohne verifizierten Abschluss. Details stehen im Inspector bereit.",
             ),
-        };
-        let _reported = reporter
-            .report(project, task_id, session_state, message)
-            .await;
+            _,
+        )
+        | (None, _) => (
+            a3_domain::AgentSessionState::Failed,
+            "Der Agentenlauf endete ohne verifizierten Abschluss. Details stehen im Inspector bereit.".to_owned(),
+        ),
     }
+}
+
+fn automatic_replan_steps(
+    ledger: &TaskLedger,
+    reason: &TaskReplanReason,
+) -> Result<(Vec<TaskStepId>, Vec<TaskStepDefinition>), AgentRunExecutionFailure> {
+    let retire_step_ids = ledger
+        .steps()
+        .filter(|step| {
+            step.is_active_plan_step()
+                && matches!(
+                    step.status(),
+                    TaskStepStatus::Pending
+                        | TaskStepStatus::Ready
+                        | TaskStepStatus::Blocked
+                        | TaskStepStatus::Failed
+                        | TaskStepStatus::Cancelled
+                )
+        })
+        .map(|step| step.definition().id())
+        .collect::<Vec<_>>();
+    if retire_step_ids.is_empty() {
+        return Err(AgentRunExecutionFailure::InvalidState);
+    }
+    let retire_set = retire_step_ids.iter().copied().collect::<BTreeSet<_>>();
+    let trigger_id = ledger
+        .steps()
+        .find(|step| {
+            retire_set.contains(&step.definition().id())
+                && matches!(
+                    step.status(),
+                    TaskStepStatus::Blocked | TaskStepStatus::Failed
+                )
+        })
+        .or_else(|| {
+            ledger
+                .steps()
+                .find(|step| retire_set.contains(&step.definition().id()))
+        })
+        .map(|step| step.definition().id())
+        .ok_or(AgentRunExecutionFailure::InvalidState)?;
+
+    let mut replacement_ids = BTreeMap::new();
+    for step_id in &retire_step_ids {
+        replacement_ids.insert(*step_id, TaskStepId::from_bytes(random_id()?));
+    }
+    let analysis_step_id = TaskStepId::from_bytes(random_id()?);
+    let trigger = ledger
+        .step(trigger_id)
+        .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+    let trigger_definition = trigger.definition();
+    let trigger_dependencies = remap_dependencies(
+        trigger_definition.dependencies(),
+        &replacement_ids,
+        &retire_set,
+    )?;
+    let analysis_outcome = TaskStepOutcome::try_from_string(bounded_utf8(
+        &format!(
+            "Planlücke untersuchen und innerhalb des bestätigten Ziels beheben: {}",
+            reason.as_str()
+        ),
+        8 * 1_024,
+    ))
+    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+    let analysis = attach_acceptance_criteria(
+        TaskStepDefinition::new(
+            analysis_step_id,
+            None,
+            analysis_outcome,
+            TaskStepRationale::try_from_string(bounded_utf8(
+                &format!("Neu nach Befund: {}", reason.as_str()),
+                8 * 1_024,
+            ))
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            trigger_dependencies,
+            vec![
+                ExpectedTaskEvidence::try_from_string(
+                    "Aktuelle Source- oder Graph-Evidence für die Ursache der Planlücke".to_owned(),
+                )
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+            ],
+            trigger_definition
+                .verification_spec()
+                .reidentified(VerificationSpecId::from_bytes(random_id()?)),
+        ),
+        trigger_definition.acceptance_criteria(),
+    )
+    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+    let mut additions = vec![analysis];
+
+    for old_id in topological_replan_order(ledger, &retire_set)? {
+        let old = ledger
+            .step(old_id)
+            .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
+        let definition = old.definition();
+        let replacement_id = *replacement_ids
+            .get(&old_id)
+            .ok_or(AgentRunExecutionFailure::InvalidState)?;
+        let parent_step_id = definition
+            .parent_step_id()
+            .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
+        let dependencies = if old_id == trigger_id {
+            vec![StepDependency::new(analysis_step_id)]
+        } else {
+            remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?
+        };
+        let replacement = attach_acceptance_criteria(
+            TaskStepDefinition::new(
+                replacement_id,
+                parent_step_id,
+                definition.intended_outcome().clone(),
+                TaskStepRationale::try_from_string(bounded_utf8(
+                    &format!(
+                        "Planrevision nach neuem Befund. {}",
+                        definition.rationale().as_str()
+                    ),
+                    8 * 1_024,
+                ))
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
+                dependencies,
+                definition.expected_evidence().to_vec(),
+                definition
+                    .verification_spec()
+                    .reidentified(VerificationSpecId::from_bytes(random_id()?)),
+            ),
+            definition.acceptance_criteria(),
+        )
+        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        additions.push(replacement);
+    }
+    Ok((retire_step_ids, additions))
+}
+
+fn attach_acceptance_criteria(
+    definition: Result<TaskStepDefinition, a3_domain::TaskStepDefinitionError>,
+    criteria: &[a3_domain::AcceptanceCriterionId],
+) -> Result<TaskStepDefinition, a3_domain::TaskStepDefinitionError> {
+    let definition = definition?;
+    if criteria.is_empty() {
+        Ok(definition)
+    } else {
+        definition.with_acceptance_criteria(criteria.to_vec())
+    }
+}
+
+fn topological_replan_order(
+    ledger: &TaskLedger,
+    retire_set: &BTreeSet<TaskStepId>,
+) -> Result<Vec<TaskStepId>, AgentRunExecutionFailure> {
+    let mut remaining = retire_set.clone();
+    let mut ordered = Vec::with_capacity(remaining.len());
+    while !remaining.is_empty() {
+        let next = remaining.iter().copied().find(|step_id| {
+            ledger.step(*step_id).is_some_and(|step| {
+                let parent_ready = step
+                    .definition()
+                    .parent_step_id()
+                    .is_none_or(|parent| !remaining.contains(&parent));
+                parent_ready
+                    && step
+                        .definition()
+                        .dependencies()
+                        .iter()
+                        .all(|dependency| !remaining.contains(&dependency.prerequisite()))
+            })
+        });
+        let Some(next) = next else {
+            return Err(AgentRunExecutionFailure::InvalidState);
+        };
+        remaining.remove(&next);
+        ordered.push(next);
+    }
+    Ok(ordered)
+}
+
+fn remap_dependencies(
+    dependencies: &[StepDependency],
+    replacements: &BTreeMap<TaskStepId, TaskStepId>,
+    retire_set: &BTreeSet<TaskStepId>,
+) -> Result<Vec<StepDependency>, AgentRunExecutionFailure> {
+    dependencies
+        .iter()
+        .map(|dependency| {
+            let prerequisite = dependency.prerequisite();
+            if retire_set.contains(&prerequisite) {
+                replacements
+                    .get(&prerequisite)
+                    .copied()
+                    .map(StepDependency::new)
+                    .ok_or(AgentRunExecutionFailure::InvalidState)
+            } else {
+                Ok(StepDependency::new(prerequisite))
+            }
+        })
+        .collect()
+}
+
+fn replan_reason_for_failure(
+    failure: MutationFailureClass,
+) -> Result<TaskReplanReason, AgentRunExecutionFailure> {
+    let reason = match failure {
+        MutationFailureClass::Conflict => {
+            "Der Projektstand hat sich geändert; betroffene Schritte müssen neu lokalisiert werden."
+        }
+        MutationFailureClass::Denied => {
+            "Die vorgesehene Aktion war nicht zulässig; der Plan benötigt einen sicheren lokalen Weg."
+        }
+        MutationFailureClass::TimedOut => {
+            "Der begrenzte Arbeitsschritt lief in ein Zeitlimit und muss kleiner geplant werden."
+        }
+        MutationFailureClass::Cancelled => {
+            "Der Arbeitsschritt wurde unterbrochen und muss vor einer Fortsetzung neu geprüft werden."
+        }
+        MutationFailureClass::ToolUnavailable => {
+            "Ein benötigtes lokales Werkzeug war nicht verfügbar; der Plan braucht eine alternative Verifikation."
+        }
+        MutationFailureClass::VerificationFailed => {
+            "Die typisierte Verifikation ist fehlgeschlagen; Ursache und Reparatur müssen neu geplant werden."
+        }
+        MutationFailureClass::IndexRefreshFailed => {
+            "Der geänderte Projektstand konnte nicht sicher neu indiziert werden."
+        }
+        MutationFailureClass::ContextStale => {
+            "Der Arbeitskontext ist nach der Änderung nicht mehr aktuell und muss neu gebunden werden."
+        }
+    };
+    TaskReplanReason::try_from_string(reason.to_owned())
+        .map_err(|_| AgentRunExecutionFailure::Unavailable)
+}
+
+fn bounded_utf8(value: &str, maximum: usize) -> String {
+    if value.len() <= maximum {
+        return value.to_owned();
+    }
+    let suffix = "…";
+    let mut end = maximum.saturating_sub(suffix.len());
+    while !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!("{}{suffix}", &value[..end])
 }
 
 impl AgentRunExecutor for ProductionAgentRunExecutor {
@@ -913,13 +1330,21 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentAttemptControl;
+    use super::{AgentAttemptControl, automatic_replan_steps, session_outcome_for_run};
     use a3_application::{
         ContextCompileControl, ContextCompilePhase, JobClock, JobCompletion, JobContext,
         JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, RepositoryIndexControl,
         WorkspacePatchControl,
     };
-    use a3_domain::{JobId, JobOwner, Progress};
+    use a3_domain::{
+        AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
+        ExpectedTaskEvidence, GoalContract, GoalContractDraft, GoalContractTimestamp,
+        GoalObjective, JobId, JobOwner, Progress, StepDependency, StepVerification,
+        StepVerificationId, StepVerificationOutcome, SuccessVerification, TaskEvidenceId, TaskId,
+        TaskLedger, TaskLedgerTimestamp, TaskReplanReason, TaskStepBlockingReason,
+        TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
+        VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
+    };
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -981,5 +1406,156 @@ mod tests {
         }
         assert!(succeeded);
         Ok(())
+    }
+
+    #[test]
+    fn automatic_replan_preserves_completed_work_and_inserts_a_bounded_adaptive_todo()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([1; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("implement the API".to_owned())?,
+                vec![AcceptanceCriterion::new(
+                    AcceptanceCriterionId::from_bytes([2; 32]),
+                    AcceptanceCriterionStatement::try_from_string(
+                        "the API is implemented and tested".to_owned(),
+                    )?,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("tests pass".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        let first = TaskStepId::from_bytes([3; 32]);
+        let second = TaskStepId::from_bytes([4; 32]);
+        let third = TaskStepId::from_bytes([5; 32]);
+        let criterion = AcceptanceCriterionId::from_bytes([2; 32]);
+        let mut ledger = TaskLedger::new(
+            goal.reference(),
+            vec![
+                step(first, Vec::new(), "define contract", 11, criterion)?,
+                step(
+                    second,
+                    vec![StepDependency::new(first)],
+                    "implement adapter",
+                    12,
+                    criterion,
+                )?,
+                step(
+                    third,
+                    vec![StepDependency::new(second)],
+                    "run integration tests",
+                    13,
+                    criterion,
+                )?,
+            ],
+            TaskLedgerTimestamp::from_unix_millis(1)?,
+        )?;
+        let run_id = AgentRunId::from_bytes([20; 32]);
+        ledger.start_step(first, run_id, TaskLedgerTimestamp::from_unix_millis(2)?)?;
+        ledger.begin_step_verification(
+            first,
+            run_id,
+            None,
+            vec![TaskEvidenceId::from_bytes([21; 32])],
+            TaskLedgerTimestamp::from_unix_millis(3)?,
+        )?;
+        ledger.finish_step_verification(
+            first,
+            StepVerification::new(
+                StepVerificationId::from_bytes([22; 32]),
+                VerificationSpecId::from_bytes([11; 32]),
+                run_id,
+                StepVerificationOutcome::Passed,
+                vec![TaskEvidenceId::from_bytes([21; 32])],
+                TaskLedgerTimestamp::from_unix_millis(4)?,
+            )?,
+        )?;
+        ledger.start_step(second, run_id, TaskLedgerTimestamp::from_unix_millis(5)?)?;
+        ledger.block_step(
+            second,
+            run_id,
+            TaskStepBlockingReason::try_from_string("missing serializer".to_owned())?,
+            TaskLedgerTimestamp::from_unix_millis(6)?,
+        )?;
+
+        let reason = TaskReplanReason::try_from_string(
+            "a serializer must be added before the adapter".to_owned(),
+        )?;
+        let (retired, additions) = automatic_replan_steps(&ledger, &reason)?;
+
+        assert_eq!(retired.len(), 2);
+        assert!(retired.contains(&second));
+        assert!(retired.contains(&third));
+        assert_eq!(additions.len(), 3);
+        assert!(
+            additions[0]
+                .intended_outcome()
+                .as_str()
+                .contains("serializer must be added")
+        );
+        assert_eq!(additions[0].dependencies(), &[StepDependency::new(first)]);
+        assert_eq!(
+            additions[1].dependencies(),
+            &[StepDependency::new(additions[0].id())]
+        );
+        assert_eq!(
+            additions[2].dependencies(),
+            &[StepDependency::new(additions[1].id())]
+        );
+        assert_eq!(
+            ledger.step(first).map(|step| step.status()),
+            Some(TaskStepStatus::Completed)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn directional_blocker_becomes_a_user_question_instead_of_a_false_runtime_error() {
+        let (state, message) = session_outcome_for_run(
+            Some(a3_domain::AgentControllerState::Failed),
+            Some("Soll die bestehende API kompatibel bleiben oder darf sie ersetzt werden?"),
+            true,
+        );
+        assert_eq!(state, a3_domain::AgentSessionState::AwaitingUser);
+        assert!(message.contains("Soll die bestehende API kompatibel bleiben"));
+
+        let (state, _) =
+            session_outcome_for_run(Some(a3_domain::AgentControllerState::Failed), None, true);
+        assert_eq!(state, a3_domain::AgentSessionState::Failed);
+
+        let (state, _) = session_outcome_for_run(
+            Some(a3_domain::AgentControllerState::Failed),
+            Some("automatic replan limit exhausted"),
+            false,
+        );
+        assert_eq!(state, a3_domain::AgentSessionState::Failed);
+    }
+
+    fn step(
+        id: TaskStepId,
+        dependencies: Vec<StepDependency>,
+        outcome: &str,
+        verification_id: u8,
+        criterion: AcceptanceCriterionId,
+    ) -> Result<TaskStepDefinition, Box<dyn std::error::Error>> {
+        Ok(TaskStepDefinition::new(
+            id,
+            None,
+            TaskStepOutcome::try_from_string(outcome.to_owned())?,
+            TaskStepRationale::try_from_string("reviewed work plan".to_owned())?,
+            dependencies,
+            vec![ExpectedTaskEvidence::try_from_string(
+                "current source and verification result".to_owned(),
+            )?],
+            VerificationSpec::new(
+                VerificationSpecId::from_bytes([verification_id; 32]),
+                VerificationMethod::Diagnostic,
+                VerificationRequirement::try_from_string("verify the result".to_owned())?,
+            ),
+        )?
+        .with_acceptance_criteria(vec![criterion])?)
     }
 }

@@ -137,7 +137,12 @@ Nutzerentscheidungen und Abschlussprüfung anlegen oder gegen die sichtbar gelad
 materiellen unveränderlichen Nachfolger anhängen. Task-, Kriterien- und Zeitanker erzeugt nur der
 Rust-Core; die WebView erhält weder Datenbankzugriff noch die Befugnis, durch das Speichern bereits
 einen Agentenlauf zu starten. Für den ausgewählten Contract lädt derselbe Workspace außerdem das
-dauerhafte Task Ledger mit Revision, Store-Version und allen aktiven Planschritten. Ein tatsächlich
+dauerhafte Task Ledger mit Planrevision und allen aktiven Planschritten. Bestätigte Conversation-
+Pläne werden dabei als höchstens 64 einzeln verifizierbare Implementierungs- und Test-Todos
+materialisiert. Neue Evidence kann innerhalb des bestätigten Ziels einen begrenzten automatischen
+Replan auslösen: bereits bestätigte Arbeit bleibt erhalten, offene Nachfolger werden historisch
+pensioniert und ein neues sichtbares Planlücken-Todo wird vor frischen Ersatzschritten eingefügt.
+Ein tatsächlich
 laufender, auf Freigabe wartender, zu verifizierender oder blockierter Schritt bleibt gemeinsam mit
 dem Ziel in einem workspaceweiten Sticky Anchor sichtbar; fehlendes Ledger und eine abweichende
 Goal-Revision erscheinen als eigene sichere Zustände. Aus dem aktiven oder letzten im Ledger

@@ -2925,10 +2925,32 @@ impl CompositionRoot {
             )),
             TaskLensTaskLoadResult::Available(anchor) => {
                 let stored = anchor.task_ledger();
-                let steps = stored
+                let mut remaining = stored
                     .ledger()
                     .steps()
                     .filter(|step| step.is_active_plan_step())
+                    .collect::<Vec<_>>();
+                let mut ordered = Vec::with_capacity(remaining.len());
+                while !remaining.is_empty() {
+                    let pending = remaining
+                        .iter()
+                        .map(|step| step.definition().id())
+                        .collect::<BTreeSet<_>>();
+                    let position = remaining.iter().position(|step| {
+                        step.definition()
+                            .dependencies()
+                            .iter()
+                            .all(|dependency| !pending.contains(&dependency.prerequisite()))
+                    });
+                    let Some(position) = position else {
+                        return Err(CommandErrorV1::project_open(
+                            ErrorCodeV1::LocalStorageInvalidData,
+                        ));
+                    };
+                    ordered.push(remaining.remove(position));
+                }
+                let steps = ordered
+                    .into_iter()
                     .map(|step| {
                         TaskLensStepV1::new(
                             step.definition().id().to_string(),

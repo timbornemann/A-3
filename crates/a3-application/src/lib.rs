@@ -107,8 +107,9 @@ pub use agent_action_codec::{
 pub use agent_actions::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
     AgentLedgerActionOutcomeKind, ApplyAgentLedgerUpdate, ApplyAgentLedgerUpdateError,
-    ContinueVerifiedAgentPlan, ContinueVerifiedAgentPlanError, ContinueVerifiedAgentPlanOutcome,
-    PersistAgentLedgerMutation, PersistAgentLedgerMutationError, RequestAgentFinish,
+    ApplyAgentPlanRevision, ApplyAgentPlanRevisionError, ContinueVerifiedAgentPlan,
+    ContinueVerifiedAgentPlanError, ContinueVerifiedAgentPlanOutcome, PersistAgentLedgerMutation,
+    PersistAgentLedgerMutationError, RequestAgentFinish,
 };
 pub use agent_activity::{
     AgentActivity, AgentActivityLoadResult, AgentActivityRun, GetAgentActivity,

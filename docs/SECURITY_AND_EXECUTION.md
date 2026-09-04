@@ -601,6 +601,16 @@ content-identischer Fehler darf einmal mit frischem Kontext wiederholt werden; d
 Wiederholung erzwingt `Replan`, weitere Wiederholungen `Failed`, sodass das Modell keine
 unbegrenzte Fehlerschleife erzeugen kann.
 
+ADR-0042 erweitert diesen Replan nicht um eine freie Plan- oder Toolautorität. `RequestReplan`
+schließt den aktuellen Versuch und transportiert nur einen begrenzten Grund. Der Core erzeugt die
+neuen Step-, Verification- und Dependency-Identitäten, schreibt Planrevision und Runanker atomar
+und begrenzt einen produktiven Run auf höchstens acht automatische Replans. Das eingefügte
+adaptive Todo bleibt innerhalb des bestätigten Goal Contracts; Zieländerungen, neue Rechte,
+Netzwerk, Installation oder Publishing benötigen weiterhin eine ausdrückliche Nutzerentscheidung.
+`ReportBlocked` ist ausschließlich der sichere Haltepunkt für eine notwendige Richtungsentscheidung
+und wird als verständliche Nutzerfrage projiziert. Weder die öffentliche Arbeitsnotiz noch diese
+Frage kann eine Mutation autorisieren.
+
 ## Netzwerk und Datenschutz
 
 V1 ist offline-first:

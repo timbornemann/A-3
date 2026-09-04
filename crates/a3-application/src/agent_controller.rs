@@ -43,6 +43,8 @@ pub enum AgentControllerSignal {
     VerificationNeedsExecution,
     /// Verification requires a material replan.
     VerificationNeedsReplan,
+    /// Execution identified a material plan gap after closing the active step attempt.
+    ExecutionNeedsReplan,
     /// The immediate next Task Ledger revision was applied.
     ReplanApplied,
     /// Scoped approval was granted.
@@ -209,6 +211,9 @@ fn next_state(
         }
         (AgentControllerState::Execute, AgentControllerSignal::ApprovalRequired) => {
             Ok(AgentControllerState::AwaitApproval)
+        }
+        (AgentControllerState::Execute, AgentControllerSignal::ExecutionNeedsReplan) => {
+            Ok(AgentControllerState::Replan)
         }
         (AgentControllerState::Verify, AgentControllerSignal::VerificationNeedsExecution) => {
             Ok(AgentControllerState::Execute)
@@ -849,6 +854,7 @@ mod tests {
             AgentControllerSignal::ApprovalRequired,
             AgentControllerSignal::VerificationNeedsExecution,
             AgentControllerSignal::VerificationNeedsReplan,
+            AgentControllerSignal::ExecutionNeedsReplan,
             AgentControllerSignal::ReplanApplied,
             AgentControllerSignal::ApprovalGranted,
             AgentControllerSignal::ApprovalDenied,
@@ -880,6 +886,10 @@ mod tests {
             (
                 AgentControllerState::Verify,
                 AgentControllerSignal::VerificationNeedsReplan,
+            ),
+            (
+                AgentControllerState::Execute,
+                AgentControllerSignal::ExecutionNeedsReplan,
             ),
             (
                 AgentControllerState::Replan,

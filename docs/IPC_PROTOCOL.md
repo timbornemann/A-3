@@ -382,6 +382,12 @@ fachlichen Controls werden im Core gegen aktuelle Task-/Ledger-/Runanker aufgel�
 und -updates transportieren ausschließlich revisionierte Breiten und Collapse-Zustände innerhalb
 fester Grenzen.
 
+Die bestehende `query_task_lens_task`-Antwort bleibt unverändert. Für einen nach ADR-0042
+materialisierten Agent-Arbeitsplan liefert sie die aktiven Schritte jedoch in topologischer
+Ausführungsreihenfolge statt in der zufälligen Reihenfolge opaker Step-IDs. Planrevision und
+Schrittstatus stammen weiterhin ausschließlich aus dem Task Ledger; die WebView kann weder Todos
+einfügen noch ihren Zustand oder ihre Verification setzen.
+
 Eine angenommene neue Nachricht liefert die bereits dauerhaft angelegte und ausgewählte Session,
 bevor der besessene Hintergrundjob arbeitet. Ein nicht einreihbarer Job wird als sichere
 fehlgeschlagene Abschlussnachricht in genau dieser Session sichtbar und hinterlässt keinen

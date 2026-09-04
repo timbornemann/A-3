@@ -4,6 +4,7 @@ mod agent_controller;
 mod agent_run;
 mod agent_session;
 mod agent_tool;
+mod agent_work_plan;
 mod approval;
 mod claim_verification;
 mod command_discovery;
@@ -86,6 +87,10 @@ pub use agent_tool::{
     AgentToolAttemptStatus, AgentToolEvidence, AgentToolEvidenceLocation, AgentToolEvidenceSet,
     AgentToolEvidenceSetError, MutationActionFingerprint, MutationActionFingerprintError,
     MutationApplicationState, MutationReconciliation, ToolRunIdDerivationError,
+};
+pub use agent_work_plan::{
+    AgentWorkPlan, AgentWorkPlanError, AgentWorkPlanStep, AgentWorkPlanVerificationIntent,
+    MAX_AGENT_WORK_PLAN_STEPS,
 };
 pub use approval::{
     ApprovalGrant, ApprovalGrantError, ApprovalGrantState, ApprovalRequest, ApprovalRequestError,

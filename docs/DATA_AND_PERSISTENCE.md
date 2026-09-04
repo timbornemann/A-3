@@ -103,6 +103,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   bestehende Definitionen, terminale Versuche oder Replans umzuschreiben, wird vor Mutation
   abgelehnt. Leser rekonstruieren und validieren den vollständigen Domain-Aggregatzustand innerhalb
   einer konsistenten Read-Transaktion.
+  ADR-0042 benötigt dafür keine neue Tabelle: Der aus einem bestätigten Conversation-Plan
+  Core-kompilierte Arbeitsplan wird als mehrere vorhandene `task_steps` persistiert. Automatische
+  Anpassungen verwenden ausschließlich die bestehende append-only Replan-Transaktion; pensionierte
+  Definitionen und Versuche bleiben lesbar, neue adaptive und ersetzende Schritte erhalten frische
+  IDs, und `agent_runs.task_ledger_revision` wird im selben Compare-and-Swap fortgeschrieben.
 - Knowledge-Schema V13 ergänzt `agent_runs` als aktuelle relationale Laufprojektion und
   `run_events` als append-only Auditjournal. Runstart sowie jeder folgende Eventappend aktualisieren
   Event und Materialisierung atomar in einer `IMMEDIATE`-Transaktion. Der Tail wird per

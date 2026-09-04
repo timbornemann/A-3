@@ -7,6 +7,7 @@ import type {
   AgentSessionsResponseV1,
   AgentSlashCommandsResponseV1,
 } from './agent-session';
+import type { TaskLensTaskResponseV1 } from './task-lens';
 
 const sessionId = 'a'.repeat(64);
 
@@ -176,6 +177,29 @@ const activeAgentActivity = (): AgentActivityResponseV1 => ({
       },
     },
     status: 'available',
+  },
+});
+
+const adaptiveWorkPlan = (): TaskLensTaskResponseV1 => ({
+  protocolVersion: 1,
+  result: {
+    ledgerRevision: 2,
+    ledgerStoreVersion: '4',
+    status: 'available',
+    steps: [
+      { intendedOutcome: 'API-Vertrag definieren', status: 'completed', stepId: 'f'.repeat(64) },
+      {
+        intendedOutcome: 'Serializer ergänzen und Adapter anbinden',
+        status: 'inProgress',
+        stepId: 'e'.repeat(64),
+      },
+      { intendedOutcome: 'Integrationstests ausführen', status: 'pending', stepId: '9'.repeat(64) },
+    ],
+    task: {
+      goalRevision: 1,
+      objective: 'API sicher implementieren',
+      taskId: 'b'.repeat(64),
+    },
   },
 });
 
@@ -871,6 +895,7 @@ describe('AgentWorkspace', () => {
           status: 'available',
         },
       })),
+      workPlanLoader: vi.fn(async () => adaptiveWorkPlan()),
     });
 
     expect(await screen.findByText('Änderungen werden umgesetzt')).toBeTruthy();
@@ -880,6 +905,10 @@ describe('AgentWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Review' })).toBeTruthy();
     expect(screen.getByText('Umsetzung vorbereitet')).toBeTruthy();
     expect(screen.getByText('Sichere Aktion ausgeführt')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '1 von 3 Schritten erledigt' })).toBeTruthy();
+    expect(screen.getByText('Serializer ergänzen und Adapter anbinden')).toBeTruthy();
+    expect(screen.getByText('Integrationstests ausführen')).toBeTruthy();
+    expect(screen.getByText(/Nach einem neuen Befund angepasst/)).toBeTruthy();
     expect(screen.queryByText('controllerDecision')).toBeNull();
     expect(screen.queryByText('policyDecision')).toBeNull();
     expect(screen.queryByText(/dddddddd/u)).toBeNull();

@@ -1065,6 +1065,7 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] taskgebundene Agentenlauf-Seitenleiste ohne doppelte Rechercheprojektion
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
 - [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
+- [x] adaptiver, schrittweise verifizierter Agent-Arbeitsplan mit begrenztem Replan
 - [x] Component-, Accessibility-, responsive und native UX-Verifikation
 
 Akzeptanz:
@@ -1199,6 +1200,13 @@ Plan- und Agent-Vorbereitung verwenden außerdem denselben geschlossenen `QUESTI
 Vertrag: Eine tatsächlich blockierende Richtungsentscheidung wird als konkrete Rückfrage sichtbar
 und benötigt keine erfundene Quellenangabe; nur ein vollständig strukturierter und aktuell belegter
 Plan darf Task, Ledger und Run materialisieren.
+
+Adaptive-Arbeitsplan-Erweiterung vom 2026-09-04 nach ADR-0042: Normale Plan- und Agentantworten
+materialisieren ihre geordneten Änderungs- und Testpunkte als einzelne dauerhafte Todos. Der
+Agentenlauf arbeitet sie sequenziell ab, kann nach neuer Evidence ein zusätzliches Planlücken-Todo
+einschieben und offene Nachfolger als neue Ledger-Revision ersetzen. Die Arbeitsplanansicht zeigt
+den aktuellen Schritt, den verständlichen Status, erledigte Schritte und die Planrevision in
+topologischer Reihenfolge; eine angepasste Revision wird ohne technische Store-ID erklärt.
 
 Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
 Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,

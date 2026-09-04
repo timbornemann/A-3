@@ -266,6 +266,13 @@ Abhängigkeiten: E1, E3, E6
 - [x] Verify und Replan
 - [x] Fortschrittsdetektor
 
+Erweiterung vom 2026-09-04 nach ADR-0042: Replan ist nun auch im produktiven Conversation-Executor
+geschlossen. Ein neuer Befund oder ein deterministisch klassifizierter Mutationsfehler kann einen
+offenen Schritt ersetzen und ein zusätzliches begrenztes Todo einschieben. Höchstens acht
+automatische Revisionen sind pro Run erlaubt; jede Änderung und jeder Test bleibt ein eigener
+verifizierter Ledger-Schritt, und ein notwendiger Nutzerentscheid wird als Haltepunkt statt als
+technischer Laufzeitfehler gemeldet.
+
 Akzeptanz:
 
 - kein zweiter mutierender Turn parallel;

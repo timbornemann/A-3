@@ -59,10 +59,12 @@
   } from './agent-ask-research';
   import { parseChatMarkdown } from './chat-markdown';
   import { agentSessionRecoveryMessage } from './command-error';
+  import { queryTaskLensTask, type TaskLensStepV1, type TaskLensTaskResponseV1 } from './task-lens';
 
   interface Props {
     activeProject: boolean;
     activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
+    workPlanLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     approvalController?: (
       taskId: string,
       approval: AgentApprovalV1,
@@ -145,6 +147,7 @@
     slashCommandsLoader = queryAgentSlashCommands,
     researchContinuer = continueAgentResearch,
     pollIntervalMs = 700,
+    workPlanLoader = queryTaskLensTask,
   }: Props = $props();
 
   let sessionsView = $state<SessionsView>({ kind: 'idle' });
@@ -181,10 +184,13 @@
   });
   let activity = $state<AgentActivityV1 | null>(null);
   let activityLoading = $state(false);
+  let workPlan = $state<TaskLensTaskResponseV1['result'] | null>(null);
+  let workPlanLoading = $state(false);
   let observedProject = false;
   let sessionRequest = 0;
   let sessionsRequest = 0;
   let activityRequest = 0;
+  let workPlanRequest = 0;
   let researchRefresh = $state(0);
   let recentlyCompletedResearchSequence = $state<string | null>(null);
   let researchProjections = $state<
@@ -330,8 +336,11 @@
   });
 
   $effect(() => {
-    if (activeTaskId) void loadActivity(activeTaskId);
-    else activity = null;
+    if (activeTaskId) void Promise.all([loadActivity(activeTaskId), loadWorkPlan(activeTaskId)]);
+    else {
+      activity = null;
+      workPlan = null;
+    }
   });
 
   $effect(() => {
@@ -627,7 +636,7 @@
       sessionView = { kind: 'available', session: next };
       researchRefresh += 1;
       if (next.activeTaskId) {
-        await loadActivity(next.activeTaskId);
+        await Promise.all([loadActivity(next.activeTaskId), loadWorkPlan(next.activeTaskId)]);
       }
       if (!['running', 'awaitingApproval', 'paused'].includes(next.summary.state)) {
         await loadSessions(sessionId);
@@ -1023,6 +1032,36 @@
     } finally {
       if (request === activityRequest) activityLoading = false;
     }
+  }
+
+  async function loadWorkPlan(taskId: string): Promise<void> {
+    const request = ++workPlanRequest;
+    workPlanLoading = true;
+    try {
+      const response = await workPlanLoader({ taskId });
+      if (request !== workPlanRequest || taskId !== activeTaskId) return;
+      workPlan = response.result;
+    } catch {
+      if (request === workPlanRequest) workPlan = null;
+    } finally {
+      if (request === workPlanRequest) workPlanLoading = false;
+    }
+  }
+
+  function workPlanStepStatus(status: TaskLensStepV1['status']): string {
+    const labels: Record<TaskLensStepV1['status'], string> = {
+      awaitingApproval: 'Wartet auf Freigabe',
+      blocked: 'Braucht Entscheidung',
+      cancelled: 'Abgebrochen',
+      completed: 'Erledigt',
+      failed: 'Fehlgeschlagen',
+      inProgress: 'In Arbeit',
+      pending: 'Geplant',
+      ready: 'Als Nächstes',
+      stale: 'Erneut zu prüfen',
+      verifying: 'Wird geprüft',
+    };
+    return labels[status];
   }
 
   function toggleHistory(): void {
@@ -1925,6 +1964,42 @@
         </nav>
         <div class="inspector-content">
           {#if inspectorTab === 'progress'}
+            {#if workPlanLoading && workPlan === null}
+              <p role="status">Arbeitsplan wird geladen …</p>
+            {:else if workPlan?.status === 'available'}
+              {@const completedSteps = workPlan.steps.filter(
+                (step) => step.status === 'completed',
+              ).length}
+              <section class="agent-work-plan" aria-labelledby="agent-work-plan-heading">
+                <header>
+                  <div>
+                    <p class="section-label">Arbeitsplan · Revision {workPlan.ledgerRevision}</p>
+                    <h3 id="agent-work-plan-heading">
+                      {completedSteps} von {workPlan.steps.length} Schritten erledigt
+                    </h3>
+                  </div>
+                  <span>{workPlan.steps.length} Todos</span>
+                </header>
+                {#if workPlan.ledgerRevision > 1}
+                  <p class="adaptive-plan-note">
+                    Nach einem neuen Befund angepasst; bestätigte Arbeit bleibt erhalten.
+                  </p>
+                {/if}
+                <ol>
+                  {#each workPlan.steps as step, index (step.stepId)}
+                    <li class:active={step.status === 'inProgress' || step.status === 'verifying'}>
+                      <span class="todo-marker" aria-hidden="true">
+                        {step.status === 'completed' ? '✓' : index + 1}
+                      </span>
+                      <div>
+                        <strong>{step.intendedOutcome}</strong>
+                        <small>{workPlanStepStatus(step.status)}</small>
+                      </div>
+                    </li>
+                  {/each}
+                </ol>
+              </section>
+            {/if}
             {#if activityLoading}<p role="status">Fortschritt wird geladen …</p>
             {:else if activity?.run}
               <section class="run-summary">
@@ -2768,6 +2843,75 @@
     color: var(--color-muted);
     font-size: var(--font-size-xs);
     text-transform: uppercase;
+  }
+  .agent-work-plan {
+    display: grid;
+    margin-block-end: var(--space-4);
+    gap: var(--space-2);
+  }
+  .agent-work-plan > header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .agent-work-plan h3 {
+    margin: var(--space-1) 0 0;
+    font-size: var(--font-size-base);
+  }
+  .agent-work-plan > header > span {
+    flex: 0 0 auto;
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .adaptive-plan-note {
+    padding: var(--space-2);
+    margin: 0;
+    border-inline-start: 2px solid var(--color-accent);
+    color: var(--color-muted);
+    background: var(--color-accent-surface);
+    font-size: var(--font-size-xs);
+  }
+  .agent-work-plan ol {
+    display: grid;
+    padding: 0;
+    margin: 0;
+    gap: var(--space-1);
+    list-style: none;
+  }
+  .agent-work-plan li {
+    display: grid;
+    grid-template-columns: 1.5rem minmax(0, 1fr);
+    align-items: start;
+    padding: var(--space-2);
+    gap: var(--space-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+  }
+  .agent-work-plan li.active {
+    border-color: var(--color-accent);
+    background: var(--color-accent-surface);
+  }
+  .todo-marker {
+    display: grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--color-muted);
+    background: var(--color-surface-muted);
+    font-size: var(--font-size-xs);
+  }
+  .agent-work-plan li.active .todo-marker {
+    color: var(--color-accent-text);
+    box-shadow: 0 0 0 3px var(--color-status-pending-ring);
+  }
+  .agent-work-plan li > div {
+    display: grid;
+    gap: 0.15rem;
+  }
+  .agent-work-plan small {
+    color: var(--color-muted);
   }
   .run-summary h3 {
     margin: var(--space-1) 0;
