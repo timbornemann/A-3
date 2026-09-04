@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = path.join(repositoryRoot, 'target', 'reports', 'dependency-license-report.json');
 
-function licenseFromManifest(manifest) {
+function licenseFromManifest(manifest, directory) {
   if (typeof manifest.license === 'string' && manifest.license.trim()) {
     return manifest.license.trim();
   }
@@ -18,6 +18,13 @@ function licenseFromManifest(manifest) {
     if (licenses.length > 0) {
       return licenses.join(' OR ');
     }
+  }
+  if (
+    ['LICENSE', 'license', 'LICENSE.md', 'license.md', 'LICENSE.txt', 'license.txt'].some((name) =>
+      fs.existsSync(path.join(directory, name)),
+    )
+  ) {
+    return 'SEE LICENSE FILE';
   }
   return 'UNKNOWN';
 }
@@ -50,7 +57,7 @@ function collectManifest(directory, source, packages) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   if (typeof manifest.name === 'string' && typeof manifest.version === 'string') {
     packages.push({
-      license: licenseFromManifest(manifest),
+      license: licenseFromManifest(manifest, directory),
       name: manifest.name,
       source,
       version: manifest.version,

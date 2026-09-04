@@ -389,6 +389,30 @@ vollständige Linux-Lauf bestand ohne Retry.
 
 ## Gate M7
 
+ADR-0039 ergänzt keine neue Mutationsart. `/review`, `/debug`, `/doc`, `/refactor` und `/test`
+präzisieren im Agent-Modus ausschließlich Ziel, Reihenfolge und Verification. Jeder bestätigte
+Fund muss als eigener evidence-gebundener Ledger-Schritt ausführbar bleiben; Hypothesen sind keine
+Änderungsgrundlage. Prozesse bleiben auf aktuelle, manifestbelegte Test-, Build-, Lint- und
+Format-Commands mit direktem argv, zentraler Policy, bestehenden Approvals und begrenzter Ausgabe
+beschränkt. Ask und Plan führen keine Projektprozesse aus.
+
+- [x] Slash Commands erweitern weder Allowlist noch Approval- oder Prozessautorität
+- [x] Agent-Command-Constraints bleiben getrennt von typisierten AgentActions
+- [x] jeder veränderte bestätigte Fund besitzt aktuelle Verification
+
+Abnahme vom 2026-09-04: Das Command-Profil wird als nicht autorisierende, typisierte
+Constraint an Recherche, Context Compiler und Materialisierung übergeben. Prozessausführung bleibt
+ausschließlich über den vorhandenen manifestbelegten Katalog, direkte argv, zentrale Policy,
+Approval und Verification möglich; Ask und Plan erhalten keine Prozess- oder Mutationsaktion.
+AgentAction-Schema und Controllergrenze bleiben davon getrennt. Im Agent-Modus erzwingt das
+Core-Profil pro bestätigtem, eigenständig änderbarem Fund einen Top-Level-Punkt in
+`Implementation Changes`. Der Materializer bildet diese Punkte auf eine sequenzielle Ledger-Kette
+mit eigener Verification-Spezifikation und Evidence-Erwartung ab. Nach erfolgreicher Verification
+startet ein atomarer Application-Use-Case genau den nächsten bereiten Schritt; erst wenn alle
+Schritte `Completed` sind, darf die Acceptance-Prüfung beginnen. Unit-Regressionen belegen
+Zerlegung, Fallback bei nicht strukturierten Plänen und den atomaren Übergang
+`Verify → Execute` zum nächsten Schritt.
+
 - [x] Security-Negativsuite grün
 - [x] Prozessbaumtests auf drei OS
 - [x] Mutations-Lock und Snapshotkonflikte grün

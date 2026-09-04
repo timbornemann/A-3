@@ -10,8 +10,8 @@ use a3_application::{
     AgentContextCompileInput, AgentContextCompiler, AgentContextCompilerFuture,
     AgentPromptContract, CompileTaskLens, CompileTaskLensFailure, CompiledAgentContext,
     ContextCompileControl, ContextCompileFailure, ContextCompilePhase, ContextToolResult,
-    ContextToolResultStatus, ModelMessage, ModelMessageRole, ModelProviderRequest, TaskLensControl,
-    TaskLensControlError,
+    ContextToolResultStatus, ModelMessage, ModelMessageRole, ModelProviderRequest,
+    SlashCommandExecutionProfile, TaskLensControl, TaskLensControlError,
 };
 use a3_domain::{
     ContextBudgetPlan, ContextBudgetUsage, ContextCompilerPolicyVersion, ContextSection,
@@ -67,11 +67,17 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             .step(input.current_step_id())
             .filter(|step| step.is_active_plan_step())
             .ok_or(ContextCompileFailure::StaleOrMismatchedInput)?;
+        let command_profile = input
+            .research_handoff()
+            .and_then(|handoff| handoff.command())
+            .cloned()
+            .map(SlashCommandExecutionProfile::resolve);
         let anchor = render_anchor(
             input.goal_contract(),
             input.task_ledger(),
             current_step,
             profile,
+            command_profile.as_ref(),
         );
         reject_secret_candidate(&anchor)?;
         let goal_tokens = count(profile, &anchor)?;
@@ -298,6 +304,7 @@ fn render_anchor(
     ledger: &TaskLedger,
     current_step: &TaskStep,
     profile: &ModelProfile,
+    command_profile: Option<&SlashCommandExecutionProfile>,
 ) -> String {
     let mut text = String::new();
     text.push_str("[ANCHOR]\n");
@@ -344,6 +351,23 @@ fn render_anchor(
         push_line(
             &mut text,
             format_args!("user_decision={}", decision.as_str()),
+        );
+    }
+    if let Some(command_profile) = command_profile {
+        let invocation = command_profile.invocation();
+        let lenses = invocation
+            .lenses()
+            .iter()
+            .map(|lens| lens.name())
+            .collect::<Vec<_>>()
+            .join(",");
+        push_line(
+            &mut text,
+            format_args!(
+                "command_profile=1:{}/{}",
+                invocation.primary().name(),
+                lenses
+            ),
         );
     }
     push_line(

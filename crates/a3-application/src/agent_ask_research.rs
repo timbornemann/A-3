@@ -697,6 +697,7 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         answer: &'a AgentSessionEntry,
         event: &'a AskResearchEvent,
         cited_sources: &'a [AskResearchSourceId],
+        diagrams: &'a [crate::EvidenceDiagramArtifact],
     ) -> AskResearchStoreFuture<'a, ()>;
     /// Links a previously completed Plan research section to the internal task created after the
     /// user explicitly accepts that plan. This is an internal persistence operation; identifiers
@@ -739,6 +740,28 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         user_sequence: AgentSessionSequence,
         source_id: AskResearchSourceId,
     ) -> AskResearchStoreFuture<'a, Option<AskResearchSource>>;
+    /// Lists at most three diagrams atomically completed with one research turn.
+    fn list_diagrams<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+    ) -> AskResearchStoreFuture<'a, Vec<crate::EvidenceDiagramArtifact>>;
+    /// Lists bounded diagram artifacts for the visible tail of one session.
+    fn list_session_diagrams<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        user_turn_limit: u16,
+    ) -> AskResearchStoreFuture<'a, Vec<SessionEvidenceDiagramArtifact>>;
+    /// Loads one artifact only when it belongs to the supplied project and session.
+    fn load_diagram<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        artifact_id: a3_domain::AgentDiagramArtifactId,
+    ) -> AskResearchStoreFuture<'a, Option<(AgentSessionSequence, crate::EvidenceDiagramArtifact)>>;
     /// Reconstructs the current, typed research handoff linked to one internal Agent task.
     ///
     /// The task identity never crosses the WebView boundary. Missing or legacy trace data yields
@@ -748,6 +771,57 @@ pub trait AskResearchStore: fmt::Debug + Send + Sync {
         project: &'a ProjectIdentity,
         task_id: TaskId,
     ) -> AskResearchStoreFuture<'a, Option<crate::ResearchHandoff>>;
+}
+
+/// One persisted diagram with the immutable index anchor of its owning research turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEvidenceDiagramArtifact {
+    user_sequence: AgentSessionSequence,
+    index_run_id: IndexRunId,
+    snapshot_id: SnapshotId,
+    artifact: crate::EvidenceDiagramArtifact,
+}
+
+impl SessionEvidenceDiagramArtifact {
+    /// Reconstructs a store-validated session diagram projection.
+    #[must_use]
+    pub const fn new(
+        user_sequence: AgentSessionSequence,
+        index_run_id: IndexRunId,
+        snapshot_id: SnapshotId,
+        artifact: crate::EvidenceDiagramArtifact,
+    ) -> Self {
+        Self {
+            user_sequence,
+            index_run_id,
+            snapshot_id,
+            artifact,
+        }
+    }
+
+    /// Returns the owning user-message sequence.
+    #[must_use]
+    pub const fn user_sequence(&self) -> AgentSessionSequence {
+        self.user_sequence
+    }
+
+    /// Returns the immutable published index run.
+    #[must_use]
+    pub const fn index_run_id(&self) -> IndexRunId {
+        self.index_run_id
+    }
+
+    /// Returns the immutable repository snapshot.
+    #[must_use]
+    pub const fn snapshot_id(&self) -> SnapshotId {
+        self.snapshot_id
+    }
+
+    /// Returns the validated artifact.
+    #[must_use]
+    pub const fn artifact(&self) -> &crate::EvidenceDiagramArtifact {
+        &self.artifact
+    }
 }
 
 /// Stable Ask research persistence failure.

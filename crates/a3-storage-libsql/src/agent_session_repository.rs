@@ -1,11 +1,14 @@
 use crate::catalog::is_corruption;
 use a3_application::{
-    AgentSessionDetail, AgentSessionListQuery, AgentSessionPage, AgentSessionStoreFailure,
+    AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
+    AgentSessionStoreFailure,
 };
 use a3_domain::{
-    AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
-    AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-    AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId, TaskId, WorktreeId,
+    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
+    AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
+    AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
+    SlashCommand, SlashCommandCatalogVersion, SlashCommandEmptyInput, SlashCommandInvocation,
+    SlashCommandLens, TaskId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 
@@ -14,6 +17,7 @@ pub(crate) async fn create(
     worktree_id: WorktreeId,
     session: &AgentSession,
     first_entry: Option<&AgentSessionEntry>,
+    command: Option<&SlashCommandInvocation>,
 ) -> Result<(), AgentSessionRepositoryError> {
     if session.revision() != AgentSessionRevision::INITIAL
         || session.presentation_deleted()
@@ -23,6 +27,9 @@ pub(crate) async fn create(
                 || session.latest_sequence() != Some(AgentSessionSequence::FIRST)
         })
         || (first_entry.is_none() && session.latest_sequence().is_some())
+        || command.is_some_and(|_| {
+            first_entry.is_none_or(|entry| entry.kind() != AgentSessionEntryKind::UserMessage)
+        })
     {
         return Err(AgentSessionRepositoryError::InvalidInput);
     }
@@ -34,6 +41,9 @@ pub(crate) async fn create(
         insert_revision(&transaction, worktree_id, session).await?;
         if let Some(entry) = first_entry {
             insert_entry(&transaction, worktree_id, session.revision(), entry).await?;
+            if let Some(command) = command {
+                insert_slash_command(&transaction, worktree_id, entry, command).await?;
+            }
         }
         Ok(())
     }
@@ -47,11 +57,15 @@ pub(crate) async fn append(
     expected: AgentSessionRevision,
     session: &AgentSession,
     entry: Option<&AgentSessionEntry>,
+    command: Option<&SlashCommandInvocation>,
 ) -> Result<(), AgentSessionRepositoryError> {
     if session.revision().get() != expected.get().saturating_add(1)
         || entry.is_some_and(|entry| {
             entry.session_id() != session.id()
                 || session.latest_sequence() != Some(entry.sequence())
+        })
+        || command.is_some_and(|_| {
+            entry.is_none_or(|entry| entry.kind() != AgentSessionEntryKind::UserMessage)
         })
     {
         return Err(AgentSessionRepositoryError::InvalidInput);
@@ -65,11 +79,77 @@ pub(crate) async fn append(
         insert_revision(&transaction, worktree_id, session).await?;
         if let Some(entry) = entry {
             insert_entry(&transaction, worktree_id, session.revision(), entry).await?;
+            if let Some(command) = command {
+                insert_slash_command(&transaction, worktree_id, entry, command).await?;
+            }
         }
         Ok(())
     }
     .await;
     close(transaction, result).await
+}
+
+async fn insert_slash_command(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    entry: &AgentSessionEntry,
+    command: &SlashCommandInvocation,
+) -> Result<(), AgentSessionRepositoryError> {
+    let subject_behavior = if command.subject().is_empty() {
+        match command.empty_input_behavior() {
+            SlashCommandEmptyInput::RepositoryWide => "repository_wide",
+            SlashCommandEmptyInput::WorkingChanges => "working_changes",
+            SlashCommandEmptyInput::Clarify => "clarify",
+            SlashCommandEmptyInput::Reject => {
+                return Err(AgentSessionRepositoryError::InvalidInput);
+            }
+        }
+    } else {
+        "provided"
+    };
+    let depth = match command.depth() {
+        AgentResearchDepth::Standard => "standard",
+        AgentResearchDepth::Thorough => "thorough",
+    };
+    transaction
+        .execute(
+            "INSERT INTO agent_slash_command_invocations (
+               worktree_id, session_id, user_sequence, catalog_version,
+               primary_command, effective_depth, subject_behavior
+             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                entry.session_id().as_bytes().to_vec(),
+                i64::try_from(entry.sequence().get())
+                    .map_err(|_| AgentSessionRepositoryError::InvalidInput)?,
+                command.primary().name(),
+                depth,
+                subject_behavior,
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Write)?;
+    for (index, lens) in command.lenses().iter().enumerate() {
+        let position = i64::try_from(index.saturating_add(1))
+            .map_err(|_| AgentSessionRepositoryError::InvalidInput)?;
+        transaction
+            .execute(
+                "INSERT INTO agent_slash_command_lenses (
+                   worktree_id, session_id, user_sequence, lens_position, lens_kind
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    worktree_id.as_bytes().to_vec(),
+                    entry.session_id().as_bytes().to_vec(),
+                    i64::try_from(entry.sequence().get())
+                        .map_err(|_| AgentSessionRepositoryError::InvalidInput)?,
+                    position,
+                    lens.name(),
+                ],
+            )
+            .await
+            .map_err(AgentSessionRepositoryError::Write)?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn delete_presentation(
@@ -234,6 +314,126 @@ pub(crate) async fn load(
     AgentSessionDetail::new(session, entries, has_older)
         .map(Some)
         .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn load_commands(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    before_sequence: Option<u64>,
+    limit: u16,
+) -> Result<Vec<AgentSessionCommandPresentation>, AgentSessionRepositoryError> {
+    if limit == 0 || limit > 128 {
+        return Err(AgentSessionRepositoryError::InvalidInput);
+    }
+    let before = before_sequence
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| AgentSessionRepositoryError::InvalidInput)?;
+    let mut rows = connection
+        .query(
+            "SELECT c.user_sequence, c.catalog_version, c.primary_command,
+                    c.effective_depth, l.lens_position, l.lens_kind
+             FROM (
+               SELECT user_sequence, catalog_version, primary_command, effective_depth
+               FROM agent_slash_command_invocations
+               WHERE worktree_id = ?1 AND session_id = ?2
+                 AND (?3 IS NULL OR user_sequence < ?3)
+               ORDER BY user_sequence DESC LIMIT ?4
+             ) AS c
+             LEFT JOIN agent_slash_command_lenses AS l
+               ON l.worktree_id = ?1 AND l.session_id = ?2
+              AND l.user_sequence = c.user_sequence
+             ORDER BY c.user_sequence, l.lens_position",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                before,
+                i64::from(limit)
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+
+    struct Pending {
+        sequence: AgentSessionSequence,
+        primary: SlashCommand,
+        depth: AgentResearchDepth,
+        lenses: Vec<SlashCommandLens>,
+    }
+    fn finish(
+        pending: Pending,
+    ) -> Result<AgentSessionCommandPresentation, AgentSessionRepositoryError> {
+        AgentSessionCommandPresentation::restore(
+            pending.sequence,
+            SlashCommandCatalogVersion::V1,
+            pending.primary,
+            pending.lenses,
+            pending.depth,
+        )
+        .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
+    }
+
+    let mut result = Vec::new();
+    let mut pending: Option<Pending> = None;
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+    {
+        let sequence = AgentSessionSequence::new(read_u64(&row, 0)?)
+            .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)?;
+        let catalog_version = read_u64(&row, 1)?;
+        if catalog_version != 1 {
+            return Err(AgentSessionRepositoryError::InvalidStoredData);
+        }
+        if pending
+            .as_ref()
+            .is_some_and(|current| current.sequence != sequence)
+        {
+            let completed = pending
+                .take()
+                .ok_or(AgentSessionRepositoryError::InvalidStoredData)?;
+            result.push(finish(completed)?);
+        }
+        if pending.is_none() {
+            let primary = SlashCommand::from_stable_name(&read_string(&row, 2)?)
+                .ok_or(AgentSessionRepositoryError::InvalidStoredData)?;
+            let depth = match read_string(&row, 3)?.as_str() {
+                "standard" => AgentResearchDepth::Standard,
+                "thorough" => AgentResearchDepth::Thorough,
+                _ => return Err(AgentSessionRepositoryError::InvalidStoredData),
+            };
+            pending = Some(Pending {
+                sequence,
+                primary,
+                depth,
+                lenses: Vec::new(),
+            });
+        }
+        let position = read_optional_u64(&row, 4)?;
+        let lens_name = read_optional_string(&row, 5)?;
+        match (position, lens_name) {
+            (None, None) => {}
+            (Some(position), Some(name)) => {
+                let current = pending
+                    .as_mut()
+                    .ok_or(AgentSessionRepositoryError::InvalidStoredData)?;
+                if position != u64::try_from(current.lenses.len() + 1).unwrap_or(u64::MAX) {
+                    return Err(AgentSessionRepositoryError::InvalidStoredData);
+                }
+                current.lenses.push(
+                    SlashCommandLens::from_stable_name(&name)
+                        .ok_or(AgentSessionRepositoryError::InvalidStoredData)?,
+                );
+            }
+            _ => return Err(AgentSessionRepositoryError::InvalidStoredData),
+        }
+    }
+    if let Some(completed) = pending {
+        result.push(finish(completed)?);
+    }
+    Ok(result)
 }
 
 pub(crate) async fn require_latest_revision(
@@ -575,12 +775,14 @@ impl AgentSessionRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentSessionRepositoryError, append, create, delete_presentation, list, load};
+    use super::{
+        AgentSessionRepositoryError, append, create, delete_presentation, list, load, load_commands,
+    };
     use a3_application::AgentSessionListQuery;
     use a3_domain::{
         AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
         AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-        AgentSessionTimestamp, AgentSessionTitle,
+        AgentSessionTimestamp, AgentSessionTitle, ParsedSlashCommand, parse_slash_command,
     };
 
     #[test]
@@ -606,13 +808,53 @@ mod tests {
                 session_id,
                 1,
                 AgentSessionEntryKind::UserMessage,
-                "Implementiere den Agent Workspace",
+                "/review /security Authentifizierung",
                 10,
                 None,
             )?;
-            create(&connection, worktree_id, &first, Some(&user))
+            let command = match parse_slash_command(AgentSessionMode::Plan, user.text().as_str())? {
+                ParsedSlashCommand::Command(command) => command,
+                ParsedSlashCommand::Plain(_) => return Err("command was not parsed".into()),
+            };
+            create(
+                &connection,
+                worktree_id,
+                &first,
+                Some(&user),
+                Some(&command),
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            let mut command_rows = connection
+                .query(
+                    "SELECT primary_command, effective_depth FROM agent_slash_command_invocations WHERE worktree_id = ?1 AND session_id = ?2",
+                    libsql::params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec()],
+                )
+                .await?;
+            let command_row = command_rows.next().await?.ok_or("command missing")?;
+            assert_eq!(command_row.get::<String>(0)?, "review");
+            assert_eq!(command_row.get::<String>(1)?, "thorough");
+            let mut lens_rows = connection
+                .query(
+                    "SELECT lens_kind FROM agent_slash_command_lenses WHERE worktree_id = ?1 AND session_id = ?2 ORDER BY lens_position",
+                    libsql::params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec()],
+                )
+                .await?;
+            assert_eq!(
+                lens_rows
+                    .next()
+                    .await?
+                    .ok_or("lens missing")?
+                    .get::<String>(0)?,
+                "security"
+            );
+            let commands = load_commands(&connection, worktree_id, session_id, None, 128)
                 .await
                 .map_err(|error| error.classify())?;
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].sequence(), AgentSessionSequence::FIRST);
+            assert_eq!(commands[0].primary().name(), "review");
+            assert_eq!(commands[0].lenses()[0].name(), "security");
 
             let second = session(
                 session_id,
@@ -637,6 +879,7 @@ mod tests {
                 AgentSessionRevision::INITIAL,
                 &second,
                 Some(&plan),
+                None,
             )
             .await
             .map_err(|error| error.classify())?;
@@ -646,6 +889,7 @@ mod tests {
                     worktree_id,
                     AgentSessionRevision::INITIAL,
                     &second,
+                    None,
                     None,
                 )
                 .await,
@@ -703,6 +947,20 @@ mod tests {
                 .map_err(|error| error.classify())?
                 .sessions()
                 .is_empty()
+            );
+            let mut command_count = connection
+                .query(
+                    "SELECT COUNT(*) FROM agent_slash_command_invocations WHERE worktree_id = ?1 AND session_id = ?2",
+                    libsql::params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec()],
+                )
+                .await?;
+            assert_eq!(
+                command_count
+                    .next()
+                    .await?
+                    .ok_or("count missing")?
+                    .get::<i64>(0)?,
+                0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

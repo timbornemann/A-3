@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub type QueryAgentWorkTraceTurnsRequestV1 = QueryAgentAskResearchTurnsRequestV1;
 /// Existing strict exact-turn request reused by the generic work trace.
 pub type QueryAgentWorkTraceDetailRequestV1 = QueryAgentAskResearchDetailRequestV1;
+/// V2 keeps the exact-turn request pathless while recognizing the expanded closed action schema.
+pub type QueryAgentWorkTraceDetailRequestV2 = QueryAgentAskResearchDetailRequestV1;
 /// Existing strict cursor request reused by the generic work trace.
 pub type QueryAgentWorkTraceSourcesRequestV1 = QueryAgentAskResearchSourcesRequestV1;
 /// Existing strict opaque source request reused by the generic work trace.
@@ -216,3 +218,6 @@ pub struct AgentWorkTraceDetailResponseV1 {
     /// Bounded read result.
     pub result: AgentWorkTraceDetailResultV1,
 }
+
+/// V2 keeps the safe bounded projection; expanded actions are rendered as Core-owned sentences.
+pub type AgentWorkTraceDetailResponseV2 = AgentWorkTraceDetailResponseV1;

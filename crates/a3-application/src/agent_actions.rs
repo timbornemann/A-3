@@ -6,7 +6,7 @@ use a3_domain::{
     AgentControllerState, AgentFinishAction, AgentLedgerUpdate, AgentRun, AgentRunTimestamp,
     AgentToolEvidenceSet, AgentUpdateLedgerAction, ProjectIdentity, RunEvent, RunEventId,
     RunEventSequence, SnapshotId, TaskLedger, TaskLedgerError, TaskLedgerTimestamp,
-    TaskReplanReason, TaskStepId,
+    TaskReplanReason, TaskStepId, TaskStepStatus,
 };
 use std::error::Error;
 use std::fmt;
@@ -398,18 +398,187 @@ impl From<AgentControllerError> for ApplyAgentLedgerUpdateError {
     }
 }
 
+/// Result of advancing a verified multi-step Agent plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinueVerifiedAgentPlanOutcome {
+    /// Every current plan step is verified, so acceptance may run.
+    ReadyForAcceptance,
+    /// Exactly one further step now owns the existing Agent run.
+    StepStarted {
+        /// Stable identity of the newly active step.
+        step_id: TaskStepId,
+        /// Optimistic store version after the atomic Ledger/run transition.
+        ledger_version: TaskLedgerStoreVersion,
+    },
+}
+
+/// Atomically starts the next ready Ledger step after the preceding step was verified.
+#[derive(Debug, Clone, Copy)]
+pub struct ContinueVerifiedAgentPlan<'a> {
+    store: &'a dyn AgentActionStore,
+}
+
+impl<'a> ContinueVerifiedAgentPlan<'a> {
+    /// Creates the use case from the existing atomic Ledger/run persistence boundary.
+    #[must_use]
+    pub const fn new(store: &'a dyn AgentActionStore) -> Self {
+        Self { store }
+    }
+
+    /// Preserves one run and one mutating action at a time while progressing a multi-step plan.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute(
+        self,
+        project: &ProjectIdentity,
+        expected_ledger_version: TaskLedgerStoreVersion,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        event_id: RunEventId,
+        observed_at: AgentRunTimestamp,
+        control: &dyn AgentControllerControl,
+    ) -> Result<ContinueVerifiedAgentPlanOutcome, ContinueVerifiedAgentPlanError> {
+        if control.is_cancelled() {
+            return Err(ContinueVerifiedAgentPlanError::Cancelled);
+        }
+        if run.state() != AgentControllerState::Verify
+            || run.goal_contract() != ledger.goal_contract()
+            || run.task_ledger_revision() != ledger.revision()
+            || ledger.steps().any(|step| {
+                matches!(
+                    step.status(),
+                    TaskStepStatus::InProgress
+                        | TaskStepStatus::AwaitingApproval
+                        | TaskStepStatus::Verifying
+                )
+            })
+        {
+            return Err(ContinueVerifiedAgentPlanError::InvalidState);
+        }
+        let next_step_id = ledger
+            .steps()
+            .filter(|step| step.is_active_plan_step() && step.status() == TaskStepStatus::Ready)
+            .map(|step| step.definition().id())
+            .next();
+        let Some(next_step_id) = next_step_id else {
+            if ledger
+                .steps()
+                .filter(|step| step.is_active_plan_step())
+                .all(|step| step.status() == TaskStepStatus::Completed)
+            {
+                return Ok(ContinueVerifiedAgentPlanOutcome::ReadyForAcceptance);
+            }
+            return Err(ContinueVerifiedAgentPlanError::InvalidState);
+        };
+
+        let timestamp = TaskLedgerTimestamp::from_unix_millis(observed_at.unix_millis())
+            .map_err(|_| ContinueVerifiedAgentPlanError::InvalidTimestamp)?;
+        let mut next_ledger = ledger.clone();
+        next_ledger.start_step(next_step_id, run.id(), timestamp)?;
+        let mut next_run = run.clone();
+        let advance = AdvanceAgentController.execute(
+            &mut next_run,
+            AgentControllerSignal::VerificationNeedsExecution,
+            event_id,
+            run.current_snapshot_id(),
+            observed_at,
+            false,
+        )?;
+        let next_version = self
+            .store
+            .commit_ledger_action(
+                project,
+                expected_ledger_version,
+                run.last_event_sequence(),
+                &next_ledger,
+                &next_run,
+                advance.event(),
+            )
+            .await?;
+        *ledger = next_ledger;
+        *run = next_run;
+        Ok(ContinueVerifiedAgentPlanOutcome::StepStarted {
+            step_id: next_step_id,
+            ledger_version: next_version,
+        })
+    }
+}
+
+/// A verified plan could not safely advance to its next independently verified step.
+#[derive(Debug)]
+pub enum ContinueVerifiedAgentPlanError {
+    /// The run or Ledger was not in the exact post-verification state.
+    InvalidState,
+    /// Cancellation won before any aggregate or persistence mutation.
+    Cancelled,
+    /// The monotone timestamp could not be represented by the Ledger.
+    InvalidTimestamp,
+    /// Starting the next ready step violated a Ledger invariant.
+    Ledger(TaskLedgerError),
+    /// The finite controller rejected Verify to Execute.
+    Controller(AgentControllerError),
+    /// The atomic compare-and-swap persistence boundary rejected the transition.
+    Storage(AgentActionStoreFailure),
+}
+
+impl fmt::Display for ContinueVerifiedAgentPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidState => "verified Agent plan is not ready to advance",
+            Self::Cancelled => "verified Agent plan advance was cancelled",
+            Self::InvalidTimestamp => "verified Agent plan timestamp is invalid",
+            Self::Ledger(_) => "verified Agent plan violated a Task Ledger invariant",
+            Self::Controller(_) => "verified Agent plan controller transition was rejected",
+            Self::Storage(_) => "verified Agent plan advance could not be persisted atomically",
+        })
+    }
+}
+
+impl Error for ContinueVerifiedAgentPlanError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Ledger(error) => Some(error),
+            Self::Controller(error) => Some(error),
+            Self::Storage(error) => Some(error),
+            Self::InvalidState | Self::Cancelled | Self::InvalidTimestamp => None,
+        }
+    }
+}
+
+impl From<TaskLedgerError> for ContinueVerifiedAgentPlanError {
+    fn from(value: TaskLedgerError) -> Self {
+        Self::Ledger(value)
+    }
+}
+
+impl From<AgentControllerError> for ContinueVerifiedAgentPlanError {
+    fn from(value: AgentControllerError) -> Self {
+        Self::Controller(value)
+    }
+}
+
+impl From<AgentActionStoreFailure> for ContinueVerifiedAgentPlanError {
+    fn from(value: AgentActionStoreFailure) -> Self {
+        Self::Storage(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentRunId,
-        AgentToolEvidence, ContentHash, EvidenceRef, ExpectedTaskEvidence, GoalContract,
-        GoalContractDraft, GoalContractTimestamp, GoalObjective, ModelProfileId,
-        ModelProfileReference, ModelProfileVersion, RepositoryPath, SourcePosition, SourceRange,
-        SuccessVerification, TaskId, TaskStepBlockingReason, TaskStepDefinition, TaskStepOutcome,
+        AgentToolEvidence, CanonicalDirectory, ContentHash, EvidenceRef, ExpectedTaskEvidence,
+        GitHead, GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp,
+        GoalObjective, ModelProfileId, ModelProfileReference, ModelProfileVersion, RepositoryId,
+        RepositoryIdentity, RepositoryPath, SourcePosition, SourceRange, StepDependency,
+        StepVerification, StepVerificationId, StepVerificationOutcome, SuccessVerification,
+        TaskEvidenceId, TaskId, TaskStepBlockingReason, TaskStepDefinition, TaskStepOutcome,
         TaskStepRationale, TaskStepResultSummary, TaskStepStatus, VerificationMethod,
-        VerificationRequirement, VerificationSpec, VerificationSpecId,
+        VerificationRequirement, VerificationSpec, VerificationSpecId, WorktreeAnchorId,
+        WorktreeId, WorktreeIdentity,
     };
+    use futures::executor::block_on;
+    use std::sync::Mutex;
 
     #[derive(Debug)]
     struct Active;
@@ -426,6 +595,33 @@ mod tests {
     impl AgentControllerControl for Cancelled {
         fn is_cancelled(&self) -> bool {
             true
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingActionStore {
+        commits: Mutex<u32>,
+    }
+
+    impl AgentActionStore for RecordingActionStore {
+        fn commit_ledger_action<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            expected_ledger_version: TaskLedgerStoreVersion,
+            _expected_last_sequence: RunEventSequence,
+            _ledger: &'a TaskLedger,
+            _run: &'a AgentRun,
+            _event: &'a RunEvent,
+        ) -> AgentActionStoreFuture<'a> {
+            Box::pin(async move {
+                let mut commits = self
+                    .commits
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *commits = commits.saturating_add(1);
+                TaskLedgerStoreVersion::new(expected_ledger_version.get().saturating_add(1))
+                    .map_err(|_| AgentActionStoreFailure::Unavailable)
+            })
         }
     }
 
@@ -603,6 +799,85 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn verified_step_atomically_starts_the_next_independent_plan_step() -> Result<(), Box<dyn Error>>
+    {
+        let (mut run, mut ledger, first_step_id, second_step_id) = multi_step_fixture()?;
+        let store = RecordingActionStore::default();
+        let outcome = block_on(ContinueVerifiedAgentPlan::new(&store).execute(
+            &project()?,
+            TaskLedgerStoreVersion::INITIAL,
+            &mut run,
+            &mut ledger,
+            event_id(8),
+            timestamp(8)?,
+            &Active,
+        ))?;
+
+        assert_eq!(
+            outcome,
+            ContinueVerifiedAgentPlanOutcome::StepStarted {
+                step_id: second_step_id,
+                ledger_version: TaskLedgerStoreVersion::new(2)?,
+            }
+        );
+        assert_eq!(run.state(), AgentControllerState::Execute);
+        assert_eq!(
+            ledger.step(first_step_id).map(|step| step.status()),
+            Some(TaskStepStatus::Completed)
+        );
+        assert_eq!(
+            ledger.step(second_step_id).map(|step| step.status()),
+            Some(TaskStepStatus::InProgress)
+        );
+        let second_evidence_id = TaskEvidenceId::from_bytes([9; 32]);
+        ledger.begin_step_verification(
+            second_step_id,
+            run_id(),
+            None,
+            vec![second_evidence_id],
+            TaskLedgerTimestamp::from_unix_millis(9)?,
+        )?;
+        ledger.finish_step_verification(
+            second_step_id,
+            StepVerification::new(
+                StepVerificationId::from_bytes([10; 32]),
+                VerificationSpecId::from_bytes([6; 32]),
+                run_id(),
+                StepVerificationOutcome::Passed,
+                vec![second_evidence_id],
+                TaskLedgerTimestamp::from_unix_millis(10)?,
+            )?,
+        )?;
+        run.transition(
+            event_id(10),
+            AgentControllerState::Verify,
+            a3_domain::RunEventPayload::empty(),
+            snapshot(),
+            timestamp(10)?,
+        )?;
+        assert_eq!(
+            block_on(ContinueVerifiedAgentPlan::new(&store).execute(
+                &project()?,
+                TaskLedgerStoreVersion::new(2)?,
+                &mut run,
+                &mut ledger,
+                event_id(11),
+                timestamp(11)?,
+                &Active,
+            ))?,
+            ContinueVerifiedAgentPlanOutcome::ReadyForAcceptance
+        );
+        assert_eq!(
+            *store
+                .commits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            1
+        );
+        Ok(())
+    }
+
     fn fixture() -> Result<(AgentRun, TaskLedger, TaskStepId), Box<dyn Error>> {
         let goal = GoalContract::initial(
             TaskId::from_bytes([1; 32]),
@@ -668,6 +943,140 @@ mod tests {
         }
         ledger.start_step(step_id, run_id(), TaskLedgerTimestamp::from_unix_millis(5)?)?;
         Ok((run, ledger, step_id))
+    }
+
+    fn multi_step_fixture() -> Result<(AgentRun, TaskLedger, TaskStepId, TaskStepId), Box<dyn Error>>
+    {
+        let goal = GoalContract::initial(
+            TaskId::from_bytes([1; 32]),
+            GoalContractDraft::new(
+                GoalObjective::try_from_string("repair two confirmed findings".to_owned())?,
+                vec![AcceptanceCriterion::new(
+                    AcceptanceCriterionId::from_bytes([2; 32]),
+                    AcceptanceCriterionStatement::try_from_string(
+                        "both findings are independently verified".to_owned(),
+                    )?,
+                )],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                SuccessVerification::try_from_string("run targeted checks".to_owned())?,
+            )?,
+            GoalContractTimestamp::from_unix_millis(1)?,
+        );
+        let first_step_id = TaskStepId::from_bytes([3; 32]);
+        let second_step_id = TaskStepId::from_bytes([4; 32]);
+        let definition = |step_id, spec_id, dependencies| -> Result<_, Box<dyn Error>> {
+            Ok(TaskStepDefinition::new(
+                step_id,
+                None,
+                TaskStepOutcome::try_from_string(format!("repair finding {step_id:?}"))?,
+                TaskStepRationale::try_from_string("confirmed by current evidence".to_owned())?,
+                dependencies,
+                vec![ExpectedTaskEvidence::try_from_string(
+                    "fresh verification".to_owned(),
+                )?],
+                VerificationSpec::new(
+                    spec_id,
+                    VerificationMethod::Diagnostic,
+                    VerificationRequirement::try_from_string("inspect evidence".to_owned())?,
+                ),
+            )?)
+        };
+        let mut ledger = TaskLedger::new(
+            goal.reference(),
+            vec![
+                definition(
+                    first_step_id,
+                    VerificationSpecId::from_bytes([5; 32]),
+                    Vec::new(),
+                )?,
+                definition(
+                    second_step_id,
+                    VerificationSpecId::from_bytes([6; 32]),
+                    vec![StepDependency::new(first_step_id)],
+                )?,
+            ],
+            TaskLedgerTimestamp::from_unix_millis(1)?,
+        )?;
+        let (mut run, _) = AgentRun::start(
+            run_id(),
+            goal.reference(),
+            ledger.revision(),
+            ModelProfileReference::new(
+                ModelProfileId::from_bytes([5; 32]),
+                ModelProfileVersion::V1,
+            ),
+            snapshot(),
+            event_id(1),
+            timestamp(1)?,
+        )?;
+        for (event, state) in [
+            (2, AgentControllerState::Localize),
+            (3, AgentControllerState::Plan),
+            (4, AgentControllerState::Execute),
+        ] {
+            run.transition(
+                event_id(event),
+                state,
+                a3_domain::RunEventPayload::empty(),
+                snapshot(),
+                timestamp(u64::from(event))?,
+            )?;
+        }
+        ledger.start_step(
+            first_step_id,
+            run_id(),
+            TaskLedgerTimestamp::from_unix_millis(5)?,
+        )?;
+        let evidence_id = TaskEvidenceId::from_bytes([7; 32]);
+        ledger.begin_step_verification(
+            first_step_id,
+            run_id(),
+            None,
+            vec![evidence_id],
+            TaskLedgerTimestamp::from_unix_millis(6)?,
+        )?;
+        ledger.finish_step_verification(
+            first_step_id,
+            StepVerification::new(
+                StepVerificationId::from_bytes([8; 32]),
+                VerificationSpecId::from_bytes([5; 32]),
+                run_id(),
+                StepVerificationOutcome::Passed,
+                vec![evidence_id],
+                TaskLedgerTimestamp::from_unix_millis(7)?,
+            )?,
+        )?;
+        run.transition(
+            event_id(7),
+            AgentControllerState::Verify,
+            a3_domain::RunEventPayload::empty(),
+            snapshot(),
+            timestamp(7)?,
+        )?;
+        Ok((run, ledger, first_step_id, second_step_id))
+    }
+
+    fn project() -> Result<ProjectIdentity, Box<dyn Error>> {
+        let root = std::env::current_dir()?.canonicalize()?;
+        let repository_id = RepositoryId::from_bytes([20; 32]);
+        Ok(ProjectIdentity::new(
+            RepositoryIdentity::new(
+                repository_id,
+                CanonicalDirectory::from_canonicalized(root.clone())?,
+                None,
+            ),
+            WorktreeIdentity::new(
+                WorktreeId::from_bytes([21; 32]),
+                WorktreeAnchorId::from_bytes([22; 32]),
+                repository_id,
+                CanonicalDirectory::from_canonicalized(root)?,
+            ),
+            GitHead::Unborn {
+                reference: GitReferenceName::try_from_full_name("refs/heads/main")?,
+            },
+        )?)
     }
 
     fn evidence(snapshot_id: SnapshotId) -> Result<AgentToolEvidenceSet, Box<dyn Error>> {

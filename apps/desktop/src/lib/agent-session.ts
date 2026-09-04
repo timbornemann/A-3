@@ -1,10 +1,13 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { CURRENT_PROTOCOL_VERSION, type InvokeCommand } from './health';
+import { parseAgentDiagramSummaryV1, type AgentDiagramSummaryV1 } from './agent-diagram';
 
 const STABLE_ID = /^[0-9a-f]{64}$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]{0,18})$/u;
 const MODES = ['ask', 'plan', 'agent'] as const;
 const RESEARCH_DEPTHS = ['standard', 'thorough'] as const;
+const RESEARCH_DEPTH_SELECTIONS = ['standard', 'thorough', 'command'] as const;
+const SLASH_COMMAND_ROLES = ['primary', 'lens'] as const;
 const STATES = [
   'draft',
   'running',
@@ -22,6 +25,7 @@ const utf8 = new TextEncoder();
 
 export type AgentSessionModeV1 = (typeof MODES)[number];
 export type AgentResearchDepthV1 = (typeof RESEARCH_DEPTHS)[number];
+export type AgentResearchDepthSelectionV1 = (typeof RESEARCH_DEPTH_SELECTIONS)[number];
 export type AgentSessionStateV1 = (typeof STATES)[number];
 export type AgentSessionEntryKindV1 = (typeof ENTRY_KINDS)[number];
 
@@ -36,11 +40,20 @@ export interface AgentSessionSummaryV1 {
 }
 
 export interface AgentSessionEntryV1 {
+  command?: AgentSessionCommandChipsV1 | null;
   createdAtUnixMillis: string;
+  diagrams?: AgentDiagramSummaryV1[];
   kind: AgentSessionEntryKindV1;
   planRevision: number | null;
   sequence: string;
   text: string;
+}
+
+export interface AgentSessionCommandChipsV1 {
+  catalogVersion: 1;
+  depth: AgentResearchDepthV1;
+  lenses: string[];
+  primary: string;
 }
 
 export interface AgentSessionV1 {
@@ -67,6 +80,23 @@ export type AgentSessionResultV1 =
 export interface AgentSessionResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
   result: AgentSessionResultV1;
+}
+
+export interface AgentSlashCommandV1 {
+  available: boolean;
+  depth: AgentResearchDepthV1;
+  description: string;
+  implicitPrimary: string | null;
+  name: string;
+  requiresSubject: boolean;
+  role: (typeof SLASH_COMMAND_ROLES)[number];
+  title: string;
+}
+
+export interface AgentSlashCommandsResponseV1 {
+  catalogVersion: 1;
+  commands: AgentSlashCommandV1[];
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
 }
 
 export type AgentSessionControlActionV1 =
@@ -123,7 +153,7 @@ export async function queryAgentSession(
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     sessionId,
   };
-  return parseAgentSessionResponseV1(await invokeCommand('query_agent_session', { request }));
+  return parseAgentSessionResponseV2(await invokeCommand('query_agent_session_v2', { request }));
 }
 
 export async function submitAgentMessage(
@@ -131,23 +161,87 @@ export async function submitAgentMessage(
     expectedSessionRevision?: string | null;
     message: string;
     mode?: AgentSessionModeV1;
-    researchDepth?: AgentResearchDepthV1;
+    researchDepth?: AgentResearchDepthSelectionV1;
     sessionId?: string | null;
   },
   invokeCommand: InvokeCommand = invokeThroughTauri,
 ): Promise<AgentSessionResponseV1> {
   const message = parseText(input.message, 256 * 1024, 'Agent message');
   if (input.sessionId) requireStableId(input.sessionId, 'Agent session');
+  const researchDepth = input.researchDepth ?? 'standard';
+  if (!RESEARCH_DEPTH_SELECTIONS.includes(researchDepth))
+    throw new Error('Invalid research depth.');
   const request = {
     contextReferences: [],
     expectedSessionRevision: input.expectedSessionRevision ?? null,
     message,
     protocolVersion: CURRENT_PROTOCOL_VERSION,
-    researchDepth: input.researchDepth ?? 'standard',
+    researchDepth,
     sessionId: input.sessionId ?? null,
     startMode: input.sessionId ? null : (input.mode ?? 'agent'),
   };
-  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message_v2', { request }));
+  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message_v3', { request }));
+}
+
+export async function queryAgentSlashCommands(
+  mode: AgentSessionModeV1,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSlashCommandsResponseV1> {
+  if (!MODES.includes(mode)) throw new Error('Invalid Agent mode.');
+  const request = { mode, protocolVersion: CURRENT_PROTOCOL_VERSION };
+  return parseAgentSlashCommandsResponseV1(
+    await invokeCommand('query_agent_slash_commands', { request }),
+  );
+}
+
+export function parseAgentSlashCommandsResponseV1(payload: unknown): AgentSlashCommandsResponseV1 {
+  const value = object(
+    payload,
+    ['catalogVersion', 'commands', 'protocolVersion'],
+    'Agent slash-command response',
+  );
+  protocol(value.protocolVersion);
+  if (value.catalogVersion !== 1 || !Array.isArray(value.commands) || value.commands.length > 32)
+    fail('Agent slash-command response');
+  const names = new Set<string>();
+  const commands = value.commands.map((candidate) => {
+    const command = object(
+      candidate,
+      [
+        'available',
+        'depth',
+        'description',
+        'implicitPrimary',
+        'name',
+        'requiresSubject',
+        'role',
+        'title',
+      ],
+      'Agent slash command',
+    );
+    if (
+      typeof command.available !== 'boolean' ||
+      typeof command.description !== 'string' ||
+      command.description.length === 0 ||
+      command.description.length > 512 ||
+      typeof command.name !== 'string' ||
+      !/^\/[a-z][a-z0-9-]{0,31}$/u.test(command.name) ||
+      typeof command.requiresSubject !== 'boolean' ||
+      typeof command.title !== 'string' ||
+      command.title.length === 0 ||
+      command.title.length > 128 ||
+      !RESEARCH_DEPTHS.includes(command.depth as AgentResearchDepthV1) ||
+      !SLASH_COMMAND_ROLES.includes(command.role as AgentSlashCommandV1['role']) ||
+      (command.implicitPrimary !== null &&
+        (typeof command.implicitPrimary !== 'string' ||
+          !/^\/[a-z][a-z0-9-]{0,31}$/u.test(command.implicitPrimary))) ||
+      names.has(command.name)
+    )
+      fail('Agent slash command');
+    names.add(command.name);
+    return command as unknown as AgentSlashCommandV1;
+  });
+  return { catalogVersion: 1, commands, protocolVersion: CURRENT_PROTOCOL_VERSION };
 }
 
 export async function continueAgentResearch(
@@ -241,6 +335,55 @@ export function parseAgentSessionResponseV1(payload: unknown): AgentSessionRespo
   return {
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     result: { session: parseSession(result.session), status: 'available' },
+  };
+}
+
+export function parseAgentSessionResponseV2(payload: unknown): AgentSessionResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent session V2 response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent session V2 result');
+  if (result.status === 'noProject' || result.status === 'notFound') {
+    exact(result, ['status'], 'Agent session V2 result');
+    return {
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      result: { status: result.status },
+    } as AgentSessionResponseV1;
+  }
+  exact(result, ['projection', 'status'], 'Agent session V2 result');
+  if (result.status !== 'available') fail('Agent session V2 result');
+  const projection = object(
+    result.projection,
+    ['entryAugmentations', 'session'],
+    'Agent session V2 projection',
+  );
+  if (!Array.isArray(projection.entryAugmentations) || projection.entryAugmentations.length > 128)
+    fail('Agent session V2 projection');
+  const session = parseSession(projection.session);
+  const entries = new Map(session.entries.map((entry) => [entry.sequence, entry]));
+  const seen = new Set<string>();
+  for (const candidate of projection.entryAugmentations) {
+    const augmentation = object(
+      candidate,
+      ['command', 'diagrams', 'userSequence'],
+      'Agent session augmentation',
+    );
+    requireDecimal(augmentation.userSequence, 'Agent session augmentation sequence', false);
+    const entry = entries.get(augmentation.userSequence);
+    if (!entry || entry.kind !== 'userMessage' || seen.has(augmentation.userSequence))
+      fail('Agent session augmentation');
+    seen.add(augmentation.userSequence);
+    if (!Array.isArray(augmentation.diagrams) || augmentation.diagrams.length > 3)
+      fail('Agent session augmentation diagrams');
+    const diagrams = augmentation.diagrams.map(parseAgentDiagramSummaryV1);
+    if (diagrams.some((diagram) => diagram.userSequence !== augmentation.userSequence))
+      fail('Agent session augmentation diagrams');
+    entry.command =
+      augmentation.command === null ? null : parseSessionCommandChips(augmentation.command);
+    entry.diagrams = diagrams;
+  }
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { session, status: 'available' },
   };
 }
 
@@ -347,7 +490,34 @@ function parseEntry(payload: unknown): AgentSessionEntryV1 {
   ) {
     fail('Agent session entry');
   }
-  return value as unknown as AgentSessionEntryV1;
+  return {
+    ...(value as unknown as AgentSessionEntryV1),
+    command: null,
+    diagrams: [],
+  };
+}
+
+function parseSessionCommandChips(payload: unknown): AgentSessionCommandChipsV1 {
+  const value = object(
+    payload,
+    ['catalogVersion', 'depth', 'lenses', 'primary'],
+    'Agent session command chips',
+  );
+  if (
+    value.catalogVersion !== 1 ||
+    !RESEARCH_DEPTHS.includes(value.depth as AgentResearchDepthV1) ||
+    typeof value.primary !== 'string' ||
+    !/^\/[a-z][a-z0-9-]{0,31}$/u.test(value.primary) ||
+    !Array.isArray(value.lenses) ||
+    value.lenses.length > 2 ||
+    value.lenses.some(
+      (lens) => typeof lens !== 'string' || !/^\/[a-z][a-z0-9-]{0,31}$/u.test(lens),
+    ) ||
+    new Set(value.lenses).size !== value.lenses.length
+  ) {
+    fail('Agent session command chips');
+  }
+  return value as unknown as AgentSessionCommandChipsV1;
 }
 
 function object(

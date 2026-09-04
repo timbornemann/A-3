@@ -12,22 +12,23 @@ use a3_context::DeterministicAgentContextCompiler;
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
     AcceptanceCriterionStatement, AgentControllerState, AgentRun, AgentRunId, AgentRunIdentity,
-    AgentRunMaterializedState, AgentRunTimestamp, AgentRunTiming, CanonicalDirectory, Centrality,
-    Confidence, ContentHash, ContextCompilerPolicyVersion, DiscoveredCommandId, ExactSearchCursor,
-    ExactSearchExplanation, ExactSearchHit, ExactSearchPage, ExactSearchPageSize, ExactSearchQuery,
-    ExactSearchSymbol, ExactSearchTarget, ExpectedTaskEvidence, FileRevision, GitHead,
-    GitReferenceName, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
-    GraphSymbol, GraphTraversalResult, IndexLanguage, IndexPublication, IndexRunId, IndexRunRecord,
-    IndexRunSequence, IndexRunStatus, LexicalScore, LexicalSearchCursor, LexicalSearchExplanation,
-    LexicalSearchHit, LexicalSearchPage, LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph,
-    LocalSymbolId, MinimumTestCaseCount, ModelCapabilities, ModelContextLimit, ModelId,
-    ModelOutputLimit, ModelParallelismLimit, ModelProfile, ModelProfileSettings,
-    ModelPromptSchemaGrounding, ModelProviderId, ModelSamplingProfile, ModelStopSequences,
-    ModelStructuredOutputCapability, ModelTemperature, ModelTokenCountingStrategy,
-    ModelToolCallMode, ModelTopP, ModuleCardClaimId, ModuleCardEvidenceId, ModuleClaimPolarity,
-    ModuleClaimPredicate, ModuleClaimStatement, ModuleId, ModuleKind, ModuleMembership,
-    ModuleMembershipEvidence, ModulePolicyVersion, ModuleProjection, ModuleRoot, ModuleSymbolSet,
-    ParsedSymbol, ProjectIdentity, PublishedIndex, QualifiedSymbolName, RankProjection, RankScore,
+    AgentRunMaterializedState, AgentRunTimestamp, AgentRunTiming, AgentSessionMode,
+    CanonicalDirectory, Centrality, Confidence, ContentHash, ContextCompilerPolicyVersion,
+    DiscoveredCommandId, ExactSearchCursor, ExactSearchExplanation, ExactSearchHit,
+    ExactSearchPage, ExactSearchPageSize, ExactSearchQuery, ExactSearchSymbol, ExactSearchTarget,
+    ExpectedTaskEvidence, FileRevision, GitHead, GitReferenceName, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, GraphSymbol, GraphTraversalResult, IndexLanguage,
+    IndexPublication, IndexRunId, IndexRunRecord, IndexRunSequence, IndexRunStatus, LexicalScore,
+    LexicalSearchCursor, LexicalSearchExplanation, LexicalSearchHit, LexicalSearchPage,
+    LexicalSearchPageSize, LexicalSearchQuery, LinkedGraph, LocalSymbolId, MinimumTestCaseCount,
+    ModelCapabilities, ModelContextLimit, ModelId, ModelOutputLimit, ModelParallelismLimit,
+    ModelProfile, ModelProfileSettings, ModelPromptSchemaGrounding, ModelProviderId,
+    ModelSamplingProfile, ModelStopSequences, ModelStructuredOutputCapability, ModelTemperature,
+    ModelTokenCountingStrategy, ModelToolCallMode, ModelTopP, ModuleCardClaimId,
+    ModuleCardEvidenceId, ModuleClaimPolarity, ModuleClaimPredicate, ModuleClaimStatement,
+    ModuleId, ModuleKind, ModuleMembership, ModuleMembershipEvidence, ModulePolicyVersion,
+    ModuleProjection, ModuleRoot, ModuleSymbolSet, ParsedSlashCommand, ParsedSymbol,
+    ProjectIdentity, PublishedIndex, QualifiedSymbolName, RankProjection, RankScore,
     RankingPolicyVersion, RepositoryCard, RepositoryId, RepositoryIdentity, RepositoryModule,
     RepositoryPath, ResolvedModuleCardEvidence, RunEventSequence, RunMemoryCheckpoint, SnapshotId,
     SourcePosition, SourceRange, StepDependency, StepVerification, StepVerificationId,
@@ -36,7 +37,7 @@ use a3_domain::{
     TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepResultSummary, TestCaseSelector,
     TraversalQuery, VerificationFailureSummary, VerificationMethod, VerificationRequirement,
     VerificationScope, VerificationSpec, VerificationSpecId, VerifiedClaimKind,
-    VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+    VerifiedClaimStatus, WorktreeAnchorId, WorktreeId, WorktreeIdentity, parse_slash_command,
 };
 use futures::executor::block_on;
 use std::error::Error;
@@ -148,9 +149,22 @@ fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result
     )?;
     let plain =
         block_on(compiler.compile(&input(fixture.snapshot_id)?, &RecordingControl::default()))?;
-    let grounded_input = input(fixture.snapshot_id)?.with_research_handoff(handoff);
+    let grounded_input = input(fixture.snapshot_id)?.with_research_handoff(handoff.clone());
     let grounded = block_on(compiler.compile(&grounded_input, &RecordingControl::default()))?;
     assert_ne!(plain.digest(), grounded.digest());
+
+    let ParsedSlashCommand::Command(command) =
+        parse_slash_command(AgentSessionMode::Agent, "/review /security authentication")?
+    else {
+        return Err(Box::new(TestError("command was not parsed")));
+    };
+    let command_input =
+        input(fixture.snapshot_id)?.with_research_handoff(handoff.with_command(command));
+    let command_grounded =
+        block_on(compiler.compile(&command_input, &RecordingControl::default()))?;
+    assert_ne!(grounded.digest(), command_grounded.digest());
+    let pack = command_grounded.request().messages()[1].content();
+    assert!(pack.contains("command_profile=1:review/security"));
 
     let stale_input = input(fixture.snapshot_id)?.with_research_handoff(ResearchHandoff::new(
         IndexRunId::from_bytes([101; 32]),

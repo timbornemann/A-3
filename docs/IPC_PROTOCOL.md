@@ -425,6 +425,33 @@ Evidence-Lücke, nächstem Schritt und opaken Source-Referenzen tragen. `legacy=
 V30-Ask-Daten ohne nachträglich erfundene Notizen. Requests akzeptieren weiterhin keine Pfade,
 Evidence-, Snapshot-, Provider-, Task- oder Run-IDs. Cursor und Source-Capabilities bleiben an
 Worktree, Session, Turn, Trace-Revision und aktuellen Index gebunden.
+`query_agent_work_trace_detail_v2` behält dieselbe sichere Projektion und ist der neue
+Frontend-Read für die um fünf geschlossene Analyseaktionen erweiterte Modellschema-Version.
+
+### Slash Commands und Diagrammartefakte
+
+`query_agent_slash_commands` V1 akzeptiert nur Protokollversion und Modus und liefert den festen
+Core-Katalog mit kompatiblen Hauptaufträgen, Linsen, Argumentverhalten und fester Tiefe.
+`submit_agent_message_v3` ergänzt `researchDepth: standard | thorough | command`. `command` ist
+nur für einen im Rust-Core vollständig validierten Slash-Aufruf erlaubt; unbekannte Commands,
+doppelte oder inkompatible Linsen, mehrere Hauptaufträge und fehlende Pflichtargumente erzeugen
+weder Sessionentry noch Job. V1 und V2 bleiben kompatibel.
+
+Commands mit Core-definiertem Rückfrageverhalten dürfen ohne Ziel eingehen. Sie erzeugen genau
+eine verständliche `AwaitingUser`-Antwort, aber keinen Recherche- oder Agent-Run. Antwortet der
+Nutzer unmittelbar mit normalem Text, rekonstruiert der Core das fehlende Ziel aus diesem Text und
+den V32-Commanddaten; die WebView übergibt dafür keine Command-, Task- oder Run-ID.
+
+`query_agent_session_v2` verwendet die begrenzte V1-Sessionseite weiter und ergänzt pro darin
+sichtbarer Usersequenz ausschließlich die persistierten Command-Chips und Diagrammzusammenfassungen.
+
+`query_agent_diagram_artifacts` und `query_agent_diagram_artifact` V1 akzeptieren Session und
+positive Usersequenz beziehungsweise eine opake Artefaktreferenz. Sie liefern höchstens drei
+Core-kompilierte Diagramme mit Typ, Titel, Beschreibung und Stale-Kennzeichnung. Referenzen sind an
+Worktree, Session, Turn und Artefakt gebunden. `export_agent_diagram` V1 akzeptiert zusätzlich nur
+geschlossenes Format und Theme sowie begrenzte gerenderte Nutzdaten. Der native Adapter wählt den
+Zielpfad; keine Response gibt ihn zurück. Requests akzeptieren insbesondere keine Pfade, argv,
+Source-, Evidence-, Snapshot-, Task-, Run- oder Provider-IDs.
 
 ## Agent Diff und Verification Inspector V1
 
@@ -654,6 +681,12 @@ Shell-, Provider-, Netzwerk- oder SQL-Capability.
 Für Ask-Recherche sind ausschließlich `allow-query-agent-ask-research-turns`,
 `allow-query-agent-ask-research-detail`, `allow-query-agent-ask-research-sources` und
 `allow-query-agent-ask-research-source-preview` freigeschaltet.
+Slash Commands und Diagramme verwenden ausschließlich
+`allow-query-agent-slash-commands`, `allow-query-agent-session-v2`,
+`allow-submit-agent-message-v3`,
+`allow-query-agent-diagram-artifacts`, `allow-query-agent-diagram-artifact` und
+`allow-export-agent-diagram`. Der Exportcommand öffnet seinen Dialog ausschließlich im nativen
+Rust-Adapter und stellt der WebView keine allgemeine Dialog- oder Dateicapability bereit.
 Der Projektkatalog besitzt ausschließlich `allow-query-project-catalog`,
 `allow-activate-catalog-project`, `allow-restore-last-project` und
 `allow-remove-catalog-project`; keine dieser Capabilities akzeptiert einen Pfad.

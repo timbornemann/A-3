@@ -32,6 +32,7 @@ mod deep_map_publication_state;
 mod deep_map_read_tools;
 mod deep_map_runner;
 mod embedding_provider;
+mod evidence_diagram;
 mod exact_search;
 mod explorer_model_provider;
 mod goal_contract;
@@ -88,6 +89,7 @@ mod run_journal;
 mod semantic_embedding_store;
 mod semantic_embeddings;
 mod settings;
+mod slash_commands;
 mod task_ledger;
 mod task_lens;
 mod task_lens_workspace;
@@ -105,6 +107,7 @@ pub use agent_action_codec::{
 pub use agent_actions::{
     AgentActionStore, AgentActionStoreFailure, AgentActionStoreFuture, AgentLedgerActionOutcome,
     AgentLedgerActionOutcomeKind, ApplyAgentLedgerUpdate, ApplyAgentLedgerUpdateError,
+    ContinueVerifiedAgentPlan, ContinueVerifiedAgentPlanError, ContinueVerifiedAgentPlanOutcome,
     PersistAgentLedgerMutation, PersistAgentLedgerMutationError, RequestAgentFinish,
 };
 pub use agent_activity::{
@@ -118,6 +121,7 @@ pub use agent_ask_research::{
     AskResearchStoreFailure, AskResearchStoreFuture, AskResearchTurn, AskResearchTurnPage,
     AskSourceSearchControl, AskSourceSearchFailure, AskSourceSearcher, AskSourceSearcherFuture,
     AskSourceTextHit, AskSourceTextSearch, AskSourceTextSearchResult,
+    SessionEvidenceDiagramArtifact,
 };
 pub use agent_controller::{
     AcceptanceRejection, AcceptanceVerificationRequest, AcceptanceVerificationRequestError,
@@ -153,8 +157,9 @@ pub use agent_runtime::{
     AgentRunExecutionRequest, AgentRunExecutionTrigger, AgentRunExecutor,
 };
 pub use agent_session::{
-    AgentSessionDetail, AgentSessionListQuery, AgentSessionPage, AgentSessionStore,
-    AgentSessionStoreFailure, AgentSessionStoreFuture, validate_agent_session_transition,
+    AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
+    AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture,
+    validate_agent_session_transition,
 };
 pub use agent_source_reader::{
     AgentSourcePage, AgentSourcePageError, AgentSourceReadControl, AgentSourceReadFailure,
@@ -232,6 +237,11 @@ pub use embedding_provider::{
     EmbeddingOperationControl, EmbeddingProvider, EmbeddingProviderFailure,
     EmbeddingProviderFuture, EmbeddingRequestTimeout, EmbeddingRequestTimeoutError,
     ProbeEmbeddingModelProfile, RawEmbeddingBatch, RawEmbeddingBatchError,
+};
+pub use evidence_diagram::{
+    DecodeEvidenceDiagrams, EvidenceDiagramArtifact, EvidenceDiagramDecodeError,
+    EvidenceDiagramDraft, EvidenceDiagramElement, EvidenceDiagramJsonSchema, EvidenceDiagramKind,
+    EvidenceDiagramRelationship,
 };
 pub use exact_search::SearchExactIndex;
 pub use explorer_model_provider::{
@@ -475,6 +485,10 @@ pub use semantic_embeddings::{
     SemanticEmbeddingBatchJob, SemanticEmbeddingJobControl,
 };
 pub use settings::*;
+pub use slash_commands::{
+    SLASH_COMMAND_LENSES, SLASH_COMMANDS, SlashCommandDescriptor, SlashCommandExecutionProfile,
+    SlashCommandLensDescriptor,
+};
 pub use task_ledger::{
     CreateTaskLedger, SaveTaskLedger, StoredTaskLedger, TaskLedgerStore, TaskLedgerStoreFailure,
     TaskLedgerStoreFuture, TaskLedgerStoreVersion, TaskLedgerStoreVersionError,

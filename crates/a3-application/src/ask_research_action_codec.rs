@@ -42,6 +42,16 @@ pub enum AskResearchAction {
     },
     /// List direct indexed children below one repository directory.
     ListDirectory(String),
+    /// Inspect the current staged, unstaged, and safely readable untracked paths.
+    InspectWorkingChanges,
+    /// Read bounded parser and index diagnostics from the pinned publication.
+    QueryIndexDiagnostics,
+    /// Inspect bounded internal and manifest-backed dependency relations.
+    InspectDependencyGraph,
+    /// Inspect indexed test-to-subject relations without claiming runtime coverage.
+    InspectTestTopology,
+    /// Search current source with the versioned local security candidate rules.
+    ScanSecurityCandidates,
 }
 
 /// Closed relationship that the read-only research controller may inspect.
@@ -252,6 +262,26 @@ fn decode_research(
                     4096,
                 )?)
             }
+            "inspectWorkingChanges" => {
+                exact(action, &["kind"])?;
+                AskResearchAction::InspectWorkingChanges
+            }
+            "queryIndexDiagnostics" => {
+                exact(action, &["kind"])?;
+                AskResearchAction::QueryIndexDiagnostics
+            }
+            "inspectDependencyGraph" => {
+                exact(action, &["kind"])?;
+                AskResearchAction::InspectDependencyGraph
+            }
+            "inspectTestTopology" => {
+                exact(action, &["kind"])?;
+                AskResearchAction::InspectTestTopology
+            }
+            "scanSecurityCandidates" => {
+                exact(action, &["kind"])?;
+                AskResearchAction::ScanSecurityCandidates
+            }
             _ => return Err(AskResearchDecisionDecodeError::InvalidValue),
         });
     }
@@ -444,6 +474,20 @@ mod tests {
                 .decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n"},"actions":[]}}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn decoder_accepts_only_closed_parameterless_analysis_actions() {
+        let decoded = DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Review","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Aktuelle Analyse","next_step":"Begrenzte Analysen ausführen"},"actions":[{"kind":"inspectWorkingChanges"},{"kind":"queryIndexDiagnostics"},{"kind":"inspectDependencyGraph"},{"kind":"inspectTestTopology"}]}}"#);
+        assert!(
+            matches!(decoded, Ok(AskResearchDecision::Research { actions, .. }) if actions == vec![
+                AskResearchAction::InspectWorkingChanges,
+                AskResearchAction::QueryIndexDiagnostics,
+                AskResearchAction::InspectDependencyGraph,
+                AskResearchAction::InspectTestTopology,
+            ])
+        );
+        assert!(DecodeAskResearchDecision.decode(r#"{"schema_version":2,"decision":{"kind":"research","note":{"goal":"Security","finding_kind":"hypothesis","finding":"Prüfung steht aus","finding_source_refs":[],"gap":"Kandidaten","next_step":"Lokal scannen"},"actions":[{"kind":"scanSecurityCandidates","path":"."}]}}"#).is_err());
     }
 
     #[test]

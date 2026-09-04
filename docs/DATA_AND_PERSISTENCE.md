@@ -247,6 +247,15 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   Sessionrevision und vorhandene interne Links committen atomar. Presentation Delete entfernt
   V31 über die bestehende Session-Entry-Cascade, Archivieren erhält die Daten. Quelltext, Prompts,
   Rohantworten und internes Denken werden weiterhin nicht persistiert.
+- Knowledge-Schema V32 ergänzt `agent_slash_command_invocations`,
+  `agent_slash_command_lenses`, `agent_diagram_artifacts` und
+  `agent_diagram_artifact_sources`. Ein Command-Aufruf bindet genau einen bereits Core-validierten
+  Katalogeintrag und seine geordneten Linsen atomar an den User-Entry. Ein Diagramm gehört zu genau
+  einem Work-Trace-Turn und speichert nur begrenzte Metadaten, Core-kompiliertes Mermaid sowie die
+  turnlokalen Source-Zuordnungen; Modell-Mermaid und gerenderte PNG-/SVG-Nutzdaten werden nicht
+  persistiert. Antwort, Zitate und bis zu drei Diagramme schließen in derselben Transaktion ab.
+  Presentation Delete entfernt V32 über die Session-Entry-Cascade, Archivieren erhält die Daten.
+  Die Migration führt keinen Backfill für alte Nachrichten oder Diagramme aus.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

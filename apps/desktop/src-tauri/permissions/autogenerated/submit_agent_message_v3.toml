@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-submit-agent-message-v3"
+description = "Enables the submit_agent_message_v3 command without any pre-configured scope."
+commands.allow = ["submit_agent_message_v3"]
+
+[[permission]]
+identifier = "deny-submit-agent-message-v3"
+description = "Denies the submit_agent_message_v3 command without any pre-configured scope."
+commands.deny = ["submit_agent_message_v3"]

@@ -776,3 +776,18 @@ können keine Mutation, Freigabe, Verification oder Ledgeränderung autorisieren
 über IPC sichtbarer Trace besteht nur aus geschlossenen Phasen, sicheren Aktionen, begrenzten
 öffentlichen Notizen, Auswahlgründen und hashgebundenen Source-Metadaten; Rohprompt,
 Modelltranskript, Chain-of-Thought und Source-Inhalt bleiben ausgeschlossen.
+
+Slash Commands nach ADR-0039 sind keine Prompt- oder Capability-Erweiterung. Der Rust-Core
+validiert Katalog, Modus, Linsen und Argumente vor jedem Write und leitet daraus ein typisiertes
+Arbeitsprofil ab. Die zusätzlichen Aktionen lesen nur aktuelle, begrenzte Working-Change-
+Metadaten, Indexdiagnosen, Dependency-/Testtopologie oder lokale regelbasierte
+Security-Kandidaten. Ein Kandidat ist erst nach sicherer Source-Inspektion Evidence. Ask und Plan
+erhalten dadurch weder Shell noch freie Prozesse; der Working-Changes-Adapter verwendet
+ausschließlich ein festes Core-argv für lokale Git-Metadaten.
+
+Diagramme akzeptieren keine rohe Modell-Mermaid. Der Core kompiliert nur ein streng validiertes,
+source-gebundenes Objekt. Die WebView rendert lokal im Mermaid Strict Mode, entfernt zusätzlich
+gefährliche SVG-Elemente, Eventattribute, externe Referenzen und aktive URLs, und übergibt beim
+Export ausschließlich die begrenzten Nutzdaten. Rust prüft SVG beziehungsweise PNG erneut, öffnet
+selbst den nativen Speicherdialog und schreibt atomar. Zielpfade, allgemeine Dialogrechte und
+Dateischreibrechte werden niemals an die WebView delegiert.

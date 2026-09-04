@@ -844,6 +844,29 @@ Ask und Plan führen ausschließlich gebundene Reads aus. Die Agent-Vorbereitung
 `ResearchHandoff` liefern, ersetzt aber niemals den ADR-0010-Controller: Im eigentlichen Agent-Run
 wird weiterhin pro Controllerturn höchstens eine typisierte Aktion geprüft und ausgeführt.
 
+ADR-0039 legt darüber einen Core-eigenen Slash-Command-Katalog. Der Domain-Parser validiert einen
+Hauptauftrag und höchstens zwei Linsen gegen den aktuellen Modus, bevor Session oder Job entstehen.
+Das Application-Profil liefert feste Recherche-, Ergebnis- und Verifikationsconstraints; es ist
+keine Berechtigung. Fünf zusätzliche Analyseaktionen bleiben aktuelle, begrenzte Reads. Der feste
+Working-Changes-Adapter liest nur lokale Git-Metadaten mit Core-eigenem argv; Nutzertext kann weder
+Pfad noch Prozess bestimmen.
+
+Für einen mutierenden Command verlangt das Core-Profil jeden bestätigten, eigenständig änderbaren
+Fund als eigenen Top-Level-Punkt in `Implementation Changes`. Der Desktop-Materializer bildet
+diese begrenzten Punkte auf eine sequenzielle Ledger-Kette mit eindeutigen Step- und
+Verification-Spezifikationen ab. Ein Application-Use-Case startet nach erfolgreicher
+Schrittverifikation atomar höchstens den nächsten bereiten Schritt und führt den bestehenden Run
+von `Verify` nach `Execute` zurück. Erst ein vollständig abgeschlossenes Ledger erreicht die
+Acceptance-Prüfung; normale Agent-Nachrichten bleiben bei ihrem bisherigen einzelnen Planschritt.
+
+`/diagram` erzeugt im selben Recherchebudget ein typisiertes `EvidenceDiagramV1`. Jede sichtbare
+Einheit und Beziehung trägt turnlokale Quellen, der Core validiert die Topologie und kompiliert
+deterministisch Mermaid. Die Svelte-Projektion lädt den lokalen Renderer lazy, verwendet Strict
+Mode und sanitisiert SVG. Der Export bleibt ein enger nativer Adapter: Er löst eine opake,
+sessiongebundene Artefaktreferenz auf, validiert SVG oder PNG, öffnet den Speicherdialog und
+schreibt atomar. Die WebView erhält weder einen Zielpfad noch eine generische Dialog- oder
+Dateicapability.
+
 - Pro Worktree existiert genau ein Mutations-Lock.
 - Read-only Suche, Indexabfragen und UI-Queries dürfen parallel laufen.
 - Index-Commits erfolgen transaktional und snapshotbezogen.

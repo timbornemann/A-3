@@ -30,7 +30,7 @@ describe('Ask research V1 client', () => {
 
     expect(invoke.mock.calls).toEqual([
       [
-        'query_agent_work_trace_detail',
+        'query_agent_work_trace_detail_v2',
         { request: { protocolVersion: 1, sessionId: id('1'), userSequence: '7' } },
       ],
       [

@@ -47,6 +47,18 @@ pub(super) fn context_digest(
                 hash_bytes(&mut hasher, revision.path().as_bytes());
                 hash_bytes(&mut hasher, revision.content_hash().as_bytes());
             }
+            match handoff.command() {
+                Some(command) => {
+                    hasher.update(&[1]);
+                    hash_bytes(&mut hasher, command.primary().name().as_bytes());
+                    for lens in command.lenses() {
+                        hash_bytes(&mut hasher, lens.name().as_bytes());
+                    }
+                }
+                None => {
+                    hasher.update(&[0]);
+                }
+            }
         }
         None => {
             hasher.update(&[0]);

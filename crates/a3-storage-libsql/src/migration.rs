@@ -3071,6 +3071,80 @@ const KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION: Migration = Migration {
         SELECT RAISE(ABORT, 'Agent work trace links are immutable'); END;",
 };
 
+const KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION: Migration = Migration {
+    version: 32,
+    name: "evidence_bound_slash_commands",
+    sql: "CREATE TABLE agent_slash_command_invocations (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      catalog_version INTEGER NOT NULL CHECK (catalog_version = 1),\n\
+      primary_command TEXT NOT NULL CHECK (primary_command IN\n\
+        ('diagram', 'explain', 'trace', 'todos', 'impact', 'review', 'debug', 'doc', 'refactor', 'test')),\n\
+      effective_depth TEXT NOT NULL CHECK (effective_depth IN ('standard', 'thorough')),\n\
+      subject_behavior TEXT NOT NULL CHECK (subject_behavior IN\n\
+        ('provided', 'repository_wide', 'working_changes', 'clarify')),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_session_entries(worktree_id, session_id, sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_slash_command_lenses (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      lens_position INTEGER NOT NULL CHECK (lens_position BETWEEN 1 AND 2),\n\
+      lens_kind TEXT NOT NULL CHECK (lens_kind IN ('security', 'performance', 'architecture')),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, lens_position),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, lens_kind),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_slash_command_invocations(worktree_id, session_id, user_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_diagram_artifacts (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      artifact_id BLOB NOT NULL CHECK (length(artifact_id) = 32),\n\
+      artifact_position INTEGER NOT NULL CHECK (artifact_position BETWEEN 1 AND 3),\n\
+      diagram_kind TEXT NOT NULL CHECK (diagram_kind IN ('flowchart', 'sequence', 'class', 'state', 'er')),\n\
+      title TEXT NOT NULL CHECK (length(CAST(title AS BLOB)) BETWEEN 1 AND 256),\n\
+      description TEXT NOT NULL CHECK (length(CAST(description AS BLOB)) BETWEEN 1 AND 2048),\n\
+      mermaid_source TEXT NOT NULL CHECK (length(CAST(mermaid_source AS BLOB)) BETWEEN 1 AND 65536),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, artifact_id),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, artifact_position),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence)\n\
+        REFERENCES agent_work_trace_turns(worktree_id, session_id, user_sequence)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_diagram_artifact_sources (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      user_sequence INTEGER NOT NULL CHECK (user_sequence > 0),\n\
+      artifact_id BLOB NOT NULL CHECK (length(artifact_id) = 32),\n\
+      source_position INTEGER NOT NULL CHECK (source_position BETWEEN 1 AND 200),\n\
+      source_id BLOB NOT NULL CHECK (length(source_id) = 32),\n\
+      PRIMARY KEY (worktree_id, session_id, user_sequence, artifact_id, source_position),\n\
+      UNIQUE (worktree_id, session_id, user_sequence, artifact_id, source_id),\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, artifact_id)\n\
+        REFERENCES agent_diagram_artifacts(worktree_id, session_id, user_sequence, artifact_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE,\n\
+      FOREIGN KEY (worktree_id, session_id, user_sequence, source_id)\n\
+        REFERENCES agent_work_trace_sources(worktree_id, session_id, user_sequence, source_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX agent_diagram_artifacts_recent_idx ON agent_diagram_artifacts\n\
+        (worktree_id, session_id, user_sequence DESC, artifact_position);\n\
+      CREATE TRIGGER agent_slash_command_invocations_update_guard BEFORE UPDATE ON agent_slash_command_invocations BEGIN\n\
+        SELECT RAISE(ABORT, 'Slash command invocations are immutable'); END;\n\
+      CREATE TRIGGER agent_slash_command_lenses_update_guard BEFORE UPDATE ON agent_slash_command_lenses BEGIN\n\
+        SELECT RAISE(ABORT, 'Slash command lenses are immutable'); END;\n\
+      CREATE TRIGGER agent_diagram_artifacts_update_guard BEFORE UPDATE ON agent_diagram_artifacts BEGIN\n\
+        SELECT RAISE(ABORT, 'Diagram artifacts are immutable'); END;\n\
+      CREATE TRIGGER agent_diagram_artifact_sources_update_guard BEFORE UPDATE ON agent_diagram_artifact_sources BEGIN\n\
+        SELECT RAISE(ABORT, 'Diagram artifact sources are immutable'); END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -3103,6 +3177,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_DEEP_MAP_PLAN_DETAILS_MIGRATION,
     KNOWLEDGE_AGENT_ASK_RESEARCH_MIGRATION,
     KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION,
+    KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3135,7 +3210,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(31);
+    pub const CURRENT: Self = Self::new(32);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3762,6 +3837,7 @@ mod tests {
         (knowledge_upgrades_from_v28, 28),
         (knowledge_upgrades_from_v29, 29),
         (knowledge_upgrades_from_v30, 30),
+        (knowledge_upgrades_from_v31, 31),
     );
 
     #[test]
@@ -5547,7 +5623,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
             assert_eq!(
                 query_string(&connection, "SELECT purpose FROM card_fts").await?,
                 "Legacy purpose\nSecond purpose line"
@@ -5661,7 +5737,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5753,7 +5829,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5874,7 +5950,7 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5966,10 +6042,17 @@ mod tests {
             )
             .await?;
 
-            let version =
-                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+            let version = KnowledgeSchemaVersion::new(
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..31],
+                    31,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?,
+            );
 
-            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(version, KnowledgeSchemaVersion::new(31));
             assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 31);
             assert_eq!(
                 query_i64(
@@ -6027,6 +6110,50 @@ mod tests {
                     &connection,
                     "SELECT COUNT(*) FROM sqlite_master
                      WHERE type = 'table' AND name = 'agent_work_trace_events'",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v32_adds_append_only_commands_and_diagrams_without_backfill()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [114; 32];
+            let worktree_id = [115; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..31],
+                31,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
+                       'agent_slash_command_invocations', 'agent_slash_command_lenses',
+                       'agent_diagram_artifacts', 'agent_diagram_artifact_sources')",
+                )
+                .await?,
+                4
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM agent_slash_command_invocations",
                 )
                 .await?,
                 0

@@ -21,18 +21,25 @@ use crate::{
     map_task_lens_selection_from_v1, map_task_lens_task_id_from_v1, map_worktree_id_from_v1,
     parse_canonical_positive_u64,
 };
-use a3_application::{AgentSessionListQuery, AgentWorkspaceLayout, UiPreferencesStoreVersion};
+use a3_application::{
+    AgentSessionListQuery, AgentWorkspaceLayout, SLASH_COMMAND_LENSES, SLASH_COMMANDS,
+    UiPreferencesStoreVersion,
+};
 use a3_domain::{
     AgentResearchDepth, AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode,
+    SlashCommandEmptyInput,
 };
 use a3_protocol::{
     ActivateCatalogProjectRequestV1, AgentActivityResponseV1, AgentApprovalControlResponseV1,
     AgentApprovalResponseV1, AgentAskResearchDetailResponseV1,
     AgentAskResearchSourcePreviewResponseV1, AgentAskResearchSourcesResponseV1,
-    AgentAskResearchTurnsResponseV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentResearchDepthV1,
-    AgentSessionControlActionV1, AgentSessionModeV1, AgentSessionResponseV1,
-    AgentSessionsResponseV1, AgentTaskControlActionV1, AgentTaskControlResponseV1,
+    AgentAskResearchTurnsResponseV1, AgentDiagramArtifactResponseV1,
+    AgentDiagramArtifactsResponseV1, AgentDiagramExportFormatV1, AgentDiagramExportResponseV1,
+    AgentDiagramExportResultV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentResearchDepthSelectionV1,
+    AgentResearchDepthV1, AgentSessionControlActionV1, AgentSessionModeV1, AgentSessionResponseV1,
+    AgentSessionResponseV2, AgentSessionsResponseV1, AgentSlashCommandRoleV1, AgentSlashCommandV1,
+    AgentSlashCommandsResponseV1, AgentTaskControlActionV1, AgentTaskControlResponseV1,
     AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1, CancelModelProbeResponseV1,
     CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ContinueAgentResearchRequestV1,
@@ -42,26 +49,28 @@ use a3_protocol::{
     DeepMapModeV2, DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1,
     DeepMapRunModulesResponseV1, DeepMapRunPageResponseV1, DeepMapStartResponseV2,
     DeepMapStatusResponseV3, DeleteModelProviderCredentialRequestV1,
-    DiscoverProviderModelsRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
-    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
-    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    DiscoverProviderModelsRequestV1, ExportAgentDiagramRequestV1, HealthRequestV1,
+    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
+    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
+    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
+    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProbeModelRoleRequestV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
+    ProjectMapSceneResponseV1, ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1,
+    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentAskResearchDetailRequestV1,
     QueryAgentAskResearchSourcePreviewRequestV1, QueryAgentAskResearchSourcesRequestV1,
-    QueryAgentAskResearchTurnsRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
+    QueryAgentAskResearchTurnsRequestV1, QueryAgentDiagramArtifactRequestV1,
+    QueryAgentDiagramArtifactsRequestV1, QueryAgentGoalRequestV1, QueryAgentInspectionLogRequestV1,
     QueryAgentInspectionRequestV1, QueryAgentSessionRequestV1, QueryAgentSessionsRequestV1,
-    QueryAgentTaskRecoveryRequestV1, QueryDeepMapAtlasImpactRequestV1,
-    QueryDeepMapEntriesRequestV1, QueryDeepMapEntryDetailRequestV1,
-    QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1, QueryDeepMapRunDashboardRequestV1,
-    QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1, QueryIndexActivityRequestV1,
-    QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1, QueryModuleCardEvidenceRequestV1,
-    QueryModuleCardFreshnessRequestV1, QueryModuleDependencyGraphRequestV1,
-    QueryModuleRuntimeFlowRequestV1, QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1,
-    QueryProjectCatalogRequestV1, QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
+    QueryAgentSlashCommandsRequestV1, QueryAgentTaskRecoveryRequestV1,
+    QueryDeepMapAtlasImpactRequestV1, QueryDeepMapEntriesRequestV1,
+    QueryDeepMapEntryDetailRequestV1, QueryDeepMapModuleStepsRequestV1, QueryDeepMapRequestV1,
+    QueryDeepMapRunDashboardRequestV1, QueryDeepMapRunModulesRequestV1, QueryDeepMapRunsRequestV1,
+    QueryIndexActivityRequestV1, QueryIndexOverviewRequestV1, QueryModuleCardDetailRequestV1,
+    QueryModuleCardEvidenceRequestV1, QueryModuleCardFreshnessRequestV1,
+    QueryModuleDependencyGraphRequestV1, QueryModuleRuntimeFlowRequestV1,
+    QueryModuleRuntimeMapRequestV1, QueryModuleTreeRequestV1, QueryProjectCatalogRequestV1,
+    QueryProjectMapSceneRequestV1, QueryProjectMapSearchRequestV1,
     QueryProjectMapSourcePreviewRequestV1, QueryProjectSettingsRequestV1,
     QueryProjectStatusRequestV1, QueryRepositoryTreeRequestV1, QuerySettingsRequestV1,
     QueryTaskLensTaskRequestV1, QueryTaskLensTasksRequestV1, QueryUiPreferencesRequestV1,
@@ -69,9 +78,9 @@ use a3_protocol::{
     RemoveCatalogProjectRequestV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
     RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
     SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV2,
-    SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2, TaskLensCompileResponseV1,
-    TaskLensTaskResponseV1, TaskLensTasksResponseV1, UiPreferencesResponseV1,
-    UpdateAgentWorkspaceLayoutRequestV1,
+    SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2, SubmitAgentMessageRequestV3,
+    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -79,7 +88,8 @@ use a3_protocol::{
     QueryProjectMapAtlasSceneRequestV1, QueryProjectMapEntityContextRequestV1,
     QueryProjectMapFlowSceneRequestV1, QueryProjectMapInventoryPageRequestV1,
 };
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 /// Opens one native directory picker and returns only a validated project identity projection.
@@ -325,6 +335,23 @@ pub async fn query_agent_session(
 }
 
 #[tauri::command]
+/// Loads one session page with persisted command chips and diagram summaries.
+pub async fn query_agent_session_v2(
+    request: QueryAgentSessionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV2, CommandErrorV1> {
+    execute_query_agent_session_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Returns the immutable built-in slash-command catalog filtered for one mode.
+pub async fn query_agent_slash_commands(
+    request: QueryAgentSlashCommandsRequestV1,
+) -> Result<AgentSlashCommandsResponseV1, CommandErrorV1> {
+    execute_query_agent_slash_commands(request)
+}
+
+#[tauri::command]
 /// Lists persistent research turns without exposing index or provider identities.
 pub async fn query_agent_ask_research_turns(
     request: QueryAgentAskResearchTurnsRequestV1,
@@ -361,6 +388,34 @@ pub async fn query_agent_ask_research_source_preview(
 }
 
 #[tauri::command]
+/// Lists at most three diagram artifacts completed with one session turn.
+pub async fn query_agent_diagram_artifacts(
+    request: QueryAgentDiagramArtifactsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentDiagramArtifactsResponseV1, CommandErrorV1> {
+    execute_query_agent_diagram_artifacts(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Loads one Core-compiled diagram through an opaque session-bound reference.
+pub async fn query_agent_diagram_artifact(
+    request: QueryAgentDiagramArtifactRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentDiagramArtifactResponseV1, CommandErrorV1> {
+    execute_query_agent_diagram_artifact(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Opens a native save dialog and atomically exports one validated rendered diagram.
+pub async fn export_agent_diagram(
+    request: ExportAgentDiagramRequestV1,
+    app: AppHandle,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentDiagramExportResponseV1, CommandErrorV1> {
+    execute_export_agent_diagram(request, &app, root.inner()).await
+}
+
+#[tauri::command]
 /// Lists generic Ask, Plan, and Agent-preparation work traces.
 pub async fn query_agent_work_trace_turns(
     request: a3_protocol::QueryAgentWorkTraceTurnsRequestV1,
@@ -377,6 +432,24 @@ pub async fn query_agent_work_trace_detail(
     request: a3_protocol::QueryAgentWorkTraceDetailRequestV1,
     root: State<'_, CompositionRoot>,
 ) -> Result<a3_protocol::AgentWorkTraceDetailResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    root.query_agent_work_trace_detail(
+        decode_agent_session_id(request.session_id())?,
+        a3_domain::AgentSessionSequence::new(
+            parse_canonical_positive_u64(request.user_sequence())
+                .map_err(|_| invalid_agent_session())?,
+        )
+        .map_err(|_| invalid_agent_session())?,
+    )
+    .await
+}
+
+#[tauri::command]
+/// Loads the V2 work trace for the expanded closed analysis-action catalog.
+pub async fn query_agent_work_trace_detail_v2(
+    request: a3_protocol::QueryAgentWorkTraceDetailRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<a3_protocol::AgentWorkTraceDetailResponseV2, CommandErrorV1> {
     require_agent_session_protocol(request.protocol_version())?;
     root.query_agent_work_trace_detail(
         decode_agent_session_id(request.session_id())?,
@@ -423,6 +496,15 @@ pub async fn submit_agent_message_v2(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
     execute_submit_agent_message_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Submits an ordinary-depth message or a Core-resolved built-in slash command.
+pub async fn submit_agent_message_v3(
+    request: SubmitAgentMessageRequestV3,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    execute_submit_agent_message_v3(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -1252,6 +1334,40 @@ async fn execute_query_agent_sessions(
     root.query_agent_sessions(query).await
 }
 
+fn execute_query_agent_slash_commands(
+    request: QueryAgentSlashCommandsRequestV1,
+) -> Result<AgentSlashCommandsResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let mode = map_session_mode(request.mode());
+    let mut entries = Vec::with_capacity(SLASH_COMMANDS.len() + SLASH_COMMAND_LENSES.len());
+    entries.extend(SLASH_COMMANDS.into_iter().map(|descriptor| {
+        let command = descriptor.command();
+        AgentSlashCommandV1::new(
+            format!("/{}", command.name()),
+            descriptor.title().to_owned(),
+            descriptor.description().to_owned(),
+            AgentSlashCommandRoleV1::Primary,
+            command.available_in(mode),
+            map_research_depth_to_v1(command.depth()),
+            command.empty_input_behavior() == SlashCommandEmptyInput::Reject,
+            None,
+        )
+    }));
+    entries.extend(SLASH_COMMAND_LENSES.into_iter().map(|descriptor| {
+        AgentSlashCommandV1::new(
+            format!("/{}", descriptor.lens().name()),
+            descriptor.title().to_owned(),
+            descriptor.description().to_owned(),
+            AgentSlashCommandRoleV1::Lens,
+            true,
+            AgentResearchDepthV1::Thorough,
+            false,
+            Some("/review".to_owned()),
+        )
+    }));
+    Ok(AgentSlashCommandsResponseV1::new(entries))
+}
+
 async fn execute_query_agent_session(
     request: QueryAgentSessionRequestV1,
     root: &CompositionRoot,
@@ -1267,6 +1383,24 @@ async fn execute_query_agent_session(
         return Err(invalid_agent_session());
     }
     root.query_agent_session(session_id, before, request.limit())
+        .await
+}
+
+async fn execute_query_agent_session_v2(
+    request: QueryAgentSessionRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV2, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let session_id = decode_agent_session_id(request.session_id())?;
+    let before = request
+        .before_sequence()
+        .map(parse_canonical_positive_u64)
+        .transpose()
+        .map_err(|()| invalid_agent_session())?;
+    if request.limit() == 0 || request.limit() > 128 {
+        return Err(invalid_agent_session());
+    }
+    root.query_agent_session_v2(session_id, before, request.limit())
         .await
 }
 
@@ -1341,6 +1475,130 @@ async fn execute_query_agent_ask_research_source_preview(
         .await
 }
 
+async fn execute_query_agent_diagram_artifacts(
+    request: QueryAgentDiagramArtifactsRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentDiagramArtifactsResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let session_id = decode_agent_session_id(request.session_id())?;
+    let user_sequence = a3_domain::AgentSessionSequence::new(
+        parse_canonical_positive_u64(request.user_sequence())
+            .map_err(|_| invalid_agent_session())?,
+    )
+    .map_err(|_| invalid_agent_session())?;
+    root.query_agent_diagram_artifacts(session_id, user_sequence)
+        .await
+}
+
+async fn execute_query_agent_diagram_artifact(
+    request: QueryAgentDiagramArtifactRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentDiagramArtifactResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    require_diagram_artifact_ref(request.artifact_ref())?;
+    root.query_agent_diagram_artifact(
+        decode_agent_session_id(request.session_id())?,
+        request.artifact_ref(),
+    )
+    .await
+}
+
+async fn execute_export_agent_diagram(
+    request: ExportAgentDiagramRequestV1,
+    app: &AppHandle,
+    root: &CompositionRoot,
+) -> Result<AgentDiagramExportResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    require_diagram_artifact_ref(request.artifact_ref())?;
+    let response = root
+        .query_agent_diagram_artifact(
+            decode_agent_session_id(request.session_id())?,
+            request.artifact_ref(),
+        )
+        .await?;
+    let artifact = match response.result {
+        a3_protocol::AgentDiagramArtifactResultV1::Available { artifact } => artifact,
+        a3_protocol::AgentDiagramArtifactResultV1::NoProject
+        | a3_protocol::AgentDiagramArtifactResultV1::NotFound => {
+            return Ok(AgentDiagramExportResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentDiagramExportResultV1::NotFound,
+            });
+        }
+    };
+    let bytes = match crate::diagram_export::validate_rendered_payload(
+        request.format(),
+        request.rendered_payload(),
+    ) {
+        Ok(bytes) => bytes,
+        Err(crate::diagram_export::DiagramExportFailure::InvalidPayload) => {
+            return Ok(AgentDiagramExportResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentDiagramExportResultV1::InvalidPayload,
+            });
+        }
+        Err(crate::diagram_export::DiagramExportFailure::Unavailable) => {
+            return Ok(AgentDiagramExportResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentDiagramExportResultV1::Failed,
+            });
+        }
+    };
+    let (extension, filter_name) = match request.format() {
+        AgentDiagramExportFormatV1::Svg => ("svg", "SVG-Diagramm"),
+        AgentDiagramExportFormatV1::Png => ("png", "PNG-Bild"),
+    };
+    let _theme = request.theme();
+    let selection = app
+        .dialog()
+        .file()
+        .set_title("A^3 Diagramm exportieren")
+        .set_file_name(crate::diagram_export::safe_file_name(
+            &artifact.summary.title,
+            extension,
+        ))
+        .add_filter(filter_name, &[extension])
+        .blocking_save_file();
+    let Some(selection) = selection else {
+        return Ok(AgentDiagramExportResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: AgentDiagramExportResultV1::Cancelled,
+        });
+    };
+    let Ok(path) = selection.into_path() else {
+        return Ok(AgentDiagramExportResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: AgentDiagramExportResultV1::Failed,
+        });
+    };
+    if !path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+    {
+        return Ok(AgentDiagramExportResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: AgentDiagramExportResultV1::Failed,
+        });
+    }
+    let result = match crate::diagram_export::write_atomically(&path, &bytes) {
+        Ok(()) => AgentDiagramExportResultV1::Exported,
+        Err(_) => AgentDiagramExportResultV1::Failed,
+    };
+    Ok(AgentDiagramExportResponseV1 {
+        protocol_version: ProtocolVersion::CURRENT,
+        result,
+    })
+}
+
+fn require_diagram_artifact_ref(value: &str) -> Result<(), CommandErrorV1> {
+    if value.len() == 128 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(invalid_agent_session())
+    }
+}
+
 async fn execute_submit_agent_message(
     request: SubmitAgentMessageRequestV1,
     root: &CompositionRoot,
@@ -1399,6 +1657,41 @@ async fn execute_submit_agent_message_v2(
     .await
 }
 
+async fn execute_submit_agent_message_v3(
+    request: SubmitAgentMessageRequestV3,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    if !request.context_references().is_empty() {
+        return Err(invalid_agent_session());
+    }
+    let session_id = request
+        .session_id()
+        .map(decode_agent_session_id)
+        .transpose()?;
+    let expected = request
+        .expected_session_revision()
+        .map(parse_agent_session_revision)
+        .transpose()?;
+    let mode = request.start_mode().map(map_session_mode);
+    if session_id.is_some() != expected.is_some() || session_id.is_some() == mode.is_some() {
+        return Err(invalid_agent_session());
+    }
+    let explicit_depth = match request.research_depth() {
+        AgentResearchDepthSelectionV1::Standard => Some(AgentResearchDepth::Standard),
+        AgentResearchDepthSelectionV1::Thorough => Some(AgentResearchDepth::Thorough),
+        AgentResearchDepthSelectionV1::Command => None,
+    };
+    root.submit_agent_message_v3(
+        session_id,
+        expected,
+        mode,
+        explicit_depth,
+        request.message().to_owned(),
+    )
+    .await
+}
+
 async fn execute_continue_agent_research(
     request: ContinueAgentResearchRequestV1,
     root: &CompositionRoot,
@@ -1424,6 +1717,13 @@ const fn map_research_depth(depth: AgentResearchDepthV1) -> AgentResearchDepth {
     match depth {
         AgentResearchDepthV1::Standard => AgentResearchDepth::Standard,
         AgentResearchDepthV1::Thorough => AgentResearchDepth::Thorough,
+    }
+}
+
+const fn map_research_depth_to_v1(depth: AgentResearchDepth) -> AgentResearchDepthV1 {
+    match depth {
+        AgentResearchDepth::Standard => AgentResearchDepthV1::Standard,
+        AgentResearchDepth::Thorough => AgentResearchDepthV1::Thorough,
     }
 }
 

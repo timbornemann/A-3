@@ -1,4 +1,4 @@
-use crate::ProtocolVersion;
+use crate::{AgentDiagramSummaryV1, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -22,6 +22,18 @@ pub enum AgentResearchDepthV1 {
     Standard,
     /// Up to twelve model decisions and twenty-four reads.
     Thorough,
+}
+
+/// V3 selection: ordinary messages choose a depth, commands use the Core-owned profile.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentResearchDepthSelectionV1 {
+    /// Explicit ordinary Standard research.
+    Standard,
+    /// Explicit ordinary Thorough research.
+    Thorough,
+    /// Depth is resolved exclusively from a validated slash command.
+    Command,
 }
 
 /// User-facing lifecycle projection.
@@ -276,6 +288,70 @@ impl SubmitAgentMessageRequestV2 {
     }
 }
 
+/// V3 message submission supporting Core-resolved built-in slash commands.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SubmitAgentMessageRequestV3 {
+    protocol_version: ProtocolVersion,
+    session_id: Option<String>,
+    expected_session_revision: Option<String>,
+    start_mode: Option<AgentSessionModeV1>,
+    research_depth: AgentResearchDepthSelectionV1,
+    message: String,
+    context_references: Vec<AgentContextReferenceV1>,
+}
+
+impl fmt::Debug for SubmitAgentMessageRequestV3 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SubmitAgentMessageRequestV3")
+            .field("protocol_version", &self.protocol_version)
+            .field("has_session_id", &self.session_id.is_some())
+            .field("research_depth", &self.research_depth)
+            .field("message_bytes", &self.message.len())
+            .field("context_references", &self.context_references.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SubmitAgentMessageRequestV3 {
+    #[must_use]
+    /// Returns the protocol version.
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    #[must_use]
+    /// Returns the optional existing session identity.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+    #[must_use]
+    /// Returns the optimistic session revision for an existing session.
+    pub fn expected_session_revision(&self) -> Option<&str> {
+        self.expected_session_revision.as_deref()
+    }
+    #[must_use]
+    /// Returns the required mode only when creating a session.
+    pub const fn start_mode(&self) -> Option<AgentSessionModeV1> {
+        self.start_mode
+    }
+    #[must_use]
+    /// Returns the ordinary or command-owned depth selection.
+    pub const fn research_depth(&self) -> AgentResearchDepthSelectionV1 {
+        self.research_depth
+    }
+    #[must_use]
+    /// Returns the bounded visible message.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+    #[must_use]
+    /// Returns reserved opaque context capabilities.
+    pub fn context_references(&self) -> &[AgentContextReferenceV1] {
+        &self.context_references
+    }
+}
+
 /// Requests continuation of the newest continuation-ready research section.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -515,6 +591,67 @@ impl AgentSessionV1 {
             has_older_entries,
         }
     }
+}
+
+/// User-facing chips for one persisted built-in command invocation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionCommandChipsV1 {
+    /// Immutable built-in catalog version.
+    pub catalog_version: u16,
+    /// Primary command including its leading slash.
+    pub primary: String,
+    /// Ordered specialist lenses including their leading slashes.
+    pub lenses: Vec<String>,
+    /// Core-owned effective research depth.
+    pub depth: AgentResearchDepthV1,
+}
+
+/// V32 presentation metadata attached to one visible user entry.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionEntryAugmentationV1 {
+    /// Sequence of the owning user message.
+    pub user_sequence: String,
+    /// Persisted command chips, when this was a validated slash invocation.
+    pub command: Option<AgentSessionCommandChipsV1>,
+    /// At most three diagrams atomically completed with this turn.
+    pub diagrams: Vec<AgentDiagramSummaryV1>,
+}
+
+/// V2 session projection combining the compatible page with V32 presentation metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionV2 {
+    /// Complete bounded V1 session page.
+    pub session: AgentSessionV1,
+    /// Metadata for only the user entries contained in this page.
+    pub entry_augmentations: Vec<AgentSessionEntryAugmentationV1>,
+}
+
+/// Result of reading one V2 session projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+pub enum AgentSessionResultV2 {
+    /// No project is active.
+    NoProject,
+    /// The selected session no longer exists in this project.
+    NotFound,
+    /// The current enriched projection is available.
+    Available {
+        /// Current bounded session and V32 presentation metadata.
+        projection: AgentSessionV2,
+    },
+}
+
+/// Versioned enriched session response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionResponseV2 {
+    /// Current IPC protocol version.
+    pub protocol_version: ProtocolVersion,
+    /// Closed read result.
+    pub result: AgentSessionResultV2,
 }
 
 /// Result of reading or mutating one session.

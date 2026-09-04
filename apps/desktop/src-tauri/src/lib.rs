@@ -14,6 +14,7 @@ mod clock;
 pub mod commands;
 mod deep_map_manager;
 mod deep_map_runtime;
+mod diagram_export;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
@@ -126,36 +127,37 @@ use a3_protocol::{
     AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
     AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
     AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSelectedActionV1,
-    AgentSessionEntryKindV1, AgentSessionEntryV1, AgentSessionModeV1, AgentSessionResponseV1,
-    AgentSessionStateV1, AgentSessionSummaryV1, AgentSessionV1, AgentSessionsResponseV1,
-    AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
-    AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
-    AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
-    AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
-    DeepMapActivityStateV1, DeepMapActivityV2, DeepMapBudgetV1, DeepMapCompactProgressV3,
-    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEntryDetailResponseV1,
-    DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2, DeepMapFailureV1, DeepMapFailureV3,
-    DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1, DeepMapPhaseV2, DeepMapProgressV1,
-    DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1, DeepMapRunV1, DeepMapSafeActionV2,
-    DeepMapStartResponseV2, DeepMapStatusResponseV2, DeepMapStatusResponseV3, DeepMapTargetKindV2,
-    ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1,
-    IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1,
-    IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1,
-    IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1,
-    ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
-    ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
-    ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
-    ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
-    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
-    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
-    ModuleCardLifecycleV1, ModuleCardValueV1, ModuleDependencyEdgeEvidenceV1,
-    ModuleDependencyEdgeV1, ModuleDependencyEndpointV1, ModuleDependencyGraphResponseV1,
-    ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1,
-    ModuleDependencyProviderV1, ModuleDependencyRelationV1, ModuleDependencyResolutionV1,
-    ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1, ModuleRuntimeFlowEdgeV1,
-    ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowRelationV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1,
-    ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    AgentSessionCommandChipsV1, AgentSessionEntryAugmentationV1, AgentSessionEntryKindV1,
+    AgentSessionEntryV1, AgentSessionModeV1, AgentSessionResponseV1, AgentSessionResponseV2,
+    AgentSessionResultV2, AgentSessionStateV1, AgentSessionSummaryV1, AgentSessionV1,
+    AgentSessionV2, AgentSessionsResponseV1, AgentTaskControlAcceptedOutcomeV1,
+    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
+    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
+    AgentTaskRecoveryV1, AgentTaskRuntimeStartV1, AgentTaskRuntimeStateV1, AgentTaskRuntimeV1,
+    CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV2,
+    DeepMapBudgetV1, DeepMapCompactProgressV3, DeepMapConfigurationV1, DeepMapControlResponseV1,
+    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2,
+    DeepMapFailureV1, DeepMapFailureV3, DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1,
+    DeepMapPhaseV2, DeepMapProgressV1, DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1,
+    DeepMapRunV1, DeepMapSafeActionV2, DeepMapStartResponseV2, DeepMapStatusResponseV2,
+    DeepMapStatusResponseV3, DeepMapTargetKindV2, ErrorCodeV1, GitHeadV1, HealthResponseV1,
+    IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1,
+    IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1,
+    IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
+    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
+    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
+    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
+    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
+    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
+    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
+    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
+    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
+    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
+    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
+    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
+    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
+    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
+    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
@@ -387,8 +389,154 @@ impl CompositionRoot {
             .agent_sessions
             .as_ref()
             .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let detail = self
+            .load_agent_session_query_detail(
+                &active.project,
+                manager,
+                session_id,
+                before_sequence,
+                limit,
+            )
+            .await?;
+        match detail {
+            Some(detail) => Ok(AgentSessionResponseV1::available(
+                map_agent_session_detail_to_v1(&detail),
+            )),
+            None => Ok(AgentSessionResponseV1::not_found()),
+        }
+    }
+
+    /// Loads one session page enriched with persisted command chips and diagram summaries.
+    pub async fn query_agent_session_v2(
+        &self,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<AgentSessionResponseV2, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentSessionResultV2::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some(detail) = self
+            .load_agent_session_query_detail(
+                &active.project,
+                manager,
+                session_id,
+                before_sequence,
+                limit,
+            )
+            .await?
+        else {
+            return Ok(AgentSessionResponseV2 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentSessionResultV2::NotFound,
+            });
+        };
+        let visible_user_sequences = detail
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind() == AgentSessionEntryKind::UserMessage)
+            .map(AgentSessionEntry::sequence)
+            .collect::<BTreeSet<_>>();
+        let commands = manager
+            .load_commands(&active.project, session_id, before_sequence, limit)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let diagrams = manager
+            .session_diagrams(&active.project, session_id, before_sequence, limit)
+            .await
+            .map_err(map_agent_session_failure)?;
+        let current = if diagrams.is_empty() {
+            None
+        } else {
+            self.load_deep_map_dashboard_index(&active.project).await?
+        };
+        let mut augmentations = visible_user_sequences
+            .iter()
+            .copied()
+            .map(|sequence| (sequence, (None, Vec::new())))
+            .collect::<BTreeMap<_, (Option<AgentSessionCommandChipsV1>, Vec<_>)>>();
+        for command in commands {
+            let Some((slot, _)) = augmentations.get_mut(&command.sequence()) else {
+                continue;
+            };
+            *slot = Some(AgentSessionCommandChipsV1 {
+                catalog_version: match command.catalog_version() {
+                    a3_domain::SlashCommandCatalogVersion::V1 => 1,
+                },
+                primary: format!("/{}", command.primary().name()),
+                lenses: command
+                    .lenses()
+                    .iter()
+                    .map(|lens| format!("/{}", lens.name()))
+                    .collect(),
+                depth: match command.depth() {
+                    a3_domain::AgentResearchDepth::Standard => {
+                        a3_protocol::AgentResearchDepthV1::Standard
+                    }
+                    a3_domain::AgentResearchDepth::Thorough => {
+                        a3_protocol::AgentResearchDepthV1::Thorough
+                    }
+                },
+            });
+        }
+        for diagram in diagrams {
+            let Some((_, slot)) = augmentations.get_mut(&diagram.user_sequence()) else {
+                continue;
+            };
+            let stale = current.as_ref().is_none_or(|published| {
+                published.run().id() != diagram.index_run_id()
+                    || published.run().snapshot_id() != diagram.snapshot_id()
+            });
+            let artifact = diagram.artifact();
+            slot.push(map_diagram_summary_to_v1(
+                artifact,
+                diagram.user_sequence(),
+                stale,
+                diagram_artifact_ref(
+                    active.project.worktree().id(),
+                    session_id,
+                    diagram.user_sequence(),
+                    artifact.id(),
+                ),
+            ));
+        }
+        Ok(AgentSessionResponseV2 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: AgentSessionResultV2::Available {
+                projection: AgentSessionV2 {
+                    session: map_agent_session_detail_to_v1(&detail),
+                    entry_augmentations: augmentations
+                        .into_iter()
+                        .map(
+                            |(sequence, (command, diagrams))| AgentSessionEntryAugmentationV1 {
+                                user_sequence: sequence.get().to_string(),
+                                command,
+                                diagrams,
+                            },
+                        )
+                        .collect(),
+                },
+            },
+        })
+    }
+
+    async fn load_agent_session_query_detail(
+        &self,
+        project: &ProjectIdentity,
+        manager: &AgentSessionManager,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<Option<AgentSessionDetail>, CommandErrorV1> {
         let mut detail = manager
-            .load(&active.project, session_id, before_sequence, limit)
+            .load(project, session_id, before_sequence, limit)
             .await
             .map_err(map_agent_session_failure)?;
         if let Some(current) = detail.as_ref()
@@ -413,24 +561,19 @@ impl CompositionRoot {
             if projected.is_some_and(|state| state != current.session().state()) {
                 manager
                     .project_runtime_state(
-                        &active.project,
+                        project,
                         work_item.task_id(),
                         projected.unwrap_or(AgentSessionState::Running),
                     )
                     .await
                     .map_err(map_agent_session_failure)?;
                 detail = manager
-                    .load(&active.project, session_id, before_sequence, limit)
+                    .load(project, session_id, before_sequence, limit)
                     .await
                     .map_err(map_agent_session_failure)?;
             }
         }
-        match detail {
-            Some(detail) => Ok(AgentSessionResponseV1::available(
-                map_agent_session_detail_to_v1(&detail),
-            )),
-            None => Ok(AgentSessionResponseV1::not_found()),
-        }
+        Ok(detail)
     }
 
     /// Lists the safe persistent research trail for Ask turns in one session.
@@ -888,6 +1031,112 @@ impl CompositionRoot {
         })
     }
 
+    /// Lists at most three evidence-bound diagram artifacts for one session turn.
+    pub async fn query_agent_diagram_artifacts(
+        &self,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> Result<a3_protocol::AgentDiagramArtifactsResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentDiagramArtifactsResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentDiagramArtifactsResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentDiagramArtifactsResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentDiagramArtifactsResultV1::NotFound,
+            });
+        };
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let stale = research_stale(&detail, current.as_ref());
+        let artifacts = manager
+            .research_diagrams(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+            .iter()
+            .map(|artifact| {
+                map_diagram_summary_to_v1(
+                    artifact,
+                    user_sequence,
+                    stale,
+                    diagram_artifact_ref(
+                        active.project.worktree().id(),
+                        session_id,
+                        user_sequence,
+                        artifact.id(),
+                    ),
+                )
+            })
+            .collect();
+        Ok(a3_protocol::AgentDiagramArtifactsResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentDiagramArtifactsResultV1::Available { artifacts },
+        })
+    }
+
+    /// Resolves one diagram through its opaque project- and session-bound capability.
+    pub async fn query_agent_diagram_artifact(
+        &self,
+        session_id: AgentSessionId,
+        artifact_ref: &str,
+    ) -> Result<a3_protocol::AgentDiagramArtifactResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(a3_protocol::AgentDiagramArtifactResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentDiagramArtifactResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let Some((user_sequence, artifact)) =
+            resolve_diagram_artifact_ref(manager, &active.project, session_id, artifact_ref)
+                .await?
+        else {
+            return Ok(a3_protocol::AgentDiagramArtifactResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentDiagramArtifactResultV1::NotFound,
+            });
+        };
+        let Some(detail) = manager
+            .research_detail(&active.project, session_id, user_sequence)
+            .await
+            .map_err(map_agent_session_failure)?
+        else {
+            return Ok(a3_protocol::AgentDiagramArtifactResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: a3_protocol::AgentDiagramArtifactResultV1::NotFound,
+            });
+        };
+        let current = self.load_deep_map_dashboard_index(&active.project).await?;
+        let summary = map_diagram_summary_to_v1(
+            &artifact,
+            user_sequence,
+            research_stale(&detail, current.as_ref()),
+            artifact_ref.to_owned(),
+        );
+        Ok(a3_protocol::AgentDiagramArtifactResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: a3_protocol::AgentDiagramArtifactResultV1::Available {
+                artifact: a3_protocol::AgentDiagramArtifactV1 {
+                    summary,
+                    mermaid: artifact.mermaid().to_owned(),
+                },
+            },
+        })
+    }
+
     /// Persists one message and completes its bounded read-only conversation turn.
     pub async fn submit_agent_message(
         &self,
@@ -941,6 +1190,38 @@ impl CompositionRoot {
                 expected_revision,
                 start_mode,
                 depth,
+                message,
+            )
+            .await
+            .map_err(map_agent_session_failure)?;
+        Ok(AgentSessionResponseV1::available(
+            map_agent_session_detail_to_v1(&detail),
+        ))
+    }
+
+    /// Persists one V3 message after Core-owned slash-command resolution.
+    pub async fn submit_agent_message_v3(
+        &self,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        start_mode: Option<AgentSessionMode>,
+        explicit_depth: Option<a3_domain::AgentResearchDepth>,
+        message: String,
+    ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV1::no_project());
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let detail = manager
+            .submit_with_command_selection(
+                &active.project,
+                session_id,
+                expected_revision,
+                start_mode,
+                explicit_depth,
                 message,
             )
             .await
@@ -4975,13 +5256,19 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_agent_activity,
             commands::query_agent_approval,
             commands::query_agent_session,
+            commands::query_agent_session_v2,
             commands::query_agent_sessions,
+            commands::query_agent_slash_commands,
             commands::query_agent_ask_research_turns,
             commands::query_agent_ask_research_detail,
             commands::query_agent_ask_research_sources,
             commands::query_agent_ask_research_source_preview,
+            commands::query_agent_diagram_artifacts,
+            commands::query_agent_diagram_artifact,
+            commands::export_agent_diagram,
             commands::query_agent_work_trace_turns,
             commands::query_agent_work_trace_detail,
+            commands::query_agent_work_trace_detail_v2,
             commands::query_agent_work_trace_sources,
             commands::query_agent_work_trace_source_preview,
             commands::query_agent_inspection,
@@ -5006,6 +5293,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::start_deep_map,
             commands::submit_agent_message,
             commands::submit_agent_message_v2,
+            commands::submit_agent_message_v3,
             commands::continue_agent_research,
             commands::update_agent_workspace_layout
         ])
@@ -5890,6 +6178,113 @@ async fn resolve_research_source_ref(
                 ErrorCodeV1::AgentSessionUnavailable,
             ));
         }
+    }
+}
+
+fn diagram_artifact_ref(
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: a3_domain::AgentSessionSequence,
+    artifact_id: a3_domain::AgentDiagramArtifactId,
+) -> String {
+    let mask = diagram_artifact_mask(worktree_id, session_id);
+    let mut bytes = Vec::with_capacity(64);
+    bytes.extend(
+        artifact_id
+            .as_bytes()
+            .iter()
+            .zip(mask)
+            .map(|(byte, mask)| byte ^ mask),
+    );
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"a3.agent-diagram-artifact.tag.v1\0");
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(session_id.as_bytes());
+    hasher.update(&user_sequence.get().to_be_bytes());
+    hasher.update(artifact_id.as_bytes());
+    bytes.extend_from_slice(hasher.finalize().as_bytes());
+    encode_hex(&bytes)
+}
+
+fn diagram_artifact_mask(worktree_id: WorktreeId, session_id: AgentSessionId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"a3.agent-diagram-artifact.mask.v1\0");
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(session_id.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+async fn resolve_diagram_artifact_ref(
+    manager: &AgentSessionManager,
+    project: &ProjectIdentity,
+    session_id: AgentSessionId,
+    artifact_ref: &str,
+) -> Result<
+    Option<(
+        a3_domain::AgentSessionSequence,
+        a3_application::EvidenceDiagramArtifact,
+    )>,
+    CommandErrorV1,
+> {
+    let Ok(bytes) = decode_hex(artifact_ref, 64) else {
+        return Ok(None);
+    };
+    if bytes.len() != 64 {
+        return Ok(None);
+    }
+    let mask = diagram_artifact_mask(project.worktree().id(), session_id);
+    let mut artifact_id = [0_u8; 32];
+    for (index, byte) in artifact_id.iter_mut().enumerate() {
+        *byte = bytes[index] ^ mask[index];
+    }
+    let Some((user_sequence, artifact)) = manager
+        .research_diagram(
+            project,
+            session_id,
+            a3_domain::AgentDiagramArtifactId::from_bytes(artifact_id),
+        )
+        .await
+        .map_err(map_agent_session_failure)?
+    else {
+        return Ok(None);
+    };
+    if diagram_artifact_ref(
+        project.worktree().id(),
+        session_id,
+        user_sequence,
+        artifact.id(),
+    ) != artifact_ref
+    {
+        return Ok(None);
+    }
+    Ok(Some((user_sequence, artifact)))
+}
+
+fn map_diagram_summary_to_v1(
+    artifact: &a3_application::EvidenceDiagramArtifact,
+    user_sequence: a3_domain::AgentSessionSequence,
+    stale: bool,
+    artifact_ref: String,
+) -> a3_protocol::AgentDiagramSummaryV1 {
+    a3_protocol::AgentDiagramSummaryV1 {
+        artifact_ref,
+        user_sequence: user_sequence.get().to_string(),
+        kind: match artifact.kind() {
+            a3_application::EvidenceDiagramKind::Flowchart => {
+                a3_protocol::AgentDiagramKindV1::Flowchart
+            }
+            a3_application::EvidenceDiagramKind::Sequence => {
+                a3_protocol::AgentDiagramKindV1::Sequence
+            }
+            a3_application::EvidenceDiagramKind::Class => a3_protocol::AgentDiagramKindV1::Class,
+            a3_application::EvidenceDiagramKind::State => a3_protocol::AgentDiagramKindV1::State,
+            a3_application::EvidenceDiagramKind::EntityRelationship => {
+                a3_protocol::AgentDiagramKindV1::EntityRelationship
+            }
+        },
+        title: artifact.title().to_owned(),
+        description: artifact.description().to_owned(),
+        stale,
     }
 }
 
@@ -9787,12 +10182,12 @@ mod tests {
         MAX_PROJECT_PATH_DISPLAY_CHARS, decode_deep_map_entry_selection,
         decode_deep_map_impact_cursor, decode_deep_map_module_selection,
         decode_deep_map_run_cursor, decode_deep_map_run_selection, decode_deep_map_step_cursor,
-        decode_research_cursor, encode_deep_map_entry_selection, encode_deep_map_impact_cursor,
-        encode_deep_map_module_selection, encode_deep_map_run_cursor,
-        encode_deep_map_run_selection, encode_deep_map_step_cursor, map_agent_goal_to_v1,
-        map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1, project_path_display,
-        publication_read_failure_lifecycle, repository_path_display, research_cursor,
-        research_source_ref,
+        decode_research_cursor, diagram_artifact_ref, encode_deep_map_entry_selection,
+        encode_deep_map_impact_cursor, encode_deep_map_module_selection,
+        encode_deep_map_run_cursor, encode_deep_map_run_selection, encode_deep_map_step_cursor,
+        map_agent_goal_to_v1, map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1,
+        project_path_display, publication_read_failure_lifecycle, repository_path_display,
+        research_cursor, research_source_ref,
     };
     use a3_application::DeepMapRunCursor;
     use a3_application::{
@@ -9800,9 +10195,10 @@ mod tests {
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
-        AcceptanceCriterionStatement, AgentSessionId, AgentSessionSequence, DeepMapEventSequence,
-        DeepMapRunId, DeepMapRunTimestamp, GoalContract, GoalContractDraft, GoalContractTimestamp,
-        GoalObjective, ModuleId, RepositoryPath, SuccessVerification, TaskId, WorktreeId,
+        AcceptanceCriterionStatement, AgentDiagramArtifactId, AgentSessionId, AgentSessionSequence,
+        DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp, GoalContract, GoalContractDraft,
+        GoalContractTimestamp, GoalObjective, ModuleId, RepositoryPath, SuccessVerification,
+        TaskId, WorktreeId,
     };
     use a3_protocol::{
         AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1, DeepMapCompactProgressV3,
@@ -9918,6 +10314,28 @@ mod tests {
         assert_ne!(
             capability,
             research_source_ref(worktree, session, sequence, 6, source, None)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diagram_reference_masks_identity_and_binds_session_turn_and_project()
+    -> Result<(), Box<dyn Error>> {
+        let worktree = WorktreeId::from_bytes([1; 32]);
+        let session = AgentSessionId::from_bytes([2; 32]);
+        let sequence = AgentSessionSequence::new(3)?;
+        let artifact = AgentDiagramArtifactId::from_bytes([4; 32]);
+        let capability = diagram_artifact_ref(worktree, session, sequence, artifact);
+
+        assert_eq!(capability.len(), 128);
+        assert!(!capability.contains(&"04".repeat(32)));
+        assert_ne!(
+            capability,
+            diagram_artifact_ref(WorktreeId::from_bytes([9; 32]), session, sequence, artifact,)
+        );
+        assert_ne!(
+            capability,
+            diagram_artifact_ref(worktree, session, AgentSessionSequence::new(8)?, artifact)
         );
         Ok(())
     }

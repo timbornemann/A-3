@@ -179,3 +179,10 @@ Vor Abschluss MUSS Codex beantworten können:
   deaktivierte Schaltfläche im Frontend gilt nicht als Sicherheitsgrenze.
 - Eine Planumsetzung bindet immer die exakte sichtbare Session- und Planrevision; Pfade, Befehle,
   Approval-IDs und Providerdaten werden nicht aus freiem Chattext übernommen.
+- Slash Commands sind geschlossene Core-Arbeitsprofile. Sie DÜRFEN Recherchefokus, Ergebnisform
+  und Verification präzisieren, aber weder Modusgrenzen noch Tool-, Prozess-, Netzwerk-, Datei-
+  oder Mutationsberechtigungen erweitern. Die WebView ist für Parsing und Modusprüfung niemals
+  Autorität.
+- Diagramme MÜSSEN aus einem typisierten, source-gebundenen Modellobjekt deterministisch kompiliert
+  werden. Rohe Modell-Mermaid und von der WebView gewählte Exportpfade DÜRFEN keine privilegierte
+  Grenze passieren.

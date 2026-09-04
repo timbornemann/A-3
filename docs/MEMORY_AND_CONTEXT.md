@@ -433,6 +433,21 @@ als Suchhinweis fortleben. Für die Agent-Materialisierung übergibt ein typisie
 `ResearchHandoff` ausschließlich Index-, Snapshot- und revalidierte Revisionsanker. Goal, Ledger,
 `RunMemoryCheckpoint`, Verification und das Run Journal bleiben danach die Autorität.
 
+Ein nach ADR-0039 validierter Slash-Aufruf wird getrennt als `CommandExecutionProfile` in die
+Kontextkompilierung eingebunden. Der Core erzeugt daraus feste Constraints für Ziel, Linse,
+Ergebnis und Verification; der ursprüngliche Slash-Text wird nicht zur privilegierten
+Systemanweisung. Das Profil kann Quellen priorisieren, aber weder öffentliche Arbeitsnotizen noch
+Hypothesen zu Evidence hochstufen. Diagrammentwürfe erhalten ausschließlich die bereits
+turnlokalen Source-Referenzen des aktuellen Rechercheabschnitts und bilden keine neue
+Memory-Autorität.
+
+Das typisierte Profil bleibt über Recherchefortsetzung, Planfreigabe, Neustart und Agent-
+Materialisierung erhalten. Vor jeder erneuten Verwendung werden gespeicherter Katalogstand,
+Hauptauftrag, Linsen, Tiefe und die ursprüngliche User-Entry erneut durch den Domain-Parser
+abgeglichen; der `ResearchHandoff` übernimmt nur das validierte Profil und gegen den aktuellen
+Index revalidierte Source-Revisionen. Eine direkte Antwort auf eine Core-Rückfrage ergänzt nur das
+fehlende Ziel und kann weder Command noch Linsen stillschweigend ändern.
+
 Im nächsten Context Pack steht `[RUN_MEMORY]` direkt nach dem vollständigen Anchor. Metadaten,
 offene Fehler und offene Hypothesen sind Pflichtinhalt; passen sie nicht in das harte Budget, wird
 der Compile abgebrochen. Step-Ergebnisse und weitere aktuelle Claims folgen deterministisch und

@@ -1058,6 +1058,8 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] persistente verwendete und zusätzlich bereitgestellte Ask-Quellen mit sicherer Vorschau
 - [x] gemeinsame endliche Mehr-Runden-Recherche für Ask, Plan und Agent-Vorbereitung
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
+- [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
+- [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
 - [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
 - [x] Component-, Accessibility-, responsive und native UX-Verifikation
@@ -1130,6 +1132,22 @@ Runden ehrlich mit einer expliziten Fortsetzungsaktion. Knowledge V31 speichert 
 Arbeitsnotizen mit ihren Source-Ketten für Ask, Plan und Agent-Vorbereitung; V30 bleibt als Legacy
 lesbar. Der Composer, Conversation-Block und Inspector verwenden dieselbe progressive Timeline.
 Rohes internes Denken bleibt ausgeschlossen.
+
+Slash-Command-Erweiterung vom 2026-09-04 nach ADR-0039: Ein `/` öffnet den vom Core gelieferten,
+modusgefilterten Katalog. Hauptauftrag und höchstens zwei Linsen erscheinen als entfernbare Chips;
+die feste Tiefe kann für diese Nachricht nicht überschrieben werden. Der Rust-Core validiert
+erneut, bevor die dauerhaft sichtbare Nachricht und ihr besessener Job entstehen. `/diagram`
+zeigt bis zu drei aus aktueller Evidence Core-kompilierte Diagramme inline. Mermaid wird lokal lazy
+im Strict Mode geladen und das SVG zusätzlich sanitisiert. SVG-/PNG-Export wählt das Ziel nur im
+nativen Rust-Dialog, validiert den gerenderten Inhalt erneut und gibt der WebView keinen Pfad.
+Knowledge V32 hält Command-Aufruf und Artefaktquellen über Reopen, während Presentation Delete sie
+entfernt und ein Indexwechsel den historischen Stand sichtbar kennzeichnet.
+
+Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
+Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,
+lokales Lazy Rendering, Sanitizer, Render-Retry und path-freien Export. Formatcheck, ESLint,
+Svelte-Typecheck mit 0 Fehlern/0 Warnungen, Produktionsbuild und Linkprüfung sind grün. Der Build
+hält Mermaid außerhalb des initialen Chunks; der Agent-Workspace bleibt ein separater Lazy-Chunk.
 
 ## Gate M8
 

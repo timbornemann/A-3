@@ -1,5 +1,8 @@
 use crate::{AskResearchAction, AskResearchDecisionNote};
-use a3_domain::{AgentResearchDepth, AskResearchSourceId, FileRevision, IndexRunId, SnapshotId};
+use a3_domain::{
+    AgentResearchDepth, AskResearchSourceId, FileRevision, IndexRunId, SlashCommandInvocation,
+    SnapshotId,
+};
 use blake3::Hasher;
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -129,14 +132,24 @@ impl BoundedResearchController {
         &mut self,
         elapsed_millis: u64,
     ) -> Result<BeginResearchDecision, ResearchControllerError> {
+        self.begin_decision_reserving(elapsed_millis, 0)
+    }
+
+    /// Reserves the next research decision while retaining fixed capacity for result formatting.
+    pub fn begin_decision_reserving(
+        &mut self,
+        elapsed_millis: u64,
+        reserved_decisions: u8,
+    ) -> Result<BeginResearchDecision, ResearchControllerError> {
         if elapsed_millis >= self.limits.duration_millis {
             return Err(ResearchControllerError::TimedOut);
         }
-        if self.decisions_used >= self.limits.model_decisions {
+        if self.decisions_used.saturating_add(reserved_decisions) >= self.limits.model_decisions {
             return Err(ResearchControllerError::DecisionBudgetExhausted);
         }
         self.decisions_used = self.decisions_used.saturating_add(1);
-        let search_allowed = self.decisions_used < self.limits.model_decisions
+        let search_allowed = self.decisions_used.saturating_add(reserved_decisions)
+            < self.limits.model_decisions
             && self.actions_used < self.limits.read_actions
             && self.stagnant_rounds < 2;
         Ok(if search_allowed {
@@ -318,6 +331,7 @@ pub struct ResearchHandoff {
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     revisions: Vec<FileRevision>,
+    command: Option<SlashCommandInvocation>,
 }
 
 impl ResearchHandoff {
@@ -334,7 +348,14 @@ impl ResearchHandoff {
             index_run_id,
             snapshot_id,
             revisions,
+            command: None,
         })
+    }
+    /// Carries one already Core-validated command profile without granting any capability.
+    #[must_use]
+    pub fn with_command(mut self, command: SlashCommandInvocation) -> Self {
+        self.command = Some(command);
+        self
     }
     #[must_use]
     /// Returns the published index run anchor.
@@ -350,6 +371,11 @@ impl ResearchHandoff {
     /// Returns the exact source revisions revalidated for handoff.
     pub fn revisions(&self) -> &[FileRevision] {
         &self.revisions
+    }
+    #[must_use]
+    /// Returns the optional typed command that shaped the research section.
+    pub const fn command(&self) -> Option<&SlashCommandInvocation> {
+        self.command.as_ref()
     }
 }
 
@@ -445,6 +471,31 @@ mod tests {
     }
 
     #[test]
+    fn closed_analysis_actions_use_the_same_deduplication_and_budget() -> Result<(), Box<dyn Error>>
+    {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        let first = controller.prepare_actions(vec![
+            AskResearchAction::InspectWorkingChanges,
+            AskResearchAction::QueryIndexDiagnostics,
+            AskResearchAction::InspectDependencyGraph,
+            AskResearchAction::InspectTestTopology,
+        ])?;
+        assert_eq!(first.actions().len(), 4);
+        let repeated = controller.prepare_actions(vec![
+            AskResearchAction::InspectWorkingChanges,
+            AskResearchAction::InspectTestTopology,
+            AskResearchAction::ScanSecurityCandidates,
+        ])?;
+        assert_eq!(
+            repeated.actions(),
+            &[AskResearchAction::ScanSecurityCandidates]
+        );
+        assert_eq!(repeated.duplicate_count(), 2);
+        assert_eq!(controller.actions_used(), 7);
+        Ok(())
+    }
+
+    #[test]
     fn final_decision_and_stagnation_are_finite() -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
         for turn in 0..5 {
@@ -460,6 +511,27 @@ mod tests {
         controller.finish_round(2, 2);
         controller.finish_round(2, 2);
         assert!(controller.is_stagnant());
+        Ok(())
+    }
+
+    #[test]
+    fn result_formatting_reservation_keeps_one_model_decision_available()
+    -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        for turn in 0..4 {
+            assert_eq!(
+                controller.begin_decision_reserving(turn * 100, 1)?,
+                BeginResearchDecision::SearchAllowed
+            );
+        }
+        assert_eq!(
+            controller.begin_decision_reserving(500, 1)?,
+            BeginResearchDecision::FinalOnly
+        );
+        assert_eq!(
+            controller.begin_decision(600)?,
+            BeginResearchDecision::FinalOnly
+        );
         Ok(())
     }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-agent-slash-commands"
+description = "Enables the query_agent_slash_commands command without any pre-configured scope."
+commands.allow = ["query_agent_slash_commands"]
+
+[[permission]]
+identifier = "deny-query-agent-slash-commands"
+description = "Denies the query_agent_slash_commands command without any pre-configured scope."
+commands.deny = ["query_agent_slash_commands"]

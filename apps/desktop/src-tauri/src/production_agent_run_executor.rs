@@ -7,8 +7,9 @@ use a3_application::{
     AgentRunExecutionTrigger, AgentRunExecutor, AgentTurnOutcome, AgentTurnRejectionReason,
     AppendAgentRead, AppendRunEvent, ApplyAgentLedgerUpdate, AskResearchStore,
     CommandAllowlistStore, CompileTaskLens, ConservativeProcessVerificationEvidenceFactory,
-    ContextCompileControl, ContextCompilePhase, DeterministicAcceptanceVerifier,
-    DiscoverProjectCommands, ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
+    ContextCompileControl, ContextCompilePhase, ContinueVerifiedAgentPlan,
+    ContinueVerifiedAgentPlanOutcome, DeterministicAcceptanceVerifier, DiscoverProjectCommands,
+    ExecuteAgentTurn, ExecuteMutatingAgentAction, IndexPersistenceControl,
     IndexPersistenceControlError, KnowledgeIndexStore, KnowledgeSearchStore,
     LoadProjectCommandAllowlist, ModelCancellationFuture, ModelOperationControl,
     MutationCommandSelection, MutationContextSeed, MutationControllerOutcome, MutationExecutionIds,
@@ -125,7 +126,7 @@ impl ProductionAgentRunExecutor {
             return Err(AgentRunExecutionFailure::AnchorsChanged);
         }
         let (mut ledger, mut ledger_version) = stored.into_parts();
-        let step_id = active_step_id(&ledger)?;
+        let mut step_id = active_step_id(&ledger)?;
         let run_id = ledger
             .step(step_id)
             .and_then(|step| step.attempts().last())
@@ -235,6 +236,19 @@ impl ProductionAgentRunExecutor {
                     &attempt_control,
                 )
                 .await?;
+            if matches!(&outcome, MutationControllerOutcome::StepVerified { .. })
+                && let Some(next_step_id) = self
+                    .continue_verified_plan(
+                        project,
+                        &mut run,
+                        &mut ledger,
+                        &mut ledger_version,
+                        &attempt_control,
+                    )
+                    .await?
+            {
+                step_id = next_step_id;
+            }
             if self.handle_mutation_outcome(request.task_id(), outcome)? {
                 return Ok(AgentRunExecutionOutcome::Completed);
             }
@@ -381,6 +395,19 @@ impl ProductionAgentRunExecutor {
                             &attempt_control,
                         )
                         .await?;
+                    if matches!(&outcome, MutationControllerOutcome::StepVerified { .. })
+                        && let Some(next_step_id) = self
+                            .continue_verified_plan(
+                                project,
+                                &mut run,
+                                &mut ledger,
+                                &mut ledger_version,
+                                &attempt_control,
+                            )
+                            .await?
+                    {
+                        step_id = next_step_id;
+                    }
                     if matches!(outcome, MutationControllerOutcome::AwaitingApproval(_)) {
                         lock_recovering_poison(&self.pending_mutations)
                             .insert(request.task_id(), replay);
@@ -439,6 +466,38 @@ impl ProductionAgentRunExecutor {
             }
         }
         Err(AgentRunExecutionFailure::Unavailable)
+    }
+
+    async fn continue_verified_plan(
+        &self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+        ledger: &mut TaskLedger,
+        ledger_version: &mut a3_application::TaskLedgerStoreVersion,
+        control: &AgentAttemptControl<'_>,
+    ) -> Result<Option<TaskStepId>, AgentRunExecutionFailure> {
+        match ContinueVerifiedAgentPlan::new(self.ports.actions.as_ref())
+            .execute(
+                project,
+                *ledger_version,
+                run,
+                ledger,
+                run_event_id()?,
+                timestamp()?,
+                control,
+            )
+            .await
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?
+        {
+            ContinueVerifiedAgentPlanOutcome::ReadyForAcceptance => Ok(None),
+            ContinueVerifiedAgentPlanOutcome::StepStarted {
+                step_id,
+                ledger_version: next_version,
+            } => {
+                *ledger_version = next_version;
+                Ok(Some(step_id))
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -713,8 +772,13 @@ fn revalidate_research_handoff(
         })
         .cloned()
         .collect();
-    ResearchHandoff::new(current.run().id(), current.run().snapshot_id(), revisions)
-        .map_err(|_| AgentRunExecutionFailure::Unavailable)
+    let revalidated =
+        ResearchHandoff::new(current.run().id(), current.run().snapshot_id(), revisions)
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+    Ok(match handoff.command() {
+        Some(command) => revalidated.with_command(command.clone()),
+        None => revalidated,
+    })
 }
 
 /// Keeps nested context, patch, process, and index progress inside one Agent-turn scope.

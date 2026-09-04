@@ -93,6 +93,27 @@ gespeichert; Cancellation, Timeout oder Fehler erhalten bereits gefundene Source
 erfolgreiche Abschluss committet Ergebnis, Zitate, terminales Event und Sessionrevision atomar.
 Kein Worker wird detached und kein UI-Poll startet neue Arbeit.
 
+Slash-Command-Nachrichten verwenden dieselben besessenen Conversationjobs und die festen
+ADR-0038-Budgets. Die zusätzlichen Analyseaktionen zählen wie bestehende Reads; ein Command
+erzeugt keinen zweiten Scheduler und keinen eigenen offenen Loop. `/diagram` reserviert innerhalb
+des Profils die letzte verfügbare Modellentscheidung für die typisierte Artefaktformatierung,
+sodass die letzte Entscheidung weiterhin keine neue Suche anfordern kann. Antwort, Zitate,
+Diagramme, terminales Event und Sessionrevision werden gemeinsam abgeschlossen; Cancellation oder
+Fehler exportieren kein unvollständiges Artefakt.
+
+Ein zielpflichtiger Command ohne Ziel schließt seinen kurzen besessenen Job deterministisch mit
+`AwaitingUser` ab, ohne Recherchemodell, Tool oder Agent-Run zu öffnen. Die direkte Nutzerantwort
+wird nur dann als Command-Fortsetzung übernommen, wenn sie auf genau diesen Rückfrage-Turn folgt;
+der Core rekonstruiert Hauptauftrag und Linsen aus der append-only V32-Projektion, validiert sie
+erneut und startet anschließend einen gewöhnlichen budgetierten Conversationjob.
+
+Mutierende Command-Pläne materialisieren bestätigte, eigenständig änderbare Top-Level-Punkte als
+sequenzielle Ledger-Schritte. Jeder besitzt eine eigene Verification-Spezifikation. Nach einem
+erfolgreich verifizierten Schritt committet `ContinueVerifiedAgentPlan` den nächsten
+`Ready`-Schritt und den Übergang `Verify → Execute` in derselben Ledger-/Run-CAS-Transaktion. Es
+läuft weiterhin höchstens eine mutierende Aktion im Worktree; erst ohne verbleibenden bereiten oder
+aktiven Schritt beginnt die Acceptance-Prüfung.
+
 Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
 auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine
 erfolgreiche H11/E8-Inspektion eines weiterhin nichtterminalen Runs. Resume beziehungsweise

@@ -243,6 +243,19 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Timer, das einmalige Einklappen nach 700 Millisekunden und sofortige Darstellung bei Reduced
   Motion. Der Workspace-Test muss den Übergang von der Live-Karte zur frisch abgeschlossenen,
   zunächst geöffneten Rechercheprojektion belegen.
+- Der ADR-0039-Contract prüft den vollständigen Slash-Katalog, Modusmatrix, leere Themen, `//`-
+  Escape, höchstens zwei unterschiedliche Linsen und die Ablehnung unbekannter oder mehrfacher
+  Hauptaufträge vor Sessionappend und Jobstart. V32-Tests decken Neuinstallation, V31→V32,
+  atomare Command-/Linsenpersistenz, atomaren Antwort-/Zitat-/Diagrammabschluss, Reopen und
+  Presentation Delete ab. Die fünf neuen Analyseaktionen müssen ihre festen Ergebnisgrenzen,
+  Indexbindung, Cancellation, Deduplizierung und ehrliche Trunkierung belegen; keine davon darf
+  Ask oder Plan eine freie Prozess-, Pfad- oder Netzwerkcapability geben. Diagrammverträge prüfen
+  Source-Referenzen, Topologie- und Größenlimits, Mermaid-Kompilierung, Strict/Lazy Rendering,
+  zusätzliche SVG-Sanitisierung, begrenztes PNG, path-freien nativen Export und Ablehnung aktiver
+  Inhalte. Component-Tests prüfen gefilterte Tastaturpalette, entfernbare Chips, feste Command-
+  Tiefe, getrennte Darstellung des Auftrags, Render-Retry, Theme und Export. Die Mermaid-Lazy-
+  Erweiterung muss initiales Bundle-, DOM-, Reduced-Motion- und Schmalfensterbudget weiterhin
+  einhalten.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene

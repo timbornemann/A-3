@@ -364,6 +364,7 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
         project: &'a ProjectIdentity,
         session: &'a AgentSession,
         first_entry: Option<&'a AgentSessionEntry>,
+        command: Option<&'a a3_domain::SlashCommandInvocation>,
     ) -> AgentSessionStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self
@@ -378,6 +379,7 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
                 project.worktree().id(),
                 session,
                 first_entry,
+                command,
             )
             .await
             .map_err(|error| error.classify())
@@ -390,6 +392,7 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
         expected_revision: AgentSessionRevision,
         session: &'a AgentSession,
         entry: Option<&'a AgentSessionEntry>,
+        command: Option<&'a a3_domain::SlashCommandInvocation>,
     ) -> AgentSessionStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self
@@ -405,6 +408,7 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
                 expected_revision,
                 session,
                 entry,
+                command,
             )
             .await
             .map_err(|error| error.classify())
@@ -446,6 +450,33 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
                 .await
                 .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
             agent_session_repository::load(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                before_sequence,
+                limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_session_commands<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> AgentSessionStoreFuture<'a, Vec<a3_application::AgentSessionCommandPresentation>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::load_commands(
                 &connection,
                 project.worktree().id(),
                 session_id,
@@ -564,6 +595,7 @@ impl AskResearchStore for LibsqlKnowledgeStore {
         answer: &'a AgentSessionEntry,
         event: &'a AskResearchEvent,
         cited_sources: &'a [AskResearchSourceId],
+        diagrams: &'a [a3_application::EvidenceDiagramArtifact],
     ) -> AskResearchStoreFuture<'a, ()> {
         Box::pin(async move {
             let database = self
@@ -582,6 +614,7 @@ impl AskResearchStore for LibsqlKnowledgeStore {
                 answer,
                 event,
                 cited_sources,
+                diagrams,
             )
             .await
             .map_err(|error| error.classify())
@@ -720,6 +753,92 @@ impl AskResearchStore for LibsqlKnowledgeStore {
                 session_id,
                 user_sequence,
                 source_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_diagrams<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: a3_domain::AgentSessionSequence,
+    ) -> AskResearchStoreFuture<'a, Vec<a3_application::EvidenceDiagramArtifact>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::list_diagrams(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                user_sequence,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn list_session_diagrams<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        user_turn_limit: u16,
+    ) -> AskResearchStoreFuture<'a, Vec<a3_application::SessionEvidenceDiagramArtifact>> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::list_session_diagrams(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                before_sequence,
+                user_turn_limit,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_diagram<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        artifact_id: a3_domain::AgentDiagramArtifactId,
+    ) -> AskResearchStoreFuture<
+        'a,
+        Option<(
+            a3_domain::AgentSessionSequence,
+            a3_application::EvidenceDiagramArtifact,
+        )>,
+    > {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await
+                .map_err(map_ask_open_failure)?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AskResearchStoreFailure::Unavailable)?;
+            agent_ask_research_repository::load_diagram(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                artifact_id,
             )
             .await
             .map_err(|error| error.classify())
@@ -4589,7 +4708,8 @@ mod tests {
                     .await?
                     .is_none()
             );
-            AgentSessionStore::create_session(&store, &project, &session, Some(&entry)).await?;
+            AgentSessionStore::create_session(&store, &project, &session, Some(&entry), None)
+                .await?;
             let loaded =
                 AgentSessionStore::load_session(&store, &project, session_id, None, 10).await?;
 

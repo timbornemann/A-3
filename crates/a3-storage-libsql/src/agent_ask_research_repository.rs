@@ -3,16 +3,19 @@ use crate::catalog::is_corruption;
 use a3_application::{
     AskResearchDetail, AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote,
     AskResearchSource, AskResearchSourcePage, AskResearchStoreFailure, AskResearchTurn,
-    AskResearchTurnPage, ResearchHandoff,
+    AskResearchTurnPage, EvidenceDiagramArtifact, EvidenceDiagramKind, ResearchHandoff,
+    SessionEvidenceDiagramArtifact,
 };
 use a3_domain::{
-    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionMode,
-    AgentSessionRevision, AgentSessionSequence, AgentSessionTimestamp, AskResearchCompleteness,
-    AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind,
-    AskResearchState, ContentHash, FileRevision, IndexRunId, RepositoryPath, SnapshotId,
-    SourcePosition, SourceRange, TaskId, WorktreeId,
+    AgentDiagramArtifactId, AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId,
+    AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionTimestamp,
+    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
+    AskResearchSourceKind, AskResearchState, ContentHash, FileRevision, IndexRunId,
+    ParsedSlashCommand, RepositoryPath, SnapshotId, SourcePosition, SourceRange, TaskId,
+    WorktreeId, parse_slash_command,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
+use std::collections::BTreeMap;
 
 pub(crate) async fn begin(
     connection: &Connection,
@@ -115,6 +118,7 @@ pub(crate) async fn complete(
     answer: &AgentSessionEntry,
     event: &AskResearchEvent,
     citations: &[AskResearchSourceId],
+    diagrams: &[EvidenceDiagramArtifact],
 ) -> Result<(), AskResearchRepositoryError> {
     if answer.session_id() != event.session_id()
         || !matches!(
@@ -122,6 +126,7 @@ pub(crate) async fn complete(
             AskResearchState::Completed | AskResearchState::AwaitingContinuation
         )
         || citations.len() > 200
+        || diagrams.len() > 3
         || (answer.task_id().is_some() && session.mode() != AgentSessionMode::Agent)
     {
         return Err(AskResearchRepositoryError::InvalidInput);
@@ -141,6 +146,40 @@ pub(crate) async fn complete(
                 "INSERT INTO agent_work_trace_citations (worktree_id, session_id, user_sequence, citation_position, source_id) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![worktree_id.as_bytes().to_vec(), event.session_id().as_bytes().to_vec(), u64_i64(event.user_sequence().get())?, i64::try_from(index + 1).map_err(|_| AskResearchRepositoryError::InvalidInput)?, source_id.as_bytes().to_vec()],
             ).await.map_err(AskResearchRepositoryError::Write)?;
+        }
+        for (index, diagram) in diagrams.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO agent_diagram_artifacts (
+                   worktree_id, session_id, user_sequence, artifact_id, artifact_position,
+                   diagram_kind, title, description, mermaid_source
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    worktree_id.as_bytes().to_vec(),
+                    event.session_id().as_bytes().to_vec(),
+                    u64_i64(event.user_sequence().get())?,
+                    diagram.id().as_bytes().to_vec(),
+                    i64::try_from(index.saturating_add(1)).map_err(|_| AskResearchRepositoryError::InvalidInput)?,
+                    diagram.kind().name(),
+                    diagram.title(),
+                    diagram.description(),
+                    diagram.mermaid(),
+                ],
+            ).await.map_err(AskResearchRepositoryError::Write)?;
+            for (source_index, source_id) in diagram.source_ids().iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO agent_diagram_artifact_sources (
+                       worktree_id, session_id, user_sequence, artifact_id, source_position, source_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        worktree_id.as_bytes().to_vec(),
+                        event.session_id().as_bytes().to_vec(),
+                        u64_i64(event.user_sequence().get())?,
+                        diagram.id().as_bytes().to_vec(),
+                        i64::try_from(source_index.saturating_add(1)).map_err(|_| AskResearchRepositoryError::InvalidInput)?,
+                        source_id.as_bytes().to_vec(),
+                    ],
+                ).await.map_err(AskResearchRepositoryError::Write)?;
+            }
         }
         if let Some(task_id) = answer.task_id() {
             require_turn_mode(
@@ -470,6 +509,228 @@ pub(crate) async fn load_source(
         .transpose()
 }
 
+pub(crate) async fn list_diagrams(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<Vec<EvidenceDiagramArtifact>, AskResearchRepositoryError> {
+    let rows = connection
+        .query(
+            "SELECT d.user_sequence, d.artifact_id, d.diagram_kind, d.title, d.description,
+                d.mermaid_source, s.source_id
+         FROM agent_diagram_artifacts AS d
+         INNER JOIN agent_diagram_artifact_sources AS s
+           ON s.worktree_id = d.worktree_id AND s.session_id = d.session_id
+          AND s.user_sequence = d.user_sequence AND s.artifact_id = d.artifact_id
+         WHERE d.worktree_id = ?1 AND d.session_id = ?2 AND d.user_sequence = ?3
+         ORDER BY d.artifact_position, s.source_position",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    collect_diagrams(rows)
+        .await
+        .map(|values| values.into_iter().map(|(_, diagram)| diagram).collect())
+}
+
+pub(crate) async fn list_session_diagrams(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    before_sequence: Option<u64>,
+    user_turn_limit: u16,
+) -> Result<Vec<SessionEvidenceDiagramArtifact>, AskResearchRepositoryError> {
+    if user_turn_limit == 0 || user_turn_limit > 128 {
+        return Err(AskResearchRepositoryError::InvalidInput);
+    }
+    let before = before_sequence
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| AskResearchRepositoryError::InvalidInput)?;
+    let rows = connection
+        .query(
+            "SELECT d.user_sequence, d.artifact_id, d.diagram_kind, d.title, d.description,
+                    d.mermaid_source, s.source_id
+             FROM agent_diagram_artifacts AS d
+             INNER JOIN (
+               SELECT user_sequence FROM agent_work_trace_turns
+               WHERE worktree_id = ?1 AND session_id = ?2
+                 AND (?3 IS NULL OR user_sequence < ?3)
+               ORDER BY user_sequence DESC
+               LIMIT ?4
+             ) AS visible ON visible.user_sequence = d.user_sequence
+             INNER JOIN agent_diagram_artifact_sources AS s
+               ON s.worktree_id = d.worktree_id AND s.session_id = d.session_id
+              AND s.user_sequence = d.user_sequence AND s.artifact_id = d.artifact_id
+             WHERE d.worktree_id = ?1 AND d.session_id = ?2
+             ORDER BY d.user_sequence, d.artifact_position, s.source_position",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                before,
+                i64::from(user_turn_limit)
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let artifacts = collect_diagrams(rows).await?;
+    let mut anchor_rows = connection
+        .query(
+            "SELECT user_sequence, index_run_id, snapshot_id
+             FROM agent_work_trace_turns
+             WHERE worktree_id = ?1 AND session_id = ?2
+               AND (?3 IS NULL OR user_sequence < ?3)
+             ORDER BY user_sequence DESC LIMIT ?4",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                before,
+                i64::from(user_turn_limit)
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let mut anchors = BTreeMap::new();
+    while let Some(row) = anchor_rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        let sequence = AgentSessionSequence::new(read_u64(&row, 0)?)
+            .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+        anchors.insert(
+            sequence,
+            (
+                IndexRunId::from_bytes(read_id(&row, 1)?),
+                SnapshotId::from_bytes(read_id(&row, 2)?),
+            ),
+        );
+    }
+    artifacts
+        .into_iter()
+        .map(|(sequence, artifact)| {
+            let (index_run_id, snapshot_id) = anchors
+                .get(&sequence)
+                .copied()
+                .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+            Ok(SessionEvidenceDiagramArtifact::new(
+                sequence,
+                index_run_id,
+                snapshot_id,
+                artifact,
+            ))
+        })
+        .collect()
+}
+
+pub(crate) async fn load_diagram(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    artifact_id: AgentDiagramArtifactId,
+) -> Result<Option<(AgentSessionSequence, EvidenceDiagramArtifact)>, AskResearchRepositoryError> {
+    let rows = connection
+        .query(
+            "SELECT d.user_sequence, d.artifact_id, d.diagram_kind, d.title, d.description,
+                d.mermaid_source, s.source_id
+         FROM agent_diagram_artifacts AS d
+         INNER JOIN agent_diagram_artifact_sources AS s
+           ON s.worktree_id = d.worktree_id AND s.session_id = d.session_id
+          AND s.user_sequence = d.user_sequence AND s.artifact_id = d.artifact_id
+         WHERE d.worktree_id = ?1 AND d.session_id = ?2 AND d.artifact_id = ?3
+         ORDER BY s.source_position",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                artifact_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let mut values = collect_diagrams(rows).await?;
+    if values.len() > 1 {
+        return Err(AskResearchRepositoryError::InvalidStoredData);
+    }
+    Ok(values.pop())
+}
+
+async fn collect_diagrams(
+    mut rows: libsql::Rows,
+) -> Result<Vec<(AgentSessionSequence, EvidenceDiagramArtifact)>, AskResearchRepositoryError> {
+    struct PendingDiagram {
+        sequence: AgentSessionSequence,
+        id: AgentDiagramArtifactId,
+        kind: EvidenceDiagramKind,
+        title: String,
+        description: String,
+        mermaid: String,
+        sources: Vec<AskResearchSourceId>,
+    }
+    fn finish(
+        pending: PendingDiagram,
+    ) -> Result<(AgentSessionSequence, EvidenceDiagramArtifact), AskResearchRepositoryError> {
+        EvidenceDiagramArtifact::restore(
+            pending.id,
+            pending.kind,
+            pending.title,
+            pending.description,
+            pending.mermaid,
+            pending.sources,
+        )
+        .map(|diagram| (pending.sequence, diagram))
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+    }
+
+    let mut result = Vec::new();
+    let mut pending: Option<PendingDiagram> = None;
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        let id = AgentDiagramArtifactId::from_bytes(read_id(&row, 1)?);
+        if pending.as_ref().is_some_and(|value| value.id != id) {
+            let completed = pending
+                .take()
+                .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+            result.push(finish(completed)?);
+        }
+        if pending.is_none() {
+            pending = Some(PendingDiagram {
+                sequence: AgentSessionSequence::new(read_u64(&row, 0)?)
+                    .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?,
+                id,
+                kind: EvidenceDiagramKind::from_name(&read_string(&row, 2)?)
+                    .ok_or(AskResearchRepositoryError::InvalidStoredData)?,
+                title: read_string(&row, 3)?,
+                description: read_string(&row, 4)?,
+                mermaid: read_string(&row, 5)?,
+                sources: Vec::new(),
+            });
+        }
+        let source_id = AskResearchSourceId::from_bytes(read_id(&row, 6)?);
+        let current = pending
+            .as_mut()
+            .ok_or(AskResearchRepositoryError::InvalidStoredData)?;
+        if current.sources.contains(&source_id) {
+            return Err(AskResearchRepositoryError::InvalidStoredData);
+        }
+        current.sources.push(source_id);
+    }
+    if let Some(completed) = pending {
+        result.push(finish(completed)?);
+    }
+    if result.len() > 3 {
+        return Err(AskResearchRepositoryError::InvalidStoredData);
+    }
+    Ok(result)
+}
+
 pub(crate) async fn load_handoff_for_task(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -502,6 +763,7 @@ pub(crate) async fn load_handoff_for_task(
     let index_run_id = IndexRunId::from_bytes(read_id(&row, 2)?);
     let snapshot_id = SnapshotId::from_bytes(read_id(&row, 3)?);
     drop(rows);
+    let command = load_handoff_command(connection, worktree_id, session_id, user_sequence).await?;
 
     let mut source_rows = connection
         .query(
@@ -531,9 +793,101 @@ pub(crate) async fn load_handoff_for_task(
             revisions.push(revision);
         }
     }
-    ResearchHandoff::new(index_run_id, snapshot_id, revisions)
-        .map(Some)
-        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+    let handoff = ResearchHandoff::new(index_run_id, snapshot_id, revisions)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+    Ok(Some(match command {
+        Some(command) => handoff.with_command(command),
+        None => handoff,
+    }))
+}
+
+async fn load_handoff_command(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    user_sequence: AgentSessionSequence,
+) -> Result<Option<a3_domain::SlashCommandInvocation>, AskResearchRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT c.catalog_version, c.primary_command, c.effective_depth, \
+                    l.lens_position, l.lens_kind, e.content, t.mode \
+             FROM agent_slash_command_invocations AS c \
+             INNER JOIN agent_session_entries AS e \
+               ON e.worktree_id = c.worktree_id AND e.session_id = c.session_id \
+              AND e.sequence = c.user_sequence \
+             INNER JOIN agent_work_trace_turns AS t \
+               ON t.worktree_id = c.worktree_id AND t.session_id = c.session_id \
+              AND t.user_sequence = c.user_sequence \
+             LEFT JOIN agent_slash_command_lenses AS l \
+               ON l.worktree_id = c.worktree_id AND l.session_id = c.session_id \
+              AND l.user_sequence = c.user_sequence \
+             WHERE c.worktree_id = ?1 AND c.session_id = ?2 AND c.user_sequence = ?3 \
+             ORDER BY l.lens_position",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_i64(user_sequence.get())?
+            ],
+        )
+        .await
+        .map_err(AskResearchRepositoryError::Read)?;
+    let mut persisted: Option<(String, String, String, AgentSessionMode)> = None;
+    let mut lenses = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AskResearchRepositoryError::Read)?
+    {
+        if read_u64(&row, 0)? != 1 {
+            return Err(AskResearchRepositoryError::InvalidStoredData);
+        }
+        let current = (
+            read_string(&row, 1)?,
+            read_string(&row, 2)?,
+            read_string(&row, 5)?,
+            decode_mode(&read_string(&row, 6)?)?,
+        );
+        if persisted.as_ref().is_some_and(|value| value != &current) {
+            return Err(AskResearchRepositoryError::InvalidStoredData);
+        }
+        if persisted.is_none() {
+            persisted = Some(current);
+        }
+        if let Some(position) = read_optional_u64(&row, 3)? {
+            if position != u64::try_from(lenses.len().saturating_add(1)).unwrap_or(u64::MAX) {
+                return Err(AskResearchRepositoryError::InvalidStoredData);
+            }
+            lenses.push(
+                read_optional_string(&row, 4)?
+                    .ok_or(AskResearchRepositoryError::InvalidStoredData)?,
+            );
+        } else if read_optional_string(&row, 4)?.is_some() {
+            return Err(AskResearchRepositoryError::InvalidStoredData);
+        }
+    }
+    let Some((primary, depth, content, mode)) = persisted else {
+        return Ok(None);
+    };
+    let ParsedSlashCommand::Command(command) = parse_slash_command(mode, &content)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?
+    else {
+        return Err(AskResearchRepositoryError::InvalidStoredData);
+    };
+    let expected_depth = match command.depth() {
+        AgentResearchDepth::Standard => "standard",
+        AgentResearchDepth::Thorough => "thorough",
+    };
+    if command.primary().name() != primary
+        || expected_depth != depth
+        || command
+            .lenses()
+            .iter()
+            .map(|lens| lens.name())
+            .ne(lenses.iter().map(String::as_str))
+    {
+        return Err(AskResearchRepositoryError::InvalidStoredData);
+    }
+    Ok(Some(command))
 }
 
 async fn require_next_event(
@@ -982,20 +1336,22 @@ impl AskResearchRepositoryError {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_event, append_sources, begin, complete, list_sources, load_detail,
-        load_handoff_for_task,
+        append_event, append_sources, begin, complete, list_diagrams, list_session_diagrams,
+        list_sources, load_detail, load_diagram, load_handoff_for_task,
     };
     use crate::agent_session_repository;
     use a3_application::{
         AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote, AskResearchSource,
+        EvidenceDiagramArtifact, EvidenceDiagramKind,
     };
     use a3_domain::{
-        AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
-        AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
-        AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItemId,
-        AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
-        AskResearchSourceKind, AskResearchState, ContentHash, FileRevision, IndexRunId,
-        RepositoryPath, SnapshotId, TaskId, WorktreeId,
+        AgentDiagramArtifactId, AgentResearchDepth, AgentSession, AgentSessionEntry,
+        AgentSessionEntryKind, AgentSessionId, AgentSessionMode, AgentSessionRevision,
+        AgentSessionSequence, AgentSessionState, AgentSessionText, AgentSessionTimestamp,
+        AgentSessionTitle, AgentWorkItemId, AskResearchCompleteness, AskResearchPhase,
+        AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+        ContentHash, FileRevision, IndexRunId, ParsedSlashCommand, RepositoryPath, SlashCommand,
+        SlashCommandLens, SnapshotId, TaskId, WorktreeId, parse_slash_command,
     };
 
     #[test]
@@ -1021,12 +1377,23 @@ mod tests {
                 session_id,
                 user_sequence,
                 AgentSessionEntryKind::UserMessage,
-                "Welche TODOs gibt es?",
+                "/review /security Authentifizierung",
                 10,
             )?;
-            agent_session_repository::create(&connection, worktree_id, &running, Some(&user))
-                .await
-                .map_err(|error| error.classify())?;
+            let ParsedSlashCommand::Command(command) =
+                parse_slash_command(AgentSessionMode::Agent, user.text().as_str())?
+            else {
+                return Err("command was not parsed".into());
+            };
+            agent_session_repository::create(
+                &connection,
+                worktree_id,
+                &running,
+                Some(&user),
+                Some(&command),
+            )
+            .await
+            .map_err(|error| error.classify())?;
 
             let first_event = AskResearchEvent::new(
                 session_id,
@@ -1046,7 +1413,7 @@ mod tests {
                 SnapshotId::from_bytes([5; 32]),
                 AgentSessionTimestamp::from_unix_millis(11)?,
                 AgentSessionMode::Agent,
-                AgentResearchDepth::Standard,
+                AgentResearchDepth::Thorough,
             );
             begin(&connection, worktree_id, &turn, &first_event)
                 .await
@@ -1123,6 +1490,15 @@ mod tests {
                 AskResearchCompleteness::Complete,
                 AgentSessionTimestamp::from_unix_millis(12)?,
             )?;
+            let diagram_id = AgentDiagramArtifactId::from_bytes([11; 32]);
+            let diagram = EvidenceDiagramArtifact::restore(
+                diagram_id,
+                EvidenceDiagramKind::Flowchart,
+                "Aufgabenfluss".to_owned(),
+                "Belegter Ablauf".to_owned(),
+                "flowchart TD\n  n0[\"Aufgabe\"]\n".to_owned(),
+                vec![source_id],
+            )?;
 
             assert!(
                 complete(
@@ -1133,6 +1509,7 @@ mod tests {
                     &answer,
                     &terminal,
                     &[AskResearchSourceId::from_bytes([8; 32])],
+                    &[],
                 )
                 .await
                 .is_err()
@@ -1162,6 +1539,7 @@ mod tests {
                 &answer,
                 &terminal,
                 &[source_id],
+                std::slice::from_ref(&diagram),
             )
             .await
             .map_err(|error| error.classify())?;
@@ -1171,6 +1549,27 @@ mod tests {
                 .ok_or("trace missing")?;
             assert_eq!(trace.events().len(), 3);
             assert_eq!(trace.cited_sources(), &[source_id]);
+            assert_eq!(
+                list_diagrams(&connection, worktree_id, session_id, user_sequence)
+                    .await
+                    .map_err(|error| error.classify())?,
+                vec![diagram.clone()]
+            );
+            let session_diagrams =
+                list_session_diagrams(&connection, worktree_id, session_id, None, 128)
+                    .await
+                    .map_err(|error| error.classify())?;
+            assert_eq!(session_diagrams.len(), 1);
+            assert_eq!(session_diagrams[0].user_sequence(), user_sequence);
+            assert_eq!(session_diagrams[0].index_run_id(), turn.index_run_id());
+            assert_eq!(session_diagrams[0].snapshot_id(), turn.snapshot_id());
+            assert_eq!(session_diagrams[0].artifact(), &diagram);
+            assert_eq!(
+                load_diagram(&connection, worktree_id, session_id, diagram_id)
+                    .await
+                    .map_err(|error| error.classify())?,
+                Some((user_sequence, diagram.clone()))
+            );
             let handoff = load_handoff_for_task(&connection, worktree_id, task_id)
                 .await
                 .map_err(|error| error.classify())?
@@ -1178,6 +1577,9 @@ mod tests {
             assert_eq!(handoff.index_run_id(), turn.index_run_id());
             assert_eq!(handoff.snapshot_id(), turn.snapshot_id());
             assert_eq!(handoff.revisions(), &[source.revision().clone()]);
+            let command = handoff.command().ok_or("command profile missing")?;
+            assert_eq!(command.primary(), SlashCommand::Review);
+            assert_eq!(command.lenses(), &[SlashCommandLens::Security]);
             assert_eq!(
                 list_sources(
                     &connection,
@@ -1214,6 +1616,12 @@ mod tests {
                     .await
                     .map_err(|error| error.classify())?
                     .is_none()
+            );
+            assert!(
+                list_diagrams(&connection, worktree_id, session_id, user_sequence)
+                    .await
+                    .map_err(|error| error.classify())?
+                    .is_empty()
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })

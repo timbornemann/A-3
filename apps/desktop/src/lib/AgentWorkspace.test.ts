@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
 import type { AgentActivityResponseV1 } from './agent-activity';
-import type { AgentSessionResponseV1, AgentSessionsResponseV1 } from './agent-session';
+import type {
+  AgentSessionResponseV1,
+  AgentSessionsResponseV1,
+  AgentSlashCommandsResponseV1,
+} from './agent-session';
 
 const sessionId = 'a'.repeat(64);
 
@@ -226,6 +230,261 @@ describe('AgentWorkspace', () => {
         researchDepth: 'thorough',
       }),
     );
+  });
+
+  it('selects a mode-compatible slash command and locks the Core-owned depth', async () => {
+    const messageSubmitter = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'noProject' as const },
+    }));
+    const slashCommandsLoader = vi.fn(async () => ({
+      catalogVersion: 1 as const,
+      commands: [
+        {
+          available: true,
+          depth: 'standard' as const,
+          description: 'Erstellt belegte Diagramme.',
+          implicitPrimary: null,
+          name: '/diagram',
+          requiresSubject: true,
+          role: 'primary' as const,
+          title: 'Diagramm',
+        },
+        {
+          available: true,
+          depth: 'thorough' as const,
+          description: 'Prüft Sicherheitsgrenzen.',
+          implicitPrimary: '/review',
+          name: '/security',
+          requiresSubject: false,
+          role: 'lens' as const,
+          title: 'Security',
+        },
+      ],
+      protocolVersion: 1 as const,
+    }));
+    render(AgentWorkspace, {
+      activeProject: true,
+      messageSubmitter,
+      sessionsLoader: vi.fn(async () => noSessions()),
+      slashCommandsLoader,
+    });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    await fireEvent.click(screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u }));
+    const composer = screen.getByLabelText('Nachricht an A^3');
+    await fireEvent.input(composer, { target: { value: '/' } });
+    await fireEvent.click(await screen.findByRole('option', { name: /\/diagram/u }));
+    await fireEvent.input(composer, { target: { value: '/diagram Agentenablauf' } });
+
+    expect(screen.getByText('Standard · automatisch')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Gründlich' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+    await waitFor(() =>
+      expect(messageSubmitter).toHaveBeenCalledWith({
+        message: '/diagram Agentenablauf',
+        mode: 'ask',
+        researchDepth: 'command',
+      }),
+    );
+  });
+
+  it('navigates the command palette with the keyboard', async () => {
+    const slashCommandsLoader = vi.fn(async (): Promise<AgentSlashCommandsResponseV1> => ({
+      catalogVersion: 1,
+      commands: [
+        {
+          available: true,
+          depth: 'standard',
+          description: 'Erstellt belegte Diagramme.',
+          implicitPrimary: null,
+          name: '/diagram',
+          requiresSubject: true,
+          role: 'primary',
+          title: 'Diagramm',
+        },
+        {
+          available: true,
+          depth: 'thorough',
+          description: 'Prüft streng.',
+          implicitPrimary: null,
+          name: '/review',
+          requiresSubject: false,
+          role: 'primary',
+          title: 'Review',
+        },
+      ],
+      protocolVersion: 1,
+    }));
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionsLoader: vi.fn(async () => noSessions()),
+      slashCommandsLoader,
+    });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    await fireEvent.click(screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u }));
+    const composer = screen.getByLabelText('Nachricht an A^3');
+    await fireEvent.input(composer, { target: { value: '/' } });
+    await screen.findByRole('option', { name: /\/diagram/u });
+
+    await fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    await fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect((composer as HTMLTextAreaElement).value).toBe('/review ');
+    expect(screen.getByText('Gründlich · automatisch')).toBeTruthy();
+  });
+
+  it('fails closed without retry loops and can reload the command catalog', async () => {
+    const slashCommandsLoader = vi
+      .fn<() => Promise<AgentSlashCommandsResponseV1>>()
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+      .mockResolvedValue({
+        catalogVersion: 1,
+        commands: [
+          {
+            available: true,
+            depth: 'standard',
+            description: 'Erstellt belegte Diagramme.',
+            implicitPrimary: null,
+            name: '/diagram',
+            requiresSubject: true,
+            role: 'primary',
+            title: 'Diagramm',
+          },
+        ],
+        protocolVersion: 1,
+      });
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionsLoader: vi.fn(async () => noSessions()),
+      slashCommandsLoader,
+    });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    await fireEvent.click(screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u }));
+    await fireEvent.input(screen.getByLabelText('Nachricht an A^3'), {
+      target: { value: '/diagram Ablauf' },
+    });
+
+    expect(await screen.findByText('Die Commands konnten nicht geladen werden.')).toBeTruthy();
+    expect(slashCommandsLoader).toHaveBeenCalledTimes(1);
+    const send = screen.getByRole('button', { name: 'Nachricht senden' }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Erneut laden' }));
+    await waitFor(() => expect(slashCommandsLoader).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(send.disabled).toBe(false));
+  });
+
+  it('keeps an escaped leading slash as ordinary message text after reload', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    response.result.session.entries[0] = {
+      ...response.result.session.entries[0],
+      command: null,
+      text: '/review ist hier normaler Text.',
+    };
+    const sessionSummary = response.result.session.summary;
+    const slashCommandsLoader = vi.fn(async (): Promise<AgentSlashCommandsResponseV1> => ({
+      catalogVersion: 1,
+      commands: [
+        {
+          available: true,
+          depth: 'thorough',
+          description: 'Prüft streng.',
+          implicitPrimary: null,
+          name: '/review',
+          requiresSubject: false,
+          role: 'primary',
+          title: 'Review',
+        },
+      ],
+      protocolVersion: 1,
+    }));
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: {
+          nextCursor: null,
+          sessions: [sessionSummary],
+          status: 'available' as const,
+        },
+      })),
+      slashCommandsLoader,
+    });
+
+    const message = await screen.findByText('/review ist hier normaler Text.');
+    expect(message.tagName).toBe('P');
+    expect(screen.queryByLabelText('Slash Commands')).toBeNull();
+  });
+
+  it('treats a leading lens as implicit review and never suggests another primary command', async () => {
+    const slashCommandsLoader = vi.fn(async () => ({
+      catalogVersion: 1 as const,
+      commands: [
+        {
+          available: true,
+          depth: 'standard' as const,
+          description: 'Erstellt belegte Diagramme.',
+          implicitPrimary: null,
+          name: '/diagram',
+          requiresSubject: true,
+          role: 'primary' as const,
+          title: 'Diagramm',
+        },
+        {
+          available: true,
+          depth: 'thorough' as const,
+          description: 'Prüft streng.',
+          implicitPrimary: null,
+          name: '/review',
+          requiresSubject: false,
+          role: 'primary' as const,
+          title: 'Review',
+        },
+        {
+          available: true,
+          depth: 'thorough' as const,
+          description: 'Prüft Sicherheitsgrenzen.',
+          implicitPrimary: '/review',
+          name: '/security',
+          requiresSubject: false,
+          role: 'lens' as const,
+          title: 'Security',
+        },
+        {
+          available: true,
+          depth: 'thorough' as const,
+          description: 'Prüft Laufzeit und Ressourcen.',
+          implicitPrimary: '/review',
+          name: '/performance',
+          requiresSubject: false,
+          role: 'lens' as const,
+          title: 'Performance',
+        },
+      ],
+      protocolVersion: 1 as const,
+    }));
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionsLoader: vi.fn(async () => noSessions()),
+      slashCommandsLoader,
+    });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    await fireEvent.click(screen.getByRole('button', { name: /Ask\s*Nur lesen und antworten/u }));
+    const composer = screen.getByLabelText('Nachricht an A^3');
+    await fireEvent.input(composer, { target: { value: '/security ' } });
+
+    expect(await screen.findByRole('option', { name: /\/performance/u })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /\/diagram/u })).toBeNull();
+    expect(screen.queryByRole('option', { name: /\/review/u })).toBeNull();
+
+    await fireEvent.input(composer, { target: { value: '/security /diagram auth' } });
+    expect(
+      screen.getByText(/Eine allein verwendete Linse nutzt automatisch \/review/u),
+    ).toBeTruthy();
   });
 
   it('implements only the exact visible plan revision', async () => {

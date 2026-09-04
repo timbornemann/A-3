@@ -140,7 +140,7 @@ export async function queryAgentAskResearchDetail(
   stable(sessionId);
   decimal(userSequence, false);
   return parseDetail(
-    await invokeCommand('query_agent_work_trace_detail', {
+    await invokeCommand('query_agent_work_trace_detail_v2', {
       request: { protocolVersion: CURRENT_PROTOCOL_VERSION, sessionId, userSequence },
     }),
   );

@@ -6,17 +6,21 @@
     continueAgentResearch,
     queryAgentSession,
     queryAgentSessions,
+    queryAgentSlashCommands,
     queryUiPreferences,
     submitAgentMessage,
     updateAgentWorkspaceLayout,
     type AgentSessionControlActionV1,
     type AgentResearchDepthV1,
+    type AgentResearchDepthSelectionV1,
     type AgentSessionModeV1,
     type AgentSessionResponseV1,
     type AgentSessionsResponseV1,
     type AgentSessionStateV1,
     type AgentSessionSummaryV1,
     type AgentSessionV1,
+    type AgentSlashCommandV1,
+    type AgentSlashCommandsResponseV1,
     type UiPreferencesV1,
   } from './agent-session';
   import {
@@ -42,6 +46,7 @@
   import AgentApprovalCenter from './AgentApprovalCenter.svelte';
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import AgentAskResearch from './AgentAskResearch.svelte';
+  import AgentDiagrams from './AgentDiagrams.svelte';
   import { parseChatMarkdown } from './chat-markdown';
 
   interface Props {
@@ -76,7 +81,7 @@
       expectedSessionRevision?: string | null;
       message: string;
       mode?: AgentSessionModeV1;
-      researchDepth?: AgentResearchDepthV1;
+      researchDepth?: AgentResearchDepthSelectionV1;
       sessionId?: string | null;
     }) => Promise<AgentSessionResponseV1>;
     researchContinuer?: (
@@ -84,6 +89,7 @@
       revision: string,
       depth: AgentResearchDepthV1,
     ) => Promise<AgentSessionResponseV1>;
+    slashCommandsLoader?: (mode: AgentSessionModeV1) => Promise<AgentSlashCommandsResponseV1>;
     pollIntervalMs?: number;
   }
 
@@ -113,6 +119,7 @@
     sessionLoader = queryAgentSession,
     sessionsLoader = queryAgentSessions,
     messageSubmitter = submitAgentMessage,
+    slashCommandsLoader = queryAgentSlashCommands,
     researchContinuer = continueAgentResearch,
     pollIntervalMs = 700,
   }: Props = $props();
@@ -124,6 +131,12 @@
   let researchDepth = $state<AgentResearchDepthV1>('standard');
   const researchDepthBySession = new SvelteMap<string, AgentResearchDepthV1>();
   let composer = $state('');
+  let slashCommands = $state<AgentSlashCommandV1[]>([]);
+  let slashCatalogLoading = $state(false);
+  let slashCatalogMode = $state<AgentSessionModeV1 | null>(null);
+  let slashCatalogFailedMode = $state<AgentSessionModeV1 | null>(null);
+  let paletteIndex = $state(0);
+  let paletteDismissed = $state(false);
   let pendingMessage = $state<string | null>(null);
   let submitting = $state(false);
   let actionError = $state<string | null>(null);
@@ -152,6 +165,24 @@
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
+  const composerMode = $derived(selectedSummary?.mode ?? newMode);
+  const commandActive = $derived(isCommandInput(composer));
+  const commandChips = $derived(resolveCommandChips(composer, slashCommands));
+  const commandSuggestions = $derived(
+    paletteDismissed ? [] : resolveCommandSuggestions(composer, slashCommands),
+  );
+  const commandInputHint = $derived(resolveCommandInputHint(composer, slashCommands));
+  const effectiveMessageDepth = $derived<AgentResearchDepthSelectionV1>(
+    commandActive ? 'command' : researchDepth,
+  );
+  const displayedCommandDepth = $derived(
+    commandActive
+      ? commandChips.some((command) => command.role === 'lens') ||
+        commandChips.some((command) => command.depth === 'thorough')
+        ? 'thorough'
+        : 'standard'
+      : researchDepth,
+  );
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
   const latestResearchSequence = $derived(
     selectedSession ? latestUserSequence(selectedSession.entries) : null,
@@ -168,6 +199,9 @@
       !submitting &&
       composer.trim().length > 0 &&
       composer.length <= 256 * 1024 &&
+      commandInputHint === null &&
+      (!commandActive ||
+        (!slashCatalogLoading && slashCatalogMode === composerMode && slashCommands.length > 0)) &&
       (!selectedSummary ||
         [
           'draft',
@@ -187,6 +221,20 @@
       observedProject = false;
       reset();
     }
+  });
+
+  $effect(() => {
+    const mode = composerMode;
+    const needsCatalog = commandActive;
+    if (
+      !activeProject ||
+      !needsCatalog ||
+      slashCatalogMode === mode ||
+      slashCatalogFailedMode === mode ||
+      slashCatalogLoading
+    )
+      return;
+    void loadSlashCommands(mode);
   });
 
   $effect(() => {
@@ -252,6 +300,11 @@
     sessionView = { kind: 'new' };
     selectedSessionId = null;
     composer = '';
+    slashCommands = [];
+    slashCatalogMode = null;
+    slashCatalogFailedMode = null;
+    paletteIndex = 0;
+    paletteDismissed = false;
     pendingMessage = null;
     activity = null;
     recentlyCompletedResearchSequence = null;
@@ -266,6 +319,32 @@
     } catch {
       // Valid defaults remain usable when nonessential layout persistence is unavailable.
     }
+  }
+
+  async function loadSlashCommands(mode: AgentSessionModeV1): Promise<void> {
+    slashCatalogLoading = true;
+    slashCatalogFailedMode = null;
+    try {
+      const response = await slashCommandsLoader(mode);
+      if (composerMode !== mode) return;
+      slashCommands = response.commands;
+      slashCatalogMode = mode;
+      paletteIndex = 0;
+    } catch {
+      if (composerMode === mode) {
+        slashCommands = [];
+        slashCatalogMode = null;
+        slashCatalogFailedMode = mode;
+      }
+    } finally {
+      slashCatalogLoading = false;
+    }
+  }
+
+  function retrySlashCommands(): void {
+    const mode = composerMode;
+    slashCatalogFailedMode = null;
+    void loadSlashCommands(mode);
   }
 
   async function loadSessions(preferredId: string | null = selectedSessionId): Promise<void> {
@@ -342,6 +421,8 @@
     researchDepth = 'standard';
     sessionView = { kind: 'new' };
     composer = '';
+    paletteIndex = 0;
+    paletteDismissed = false;
     pendingMessage = null;
     actionError = null;
     sessionMenuOpen = false;
@@ -351,6 +432,7 @@
   async function submit(): Promise<void> {
     if (!canSubmit) return;
     const message = composer.trim();
+    const submittedDepth = effectiveMessageDepth;
     const current = selectedSession;
     composer = '';
     pendingMessage = message;
@@ -363,10 +445,10 @@
           ? {
               expectedSessionRevision: current.summary.revision,
               message,
-              researchDepth,
+              researchDepth: submittedDepth,
               sessionId: current.summary.sessionId,
             }
-          : { message, mode: newMode, researchDepth },
+          : { message, mode: newMode, researchDepth: submittedDepth },
       );
       if (response.result.status === 'available') {
         selectedSessionId = response.result.session.summary.sessionId;
@@ -414,15 +496,167 @@
   }
 
   function composerKeydown(event: KeyboardEvent): void {
+    if (commandSuggestions.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        paletteIndex = (paletteIndex + 1) % commandSuggestions.length;
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        paletteIndex = (paletteIndex - 1 + commandSuggestions.length) % commandSuggestions.length;
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        paletteDismissed = true;
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        selectSlashSuggestion(commandSuggestions[paletteIndex] ?? commandSuggestions[0]);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submit();
     }
   }
 
+  function composerInput(): void {
+    paletteDismissed = false;
+    paletteIndex = 0;
+  }
+
+  function selectSlashSuggestion(command: AgentSlashCommandV1 | undefined): void {
+    if (!command) return;
+    const current = composer.trimStart();
+    const trailingSpace = /\s$/u.test(current);
+    const tokens = current.split(/\s+/u).filter(Boolean);
+    if (trailingSpace) tokens.push('');
+    if (tokens.length <= 1) {
+      composer =
+        command.role === 'lens' && command.implicitPrimary
+          ? `${command.implicitPrimary} ${command.name} `
+          : `${command.name} `;
+    } else {
+      tokens[tokens.length - 1] = command.name;
+      composer = `${tokens.join(' ')} `;
+    }
+    paletteIndex = 0;
+    paletteDismissed = false;
+  }
+
+  function removeCommandChip(name: string): void {
+    const tokens = composer.trimStart().split(/\s+/u).filter(Boolean);
+    const index = tokens.indexOf(name);
+    if (index < 0) return;
+    tokens.splice(index, 1);
+    composer = tokens.join(' ');
+    if (composer.length > 0) composer += ' ';
+    paletteIndex = 0;
+    paletteDismissed = false;
+  }
+
   function selectResearchDepth(depth: AgentResearchDepthV1): void {
     researchDepth = depth;
     if (selectedSessionId) researchDepthBySession.set(selectedSessionId, depth);
+  }
+
+  function isCommandInput(value: string): boolean {
+    const trimmed = value.trimStart();
+    return trimmed.startsWith('/') && !trimmed.startsWith('//');
+  }
+
+  function resolveCommandChips(
+    value: string,
+    catalog: AgentSlashCommandV1[],
+  ): AgentSlashCommandV1[] {
+    if (!isCommandInput(value)) return [];
+    const byName = new Map(catalog.map((command) => [command.name, command]));
+    const chips: AgentSlashCommandV1[] = [];
+    for (const token of value.trimStart().split(/\s+/u)) {
+      if (!token.startsWith('/')) break;
+      const command = byName.get(token);
+      if (!command) break;
+      chips.push(command);
+      if (chips.length === 3) break;
+    }
+    return chips;
+  }
+
+  function entryCommandChips(entry: AgentSessionV1['entries'][number]): Array<{ name: string }> {
+    return entry.command
+      ? [entry.command.primary, ...entry.command.lenses].map((name) => ({ name }))
+      : [];
+  }
+
+  function resolveCommandSuggestions(
+    value: string,
+    catalog: AgentSlashCommandV1[],
+  ): AgentSlashCommandV1[] {
+    if (!isCommandInput(value) || catalog.length === 0) return [];
+    const trimmed = value.trimStart();
+    const onlyCommandTokens = /^(?:\/[a-z0-9-]*\s*){1,3}$/u.test(trimmed);
+    if (!onlyCommandTokens) return [];
+    const trailingSpace = /\s$/u.test(trimmed);
+    const tokens = trimmed.split(/\s+/u).filter(Boolean);
+    const prefix = trailingSpace ? '' : (tokens.pop() ?? '');
+    const selected = new Set(tokens);
+    const first = catalog.find((command) => command.name === tokens[0]);
+    const selectingLens = first !== undefined;
+    return catalog.filter(
+      (command) =>
+        command.available &&
+        !selected.has(command.name) &&
+        (!selectingLens || command.role === 'lens') &&
+        command.name.startsWith(prefix),
+    );
+  }
+
+  function commandSubjectText(value: string, catalog: Array<{ name: string }>): string {
+    const names = new Set(catalog.map((command) => command.name));
+    const tokens = value.trimStart().split(/\s+/u).filter(Boolean);
+    let consumed = 0;
+    while (consumed < tokens.length && consumed < 3 && names.has(tokens[consumed])) consumed += 1;
+    const subject = tokens.slice(consumed).join(' ');
+    if (subject) return subject;
+    if (tokens[0] === '/impact') return 'Aktuelle lokale Änderungen untersuchen';
+    if (tokens[0] === '/review' || tokens[0] === '/todos') return 'Gesamtes Repository untersuchen';
+    return 'Konkretes Ziel gemeinsam klären';
+  }
+
+  function resolveCommandInputHint(value: string, catalog: AgentSlashCommandV1[]): string | null {
+    if (!isCommandInput(value) || catalog.length === 0) return null;
+    const byName = new Map(catalog.map((command) => [command.name, command]));
+    const tokens = value.trimStart().split(/\s+/u).filter(Boolean);
+    const leading: AgentSlashCommandV1[] = [];
+    let subjectStart = 0;
+    for (const [index, token] of tokens.entries()) {
+      if (!token.startsWith('/')) {
+        subjectStart = index;
+        break;
+      }
+      const command = byName.get(token);
+      if (!command) return `„${token}“ ist unbekannt. Wähle einen Command aus der Liste.`;
+      leading.push(command);
+      subjectStart = index + 1;
+    }
+    const primary = leading.filter((command) => command.role === 'primary');
+    const lenses = leading.filter((command) => command.role === 'lens');
+    if (primary.length > 1) return 'Pro Nachricht ist genau ein Haupt-Command erlaubt.';
+    if (leading[0]?.role === 'lens' && primary.length > 0)
+      return 'Eine allein verwendete Linse nutzt automatisch /review; ein weiterer Haupt-Command ist nicht erlaubt.';
+    if (lenses.length > 2) return 'Pro Nachricht sind höchstens zwei Linsen erlaubt.';
+    if (new Set(lenses.map((lens) => lens.name)).size !== lenses.length)
+      return 'Jede Linse darf nur einmal verwendet werden.';
+    const effectivePrimary = primary[0] ?? byName.get(leading[0]?.implicitPrimary ?? '');
+    if (!effectivePrimary?.available)
+      return 'Dieser Command ist im aktuellen Modus nicht verfügbar.';
+    if (effectivePrimary.requiresSubject && tokens.slice(subjectStart).join(' ').length === 0)
+      return `${effectivePrimary.name} braucht ein konkretes Thema.`;
+    return null;
   }
 
   function latestUserSequence(entries: AgentSessionV1['entries']): string | null {
@@ -914,6 +1148,11 @@
         {:else}
           <div class="messages">
             {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
+              {@const entryCommands = entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
+              {@const displayedEntryText =
+                entryCommands.length > 0
+                  ? commandSubjectText(entry.text, entryCommands)
+                  : entry.text}
               <article
                 class:user-message={entry.kind === 'userMessage'}
                 class:agent-message={entry.kind !== 'userMessage'}
@@ -930,7 +1169,14 @@
                   ><time>{relativeTime(entry.createdAtUnixMillis)}</time>
                 </header>
                 <div class="message-text">
-                  {#each parseChatMarkdown(entry.text) as block, blockIndex (blockIndex)}
+                  {#if entryCommands.length > 0}
+                    <div class="message-command-chips" aria-label="Slash Commands">
+                      {#each entryCommands as command (command.name)}
+                        <span>{command.name}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                  {#each parseChatMarkdown(displayedEntryText) as block, blockIndex (blockIndex)}
                     {#if block.kind === 'heading'}
                       <div class="markdown-heading" data-level={block.level}>{block.text}</div>
                     {:else if block.kind === 'paragraph'}
@@ -964,6 +1210,14 @@
                       refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
                       recentlyCompleted={askUserSequence === recentlyCompletedResearchSequence}
                       oncontinue={() => void continueResearch()}
+                    />
+                    <AgentDiagrams
+                      sessionId={sessionView.session.summary.sessionId}
+                      userSequence={askUserSequence}
+                      refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                      summaries={sessionView.session.entries.find(
+                        (candidate) => candidate.sequence === askUserSequence,
+                      )?.diagrams}
                     />
                   {/if}
                 {/if}
@@ -1049,9 +1303,25 @@
               >
             </div>
           {/if}
+          {#if commandChips.length > 0}
+            <div class="composer-command-chips" aria-label="Aktive Slash Commands">
+              {#each commandChips as command (command.name)}
+                <button
+                  type="button"
+                  onclick={() => removeCommandChip(command.name)}
+                  aria-label={`${command.name} entfernen`}
+                  ><span>{command.name}</span><span aria-hidden="true">×</span></button
+                >
+              {/each}
+              <span class="command-depth"
+                >{displayedCommandDepth === 'thorough' ? 'Gründlich' : 'Standard'} · automatisch</span
+              >
+            </div>
+          {/if}
           <textarea
             bind:value={composer}
             onkeydown={composerKeydown}
+            oninput={composerInput}
             disabled={submitting ||
               (selectedSummary !== null &&
                 ![
@@ -1071,6 +1341,35 @@
                   ? 'Was möchtest du planen?'
                   : 'Welche Aufgabe soll A^3 erledigen?'}
             rows="3"></textarea>
+          {#if commandSuggestions.length > 0}
+            <div class="slash-palette" role="listbox" aria-label="Slash Commands">
+              {#each commandSuggestions as command, index (command.name)}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === paletteIndex}
+                  class:active={index === paletteIndex}
+                  onclick={() => selectSlashSuggestion(command)}
+                >
+                  <span><strong>{command.name}</strong><small>{command.title}</small></span>
+                  <span class="palette-description">{command.description}</span>
+                  <span class="palette-depth"
+                    >{command.depth === 'thorough' ? 'Gründlich' : 'Standard'}</span
+                  >
+                </button>
+              {/each}
+            </div>
+          {:else if commandActive && slashCatalogLoading}
+            <div class="slash-palette-loading" role="status">Commands werden geladen …</div>
+          {:else if commandActive && slashCatalogFailedMode === composerMode}
+            <div class="slash-palette-loading slash-palette-failed" role="alert">
+              <span>Die Commands konnten nicht geladen werden.</span>
+              <button type="button" onclick={retrySlashCommands}>Erneut laden</button>
+            </div>
+          {/if}
+          {#if commandInputHint}
+            <p class="slash-command-error" role="alert">{commandInputHint}</p>
+          {/if}
           <div class="composer-toolbar">
             <div>
               <span class="context-note">● Aktiver Worktree · aktueller Indexkontext</span>
@@ -1078,12 +1377,14 @@
             <div class="research-depth" aria-label="Recherche-Tiefe">
               <button
                 type="button"
-                aria-pressed={researchDepth === 'standard'}
+                disabled={commandActive}
+                aria-pressed={displayedCommandDepth === 'standard'}
                 onclick={() => selectResearchDepth('standard')}>Standard</button
               >
               <button
                 type="button"
-                aria-pressed={researchDepth === 'thorough'}
+                disabled={commandActive}
+                aria-pressed={displayedCommandDepth === 'thorough'}
                 onclick={() => selectResearchDepth('thorough')}>Gründlich</button
               >
             </div>
@@ -1523,6 +1824,28 @@
     font-size: var(--font-size-sm);
     white-space: pre;
   }
+  .message-command-chips,
+  .composer-command-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .message-command-chips {
+    margin-block-end: var(--space-2);
+  }
+  .message-command-chips span,
+  .composer-command-chips button {
+    border: 1px solid var(--color-accent);
+    border-radius: 999px;
+    color: var(--color-accent-text);
+    background: var(--color-accent-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+  .message-command-chips span {
+    padding: 0.2rem var(--space-2);
+  }
   .user-message {
     max-width: min(88%, 38rem);
     margin-inline-start: auto;
@@ -1687,6 +2010,87 @@
     background: transparent;
     line-height: 1.5;
   }
+  .composer-command-chips {
+    padding: var(--space-2) var(--space-3) 0;
+  }
+  .composer-command-chips button {
+    display: inline-flex;
+    min-height: 1.8rem;
+    align-items: center;
+    padding: 0 var(--space-2);
+    gap: var(--space-1);
+    cursor: pointer;
+  }
+  .command-depth {
+    margin-inline-start: auto;
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .slash-palette,
+  .slash-palette-loading {
+    margin: 0 var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    background: var(--color-surface-raised, var(--color-surface));
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 18%, transparent);
+  }
+  .slash-palette {
+    display: grid;
+    max-height: 15rem;
+    overflow-y: auto;
+    padding: var(--space-1);
+  }
+  .slash-palette > button {
+    display: grid;
+    grid-template-columns: minmax(8rem, auto) 1fr auto;
+    min-height: 3.1rem;
+    align-items: center;
+    padding: var(--space-2);
+    gap: var(--space-3);
+    border: 0;
+    border-radius: calc(var(--radius-control) - 2px);
+    color: var(--color-text);
+    background: transparent;
+    cursor: pointer;
+    text-align: start;
+  }
+  .slash-palette > button.active,
+  .slash-palette > button:hover {
+    background: var(--color-accent-surface);
+  }
+  .slash-palette > button > span:first-child {
+    display: grid;
+  }
+  .slash-palette strong {
+    color: var(--color-heading);
+    font-family: var(--font-mono);
+  }
+  .slash-palette small,
+  .palette-description,
+  .palette-depth,
+  .slash-palette-loading {
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .slash-palette-loading {
+    padding: var(--space-3);
+  }
+  .slash-palette-failed {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .slash-palette-failed button {
+    min-height: 2rem;
+    padding: 0 var(--space-2);
+    cursor: pointer;
+  }
+  .slash-command-error {
+    margin: var(--space-2) var(--space-3) 0;
+    color: var(--color-danger-text, var(--color-danger));
+    font-size: var(--font-size-xs);
+  }
   .composer-toolbar {
     display: flex;
     align-items: center;
@@ -1719,6 +2123,10 @@
     color: var(--color-heading);
     background: var(--color-surface);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--color-shadow) 20%, transparent);
+  }
+  .research-depth button:disabled {
+    cursor: default;
+    opacity: 0.65;
   }
   .context-note {
     color: var(--color-subtle);

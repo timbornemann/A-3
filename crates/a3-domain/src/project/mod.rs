@@ -37,6 +37,7 @@ mod revision;
 mod run_memory;
 mod secret;
 mod semantic_card;
+mod slash_command;
 mod snapshot;
 mod task_ledger;
 mod task_lens;
@@ -165,11 +166,11 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-    ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId, DiscoveredCommandId,
-    IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId,
-    RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId,
-    VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, AgentDiagramArtifactId, AgentRunId, AgentSessionId, AgentWorkItemId,
+    ApprovalId, ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId,
+    DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity,
+    RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
+    ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{
@@ -272,6 +273,11 @@ pub use secret::{SecretCandidateClassifierV1, SecretCandidateKind};
 pub use semantic_card::{
     BodyHash, NormalizedSemanticCard, SemanticCardBatch, SemanticCardBatchError, SemanticCardId,
     SemanticCardNormalizationError, SemanticCardNormalizationVersion,
+};
+pub use slash_command::{
+    ParsedSlashCommand, SlashCommand, SlashCommandCatalogVersion, SlashCommandEmptyInput,
+    SlashCommandInvocation, SlashCommandLens, SlashCommandParseError, SlashCommandResearchProfile,
+    SlashCommandResultContract, SlashCommandVerificationProfile, parse_slash_command,
 };
 pub use snapshot::{
     ContentHash, IndexLanguage, IndexSchemaVersion, IndexSchemaVersionError,

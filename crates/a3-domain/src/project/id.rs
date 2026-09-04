@@ -83,6 +83,10 @@ stable_id!(
     AskResearchSourceId
 );
 stable_id!(
+    /// Opaque identity of one evidence-bound diagram artifact in an Agent conversation.
+    AgentDiagramArtifactId
+);
+stable_id!(
     /// Stable identity of one task-bearing work item within an Agent conversation.
     AgentWorkItemId
 );
@@ -157,8 +161,8 @@ fn write_hex(bytes: &[u8; ID_LENGTH], formatter: &mut fmt::Formatter<'_>) -> fmt
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptanceCriterionId, AgentRunId, AgentSessionId, AgentWorkItemId, ApprovalId,
-        ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId,
+        AcceptanceCriterionId, AgentDiagramArtifactId, AgentRunId, AgentSessionId, AgentWorkItemId,
+        ApprovalId, ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId,
         DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId,
         RemoteIdentity, RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId,
         TaskId, TaskStepId, ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId,
@@ -183,6 +187,7 @@ mod tests {
         assert_eq!(TaskId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentSessionId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AskResearchSourceId::from_bytes(bytes).as_bytes(), &bytes);
+        assert_eq!(AgentDiagramArtifactId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AgentWorkItemId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(AcceptanceCriterionId::from_bytes(bytes).as_bytes(), &bytes);
         assert_eq!(TaskStepId::from_bytes(bytes).as_bytes(), &bytes);

@@ -1,6 +1,7 @@
 use a3_domain::{
-    AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision, AgentSessionState,
-    ProjectIdentity,
+    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision,
+    AgentSessionSequence, AgentSessionState, ProjectIdentity, SlashCommand,
+    SlashCommandCatalogVersion, SlashCommandInvocation, SlashCommandLens,
 };
 use std::error::Error;
 use std::fmt;
@@ -147,6 +148,76 @@ impl AgentSessionDetail {
     }
 }
 
+/// Persisted user-facing command metadata for one session entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSessionCommandPresentation {
+    sequence: AgentSessionSequence,
+    catalog_version: SlashCommandCatalogVersion,
+    primary: SlashCommand,
+    lenses: Vec<SlashCommandLens>,
+    depth: AgentResearchDepth,
+}
+
+impl AgentSessionCommandPresentation {
+    /// Revalidates a bounded command presentation reconstructed by a store adapter.
+    pub fn restore(
+        sequence: AgentSessionSequence,
+        catalog_version: SlashCommandCatalogVersion,
+        primary: SlashCommand,
+        lenses: Vec<SlashCommandLens>,
+        depth: AgentResearchDepth,
+    ) -> Result<Self, AgentSessionStoreFailure> {
+        if lenses.len() > 2
+            || lenses.windows(2).any(|pair| pair[0] == pair[1])
+            || depth
+                != if lenses.is_empty() {
+                    primary.depth()
+                } else {
+                    AgentResearchDepth::Thorough
+                }
+        {
+            return Err(AgentSessionStoreFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            sequence,
+            catalog_version,
+            primary,
+            lenses,
+            depth,
+        })
+    }
+
+    /// Returns the user-entry sequence.
+    #[must_use]
+    pub const fn sequence(&self) -> AgentSessionSequence {
+        self.sequence
+    }
+
+    /// Returns the immutable catalog version.
+    #[must_use]
+    pub const fn catalog_version(&self) -> SlashCommandCatalogVersion {
+        self.catalog_version
+    }
+
+    /// Returns the primary command.
+    #[must_use]
+    pub const fn primary(&self) -> SlashCommand {
+        self.primary
+    }
+
+    /// Returns the ordered specialist lenses.
+    #[must_use]
+    pub fn lenses(&self) -> &[SlashCommandLens] {
+        &self.lenses
+    }
+
+    /// Returns the Core-owned effective depth.
+    #[must_use]
+    pub const fn depth(&self) -> AgentResearchDepth {
+        self.depth
+    }
+}
+
 /// Persistence boundary for project-local conversation presentation data.
 pub trait AgentSessionStore: fmt::Debug + Send + Sync {
     /// Creates revision one, optionally with its sequence-one entry, atomically.
@@ -155,6 +226,7 @@ pub trait AgentSessionStore: fmt::Debug + Send + Sync {
         project: &'a ProjectIdentity,
         session: &'a AgentSession,
         first_entry: Option<&'a AgentSessionEntry>,
+        command: Option<&'a SlashCommandInvocation>,
     ) -> AgentSessionStoreFuture<'a, ()>;
 
     /// Appends the immediate session revision and optional immediate entry atomically.
@@ -164,6 +236,7 @@ pub trait AgentSessionStore: fmt::Debug + Send + Sync {
         expected_revision: AgentSessionRevision,
         session: &'a AgentSession,
         entry: Option<&'a AgentSessionEntry>,
+        command: Option<&'a SlashCommandInvocation>,
     ) -> AgentSessionStoreFuture<'a, ()>;
 
     /// Reads project-local session summaries.
@@ -181,6 +254,15 @@ pub trait AgentSessionStore: fmt::Debug + Send + Sync {
         before_sequence: Option<u64>,
         limit: u16,
     ) -> AgentSessionStoreFuture<'a, Option<AgentSessionDetail>>;
+
+    /// Loads the bounded command metadata belonging to one visible session page.
+    fn load_session_commands<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> AgentSessionStoreFuture<'a, Vec<AgentSessionCommandPresentation>>;
 
     /// Removes presentation entries after an append-only tombstone revision was committed.
     fn delete_presentation<'a>(

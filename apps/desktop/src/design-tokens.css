@@ -43,6 +43,8 @@
   --color-surface-raised: #ffffff;
   --color-surface-subtle: #f7f8fa;
   --color-surface-muted: #eef0f3;
+  --color-diagram-light-surface: #ffffff;
+  --color-diagram-dark-surface: #111827;
   --color-accent-surface: #e9edff;
   --color-sidebar: #20232a;
   --color-sidebar-raised: #292d35;

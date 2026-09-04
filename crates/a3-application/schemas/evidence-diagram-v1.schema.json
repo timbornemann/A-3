@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "diagrams"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "diagrams": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/diagram" }
+    }
+  },
+  "$defs": {
+    "sourceRef": { "type": "string", "pattern": "^S(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|200)$" },
+    "sourceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceRef" }
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "category", "source_refs"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "source_refs": { "$ref": "#/$defs/sourceRefs" }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "label", "source_refs"],
+      "properties": {
+        "from": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$" },
+        "to": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "source_refs": { "$ref": "#/$defs/sourceRefs" }
+      }
+    },
+    "diagram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "description", "elements", "relationships"],
+      "properties": {
+        "type": { "enum": ["flowchart", "sequence", "class", "state", "er"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "elements": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/element" } },
+        "relationships": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/relationship" } }
+      }
+    }
+  }
+}

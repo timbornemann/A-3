@@ -397,6 +397,26 @@ Agent-Materialisierung; der eigentliche Run bleibt vollständig unter Goal, Ledg
 `RunMemoryCheckpoint`, ADR-0010-Controller und Verification. Öffentliche Arbeitsnotizen können
 keine Aktion oder Zustandsänderung autorisieren.
 
+ADR-0039-Erweiterung: Der gemeinsame Recherchecontroller erhält einen Domain-validierten,
+versionierten Slash-Command-Katalog und die fünf begrenzten Reads für Working Changes,
+Indexdiagnosen, Dependency Graph, Testtopologie und lokale Security-Kandidaten. Das aufgelöste
+Arbeitsprofil beeinflusst Fokus, Ergebnis und Verification, niemals die Capability. Ask und Plan
+bleiben read-only; AgentAction, Ledger, Policy und genau eine Mutation pro Controllerturn bleiben
+unverändert autoritativ. `/diagram` verwendet nur turnlokale Sources und eine reservierte letzte
+Entscheidung innerhalb des vorhandenen Budgets.
+
+- [x] Slash-Parser und Command-Profile sind gegen Modusmatrix und Escape vollständig geprüft
+- [x] neue Read-Aktionen sind begrenzt, indexgebunden, dedupliziert und abbrechbar
+- [x] Diagramme können keine Evidence-, Ledger- oder Ausführungsautorität erzeugen
+
+Verifiziert am 2026-09-04: Domain-, Application-, Desktop- und Context-Contracts prüfen den
+geschlossenen Katalog, die Modusmatrix, `//`-Escape, implizites Review, höchstens zwei Linsen,
+feste Tiefe, Core-erzwungene minimale Read-Baselines, gemeinsame Aktionsbudgets,
+Deduplizierung, Cancellation und Source-Revalidierung. `EvidenceDiagramV1` akzeptiert nur
+turnlokale Quellen; der Core erzeugt daraus deterministisches Mermaid ohne Action-, Ledger- oder
+Policy-Semantik. Der vollständige Workspace-Test, Workspace-Clippy mit `-D warnings` und Rustdoc
+mit `-D warnings` sind grün.
+
 - [x] read-only End-to-End-Agent auf drei Fixture-Sprachen
 - [x] Goal-Retention- und Compaction-Eval grün
 - [x] ungültige Modellausgaben werden nie ausgeführt

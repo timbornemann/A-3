@@ -4,9 +4,11 @@ mod agent_activity;
 mod agent_approval;
 mod agent_ask_research;
 mod agent_control;
+mod agent_diagram;
 mod agent_goal;
 mod agent_inspection;
 mod agent_session;
+mod agent_slash_command;
 mod agent_work_trace;
 mod deep_map;
 mod deep_map_dashboard;
@@ -53,6 +55,7 @@ pub use agent_control::{
     AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, ControlAgentTaskRunRequestV1,
     QueryAgentTaskRecoveryRequestV1,
 };
+pub use agent_diagram::*;
 pub use agent_goal::{
     AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
     AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
@@ -60,6 +63,7 @@ pub use agent_goal::{
 };
 pub use agent_inspection::*;
 pub use agent_session::*;
+pub use agent_slash_command::*;
 pub use agent_work_trace::*;
 pub use deep_map::{
     ControlDeepMapRequestV1, DeepMapActivityStateV1, DeepMapActivityV1, DeepMapActivityV2,

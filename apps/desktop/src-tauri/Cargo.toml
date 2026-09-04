@@ -18,6 +18,7 @@ a3-repo-index.workspace = true
 a3-storage-libsql.workspace = true
 a3-workspace.workspace = true
 blake3.workspace = true
+base64.workspace = true
 crossbeam-channel.workspace = true
 futures.workspace = true
 getrandom.workspace = true

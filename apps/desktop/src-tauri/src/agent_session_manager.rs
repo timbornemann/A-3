@@ -8,39 +8,56 @@ use a3_application::{
     AskResearchPublicNote, AskResearchRelation, AskResearchSource, AskResearchStore,
     AskResearchStoreFailure, AskResearchTurn, AskSourceSearcher, AskSourceTextSearch,
     BeginResearchDecision, BoundedResearchController, CompileTaskLens, CreateAgentRun,
-    CreateGoalContract, CreateTaskLedger, DecodeAskResearchDecision, GoalContractStore,
-    JobCompletion, JobContext, JobSubmitter, KnowledgeIndexStore, KnowledgeSearchStore,
-    ResearchHandoff, ResearchMemoryCheckpoint, ResearchMemoryFinding, ResearchMemoryFindingKind,
-    RunJournalStore, TaskLedgerStore, TaskLensClaimStore, TaskLensControl, TaskLensControlError,
-    TaskLensIndexStore, memory_finding_from_note, validate_agent_session_transition,
+    CreateGoalContract, CreateTaskLedger, DecodeAskResearchDecision, DecodeEvidenceDiagrams,
+    EvidenceDiagramArtifact, GoalContractStore, JobCompletion, JobContext, JobSubmitter,
+    KnowledgeIndexStore, KnowledgeSearchStore, ResearchHandoff, ResearchMemoryCheckpoint,
+    ResearchMemoryFinding, ResearchMemoryFindingKind, RunJournalStore,
+    SlashCommandExecutionProfile, TaskLedgerStore, TaskLensClaimStore, TaskLensControl,
+    TaskLensControlError, TaskLensIndexStore, memory_finding_from_note,
+    validate_agent_session_transition,
 };
 use a3_application::{AgentSourceReader, DiscoverProjectCommands, ModelMessageRole};
 use a3_domain::{
-    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement, AgentFileInspection,
-    AgentFileLineCount, AgentFileStartLine, AgentResearchDepth, AgentRun, AgentRunId,
-    AgentRunTimestamp, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
-    AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
-    AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
-    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
-    AskResearchSourceKind, AskResearchState, DiscoveredCommandKind, ExpectedTaskEvidence,
-    GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId,
-    JobOwner, PolicyResourceId, Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1,
-    SourceChannel, SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger,
+    AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement,
+    AgentDiagramArtifactId, AgentFileInspection, AgentFileLineCount, AgentFileStartLine,
+    AgentResearchDepth, AgentRun, AgentRunId, AgentRunTimestamp, AgentSession, AgentSessionEntry,
+    AgentSessionEntryKind, AgentSessionId, AgentSessionMode, AgentSessionRevision,
+    AgentSessionSequence, AgentSessionState, AgentSessionText, AgentSessionTimestamp,
+    AgentSessionTitle, AgentWorkItem, AgentWorkItemId, AskResearchCompleteness, AskResearchPhase,
+    AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
+    DiscoveredCommandKind, ExpectedTaskEvidence, GoalContract, GoalContractDraft,
+    GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId, JobOwner, ParsedSlashCommand,
+    PolicyResourceId, Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1,
+    SlashCommand, SlashCommandEmptyInput, SlashCommandVerificationProfile, SourceChannel,
+    StepDependency, SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger,
     TaskLedgerTimestamp, TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget,
     TaskLensTokenBudget, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
     VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId,
+    parse_slash_command,
 };
 use a3_workspace::{WorkspaceAgentSourceReader, WorkspaceAskSourceSearcher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::io::Read;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SESSION_PAGE_LIMIT: u16 = 128;
 const AGENT_CONVERSATION_JOB_OWNER: JobOwner = JobOwner::new(4);
 const CONVERSATION_PROGRESS_TOTAL: u64 = 10;
 const TASK_LENS_PROGRESS_END: u64 = 7;
+const WORKING_CHANGES_BYTE_LIMIT: u64 = 2 * 1_024 * 1_024;
+const WORKING_CHANGES_FILE_LIMIT: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageResearchSelection {
+    LegacyDepth(AgentResearchDepth),
+    ExplicitDepth(AgentResearchDepth),
+    Command,
+}
 
 /// Core task persistence required to turn one reviewed plan into authoritative harness anchors.
 #[derive(Clone)]
@@ -69,13 +86,17 @@ impl AgentTaskMaterializer {
 
     async fn materialize(
         &self,
-        project: &ProjectIdentity,
-        objective: &str,
-        reviewed_plan: &str,
-        profile: a3_domain::ModelProfile,
-        research_handoff: Option<&ResearchHandoff>,
-        control: &dyn a3_application::IndexPersistenceControl,
+        request: AgentTaskMaterialization<'_>,
     ) -> Result<MaterializedAgentTask, AgentSessionManagerFailure> {
+        let AgentTaskMaterialization {
+            project,
+            objective,
+            reviewed_plan,
+            profile,
+            research_handoff,
+            verification_profile,
+            control,
+        } = request;
         let published = self
             .index
             .latest_published_index(project, control)
@@ -98,8 +119,6 @@ impl AgentTaskMaterializer {
         }
         let task_id = TaskId::from_bytes(random_id()?);
         let criterion_id = AcceptanceCriterionId::from_bytes(random_id()?);
-        let step_id = TaskStepId::from_bytes(random_id()?);
-        let spec_id = VerificationSpecId::from_bytes(random_id()?);
         let base = now_millis()?;
         let criterion = AcceptanceCriterion::new(
             criterion_id,
@@ -131,68 +150,96 @@ impl AgentTaskMaterializer {
         let catalog = DiscoverProjectCommands
             .execute(project.worktree().id(), &published)
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
-        let verification_command = catalog
-            .commands()
-            .iter()
-            .find(|command| command.kind() == DiscoveredCommandKind::Test)
-            .or_else(|| {
-                catalog
-                    .commands()
-                    .iter()
-                    .find(|command| command.kind() == DiscoveredCommandKind::Lint)
-            })
-            .or_else(|| {
-                catalog
-                    .commands()
-                    .iter()
-                    .find(|command| command.kind() == DiscoveredCommandKind::Build)
-            });
-        let verification = match verification_command {
-            Some(command) => VerificationSpec::command(
-                spec_id,
-                verification_requirement("Der deterministisch entdeckte Projektcheck besteht.")?,
-                command.id(),
-                VerificationScope::Workspace,
-            ),
-            None => VerificationSpec::user_confirm(
-                spec_id,
-                verification_requirement(
-                    "Nutzer bestätigt das reviewte Ergebnis auf dem aktuellen Snapshot.",
-                )?,
-                PolicyResourceId::from_bytes(random_id()?),
-            ),
-        };
-        let definition = TaskStepDefinition::new(
-            step_id,
-            None,
-            TaskStepOutcome::try_from_string(bounded_text(reviewed_plan, 12 * 1024))
+        let preferred_verification = verification_profile.map_or(
+            &[
+                DiscoveredCommandKind::Test,
+                DiscoveredCommandKind::Lint,
+                DiscoveredCommandKind::Build,
+            ] as &[_],
+            verification_command_order,
+        );
+        let verification_command = preferred_verification.iter().find_map(|kind| {
+            catalog
+                .commands()
+                .iter()
+                .find(|command| command.kind() == *kind)
+        });
+        let step_outcomes = materialization_step_outcomes(
+            reviewed_plan,
+            research_handoff
+                .and_then(ResearchHandoff::command)
+                .is_some(),
+        );
+        let step_ids = (0..step_outcomes.len())
+            .map(|_| random_id().map(TaskStepId::from_bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut definitions = Vec::with_capacity(step_outcomes.len());
+        for (index, outcome) in step_outcomes.into_iter().enumerate() {
+            let spec_id = VerificationSpecId::from_bytes(random_id()?);
+            let verification = match verification_command {
+                Some(command) => VerificationSpec::command(
+                    spec_id,
+                    verification_requirement(
+                        "Der deterministisch entdeckte Projektcheck besteht für diesen Änderungsschritt.",
+                    )?,
+                    command.id(),
+                    VerificationScope::Workspace,
+                ),
+                None => VerificationSpec::user_confirm(
+                    spec_id,
+                    verification_requirement(
+                        "Nutzer bestätigt diesen Änderungsschritt auf dem aktuellen Snapshot.",
+                    )?,
+                    PolicyResourceId::from_bytes(random_id()?),
+                ),
+            };
+            let dependencies = index
+                .checked_sub(1)
+                .map(|previous| vec![StepDependency::new(step_ids[previous])])
+                .unwrap_or_default();
+            let definition = TaskStepDefinition::new(
+                step_ids[index],
+                None,
+                TaskStepOutcome::try_from_string(bounded_text(&outcome, 8 * 1024))
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                TaskStepRationale::try_from_string(if step_ids.len() == 1 {
+                    "Setzt ausschließlich die vom Nutzer freigegebene Planrevision um.".to_owned()
+                } else {
+                    format!(
+                        "Setzt den eigenständig verifizierbaren Command-Schritt {} von {} um.",
+                        index.saturating_add(1),
+                        step_ids.len()
+                    )
+                })
                 .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-            TaskStepRationale::try_from_string(
-                "Setzt ausschließlich die vom Nutzer freigegebene Planrevision um.".to_owned(),
+                dependencies,
+                vec![
+                    ExpectedTaskEvidence::try_from_string(
+                        "Aktuelles Ergebnis und eigene Verification dieses Änderungsschritts"
+                            .to_owned(),
+                    )
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                ],
+                verification,
             )
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-            Vec::new(),
-            vec![
-                ExpectedTaskEvidence::try_from_string(
-                    "Aktuelles Ergebnis der festgelegten Verification".to_owned(),
-                )
-                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-            ],
-            verification,
-        )
-        .and_then(|step| step.with_acceptance_criteria(vec![criterion_id]))
-        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+            .and_then(|step| step.with_acceptance_criteria(vec![criterion_id]))
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+            definitions.push(definition);
+        }
+        let first_step_id = *step_ids
+            .first()
+            .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
         let run_id = AgentRunId::from_bytes(random_id()?);
         let mut ledger = TaskLedger::new(
             goal.reference(),
-            vec![definition],
+            definitions,
             TaskLedgerTimestamp::from_unix_millis(base.saturating_add(1))
                 .map_err(|_| AgentSessionManagerFailure::Unavailable)?,
         )
         .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         ledger
             .start_step(
-                step_id,
+                first_step_id,
                 run_id,
                 TaskLedgerTimestamp::from_unix_millis(base.saturating_add(2))
                     .map_err(|_| AgentSessionManagerFailure::Unavailable)?,
@@ -254,6 +301,16 @@ impl AgentTaskMaterializer {
     }
 }
 
+struct AgentTaskMaterialization<'a> {
+    project: &'a ProjectIdentity,
+    objective: &'a str,
+    reviewed_plan: &'a str,
+    profile: a3_domain::ModelProfile,
+    research_handoff: Option<&'a ResearchHandoff>,
+    verification_profile: Option<SlashCommandVerificationProfile>,
+    control: &'a dyn a3_application::IndexPersistenceControl,
+}
+
 impl fmt::Debug for AgentTaskMaterializer {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -305,6 +362,7 @@ impl AgentAskResearcher {
         depth: AgentResearchDepth,
         query: &str,
         transcript: &[(ModelMessageRole, String)],
+        command_profile: Option<&SlashCommandExecutionProfile>,
         control: &JobContext,
     ) -> Result<AskResearchResult, AgentSessionManagerFailure> {
         let lens_control = ConversationTaskLensControl { context: control };
@@ -337,7 +395,14 @@ impl AgentAskResearcher {
         self.trace.begin_turn(project, &turn, &first).await?;
         let result = self
             .research_after_begin(
-                runtime, project, &published, &turn, query, transcript, control,
+                runtime,
+                project,
+                &published,
+                &turn,
+                query,
+                transcript,
+                command_profile,
+                control,
             )
             .await;
         if result.is_err() {
@@ -391,6 +456,7 @@ impl AgentAskResearcher {
         turn: &AskResearchTurn,
         query: &str,
         transcript: &[(ModelMessageRole, String)],
+        command_profile: Option<&SlashCommandExecutionProfile>,
         control: &JobContext,
     ) -> Result<AskResearchResult, AgentSessionManagerFailure> {
         let evidence_budget = runtime
@@ -483,10 +549,40 @@ impl AgentAskResearcher {
         let mut model_transcript = bounded_conversation(transcript);
         let started = Instant::now();
         let mut controller = BoundedResearchController::new(turn.depth());
+        if let Some(profile) = command_profile {
+            let initial_actions = profile.initial_read_actions();
+            if !initial_actions.is_empty() {
+                let batch = controller
+                    .prepare_actions(initial_actions)
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                let before = state.evidence_revision;
+                let action_results = self
+                    .execute_actions(
+                        project,
+                        published,
+                        turn,
+                        &mut state,
+                        batch.actions().to_vec(),
+                        control,
+                    )
+                    .await?;
+                controller.finish_round(before, state.evidence_revision);
+                model_transcript.push((
+                    ModelMessageRole::User,
+                    format!(
+                        "CORE-REQUIRED READ-ONLY COMMAND BASELINE:\n{action_results}\n\nUse this evidence baseline and choose only necessary bounded follow-up reads."
+                    ),
+                ));
+            }
+        }
+        let diagrams_requested = command_profile
+            .is_some_and(|profile| profile.invocation().primary() == SlashCommand::Diagram);
         let (markdown, ordinals) = loop {
-            let permission = match controller.begin_decision(elapsed_millis(started)) {
+            let permission = match controller
+                .begin_decision_reserving(elapsed_millis(started), u8::from(diagrams_requested))
+            {
                 Ok(permission) => permission,
-                Err(_) => return awaiting_continuation(turn, &state),
+                Err(_) => return awaiting_continuation(turn, &state, command_profile),
             };
             state.event_sequence = state.event_sequence.saturating_add(1);
             self.append_running_event(
@@ -513,10 +609,11 @@ impl AgentAskResearcher {
                 &mut controller,
                 started,
                 state.sources.len(),
+                command_profile,
             )
             .await?
             else {
-                return awaiting_continuation(turn, &state);
+                return awaiting_continuation(turn, &state, command_profile);
             };
             match decision {
                 a3_application::AskResearchDecision::Answer {
@@ -544,7 +641,7 @@ impl AgentAskResearcher {
                     }
                     let batch = match controller.prepare_actions(actions) {
                         Ok(batch) => batch,
-                        Err(_) => return awaiting_continuation(turn, &state),
+                        Err(_) => return awaiting_continuation(turn, &state, command_profile),
                     };
                     state.record_note(query, &note)?;
                     state.event_sequence = state.event_sequence.saturating_add(1);
@@ -581,7 +678,7 @@ impl AgentAskResearcher {
                     }
                     controller.finish_round(before, state.evidence_revision);
                     if controller.is_stagnant() {
-                        return awaiting_continuation(turn, &state);
+                        return awaiting_continuation(turn, &state, command_profile);
                     }
                     model_transcript.push((
                         ModelMessageRole::User,
@@ -603,24 +700,52 @@ impl AgentAskResearcher {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if citations.is_empty() && response_requires_citations(turn.mode(), &markdown) {
-            return awaiting_continuation(turn, &state);
+            return awaiting_continuation(turn, &state, command_profile);
         }
+        if diagrams_requested {
+            state.event_sequence = state.event_sequence.saturating_add(1);
+            self.append_running_event(
+                project,
+                turn,
+                state.event_sequence,
+                AskResearchPhase::AnsweringOrPlanning,
+                "Belegte Elemente und Beziehungen in sichere Diagramme übersetzen",
+                None,
+                AskResearchCompleteness::NotApplicable,
+            )
+            .await?;
+        }
+        let diagrams = compile_diagram_artifacts(
+            runtime,
+            command_profile,
+            &mut model_transcript,
+            &state,
+            &mut controller,
+            started,
+            control,
+        )
+        .await?;
         let terminal_event = research_event(
             turn.session_id(),
             turn.user_sequence(),
             state.event_sequence.saturating_add(1),
             AskResearchPhase::Completed,
             AskResearchState::Completed,
-            "Antwort und verwendete Quellen veröffentlicht",
+            if diagrams.is_empty() {
+                "Antwort und verwendete Quellen veröffentlicht"
+            } else {
+                "Antwort, Diagramme und verwendete Quellen veröffentlicht"
+            },
             None,
             AskResearchCompleteness::NotApplicable,
         )?;
         Ok(AskResearchResult {
             markdown,
             citations,
+            diagrams,
             terminal_event,
             awaiting_continuation: false,
-            handoff: research_handoff(turn, &state)?,
+            handoff: research_handoff(turn, &state, command_profile)?,
         })
     }
 
@@ -1138,9 +1263,229 @@ impl AgentAskResearcher {
                         }
                     ));
                 }
+                AskResearchAction::InspectWorkingChanges => {
+                    state.event_sequence = state.event_sequence.saturating_add(1);
+                    self.append_running_event(
+                        project,
+                        turn,
+                        state.event_sequence,
+                        AskResearchPhase::Reading,
+                        "Aktuelle lokale Änderungen begrenzt und ohne Quelltextpersistenz erfassen",
+                        None,
+                        AskResearchCompleteness::NotApplicable,
+                    )
+                    .await?;
+                    let changes = inspect_working_change_paths(project, control)?;
+                    let before = state.sources.len();
+                    let mut unresolved = 0usize;
+                    for path in &changes.paths {
+                        let revision = published
+                            .publication()
+                            .graph()
+                            .files()
+                            .iter()
+                            .find(|revision| revision.path().as_bytes() == path.as_slice());
+                        if let Some(revision) = revision {
+                            self.add_and_read_source(
+                                project,
+                                turn,
+                                state,
+                                revision.clone(),
+                                None,
+                                None,
+                                AskResearchSourceKind::File,
+                                AskResearchSelectionReason::ExactNameOrPath,
+                                control,
+                            )
+                            .await?;
+                        } else {
+                            unresolved = unresolved.saturating_add(1);
+                        }
+                    }
+                    results.push(format!(
+                        "{} lokale Änderung(en) erfasst; {} aktuelle Quelle(n) gelesen; {} nicht im gebundenen Index auflösbar{}.",
+                        changes.paths.len(),
+                        state.sources.len().saturating_sub(before),
+                        unresolved,
+                        if changes.limited { " (auf 200 Dateien beziehungsweise 2 MiB begrenzt)" } else { "" }
+                    ));
+                }
+                AskResearchAction::QueryIndexDiagnostics => {
+                    state.event_sequence = state.event_sequence.saturating_add(1);
+                    self.append_running_event(
+                        project,
+                        turn,
+                        state.event_sequence,
+                        AskResearchPhase::Reading,
+                        "Aktuelle Parser- und Indexdiagnosen prüfen",
+                        None,
+                        AskResearchCompleteness::NotApplicable,
+                    )
+                    .await?;
+                    let mut count = 0usize;
+                    let before = state.sources.len();
+                    'analyses: for analysis in published.publication().file_analyses() {
+                        for diagnostic in analysis.diagnostics() {
+                            if count == 100 {
+                                break 'analyses;
+                            }
+                            self.add_and_read_source(
+                                project,
+                                turn,
+                                state,
+                                analysis.revision().clone(),
+                                Some(diagnostic.range()),
+                                None,
+                                AskResearchSourceKind::Symbol,
+                                AskResearchSelectionReason::IndexedText,
+                                control,
+                            )
+                            .await?;
+                            count = count.saturating_add(1);
+                        }
+                    }
+                    results.push(format!(
+                        "{count} aktuelle Diagnose(n) geprüft; {} Evidence-Quelle(n) bereitgestellt{}.",
+                        state.sources.len().saturating_sub(before),
+                        if count == 100 { " (auf 100 begrenzt)" } else { "" }
+                    ));
+                }
+                AskResearchAction::InspectDependencyGraph => {
+                    let summary = self
+                        .inspect_graph_topology(
+                            project,
+                            published,
+                            turn,
+                            state,
+                            400,
+                            |kind| {
+                                matches!(
+                                    kind,
+                                    SyntaxRelationKind::Imports
+                                        | SyntaxRelationKind::Exports
+                                        | SyntaxRelationKind::Calls
+                                        | SyntaxRelationKind::Builds
+                                        | SyntaxRelationKind::Configures
+                                )
+                            },
+                            "Aktuelle interne und manifestbelegte Abhängigkeiten verfolgen",
+                            control,
+                        )
+                        .await?;
+                    results.push(summary);
+                }
+                AskResearchAction::InspectTestTopology => {
+                    let summary = self
+                        .inspect_graph_topology(
+                            project,
+                            published,
+                            turn,
+                            state,
+                            200,
+                            |kind| kind == SyntaxRelationKind::Tests,
+                            "Indexierte Testbeziehungen prüfen, ohne Laufzeit-Coverage zu behaupten",
+                            control,
+                        )
+                        .await?;
+                    results.push(summary);
+                }
+                AskResearchAction::ScanSecurityCandidates => {
+                    results.push(
+                        self.search_source(
+                            project,
+                            published,
+                            turn,
+                            state,
+                            security_rule_literals(),
+                            control,
+                        )
+                        .await?,
+                    );
+                }
             }
         }
         Ok(results.join("\n"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn inspect_graph_topology(
+        &self,
+        project: &ProjectIdentity,
+        published: &a3_domain::PublishedIndex,
+        turn: &AskResearchTurn,
+        state: &mut AskResearchWorkingSet,
+        edge_limit: usize,
+        include: impl Fn(SyntaxRelationKind) -> bool,
+        action: &str,
+        control: &JobContext,
+    ) -> Result<String, AgentSessionManagerFailure> {
+        state.event_sequence = state.event_sequence.saturating_add(1);
+        self.append_running_event(
+            project,
+            turn,
+            state.event_sequence,
+            AskResearchPhase::Reading,
+            action,
+            None,
+            AskResearchCompleteness::NotApplicable,
+        )
+        .await?;
+        let before = state.sources.len();
+        let mut matching = 0usize;
+        let mut nodes = BTreeSet::new();
+        let mut node_limited = false;
+        for edge in published
+            .publication()
+            .graph()
+            .edges()
+            .iter()
+            .filter(|edge| include(edge.kind()))
+        {
+            if matching == edge_limit {
+                break;
+            }
+            let mut prospective_nodes = nodes.clone();
+            prospective_nodes.insert(edge.source().clone());
+            prospective_nodes.insert(edge.target().clone());
+            if prospective_nodes.len() > 200 {
+                node_limited = true;
+                continue;
+            }
+            nodes = prospective_nodes;
+            self.add_and_read_source(
+                project,
+                turn,
+                state,
+                edge.evidence().revision().clone(),
+                Some(edge.evidence().range()),
+                None,
+                AskResearchSourceKind::Relationship,
+                if edge.kind() == SyntaxRelationKind::Tests {
+                    AskResearchSelectionReason::Test
+                } else {
+                    AskResearchSelectionReason::Relationship
+                },
+                control,
+            )
+            .await?;
+            matching = matching.saturating_add(1);
+        }
+        let total = published
+            .publication()
+            .graph()
+            .edges()
+            .iter()
+            .filter(|edge| include(edge.kind()))
+            .count();
+        Ok(format!(
+            "{matching} aktuelle Beziehung(en) geprüft; {} Evidence-Quelle(n) bereitgestellt{}.",
+            state.sources.len().saturating_sub(before),
+            if total > matching || node_limited {
+                " (Ergebnis begrenzt)"
+            } else {
+                ""
+            }
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1300,6 +1645,7 @@ impl AgentAskResearcher {
 struct AskResearchResult {
     markdown: String,
     citations: Vec<AskResearchSourceId>,
+    diagrams: Vec<EvidenceDiagramArtifact>,
     terminal_event: AskResearchEvent,
     awaiting_continuation: bool,
     handoff: ResearchHandoff,
@@ -1625,7 +1971,13 @@ impl AgentSessionRunReporter {
         );
         validate_agent_session_transition(detail.session(), &next)?;
         self.store
-            .append_session_revision(project, detail.session().revision(), &next, Some(&entry))
+            .append_session_revision(
+                project,
+                detail.session().revision(),
+                &next,
+                Some(&entry),
+                None,
+            )
             .await
             .map_err(Into::into)
     }
@@ -1720,6 +2072,20 @@ impl AgentSessionManager {
         Ok(detail)
     }
 
+    pub(crate) async fn load_commands(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<Vec<a3_application::AgentSessionCommandPresentation>, AgentSessionManagerFailure>
+    {
+        self.store
+            .load_session_commands(project, session_id, before_sequence, limit)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn research_turns(
         &self,
         project: &ProjectIdentity,
@@ -1773,6 +2139,51 @@ impl AgentSessionManager {
             .as_ref()
             .ok_or(AgentSessionManagerFailure::Unavailable)?
             .load_source(project, session_id, user_sequence, source_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn research_diagrams(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        user_sequence: AgentSessionSequence,
+    ) -> Result<Vec<a3_application::EvidenceDiagramArtifact>, AgentSessionManagerFailure> {
+        self.research_store
+            .as_ref()
+            .ok_or(AgentSessionManagerFailure::Unavailable)?
+            .list_diagrams(project, session_id, user_sequence)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn research_diagram(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        artifact_id: AgentDiagramArtifactId,
+    ) -> Result<Option<(AgentSessionSequence, EvidenceDiagramArtifact)>, AgentSessionManagerFailure>
+    {
+        self.research_store
+            .as_ref()
+            .ok_or(AgentSessionManagerFailure::Unavailable)?
+            .load_diagram(project, session_id, artifact_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn session_diagrams(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        user_turn_limit: u16,
+    ) -> Result<Vec<a3_application::SessionEvidenceDiagramArtifact>, AgentSessionManagerFailure>
+    {
+        self.research_store
+            .as_ref()
+            .ok_or(AgentSessionManagerFailure::Unavailable)?
+            .list_session_diagrams(project, session_id, before_sequence, user_turn_limit)
             .await
             .map_err(Into::into)
     }
@@ -1865,8 +2276,52 @@ impl AgentSessionManager {
         depth: AgentResearchDepth,
         message: String,
     ) -> Result<AgentSessionDetail, AgentSessionManagerFailure> {
-        let text = AgentSessionText::try_from_string(message)
-            .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
+        self.submit_with_selection(
+            project,
+            session_id,
+            expected_revision,
+            start_mode,
+            MessageResearchSelection::LegacyDepth(depth),
+            message,
+        )
+        .await
+    }
+
+    /// Submits one V3 message after resolving a command or explicit ordinary depth in the Core.
+    pub(crate) async fn submit_with_command_selection(
+        &self,
+        project: &ProjectIdentity,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        start_mode: Option<AgentSessionMode>,
+        explicit_depth: Option<AgentResearchDepth>,
+        message: String,
+    ) -> Result<AgentSessionDetail, AgentSessionManagerFailure> {
+        let selection = explicit_depth.map_or(
+            MessageResearchSelection::Command,
+            MessageResearchSelection::ExplicitDepth,
+        );
+        self.submit_with_selection(
+            project,
+            session_id,
+            expected_revision,
+            start_mode,
+            selection,
+            message,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn submit_with_selection(
+        &self,
+        project: &ProjectIdentity,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        start_mode: Option<AgentSessionMode>,
+        selection: MessageResearchSelection,
+        message: String,
+    ) -> Result<AgentSessionDetail, AgentSessionManagerFailure> {
         let generated_session_id = if session_id.is_none() {
             Some(AgentSessionId::from_bytes(random_id()?))
         } else {
@@ -1877,7 +2332,7 @@ impl AgentSessionManager {
             .ok_or(AgentSessionManagerFailure::InvalidInput)?;
         let mut operation = self.acquire(operation_session_id)?;
         let now = timestamp()?;
-        let (session, user_entry) = match session_id {
+        let (session, user_entry, depth, command_profile) = match session_id {
             Some(session_id) => {
                 let expected = expected_revision.ok_or(AgentSessionManagerFailure::InvalidInput)?;
                 if start_mode.is_some() {
@@ -1901,6 +2356,16 @@ impl AgentSessionManager {
                 {
                     return Err(AgentSessionManagerFailure::Conflict);
                 }
+                let inherited_command = if selection == MessageResearchSelection::Command {
+                    None
+                } else {
+                    pending_clarification_command(self.store.as_ref(), project, &current, &message)
+                        .await?
+                };
+                let (text, depth, command_profile) = inherited_command.map_or_else(
+                    || resolve_submitted_message(current.session().mode(), selection, &message),
+                    |profile| command_message(current.session().mode(), profile, &message),
+                )?;
                 let sequence = next_sequence(current.session().latest_sequence())?;
                 let next = successor(
                     current.session(),
@@ -1927,15 +2392,25 @@ impl AgentSessionManager {
                 );
                 validate_agent_session_transition(current.session(), &next)?;
                 self.store
-                    .append_session_revision(project, expected, &next, Some(&entry))
+                    .append_session_revision(
+                        project,
+                        expected,
+                        &next,
+                        Some(&entry),
+                        command_profile
+                            .as_ref()
+                            .map(SlashCommandExecutionProfile::invocation),
+                    )
                     .await?;
-                (next, entry)
+                (next, entry, depth, command_profile)
             }
             None => {
                 if expected_revision.is_some() {
                     return Err(AgentSessionManagerFailure::InvalidInput);
                 }
                 let mode = start_mode.ok_or(AgentSessionManagerFailure::InvalidInput)?;
+                let (text, depth, command_profile) =
+                    resolve_submitted_message(mode, selection, &message)?;
                 let session_id =
                     generated_session_id.ok_or(AgentSessionManagerFailure::InvalidInput)?;
                 let session = AgentSession::from_parts(
@@ -1962,9 +2437,16 @@ impl AgentSessionManager {
                     None,
                 );
                 self.store
-                    .create_session(project, &session, Some(&entry))
+                    .create_session(
+                        project,
+                        &session,
+                        Some(&entry),
+                        command_profile
+                            .as_ref()
+                            .map(SlashCommandExecutionProfile::invocation),
+                    )
                     .await?;
-                (session, entry)
+                (session, entry, depth, command_profile)
             }
         };
         let detail = self
@@ -1972,6 +2454,10 @@ impl AgentSessionManager {
             .load_session(project, session.id(), None, SESSION_PAGE_LIMIT)
             .await?
             .ok_or(AgentSessionManagerFailure::NotFound)?;
+        let objective = command_profile.as_ref().map_or_else(
+            || user_entry.text().as_str().to_owned(),
+            |profile| profile.objective().to_owned(),
+        );
         let transcript = detail
             .entries()
             .iter()
@@ -1981,10 +2467,14 @@ impl AgentSessionManager {
                 } else {
                     ModelMessageRole::Assistant
                 };
-                (role, entry.text().as_str().to_owned())
+                let content = if entry.sequence() == user_entry.sequence() {
+                    objective.clone()
+                } else {
+                    entry.text().as_str().to_owned()
+                };
+                (role, content)
             })
             .collect::<Vec<_>>();
-        let objective = user_entry.text().as_str().to_owned();
         let job_id = match self.job_ids.allocate() {
             Ok(job_id) => job_id,
             Err(_) => {
@@ -2030,6 +2520,7 @@ impl AgentSessionManager {
                     reporter,
                     researcher,
                     depth,
+                    command_profile,
                     context,
                 ))
             },
@@ -2078,6 +2569,13 @@ impl AgentSessionManager {
             .rev()
             .find(|entry| entry.kind() == AgentSessionEntryKind::UserMessage)
             .ok_or(AgentSessionManagerFailure::Conflict)?;
+        let original_message = user_entry.text().as_str().to_owned();
+        let stored_command = self
+            .store
+            .load_session_commands(project, session_id, None, SESSION_PAGE_LIMIT)
+            .await?
+            .into_iter()
+            .find(|command| command.sequence() == user_entry.sequence());
         let trace = self
             .research_store
             .as_ref()
@@ -2092,9 +2590,26 @@ impl AgentSessionManager {
         {
             return Err(AgentSessionManagerFailure::Conflict);
         }
+        if let Some(stored_command) = stored_command {
+            let _profile = restore_command_profile(
+                detail.session().mode(),
+                &original_message,
+                &stored_command,
+            )?;
+            return self
+                .submit_with_command_selection(
+                    project,
+                    Some(session_id),
+                    Some(expected_revision),
+                    None,
+                    None,
+                    original_message,
+                )
+                .await;
+        }
         let message = format!(
             "Recherche fortsetzen. Ursprüngliche Frage:\n{}",
-            bounded_text(user_entry.text().as_str(), 8 * 1024)
+            bounded_text(&original_message, 8 * 1024)
         );
         self.submit_with_depth(
             project,
@@ -2205,7 +2720,7 @@ impl AgentSessionManager {
             Ok(None)
         } else {
             self.store
-                .append_session_revision(project, expected, &next, None)
+                .append_session_revision(project, expected, &next, None, None)
                 .await?;
             self.store
                 .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
@@ -2259,13 +2774,39 @@ impl AgentSessionManager {
             .find(|entry| entry.kind() == AgentSessionEntryKind::UserMessage)
             .map(|entry| entry.text().as_str().to_owned())
             .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
-        let plan = detail
+        let plan_entry = detail
             .entries()
             .iter()
             .rev()
             .find(|entry| entry.plan_revision() == Some(plan_revision))
-            .map(|entry| entry.text().as_str().to_owned())
             .ok_or(AgentSessionManagerFailure::Conflict)?;
+        let plan = plan_entry.text().as_str().to_owned();
+        let triggering_user_entry = detail
+            .entries()
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.sequence() < plan_entry.sequence()
+                    && entry.kind() == AgentSessionEntryKind::UserMessage
+            })
+            .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
+        let command_profile = self
+            .store
+            .load_session_commands(project, session_id, None, SESSION_PAGE_LIMIT)
+            .await?
+            .into_iter()
+            .find(|command| command.sequence() == triggering_user_entry.sequence())
+            .map(|command| {
+                restore_command_profile(
+                    AgentSessionMode::Plan,
+                    triggering_user_entry.text().as_str(),
+                    &command,
+                )
+            })
+            .transpose()?;
+        let objective = command_profile
+            .as_ref()
+            .map_or(objective, |profile| profile.objective().to_owned());
         let running = successor(
             detail.session(),
             SessionSuccessor {
@@ -2281,7 +2822,7 @@ impl AgentSessionManager {
         )?;
         validate_agent_session_transition(detail.session(), &running)?;
         self.store
-            .append_session_revision(project, expected, &running, None)
+            .append_session_revision(project, expected, &running, None, None)
             .await?;
         let job_id = match self.job_ids.allocate() {
             Ok(job_id) => job_id,
@@ -2321,6 +2862,7 @@ impl AgentSessionManager {
                     scheduled_session,
                     objective,
                     plan,
+                    command_profile,
                     context,
                 ))
             },
@@ -2422,6 +2964,7 @@ async fn complete_plan_implementation(
     session: AgentSession,
     objective: String,
     plan: String,
+    command_profile: Option<SlashCommandExecutionProfile>,
     context: JobContext,
 ) -> JobCompletion {
     if context.cancellation_token().is_cancelled() {
@@ -2443,17 +2986,25 @@ async fn complete_plan_implementation(
             .execution_model()
             .await
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
-        let prior_research =
-            latest_plan_research_handoff(research_store.as_ref(), &project, session.id()).await?;
+        let prior_research = latest_plan_research_handoff(
+            research_store.as_ref(),
+            &project,
+            session.id(),
+            command_profile.as_ref(),
+        )
+        .await?;
         let task = materializer
-            .materialize(
-                &project,
-                &objective,
-                &plan,
+            .materialize(AgentTaskMaterialization {
+                project: &project,
+                objective: &objective,
+                reviewed_plan: &plan,
                 profile,
-                prior_research.as_ref().map(|(_, handoff)| handoff),
-                &index_control,
-            )
+                research_handoff: prior_research.as_ref().map(|(_, handoff)| handoff),
+                verification_profile: command_profile
+                    .as_ref()
+                    .map(SlashCommandExecutionProfile::verification_profile),
+                control: &index_control,
+            })
             .await?;
         if let Some((user_sequence, _)) = prior_research {
             research_store
@@ -2495,7 +3046,7 @@ async fn complete_plan_implementation(
         );
         validate_agent_session_transition(&session, &linked)?;
         store
-            .append_session_revision(&project, session.revision(), &linked, Some(&entry))
+            .append_session_revision(&project, session.revision(), &linked, Some(&entry), None)
             .await?;
         reporter.link(task.work_item.task_id(), session.id());
         run_manager
@@ -2532,6 +3083,7 @@ async fn latest_plan_research_handoff(
     store: &dyn AskResearchStore,
     project: &ProjectIdentity,
     session_id: AgentSessionId,
+    command_profile: Option<&SlashCommandExecutionProfile>,
 ) -> Result<Option<(AgentSessionSequence, ResearchHandoff)>, AgentSessionManagerFailure> {
     let turns = store.list_turns(project, session_id, 32).await?;
     let Some(detail) = turns.turns().iter().find(|detail| {
@@ -2571,7 +3123,355 @@ async fn latest_plan_research_handoff(
         revisions,
     )
     .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+    let handoff = match command_profile {
+        Some(profile) => handoff.with_command(profile.invocation().clone()),
+        None => handoff,
+    };
     Ok(Some((detail.turn().user_sequence(), handoff)))
+}
+
+struct WorkingChangePaths {
+    paths: Vec<Vec<u8>>,
+    limited: bool,
+}
+
+fn inspect_working_change_paths(
+    project: &ProjectIdentity,
+    control: &JobContext,
+) -> Result<WorkingChangePaths, AgentSessionManagerFailure> {
+    let mut child = Command::new("git")
+        .args([
+            "-c",
+            "core.quotepath=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ])
+        .current_dir(project.worktree().root().as_path())
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(AgentSessionManagerFailure::Unavailable)?;
+    let reader = thread::spawn(move || {
+        read_bounded_process_output(stdout, WORKING_CHANGES_BYTE_LIMIT.saturating_add(1))
+    });
+    let started = Instant::now();
+    let mut interrupted = false;
+    let status = loop {
+        if control.cancellation_token().is_cancelled()
+            || started.elapsed() >= Duration::from_secs(30)
+        {
+            let _ignored = child.kill();
+            interrupted = true;
+            break child.wait().ok();
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                let _ignored = child.kill();
+                interrupted = true;
+                break child.wait().ok();
+            }
+        }
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+    if interrupted || !status.is_some_and(|status| status.success()) {
+        return Err(AgentSessionManagerFailure::Unavailable);
+    }
+    Ok(parse_working_change_paths(&bytes))
+}
+
+fn read_bounded_process_output(
+    mut reader: impl Read,
+    retained_limit: u64,
+) -> std::io::Result<Vec<u8>> {
+    let capacity = usize::try_from(retained_limit).unwrap_or(usize::MAX);
+    let mut retained = Vec::with_capacity(capacity.min(64 * 1_024));
+    let mut buffer = [0_u8; 16 * 1_024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = capacity.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    Ok(retained)
+}
+
+fn parse_working_change_paths(bytes: &[u8]) -> WorkingChangePaths {
+    let byte_limited = u64::try_from(bytes.len()).unwrap_or(u64::MAX) > WORKING_CHANGES_BYTE_LIMIT;
+    let safe_length = usize::try_from(WORKING_CHANGES_BYTE_LIMIT)
+        .unwrap_or(usize::MAX)
+        .min(bytes.len());
+    let mut paths = BTreeSet::new();
+    let fields = bytes[..safe_length]
+        .split(|byte| *byte == 0)
+        .collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < fields.len() && paths.len() <= WORKING_CHANGES_FILE_LIMIT {
+        let record = fields[index];
+        index = index.saturating_add(1);
+        if record.len() < 4 || record[2] != b' ' {
+            continue;
+        }
+        let is_rename = matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C');
+        let path = &record[3..];
+        if !path.is_empty() {
+            paths.insert(path.to_vec());
+        }
+        if is_rename {
+            index = index.saturating_add(1);
+        }
+    }
+    let file_limited = paths.len() > WORKING_CHANGES_FILE_LIMIT;
+    WorkingChangePaths {
+        paths: paths.into_iter().take(WORKING_CHANGES_FILE_LIMIT).collect(),
+        limited: byte_limited || file_limited,
+    }
+}
+
+fn security_rule_literals() -> Vec<String> {
+    [
+        "unsafe ",
+        "Command::new",
+        "std::process",
+        "http://",
+        "https://",
+        "password",
+        "secret",
+        "api_key",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn resolve_submitted_message(
+    mode: AgentSessionMode,
+    selection: MessageResearchSelection,
+    message: &str,
+) -> Result<
+    (
+        AgentSessionText,
+        AgentResearchDepth,
+        Option<SlashCommandExecutionProfile>,
+    ),
+    AgentSessionManagerFailure,
+> {
+    match selection {
+        MessageResearchSelection::LegacyDepth(depth) => Ok((
+            AgentSessionText::try_from_string(message.to_owned())
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+            depth,
+            None,
+        )),
+        MessageResearchSelection::ExplicitDepth(depth) => {
+            let ParsedSlashCommand::Plain(text) = parse_slash_command(mode, message)
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?
+            else {
+                return Err(AgentSessionManagerFailure::InvalidInput);
+            };
+            Ok((
+                AgentSessionText::try_from_string(text)
+                    .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+                depth,
+                None,
+            ))
+        }
+        MessageResearchSelection::Command => {
+            let ParsedSlashCommand::Command(invocation) = parse_slash_command(mode, message)
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?
+            else {
+                return Err(AgentSessionManagerFailure::InvalidInput);
+            };
+            let profile = SlashCommandExecutionProfile::resolve(invocation);
+            let depth = profile.depth();
+            Ok((
+                AgentSessionText::try_from_string(message.trim().to_owned())
+                    .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+                depth,
+                Some(profile),
+            ))
+        }
+    }
+}
+
+async fn pending_clarification_command(
+    store: &dyn AgentSessionStore,
+    project: &ProjectIdentity,
+    current: &AgentSessionDetail,
+    subject: &str,
+) -> Result<Option<SlashCommandExecutionProfile>, AgentSessionManagerFailure> {
+    if current.session().state() != AgentSessionState::AwaitingUser || subject.trim().is_empty() {
+        return Ok(None);
+    }
+    let Some(latest_sequence) = current.session().latest_sequence() else {
+        return Ok(None);
+    };
+    let Some(latest_entry) = current
+        .entries()
+        .iter()
+        .find(|entry| entry.sequence() == latest_sequence)
+    else {
+        return Ok(None);
+    };
+    if latest_entry.kind() != AgentSessionEntryKind::AssistantSummary {
+        return Ok(None);
+    }
+    let Some(stored) = store
+        .load_session_commands(project, current.session().id(), None, 1)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    if stored.sequence().next().ok() != Some(latest_sequence) {
+        return Ok(None);
+    }
+    let Some(entry) = current
+        .entries()
+        .iter()
+        .find(|entry| entry.sequence() == stored.sequence())
+    else {
+        return Ok(None);
+    };
+    let profile =
+        restore_command_profile(current.session().mode(), entry.text().as_str(), &stored)?;
+    if !profile.invocation().subject().is_empty()
+        || profile.invocation().empty_input_behavior() != SlashCommandEmptyInput::Clarify
+    {
+        return Ok(None);
+    }
+    Ok(Some(profile))
+}
+
+fn command_message(
+    mode: AgentSessionMode,
+    profile: SlashCommandExecutionProfile,
+    subject: &str,
+) -> Result<
+    (
+        AgentSessionText,
+        AgentResearchDepth,
+        Option<SlashCommandExecutionProfile>,
+    ),
+    AgentSessionManagerFailure,
+> {
+    let mut message = format!("/{}", profile.invocation().primary().name());
+    for lens in profile.invocation().lenses() {
+        message.push_str(&format!(" /{}", lens.name()));
+    }
+    message.push(' ');
+    message.push_str(subject.trim());
+    let ParsedSlashCommand::Command(invocation) = parse_slash_command(mode, &message)
+        .map_err(|_| AgentSessionManagerFailure::InvalidInput)?
+    else {
+        return Err(AgentSessionManagerFailure::InvalidInput);
+    };
+    let profile = SlashCommandExecutionProfile::resolve(invocation);
+    let depth = profile.depth();
+    Ok((
+        AgentSessionText::try_from_string(message)
+            .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+        depth,
+        Some(profile),
+    ))
+}
+
+async fn complete_command_clarification(
+    store: &dyn AgentSessionStore,
+    project: &ProjectIdentity,
+    session: &AgentSession,
+    user_sequence: AgentSessionSequence,
+    command: SlashCommand,
+    context: &JobContext,
+) -> Result<JobCompletion, AgentSessionManagerFailure> {
+    report_progress(context, 0)?;
+    let sequence = user_sequence
+        .next()
+        .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
+    let completed_at = timestamp()?;
+    let next = successor(
+        session,
+        SessionSuccessor {
+            title: session.title().as_str().to_owned(),
+            mode: session.mode(),
+            state: AgentSessionState::AwaitingUser,
+            updated_at: completed_at,
+            latest_sequence: Some(sequence),
+            active_work_item: session.active_work_item(),
+            plan_revision: session.current_plan_revision(),
+            presentation_deleted: false,
+        },
+    )?;
+    let entry = AgentSessionEntry::new(
+        session.id(),
+        sequence,
+        AgentSessionEntryKind::AssistantSummary,
+        AgentSessionText::try_from_string(command_clarification_question(command).to_owned())
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+        completed_at,
+        None,
+        None,
+        None,
+    );
+    validate_agent_session_transition(session, &next)?;
+    store
+        .append_session_revision(project, session.revision(), &next, Some(&entry), None)
+        .await?;
+    report_progress(context, CONVERSATION_PROGRESS_TOTAL)?;
+    Ok(JobCompletion::Succeeded)
+}
+
+const fn command_clarification_question(command: SlashCommand) -> &'static str {
+    match command {
+        SlashCommand::Debug => {
+            "Welchen konkreten Fehler oder welches beobachtete Verhalten soll A^3 untersuchen?"
+        }
+        SlashCommand::Doc => {
+            "Welche Dokumentation oder welcher Codebereich soll erstellt beziehungsweise aktualisiert werden?"
+        }
+        SlashCommand::Refactor => {
+            "Welcher konkrete Codebereich soll verhaltenserhaltend überarbeitet werden?"
+        }
+        SlashCommand::Test => {
+            "Welches Verhalten oder welcher Codebereich soll durch Tests abgedeckt werden?"
+        }
+        _ => "Welches konkrete Ziel soll A^3 bearbeiten?",
+    }
+}
+
+fn restore_command_profile(
+    mode: AgentSessionMode,
+    message: &str,
+    stored: &a3_application::AgentSessionCommandPresentation,
+) -> Result<SlashCommandExecutionProfile, AgentSessionManagerFailure> {
+    let ParsedSlashCommand::Command(invocation) = parse_slash_command(mode, message)
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?
+    else {
+        return Err(AgentSessionManagerFailure::InvalidOutput);
+    };
+    if invocation.primary() != stored.primary()
+        || invocation.lenses() != stored.lenses()
+        || invocation.depth() != stored.depth()
+    {
+        return Err(AgentSessionManagerFailure::InvalidOutput);
+    }
+    Ok(SlashCommandExecutionProfile::resolve(invocation))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2588,6 +3488,7 @@ async fn complete_scheduled_session(
     reporter: Option<Arc<AgentSessionRunReporter>>,
     researcher: Option<AgentAskResearcher>,
     depth: AgentResearchDepth,
+    command_profile: Option<SlashCommandExecutionProfile>,
     context: JobContext,
 ) -> JobCompletion {
     let recovery_store = Arc::clone(&store);
@@ -2606,6 +3507,7 @@ async fn complete_scheduled_session(
         reporter,
         researcher,
         depth,
+        command_profile,
         &context,
     )
     .await
@@ -2648,8 +3550,26 @@ async fn complete_scheduled_session_inner(
     reporter: Option<Arc<AgentSessionRunReporter>>,
     researcher: Option<AgentAskResearcher>,
     depth: AgentResearchDepth,
+    command_profile: Option<SlashCommandExecutionProfile>,
     context: &JobContext,
 ) -> Result<JobCompletion, AgentSessionManagerFailure> {
+    if context.cancellation_token().is_cancelled() {
+        return Err(AgentSessionManagerFailure::Unavailable);
+    }
+    if let Some(profile) = command_profile.as_ref()
+        && profile.invocation().subject().is_empty()
+        && profile.invocation().empty_input_behavior() == SlashCommandEmptyInput::Clarify
+    {
+        return complete_command_clarification(
+            store.as_ref(),
+            &project,
+            &session,
+            user_sequence,
+            profile.invocation().primary(),
+            context,
+        )
+        .await;
+    }
     report_progress(context, 0)?;
     let index_control = ConversationIndexControl { context };
     let research_store = researcher.as_ref().map(|value| Arc::clone(&value.trace));
@@ -2666,6 +3586,7 @@ async fn complete_scheduled_session_inner(
                 depth,
                 &objective,
                 &transcript,
+                command_profile.as_ref(),
                 context,
             )
             .await?,
@@ -2787,14 +3708,19 @@ async fn complete_scheduled_session_inner(
                                 .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
                             Some(
                                 materializer
-                                    .materialize(
-                                        &project,
-                                        &objective,
-                                        &content,
+                                    .materialize(AgentTaskMaterialization {
+                                        project: &project,
+                                        objective: &objective,
+                                        reviewed_plan: &content,
                                         profile,
-                                        research_result.as_ref().map(|result| &result.handoff),
-                                        &index_control,
-                                    )
+                                        research_handoff: research_result
+                                            .as_ref()
+                                            .map(|result| &result.handoff),
+                                        verification_profile: command_profile
+                                            .as_ref()
+                                            .map(SlashCommandExecutionProfile::verification_profile),
+                                        control: &index_control,
+                                    })
                                     .await?,
                             )
                         }
@@ -2880,6 +3806,7 @@ async fn complete_scheduled_session_inner(
                 &assistant_entry,
                 &result.terminal_event,
                 &result.citations,
+                &result.diagrams,
             )
             .await
         {
@@ -2926,6 +3853,7 @@ async fn complete_scheduled_session_inner(
                 session.revision(),
                 &final_session,
                 Some(&assistant_entry),
+                None,
             )
             .await?;
     }
@@ -3006,7 +3934,13 @@ async fn settle_unfinished_conversation(
         );
         validate_agent_session_transition(detail.session(), &next)?;
         match store
-            .append_session_revision(project, detail.session().revision(), &next, Some(&entry))
+            .append_session_revision(
+                project,
+                detail.session().revision(),
+                &next,
+                Some(&entry),
+                None,
+            )
             .await
         {
             Ok(()) => return Ok(()),
@@ -3117,6 +4051,33 @@ fn verification_requirement(
         .map_err(|_| AgentSessionManagerFailure::InvalidOutput)
 }
 
+const fn verification_command_order(
+    profile: SlashCommandVerificationProfile,
+) -> &'static [DiscoveredCommandKind] {
+    match profile {
+        SlashCommandVerificationProfile::EvidenceOnly
+        | SlashCommandVerificationProfile::Review
+        | SlashCommandVerificationProfile::BehaviorPreservation => &[
+            DiscoveredCommandKind::Test,
+            DiscoveredCommandKind::Lint,
+            DiscoveredCommandKind::Build,
+            DiscoveredCommandKind::Format,
+        ],
+        SlashCommandVerificationProfile::Repair | SlashCommandVerificationProfile::Tests => &[
+            DiscoveredCommandKind::Test,
+            DiscoveredCommandKind::Build,
+            DiscoveredCommandKind::Lint,
+            DiscoveredCommandKind::Format,
+        ],
+        SlashCommandVerificationProfile::Documentation => &[
+            DiscoveredCommandKind::Lint,
+            DiscoveredCommandKind::Build,
+            DiscoveredCommandKind::Test,
+            DiscoveredCommandKind::Format,
+        ],
+    }
+}
+
 fn bounded_text(value: &str, max_bytes: usize) -> String {
     let value = value.trim();
     if value.len() <= max_bytes {
@@ -3128,6 +4089,70 @@ fn bounded_text(value: &str, max_bytes: usize) -> String {
         end = end.saturating_sub(1);
     }
     format!("{}{suffix}", &value[..end])
+}
+
+fn materialization_step_outcomes(reviewed_plan: &str, split_command_plan: bool) -> Vec<String> {
+    if !split_command_plan {
+        return vec![bounded_text(reviewed_plan, 8 * 1_024)];
+    }
+    let mut in_changes = false;
+    let mut current: Option<String> = None;
+    let mut outcomes = Vec::new();
+    for line in reviewed_plan.lines() {
+        let normalized_heading = line.trim_start_matches('#').trim();
+        if normalized_heading.eq_ignore_ascii_case("Implementation Changes") {
+            in_changes = true;
+            continue;
+        }
+        if !in_changes {
+            continue;
+        }
+        if line.trim_start().starts_with('#')
+            || ["Summary", "Interfaces", "Test Plan", "Assumptions"]
+                .iter()
+                .any(|heading| normalized_heading.eq_ignore_ascii_case(heading))
+        {
+            break;
+        }
+        if let Some(item) = top_level_markdown_item(line) {
+            if let Some(previous) = current.take() {
+                outcomes.push(bounded_text(&previous, 8 * 1_024));
+            }
+            current = Some(item.trim().to_owned());
+        } else if let Some(current) = current.as_mut()
+            && !line.trim().is_empty()
+        {
+            current.push('\n');
+            current.push_str(line.trim());
+        }
+    }
+    if let Some(last) = current {
+        outcomes.push(bounded_text(&last, 8 * 1_024));
+    }
+    let mut seen = BTreeSet::new();
+    outcomes.retain(|outcome| !outcome.is_empty() && seen.insert(outcome.clone()));
+    if outcomes.is_empty() || outcomes.len() > 64 {
+        vec![bounded_text(reviewed_plan, 8 * 1_024)]
+    } else {
+        outcomes
+    }
+}
+
+fn top_level_markdown_item(line: &str) -> Option<&str> {
+    if line.trim_start() != line {
+        return None;
+    }
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(item) = line.strip_prefix(marker) {
+            return Some(item);
+        }
+    }
+    let (number, item) = line.split_once(". ")?;
+    if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(item)
+    } else {
+        None
+    }
 }
 
 fn utf8_prefix(value: &str, maximum_bytes: usize) -> &str {
@@ -3222,9 +4247,86 @@ fn public_note(
     .map_err(|_| AgentSessionManagerFailure::InvalidOutput)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn compile_diagram_artifacts(
+    runtime: &AgentConversationRuntime,
+    command_profile: Option<&SlashCommandExecutionProfile>,
+    transcript: &mut Vec<(ModelMessageRole, String)>,
+    state: &AskResearchWorkingSet,
+    controller: &mut BoundedResearchController,
+    started: Instant,
+    control: &JobContext,
+) -> Result<Vec<EvidenceDiagramArtifact>, AgentSessionManagerFailure> {
+    if command_profile.is_none_or(|profile| profile.invocation().primary() != SlashCommand::Diagram)
+    {
+        return Ok(Vec::new());
+    }
+    loop {
+        controller
+            .begin_decision(elapsed_millis(started))
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        let remaining = controller
+            .limits()
+            .duration_millis()
+            .saturating_sub(elapsed_millis(started));
+        if remaining == 0 {
+            return Err(AgentSessionManagerFailure::Unavailable);
+        }
+        let raw = tokio::time::timeout(
+            Duration::from_millis(remaining),
+            runtime.complete_evidence_diagrams(transcript, control),
+        )
+        .await
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+        .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
+        let diagrams = DecodeEvidenceDiagrams.decode(&raw).ok().and_then(|drafts| {
+            drafts
+                .into_iter()
+                .map(|draft| {
+                    let mut source_ids = Vec::new();
+                    for ordinal in draft.source_ordinals() {
+                        let source_id = state
+                            .sources
+                            .get(usize::from(ordinal.saturating_sub(1)))
+                            .map(AskResearchSource::id)?;
+                        if !source_ids.contains(&source_id) {
+                            source_ids.push(source_id);
+                        }
+                    }
+                    if source_ids.is_empty() {
+                        return None;
+                    }
+                    Some((draft, source_ids))
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        if let Some(diagrams) = diagrams {
+            return diagrams
+                .into_iter()
+                .map(|(draft, source_ids)| {
+                    Ok(EvidenceDiagramArtifact::new(
+                        AgentDiagramArtifactId::from_bytes(random_id()?),
+                        &draft,
+                        source_ids,
+                    ))
+                })
+                .collect();
+        }
+        controller
+            .use_repair()
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        transcript.push((
+            ModelMessageRole::User,
+            "The previous diagram object violated the strict typed schema or cited an unavailable source. Return one corrected object only; do not add Mermaid or prose."
+                .to_owned(),
+        ));
+    }
+}
+
 fn awaiting_continuation(
     turn: &AskResearchTurn,
     state: &AskResearchWorkingSet,
+    command_profile: Option<&SlashCommandExecutionProfile>,
 ) -> Result<AskResearchResult, AgentSessionManagerFailure> {
     let terminal_event = research_event(
         turn.session_id(),
@@ -3239,15 +4341,17 @@ fn awaiting_continuation(
     Ok(AskResearchResult {
         markdown: "Die Recherche hat den verfügbaren Rahmen erreicht. Die bisher gefundenen Quellen bleiben erhalten. Mit „Recherche fortsetzen“ kann A^3 den aktuellen Projektstand neu binden und gezielt weiterarbeiten.".to_owned(),
         citations: Vec::new(),
+        diagrams: Vec::new(),
         terminal_event,
         awaiting_continuation: true,
-        handoff: research_handoff(turn, state)?,
+        handoff: research_handoff(turn, state, command_profile)?,
     })
 }
 
 fn research_handoff(
     turn: &AskResearchTurn,
     state: &AskResearchWorkingSet,
+    command_profile: Option<&SlashCommandExecutionProfile>,
 ) -> Result<ResearchHandoff, AgentSessionManagerFailure> {
     let mut revisions = Vec::new();
     for source in &state.sources {
@@ -3255,8 +4359,12 @@ fn research_handoff(
             revisions.push(source.revision().clone());
         }
     }
-    ResearchHandoff::new(turn.index_run_id(), turn.snapshot_id(), revisions)
-        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)
+    let handoff = ResearchHandoff::new(turn.index_run_id(), turn.snapshot_id(), revisions)
+        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+    Ok(match command_profile {
+        Some(profile) => handoff.with_command(profile.invocation().clone()),
+        None => handoff,
+    })
 }
 
 fn elapsed_millis(started: Instant) -> u64 {
@@ -3273,6 +4381,7 @@ async fn ask_decision(
     controller: &mut BoundedResearchController,
     started: Instant,
     source_count: usize,
+    command_profile: Option<&SlashCommandExecutionProfile>,
 ) -> Result<Option<a3_application::AskResearchDecision>, AgentSessionManagerFailure> {
     let mut permission = initial_permission;
     loop {
@@ -3290,6 +4399,7 @@ async fn ask_decision(
                 mode,
                 permission == BeginResearchDecision::SearchAllowed,
                 transcript,
+                command_profile.map(|profile| profile.system_constraint(mode)),
                 control,
             ),
         )
@@ -3758,23 +4868,28 @@ impl Drop for AgentSessionManager {
 mod tests {
     use super::{
         AgentConversationFailure, ConversationTaskLensControl, ConversationTerminal,
-        PlanConversationResponse, classify_plan_response, model_safe_path,
-        presentation_can_be_hidden, response_requires_citations, safe_failure_message,
-        settle_unfinished_conversation, visible_research_query,
+        PlanConversationResponse, classify_plan_response, command_clarification_question,
+        command_message, materialization_step_outcomes, model_safe_path,
+        parse_working_change_paths, presentation_can_be_hidden, read_bounded_process_output,
+        response_requires_citations, restore_command_profile, safe_failure_message,
+        settle_unfinished_conversation, verification_command_order, visible_research_query,
     };
     use a3_application::{
-        AgentSessionDetail, AgentSessionListQuery, AgentSessionPage, AgentSessionStore,
-        AgentSessionStoreFailure, AgentSessionStoreFuture, JobClock, JobCompletion, JobContext,
-        JobEventKind, JobScheduler, JobSchedulerConfig, JobTimestamp, TaskLensControl,
+        AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery,
+        AgentSessionPage, AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture,
+        JobClock, JobCompletion, JobContext, JobEventKind, JobScheduler, JobSchedulerConfig,
+        JobTimestamp, TaskLensControl,
     };
     use a3_domain::{
         AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
         AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-        AgentSessionTimestamp, AgentSessionTitle, JobId, JobOwner, Progress, ProjectIdentity,
-        RepositoryId, RepositoryIdentity, RepositoryPath, WorktreeAnchorId, WorktreeId,
-        WorktreeIdentity,
+        AgentSessionTimestamp, AgentSessionTitle, DiscoveredCommandKind, JobId, JobOwner, Progress,
+        ProjectIdentity, RepositoryId, RepositoryIdentity, RepositoryPath, SlashCommand,
+        SlashCommandCatalogVersion, SlashCommandLens, SlashCommandVerificationProfile,
+        WorktreeAnchorId, WorktreeId, WorktreeIdentity,
     };
     use futures::executor::block_on;
+    use std::io::Cursor;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -3785,6 +4900,25 @@ mod tests {
             classify_plan_response(&format!("PLAN:\n{plan}")),
             PlanConversationResponse::Plan(plan.to_owned())
         );
+    }
+
+    #[test]
+    fn command_plan_materializes_each_top_level_change_as_one_bounded_step() {
+        let plan = "## Summary\nReview\n## Implementation Changes\n- [High] Fix path validation.\n  - Keep the canonical root check.\n- [Medium] Close the race before writing.\n## Interfaces\nNone\n## Test Plan\nRun tests\n## Assumptions\nCurrent index";
+        assert_eq!(
+            materialization_step_outcomes(plan, true),
+            vec![
+                "[High] Fix path validation.\n- Keep the canonical root check.",
+                "[Medium] Close the race before writing.",
+            ]
+        );
+        assert_eq!(materialization_step_outcomes(plan, false), vec![plan]);
+    }
+
+    #[test]
+    fn command_plan_without_structured_change_items_remains_one_safe_step() {
+        let plan = "## Summary\nReview\n## Implementation Changes\nNo confirmed change is required.\n## Interfaces\nNone\n## Test Plan\nRun tests\n## Assumptions\nCurrent index";
+        assert_eq!(materialization_step_outcomes(plan, true), vec![plan]);
     }
 
     #[test]
@@ -3816,6 +4950,103 @@ mod tests {
             AgentSessionMode::Plan,
             "QUESTION: Welche Plattform ist relevant?"
         ));
+    }
+
+    #[test]
+    fn persisted_command_profile_is_revalidated_before_plan_materialization()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stored = AgentSessionCommandPresentation::restore(
+            AgentSessionSequence::FIRST,
+            SlashCommandCatalogVersion::V1,
+            SlashCommand::Review,
+            vec![SlashCommandLens::Security],
+            a3_domain::AgentResearchDepth::Thorough,
+        )?;
+        let profile = restore_command_profile(
+            AgentSessionMode::Plan,
+            "/review /security authentication",
+            &stored,
+        )?;
+        assert_eq!(
+            profile.verification_profile(),
+            SlashCommandVerificationProfile::Review
+        );
+        assert!(
+            restore_command_profile(AgentSessionMode::Plan, "/review authentication", &stored)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn command_verification_profiles_choose_only_supported_manifest_kinds() {
+        assert_eq!(
+            verification_command_order(SlashCommandVerificationProfile::Repair),
+            &[
+                DiscoveredCommandKind::Test,
+                DiscoveredCommandKind::Build,
+                DiscoveredCommandKind::Lint,
+                DiscoveredCommandKind::Format,
+            ]
+        );
+        assert_eq!(
+            verification_command_order(SlashCommandVerificationProfile::Documentation)[0],
+            DiscoveredCommandKind::Lint
+        );
+    }
+
+    #[test]
+    fn empty_target_clarification_retains_command_and_lenses_on_follow_up()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stored = AgentSessionCommandPresentation::restore(
+            AgentSessionSequence::FIRST,
+            SlashCommandCatalogVersion::V1,
+            SlashCommand::Doc,
+            vec![SlashCommandLens::Architecture],
+            a3_domain::AgentResearchDepth::Thorough,
+        )?;
+        let profile =
+            restore_command_profile(AgentSessionMode::Agent, "/doc /architecture", &stored)?;
+        let (text, depth, resumed) = command_message(
+            AgentSessionMode::Agent,
+            profile,
+            "die öffentliche API in src/lib.rs",
+        )?;
+        let resumed = resumed.ok_or("command profile missing")?;
+        assert_eq!(
+            text.as_str(),
+            "/doc /architecture die öffentliche API in src/lib.rs"
+        );
+        assert_eq!(depth, a3_domain::AgentResearchDepth::Thorough);
+        assert_eq!(
+            resumed.invocation().lenses(),
+            &[SlashCommandLens::Architecture]
+        );
+        assert_eq!(
+            command_clarification_question(SlashCommand::Doc),
+            "Welche Dokumentation oder welcher Codebereich soll erstellt beziehungsweise aktualisiert werden?"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn working_change_metadata_is_bounded_and_rename_origins_are_not_treated_as_targets()
+    -> Result<(), std::io::Error> {
+        let parsed =
+            parse_working_change_paths(b" M src/lib.rs\0R  src/new.rs\0src/old.rs\0?? notes.md\0");
+        assert_eq!(
+            parsed.paths,
+            vec![
+                b"notes.md".to_vec(),
+                b"src/lib.rs".to_vec(),
+                b"src/new.rs".to_vec()
+            ]
+        );
+        assert!(!parsed.limited);
+
+        let retained = read_bounded_process_output(Cursor::new(vec![7_u8; 64]), 9)?;
+        assert_eq!(retained, vec![7_u8; 9]);
+        Ok(())
     }
 
     #[test]
@@ -3995,6 +5226,7 @@ mod tests {
             _project: &'a ProjectIdentity,
             _session: &'a AgentSession,
             _first_entry: Option<&'a AgentSessionEntry>,
+            _command: Option<&'a a3_domain::SlashCommandInvocation>,
         ) -> AgentSessionStoreFuture<'a, ()> {
             Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
         }
@@ -4005,6 +5237,7 @@ mod tests {
             expected_revision: AgentSessionRevision,
             session: &'a AgentSession,
             entry: Option<&'a AgentSessionEntry>,
+            _command: Option<&'a a3_domain::SlashCommandInvocation>,
         ) -> AgentSessionStoreFuture<'a, ()> {
             Box::pin(async move {
                 let mut value = self.value.lock().unwrap_or_else(|error| error.into_inner());
@@ -4035,6 +5268,17 @@ mod tests {
             _limit: u16,
         ) -> AgentSessionStoreFuture<'a, Option<AgentSessionDetail>> {
             Box::pin(async move { Ok(Some(self.detail())) })
+        }
+
+        fn load_session_commands<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+            _before_sequence: Option<u64>,
+            _limit: u16,
+        ) -> AgentSessionStoreFuture<'a, Vec<a3_application::AgentSessionCommandPresentation>>
+        {
+            Box::pin(async { Ok(Vec::new()) })
         }
 
         fn delete_presentation<'a>(

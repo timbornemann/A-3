@@ -64,6 +64,7 @@ dependencies = [
  "a3-repo-index",
  "a3-storage-libsql",
  "a3-workspace",
+ "base64 0.22.1",
  "blake3",
  "crossbeam-channel",
  "futures",
