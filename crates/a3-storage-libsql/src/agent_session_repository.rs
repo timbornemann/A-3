@@ -1,14 +1,16 @@
 use crate::catalog::is_corruption;
 use a3_application::{
     AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
-    AgentSessionStoreFailure,
+    AgentSessionQueue, AgentSessionStoreFailure,
 };
 use a3_domain::{
-    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
-    AgentSessionMode, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
-    AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
-    SlashCommand, SlashCommandCatalogVersion, SlashCommandEmptyInput, SlashCommandInvocation,
-    SlashCommandLens, TaskId, WorktreeId,
+    AgentQueuedMessage, AgentQueuedMessageId, AgentQueuedMessageState,
+    AgentQueuedResearchSelection, AgentResearchDepth, AgentSession, AgentSessionEntry,
+    AgentSessionEntryKind, AgentSessionId, AgentSessionMode, AgentSessionQueueRevision,
+    AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
+    AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId, SlashCommand,
+    SlashCommandCatalogVersion, SlashCommandEmptyInput, SlashCommandInvocation, SlashCommandLens,
+    TaskId, WorktreeId,
 };
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 
@@ -170,23 +172,240 @@ pub(crate) async fn delete_presentation(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(AgentSessionRepositoryError::Begin)?;
+    let result =
+        async {
+            require_latest_revision(&transaction, worktree_id, session_id, expected).await?;
+            insert_revision(&transaction, worktree_id, tombstone).await?;
+            transaction
+                .execute(
+                    "DELETE FROM agent_session_entries WHERE worktree_id = ?1 AND session_id = ?2",
+                    params![
+                        worktree_id.as_bytes().to_vec(),
+                        session_id.as_bytes().to_vec()
+                    ],
+                )
+                .await
+                .map_err(AgentSessionRepositoryError::Write)?;
+            transaction
+            .execute(
+                "DELETE FROM agent_message_queue_items WHERE worktree_id = ?1 AND session_id = ?2",
+                params![worktree_id.as_bytes().to_vec(), session_id.as_bytes().to_vec()],
+            )
+            .await
+            .map_err(AgentSessionRepositoryError::Write)?;
+            Ok(())
+        }
+        .await;
+    close(transaction, result).await
+}
+
+pub(crate) async fn enqueue_message(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    expected_session_revision: AgentSessionRevision,
+    message: &AgentQueuedMessage,
+) -> Result<AgentSessionQueue, AgentSessionRepositoryError> {
+    if message.state() != AgentQueuedMessageState::Queued || message.ordinal() == 0 {
+        return Err(AgentSessionRepositoryError::InvalidInput);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentSessionRepositoryError::Begin)?;
     let result = async {
-        require_latest_revision(&transaction, worktree_id, session_id, expected).await?;
-        insert_revision(&transaction, worktree_id, tombstone).await?;
+        require_latest_revision(
+            &transaction,
+            worktree_id,
+            message.session_id(),
+            expected_session_revision,
+        )
+        .await?;
+        let (session_count, session_bytes, worktree_count, worktree_bytes) =
+            queue_usage(&transaction, worktree_id, message.session_id()).await?;
+        if session_count >= 16
+            || session_bytes.saturating_add(message.text().as_str().len() as u64) > 1_048_576
+            || worktree_count >= 64
+            || worktree_bytes.saturating_add(message.text().as_str().len() as u64) > 4_194_304
+        {
+            return Err(AgentSessionRepositoryError::InvalidInput);
+        }
+        let expected_ordinal =
+            next_queue_ordinal(&transaction, worktree_id, message.session_id()).await?;
         transaction
             .execute(
-                "DELETE FROM agent_session_entries WHERE worktree_id = ?1 AND session_id = ?2",
+                "INSERT INTO agent_message_queue_items (
+                   worktree_id, session_id, queue_item_id, ordinal, target_mode,
+                   research_selection, message, enqueued_at_unix_millis
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     worktree_id.as_bytes().to_vec(),
-                    session_id.as_bytes().to_vec()
+                    message.session_id().as_bytes().to_vec(),
+                    message.id().as_bytes().to_vec(),
+                    u64_to_i64(expected_ordinal)?,
+                    encode_mode(message.target_mode()),
+                    encode_queue_research(message.research()),
+                    message.text().as_str(),
+                    u64_to_i64(message.enqueued_at().unix_millis())?,
                 ],
             )
             .await
             .map_err(AgentSessionRepositoryError::Write)?;
-        Ok(())
+        append_queue_event(
+            &transaction,
+            worktree_id,
+            message.session_id(),
+            Some(message.id()),
+            "queued",
+            message.enqueued_at().unix_millis(),
+        )
+        .await
     }
     .await;
-    close(transaction, result).await
+    close(transaction, result).await?;
+    load_message_queue(connection, worktree_id, message.session_id()).await
+}
+
+pub(crate) async fn load_message_queue(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<AgentSessionQueue, AgentSessionRepositoryError> {
+    let revision = current_queue_revision_connection(connection, worktree_id, session_id).await?;
+    let paused = current_queue_paused(connection, worktree_id, session_id).await?;
+    let mut rows = connection
+        .query(
+            "WITH latest AS (
+               SELECT queue_item_id, MAX(queue_revision) AS queue_revision
+               FROM agent_message_queue_events
+               WHERE worktree_id = ?1 AND session_id = ?2 AND queue_item_id IS NOT NULL
+               GROUP BY queue_item_id
+             )
+             SELECT i.queue_item_id, i.ordinal, i.target_mode, i.research_selection,
+               i.message, i.enqueued_at_unix_millis
+             FROM agent_message_queue_items i
+             JOIN latest l ON l.queue_item_id = i.queue_item_id
+             JOIN agent_message_queue_events e
+               ON e.worktree_id = i.worktree_id AND e.session_id = i.session_id
+               AND e.queue_item_id = i.queue_item_id AND e.queue_revision = l.queue_revision
+             WHERE i.worktree_id = ?1 AND i.session_id = ?2 AND e.state = 'queued'
+             ORDER BY i.ordinal ASC LIMIT 17",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    let mut messages = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+    {
+        let text = AgentSessionText::try_from_string(read_string(&row, 4)?)
+            .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)?;
+        messages.push(AgentQueuedMessage::from_parts(
+            AgentQueuedMessageId::from_bytes(read_id(&row, 0)?),
+            session_id,
+            read_u64(&row, 1)?,
+            decode_mode(&read_string(&row, 2)?)?,
+            decode_queue_research(&read_string(&row, 3)?)?,
+            text,
+            AgentSessionTimestamp::from_unix_millis(read_u64(&row, 5)?)
+                .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)?,
+            AgentQueuedMessageState::Queued,
+        ));
+    }
+    AgentSessionQueue::new(revision, paused, messages)
+        .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
+}
+
+pub(crate) async fn transition_queued_message(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    expected_queue_revision: AgentSessionQueueRevision,
+    message_id: AgentQueuedMessageId,
+    state: AgentQueuedMessageState,
+    occurred_at_unix_millis: u64,
+) -> Result<AgentSessionQueue, AgentSessionRepositoryError> {
+    let state = match state {
+        AgentQueuedMessageState::Started => "started",
+        AgentQueuedMessageState::Removed => "removed",
+        AgentQueuedMessageState::Queued => "queued",
+    };
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentSessionRepositoryError::Begin)?;
+    let result = async {
+        require_queue_revision(
+            &transaction,
+            worktree_id,
+            session_id,
+            expected_queue_revision,
+        )
+        .await?;
+        require_queue_item_state(
+            &transaction,
+            worktree_id,
+            session_id,
+            message_id,
+            if state == "queued" {
+                "started"
+            } else {
+                "queued"
+            },
+        )
+        .await?;
+        append_queue_event(
+            &transaction,
+            worktree_id,
+            session_id,
+            Some(message_id),
+            state,
+            occurred_at_unix_millis,
+        )
+        .await
+    }
+    .await;
+    close(transaction, result).await?;
+    load_message_queue(connection, worktree_id, session_id).await
+}
+
+pub(crate) async fn set_message_queue_paused(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    expected_queue_revision: AgentSessionQueueRevision,
+    paused: bool,
+    occurred_at_unix_millis: u64,
+) -> Result<AgentSessionQueue, AgentSessionRepositoryError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(AgentSessionRepositoryError::Begin)?;
+    let result = async {
+        require_queue_revision(
+            &transaction,
+            worktree_id,
+            session_id,
+            expected_queue_revision,
+        )
+        .await?;
+        append_queue_event(
+            &transaction,
+            worktree_id,
+            session_id,
+            None,
+            if paused { "paused" } else { "resumed" },
+            occurred_at_unix_millis,
+        )
+        .await
+    }
+    .await;
+    close(transaction, result).await?;
+    load_message_queue(connection, worktree_id, session_id).await
 }
 
 pub(crate) async fn list(
@@ -666,6 +885,252 @@ fn decode_kind(value: &str) -> Result<AgentSessionEntryKind, AgentSessionReposit
     }
 }
 
+const fn encode_queue_research(value: AgentQueuedResearchSelection) -> &'static str {
+    match value {
+        AgentQueuedResearchSelection::Standard => "standard",
+        AgentQueuedResearchSelection::Thorough => "thorough",
+        AgentQueuedResearchSelection::Command => "command",
+    }
+}
+
+fn decode_queue_research(
+    value: &str,
+) -> Result<AgentQueuedResearchSelection, AgentSessionRepositoryError> {
+    match value {
+        "standard" => Ok(AgentQueuedResearchSelection::Standard),
+        "thorough" => Ok(AgentQueuedResearchSelection::Thorough),
+        "command" => Ok(AgentQueuedResearchSelection::Command),
+        _ => Err(AgentSessionRepositoryError::InvalidStoredData),
+    }
+}
+
+async fn queue_usage(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<(u64, u64, u64, u64), AgentSessionRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "WITH latest AS (
+               SELECT session_id, queue_item_id, MAX(queue_revision) AS queue_revision
+               FROM agent_message_queue_events WHERE worktree_id = ?1 AND queue_item_id IS NOT NULL
+               GROUP BY session_id, queue_item_id
+             ), pending AS (
+               SELECT i.session_id, length(CAST(i.message AS BLOB)) AS message_bytes
+               FROM agent_message_queue_items i
+               JOIN latest l ON l.session_id = i.session_id AND l.queue_item_id = i.queue_item_id
+               JOIN agent_message_queue_events e
+                 ON e.worktree_id = i.worktree_id AND e.session_id = i.session_id
+                 AND e.queue_item_id = i.queue_item_id AND e.queue_revision = l.queue_revision
+               WHERE i.worktree_id = ?1 AND e.state = 'queued'
+             )
+             SELECT
+               COALESCE(SUM(CASE WHEN session_id = ?2 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN session_id = ?2 THEN message_bytes ELSE 0 END), 0),
+               COUNT(*), COALESCE(SUM(message_bytes), 0)
+             FROM pending",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+        .ok_or(AgentSessionRepositoryError::InvalidStoredData)?;
+    Ok((
+        read_u64(&row, 0)?,
+        read_u64(&row, 1)?,
+        read_u64(&row, 2)?,
+        read_u64(&row, 3)?,
+    ))
+}
+
+async fn next_queue_ordinal(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<u64, AgentSessionRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT COALESCE(MAX(ordinal), 0) FROM agent_message_queue_items
+             WHERE worktree_id = ?1 AND session_id = ?2",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    let value = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+        .ok_or(AgentSessionRepositoryError::InvalidStoredData)
+        .and_then(|row| read_u64(&row, 0))?;
+    value
+        .checked_add(1)
+        .ok_or(AgentSessionRepositoryError::InvalidInput)
+}
+
+async fn append_queue_event(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    message_id: Option<AgentQueuedMessageId>,
+    state: &str,
+    occurred_at_unix_millis: u64,
+) -> Result<(), AgentSessionRepositoryError> {
+    let revision = current_queue_revision_transaction(transaction, worktree_id, session_id)
+        .await?
+        .get()
+        .checked_add(1)
+        .ok_or(AgentSessionRepositoryError::InvalidInput)?;
+    transaction
+        .execute(
+            "INSERT INTO agent_message_queue_events (
+               worktree_id, session_id, queue_revision, queue_item_id, state,
+               occurred_at_unix_millis
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                u64_to_i64(revision)?,
+                message_id.map(|id| id.as_bytes().to_vec()),
+                state,
+                u64_to_i64(occurred_at_unix_millis)?,
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Write)?;
+    Ok(())
+}
+
+async fn require_queue_revision(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    expected: AgentSessionQueueRevision,
+) -> Result<(), AgentSessionRepositoryError> {
+    if current_queue_revision_transaction(transaction, worktree_id, session_id).await? == expected {
+        Ok(())
+    } else {
+        Err(AgentSessionRepositoryError::Conflict)
+    }
+}
+
+async fn require_queue_item_state(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    message_id: AgentQueuedMessageId,
+    expected_state: &str,
+) -> Result<(), AgentSessionRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT state FROM agent_message_queue_events
+             WHERE worktree_id = ?1 AND session_id = ?2 AND queue_item_id = ?3
+             ORDER BY queue_revision DESC LIMIT 1",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec(),
+                message_id.as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    match rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+    {
+        Some(row) if read_string(&row, 0)? == expected_state => Ok(()),
+        _ => Err(AgentSessionRepositoryError::Conflict),
+    }
+}
+
+async fn current_queue_revision_transaction(
+    transaction: &Transaction,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<AgentSessionQueueRevision, AgentSessionRepositoryError> {
+    let mut rows = transaction
+        .query(
+            "SELECT COALESCE(MAX(queue_revision), 0) FROM agent_message_queue_events
+             WHERE worktree_id = ?1 AND session_id = ?2",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    let revision = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+        .ok_or(AgentSessionRepositoryError::InvalidStoredData)
+        .and_then(|row| read_u64(&row, 0))?;
+    AgentSessionQueueRevision::new(revision)
+        .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
+}
+
+async fn current_queue_revision_connection(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<AgentSessionQueueRevision, AgentSessionRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT COALESCE(MAX(queue_revision), 0) FROM agent_message_queue_events
+             WHERE worktree_id = ?1 AND session_id = ?2",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    let revision = rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+        .ok_or(AgentSessionRepositoryError::InvalidStoredData)
+        .and_then(|row| read_u64(&row, 0))?;
+    AgentSessionQueueRevision::new(revision)
+        .map_err(|_| AgentSessionRepositoryError::InvalidStoredData)
+}
+
+async fn current_queue_paused(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> Result<bool, AgentSessionRepositoryError> {
+    let mut rows = connection
+        .query(
+            "SELECT state FROM agent_message_queue_events
+             WHERE worktree_id = ?1 AND session_id = ?2 AND state IN ('paused', 'resumed')
+             ORDER BY queue_revision DESC LIMIT 1",
+            params![
+                worktree_id.as_bytes().to_vec(),
+                session_id.as_bytes().to_vec()
+            ],
+        )
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?;
+    match rows
+        .next()
+        .await
+        .map_err(AgentSessionRepositoryError::Read)?
+    {
+        Some(row) => Ok(read_string(&row, 0)? == "paused"),
+        None => Ok(false),
+    }
+}
+
 fn read_string(row: &libsql::Row, index: i32) -> Result<String, AgentSessionRepositoryError> {
     row.get(index).map_err(AgentSessionRepositoryError::Read)
 }
@@ -776,13 +1241,17 @@ impl AgentSessionRepositoryError {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentSessionRepositoryError, append, create, delete_presentation, list, load, load_commands,
+        AgentSessionRepositoryError, append, create, delete_presentation, enqueue_message, list,
+        load, load_commands, load_message_queue, set_message_queue_paused,
+        transition_queued_message,
     };
     use a3_application::AgentSessionListQuery;
     use a3_domain::{
-        AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
-        AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
-        AgentSessionTimestamp, AgentSessionTitle, ParsedSlashCommand, parse_slash_command,
+        AgentQueuedMessage, AgentQueuedMessageId, AgentQueuedMessageState,
+        AgentQueuedResearchSelection, AgentSession, AgentSessionEntry, AgentSessionEntryKind,
+        AgentSessionId, AgentSessionMode, AgentSessionQueueRevision, AgentSessionRevision,
+        AgentSessionSequence, AgentSessionState, AgentSessionText, AgentSessionTimestamp,
+        AgentSessionTitle, ParsedSlashCommand, parse_slash_command,
     };
 
     #[test]
@@ -964,6 +1433,137 @@ mod tests {
             );
             Ok::<(), Box<dyn std::error::Error>>(())
         })
+    }
+
+    #[test]
+    fn durable_queue_preserves_fifo_supports_retry_and_requires_exact_revisions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let worktree_id = a3_domain::WorktreeId::from_bytes([12; 32]);
+            crate::migration::migrate_knowledge(&connection, &[11; 32], worktree_id.as_bytes())
+                .await?;
+            let session_id = AgentSessionId::from_bytes([13; 32]);
+            let completed = session(
+                session_id,
+                1,
+                AgentSessionState::Completed,
+                10,
+                None,
+                None,
+                false,
+            )?;
+            create(&connection, worktree_id, &completed, None, None)
+                .await
+                .map_err(|error| error.classify())?;
+
+            let first = queued_message(session_id, 1, 14, AgentSessionMode::Ask, "Erste Frage")?;
+            let first_queue = enqueue_message(
+                &connection,
+                worktree_id,
+                AgentSessionRevision::INITIAL,
+                &first,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert_eq!(first_queue.revision().get(), 1);
+            let second =
+                queued_message(session_id, 2, 15, AgentSessionMode::Plan, "Zweiter Auftrag")?;
+            let second_queue = enqueue_message(
+                &connection,
+                worktree_id,
+                AgentSessionRevision::INITIAL,
+                &second,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert_eq!(
+                second_queue
+                    .messages()
+                    .iter()
+                    .map(AgentQueuedMessage::id)
+                    .collect::<Vec<_>>(),
+                vec![first.id(), second.id()]
+            );
+
+            let claimed = transition_queued_message(
+                &connection,
+                worktree_id,
+                session_id,
+                second_queue.revision(),
+                first.id(),
+                AgentQueuedMessageState::Started,
+                13,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert_eq!(claimed.messages().len(), 1);
+            assert_eq!(claimed.messages()[0].id(), second.id());
+            assert!(matches!(
+                transition_queued_message(
+                    &connection,
+                    worktree_id,
+                    session_id,
+                    AgentSessionQueueRevision::new(2)?,
+                    second.id(),
+                    AgentQueuedMessageState::Removed,
+                    14,
+                )
+                .await,
+                Err(AgentSessionRepositoryError::Conflict)
+            ));
+
+            let retried = transition_queued_message(
+                &connection,
+                worktree_id,
+                session_id,
+                claimed.revision(),
+                first.id(),
+                AgentQueuedMessageState::Queued,
+                15,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert_eq!(retried.messages().len(), 2);
+            let paused = set_message_queue_paused(
+                &connection,
+                worktree_id,
+                session_id,
+                retried.revision(),
+                true,
+                16,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            assert!(paused.paused());
+            assert_eq!(
+                load_message_queue(&connection, worktree_id, session_id)
+                    .await
+                    .map_err(|error| error.classify())?,
+                paused
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    fn queued_message(
+        session_id: AgentSessionId,
+        ordinal: u64,
+        id_byte: u8,
+        target_mode: AgentSessionMode,
+        text: &str,
+    ) -> Result<AgentQueuedMessage, Box<dyn std::error::Error>> {
+        Ok(AgentQueuedMessage::from_parts(
+            AgentQueuedMessageId::from_bytes([id_byte; 32]),
+            session_id,
+            ordinal,
+            target_mode,
+            AgentQueuedResearchSelection::Standard,
+            AgentSessionText::try_from_string(text.to_owned())?,
+            AgentSessionTimestamp::from_unix_millis(ordinal.saturating_add(10))?,
+            AgentQueuedMessageState::Queued,
+        ))
     }
 
     fn session(

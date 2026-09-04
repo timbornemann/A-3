@@ -74,9 +74,11 @@ pub use agent_run::{
     RunEventSubject, RunPayloadDigest,
 };
 pub use agent_session::{
-    AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionMode, AgentSessionRevision,
-    AgentSessionRevisionError, AgentSessionSequence, AgentSessionState, AgentSessionText,
-    AgentSessionTextError, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem,
+    AgentQueuedMessage, AgentQueuedMessageState, AgentQueuedResearchSelection, AgentSession,
+    AgentSessionEntry, AgentSessionEntryKind, AgentSessionMode, AgentSessionQueueRevision,
+    AgentSessionRevision, AgentSessionRevisionError, AgentSessionSequence, AgentSessionState,
+    AgentSessionText, AgentSessionTextError, AgentSessionTimestamp, AgentSessionTitle,
+    AgentWorkItem,
 };
 pub use agent_tool::{
     AgentMutationAttempt, AgentMutationAttemptError, AgentMutationDisposition, AgentMutationKind,
@@ -166,11 +168,12 @@ pub use graph_retrieval::{
     TraversalResultLimit, TraversalResultLimitError,
 };
 pub use id::{
-    AcceptanceCriterionId, AgentDiagramArtifactId, AgentRunId, AgentSessionId, AgentWorkItemId,
-    ApprovalId, ApprovalRequestId, AskResearchSourceId, CommandCatalogId, DeepMapRunId,
-    DiscoveredCommandId, IndexRunId, PolicyDecisionId, PolicyResourceId, ProjectId, RemoteIdentity,
-    RepositoryId, RunEventId, SnapshotId, StepVerificationId, TaskEvidenceId, TaskId, TaskStepId,
-    ToolRunId, VerificationRunId, VerificationSpecId, WorktreeAnchorId, WorktreeId,
+    AcceptanceCriterionId, AgentDiagramArtifactId, AgentQueuedMessageId, AgentRunId,
+    AgentSessionId, AgentWorkItemId, ApprovalId, ApprovalRequestId, AskResearchSourceId,
+    CommandCatalogId, DeepMapRunId, DiscoveredCommandId, IndexRunId, PolicyDecisionId,
+    PolicyResourceId, ProjectId, RemoteIdentity, RepositoryId, RunEventId, SnapshotId,
+    StepVerificationId, TaskEvidenceId, TaskId, TaskStepId, ToolRunId, VerificationRunId,
+    VerificationSpecId, WorktreeAnchorId, WorktreeId,
 };
 pub use index_analysis::{IndexedFileAnalysis, IndexedFileAnalysisError};
 pub use index_run::{

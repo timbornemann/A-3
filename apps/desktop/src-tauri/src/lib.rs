@@ -101,13 +101,14 @@ use a3_application::{
 use a3_credentials::NativeProviderCredentialStore;
 use a3_domain::{
     AcceptanceCriterionId, AcceptanceCriterionRequirement, AcceptanceCriterionStatement,
-    AgentControllerState, AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId,
-    AgentSessionMode, AgentSessionRevision, AgentSessionState, AgentTurnActionClass,
-    AgentTurnRepairUsage, ApplicationVersion, ApplicationVersionError, DeepMapDiagnosticCode,
-    DeepMapEventSequence, DeepMapMode, DeepMapRunId, ExactSearchExplanation, ExactSearchTarget,
-    ExploreBudget, FileRevision, FusionPriority, GitHead, GoalConstraint, GoalContract,
-    GoalContractRevision, GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol,
-    GraphTraversalResult, Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
+    AgentControllerState, AgentQueuedMessageId, AgentSession, AgentSessionEntry,
+    AgentSessionEntryKind, AgentSessionId, AgentSessionMode, AgentSessionQueueRevision,
+    AgentSessionRevision, AgentSessionState, AgentTurnActionClass, AgentTurnRepairUsage,
+    ApplicationVersion, ApplicationVersionError, DeepMapDiagnosticCode, DeepMapEventSequence,
+    DeepMapMode, DeepMapRunId, ExactSearchExplanation, ExactSearchTarget, ExploreBudget,
+    FileRevision, FusionPriority, GitHead, GoalConstraint, GoalContract, GoalContractRevision,
+    GoalObjective, GoalRevisionReason, GraphEdge, GraphEndpoint, GraphSymbol, GraphTraversalResult,
+    Health, IndexLanguage, IndexRunId, IndexRunStatus, InvalidationReason,
     LexicalSearchExplanation, LinkResolution, ModuleCardEvidenceId, ModuleCardField, ModuleCardId,
     ModuleClaimPolarity, ModuleClaimPredicate, ModuleId, ModuleKind, ModuleRoot, NonGoal,
     ParseDiagnosticCode, ParseDiagnosticSeverity, Platform, Progress, ProjectId, ProjectIdentity,
@@ -126,38 +127,41 @@ use a3_protocol::{
     AgentApprovalResultV1, AgentApprovalRuntimeStartV1, AgentControllerStateV1,
     AgentGoalContractV1, AgentGoalCriterionInputV1, AgentGoalCriterionRequirementV1,
     AgentGoalCriterionV1, AgentGoalDraftInputV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentSelectedActionV1,
-    AgentSessionCommandChipsV1, AgentSessionEntryAugmentationV1, AgentSessionEntryKindV1,
-    AgentSessionEntryV1, AgentSessionModeV1, AgentSessionResponseV1, AgentSessionResponseV2,
-    AgentSessionResultV2, AgentSessionStateV1, AgentSessionSummaryV1, AgentSessionV1,
-    AgentSessionV2, AgentSessionsResponseV1, AgentTaskControlAcceptedOutcomeV1,
-    AgentTaskControlActionV1, AgentTaskControlOutcomeV1, AgentTaskControlResponseV1,
-    AgentTaskControlResultV1, AgentTaskRecoveryResponseV1, AgentTaskRecoveryResultV1,
-    AgentTaskRecoveryV1, AgentTaskRuntimeStartV1, AgentTaskRuntimeStateV1, AgentTaskRuntimeV1,
-    CommandErrorV1, CompileTaskLensRequestV1, DeepMapActivityStateV1, DeepMapActivityV2,
-    DeepMapBudgetV1, DeepMapCompactProgressV3, DeepMapConfigurationV1, DeepMapControlResponseV1,
-    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2,
-    DeepMapFailureV1, DeepMapFailureV3, DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1,
-    DeepMapPhaseV2, DeepMapProgressV1, DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1,
-    DeepMapRunV1, DeepMapSafeActionV2, DeepMapStartResponseV2, DeepMapStatusResponseV2,
-    DeepMapStatusResponseV3, DeepMapTargetKindV2, ErrorCodeV1, GitHeadV1, HealthResponseV1,
-    IndexActivityResponseV1, IndexActivityStateV1, IndexActivityV1, IndexDiagnosticCodeV1,
-    IndexDiagnosticSeverityV1, IndexDiagnosticV1, IndexFileDiagnosticsV1, IndexLanguageV1,
-    IndexOverviewCountsV1, IndexOverviewResponseV1, IndexOverviewV1, IndexPhaseV1, IndexStateV1,
-    ModuleCardClaimKindV1, ModuleCardClaimStateV1, ModuleCardClaimV1, ModuleCardCoverageBandV1,
-    ModuleCardCoverageV1, ModuleCardDetailFieldV1, ModuleCardDetailResponseV1, ModuleCardDetailV1,
-    ModuleCardEvidenceFreshnessV1, ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1,
-    ModuleCardEvidenceResponseV1, ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1,
-    ModuleCardFieldKindV1, ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1,
-    ModuleCardFreshnessReasonV1, ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1,
-    ModuleCardFreshnessV1, ModuleCardLifecycleV1, ModuleCardValueV1,
-    ModuleDependencyEdgeEvidenceV1, ModuleDependencyEdgeV1, ModuleDependencyEndpointV1,
-    ModuleDependencyGraphResponseV1, ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1,
-    ModuleDependencyNodeV1, ModuleDependencyProviderV1, ModuleDependencyRelationV1,
-    ModuleDependencyResolutionV1, ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1,
-    ModuleRuntimeFlowEdgeV1, ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1,
-    ModuleRuntimeFlowRelationV1, ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1,
-    ModuleRuntimeFlowV1, ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentMessageSubmissionOutcomeV1,
+    AgentPlanStartOutcomeV1, AgentPlanStartResponseV1, AgentPlanStartResultV1,
+    AgentQueuedMessageSummaryV1, AgentSelectedActionV1, AgentSessionCommandChipsV1,
+    AgentSessionEntryAugmentationV1, AgentSessionEntryKindV1, AgentSessionEntryV1,
+    AgentSessionModeOptionV1, AgentSessionModeV1, AgentSessionResponseV1, AgentSessionResponseV2,
+    AgentSessionResponseV3, AgentSessionResultV2, AgentSessionResultV3, AgentSessionStateV1,
+    AgentSessionSummaryV1, AgentSessionV1, AgentSessionV2, AgentSessionV3, AgentSessionsResponseV1,
+    AgentTaskControlAcceptedOutcomeV1, AgentTaskControlActionV1, AgentTaskControlOutcomeV1,
+    AgentTaskControlResponseV1, AgentTaskControlResultV1, AgentTaskRecoveryResponseV1,
+    AgentTaskRecoveryResultV1, AgentTaskRecoveryV1, AgentTaskRuntimeStartV1,
+    AgentTaskRuntimeStateV1, AgentTaskRuntimeV1, CommandErrorV1, CompileTaskLensRequestV1,
+    DeepMapActivityStateV1, DeepMapActivityV2, DeepMapBudgetV1, DeepMapCompactProgressV3,
+    DeepMapConfigurationV1, DeepMapControlResponseV1, DeepMapEntryDetailResponseV1,
+    DeepMapEntryPageResponseV1, DeepMapEntryV1, DeepMapEventV2, DeepMapFailureV1, DeepMapFailureV3,
+    DeepMapLifecycleV3, DeepMapModeV2, DeepMapModelV1, DeepMapPhaseV2, DeepMapProgressV1,
+    DeepMapPublicationSummaryV2, DeepMapRunPageResponseV1, DeepMapRunV1, DeepMapSafeActionV2,
+    DeepMapStartResponseV2, DeepMapStatusResponseV2, DeepMapStatusResponseV3, DeepMapTargetKindV2,
+    ErrorCodeV1, GitHeadV1, HealthResponseV1, IndexActivityResponseV1, IndexActivityStateV1,
+    IndexActivityV1, IndexDiagnosticCodeV1, IndexDiagnosticSeverityV1, IndexDiagnosticV1,
+    IndexFileDiagnosticsV1, IndexLanguageV1, IndexOverviewCountsV1, IndexOverviewResponseV1,
+    IndexOverviewV1, IndexPhaseV1, IndexStateV1, ModuleCardClaimKindV1, ModuleCardClaimStateV1,
+    ModuleCardClaimV1, ModuleCardCoverageBandV1, ModuleCardCoverageV1, ModuleCardDetailFieldV1,
+    ModuleCardDetailResponseV1, ModuleCardDetailV1, ModuleCardEvidenceFreshnessV1,
+    ModuleCardEvidencePayloadV1, ModuleCardEvidenceRelationV1, ModuleCardEvidenceResponseV1,
+    ModuleCardEvidenceRevisionV1, ModuleCardEvidenceV1, ModuleCardFieldKindV1,
+    ModuleCardFreshnessCountsV1, ModuleCardFreshnessReasonCountV1, ModuleCardFreshnessReasonV1,
+    ModuleCardFreshnessResponseV1, ModuleCardFreshnessStatusV1, ModuleCardFreshnessV1,
+    ModuleCardLifecycleV1, ModuleCardValueV1, ModuleDependencyEdgeEvidenceV1,
+    ModuleDependencyEdgeV1, ModuleDependencyEndpointV1, ModuleDependencyGraphResponseV1,
+    ModuleDependencyGraphV1, ModuleDependencyNodeEvidenceV1, ModuleDependencyNodeV1,
+    ModuleDependencyProviderV1, ModuleDependencyRelationV1, ModuleDependencyResolutionV1,
+    ModuleDependencySourcePositionV1, ModuleDependencySourceRangeV1, ModuleRuntimeFlowEdgeV1,
+    ModuleRuntimeFlowHitV1, ModuleRuntimeFlowKindV1, ModuleRuntimeFlowRelationV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeFlowTargetV1, ModuleRuntimeFlowV1,
+    ModuleRuntimeMapResponseV1, ModuleRuntimeMapV1, ModuleRuntimeRootKindV1,
     ModuleRuntimeRootSetV1, ModuleRuntimeRootV1, ModuleRuntimeSymbolKindV1, ModuleRuntimeSymbolV1,
     ModuleTreeBoundaryEvidenceV1, ModuleTreeChildStateV1, ModuleTreeEntryKindV1, ModuleTreeEntryV1,
     ModuleTreeFeatureCountV1, ModuleTreePageV1, ModuleTreeResponseV1, ModuleTreeRevisionV1,
@@ -178,10 +182,11 @@ use a3_protocol::{
     QueryRepositoryTreeRequestV1, QueryTaskLensTaskRequestV1, RebuildProjectIndexResponseV1,
     RebuildStateV1, RecentProjectSummaryV1, RecentProjectsResponseV1, RemoveProjectResponseV1,
     RepositoryTreeEntryKindV1, RepositoryTreeEntryV1, RepositoryTreePageV1,
-    RepositoryTreeResponseV1, TaskLensClaimEvidenceV1, TaskLensClaimKindV1,
-    TaskLensClaimPolarityV1, TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1,
-    TaskLensEntryReasonV1, TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1,
-    TaskLensPathV1, TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
+    RepositoryTreeResponseV1, SubmitAgentMessageResponseV4, SubmitAgentMessageResultV4,
+    TaskLensClaimEvidenceV1, TaskLensClaimKindV1, TaskLensClaimPolarityV1,
+    TaskLensClaimPredicateV1, TaskLensClaimV1, TaskLensCompileResponseV1, TaskLensEntryReasonV1,
+    TaskLensEntryTargetV1, TaskLensEntryV1, TaskLensModuleKindV1, TaskLensPathV1,
+    TaskLensPriorityV1, TaskLensRetrievalChannelV1, TaskLensRetrievalSourceV1,
     TaskLensStepStatusV1, TaskLensStepV1, TaskLensTaskResponseV1, TaskLensTaskSummaryV1,
     TaskLensTasksResponseV1, TaskLensV1, UiPreferencesResponseV1,
 };
@@ -212,8 +217,9 @@ use agent_recovery_metadata::SystemAgentRecoveryMetadata;
 use agent_run_manager::{AgentRunActivityState, AgentRunManager, AgentRunManagerControlError};
 use agent_runtime_recovery::CoreAgentRuntimeRecovery;
 use agent_session_manager::{
-    AgentAskResearcher, AgentSessionManager, AgentSessionManagerDependencies,
-    AgentSessionManagerFailure, AgentSessionRunReporter, PresentationMutation,
+    AgentAskResearcher, AgentMessageSubmission, AgentSessionManager,
+    AgentSessionManagerDependencies, AgentSessionManagerFailure, AgentSessionRunReporter,
+    PresentationMutation,
 };
 use clock::SystemJobClock;
 use deep_map_manager::{
@@ -523,6 +529,55 @@ impl CompositionRoot {
                         )
                         .collect(),
                 },
+            },
+        })
+    }
+
+    /// Loads the enriched conversation together with its durable FIFO and mode choices.
+    pub async fn query_agent_session_v3(
+        &self,
+        session_id: AgentSessionId,
+        before_sequence: Option<u64>,
+        limit: u16,
+    ) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+        let response = self
+            .query_agent_session_v2(session_id, before_sequence, limit)
+            .await?;
+        let projection = match response.result {
+            AgentSessionResultV2::NoProject => {
+                return Ok(AgentSessionResponseV3 {
+                    protocol_version: ProtocolVersion::CURRENT,
+                    result: AgentSessionResultV3::NoProject,
+                });
+            }
+            AgentSessionResultV2::NotFound => {
+                return Ok(AgentSessionResponseV3 {
+                    protocol_version: ProtocolVersion::CURRENT,
+                    result: AgentSessionResultV3::NotFound,
+                });
+            }
+            AgentSessionResultV2::Available { projection } => projection,
+        };
+        let active = lock_recovering_poison(&self.active_project)
+            .clone()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let queue = manager
+            .load_queue(&active.project, session_id)
+            .await
+            .map_err(map_agent_session_failure)?;
+        Ok(AgentSessionResponseV3 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: AgentSessionResultV3::Available {
+                projection: Box::new(map_agent_session_v3(
+                    projection,
+                    &queue,
+                    active.project.worktree().id(),
+                    session_id,
+                )),
             },
         })
     }
@@ -1539,6 +1594,81 @@ impl CompositionRoot {
         ))
     }
 
+    /// Starts or durably queues one explicitly mode-bound message.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_agent_message_v4(
+        &self,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        target_mode: AgentSessionMode,
+        explicit_depth: Option<a3_domain::AgentResearchDepth>,
+        command_depth: bool,
+        message: String,
+    ) -> Result<SubmitAgentMessageResponseV4, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(SubmitAgentMessageResponseV4 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: SubmitAgentMessageResultV4::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let submission = manager
+            .submit_or_queue(
+                &active.project,
+                session_id,
+                expected_revision,
+                target_mode,
+                explicit_depth,
+                command_depth,
+                message,
+            )
+            .await
+            .map_err(map_agent_session_failure)?;
+        let (detail, outcome, known_queue) = match submission {
+            AgentMessageSubmission::Started {
+                detail,
+                requires_plan_review,
+            } => (
+                detail,
+                if requires_plan_review {
+                    AgentMessageSubmissionOutcomeV1::RequiresPlanReview
+                } else {
+                    AgentMessageSubmissionOutcomeV1::Started
+                },
+                None,
+            ),
+            AgentMessageSubmission::Queued { detail, queue } => {
+                (detail, AgentMessageSubmissionOutcomeV1::Queued, Some(queue))
+            }
+        };
+        let queue = match known_queue {
+            Some(queue) => queue,
+            None => manager
+                .load_queue(&active.project, detail.session().id())
+                .await
+                .map_err(map_agent_session_failure)?,
+        };
+        let v2 = AgentSessionV2 {
+            session: map_agent_session_detail_to_v1(&detail),
+            entry_augmentations: Vec::new(),
+        };
+        Ok(SubmitAgentMessageResponseV4 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result: SubmitAgentMessageResultV4::Available {
+                outcome,
+                projection: Box::new(map_agent_session_v3(
+                    v2,
+                    &queue,
+                    active.project.worktree().id(),
+                    detail.session().id(),
+                )),
+            },
+        })
+    }
+
     /// Continues only the newest explicitly continuation-ready research section.
     pub async fn continue_agent_research(
         &self,
@@ -1588,6 +1718,65 @@ impl CompositionRoot {
         }
     }
 
+    /// Removes one waiting message or explicitly resumes a paused durable queue.
+    pub(crate) async fn control_agent_session_queue(
+        &self,
+        session_id: AgentSessionId,
+        expected_queue_revision: AgentSessionQueueRevision,
+        queue_reference: Option<String>,
+    ) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentSessionResponseV3 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentSessionResultV3::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        if let Some(queue_reference) = queue_reference {
+            let queue = manager
+                .load_queue(&active.project, session_id)
+                .await
+                .map_err(map_agent_session_failure)?;
+            if queue.revision() != expected_queue_revision {
+                return Err(CommandErrorV1::agent_session(
+                    ErrorCodeV1::AgentSessionRevisionConflict,
+                ));
+            }
+            let message_id = queue
+                .messages()
+                .iter()
+                .find(|message| {
+                    queue_message_ref(
+                        active.project.worktree().id(),
+                        session_id,
+                        queue.revision(),
+                        message.id(),
+                    ) == queue_reference
+                })
+                .map(a3_domain::AgentQueuedMessage::id)
+                .ok_or_else(|| {
+                    CommandErrorV1::agent_session(ErrorCodeV1::InvalidAgentSessionRequest)
+                })?;
+            manager
+                .remove_queued_message(
+                    &active.project,
+                    session_id,
+                    expected_queue_revision,
+                    message_id,
+                )
+                .await
+        } else {
+            manager
+                .resume_queue(&active.project, session_id, expected_queue_revision)
+                .await
+        }
+        .map_err(map_agent_session_failure)?;
+        self.query_agent_session_v3(session_id, None, 128).await
+    }
+
     /// Materializes and queues exactly the reviewed immutable plan revision.
     pub(crate) async fn implement_agent_session_plan(
         &self,
@@ -1614,6 +1803,53 @@ impl CompositionRoot {
         Ok(AgentSessionResponseV1::available(
             map_agent_session_detail_to_v1(&detail),
         ))
+    }
+
+    /// Starts one exact reviewed plan and preserves semantic race outcomes for the UI.
+    pub(crate) async fn implement_agent_session_plan_v2(
+        &self,
+        session_id: AgentSessionId,
+        expected_revision: AgentSessionRevision,
+        plan_revision: u32,
+    ) -> Result<AgentPlanStartResponseV1, CommandErrorV1> {
+        let Some(active) = lock_recovering_poison(&self.active_project).clone() else {
+            return Ok(AgentPlanStartResponseV1 {
+                protocol_version: ProtocolVersion::CURRENT,
+                result: AgentPlanStartResultV1::NoProject,
+            });
+        };
+        let manager = self
+            .agent_sessions
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::agent_session(ErrorCodeV1::AgentSessionUnavailable))?;
+        let outcome = match manager
+            .implement_plan(
+                &active.project,
+                session_id,
+                expected_revision,
+                plan_revision,
+            )
+            .await
+        {
+            Ok(_) => AgentPlanStartOutcomeV1::Started,
+            Err(AgentSessionManagerFailure::Conflict) => AgentPlanStartOutcomeV1::PlanChanged,
+            Err(AgentSessionManagerFailure::IndexChanged) => AgentPlanStartOutcomeV1::IndexChanged,
+            Err(AgentSessionManagerFailure::Unavailable) => AgentPlanStartOutcomeV1::Unavailable,
+            Err(error) => return Err(map_agent_session_failure(error)),
+        };
+        let current = self.query_agent_session_v3(session_id, None, 128).await?;
+        let result = match current.result {
+            AgentSessionResultV3::NoProject => AgentPlanStartResultV1::NoProject,
+            AgentSessionResultV3::NotFound => AgentPlanStartResultV1::NotFound,
+            AgentSessionResultV3::Available { projection } => AgentPlanStartResultV1::Available {
+                outcome,
+                projection,
+            },
+        };
+        Ok(AgentPlanStartResponseV1 {
+            protocol_version: ProtocolVersion::CURRENT,
+            result,
+        })
     }
 
     /// Resolves Pause, Resume, or Cancel from the session's Core-owned task anchor.
@@ -4377,6 +4613,74 @@ fn map_agent_session_detail_to_v1(detail: &AgentSessionDetail) -> AgentSessionV1
     )
 }
 
+fn map_agent_session_v3(
+    projection: AgentSessionV2,
+    queue: &a3_application::AgentSessionQueue,
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+) -> AgentSessionV3 {
+    let current_mode = projection.session.summary().mode();
+    AgentSessionV3 {
+        projection,
+        mode_options: [
+            AgentSessionModeV1::Ask,
+            AgentSessionModeV1::Plan,
+            AgentSessionModeV1::Agent,
+        ]
+        .into_iter()
+        .map(|mode| AgentSessionModeOptionV1 {
+            mode,
+            selectable: true,
+            requires_plan_review: mode == AgentSessionModeV1::Agent
+                && current_mode != AgentSessionModeV1::Agent,
+        })
+        .collect(),
+        queue_revision: queue.revision().get().to_string(),
+        queue_paused: queue.paused(),
+        queued_messages: queue
+            .messages()
+            .iter()
+            .enumerate()
+            .map(|(index, message)| AgentQueuedMessageSummaryV1 {
+                queue_reference: queue_message_ref(
+                    worktree_id,
+                    session_id,
+                    queue.revision(),
+                    message.id(),
+                ),
+                position: u16::try_from(index.saturating_add(1)).unwrap_or(u16::MAX),
+                target_mode: map_agent_session_mode_to_v1(message.target_mode()),
+                preview: bounded_queue_preview(message.text().as_str()),
+                enqueued_at_unix_millis: message.enqueued_at().unix_millis().to_string(),
+            })
+            .collect(),
+    }
+}
+
+fn queue_message_ref(
+    worktree_id: WorktreeId,
+    session_id: AgentSessionId,
+    queue_revision: AgentSessionQueueRevision,
+    message_id: AgentQueuedMessageId,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"a3.agent-message-queue-item.v1\0");
+    hasher.update(worktree_id.as_bytes());
+    hasher.update(session_id.as_bytes());
+    hasher.update(&queue_revision.get().to_be_bytes());
+    hasher.update(message_id.as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+
+fn bounded_queue_preview(message: &str) -> String {
+    let mut preview = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if preview.chars().count() > 120 {
+        preview = preview.chars().take(119).collect::<String>();
+        preview.push('…');
+    }
+    preview
+}
+
 fn map_agent_session_summary_to_v1(session: &AgentSession) -> AgentSessionSummaryV1 {
     AgentSessionSummaryV1::new(
         session.id().to_string(),
@@ -4433,7 +4737,9 @@ fn map_agent_session_failure(error: AgentSessionManagerFailure) -> CommandErrorV
         AgentSessionManagerFailure::InvalidInput | AgentSessionManagerFailure::InvalidOutput => {
             ErrorCodeV1::InvalidAgentSessionRequest
         }
-        AgentSessionManagerFailure::Conflict => ErrorCodeV1::AgentSessionRevisionConflict,
+        AgentSessionManagerFailure::Conflict | AgentSessionManagerFailure::IndexChanged => {
+            ErrorCodeV1::AgentSessionRevisionConflict
+        }
         AgentSessionManagerFailure::Busy => ErrorCodeV1::AgentSessionBusy,
         AgentSessionManagerFailure::NotFound | AgentSessionManagerFailure::Unavailable => {
             ErrorCodeV1::AgentSessionUnavailable
@@ -5529,6 +5835,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
             commands::control_agent_session,
+            commands::control_agent_session_v2,
+            commands::control_agent_session_queue,
             commands::control_agent_task_run,
             commands::create_agent_goal,
             commands::discover_provider_models,
@@ -5565,6 +5873,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_agent_approval,
             commands::query_agent_session,
             commands::query_agent_session_v2,
+            commands::query_agent_session_v3,
             commands::query_agent_sessions,
             commands::query_agent_slash_commands,
             commands::query_agent_ask_research_turns,
@@ -5604,6 +5913,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::submit_agent_message,
             commands::submit_agent_message_v2,
             commands::submit_agent_message_v3,
+            commands::submit_agent_message_v4,
             commands::continue_agent_research,
             commands::update_agent_workspace_layout
         ])
@@ -10597,8 +10907,8 @@ mod tests {
         encode_deep_map_impact_cursor, encode_deep_map_module_selection,
         encode_deep_map_run_cursor, encode_deep_map_run_selection, encode_deep_map_step_cursor,
         map_agent_goal_to_v1, map_agent_task_control_result_to_v1, map_create_agent_goal_from_v1,
-        project_path_display, publication_read_failure_lifecycle, repository_path_display,
-        research_cursor, research_projection_ref, research_source_ref,
+        project_path_display, publication_read_failure_lifecycle, queue_message_ref,
+        repository_path_display, research_cursor, research_projection_ref, research_source_ref,
     };
     use a3_application::DeepMapRunCursor;
     use a3_application::{
@@ -10606,10 +10916,10 @@ mod tests {
     };
     use a3_domain::{
         AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionRequirement,
-        AcceptanceCriterionStatement, AgentDiagramArtifactId, AgentSessionId, AgentSessionSequence,
-        DeepMapEventSequence, DeepMapRunId, DeepMapRunTimestamp, GoalContract, GoalContractDraft,
-        GoalContractTimestamp, GoalObjective, ModuleId, RepositoryPath, SuccessVerification,
-        TaskId, WorktreeId,
+        AcceptanceCriterionStatement, AgentDiagramArtifactId, AgentQueuedMessageId, AgentSessionId,
+        AgentSessionQueueRevision, AgentSessionSequence, DeepMapEventSequence, DeepMapRunId,
+        DeepMapRunTimestamp, GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective,
+        ModuleId, RepositoryPath, SuccessVerification, TaskId, WorktreeId,
     };
     use a3_protocol::{
         AgentTaskRuntimeStartV1, CreateAgentGoalRequestV1, DeepMapCompactProgressV3,
@@ -10630,6 +10940,39 @@ mod tests {
         assert_eq!(
             publication_read_failure_lifecycle(DeepMapLifecycleV3::Ready),
             DeepMapLifecycleV3::Ready
+        );
+    }
+
+    #[test]
+    fn queue_reference_masks_identity_and_binds_worktree_session_and_revision() {
+        let worktree = WorktreeId::from_bytes([1; 32]);
+        let session = AgentSessionId::from_bytes([2; 32]);
+        let message = AgentQueuedMessageId::from_bytes([3; 32]);
+        let reference = queue_message_ref(
+            worktree,
+            session,
+            AgentSessionQueueRevision::new(4).unwrap_or(AgentSessionQueueRevision::EMPTY),
+            message,
+        );
+
+        assert_ne!(reference, message.to_string());
+        assert_ne!(
+            reference,
+            queue_message_ref(
+                worktree,
+                session,
+                AgentSessionQueueRevision::new(5).unwrap_or(AgentSessionQueueRevision::EMPTY),
+                message,
+            )
+        );
+        assert_ne!(
+            reference,
+            queue_message_ref(
+                WorktreeId::from_bytes([9; 32]),
+                session,
+                AgentSessionQueueRevision::new(4).unwrap_or(AgentSessionQueueRevision::EMPTY),
+                message,
+            )
         );
     }
 

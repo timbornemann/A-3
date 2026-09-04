@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  parseAgentPlanStartResponseV1,
   parseAgentSessionResponseV1,
   parseAgentSessionResponseV2,
+  parseAgentSessionResponseV3,
   parseAgentSessionsResponseV1,
   parseAgentSlashCommandsResponseV1,
   parseUiPreferencesV1,
@@ -144,7 +146,7 @@ describe('Agent session V1', () => {
   it('submits only the narrow new-session contract', async () => {
     const invoke = vi.fn(async () => ({ protocolVersion: 1, result: { status: 'noProject' } }));
     await submitAgentMessage({ message: 'Explain the index', mode: 'ask' }, invoke);
-    expect(invoke).toHaveBeenCalledWith('submit_agent_message_v3', {
+    expect(invoke).toHaveBeenCalledWith('submit_agent_message_v4', {
       request: {
         contextReferences: [],
         expectedSessionRevision: null,
@@ -152,9 +154,68 @@ describe('Agent session V1', () => {
         protocolVersion: 1,
         researchDepth: 'standard',
         sessionId: null,
-        startMode: 'ask',
+        targetMode: 'ask',
       },
     });
+  });
+
+  it('accepts a bounded V33 queue and rejects contradictory mode choices', () => {
+    const response = {
+      protocolVersion: 1,
+      result: {
+        projection: {
+          modeOptions: [
+            { mode: 'ask', requiresPlanReview: false, selectable: true },
+            { mode: 'plan', requiresPlanReview: false, selectable: true },
+            { mode: 'agent', requiresPlanReview: true, selectable: true },
+          ],
+          projection: {
+            entryAugmentations: [],
+            session: {
+              activeTaskId: null,
+              entries: [],
+              hasOlderEntries: false,
+              summary: summary(),
+            },
+          },
+          queuePaused: true,
+          queueRevision: '4',
+          queuedMessages: [
+            {
+              enqueuedAtUnixMillis: '101',
+              position: 1,
+              preview: 'Nächsten Auftrag prüfen',
+              queueReference: id('b'),
+              targetMode: 'ask',
+            },
+          ],
+        },
+        status: 'available',
+      },
+    };
+
+    const parsed = parseAgentSessionResponseV3(response);
+    expect(parsed.result.status).toBe('available');
+    if (parsed.result.status === 'available') {
+      expect(parsed.result.session.queuePaused).toBe(true);
+      expect(parsed.result.session.queuedMessages?.[0].targetMode).toBe('ask');
+    }
+    const planStart = parseAgentPlanStartResponseV1({
+      protocolVersion: 1,
+      result: {
+        outcome: 'indexChanged',
+        projection: response.result.projection,
+        status: 'available',
+      },
+    });
+    expect(planStart.result.status).toBe('available');
+    if (planStart.result.status === 'available') {
+      expect(planStart.result.outcome).toBe('indexChanged');
+      expect(planStart.result.session.queueRevision).toBe('4');
+    }
+    const contradictory = structuredClone(response);
+    contradictory.result.projection.modeOptions[2].mode = 'plan';
+    expect(() => parseAgentSessionResponseV3(contradictory)).toThrow(/mode options/u);
   });
 
   it('accepts only the bounded Core-owned slash-command catalog', () => {

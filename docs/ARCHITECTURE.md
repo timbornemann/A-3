@@ -555,6 +555,14 @@ weiterhin durch typisierte Adapter, zentrale Policy, Approval, frische Indexieru
 Verification. Projektwechsel quiesziert Conversation- und Agentjobs, bevor neue Projektanker aktiv
 werden.
 
+ADR-0041 behandelt den Modus als Capability des nächsten unabhängigen Work Items. Eine sichtbare
+Auswahl unterbricht den aktuellen Besitzer nicht. Validierte Folgenachrichten warten dauerhaft in
+einer begrenzten sessionlokalen FIFO; der Scheduler startet sie nacheinander und hält an
+Rückfragen, Planreview, Approval, Pause, Fehler und Abbruch. Nach einem Rückwechsel zu Ask oder
+Plan werden Task-, Run- und Plananker nicht übernommen. Ein späterer Agent-Auftrag beginnt deshalb
+erneut als Planvorbereitung. Die operative Seitenleiste wird ausschließlich aus einem tatsächlich
+materialisierten `activeTaskId` abgeleitet; Recherche und Quellen bleiben turngebunden im Chat.
+
 1. Ein Goal Contract wird erstellt oder bestätigt.
 2. Der Controller lokalisiert relevante Evidenz.
 3. Der Context Compiler erzeugt ein tokenbegrenztes Context Pack.

@@ -114,6 +114,16 @@ erfolgreich verifizierten Schritt committet `ContinueVerifiedAgentPlan` den näc
 läuft weiterhin höchstens eine mutierende Aktion im Worktree; erst ohne verbleibenden bereiten oder
 aktiven Schritt beginnt die Acceptance-Prüfung.
 
+ADR-0041 ergänzt vor dem Conversation-Scheduler eine dauerhafte FIFO-Projektion. Während ein
+Conversationjob den Slot besitzt, validiert der Core weitere Nachrichten vollständig und
+persistiert sie, ohne den Besitzer zu unterbrechen. Ein erfolgreicher terminaler Abschluss gibt
+den Slot frei und stößt genau den ältesten fortsetzbaren Eintrag an. Rückfrage, Planreview oder
+Approval bleiben menschliche Haltepunkte; Fehler und Abbruch pausieren die Queue. Nach einem
+Prozessneustart wird
+eine gefundene Queue ebenfalls pausiert sichtbar gemacht und erst nach expliziter Fortsetzung in
+den flüchtigen Dispatchsatz aufgenommen. Ein beim Dispatch fehlgeschlagener Claim wird append-only
+zurück auf `queued` gesetzt und pausiert, statt die Nachricht zu verlieren.
+
 Pause ist nur für `Running` zulässig. Sie fordert Scheduler-Cancellation an; `Paused` folgt erst
 auf den terminalen Schedulerstatus `Cancelled`, die Executor-Rückgabe `Cancelled` und eine
 erfolgreiche H11/E8-Inspektion eines weiterhin nichtterminalen Runs. Resume beziehungsweise

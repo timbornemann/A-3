@@ -158,7 +158,7 @@ pub use agent_runtime::{
 };
 pub use agent_session::{
     AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery, AgentSessionPage,
-    AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture,
+    AgentSessionQueue, AgentSessionStore, AgentSessionStoreFailure, AgentSessionStoreFuture,
     validate_agent_session_transition,
 };
 pub use agent_source_reader::{

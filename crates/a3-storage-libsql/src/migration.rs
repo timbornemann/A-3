@@ -3145,6 +3145,47 @@ const KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION: Migration = Migration {
         SELECT RAISE(ABORT, 'Diagram artifact sources are immutable'); END;",
 };
 
+const KNOWLEDGE_AGENT_MESSAGE_QUEUE_MIGRATION: Migration = Migration {
+    version: 33,
+    name: "durable_agent_message_queue",
+    sql: "CREATE TABLE agent_message_queue_items (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      queue_item_id BLOB NOT NULL CHECK (length(queue_item_id) = 32),\n\
+      ordinal INTEGER NOT NULL CHECK (ordinal > 0),\n\
+      target_mode TEXT NOT NULL CHECK (target_mode IN ('ask', 'plan', 'agent')),\n\
+      research_selection TEXT NOT NULL CHECK (research_selection IN ('standard', 'thorough', 'command')),\n\
+      message TEXT NOT NULL CHECK (length(CAST(message AS BLOB)) BETWEEN 1 AND 262144),\n\
+      enqueued_at_unix_millis INTEGER NOT NULL CHECK (enqueued_at_unix_millis >= 0),\n\
+      PRIMARY KEY (worktree_id, session_id, queue_item_id),\n\
+      UNIQUE (worktree_id, session_id, ordinal),\n\
+      FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id)\n\
+        ON UPDATE CASCADE ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE TABLE agent_message_queue_events (\n\
+      worktree_id BLOB NOT NULL CHECK (length(worktree_id) = 32),\n\
+      session_id BLOB NOT NULL CHECK (length(session_id) = 32),\n\
+      queue_revision INTEGER NOT NULL CHECK (queue_revision > 0),\n\
+      queue_item_id BLOB CHECK (queue_item_id IS NULL OR length(queue_item_id) = 32),\n\
+      state TEXT NOT NULL CHECK (state IN ('queued', 'started', 'removed', 'paused', 'resumed')),\n\
+      occurred_at_unix_millis INTEGER NOT NULL CHECK (occurred_at_unix_millis >= 0),\n\
+      CHECK ((state IN ('paused', 'resumed') AND queue_item_id IS NULL) OR\n\
+        (state IN ('queued', 'started', 'removed') AND queue_item_id IS NOT NULL)),\n\
+      PRIMARY KEY (worktree_id, session_id, queue_revision),\n\
+      FOREIGN KEY (worktree_id, session_id, queue_item_id)\n\
+        REFERENCES agent_message_queue_items(worktree_id, session_id, queue_item_id)\n\
+        ON UPDATE RESTRICT ON DELETE CASCADE\n\
+      ) STRICT;\n\
+      CREATE INDEX agent_message_queue_fifo_idx ON agent_message_queue_items\n\
+        (worktree_id, session_id, ordinal);\n\
+      CREATE INDEX agent_message_queue_worktree_idx ON agent_message_queue_items\n\
+        (worktree_id, enqueued_at_unix_millis, ordinal);\n\
+      CREATE TRIGGER agent_message_queue_items_update_guard BEFORE UPDATE ON agent_message_queue_items BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent queue items are immutable'); END;\n\
+      CREATE TRIGGER agent_message_queue_events_update_guard BEFORE UPDATE ON agent_message_queue_events BEGIN\n\
+        SELECT RAISE(ABORT, 'Agent queue events are immutable'); END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -3178,6 +3219,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_ASK_RESEARCH_MIGRATION,
     KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION,
     KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION,
+    KNOWLEDGE_AGENT_MESSAGE_QUEUE_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3210,7 +3252,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(32);
+    pub const CURRENT: Self = Self::new(33);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3838,6 +3880,7 @@ mod tests {
         (knowledge_upgrades_from_v29, 29),
         (knowledge_upgrades_from_v30, 30),
         (knowledge_upgrades_from_v31, 31),
+        (knowledge_upgrades_from_v32, 32),
     );
 
     #[test]
@@ -5623,7 +5666,10 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(&connection, "PRAGMA user_version").await?,
+                i64::from(KnowledgeSchemaVersion::CURRENT.get())
+            );
             assert_eq!(
                 query_string(&connection, "SELECT purpose FROM card_fts").await?,
                 "Legacy purpose\nSecond purpose line"
@@ -5737,7 +5783,10 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(&connection, "PRAGMA user_version").await?,
+                i64::from(KnowledgeSchemaVersion::CURRENT.get())
+            );
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5829,7 +5878,10 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(&connection, "PRAGMA user_version").await?,
+                i64::from(KnowledgeSchemaVersion::CURRENT.get())
+            );
             assert_eq!(
                 query_i64(
                     &connection,
@@ -5950,7 +6002,10 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(&connection, "PRAGMA user_version").await?,
+                i64::from(KnowledgeSchemaVersion::CURRENT.get())
+            );
             assert_eq!(
                 query_i64(
                     &connection,
@@ -6135,10 +6190,17 @@ mod tests {
             )
             .await?;
 
-            let version =
-                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+            let version = KnowledgeSchemaVersion::new(
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..32],
+                    32,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?,
+            );
 
-            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(version, KnowledgeSchemaVersion::new(32));
             assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
             assert_eq!(
                 query_i64(
@@ -6154,6 +6216,96 @@ mod tests {
                 query_i64(
                     &connection,
                     "SELECT COUNT(*) FROM agent_slash_command_invocations",
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v33_adds_an_empty_append_only_agent_message_queue()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [116; 32];
+            let worktree_id = [117; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..32],
+                32,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+
+            let version =
+                super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
+
+            assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 33);
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
+                       'agent_message_queue_items', 'agent_message_queue_events')",
+                )
+                .await?,
+                2
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM agent_message_queue_items"
+                )
+                .await?,
+                0
+            );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn failed_knowledge_v33_upgrade_preserves_the_v32_database()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let repository_id = [118; 32];
+            let worktree_id = [119; 32];
+            super::apply_knowledge_bootstrap(&connection, &repository_id, &worktree_id).await?;
+            migrate(
+                &connection,
+                &KNOWLEDGE_MIGRATIONS[..32],
+                32,
+                super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+            )
+            .await?;
+            connection
+                .execute(
+                    "CREATE TABLE agent_message_queue_items (conflict INTEGER)",
+                    (),
+                )
+                .await?;
+
+            let result = super::migrate_knowledge(&connection, &repository_id, &worktree_id).await;
+
+            assert!(matches!(
+                result,
+                Err(MigrationError::Apply { version: 33, .. })
+            ));
+            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 32);
+            assert_eq!(
+                query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                32
+            );
+            assert_eq!(
+                query_i64(
+                    &connection,
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'agent_message_queue_events'",
                 )
                 .await?,
                 0

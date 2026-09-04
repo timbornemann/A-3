@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import {
     controlAgentSession,
+    controlAgentSessionQueue,
     continueAgentResearch,
+    implementAgentSessionPlan,
     queryAgentSession,
     queryAgentSessions,
     queryAgentSlashCommands,
@@ -11,6 +13,8 @@
     submitAgentMessage,
     updateAgentWorkspaceLayout,
     type AgentSessionControlActionV1,
+    type AgentPlanStartOutcomeV1,
+    type AgentPlanStartResponseV1,
     type AgentResearchDepthV1,
     type AgentResearchDepthSelectionV1,
     type AgentSessionModeV1,
@@ -54,6 +58,7 @@
     AgentWorkTraceSourceV2,
   } from './agent-ask-research';
   import { parseChatMarkdown } from './chat-markdown';
+  import { agentSessionRecoveryMessage } from './command-error';
 
   interface Props {
     activeProject: boolean;
@@ -77,6 +82,16 @@
       sessionId: string,
       revision: string,
       action: AgentSessionControlActionV1,
+    ) => Promise<AgentSessionResponseV1>;
+    planStarter?: (
+      sessionId: string,
+      revision: string,
+      planRevision: number,
+    ) => Promise<AgentPlanStartResponseV1>;
+    sessionQueueController?: (
+      sessionId: string,
+      queueRevision: string,
+      action: { kind: 'remove'; queueReference: string } | { kind: 'resume' },
     ) => Promise<AgentSessionResponseV1>;
     sessionLoader?: (sessionId: string) => Promise<AgentSessionResponseV1>;
     sessionsLoader?: (options?: {
@@ -121,7 +136,9 @@
     inspectionLoader,
     inspectionLogLoader,
     onRunStatusChange = () => {},
+    planStarter = implementAgentSessionPlan,
     sessionController = controlAgentSession,
+    sessionQueueController = controlAgentSessionQueue,
     sessionLoader = queryAgentSession,
     sessionsLoader = queryAgentSessions,
     messageSubmitter = submitAgentMessage,
@@ -133,7 +150,7 @@
   let sessionsView = $state<SessionsView>({ kind: 'idle' });
   let sessionView = $state<SessionView>({ kind: 'new' });
   let selectedSessionId = $state<string | null>(null);
-  let newMode = $state<AgentSessionModeV1>('agent');
+  let targetMode = $state<AgentSessionModeV1>('agent');
   let researchDepth = $state<AgentResearchDepthV1>('standard');
   const researchDepthBySession = new SvelteMap<string, AgentResearchDepthV1>();
   let composer = $state('');
@@ -149,6 +166,8 @@
   let searchInput = $state('');
   let includeArchived = $state(false);
   let sessionMenuOpen = $state(false);
+  let sessionMenuElement = $state<HTMLDivElement | null>(null);
+  let sessionMenuTrigger = $state<HTMLButtonElement | null>(null);
   let historyOpen = $state(true);
   let inspectorOpen = $state(true);
   let inspectorTab = $state<InspectorTab>('progress');
@@ -184,12 +203,13 @@
   let conversationResumeIntent = false;
   let conversationTouchY: number | null = null;
   let followFrame: number | null = null;
+  const autoOpenedAgentTasks = new SvelteSet<string>();
 
   const CONVERSATION_END_TOLERANCE_PX = 12;
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
-  const composerMode = $derived(selectedSummary?.mode ?? newMode);
+  const composerMode = $derived(targetMode);
   const commandActive = $derived(isCommandInput(composer));
   const commandChips = $derived(resolveCommandChips(composer, slashCommands));
   const commandSuggestions = $derived(
@@ -208,6 +228,7 @@
       : researchDepth,
   );
   const activeTaskId = $derived(selectedSession?.activeTaskId ?? null);
+  const agentSidebarVisible = $derived(activeTaskId !== null);
   const latestResearchSequence = $derived(
     selectedSession ? latestUserSequence(selectedSession.entries) : null,
   );
@@ -260,17 +281,20 @@
       composer.length <= 256 * 1024 &&
       commandInputHint === null &&
       (!commandActive ||
-        (!slashCatalogLoading && slashCatalogMode === composerMode && slashCommands.length > 0)) &&
-      (!selectedSummary ||
-        [
-          'draft',
-          'awaitingUser',
-          'awaitingPlanReview',
-          'completed',
-          'failed',
-          'cancelled',
-        ].includes(selectedSummary.state)),
+        (!slashCatalogLoading && slashCatalogMode === composerMode && slashCommands.length > 0)),
   );
+
+  function modeIsSelectable(mode: AgentSessionModeV1): boolean {
+    return selectedSession?.modeOptions?.find((option) => option.mode === mode)?.selectable ?? true;
+  }
+
+  function modeRequiresPlanReview(mode: AgentSessionModeV1): boolean {
+    if (mode !== 'agent') return false;
+    return (
+      selectedSession?.modeOptions?.find((option) => option.mode === mode)?.requiresPlanReview ??
+      selectedSummary?.mode !== 'agent'
+    );
+  }
 
   $effect(() => {
     if (activeProject && !observedProject) {
@@ -280,6 +304,15 @@
       observedProject = false;
       reset();
     }
+  });
+
+  $effect(() => {
+    if (!sessionMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (!sessionMenuElement?.contains(event.target as Node)) sessionMenuOpen = false;
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
   });
 
   $effect(() => {
@@ -302,6 +335,13 @@
   });
 
   $effect(() => {
+    const taskId = activeTaskId;
+    if (!taskId || autoOpenedAgentTasks.has(taskId)) return;
+    autoOpenedAgentTasks.add(taskId);
+    inspectorOpen = true;
+  });
+
+  $effect(() => {
     const viewport = messageScrollElement;
     const content = messageContentElement;
     if (!viewport || !content || typeof ResizeObserver !== 'function') return;
@@ -313,8 +353,12 @@
   });
 
   $effect(() => {
+    const hasDispatchableQueue =
+      (selectedSession?.queuedMessages?.length ?? 0) > 0 && !selectedSession?.queuePaused;
     const sessionId =
-      selectedSummary && ['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state)
+      selectedSummary &&
+      (['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state) ||
+        hasDispatchableQueue)
         ? selectedSummary.sessionId
         : null;
     if (!sessionId) return;
@@ -336,6 +380,20 @@
   onDestroy(() => {
     if (followFrame !== null) window.cancelAnimationFrame(followFrame);
   });
+
+  async function toggleSessionMenu(): Promise<void> {
+    sessionMenuOpen = !sessionMenuOpen;
+    if (!sessionMenuOpen) return;
+    await tick();
+    sessionMenuElement?.querySelector<HTMLButtonElement>('.menu-popover button')?.focus();
+  }
+
+  function handleSessionMenuKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || !sessionMenuOpen) return;
+    event.preventDefault();
+    sessionMenuOpen = false;
+    sessionMenuTrigger?.focus();
+  }
 
   function scrollConversationToEnd(viewport: HTMLDivElement): void {
     viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
@@ -535,6 +593,10 @@
       resumeConversationFollow();
     }
     selectedSessionId = sessionId;
+    targetMode =
+      sessionView.kind === 'available' && sessionView.session.summary.sessionId === sessionId
+        ? sessionView.session.summary.mode
+        : targetMode;
     researchDepth = researchDepthBySession.get(sessionId) ?? 'standard';
     sessionMenuOpen = false;
     actionError = null;
@@ -542,9 +604,10 @@
     try {
       const response = await sessionLoader(sessionId);
       if (request !== sessionRequest || selectedSessionId !== sessionId) return;
-      if (response.result.status === 'available')
+      if (response.result.status === 'available') {
         sessionView = { kind: 'available', session: response.result.session };
-      else if (response.result.status === 'notFound') sessionView = { kind: 'missing' };
+        targetMode = response.result.session.summary.mode;
+      } else if (response.result.status === 'notFound') sessionView = { kind: 'missing' };
       else sessionView = { kind: 'error' };
     } catch {
       if (request === sessionRequest) sessionView = { kind: 'error' };
@@ -577,6 +640,7 @@
   function startNewSession(): void {
     sessionRequest += 1;
     selectedSessionId = null;
+    targetMode = 'agent';
     researchDepth = 'standard';
     sessionView = { kind: 'new' };
     composer = '';
@@ -606,10 +670,11 @@
           ? {
               expectedSessionRevision: current.summary.revision,
               message,
+              mode: targetMode,
               researchDepth: submittedDepth,
               sessionId: current.summary.sessionId,
             }
-          : { message, mode: newMode, researchDepth: submittedDepth },
+          : { message, mode: targetMode, researchDepth: submittedDepth },
       );
       if (response.result.status === 'available') {
         selectedSessionId = response.result.session.summary.sessionId;
@@ -620,13 +685,46 @@
       } else {
         actionError = 'Das aktive Projekt ist nicht mehr verfügbar.';
       }
-    } catch {
+    } catch (error) {
       composer = message;
-      actionError =
-        'Die Nachricht konnte nicht sicher verarbeitet werden. Prüfe Modell und Projektstatus.';
+      actionError = agentSessionRecoveryMessage(error, 'submit');
     } finally {
       pendingMessage = null;
       submitting = false;
+    }
+  }
+
+  async function removeQueuedMessage(queueReference: string): Promise<void> {
+    const current = selectedSession;
+    if (!current?.queueRevision) return;
+    actionError = null;
+    try {
+      const response = await sessionQueueController(
+        current.summary.sessionId,
+        current.queueRevision,
+        { kind: 'remove', queueReference },
+      );
+      if (response.result.status === 'available')
+        sessionView = { kind: 'available', session: response.result.session };
+    } catch {
+      actionError = 'Die vorgemerkte Nachricht konnte nicht entfernt werden. Lade die Session neu.';
+    }
+  }
+
+  async function resumeQueuedMessages(): Promise<void> {
+    const current = selectedSession;
+    if (!current?.queueRevision) return;
+    actionError = null;
+    try {
+      const response = await sessionQueueController(
+        current.summary.sessionId,
+        current.queueRevision,
+        { kind: 'resume' },
+      );
+      if (response.result.status === 'available')
+        sessionView = { kind: 'available', session: response.result.session };
+    } catch {
+      actionError = 'Die Warteschlange konnte nicht fortgesetzt werden. Lade die Session neu.';
     }
   }
 
@@ -853,6 +951,22 @@
     if (!current || submitting) return;
     actionError = null;
     try {
+      if (action.kind === 'implementPlan') {
+        const start = await planStarter(
+          current.summary.sessionId,
+          current.summary.revision,
+          action.planRevision,
+        );
+        if (start.result.status === 'available') {
+          sessionView = { kind: 'available', session: start.result.session };
+          actionError = planStartOutcomeMessage(start.result.outcome);
+          await loadSessions(start.result.session.summary.sessionId);
+        } else if (start.result.status === 'notFound') {
+          startNewSession();
+          await loadSessions(null);
+        } else actionError = 'Das aktive Projekt ist nicht mehr verfügbar.';
+        return;
+      }
       const response = await sessionController(
         current.summary.sessionId,
         current.summary.revision,
@@ -865,11 +979,27 @@
         startNewSession();
         await loadSessions(null);
       }
-    } catch {
-      actionError =
-        action.kind === 'implementPlan'
-          ? 'Der Plan konnte mit den aktuellen dauerhaften Ankern nicht gestartet werden.'
-          : 'Die Session-Aktion konnte nicht abgeschlossen werden.';
+    } catch (error) {
+      actionError = agentSessionRecoveryMessage(
+        error,
+        action.kind === 'implementPlan' ? 'implementPlan' : 'control',
+      );
+      if (action.kind === 'implementPlan') await selectSession(current.summary.sessionId);
+    }
+  }
+
+  function planStartOutcomeMessage(outcome: AgentPlanStartOutcomeV1): string | null {
+    switch (outcome) {
+      case 'started':
+        return null;
+      case 'queued':
+        return 'Der geprüfte Plan startet automatisch, sobald die laufende Vorbereitung abgeschlossen ist.';
+      case 'planChanged':
+        return 'Der Plan wurde inzwischen geändert. Prüfe und bestätige die aktuell sichtbare Revision.';
+      case 'indexChanged':
+        return 'Der Projektstand hat sich geändert. Lass den Plan mit aktuellen Quellen neu prüfen.';
+      case 'unavailable':
+        return 'Die lokale Agentenlaufzeit ist momentan nicht verfügbar. Der geprüfte Plan bleibt erhalten.';
     }
   }
 
@@ -1089,10 +1219,12 @@
   }
 </script>
 
+<svelte:window onkeydown={handleSessionMenuKeydown} />
+
 <section
   class="agent-workspace"
   class:history-collapsed={!historyOpen}
-  class:inspector-collapsed={!inspectorOpen}
+  class:inspector-collapsed={!agentSidebarVisible || !inspectorOpen}
   style={`--history-width:${preferences.sessionRailWidth}px;--inspector-width:${preferences.inspectorWidth}px`}
   aria-label="Agent Workspace"
 >
@@ -1189,83 +1321,87 @@
           </p>
         </div>
         {#if selectedSummary}
-          {#if activeTaskId && selectedSummary.state === 'running'}
-            <div class="runtime-controls" aria-label="Agentenlauf steuern">
-              <button
-                type="button"
-                disabled={submitting}
-                onclick={() => void applySessionAction({ kind: 'pause' })}>Pausieren</button
-              >
-              <button
-                class="danger"
-                type="button"
-                disabled={submitting}
-                onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
-              >
-            </div>
-          {:else if selectedSummary.state === 'running'}
-            <div class="runtime-controls" aria-label="Agentenlauf steuern">
-              <button
-                class="danger"
-                type="button"
-                disabled={submitting}
-                onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
-              >
-            </div>
-          {:else if activeTaskId && selectedSummary.state === 'paused'}
-            <div class="runtime-controls" aria-label="Agentenlauf steuern">
-              <button
-                class="primary"
-                type="button"
-                disabled={submitting}
-                onclick={() => void applySessionAction({ kind: 'resume' })}>Fortsetzen</button
-              >
-              <button
-                class="danger"
-                type="button"
-                disabled={submitting}
-                onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
-              >
-            </div>
-          {/if}
-          <div class="session-menu">
-            <button
-              class="icon-button"
-              type="button"
-              aria-label="Session-Aktionen"
-              aria-expanded={sessionMenuOpen}
-              onclick={() => (sessionMenuOpen = !sessionMenuOpen)}>•••</button
-            >
-            {#if sessionMenuOpen}
-              <div class="menu-popover">
-                <button type="button" onclick={renameSession}>Umbenennen</button>
-                {#if selectedSummary.mode === 'ask' && selectedSummary.state !== 'archived'}
-                  <button
-                    type="button"
-                    onclick={() => void applySessionAction({ kind: 'switchToPlan' })}
-                    >In Plan wechseln</button
-                  >
-                {/if}
-                {#if presentationCanBeHidden}
-                  <button
-                    type="button"
-                    onclick={() =>
-                      void applySessionAction({
-                        kind: selectedSummary.state === 'archived' ? 'unarchive' : 'archive',
-                      })}
-                    >{selectedSummary.state === 'archived'
-                      ? 'Wiederherstellen'
-                      : 'Archivieren'}</button
-                  >
-                  <button
-                    class="danger"
-                    type="button"
-                    onclick={() => void applySessionAction({ kind: 'deletePresentation' })}
-                    >Chat löschen</button
-                  >
-                {/if}
+          <div class="header-actions">
+            {#if activeTaskId && selectedSummary.state === 'running'}
+              <div class="runtime-controls" aria-label="Agentenlauf steuern">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onclick={() => void applySessionAction({ kind: 'pause' })}>Pausieren</button
+                >
+                <button
+                  class="danger"
+                  type="button"
+                  disabled={submitting}
+                  onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
+                >
+              </div>
+            {:else if selectedSummary.state === 'running'}
+              <div class="runtime-controls" aria-label="Agentenlauf steuern">
+                <button
+                  class="danger"
+                  type="button"
+                  disabled={submitting}
+                  onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
+                >
+              </div>
+            {:else if activeTaskId && selectedSummary.state === 'paused'}
+              <div class="runtime-controls" aria-label="Agentenlauf steuern">
+                <button
+                  class="primary"
+                  type="button"
+                  disabled={submitting}
+                  onclick={() => void applySessionAction({ kind: 'resume' })}>Fortsetzen</button
+                >
+                <button
+                  class="danger"
+                  type="button"
+                  disabled={submitting}
+                  onclick={() => void applySessionAction({ kind: 'cancel' })}>Abbrechen</button
+                >
               </div>
             {/if}
+            {#if activeTaskId && !inspectorOpen}
+              <button
+                class="icon-button"
+                type="button"
+                onclick={toggleInspector}
+                aria-label="Agentenlauf öffnen">◫</button
+              >
+            {/if}
+            <div class="session-menu" bind:this={sessionMenuElement}>
+              <button
+                bind:this={sessionMenuTrigger}
+                class="icon-button"
+                type="button"
+                aria-label="Session-Aktionen"
+                aria-expanded={sessionMenuOpen}
+                onclick={() => void toggleSessionMenu()}>•••</button
+              >
+              {#if sessionMenuOpen}
+                <div class="menu-popover">
+                  <button type="button" onclick={renameSession}>Umbenennen</button>
+                  {#if presentationCanBeHidden}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        void applySessionAction({
+                          kind: selectedSummary.state === 'archived' ? 'unarchive' : 'archive',
+                        })}
+                      >{selectedSummary.state === 'archived'
+                        ? 'Wiederherstellen'
+                        : 'Archivieren'}</button
+                    >
+                    <button
+                      class="danger"
+                      type="button"
+                      onclick={() => void applySessionAction({ kind: 'deletePresentation' })}
+                      >Chat löschen</button
+                    >
+                  {/if}
+                </div>
+              {/if}
+            </div>
           </div>
         {/if}
       </header>
@@ -1312,21 +1448,21 @@
               <button
                 type="button"
                 onclick={() => {
-                  newMode = 'ask';
+                  targetMode = 'ask';
                   composer = 'Wie ist dieser Teil des Projekts aufgebaut?';
                 }}>Projekt verstehen <span>Ask</span></button
               >
               <button
                 type="button"
                 onclick={() => {
-                  newMode = 'plan';
+                  targetMode = 'plan';
                   composer = 'Erstelle einen umsetzungsreifen Plan für ';
                 }}>Änderung planen <span>Plan</span></button
               >
               <button
                 type="button"
                 onclick={() => {
-                  newMode = 'agent';
+                  targetMode = 'agent';
                   composer = 'Implementiere ';
                 }}>Aufgabe umsetzen <span>Agent</span></button
               >
@@ -1553,30 +1689,106 @@
       </div>
 
       <div class="composer-wrap">
+        {#if selectedSession?.queuedMessages && selectedSession.queuedMessages.length > 0}
+          <section class="message-queue" aria-label="Vorgemerkte Nachrichten">
+            <header>
+              <strong>{selectedSession.queuedMessages.length} vorgemerkt</strong>
+              {#if selectedSession.queuePaused}
+                <button type="button" onclick={() => void resumeQueuedMessages()}
+                  >Mit Warteschlange fortfahren</button
+                >
+              {/if}
+            </header>
+            <ol>
+              {#each selectedSession.queuedMessages.slice(0, 3) as queued (queued.queueReference)}
+                <li>
+                  <span class="queue-position">{queued.position}</span>
+                  <span class="queue-mode">{modeLabel(queued.targetMode)}</span>
+                  <span class="queue-preview">{queued.preview}</span>
+                  <button
+                    type="button"
+                    aria-label={`Vorgemerkte Nachricht ${queued.position} entfernen`}
+                    onclick={() => void removeQueuedMessage(queued.queueReference)}>×</button
+                  >
+                </li>
+              {/each}
+            </ol>
+            {#if selectedSession.queuedMessages.length > 3}
+              <details>
+                <summary>{selectedSession.queuedMessages.length - 3} weitere</summary>
+                <ol start="4">
+                  {#each selectedSession.queuedMessages.slice(3) as queued (queued.queueReference)}
+                    <li>
+                      <span class="queue-position">{queued.position}</span>
+                      <span class="queue-mode">{modeLabel(queued.targetMode)}</span>
+                      <span class="queue-preview">{queued.preview}</span>
+                      <button
+                        type="button"
+                        aria-label={`Vorgemerkte Nachricht ${queued.position} entfernen`}
+                        onclick={() => void removeQueuedMessage(queued.queueReference)}>×</button
+                      >
+                    </li>
+                  {/each}
+                </ol>
+              </details>
+            {/if}
+          </section>
+        {/if}
         {#if actionError}<p class="composer-error" role="alert">{actionError}</p>{/if}
         <div class="composer-box">
-          {#if !selectedSummary}
-            <div class="mode-switch" aria-label="Agent-Modus">
-              <button
-                type="button"
-                aria-pressed={newMode === 'ask'}
-                onclick={() => (newMode = 'ask')}
-                ><strong>Ask</strong><span>Nur lesen und antworten</span></button
-              >
-              <button
-                type="button"
-                aria-pressed={newMode === 'agent'}
-                onclick={() => (newMode = 'agent')}
-                ><strong>Agent</strong><span>Änderungen ausführen</span></button
-              >
-              <button
-                type="button"
-                aria-pressed={newMode === 'plan'}
-                onclick={() => (newMode = 'plan')}
-                ><strong>Plan</strong><span>Gemeinsam ausarbeiten</span></button
-              >
-            </div>
-          {/if}
+          <div class="mode-switch" aria-label="Modus für die nächste Nachricht">
+            <button
+              type="button"
+              aria-label="Ask Nur lesen und antworten"
+              disabled={!modeIsSelectable('ask')}
+              class:executing={selectedSummary?.mode === 'ask' &&
+                selectedSummary.state === 'running'}
+              aria-pressed={targetMode === 'ask'}
+              onclick={() => (targetMode = 'ask')}
+              ><strong>Ask</strong><span
+                >{selectedSummary?.mode === 'ask' && selectedSummary.state === 'running'
+                  ? 'Wird ausgeführt'
+                  : targetMode === 'ask'
+                    ? 'Als Nächstes'
+                    : 'Lesen & antworten'}</span
+              ></button
+            >
+            <button
+              type="button"
+              aria-label="Plan Gemeinsam ausarbeiten"
+              disabled={!modeIsSelectable('plan')}
+              class:executing={selectedSummary?.mode === 'plan' &&
+                selectedSummary.state === 'running'}
+              aria-pressed={targetMode === 'plan'}
+              onclick={() => (targetMode = 'plan')}
+              ><strong>Plan</strong><span
+                >{selectedSummary?.mode === 'plan' && selectedSummary.state === 'running'
+                  ? 'Wird ausgeführt'
+                  : targetMode === 'plan'
+                    ? 'Als Nächstes'
+                    : 'Plan erarbeiten'}</span
+              ></button
+            >
+            <button
+              type="button"
+              aria-label="Agent Änderungen ausführen"
+              disabled={!modeIsSelectable('agent')}
+              class:executing={selectedSummary?.mode === 'agent' &&
+                selectedSummary.state === 'running'}
+              class:requires-review={targetMode === 'agent' && modeRequiresPlanReview('agent')}
+              aria-pressed={targetMode === 'agent'}
+              onclick={() => (targetMode = 'agent')}
+              ><strong>Agent</strong><span
+                >{selectedSummary?.mode === 'agent' && selectedSummary.state === 'running'
+                  ? 'Wird ausgeführt'
+                  : targetMode === 'agent' && modeRequiresPlanReview('agent')
+                    ? 'Nach Planfreigabe'
+                    : targetMode === 'agent'
+                      ? 'Als Nächstes'
+                      : 'Sicher umsetzen'}</span
+              ></button
+            >
+          </div>
           {#if commandChips.length > 0}
             <div class="composer-command-chips" aria-label="Aktive Slash Commands">
               {#each commandChips as command (command.name)}
@@ -1596,22 +1808,13 @@
             bind:value={composer}
             onkeydown={composerKeydown}
             oninput={composerInput}
-            disabled={submitting ||
-              (selectedSummary !== null &&
-                ![
-                  'draft',
-                  'awaitingUser',
-                  'awaitingPlanReview',
-                  'completed',
-                  'failed',
-                  'cancelled',
-                ].includes(selectedSummary.state))}
+            disabled={submitting}
             aria-label="Nachricht an A^3"
             placeholder={selectedSummary
               ? 'Nachricht senden …'
-              : newMode === 'ask'
+              : targetMode === 'ask'
                 ? 'Stelle eine Frage zum Projekt …'
-                : newMode === 'plan'
+                : targetMode === 'plan'
                   ? 'Was möchtest du planen?'
                   : 'Welche Aufgabe soll A^3 erledigen?'}
             rows="3"></textarea>
@@ -1684,29 +1887,26 @@
       </div>
     </main>
 
-    {#if inspectorOpen}<div
+    {#if agentSidebarVisible && inspectorOpen}<div
         class="resize-handle inspector-resize"
         role="separator"
         aria-label="Inspectorbreite ändern"
         onpointerdown={(event) => beginResize(event, 'inspector')}
       ></div>{/if}
-    {#if !inspectorOpen}<button
-        class="reopen-pane reopen-inspector"
-        type="button"
-        onclick={toggleInspector}
-        aria-label="Inspector öffnen">◫</button
-      >{/if}
 
-    <aside class="inspector" aria-label="Agent Inspector">
-      <header class="inspector-header">
-        <strong>Inspector</strong><button
-          class="icon-button"
-          type="button"
-          onclick={toggleInspector}
-          aria-label="Inspector einklappen">›</button
-        >
-      </header>
-      {#if activeTaskId}<nav class="inspector-tabs" aria-label="Inspector Ansichten">
+    {#if agentSidebarVisible && activeTaskId}
+      {@const visibleTaskId = activeTaskId}
+      <aside class="inspector" aria-label="Agentenlauf">
+        <header class="inspector-header">
+          <strong>Agentenlauf</strong>
+          <button
+            class="icon-button"
+            type="button"
+            onclick={toggleInspector}
+            aria-label="Agentenlauf einklappen">›</button
+          >
+        </header>
+        <nav class="inspector-tabs" aria-label="Agentenlauf Ansichten">
           <button
             type="button"
             aria-current={inspectorTab === 'progress' ? 'page' : undefined}
@@ -1722,80 +1922,60 @@
             aria-current={inspectorTab === 'review' ? 'page' : undefined}
             onclick={() => (inspectorTab = 'review')}>Review</button
           >
-        </nav>{/if}
-      <div class="inspector-content">
-        {#if latestResearchSequence && selectedSummary && (!activeTaskId || inspectorTab === 'progress')}
-          <AgentAskResearch
-            compact
-            mirror
-            sessionId={selectedSummary.sessionId}
-            userSequence={latestResearchSequence}
-            refreshKey={`${selectedSummary.revision}-${researchRefresh}`}
-            live={selectedSummary.state === 'running' && !activeTaskId}
-            recentlyCompleted={latestResearchSequence === recentlyCompletedResearchSequence}
-            responseVisible={latestResearchHasResponse}
-            sourceRequest={researchSourceRequest}
-            presentation={researchPresentations[
-              `${selectedSummary.sessionId}:${latestResearchSequence}`
-            ] ?? null}
-            oncontinue={() => void continueResearch()}
-          />
-        {/if}
-        {#if !activeTaskId}
-          {#if !latestResearchSequence}
-            <div class="inspector-empty">
-              <span aria-hidden="true">⌕</span>
-              <p>Der Arbeitsweg erscheint nach der ersten Nachricht.</p>
-            </div>
-          {/if}
-        {:else if inspectorTab === 'progress'}
-          {#if activityLoading}<p role="status">Fortschritt wird geladen …</p>
-          {:else if activity?.run}
-            <section class="run-summary">
-              <p class="section-label">Umsetzung & Prüfung</p>
-              <h3>{controllerStateLabel(activity.run.state)}</h3>
-              <p>Der sichere Agent arbeitet den belegten Plan schrittweise ab.</p>
-            </section>
-            <ol class="activity-timeline">
-              {#each activity.run.timeline as event (event.sequence)}
-                {@const eventState = activityEventState(
-                  event,
-                  activity.run.timeline.at(-1)?.sequence,
-                  activity.run.terminal,
-                )}
-                <li class={eventState} aria-current={eventState === 'active' ? 'step' : undefined}>
-                  <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
-                  <div>
-                    <strong>{activityEventLabel(event)}</strong>
-                    <p>{activityEventFeedback(event)}</p>
-                  </div>
-                </li>
-              {/each}
-            </ol>
-          {:else}<p>Für diese Aufgabe existiert noch kein aktiver Run.</p>{/if}
-        {:else if inspectorTab === 'changes'}
-          <AgentInspectionPanel
-            taskId={activeTaskId}
-            loader={inspectionLoader}
-            logLoader={inspectionLogLoader}
-          />
-        {:else}
-          <div class="review-stack">
+        </nav>
+        <div class="inspector-content">
+          {#if inspectorTab === 'progress'}
+            {#if activityLoading}<p role="status">Fortschritt wird geladen …</p>
+            {:else if activity?.run}
+              <section class="run-summary">
+                <p class="section-label">Umsetzung & Prüfung</p>
+                <h3>{controllerStateLabel(activity.run.state)}</h3>
+                <p>Der sichere Agent arbeitet den belegten Plan schrittweise ab.</p>
+              </section>
+              <ol class="activity-timeline">
+                {#each activity.run.timeline as event (event.sequence)}
+                  {@const eventState = activityEventState(
+                    event,
+                    activity.run.timeline.at(-1)?.sequence,
+                    activity.run.terminal,
+                  )}
+                  <li
+                    class={eventState}
+                    aria-current={eventState === 'active' ? 'step' : undefined}
+                  >
+                    <span aria-hidden="true">{eventState === 'done' ? '✓' : ''}</span>
+                    <div>
+                      <strong>{activityEventLabel(event)}</strong>
+                      <p>{activityEventFeedback(event)}</p>
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+            {:else}<p>Für diese Aufgabe existiert noch kein aktiver Run.</p>{/if}
+          {:else if inspectorTab === 'changes'}
             <AgentInspectionPanel
-              taskId={activeTaskId}
+              taskId={visibleTaskId}
               loader={inspectionLoader}
               logLoader={inspectionLogLoader}
             />
-            <AgentApprovalCenter
-              taskId={activeTaskId}
-              loader={approvalLoader}
-              controller={approvalController}
-              onChanged={() => loadActivity(activeTaskId)}
-            />
-          </div>
-        {/if}
-      </div>
-    </aside>
+          {:else}
+            <div class="review-stack">
+              <AgentInspectionPanel
+                taskId={visibleTaskId}
+                loader={inspectionLoader}
+                logLoader={inspectionLogLoader}
+              />
+              <AgentApprovalCenter
+                taskId={visibleTaskId}
+                loader={approvalLoader}
+                controller={approvalController}
+                onChanged={() => loadActivity(visibleTaskId)}
+              />
+            </div>
+          {/if}
+        </div>
+      </aside>
+    {/if}
   {/if}
 </section>
 
@@ -1999,6 +2179,15 @@
     gap: var(--space-1);
     margin-inline-start: auto;
   }
+  .header-actions {
+    position: relative;
+    z-index: 15;
+    display: flex;
+    min-width: max-content;
+    align-items: center;
+    margin-inline-start: var(--space-3);
+    gap: var(--space-1);
+  }
   .runtime-controls button {
     min-height: 2.75rem;
   }
@@ -2012,7 +2201,7 @@
     top: calc(100% + var(--space-1));
     right: 0;
     display: grid;
-    width: 11rem;
+    width: min(11rem, calc(100vw - 2 * var(--space-3)));
     padding: var(--space-1);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -2254,6 +2443,66 @@
     margin: 0 auto;
     padding: var(--space-3) var(--space-4) var(--space-4);
   }
+  .message-queue {
+    margin-block-end: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border-soft);
+    border-radius: var(--radius-control);
+    background: var(--color-surface-subtle);
+    font-size: var(--font-size-xs);
+  }
+  .message-queue > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-block-end: var(--space-1);
+    color: var(--color-muted);
+  }
+  .message-queue ol {
+    display: grid;
+    padding: 0;
+    margin: 0;
+    gap: 0.2rem;
+    list-style: none;
+  }
+  .message-queue li {
+    display: grid;
+    grid-template-columns: 1.25rem 3.5rem minmax(0, 1fr) 1.75rem;
+    min-height: 1.8rem;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .queue-position,
+  .queue-mode {
+    color: var(--color-muted);
+  }
+  .queue-position {
+    text-align: center;
+  }
+  .queue-preview {
+    overflow: hidden;
+    color: var(--color-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .message-queue button {
+    min-height: 1.7rem;
+    padding: 0 var(--space-1);
+    border: 0;
+    border-radius: var(--radius-control);
+    color: var(--color-muted);
+    background: transparent;
+    cursor: pointer;
+  }
+  .message-queue button:hover {
+    color: var(--color-text);
+    background: var(--color-surface-muted);
+  }
+  .message-queue summary {
+    margin-top: var(--space-1);
+    color: var(--color-muted);
+    cursor: pointer;
+  }
   .composer-box {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-card);
@@ -2261,6 +2510,7 @@
     box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 22%, transparent);
   }
   .mode-switch {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     padding: var(--space-1);
@@ -2268,6 +2518,8 @@
     gap: var(--space-1);
   }
   .mode-switch button {
+    position: relative;
+    z-index: 1;
     display: grid;
     min-height: 3rem;
     padding: var(--space-1) var(--space-2);
@@ -2281,6 +2533,20 @@
     border-color: var(--color-border);
     color: var(--color-heading);
     background: var(--color-accent-surface);
+  }
+  .mode-switch button.executing::before {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    width: 0.35rem;
+    height: 0.35rem;
+    border-radius: 50%;
+    content: '';
+    background: var(--color-status-pending);
+    box-shadow: 0 0 0 3px var(--color-status-pending-ring);
+  }
+  .mode-switch button.requires-review span {
+    color: var(--color-warning);
   }
   .mode-switch span {
     font-size: var(--font-size-xs);
@@ -2576,9 +2842,6 @@
   .reopen-history {
     left: var(--space-2);
   }
-  .reopen-inspector {
-    right: var(--space-2);
-  }
   .no-project {
     display: grid;
     grid-column: 1 / -1;
@@ -2625,7 +2888,7 @@
       display: none;
     }
     .conversation-header {
-      padding-inline-end: 3.5rem;
+      padding-inline-end: var(--space-3);
     }
   }
   @media (max-width: 760px) {

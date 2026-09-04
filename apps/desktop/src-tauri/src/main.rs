@@ -483,6 +483,8 @@ mod tests {
                 "allow-confirm-project-command-allowlist",
                 "allow-control-agent-approval",
                 "allow-control-agent-session",
+                "allow-control-agent-session-v2",
+                "allow-control-agent-session-queue",
                 "allow-control-agent-task-run",
                 "allow-create-agent-goal",
                 "allow-discover-provider-models",
@@ -514,6 +516,7 @@ mod tests {
                 "allow-query-agent-work-trace-source-preview",
                 "allow-query-agent-session",
                 "allow-query-agent-session-v2",
+                "allow-query-agent-session-v3",
                 "allow-query-agent-sessions",
                 "allow-query-agent-slash-commands",
                 "allow-query-agent-inspection",
@@ -557,6 +560,7 @@ mod tests {
                 "allow-submit-agent-message",
                 "allow-submit-agent-message-v2",
                 "allow-submit-agent-message-v3",
+                "allow-submit-agent-message-v4",
                 "allow-continue-agent-research",
                 "allow-update-agent-workspace-layout"
             ]))

@@ -38,6 +38,10 @@ export type ErrorCodeV1 =
   | 'agentTaskControlUnavailable'
   | 'invalidAgentApprovalRequest'
   | 'agentApprovalUnavailable'
+  | 'invalidAgentSessionRequest'
+  | 'agentSessionRevisionConflict'
+  | 'agentSessionUnavailable'
+  | 'agentSessionBusy'
   | 'indexRebuildAlreadyPending'
   | 'indexRebuildUnavailable'
   | 'projectOperationBusy'
@@ -102,6 +106,10 @@ const ERROR_CODES = new Set<ErrorCodeV1>([
   'agentTaskControlUnavailable',
   'invalidAgentApprovalRequest',
   'agentApprovalUnavailable',
+  'invalidAgentSessionRequest',
+  'agentSessionRevisionConflict',
+  'agentSessionUnavailable',
+  'agentSessionBusy',
   'indexRebuildAlreadyPending',
   'indexRebuildUnavailable',
   'projectOperationBusy',
@@ -244,6 +252,34 @@ export function deepMapRecoveryMessage(error: unknown): string {
   return (
     (code === undefined ? undefined : messages[code]) ??
     'Die Deep-Map-Aktion konnte nicht sicher ausgeführt werden. Aktualisiere den Status und versuche es erneut.'
+  );
+}
+
+export function agentSessionRecoveryMessage(
+  error: unknown,
+  action: 'control' | 'implementPlan' | 'queue' | 'submit',
+): string {
+  const code = parseCommandErrorV1(error)?.code;
+  const messages: Partial<Record<ErrorCodeV1, string>> = {
+    invalidAgentSessionRequest:
+      'Die angeforderte Session-Aktion passt nicht zum aktuellen Zustand.',
+    agentSessionRevisionConflict:
+      action === 'implementPlan'
+        ? 'Der Plan wurde inzwischen geändert oder der Projektstand ist nicht mehr aktuell. Lade die Session und bestätige den aktuellen Plan erneut.'
+        : 'Die Session wurde inzwischen aktualisiert. Der neueste sichere Stand wird geladen.',
+    agentSessionBusy:
+      action === 'implementPlan'
+        ? 'Ein anderer Agentenlauf ist noch aktiv. Der Plan wurde nicht gestartet. Warte auf dessen Abschluss und versuche es dann erneut.'
+        : 'Die aktuelle Arbeit blockiert diese Aktion noch. Der gespeicherte Stand wurde nicht verändert; versuche es nach dem Abschluss erneut.',
+    agentSessionUnavailable:
+      'Die lokale Agentenlaufzeit ist momentan nicht verfügbar. Der gespeicherte Arbeitsstand bleibt erhalten.',
+    noActiveProject: 'Öffne zuerst einen lokalen Git-Worktree.',
+    unsupportedProtocolVersion:
+      'UI und Core verwenden unterschiedliche Protokollversionen. Starte A^3 neu.',
+  };
+  return (
+    (code === undefined ? undefined : messages[code]) ??
+    'Die Session-Aktion konnte nicht sicher abgeschlossen werden. Lade den aktuellen Stand und versuche es erneut.'
   );
 }
 

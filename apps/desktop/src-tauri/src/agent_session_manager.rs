@@ -3,15 +3,15 @@ use crate::agent_run_manager::{AgentRunActivityState, AgentRunManager};
 use crate::job_ids::DesktopJobIds;
 use a3_application::{
     AdvanceAgentController, AgentControllerSignal, AgentRunExecutionRequest, AgentSessionDetail,
-    AgentSessionListQuery, AgentSessionPage, AgentSessionStore, AgentSessionStoreFailure,
-    AppendRunEvent, AskResearchAction, AskResearchEvent, AskResearchPublicFindingKind,
-    AskResearchPublicNote, AskResearchRelation, AskResearchSource, AskResearchStore,
-    AskResearchStoreFailure, AskResearchTurn, AskSourceSearcher, AskSourceTextSearch,
-    BeginResearchDecision, BoundedResearchController, CompileTaskLens, CreateAgentRun,
-    CreateGoalContract, CreateTaskLedger, DecodeAskResearchDecision, DecodeEvidenceDiagrams,
-    EvidenceDiagramArtifact, GoalContractStore, JobCompletion, JobContext, JobSubmitter,
-    KnowledgeIndexStore, KnowledgeSearchStore, ResearchHandoff, ResearchMemoryCheckpoint,
-    ResearchMemoryFinding, ResearchMemoryFindingKind, RunJournalStore,
+    AgentSessionListQuery, AgentSessionPage, AgentSessionQueue, AgentSessionStore,
+    AgentSessionStoreFailure, AppendRunEvent, AskResearchAction, AskResearchEvent,
+    AskResearchPublicFindingKind, AskResearchPublicNote, AskResearchRelation, AskResearchSource,
+    AskResearchStore, AskResearchStoreFailure, AskResearchTurn, AskSourceSearcher,
+    AskSourceTextSearch, BeginResearchDecision, BoundedResearchController, CompileTaskLens,
+    CreateAgentRun, CreateGoalContract, CreateTaskLedger, DecodeAskResearchDecision,
+    DecodeEvidenceDiagrams, EvidenceDiagramArtifact, GoalContractStore, JobCompletion, JobContext,
+    JobSubmitter, KnowledgeIndexStore, KnowledgeSearchStore, ResearchHandoff,
+    ResearchMemoryCheckpoint, ResearchMemoryFinding, ResearchMemoryFindingKind, RunJournalStore,
     SlashCommandExecutionProfile, TaskLedgerStore, TaskLensClaimStore, TaskLensControl,
     TaskLensControlError, TaskLensIndexStore, memory_finding_from_note,
     validate_agent_session_transition,
@@ -20,28 +20,29 @@ use a3_application::{AgentSourceReader, DiscoverProjectCommands, ModelMessageRol
 use a3_domain::{
     AcceptanceCriterion, AcceptanceCriterionId, AcceptanceCriterionStatement,
     AgentDiagramArtifactId, AgentFileInspection, AgentFileLineCount, AgentFileStartLine,
-    AgentResearchDepth, AgentRun, AgentRunId, AgentRunTimestamp, AgentSession, AgentSessionEntry,
-    AgentSessionEntryKind, AgentSessionId, AgentSessionMode, AgentSessionRevision,
-    AgentSessionSequence, AgentSessionState, AgentSessionText, AgentSessionTimestamp,
-    AgentSessionTitle, AgentWorkItem, AgentWorkItemId, AskResearchCompleteness, AskResearchPhase,
-    AskResearchSelectionReason, AskResearchSourceId, AskResearchSourceKind, AskResearchState,
-    DiscoveredCommandKind, ExpectedTaskEvidence, GoalContract, GoalContractDraft,
-    GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId, JobOwner, ParsedSlashCommand,
-    PolicyResourceId, Progress, ProjectIdentity, RunEventId, SecretCandidateClassifierV1,
-    SlashCommand, SlashCommandEmptyInput, SlashCommandVerificationProfile, SourceChannel,
-    StepDependency, SuccessVerification, SyntaxRelationKind, TaskId, TaskLedger,
-    TaskLedgerTimestamp, TaskLensEntryReason, TaskLensSeedSet, TaskLensSeedText, TaskLensTarget,
-    TaskLensTokenBudget, TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale,
-    VerificationRequirement, VerificationScope, VerificationSpec, VerificationSpecId,
-    parse_slash_command,
+    AgentQueuedMessage, AgentQueuedMessageId, AgentQueuedMessageState,
+    AgentQueuedResearchSelection, AgentResearchDepth, AgentRun, AgentRunId, AgentRunTimestamp,
+    AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
+    AgentSessionQueueRevision, AgentSessionRevision, AgentSessionSequence, AgentSessionState,
+    AgentSessionText, AgentSessionTimestamp, AgentSessionTitle, AgentWorkItem, AgentWorkItemId,
+    AskResearchCompleteness, AskResearchPhase, AskResearchSelectionReason, AskResearchSourceId,
+    AskResearchSourceKind, AskResearchState, DiscoveredCommandKind, ExpectedTaskEvidence,
+    GoalContract, GoalContractDraft, GoalContractTimestamp, GoalObjective, GraphEndpoint, JobId,
+    JobOwner, ParsedSlashCommand, PolicyResourceId, Progress, ProjectIdentity, RunEventId,
+    SecretCandidateClassifierV1, SlashCommand, SlashCommandEmptyInput,
+    SlashCommandVerificationProfile, SourceChannel, StepDependency, SuccessVerification,
+    SyntaxRelationKind, TaskId, TaskLedger, TaskLedgerTimestamp, TaskLensEntryReason,
+    TaskLensSeedSet, TaskLensSeedText, TaskLensTarget, TaskLensTokenBudget, TaskStepDefinition,
+    TaskStepId, TaskStepOutcome, TaskStepRationale, VerificationRequirement, VerificationScope,
+    VerificationSpec, VerificationSpecId, WorktreeId, parse_slash_command,
 };
 use a3_workspace::{WorkspaceAgentSourceReader, WorkspaceAskSourceSearcher};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -57,6 +58,18 @@ enum MessageResearchSelection {
     LegacyDepth(AgentResearchDepth),
     ExplicitDepth(AgentResearchDepth),
     Command,
+}
+
+/// Closed V4 acceptance result used by the protocol composition boundary.
+pub(crate) enum AgentMessageSubmission {
+    Started {
+        detail: AgentSessionDetail,
+        requires_plan_review: bool,
+    },
+    Queued {
+        detail: AgentSessionDetail,
+        queue: AgentSessionQueue,
+    },
 }
 
 /// Core task persistence required to turn one reviewed plan into authoritative harness anchors.
@@ -104,16 +117,7 @@ impl AgentTaskMaterializer {
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?
             .ok_or(AgentSessionManagerFailure::Unavailable)?;
         if let Some(handoff) = research_handoff
-            && (handoff.index_run_id() != published.run().id()
-                || handoff.snapshot_id() != published.run().snapshot_id()
-                || handoff.revisions().iter().any(|revision| {
-                    !published
-                        .publication()
-                        .graph()
-                        .files()
-                        .iter()
-                        .any(|current| current == revision)
-                }))
+            && !research_handoff_matches_index(handoff, &published)
         {
             return Err(AgentSessionManagerFailure::Conflict);
         }
@@ -1866,6 +1870,22 @@ impl a3_application::IndexPersistenceControl for ConversationIndexControl<'_> {
     }
 }
 
+#[derive(Debug)]
+struct PlanStartIndexControl;
+
+impl a3_application::IndexPersistenceControl for PlanStartIndexControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+
+    fn report_progress(
+        &self,
+        _progress: Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        Ok(())
+    }
+}
+
 impl TaskLensControl for ConversationTaskLensControl<'_> {
     fn is_cancelled(&self) -> bool {
         self.context.cancellation_token().is_cancelled()
@@ -1892,6 +1912,7 @@ impl TaskLensControl for ConversationTaskLensControl<'_> {
 pub(crate) struct AgentSessionRunReporter {
     store: Arc<dyn AgentSessionStore>,
     links: Mutex<BTreeMap<TaskId, AgentSessionId>>,
+    queue_wake: Mutex<Option<Weak<ConversationQueueWake>>>,
 }
 
 impl AgentSessionRunReporter {
@@ -1900,7 +1921,12 @@ impl AgentSessionRunReporter {
         Self {
             store,
             links: Mutex::new(BTreeMap::new()),
+            queue_wake: Mutex::new(None),
         }
+    }
+
+    fn bind_queue_wake(&self, wake: &Arc<ConversationQueueWake>) {
+        *lock_recovering_poison(&self.queue_wake) = Some(Arc::downgrade(wake));
     }
 
     pub(crate) fn link(&self, task_id: TaskId, session_id: AgentSessionId) {
@@ -1979,7 +2005,19 @@ impl AgentSessionRunReporter {
                 None,
             )
             .await
-            .map_err(Into::into)
+            .map_err(AgentSessionManagerFailure::from)?;
+        if matches!(
+            state,
+            AgentSessionState::Completed | AgentSessionState::Failed | AgentSessionState::Cancelled
+        ) {
+            let wake = lock_recovering_poison(&self.queue_wake)
+                .as_ref()
+                .and_then(Weak::upgrade);
+            if let Some(wake) = wake {
+                wake.after_agent_terminal(project, session_id, state).await;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2003,10 +2041,58 @@ pub(crate) struct AgentSessionManager {
     reporter: Option<Arc<AgentSessionRunReporter>>,
     researcher: Option<AgentAskResearcher>,
     research_store: Option<Arc<dyn AskResearchStore>>,
-    active_session: Mutex<Option<ActiveConversation>>,
+    active_session: Arc<Mutex<Option<ActiveConversation>>>,
+    auto_dispatch_queues: Arc<Mutex<HashSet<(WorktreeId, AgentSessionId)>>>,
+    _queue_wake: Option<Arc<ConversationQueueWake>>,
+}
+
+struct ConversationQueueWake {
+    dependencies: AgentSessionManagerDependencies,
+    active_session: Arc<Mutex<Option<ActiveConversation>>>,
+    auto_dispatch_queues: Arc<Mutex<HashSet<(WorktreeId, AgentSessionId)>>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QueueDispatchTrigger {
+    Automatic,
+    ExplicitResume,
+}
+
+impl ConversationQueueWake {
+    async fn after_agent_terminal(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        state: AgentSessionState,
+    ) {
+        let dispatcher = AgentSessionManager::with_active_session(
+            self.dependencies.clone(),
+            Arc::clone(&self.active_session),
+            Arc::clone(&self.auto_dispatch_queues),
+        );
+        if state == AgentSessionState::Completed {
+            let _dispatched = dispatcher
+                .dispatch_next_queued(project, QueueDispatchTrigger::Automatic)
+                .await;
+        } else if let Ok(queue) = dispatcher
+            .store
+            .load_message_queue(project, session_id)
+            .await
+            && !queue.messages().is_empty()
+            && !queue.paused()
+        {
+            let _paused = dispatcher
+                .store
+                .set_message_queue_paused(project, session_id, queue.revision(), true)
+                .await;
+            lock_recovering_poison(&dispatcher.auto_dispatch_queues)
+                .remove(&(project.worktree().id(), session_id));
+        }
+    }
 }
 
 /// Composition-root-owned dependencies for the conversation projection and its runtime bridges.
+#[derive(Clone)]
 pub(crate) struct AgentSessionManagerDependencies {
     pub(crate) store: Arc<dyn AgentSessionStore>,
     pub(crate) runtime: AgentConversationRuntime,
@@ -2022,6 +2108,16 @@ pub(crate) struct AgentSessionManagerDependencies {
 impl AgentSessionManager {
     #[must_use]
     pub(crate) fn new(dependencies: AgentSessionManagerDependencies) -> Self {
+        let active_session = Arc::new(Mutex::new(None));
+        let auto_dispatch_queues = Arc::new(Mutex::new(HashSet::new()));
+        let queue_wake = Arc::new(ConversationQueueWake {
+            dependencies: dependencies.clone(),
+            active_session: Arc::clone(&active_session),
+            auto_dispatch_queues: Arc::clone(&auto_dispatch_queues),
+        });
+        if let Some(reporter) = dependencies.reporter.as_ref() {
+            reporter.bind_queue_wake(&queue_wake);
+        }
         Self {
             store: dependencies.store,
             runtime: dependencies.runtime,
@@ -2032,7 +2128,44 @@ impl AgentSessionManager {
             reporter: dependencies.reporter,
             researcher: dependencies.researcher,
             research_store: dependencies.research_store,
-            active_session: Mutex::new(None),
+            active_session,
+            auto_dispatch_queues,
+            _queue_wake: Some(queue_wake),
+        }
+    }
+
+    fn with_active_session(
+        dependencies: AgentSessionManagerDependencies,
+        active_session: Arc<Mutex<Option<ActiveConversation>>>,
+        auto_dispatch_queues: Arc<Mutex<HashSet<(WorktreeId, AgentSessionId)>>>,
+    ) -> Self {
+        Self {
+            store: dependencies.store,
+            runtime: dependencies.runtime,
+            submitter: dependencies.submitter,
+            job_ids: dependencies.job_ids,
+            materializer: dependencies.materializer,
+            run_manager: dependencies.run_manager,
+            reporter: dependencies.reporter,
+            researcher: dependencies.researcher,
+            research_store: dependencies.research_store,
+            active_session,
+            auto_dispatch_queues,
+            _queue_wake: None,
+        }
+    }
+
+    fn dependencies(&self) -> AgentSessionManagerDependencies {
+        AgentSessionManagerDependencies {
+            store: Arc::clone(&self.store),
+            runtime: self.runtime.clone(),
+            submitter: self.submitter.clone(),
+            job_ids: Arc::clone(&self.job_ids),
+            materializer: self.materializer.clone(),
+            run_manager: self.run_manager.clone(),
+            reporter: self.reporter.clone(),
+            researcher: self.researcher.clone(),
+            research_store: self.research_store.clone(),
         }
     }
 
@@ -2084,6 +2217,302 @@ impl AgentSessionManager {
             .load_session_commands(project, session_id, before_sequence, limit)
             .await
             .map_err(Into::into)
+    }
+
+    pub(crate) async fn load_queue(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+    ) -> Result<AgentSessionQueue, AgentSessionManagerFailure> {
+        let queue = self
+            .store
+            .load_message_queue(project, session_id)
+            .await
+            .map_err(AgentSessionManagerFailure::from)?;
+        let key = (project.worktree().id(), session_id);
+        if queue.messages().is_empty() || queue.paused() {
+            if queue.messages().is_empty() {
+                lock_recovering_poison(&self.auto_dispatch_queues).remove(&key);
+            }
+            return Ok(queue);
+        }
+        if lock_recovering_poison(&self.auto_dispatch_queues).contains(&key) {
+            return Ok(queue);
+        }
+        self.store
+            .set_message_queue_paused(project, session_id, queue.revision(), true)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Starts immediately when the capability is free; otherwise persists the validated message.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn submit_or_queue(
+        &self,
+        project: &ProjectIdentity,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        target_mode: AgentSessionMode,
+        explicit_depth: Option<AgentResearchDepth>,
+        command_depth: bool,
+        message: String,
+    ) -> Result<AgentMessageSubmission, AgentSessionManagerFailure> {
+        if session_id.is_none() {
+            // A fresh Agent request has no reviewed plan lineage yet. Start its read-only
+            // preparation in Plan and expose the explicit review stop before any task can exist.
+            let (effective_mode, requires_plan_review) =
+                resolve_next_message_mode(None, target_mode);
+            let detail = self
+                .submit_for_target_mode(
+                    project,
+                    None,
+                    None,
+                    effective_mode,
+                    explicit_depth,
+                    command_depth,
+                    message,
+                )
+                .await?;
+            return Ok(AgentMessageSubmission::Started {
+                detail,
+                requires_plan_review,
+            });
+        }
+        let session_id = session_id.ok_or(AgentSessionManagerFailure::InvalidInput)?;
+        let expected = expected_revision.ok_or(AgentSessionManagerFailure::InvalidInput)?;
+        self.release_terminal_job();
+        let current = self
+            .store
+            .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+            .await?
+            .ok_or(AgentSessionManagerFailure::NotFound)?;
+        if current.session().revision() != expected {
+            return Err(AgentSessionManagerFailure::Conflict);
+        }
+        let should_queue = lock_recovering_poison(&self.active_session).is_some()
+            || !matches!(
+                current.session().state(),
+                AgentSessionState::Draft
+                    | AgentSessionState::AwaitingUser
+                    | AgentSessionState::AwaitingPlanReview
+                    | AgentSessionState::Completed
+                    | AgentSessionState::Failed
+                    | AgentSessionState::Cancelled
+            );
+        if !should_queue {
+            let (effective_mode, requires_plan_review) =
+                resolve_next_message_mode(Some(current.session().mode()), target_mode);
+            let detail = self
+                .submit_for_target_mode(
+                    project,
+                    Some(session_id),
+                    Some(expected),
+                    effective_mode,
+                    explicit_depth,
+                    command_depth,
+                    message,
+                )
+                .await?;
+            return Ok(AgentMessageSubmission::Started {
+                detail,
+                requires_plan_review,
+            });
+        }
+        let (effective_mode, _) =
+            resolve_next_message_mode(Some(current.session().mode()), target_mode);
+        let selection = if command_depth {
+            MessageResearchSelection::Command
+        } else {
+            MessageResearchSelection::ExplicitDepth(
+                explicit_depth.ok_or(AgentSessionManagerFailure::InvalidInput)?,
+            )
+        };
+        let _validated = resolve_submitted_message(effective_mode, selection, &message)?;
+        let queue = self.store.load_message_queue(project, session_id).await?;
+        let queued = AgentQueuedMessage::from_parts(
+            AgentQueuedMessageId::from_bytes(random_id()?),
+            session_id,
+            queue
+                .messages()
+                .last()
+                .map_or(1, |item| item.ordinal().saturating_add(1)),
+            target_mode,
+            match selection {
+                MessageResearchSelection::LegacyDepth(AgentResearchDepth::Standard)
+                | MessageResearchSelection::ExplicitDepth(AgentResearchDepth::Standard) => {
+                    AgentQueuedResearchSelection::Standard
+                }
+                MessageResearchSelection::LegacyDepth(AgentResearchDepth::Thorough)
+                | MessageResearchSelection::ExplicitDepth(AgentResearchDepth::Thorough) => {
+                    AgentQueuedResearchSelection::Thorough
+                }
+                MessageResearchSelection::Command => AgentQueuedResearchSelection::Command,
+            },
+            AgentSessionText::try_from_string(message)
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+            timestamp()?,
+            AgentQueuedMessageState::Queued,
+        );
+        let queue = self
+            .store
+            .enqueue_message(project, expected, &queued)
+            .await?;
+        lock_recovering_poison(&self.auto_dispatch_queues)
+            .insert((project.worktree().id(), session_id));
+        Ok(AgentMessageSubmission::Queued {
+            detail: current,
+            queue,
+        })
+    }
+
+    pub(crate) async fn remove_queued_message(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        expected_queue_revision: AgentSessionQueueRevision,
+        message_id: AgentQueuedMessageId,
+    ) -> Result<AgentSessionQueue, AgentSessionManagerFailure> {
+        let queue = self
+            .store
+            .transition_queued_message(
+                project,
+                session_id,
+                expected_queue_revision,
+                message_id,
+                AgentQueuedMessageState::Removed,
+            )
+            .await
+            .map_err(AgentSessionManagerFailure::from)?;
+        if queue.messages().is_empty() {
+            lock_recovering_poison(&self.auto_dispatch_queues)
+                .remove(&(project.worktree().id(), session_id));
+        }
+        Ok(queue)
+    }
+
+    pub(crate) async fn resume_queue(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+        expected_queue_revision: AgentSessionQueueRevision,
+    ) -> Result<AgentSessionQueue, AgentSessionManagerFailure> {
+        self.store
+            .set_message_queue_paused(project, session_id, expected_queue_revision, false)
+            .await
+            .map_err(AgentSessionManagerFailure::from)?;
+        lock_recovering_poison(&self.auto_dispatch_queues)
+            .insert((project.worktree().id(), session_id));
+        self.dispatch_next_queued(project, QueueDispatchTrigger::ExplicitResume)
+            .await?;
+        self.store
+            .load_message_queue(project, session_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn dispatch_next_queued(
+        &self,
+        project: &ProjectIdentity,
+        trigger: QueueDispatchTrigger,
+    ) -> Result<(), AgentSessionManagerFailure> {
+        self.release_terminal_job();
+        if lock_recovering_poison(&self.active_session).is_some() {
+            return Ok(());
+        }
+        let worktree_id = project.worktree().id();
+        let session_ids = lock_recovering_poison(&self.auto_dispatch_queues)
+            .iter()
+            .filter_map(|(candidate_worktree, session_id)| {
+                (*candidate_worktree == worktree_id).then_some(*session_id)
+            })
+            .collect::<Vec<_>>();
+        let mut candidate = None;
+        for session_id in session_ids {
+            let Some(detail) = self
+                .store
+                .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
+                .await?
+            else {
+                lock_recovering_poison(&self.auto_dispatch_queues)
+                    .remove(&(worktree_id, session_id));
+                continue;
+            };
+            if !queue_dispatch_allows_state(trigger, detail.session().state()) {
+                continue;
+            }
+            let queue = self.store.load_message_queue(project, session_id).await?;
+            if queue.paused() || queue.messages().is_empty() {
+                if queue.messages().is_empty() {
+                    lock_recovering_poison(&self.auto_dispatch_queues)
+                        .remove(&(worktree_id, session_id));
+                }
+                continue;
+            }
+            let message = queue.messages()[0].clone();
+            let order = (
+                message.enqueued_at().unix_millis(),
+                message.ordinal(),
+                message.id().as_bytes().to_owned(),
+            );
+            if candidate
+                .as_ref()
+                .is_none_or(|(current, _, _, _)| order < *current)
+            {
+                candidate = Some((order, detail, queue, message));
+            }
+        }
+        let Some((_, detail, queue, message)) = candidate else {
+            return Ok(());
+        };
+        let session_id = detail.session().id();
+        self.store
+            .transition_queued_message(
+                project,
+                session_id,
+                queue.revision(),
+                message.id(),
+                AgentQueuedMessageState::Started,
+            )
+            .await?;
+        let (depth, command_depth) = match message.research() {
+            AgentQueuedResearchSelection::Standard => (Some(AgentResearchDepth::Standard), false),
+            AgentQueuedResearchSelection::Thorough => (Some(AgentResearchDepth::Thorough), false),
+            AgentQueuedResearchSelection::Command => (None, true),
+        };
+        let (effective_mode, _) =
+            resolve_next_message_mode(Some(detail.session().mode()), message.target_mode());
+        let submission = self
+            .submit_for_target_mode(
+                project,
+                Some(session_id),
+                Some(detail.session().revision()),
+                effective_mode,
+                depth,
+                command_depth,
+                message.text().as_str().to_owned(),
+            )
+            .await;
+        if submission.is_err() {
+            if let Ok(current) = self.store.load_message_queue(project, session_id).await
+                && let Ok(requeued) = self
+                    .store
+                    .transition_queued_message(
+                        project,
+                        session_id,
+                        current.revision(),
+                        message.id(),
+                        AgentQueuedMessageState::Queued,
+                    )
+                    .await
+            {
+                let _paused = self
+                    .store
+                    .set_message_queue_paused(project, session_id, requeued.revision(), true)
+                    .await;
+            }
+            lock_recovering_poison(&self.auto_dispatch_queues).remove(&(worktree_id, session_id));
+        }
+        submission.map(|_| ())
     }
 
     pub(crate) async fn research_turns(
@@ -2295,6 +2724,7 @@ impl AgentSessionManager {
             session_id,
             expected_revision,
             start_mode,
+            None,
             MessageResearchSelection::LegacyDepth(depth),
             message,
         )
@@ -2320,6 +2750,38 @@ impl AgentSessionManager {
             session_id,
             expected_revision,
             start_mode,
+            None,
+            selection,
+            message,
+        )
+        .await
+    }
+
+    /// Starts an independent work item in the explicitly selected capability envelope.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn submit_for_target_mode(
+        &self,
+        project: &ProjectIdentity,
+        session_id: Option<AgentSessionId>,
+        expected_revision: Option<AgentSessionRevision>,
+        target_mode: AgentSessionMode,
+        explicit_depth: Option<AgentResearchDepth>,
+        command_depth: bool,
+        message: String,
+    ) -> Result<AgentSessionDetail, AgentSessionManagerFailure> {
+        let selection = if command_depth {
+            MessageResearchSelection::Command
+        } else {
+            MessageResearchSelection::ExplicitDepth(
+                explicit_depth.ok_or(AgentSessionManagerFailure::InvalidInput)?,
+            )
+        };
+        self.submit_with_selection(
+            project,
+            session_id,
+            expected_revision,
+            session_id.is_none().then_some(target_mode),
+            Some(target_mode),
             selection,
             message,
         )
@@ -2333,6 +2795,7 @@ impl AgentSessionManager {
         session_id: Option<AgentSessionId>,
         expected_revision: Option<AgentSessionRevision>,
         start_mode: Option<AgentSessionMode>,
+        target_mode: Option<AgentSessionMode>,
         selection: MessageResearchSelection,
         message: String,
     ) -> Result<AgentSessionDetail, AgentSessionManagerFailure> {
@@ -2370,27 +2833,37 @@ impl AgentSessionManager {
                 {
                     return Err(AgentSessionManagerFailure::Conflict);
                 }
-                let inherited_command = if selection == MessageResearchSelection::Command {
+                let selected_mode = target_mode.unwrap_or(current.session().mode());
+                let (effective_mode, _) =
+                    resolve_next_message_mode(Some(current.session().mode()), selected_mode);
+                let inherited_command = if selection == MessageResearchSelection::Command
+                    || effective_mode != current.session().mode()
+                {
                     None
                 } else {
                     pending_clarification_command(self.store.as_ref(), project, &current, &message)
                         .await?
                 };
                 let (text, depth, command_profile) = inherited_command.map_or_else(
-                    || resolve_submitted_message(current.session().mode(), selection, &message),
-                    |profile| command_message(current.session().mode(), profile, &message),
+                    || resolve_submitted_message(effective_mode, selection, &message),
+                    |profile| command_message(effective_mode, profile, &message),
                 )?;
                 let sequence = next_sequence(current.session().latest_sequence())?;
                 let next = successor(
                     current.session(),
                     SessionSuccessor {
                         title: current.session().title().as_str().to_owned(),
-                        mode: current.session().mode(),
+                        mode: effective_mode,
                         state: AgentSessionState::Running,
                         updated_at: now,
                         latest_sequence: Some(sequence),
-                        active_work_item: current.session().active_work_item(),
-                        plan_revision: current.session().current_plan_revision(),
+                        // Every user message starts an independent work item. Historical task and
+                        // run links remain on their entries, but the operative sidebar must stay
+                        // detached until this message materializes its own task.
+                        active_work_item: None,
+                        plan_revision: (effective_mode == current.session().mode())
+                            .then(|| current.session().current_plan_revision())
+                            .flatten(),
                         presentation_deleted: false,
                     },
                 )?;
@@ -2517,11 +2990,15 @@ impl AgentSessionManager {
         let job_project = project.clone();
         let scheduled_session = session.clone();
         let user_sequence = user_entry.sequence();
+        let queue_dependencies = self.dependencies();
+        let queue_active_session = Arc::clone(&self.active_session);
+        let queue_auto_dispatch = Arc::clone(&self.auto_dispatch_queues);
+        let queue_project = project.clone();
         let scheduled = self.submitter.submit(
             job_id,
             AGENT_CONVERSATION_JOB_OWNER,
             move |context: JobContext| {
-                tauri::async_runtime::block_on(complete_scheduled_session(
+                let completion = tauri::async_runtime::block_on(complete_scheduled_session(
                     store,
                     runtime,
                     job_project,
@@ -2536,7 +3013,47 @@ impl AgentSessionManager {
                     depth,
                     command_profile,
                     context,
-                ))
+                ));
+                release_conversation_owner(&queue_active_session, operation_session_id);
+                if completion == JobCompletion::Succeeded {
+                    let dispatcher = AgentSessionManager::with_active_session(
+                        queue_dependencies,
+                        Arc::clone(&queue_active_session),
+                        Arc::clone(&queue_auto_dispatch),
+                    );
+                    let _dispatched = tauri::async_runtime::block_on(
+                        dispatcher
+                            .dispatch_next_queued(&queue_project, QueueDispatchTrigger::Automatic),
+                    );
+                } else {
+                    let dispatcher = AgentSessionManager::with_active_session(
+                        queue_dependencies,
+                        Arc::clone(&queue_active_session),
+                        Arc::clone(&queue_auto_dispatch),
+                    );
+                    let _paused = tauri::async_runtime::block_on(async {
+                        let queue = dispatcher
+                            .store
+                            .load_message_queue(&queue_project, operation_session_id)
+                            .await?;
+                        if queue.messages().is_empty() || queue.paused() {
+                            return Ok::<(), AgentSessionStoreFailure>(());
+                        }
+                        dispatcher
+                            .store
+                            .set_message_queue_paused(
+                                &queue_project,
+                                operation_session_id,
+                                queue.revision(),
+                                true,
+                            )
+                            .await
+                            .map(|_| ())
+                    });
+                    lock_recovering_poison(&dispatcher.auto_dispatch_queues)
+                        .remove(&(queue_project.worktree().id(), operation_session_id));
+                }
+                completion
             },
         );
         if scheduled.is_err() {
@@ -2655,11 +3172,11 @@ impl AgentSessionManager {
         if detail.session().revision() != expected {
             return Err(AgentSessionManagerFailure::Conflict);
         }
-        if matches!(
+        let pauses_queue = matches!(
             &mutation,
             PresentationMutation::Archive | PresentationMutation::Delete
-        ) && !presentation_can_be_hidden(detail.session().state())
-        {
+        );
+        if pauses_queue && !presentation_can_be_hidden(detail.session().state()) {
             return Err(AgentSessionManagerFailure::Busy);
         }
         let now = timestamp()?;
@@ -2731,11 +3248,26 @@ impl AgentSessionManager {
             self.store
                 .delete_presentation(project, session_id, expected, &next)
                 .await?;
+            lock_recovering_poison(&self.auto_dispatch_queues)
+                .remove(&(project.worktree().id(), session_id));
             Ok(None)
         } else {
             self.store
                 .append_session_revision(project, expected, &next, None, None)
                 .await?;
+            if pauses_queue {
+                lock_recovering_poison(&self.auto_dispatch_queues)
+                    .remove(&(project.worktree().id(), session_id));
+                if let Ok(queue) = self.store.load_message_queue(project, session_id).await
+                    && !queue.messages().is_empty()
+                    && !queue.paused()
+                {
+                    let _paused = self
+                        .store
+                        .set_message_queue_paused(project, session_id, queue.revision(), true)
+                        .await;
+                }
+            }
             self.store
                 .load_session(project, session_id, None, SESSION_PAGE_LIMIT)
                 .await
@@ -2766,9 +3298,11 @@ impl AgentSessionManager {
             .research_store
             .clone()
             .ok_or(AgentSessionManagerFailure::Unavailable)?;
-        if run_manager.activity().state() != AgentRunActivityState::Idle {
+        let run_state = run_manager.activity().state();
+        if agent_run_blocks_plan_start(run_state) {
             return Err(AgentSessionManagerFailure::Busy);
         }
+        self.await_prior_conversation_release(session_id).await?;
         let mut operation = self.acquire(session_id)?;
         let detail = self
             .store
@@ -2818,6 +3352,24 @@ impl AgentSessionManager {
                 )
             })
             .transpose()?;
+        if let Some((_, handoff)) = latest_plan_research_handoff(
+            research_store.as_ref(),
+            project,
+            session_id,
+            command_profile.as_ref(),
+        )
+        .await?
+        {
+            let published = materializer
+                .index
+                .latest_published_index(project, &PlanStartIndexControl)
+                .await
+                .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+                .ok_or(AgentSessionManagerFailure::Unavailable)?;
+            if !research_handoff_matches_index(&handoff, &published) {
+                return Err(AgentSessionManagerFailure::IndexChanged);
+            }
+        }
         let objective = command_profile
             .as_ref()
             .map_or(objective, |profile| profile.objective().to_owned());
@@ -2861,11 +3413,15 @@ impl AgentSessionManager {
         let runtime = self.runtime.clone();
         let job_project = project.clone();
         let scheduled_session = running.clone();
+        let queue_dependencies = self.dependencies();
+        let queue_active_session = Arc::clone(&self.active_session);
+        let queue_auto_dispatch = Arc::clone(&self.auto_dispatch_queues);
+        let queue_project = project.clone();
         let scheduled = self.submitter.submit(
             job_id,
             AGENT_CONVERSATION_JOB_OWNER,
             move |context: JobContext| {
-                tauri::async_runtime::block_on(complete_plan_implementation(
+                let completion = tauri::async_runtime::block_on(complete_plan_implementation(
                     store,
                     runtime,
                     materializer,
@@ -2878,7 +3434,24 @@ impl AgentSessionManager {
                     plan,
                     command_profile,
                     context,
-                ))
+                ));
+                release_conversation_owner(&queue_active_session, session_id);
+                let dispatcher = AgentSessionManager::with_active_session(
+                    queue_dependencies,
+                    Arc::clone(&queue_active_session),
+                    Arc::clone(&queue_auto_dispatch),
+                );
+                if completion == JobCompletion::Succeeded {
+                    let _dispatched = tauri::async_runtime::block_on(
+                        dispatcher
+                            .dispatch_next_queued(&queue_project, QueueDispatchTrigger::Automatic),
+                    );
+                } else {
+                    tauri::async_runtime::block_on(
+                        dispatcher.pause_queue_after_failed_work(&queue_project, session_id),
+                    );
+                }
+                completion
             },
         );
         if scheduled.is_err() {
@@ -2905,6 +3478,9 @@ impl AgentSessionManager {
     }
 
     pub(crate) fn quiesce(&self) -> Result<(), AgentSessionManagerFailure> {
+        // Auto-dispatch authority is process-local. A project switch or shutdown must never carry
+        // it into a later activation; the durable queue remains visible and is paused on reload.
+        lock_recovering_poison(&self.auto_dispatch_queues).clear();
         self.release_terminal_job();
         let job_id = lock_recovering_poison(&self.active_session)
             .as_ref()
@@ -2963,6 +3539,45 @@ impl AgentSessionManager {
         if terminal {
             *active = None;
         }
+    }
+
+    async fn await_prior_conversation_release(
+        &self,
+        session_id: AgentSessionId,
+    ) -> Result<(), AgentSessionManagerFailure> {
+        let deadline = Instant::now() + Duration::from_millis(750);
+        loop {
+            self.release_terminal_job();
+            let active = *lock_recovering_poison(&self.active_session);
+            match active {
+                None => return Ok(()),
+                Some(active) if active.session_id != session_id => {
+                    return Err(AgentSessionManagerFailure::Busy);
+                }
+                Some(_) if Instant::now() >= deadline => {
+                    return Err(AgentSessionManagerFailure::Busy);
+                }
+                Some(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    }
+
+    async fn pause_queue_after_failed_work(
+        &self,
+        project: &ProjectIdentity,
+        session_id: AgentSessionId,
+    ) {
+        if let Ok(queue) = self.store.load_message_queue(project, session_id).await
+            && !queue.messages().is_empty()
+            && !queue.paused()
+        {
+            let _paused = self
+                .store
+                .set_message_queue_paused(project, session_id, queue.revision(), true)
+                .await;
+        }
+        lock_recovering_poison(&self.auto_dispatch_queues)
+            .remove(&(project.worktree().id(), session_id));
     }
 }
 
@@ -3081,11 +3696,16 @@ async fn complete_plan_implementation(
             JobCompletion::Cancelled
         }
         Err(error) => {
+            let terminal = if error == AgentSessionManagerFailure::Conflict {
+                ConversationTerminal::PlanNeedsRefresh
+            } else {
+                ConversationTerminal::Failed(safe_manager_failure_message(error))
+            };
             let _settled = settle_unfinished_conversation(
                 &recovery_store,
                 &recovery_project,
                 recovery_session_id,
-                ConversationTerminal::Failed(safe_manager_failure_message(error)),
+                terminal,
             )
             .await;
             JobCompletion::Failed
@@ -3894,6 +4514,7 @@ fn report_progress(context: &JobContext, completed: u64) -> Result<(), AgentSess
 enum ConversationTerminal {
     Cancelled,
     Failed(&'static str),
+    PlanNeedsRefresh,
 }
 
 async fn settle_unfinished_conversation(
@@ -3910,12 +4531,22 @@ async fn settle_unfinished_conversation(
         if detail.session().state() != AgentSessionState::Running {
             return Ok(());
         }
-        let (state, message) = match terminal {
+        let (state, kind, message) = match terminal {
             ConversationTerminal::Cancelled => (
                 AgentSessionState::Cancelled,
+                AgentSessionEntryKind::FinalReport,
                 "Die aktuelle Verarbeitung wurde abgebrochen.",
             ),
-            ConversationTerminal::Failed(message) => (AgentSessionState::Failed, message),
+            ConversationTerminal::Failed(message) => (
+                AgentSessionState::Failed,
+                AgentSessionEntryKind::FinalReport,
+                message,
+            ),
+            ConversationTerminal::PlanNeedsRefresh => (
+                AgentSessionState::AwaitingUser,
+                AgentSessionEntryKind::AssistantSummary,
+                "Der Projektstand hat sich seit der Planrecherche geändert. Der bisherige Plan bleibt sichtbar, muss aber mit aktuellen Quellen neu geprüft werden.",
+            ),
         };
         let sequence = next_sequence(detail.session().latest_sequence())?;
         let completed_at = timestamp()?;
@@ -3935,7 +4566,7 @@ async fn settle_unfinished_conversation(
         let entry = AgentSessionEntry::new(
             session_id,
             sequence,
-            AgentSessionEntryKind::FinalReport,
+            kind,
             AgentSessionText::try_from_string(message.to_owned())
                 .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
             completed_at,
@@ -4024,6 +4655,52 @@ const fn presentation_can_be_hidden(state: AgentSessionState) -> bool {
             | AgentSessionState::AwaitingApproval
             | AgentSessionState::Paused
     )
+}
+
+const fn resolve_next_message_mode(
+    current_mode: Option<AgentSessionMode>,
+    selected_mode: AgentSessionMode,
+) -> (AgentSessionMode, bool) {
+    if matches!(selected_mode, AgentSessionMode::Agent)
+        && !matches!(current_mode, Some(AgentSessionMode::Agent))
+    {
+        (AgentSessionMode::Plan, true)
+    } else {
+        (selected_mode, false)
+    }
+}
+
+const fn agent_run_blocks_plan_start(state: AgentRunActivityState) -> bool {
+    state.owns_live_worker() || matches!(state, AgentRunActivityState::Paused)
+}
+
+const fn queue_dispatch_allows_state(
+    trigger: QueueDispatchTrigger,
+    state: AgentSessionState,
+) -> bool {
+    match trigger {
+        QueueDispatchTrigger::Automatic => matches!(state, AgentSessionState::Completed),
+        QueueDispatchTrigger::ExplicitResume => matches!(
+            state,
+            AgentSessionState::Completed | AgentSessionState::Failed | AgentSessionState::Cancelled
+        ),
+    }
+}
+
+fn research_handoff_matches_index(
+    handoff: &ResearchHandoff,
+    published: &a3_domain::PublishedIndex,
+) -> bool {
+    handoff.index_run_id() == published.run().id()
+        && handoff.snapshot_id() == published.run().snapshot_id()
+        && handoff.revisions().iter().all(|revision| {
+            published
+                .publication()
+                .graph()
+                .files()
+                .iter()
+                .any(|current| current == revision)
+        })
 }
 
 fn title_from_message(message: &str) -> Result<AgentSessionTitle, AgentSessionManagerFailure> {
@@ -4742,7 +5419,9 @@ const fn safe_manager_failure_message(error: AgentSessionManagerFailure) -> &'st
         AgentSessionManagerFailure::InvalidInput | AgentSessionManagerFailure::InvalidOutput => {
             "A^3 konnte die vorbereiteten Informationen nicht sicher verarbeiten. Prüfe den Projektindex und versuche es erneut."
         }
-        AgentSessionManagerFailure::NotFound | AgentSessionManagerFailure::Conflict => {
+        AgentSessionManagerFailure::NotFound
+        | AgentSessionManagerFailure::Conflict
+        | AgentSessionManagerFailure::IndexChanged => {
             "Die Session hat sich während der Verarbeitung geändert. Der zuletzt sicher gespeicherte Stand bleibt erhalten."
         }
         AgentSessionManagerFailure::Busy => {
@@ -4764,6 +5443,19 @@ struct SessionPermit<'a> {
     active: &'a Mutex<Option<ActiveConversation>>,
     session_id: AgentSessionId,
     activated: bool,
+}
+
+fn release_conversation_owner(
+    active: &Mutex<Option<ActiveConversation>>,
+    session_id: AgentSessionId,
+) {
+    let mut owner = lock_recovering_poison(active);
+    if owner
+        .as_ref()
+        .is_some_and(|value| value.session_id == session_id)
+    {
+        *owner = None;
+    }
 }
 
 impl SessionPermit<'_> {
@@ -4817,6 +5509,7 @@ pub(crate) enum AgentSessionManagerFailure {
     InvalidOutput,
     NotFound,
     Conflict,
+    IndexChanged,
     Busy,
     Unavailable,
 }
@@ -4851,6 +5544,7 @@ impl fmt::Display for AgentSessionManagerFailure {
             Self::InvalidOutput => "Agent session output is invalid",
             Self::NotFound => "Agent session was not found",
             Self::Conflict => "Agent session changed",
+            Self::IndexChanged => "Agent plan index changed",
             Self::Busy => "Agent session operation is already active",
             Self::Unavailable => "Agent session is unavailable",
         })
@@ -4882,11 +5576,13 @@ impl Drop for AgentSessionManager {
 mod tests {
     use super::{
         AgentConversationFailure, ConversationTaskLensControl, ConversationTerminal,
-        PlanConversationResponse, classify_plan_response, command_clarification_question,
-        command_message, materialization_step_outcomes, model_safe_path,
-        parse_working_change_paths, presentation_can_be_hidden, read_bounded_process_output,
-        response_requires_citations, restore_command_profile, safe_failure_message,
-        settle_unfinished_conversation, verification_command_order, visible_research_query,
+        PlanConversationResponse, QueueDispatchTrigger, agent_run_blocks_plan_start,
+        classify_plan_response, command_clarification_question, command_message,
+        materialization_step_outcomes, model_safe_path, parse_working_change_paths,
+        presentation_can_be_hidden, queue_dispatch_allows_state, read_bounded_process_output,
+        resolve_next_message_mode, response_requires_citations, restore_command_profile,
+        safe_failure_message, settle_unfinished_conversation, verification_command_order,
+        visible_research_query,
     };
     use a3_application::{
         AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery,
@@ -4906,6 +5602,84 @@ mod tests {
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[test]
+    fn only_live_or_paused_agent_runs_block_a_reviewed_plan_start() {
+        use crate::agent_run_manager::AgentRunActivityState;
+
+        for state in [
+            AgentRunActivityState::Queued,
+            AgentRunActivityState::Running,
+            AgentRunActivityState::Pausing,
+            AgentRunActivityState::Paused,
+            AgentRunActivityState::Cancelling,
+        ] {
+            assert!(agent_run_blocks_plan_start(state));
+        }
+        for state in [
+            AgentRunActivityState::Idle,
+            AgentRunActivityState::Succeeded,
+            AgentRunActivityState::Failed,
+            AgentRunActivityState::Cancelled,
+        ] {
+            assert!(!agent_run_blocks_plan_start(state));
+        }
+    }
+
+    #[test]
+    fn agent_mode_requires_a_fresh_plan_unless_agent_continuity_is_unbroken() {
+        assert_eq!(
+            resolve_next_message_mode(None, AgentSessionMode::Agent),
+            (AgentSessionMode::Plan, true)
+        );
+        assert_eq!(
+            resolve_next_message_mode(Some(AgentSessionMode::Ask), AgentSessionMode::Agent),
+            (AgentSessionMode::Plan, true)
+        );
+        assert_eq!(
+            resolve_next_message_mode(Some(AgentSessionMode::Plan), AgentSessionMode::Agent),
+            (AgentSessionMode::Plan, true)
+        );
+        assert_eq!(
+            resolve_next_message_mode(Some(AgentSessionMode::Agent), AgentSessionMode::Agent),
+            (AgentSessionMode::Agent, false)
+        );
+        assert_eq!(
+            resolve_next_message_mode(Some(AgentSessionMode::Agent), AgentSessionMode::Ask),
+            (AgentSessionMode::Ask, false)
+        );
+    }
+
+    #[test]
+    fn automatic_queue_dispatch_stops_at_every_human_halt() {
+        assert!(queue_dispatch_allows_state(
+            QueueDispatchTrigger::Automatic,
+            AgentSessionState::Completed
+        ));
+        for state in [
+            AgentSessionState::AwaitingUser,
+            AgentSessionState::AwaitingPlanReview,
+            AgentSessionState::AwaitingApproval,
+            AgentSessionState::Paused,
+            AgentSessionState::Failed,
+            AgentSessionState::Cancelled,
+        ] {
+            assert!(!queue_dispatch_allows_state(
+                QueueDispatchTrigger::Automatic,
+                state
+            ));
+        }
+        for state in [AgentSessionState::Failed, AgentSessionState::Cancelled] {
+            assert!(queue_dispatch_allows_state(
+                QueueDispatchTrigger::ExplicitResume,
+                state
+            ));
+        }
+        assert!(!queue_dispatch_allows_state(
+            QueueDispatchTrigger::ExplicitResume,
+            AgentSessionState::AwaitingPlanReview
+        ));
+    }
 
     #[test]
     fn plan_marker_is_removed_before_the_revision_is_persisted() {
@@ -5206,6 +5980,30 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn stale_plan_materialization_returns_to_a_readable_user_halt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (session_id, concrete) = running_session_store(14)?;
+        let store: Arc<dyn AgentSessionStore> = concrete.clone();
+
+        block_on(settle_unfinished_conversation(
+            &store,
+            &project(),
+            session_id,
+            ConversationTerminal::PlanNeedsRefresh,
+        ))?;
+
+        let detail = concrete.detail();
+        assert_eq!(detail.session().state(), AgentSessionState::AwaitingUser);
+        assert_eq!(
+            detail.entries()[1].kind(),
+            AgentSessionEntryKind::AssistantSummary
+        );
+        assert!(detail.entries()[1].text().as_str().contains("Projektstand"));
+        assert!(detail.entries()[1].text().as_str().contains("neu geprüft"));
+        Ok(())
+    }
+
     #[derive(Debug)]
     struct FixedClock;
 
@@ -5293,6 +6091,50 @@ mod tests {
         ) -> AgentSessionStoreFuture<'a, Vec<a3_application::AgentSessionCommandPresentation>>
         {
             Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn enqueue_message<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _expected_session_revision: AgentSessionRevision,
+            _message: &'a a3_domain::AgentQueuedMessage,
+        ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+            Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
+        }
+
+        fn load_message_queue<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+        ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+            Box::pin(async {
+                a3_application::AgentSessionQueue::new(
+                    a3_domain::AgentSessionQueueRevision::EMPTY,
+                    false,
+                    Vec::new(),
+                )
+            })
+        }
+
+        fn transition_queued_message<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+            _expected_queue_revision: a3_domain::AgentSessionQueueRevision,
+            _message_id: a3_domain::AgentQueuedMessageId,
+            _state: a3_domain::AgentQueuedMessageState,
+        ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+            Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
+        }
+
+        fn set_message_queue_paused<'a>(
+            &'a self,
+            _project: &'a ProjectIdentity,
+            _session_id: AgentSessionId,
+            _expected_queue_revision: a3_domain::AgentSessionQueueRevision,
+            _paused: bool,
+        ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+            Box::pin(async { Err(AgentSessionStoreFailure::InvalidInput) })
         }
 
         fn delete_presentation<'a>(

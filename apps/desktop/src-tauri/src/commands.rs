@@ -36,27 +36,30 @@ use a3_protocol::{
     AgentAskResearchTurnsResponseV1, AgentDiagramArtifactResponseV1,
     AgentDiagramArtifactsResponseV1, AgentDiagramExportFormatV1, AgentDiagramExportResponseV1,
     AgentDiagramExportResultV1, AgentGoalMutationResponseV1, AgentGoalResponseV1,
-    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentResearchDepthSelectionV1,
-    AgentResearchDepthV1, AgentSessionControlActionV1, AgentSessionModeV1, AgentSessionResponseV1,
-    AgentSessionResponseV2, AgentSessionsResponseV1, AgentSlashCommandRoleV1, AgentSlashCommandV1,
-    AgentSlashCommandsResponseV1, AgentTaskControlActionV1, AgentTaskControlResponseV1,
-    AgentTaskRecoveryResponseV1, CancelModelProbeRequestV1, CancelModelProbeResponseV1,
-    CommandErrorV1, CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
+    AgentInspectionLogResponseV1, AgentInspectionResponseV1, AgentPlanStartResponseV1,
+    AgentResearchDepthSelectionV1, AgentResearchDepthV1, AgentSessionControlActionV1,
+    AgentSessionModeV1, AgentSessionQueueControlActionV1, AgentSessionResponseV1,
+    AgentSessionResponseV2, AgentSessionResponseV3, AgentSessionsResponseV1,
+    AgentSlashCommandRoleV1, AgentSlashCommandV1, AgentSlashCommandsResponseV1,
+    AgentTaskControlActionV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
+    CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
+    CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
     ConfirmProjectCommandAllowlistRequestV1, ContinueAgentResearchRequestV1,
-    ControlAgentApprovalRequestV1, ControlAgentSessionRequestV1, ControlAgentTaskRunRequestV1,
-    ControlDeepMapRequestV1, CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1,
-    DeepMapControlResponseV1, DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1,
-    DeepMapModeV2, DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1,
-    DeepMapRunModulesResponseV1, DeepMapRunPageResponseV1, DeepMapStartResponseV2,
-    DeepMapStatusResponseV3, DeleteModelProviderCredentialRequestV1,
-    DiscoverProviderModelsRequestV1, ExportAgentDiagramRequestV1, HealthRequestV1,
-    HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
-    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
-    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
-    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
-    ProbeModelRoleRequestV1, ProjectActivationResponseV1, ProjectCatalogResponseV1,
-    ProjectMapSceneResponseV1, ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1,
-    ProjectSettingsResponseV1, ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    ControlAgentApprovalRequestV1, ControlAgentSessionQueueRequestV1, ControlAgentSessionRequestV1,
+    ControlAgentSessionRequestV2, ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1,
+    CreateAgentGoalRequestV1, DeepMapAtlasImpactResponseV1, DeepMapControlResponseV1,
+    DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapModeV2,
+    DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1, DeepMapRunModulesResponseV1,
+    DeepMapRunPageResponseV1, DeepMapStartResponseV2, DeepMapStatusResponseV3,
+    DeleteModelProviderCredentialRequestV1, DiscoverProviderModelsRequestV1,
+    ExportAgentDiagramRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
+    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
+    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
+    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
+    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
+    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
+    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
+    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentAskResearchDetailRequestV1,
     QueryAgentAskResearchSourcePreviewRequestV1, QueryAgentAskResearchSourcesRequestV1,
     QueryAgentAskResearchTurnsRequestV1, QueryAgentDiagramArtifactRequestV1,
@@ -79,8 +82,9 @@ use a3_protocol::{
     RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
     SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV2,
     SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2, SubmitAgentMessageRequestV3,
-    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
-    UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
+    SubmitAgentMessageRequestV4, SubmitAgentMessageResponseV4, TaskLensCompileResponseV1,
+    TaskLensTaskResponseV1, TaskLensTasksResponseV1, UiPreferencesResponseV1,
+    UpdateAgentWorkspaceLayoutRequestV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -344,6 +348,15 @@ pub async fn query_agent_session_v2(
 }
 
 #[tauri::command]
+/// Loads one session with the V33 durable message queue and reversible mode choices.
+pub async fn query_agent_session_v3(
+    request: QueryAgentSessionRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+    execute_query_agent_session_v3(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Returns the immutable built-in slash-command catalog filtered for one mode.
 pub async fn query_agent_slash_commands(
     request: QueryAgentSlashCommandsRequestV1,
@@ -542,6 +555,15 @@ pub async fn submit_agent_message_v3(
 }
 
 #[tauri::command]
+/// Starts or durably queues one explicitly mode-bound message.
+pub async fn submit_agent_message_v4(
+    request: SubmitAgentMessageRequestV4,
+    root: State<'_, CompositionRoot>,
+) -> Result<SubmitAgentMessageResponseV4, CommandErrorV1> {
+    execute_submit_agent_message_v4(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Continues only the newest continuation-ready research section.
 pub async fn continue_agent_research(
     request: ContinueAgentResearchRequestV1,
@@ -557,6 +579,24 @@ pub async fn control_agent_session(
     root: State<'_, CompositionRoot>,
 ) -> Result<AgentSessionResponseV1, CommandErrorV1> {
     execute_control_agent_session(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Starts the exact reviewed plan and returns a closed semantic outcome.
+pub async fn control_agent_session_v2(
+    request: ControlAgentSessionRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentPlanStartResponseV1, CommandErrorV1> {
+    execute_control_agent_session_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Removes a waiting queue entry or explicitly resumes a paused session queue.
+pub async fn control_agent_session_queue(
+    request: ControlAgentSessionQueueRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+    execute_control_agent_session_queue(request, root.inner()).await
 }
 
 #[tauri::command]
@@ -1438,6 +1478,24 @@ async fn execute_query_agent_session_v2(
         .await
 }
 
+async fn execute_query_agent_session_v3(
+    request: QueryAgentSessionRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    let session_id = decode_agent_session_id(request.session_id())?;
+    let before = request
+        .before_sequence()
+        .map(parse_canonical_positive_u64)
+        .transpose()
+        .map_err(|()| invalid_agent_session())?;
+    if request.limit() == 0 || request.limit() > 128 {
+        return Err(invalid_agent_session());
+    }
+    root.query_agent_session_v3(session_id, before, request.limit())
+        .await
+}
+
 async fn execute_query_agent_ask_research_turns(
     request: QueryAgentAskResearchTurnsRequestV1,
     root: &CompositionRoot,
@@ -1726,6 +1784,64 @@ async fn execute_submit_agent_message_v3(
     .await
 }
 
+async fn execute_submit_agent_message_v4(
+    request: SubmitAgentMessageRequestV4,
+    root: &CompositionRoot,
+) -> Result<SubmitAgentMessageResponseV4, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    if !request.context_references().is_empty() {
+        return Err(invalid_agent_session());
+    }
+    let session_id = request
+        .session_id()
+        .map(decode_agent_session_id)
+        .transpose()?;
+    let expected = request
+        .expected_session_revision()
+        .map(parse_agent_session_revision)
+        .transpose()?;
+    if session_id.is_some() != expected.is_some() {
+        return Err(invalid_agent_session());
+    }
+    let (explicit_depth, command_depth) = match request.research_depth() {
+        AgentResearchDepthSelectionV1::Standard => (Some(AgentResearchDepth::Standard), false),
+        AgentResearchDepthSelectionV1::Thorough => (Some(AgentResearchDepth::Thorough), false),
+        AgentResearchDepthSelectionV1::Command => (None, true),
+    };
+    root.submit_agent_message_v4(
+        session_id,
+        expected,
+        map_session_mode(request.target_mode()),
+        explicit_depth,
+        command_depth,
+        request.message().to_owned(),
+    )
+    .await
+}
+
+async fn execute_control_agent_session_queue(
+    request: ControlAgentSessionQueueRequestV1,
+    root: &CompositionRoot,
+) -> Result<AgentSessionResponseV3, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version)?;
+    let session_id = decode_agent_session_id(&request.session_id)?;
+    let revision_value = request
+        .expected_queue_revision
+        .parse::<u64>()
+        .map_err(|_| invalid_agent_session())?;
+    if revision_value.to_string() != request.expected_queue_revision {
+        return Err(invalid_agent_session());
+    }
+    let revision = a3_domain::AgentSessionQueueRevision::new(revision_value)
+        .map_err(|_| invalid_agent_session())?;
+    let queue_reference = match request.action {
+        AgentSessionQueueControlActionV1::Remove { queue_reference } => Some(queue_reference),
+        AgentSessionQueueControlActionV1::Resume => None,
+    };
+    root.control_agent_session_queue(session_id, revision, queue_reference)
+        .await
+}
+
 async fn execute_continue_agent_research(
     request: ContinueAgentResearchRequestV1,
     root: &CompositionRoot,
@@ -1811,6 +1927,22 @@ async fn execute_control_agent_session(
     };
     root.control_agent_session_presentation(session_id, expected, mutation)
         .await
+}
+
+async fn execute_control_agent_session_v2(
+    request: ControlAgentSessionRequestV2,
+    root: &CompositionRoot,
+) -> Result<AgentPlanStartResponseV1, CommandErrorV1> {
+    require_agent_session_protocol(request.protocol_version())?;
+    if request.plan_revision() == 0 {
+        return Err(invalid_agent_session());
+    }
+    root.implement_agent_session_plan_v2(
+        decode_agent_session_id(request.session_id())?,
+        parse_agent_session_revision(request.expected_session_revision())?,
+        request.plan_revision(),
+    )
+    .await
 }
 
 async fn execute_query_ui_preferences(

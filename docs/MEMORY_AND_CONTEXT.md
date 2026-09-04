@@ -433,6 +433,12 @@ als Suchhinweis fortleben. Für die Agent-Materialisierung übergibt ein typisie
 `ResearchHandoff` ausschließlich Index-, Snapshot- und revalidierte Revisionsanker. Goal, Ledger,
 `RunMemoryCheckpoint`, Verification und das Run Journal bleiben danach die Autorität.
 
+Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
+Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum
+Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt; ein neuer
+Agent-Auftrag erhält erst nach aktueller Recherche und ausdrücklicher Planfreigabe einen neuen
+`ResearchHandoff`, Goal Contract und Task Ledger.
+
 Ein nach ADR-0039 validierter Slash-Aufruf wird getrennt als `CommandExecutionProfile` in die
 Kontextkompilierung eingebunden. Der Core erzeugt daraus feste Constraints für Ziel, Linse,
 Ergebnis und Verification; der ursprüngliche Slash-Text wird nicht zur privilegierten

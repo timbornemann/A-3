@@ -60,7 +60,25 @@ export interface AgentSessionV1 {
   activeTaskId: string | null;
   entries: AgentSessionEntryV1[];
   hasOlderEntries: boolean;
+  modeOptions?: AgentSessionModeOptionV1[];
+  queuePaused?: boolean;
+  queuedMessages?: AgentQueuedMessageSummaryV1[];
+  queueRevision?: string;
   summary: AgentSessionSummaryV1;
+}
+
+export interface AgentSessionModeOptionV1 {
+  mode: AgentSessionModeV1;
+  requiresPlanReview: boolean;
+  selectable: boolean;
+}
+
+export interface AgentQueuedMessageSummaryV1 {
+  enqueuedAtUnixMillis: string;
+  position: number;
+  preview: string;
+  queueReference: string;
+  targetMode: AgentSessionModeV1;
 }
 
 export type AgentSessionsResultV1 =
@@ -80,6 +98,20 @@ export type AgentSessionResultV1 =
 export interface AgentSessionResponseV1 {
   protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
   result: AgentSessionResultV1;
+  submissionOutcome?: 'started' | 'queued' | 'requiresPlanReview';
+}
+
+export type AgentPlanStartOutcomeV1 =
+  'started' | 'queued' | 'planChanged' | 'indexChanged' | 'unavailable';
+
+export type AgentPlanStartResultV1 =
+  | { status: 'noProject' }
+  | { status: 'notFound' }
+  | { outcome: AgentPlanStartOutcomeV1; session: AgentSessionV1; status: 'available' };
+
+export interface AgentPlanStartResponseV1 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  result: AgentPlanStartResultV1;
 }
 
 export interface AgentSlashCommandV1 {
@@ -153,7 +185,7 @@ export async function queryAgentSession(
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     sessionId,
   };
-  return parseAgentSessionResponseV2(await invokeCommand('query_agent_session_v2', { request }));
+  return parseAgentSessionResponseV3(await invokeCommand('query_agent_session_v3', { request }));
 }
 
 export async function submitAgentMessage(
@@ -178,9 +210,32 @@ export async function submitAgentMessage(
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     researchDepth,
     sessionId: input.sessionId ?? null,
-    startMode: input.sessionId ? null : (input.mode ?? 'agent'),
+    targetMode: input.mode ?? 'agent',
   };
-  return parseAgentSessionResponseV1(await invokeCommand('submit_agent_message_v3', { request }));
+  return parseSubmitAgentMessageResponseV4(
+    await invokeCommand('submit_agent_message_v4', { request }),
+  );
+}
+
+export async function controlAgentSessionQueue(
+  sessionId: string,
+  expectedQueueRevision: string,
+  action: { kind: 'remove'; queueReference: string } | { kind: 'resume' },
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentSessionResponseV1> {
+  requireStableId(sessionId, 'Agent session');
+  requireDecimal(expectedQueueRevision, 'Agent queue revision', true);
+  if (action.kind === 'remove') requireStableId(action.queueReference, 'Agent queue item');
+  return parseAgentSessionResponseV3(
+    await invokeCommand('control_agent_session_queue', {
+      request: {
+        action,
+        expectedQueueRevision,
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+        sessionId,
+      },
+    }),
+  );
 }
 
 export async function queryAgentSlashCommands(
@@ -277,6 +332,26 @@ export async function controlAgentSession(
     sessionId,
   };
   return parseAgentSessionResponseV1(await invokeCommand('control_agent_session', { request }));
+}
+
+export async function implementAgentSessionPlan(
+  sessionId: string,
+  expectedSessionRevision: string,
+  planRevision: number,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<AgentPlanStartResponseV1> {
+  requireStableId(sessionId, 'Agent session');
+  requireDecimal(expectedSessionRevision, 'Agent session revision', false);
+  if (!integer(planRevision, 1, 4_294_967_295)) throw new Error('Invalid plan revision.');
+  const request = {
+    expectedSessionRevision,
+    planRevision,
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    sessionId,
+  };
+  return parseAgentPlanStartResponseV1(
+    await invokeCommand('control_agent_session_v2', { request }),
+  );
 }
 
 export async function queryUiPreferences(
@@ -384,6 +459,140 @@ export function parseAgentSessionResponseV2(payload: unknown): AgentSessionRespo
   return {
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     result: { session, status: 'available' },
+  };
+}
+
+export function parseAgentSessionResponseV3(payload: unknown): AgentSessionResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent session V3 response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent session V3 result');
+  if (result.status === 'noProject' || result.status === 'notFound') {
+    exact(result, ['status'], 'Agent session V3 result');
+    return {
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      result: { status: result.status },
+    } as AgentSessionResponseV1;
+  }
+  exact(result, ['projection', 'status'], 'Agent session V3 result');
+  if (result.status !== 'available') fail('Agent session V3 result');
+  const projection = object(
+    result.projection,
+    ['modeOptions', 'projection', 'queuePaused', 'queueRevision', 'queuedMessages'],
+    'Agent session V3 projection',
+  );
+  const nested = parseAgentSessionV2Projection(projection.projection);
+  requireDecimal(projection.queueRevision, 'Agent queue revision', true);
+  if (typeof projection.queuePaused !== 'boolean') fail('Agent queue paused');
+  if (!Array.isArray(projection.modeOptions) || projection.modeOptions.length !== 3)
+    fail('Agent mode options');
+  const modeOptions = projection.modeOptions.map((candidate) => {
+    const option = object(
+      candidate,
+      ['mode', 'requiresPlanReview', 'selectable'],
+      'Agent mode option',
+    );
+    if (
+      !MODES.includes(option.mode as AgentSessionModeV1) ||
+      typeof option.requiresPlanReview !== 'boolean' ||
+      typeof option.selectable !== 'boolean'
+    )
+      fail('Agent mode option');
+    return option as unknown as AgentSessionModeOptionV1;
+  });
+  if (new Set(modeOptions.map((option) => option.mode)).size !== MODES.length)
+    fail('Agent mode options');
+  if (!Array.isArray(projection.queuedMessages) || projection.queuedMessages.length > 16)
+    fail('Agent queued messages');
+  const queuedMessages = projection.queuedMessages.map((candidate, index) => {
+    const queued = object(
+      candidate,
+      ['enqueuedAtUnixMillis', 'position', 'preview', 'queueReference', 'targetMode'],
+      'Agent queued message',
+    );
+    requireStableId(queued.queueReference, 'Agent queue item');
+    requireDecimal(queued.enqueuedAtUnixMillis, 'Agent queue time', true);
+    if (
+      queued.position !== index + 1 ||
+      !MODES.includes(queued.targetMode as AgentSessionModeV1) ||
+      typeof queued.preview !== 'string' ||
+      queued.preview.length === 0 ||
+      queued.preview.length > 121
+    )
+      fail('Agent queued message');
+    return queued as unknown as AgentQueuedMessageSummaryV1;
+  });
+  nested.modeOptions = modeOptions;
+  nested.queuePaused = projection.queuePaused;
+  nested.queueRevision = projection.queueRevision;
+  nested.queuedMessages = queuedMessages;
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { session: nested, status: 'available' },
+  };
+}
+
+function parseAgentSessionV2Projection(payload: unknown): AgentSessionV1 {
+  const parsed = parseAgentSessionResponseV2({
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { projection: payload, status: 'available' },
+  });
+  if (parsed.result.status !== 'available') fail('Agent session V2 projection');
+  return parsed.result.session;
+}
+
+export function parseSubmitAgentMessageResponseV4(payload: unknown): AgentSessionResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent submit V4 response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent submit V4 result');
+  if (result.status === 'noProject') {
+    exact(result, ['status'], 'Agent submit V4 result');
+    return { protocolVersion: CURRENT_PROTOCOL_VERSION, result: { status: 'noProject' } };
+  }
+  exact(result, ['outcome', 'projection', 'status'], 'Agent submit V4 result');
+  if (
+    result.status !== 'available' ||
+    !['started', 'queued', 'requiresPlanReview'].includes(result.outcome as string)
+  )
+    fail('Agent submit V4 result');
+  const parsed = parseAgentSessionResponseV3({
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { projection: result.projection, status: 'available' },
+  });
+  parsed.submissionOutcome = result.outcome as AgentSessionResponseV1['submissionOutcome'];
+  return parsed;
+}
+
+export function parseAgentPlanStartResponseV1(payload: unknown): AgentPlanStartResponseV1 {
+  const value = object(payload, ['protocolVersion', 'result'], 'Agent plan-start response');
+  protocol(value.protocolVersion);
+  const result = object(value.result, undefined, 'Agent plan-start result');
+  if (result.status === 'noProject' || result.status === 'notFound') {
+    exact(result, ['status'], 'Agent plan-start result');
+    return {
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      result: { status: result.status },
+    } as AgentPlanStartResponseV1;
+  }
+  exact(result, ['outcome', 'projection', 'status'], 'Agent plan-start result');
+  if (
+    result.status !== 'available' ||
+    !['started', 'queued', 'planChanged', 'indexChanged', 'unavailable'].includes(
+      result.outcome as string,
+    )
+  )
+    fail('Agent plan-start result');
+  const parsed = parseAgentSessionResponseV3({
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: { projection: result.projection, status: 'available' },
+  });
+  if (parsed.result.status !== 'available') fail('Agent plan-start result');
+  return {
+    protocolVersion: CURRENT_PROTOCOL_VERSION,
+    result: {
+      outcome: result.outcome as AgentPlanStartOutcomeV1,
+      session: parsed.result.session,
+      status: 'available',
+    },
   };
 }
 

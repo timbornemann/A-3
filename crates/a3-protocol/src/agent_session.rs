@@ -301,6 +301,71 @@ pub struct SubmitAgentMessageRequestV3 {
     context_references: Vec<AgentContextReferenceV1>,
 }
 
+/// Creates or queues one message with an explicit next-work-item capability envelope.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SubmitAgentMessageRequestV4 {
+    protocol_version: ProtocolVersion,
+    session_id: Option<String>,
+    expected_session_revision: Option<String>,
+    target_mode: AgentSessionModeV1,
+    research_depth: AgentResearchDepthSelectionV1,
+    message: String,
+    context_references: Vec<AgentContextReferenceV1>,
+}
+
+impl fmt::Debug for SubmitAgentMessageRequestV4 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SubmitAgentMessageRequestV4")
+            .field("protocol_version", &self.protocol_version)
+            .field("has_session_id", &self.session_id.is_some())
+            .field("target_mode", &self.target_mode)
+            .field("research_depth", &self.research_depth)
+            .field("message_bytes", &self.message.len())
+            .field("context_references", &self.context_references.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SubmitAgentMessageRequestV4 {
+    /// Returns the requested protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the optional existing session identity.
+    #[must_use]
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+    /// Returns the required revision for an existing session.
+    #[must_use]
+    pub fn expected_session_revision(&self) -> Option<&str> {
+        self.expected_session_revision.as_deref()
+    }
+    /// Returns the capability envelope for the next independent work item.
+    #[must_use]
+    pub const fn target_mode(&self) -> AgentSessionModeV1 {
+        self.target_mode
+    }
+    /// Returns the requested or command-owned research depth.
+    #[must_use]
+    pub const fn research_depth(&self) -> AgentResearchDepthSelectionV1 {
+        self.research_depth
+    }
+    /// Returns the bounded user message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+    /// Returns the explicitly selected bounded context references.
+    #[must_use]
+    pub fn context_references(&self) -> &[AgentContextReferenceV1] {
+        &self.context_references
+    }
+}
+
 impl fmt::Debug for SubmitAgentMessageRequestV3 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -484,6 +549,12 @@ impl AgentSessionSummaryV1 {
             current_plan_revision,
         }
     }
+
+    /// Returns the capability mode of the currently displayed work item.
+    #[must_use]
+    pub const fn mode(&self) -> AgentSessionModeV1 {
+        self.mode
+    }
 }
 
 /// One bounded durable conversation record.
@@ -596,6 +667,12 @@ impl AgentSessionV1 {
             has_older_entries,
         }
     }
+
+    /// Returns the bounded session summary.
+    #[must_use]
+    pub const fn summary(&self) -> &AgentSessionSummaryV1 {
+        &self.summary
+    }
 }
 
 /// User-facing chips for one persisted built-in command invocation.
@@ -632,6 +709,218 @@ pub struct AgentSessionV2 {
     pub session: AgentSessionV1,
     /// Metadata for only the user entries contained in this page.
     pub entry_augmentations: Vec<AgentSessionEntryAugmentationV1>,
+}
+
+/// One bounded durable FIFO entry visible above the composer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentQueuedMessageSummaryV1 {
+    /// Opaque session-bound reference accepted by the remove action.
+    pub queue_reference: String,
+    /// Current one-based FIFO position.
+    pub position: u16,
+    /// Capability envelope selected for the queued work item.
+    pub target_mode: AgentSessionModeV1,
+    /// Bounded single-line message preview.
+    pub preview: String,
+    /// Decimal enqueue timestamp.
+    pub enqueued_at_unix_millis: String,
+}
+
+/// Core-derived next-message choices. Choosing a mode never interrupts current work.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionModeOptionV1 {
+    /// Candidate mode.
+    pub mode: AgentSessionModeV1,
+    /// Whether the mode can be selected for the next message.
+    pub selectable: bool,
+    /// Whether this choice must stop at a fresh plan review.
+    pub requires_plan_review: bool,
+}
+
+/// V33 session projection with the bounded durable queue and mode choices.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionV3 {
+    /// Compatible V2 conversation and artifact projection.
+    pub projection: AgentSessionV2,
+    /// Core-derived choices for the next message.
+    pub mode_options: Vec<AgentSessionModeOptionV1>,
+    /// Decimal append-only queue revision.
+    pub queue_revision: String,
+    /// Whether explicit continuation is required.
+    pub queue_paused: bool,
+    /// At most sixteen waiting messages in FIFO order.
+    pub queued_messages: Vec<AgentQueuedMessageSummaryV1>,
+}
+
+/// Result of loading the V33 session projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+pub enum AgentSessionResultV3 {
+    /// No project is active.
+    NoProject,
+    /// The requested session is unavailable in this project.
+    NotFound,
+    /// The bounded current projection is available.
+    Available {
+        /// Current V33 projection.
+        projection: Box<AgentSessionV3>,
+    },
+}
+
+/// Versioned V33 session response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentSessionResponseV3 {
+    /// Current IPC protocol version.
+    pub protocol_version: ProtocolVersion,
+    /// Closed query result.
+    pub result: AgentSessionResultV3,
+}
+
+/// Closed outcome of accepting one V4 message.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMessageSubmissionOutcomeV1 {
+    /// The message started immediately.
+    Started,
+    /// The message was durably queued.
+    Queued,
+    /// Agent intent is being prepared as a fresh Plan requiring review.
+    RequiresPlanReview,
+}
+
+/// V4 submit response includes the same projection used by subsequent polling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+pub enum SubmitAgentMessageResultV4 {
+    /// No project is active.
+    NoProject,
+    /// The message was accepted and the current projection is available.
+    Available {
+        /// Closed acceptance outcome.
+        outcome: AgentMessageSubmissionOutcomeV1,
+        /// Current V33 projection.
+        projection: Box<AgentSessionV3>,
+    },
+}
+
+/// Versioned V4 message-submission response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SubmitAgentMessageResponseV4 {
+    /// Current IPC protocol version.
+    pub protocol_version: ProtocolVersion,
+    /// Closed submission result.
+    pub result: SubmitAgentMessageResultV4,
+}
+
+/// Queue controls never contain message text, paths, task identities, or process data.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum AgentSessionQueueControlActionV1 {
+    /// Removes one not-yet-started message.
+    Remove {
+        /// Opaque session-bound queue reference.
+        queue_reference: String,
+    },
+    /// Explicitly permits automatic queue dispatch again.
+    Resume,
+}
+
+/// Versioned request for one narrow queue presentation action.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ControlAgentSessionQueueRequestV1 {
+    /// Current IPC protocol version.
+    pub protocol_version: ProtocolVersion,
+    /// Opaque session identity.
+    pub session_id: String,
+    /// Decimal optimistic queue revision.
+    pub expected_queue_revision: String,
+    /// Narrow requested action.
+    pub action: AgentSessionQueueControlActionV1,
+}
+
+/// Closed plan-start outcomes distinguish normal races from stale anchors.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentPlanStartOutcomeV1 {
+    /// Materialization and execution started.
+    Started,
+    /// The exact reviewed plan waits for the prior conversation release.
+    Queued,
+    /// A different plan revision is now current.
+    PlanChanged,
+    /// The reviewed plan describes an older project index.
+    IndexChanged,
+    /// Required local execution capability is unavailable.
+    Unavailable,
+}
+
+/// Exact reviewed-plan start request. It carries no task, run, path, or process authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ControlAgentSessionRequestV2 {
+    protocol_version: ProtocolVersion,
+    session_id: String,
+    expected_session_revision: String,
+    plan_revision: u32,
+}
+
+impl ControlAgentSessionRequestV2 {
+    #[must_use]
+    /// Returns the requested protocol version.
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    #[must_use]
+    /// Returns the opaque session capability.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    #[must_use]
+    /// Returns the exact visible optimistic session revision.
+    pub fn expected_session_revision(&self) -> &str {
+        &self.expected_session_revision
+    }
+
+    #[must_use]
+    /// Returns the exact immutable plan revision approved by the user.
+    pub const fn plan_revision(&self) -> u32 {
+        self.plan_revision
+    }
+}
+
+/// Closed outcome of one exact reviewed-plan start request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "status")]
+pub enum AgentPlanStartResultV1 {
+    /// No project is active.
+    NoProject,
+    /// The selected session is unavailable in this project.
+    NotFound,
+    /// The current projection and semantic start outcome are available.
+    Available {
+        /// Closed semantic result of the start attempt.
+        outcome: AgentPlanStartOutcomeV1,
+        /// Current V33 session projection after the attempt.
+        projection: Box<AgentSessionV3>,
+    },
+}
+
+/// Versioned response for `control_agent_session_v2`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AgentPlanStartResponseV1 {
+    /// Current IPC protocol version.
+    pub protocol_version: ProtocolVersion,
+    /// Closed project/session/start outcome.
+    pub result: AgentPlanStartResultV1,
 }
 
 /// Result of reading one V2 session projection.
@@ -804,7 +1093,10 @@ impl UiPreferencesResponseV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentSessionModeV1, AgentSessionsResultV1, SubmitAgentMessageRequestV1};
+    use super::{
+        AgentResearchDepthSelectionV1, AgentSessionModeV1, AgentSessionsResultV1,
+        ControlAgentSessionRequestV2, SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV4,
+    };
     use crate::ProtocolVersion;
 
     #[test]
@@ -836,6 +1128,58 @@ mod tests {
             Some(&serde_json::json!("a".repeat(64)))
         );
         assert!(!object.contains_key("next_cursor"));
+        Ok(())
+    }
+
+    #[test]
+    fn v4_submit_requires_the_explicit_target_mode_and_rejects_legacy_authority_fields()
+    -> Result<(), serde_json::Error> {
+        let valid = serde_json::json!({
+            "protocolVersion": ProtocolVersion::CURRENT.get(),
+            "sessionId": null,
+            "expectedSessionRevision": null,
+            "targetMode": AgentSessionModeV1::Plan,
+            "researchDepth": AgentResearchDepthSelectionV1::Thorough,
+            "message": "Untersuche den Plan",
+            "contextReferences": []
+        });
+        let request = serde_json::from_value::<SubmitAgentMessageRequestV4>(valid)?;
+        assert_eq!(request.target_mode(), AgentSessionModeV1::Plan);
+
+        let invalid = serde_json::json!({
+            "protocolVersion": ProtocolVersion::CURRENT.get(),
+            "sessionId": null,
+            "expectedSessionRevision": null,
+            "targetMode": AgentSessionModeV1::Agent,
+            "startMode": AgentSessionModeV1::Ask,
+            "researchDepth": AgentResearchDepthSelectionV1::Standard,
+            "message": "Ändere das Projekt",
+            "contextReferences": []
+        });
+        assert!(serde_json::from_value::<SubmitAgentMessageRequestV4>(invalid).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn v2_plan_start_accepts_only_an_exact_visible_plan_reference() -> Result<(), serde_json::Error>
+    {
+        let valid = serde_json::json!({
+            "protocolVersion": ProtocolVersion::CURRENT.get(),
+            "sessionId": "a".repeat(64),
+            "expectedSessionRevision": "4",
+            "planRevision": 2
+        });
+        let request = serde_json::from_value::<ControlAgentSessionRequestV2>(valid)?;
+        assert_eq!(request.plan_revision(), 2);
+
+        let invalid = serde_json::json!({
+            "protocolVersion": ProtocolVersion::CURRENT.get(),
+            "sessionId": "a".repeat(64),
+            "expectedSessionRevision": "4",
+            "planRevision": 2,
+            "taskId": "b".repeat(64)
+        });
+        assert!(serde_json::from_value::<ControlAgentSessionRequestV2>(invalid).is_err());
         Ok(())
     }
 }

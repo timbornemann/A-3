@@ -1,4 +1,4 @@
-use super::{AgentSessionId, AgentWorkItemId, TaskId};
+use super::{AgentQueuedMessageId, AgentSessionId, AgentWorkItemId, TaskId};
 use std::error::Error;
 use std::fmt;
 
@@ -24,6 +24,154 @@ impl AgentSessionMode {
             (self, next),
             (Self::Ask, Self::Plan) | (Self::Plan, Self::Agent)
         )
+    }
+
+    /// Returns whether a user may select this mode for a later, independent work item.
+    #[must_use]
+    pub const fn can_select_for_next_message(self, _next: Self) -> bool {
+        true
+    }
+}
+
+/// Closed research selection persisted with one queued user message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AgentQueuedResearchSelection {
+    /// Ordinary Standard research.
+    Standard,
+    /// Ordinary Thorough research.
+    Thorough,
+    /// The built-in slash command owns the depth.
+    Command,
+}
+
+/// Latest public lifecycle of one append-only queue item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AgentQueuedMessageState {
+    /// The validated message is waiting for its session.
+    Queued,
+    /// The scheduler claimed the message exactly once.
+    Started,
+    /// The user removed the message before it started.
+    Removed,
+}
+
+/// Monotone visible revision of a session-local message queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AgentSessionQueueRevision(u64);
+
+impl AgentSessionQueueRevision {
+    /// Empty queues have revision zero.
+    pub const EMPTY: Self = Self(0);
+
+    /// Restores a locally representable queue revision.
+    pub const fn new(value: u64) -> Result<Self, AgentSessionRevisionError> {
+        if value > i64::MAX as u64 {
+            Err(AgentSessionRevisionError)
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    /// Returns the stored integer representation.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// One fully validated, bounded message waiting behind current session work.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AgentQueuedMessage {
+    id: AgentQueuedMessageId,
+    session_id: AgentSessionId,
+    ordinal: u64,
+    target_mode: AgentSessionMode,
+    research: AgentQueuedResearchSelection,
+    text: AgentSessionText,
+    enqueued_at: AgentSessionTimestamp,
+    state: AgentQueuedMessageState,
+}
+
+impl AgentQueuedMessage {
+    /// Restores one queue item after storage validated its closed columns.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn from_parts(
+        id: AgentQueuedMessageId,
+        session_id: AgentSessionId,
+        ordinal: u64,
+        target_mode: AgentSessionMode,
+        research: AgentQueuedResearchSelection,
+        text: AgentSessionText,
+        enqueued_at: AgentSessionTimestamp,
+        state: AgentQueuedMessageState,
+    ) -> Self {
+        Self {
+            id,
+            session_id,
+            ordinal,
+            target_mode,
+            research,
+            text,
+            enqueued_at,
+            state,
+        }
+    }
+
+    /// Returns the opaque queue-item identity.
+    #[must_use]
+    pub const fn id(&self) -> AgentQueuedMessageId {
+        self.id
+    }
+    /// Returns the owning conversation identity.
+    #[must_use]
+    pub const fn session_id(&self) -> AgentSessionId {
+        self.session_id
+    }
+    /// Returns the immutable FIFO ordinal within the session.
+    #[must_use]
+    pub const fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+    /// Returns the capability envelope selected for this message.
+    #[must_use]
+    pub const fn target_mode(&self) -> AgentSessionMode {
+        self.target_mode
+    }
+    /// Returns the validated research-depth selection.
+    #[must_use]
+    pub const fn research(&self) -> AgentQueuedResearchSelection {
+        self.research
+    }
+    /// Returns the bounded user-visible message.
+    #[must_use]
+    pub const fn text(&self) -> &AgentSessionText {
+        &self.text
+    }
+    /// Returns when the message entered the queue.
+    #[must_use]
+    pub const fn enqueued_at(&self) -> AgentSessionTimestamp {
+        self.enqueued_at
+    }
+    /// Returns the latest append-only lifecycle projection.
+    #[must_use]
+    pub const fn state(&self) -> AgentQueuedMessageState {
+        self.state
+    }
+}
+
+impl fmt::Debug for AgentQueuedMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentQueuedMessage")
+            .field("id", &self.id)
+            .field("session_id", &self.session_id)
+            .field("ordinal", &self.ordinal)
+            .field("target_mode", &self.target_mode)
+            .field("research", &self.research)
+            .field("message_bytes", &self.text.as_str().len())
+            .field("enqueued_at", &self.enqueued_at)
+            .field("state", &self.state)
+            .finish()
     }
 }
 

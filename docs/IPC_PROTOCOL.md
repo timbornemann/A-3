@@ -453,6 +453,19 @@ den V32-Commanddaten; die WebView übergibt dafür keine Command-, Task- oder Ru
 `query_agent_session_v2` verwendet die begrenzte V1-Sessionseite weiter und ergänzt pro darin
 sichtbarer Usersequenz ausschließlich die persistierten Command-Chips und Diagrammzusammenfassungen.
 
+ADR-0041 ergänzt `query_agent_session_v3` um die drei Core-abgeleiteten nächsten Modusoptionen,
+eine monotone Queue-Revision, den Pausenzustand und höchstens 16 einzeilige FIFO-Zusammenfassungen.
+`submit_agent_message_v4` verlangt für jede Nachricht `targetMode` und liefert geschlossen
+`started`, `queued` oder `requiresPlanReview`. Ein Agent-Ziel ohne ungebrochene Agent-Kontinuität
+wird im Core als read-only Planvorbereitung ausgeführt und kann erst nach Freigabe der exakten
+Planrevision mutieren. `control_agent_session_v2` startet ausschließlich die angegebene
+Planrevision und unterscheidet `started`, `queued`, `planChanged`, `indexChanged` und
+`unavailable`; der aktuelle Plan- und Indexanker wird vor der ersten Mutation geprüft.
+`control_agent_session_queue` darf ausschließlich einen noch wartenden
+Eintrag über seine Sessionbindung entfernen oder eine pausierte Queue ausdrücklich fortsetzen.
+Die WebView übergibt keine Worktree-, Task-, Run-, Evidence-, Snapshot-, Provider-, Pfad- oder
+Prozessautorität. V1 bis V3 bleiben kompatibel.
+
 `query_agent_diagram_artifacts` und `query_agent_diagram_artifact` V1 akzeptieren Session und
 positive Usersequenz beziehungsweise eine opake Artefaktreferenz. Sie liefern höchstens drei
 Core-kompilierte Diagramme mit Typ, Titel, Beschreibung und Stale-Kennzeichnung. Referenzen sind an

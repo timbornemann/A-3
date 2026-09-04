@@ -139,6 +139,11 @@ Stand: 2026-08-03
 15. Frontend-Performanceclaims benötigen getrennte deterministische Verträge, einen realen
     Browserprofil-Lauf und eine native App-Prozessmessung. Synthetische DOM-Zeit allein ist kein
     Beleg für Interaktionslatenz oder Idle-RAM.
+16. Die Auswahl eines Conversation-Modus gilt nur für das nächste unabhängige Work Item und DARF
+    keinen laufenden Besitzer umschalten. Dauerhafte Folgenachrichten MÜSSEN begrenzt, FIFO-geordnet
+    und vor Persistenz sowie Start Core-validiert sein. Ein Wechsel aus Agent zu Ask oder Plan
+    verwirft die Ausführbarkeit des früheren Plans; spätere Mutation benötigt eine neue exakte
+    Planfreigabe.
 
 ## 11. Tests
 

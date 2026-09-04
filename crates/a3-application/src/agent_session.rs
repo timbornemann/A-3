@@ -1,6 +1,7 @@
 use a3_domain::{
-    AgentResearchDepth, AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionRevision,
-    AgentSessionSequence, AgentSessionState, ProjectIdentity, SlashCommand,
+    AgentQueuedMessage, AgentQueuedMessageId, AgentQueuedMessageState, AgentResearchDepth,
+    AgentSession, AgentSessionEntry, AgentSessionId, AgentSessionQueueRevision,
+    AgentSessionRevision, AgentSessionSequence, AgentSessionState, ProjectIdentity, SlashCommand,
     SlashCommandCatalogVersion, SlashCommandInvocation, SlashCommandLens,
 };
 use std::error::Error;
@@ -73,6 +74,55 @@ impl AgentSessionListQuery {
 pub struct AgentSessionPage {
     sessions: Vec<AgentSession>,
     has_more: bool,
+}
+
+/// Bounded current projection of one append-only, session-local message queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSessionQueue {
+    revision: AgentSessionQueueRevision,
+    paused: bool,
+    messages: Vec<AgentQueuedMessage>,
+}
+
+impl AgentSessionQueue {
+    /// Revalidates the visible FIFO projection returned by a persistence adapter.
+    pub fn new(
+        revision: AgentSessionQueueRevision,
+        paused: bool,
+        messages: Vec<AgentQueuedMessage>,
+    ) -> Result<Self, AgentSessionStoreFailure> {
+        if messages.len() > 16
+            || messages
+                .iter()
+                .any(|message| message.state() != AgentQueuedMessageState::Queued)
+            || messages
+                .windows(2)
+                .any(|pair| pair[0].ordinal() >= pair[1].ordinal())
+        {
+            return Err(AgentSessionStoreFailure::InvalidStoredData);
+        }
+        Ok(Self {
+            revision,
+            paused,
+            messages,
+        })
+    }
+
+    /// Returns the monotone append-only queue revision.
+    #[must_use]
+    pub const fn revision(&self) -> AgentSessionQueueRevision {
+        self.revision
+    }
+    /// Returns whether automatic dispatch requires an explicit resume action.
+    #[must_use]
+    pub const fn paused(&self) -> bool {
+        self.paused
+    }
+    /// Returns waiting messages in immutable FIFO order.
+    #[must_use]
+    pub fn messages(&self) -> &[AgentQueuedMessage] {
+        &self.messages
+    }
 }
 
 impl AgentSessionPage {
@@ -264,6 +314,40 @@ pub trait AgentSessionStore: fmt::Debug + Send + Sync {
         limit: u16,
     ) -> AgentSessionStoreFuture<'a, Vec<AgentSessionCommandPresentation>>;
 
+    /// Appends one validated message to the durable FIFO after checking all queue limits.
+    fn enqueue_message<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_session_revision: AgentSessionRevision,
+        message: &'a AgentQueuedMessage,
+    ) -> AgentSessionStoreFuture<'a, AgentSessionQueue>;
+
+    /// Loads the current bounded session queue without exposing internal persistence identities.
+    fn load_message_queue<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+    ) -> AgentSessionStoreFuture<'a, AgentSessionQueue>;
+
+    /// Atomically appends the next lifecycle event for one queue item.
+    fn transition_queued_message<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        expected_queue_revision: AgentSessionQueueRevision,
+        message_id: AgentQueuedMessageId,
+        state: AgentQueuedMessageState,
+    ) -> AgentSessionStoreFuture<'a, AgentSessionQueue>;
+
+    /// Pauses or resumes automatic dispatch for this session queue.
+    fn set_message_queue_paused<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: AgentSessionId,
+        expected_queue_revision: AgentSessionQueueRevision,
+        paused: bool,
+    ) -> AgentSessionStoreFuture<'a, AgentSessionQueue>;
+
     /// Removes presentation entries after an append-only tombstone revision was committed.
     fn delete_presentation<'a>(
         &'a self,
@@ -314,7 +398,13 @@ pub fn validate_agent_session_transition(
         return Err(AgentSessionStoreFailure::InvalidInput);
     }
     if current.mode() != next.mode() && !current.mode().can_transition_to(next.mode()) {
-        return Err(AgentSessionStoreFailure::InvalidInput);
+        let starts_independent_work_item = current.state().accepts_follow_up()
+            && next.state() == AgentSessionState::Running
+            && next.active_work_item().is_none()
+            && next.current_plan_revision().is_none();
+        if !starts_independent_work_item {
+            return Err(AgentSessionStoreFailure::InvalidInput);
+        }
     }
     if current.state() == AgentSessionState::Archived && next.state() == AgentSessionState::Running
     {
@@ -332,13 +422,21 @@ mod tests {
     };
 
     fn session(revision: u64, mode: AgentSessionMode) -> AgentSession {
+        session_with_state(revision, mode, AgentSessionState::Running)
+    }
+
+    fn session_with_state(
+        revision: u64,
+        mode: AgentSessionMode,
+        state: AgentSessionState,
+    ) -> AgentSession {
         AgentSession::from_parts(
             AgentSessionId::from_bytes([1; 32]),
             AgentSessionRevision::new(revision).unwrap_or(AgentSessionRevision::INITIAL),
             AgentSessionTitle::try_from_string("Task".to_owned())
                 .unwrap_or_else(|_| unreachable!()),
             mode,
-            AgentSessionState::Running,
+            state,
             AgentSessionTimestamp::from_unix_millis(1).unwrap_or_else(|_| unreachable!()),
             AgentSessionTimestamp::from_unix_millis(revision).unwrap_or_else(|_| unreachable!()),
             None,
@@ -349,13 +447,26 @@ mod tests {
     }
 
     #[test]
-    fn reverse_mode_transition_is_rejected() {
+    fn reverse_mode_transition_is_rejected_inside_one_work_item() {
         assert_eq!(
             validate_agent_session_transition(
                 &session(1, AgentSessionMode::Agent),
                 &session(2, AgentSessionMode::Ask),
             ),
             Err(AgentSessionStoreFailure::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn completed_work_item_may_select_any_mode_for_the_next_message() {
+        let current = session_with_state(1, AgentSessionMode::Agent, AgentSessionState::Completed);
+        let next = session_with_state(2, AgentSessionMode::Ask, AgentSessionState::Running);
+
+        assert_eq!(validate_agent_session_transition(&current, &next), Ok(()));
+        assert!(
+            current
+                .mode()
+                .can_select_for_next_message(AgentSessionMode::Ask)
         );
     }
 }

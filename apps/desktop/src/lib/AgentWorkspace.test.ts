@@ -263,6 +263,111 @@ describe('AgentWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Standard' }).getAttribute('aria-pressed')).toBe(
       'false',
     );
+    expect(screen.queryByRole('complementary', { name: 'Agentenlauf' })).toBeNull();
+  });
+
+  it('shows and controls the durable FIFO above the composer', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    response.result.session.queuePaused = true;
+    response.result.session.queueRevision = '7';
+    response.result.session.modeOptions = [
+      { mode: 'ask', requiresPlanReview: false, selectable: true },
+      { mode: 'plan', requiresPlanReview: false, selectable: true },
+      { mode: 'agent', requiresPlanReview: true, selectable: true },
+    ];
+    response.result.session.queuedMessages = [
+      {
+        enqueuedAtUnixMillis: '102',
+        position: 1,
+        preview: 'Erste vorgemerkte Frage',
+        queueReference: 'c'.repeat(64),
+        targetMode: 'ask',
+      },
+      {
+        enqueuedAtUnixMillis: '103',
+        position: 2,
+        preview: 'Anschließenden Plan erstellen',
+        queueReference: 'd'.repeat(64),
+        targetMode: 'plan',
+      },
+    ];
+    const sessionQueueController = vi.fn(async () => response);
+    const sessionSummary = response.result.session.summary;
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionLoader: vi.fn(async () => response),
+      sessionQueueController,
+      sessionsLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: { nextCursor: null, sessions: [sessionSummary], status: 'available' as const },
+      })),
+    });
+
+    expect(await screen.findByText('2 vorgemerkt')).toBeTruthy();
+    expect(screen.getByText('Erste vorgemerkte Frage')).toBeTruthy();
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vorgemerkte Nachricht 1 entfernen' }),
+    );
+    await waitFor(() =>
+      expect(sessionQueueController).toHaveBeenCalledWith(sessionId, '7', {
+        kind: 'remove',
+        queueReference: 'c'.repeat(64),
+      }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Mit Warteschlange fortfahren' }));
+    await waitFor(() =>
+      expect(sessionQueueController).toHaveBeenCalledWith(sessionId, '7', { kind: 'resume' }),
+    );
+  });
+
+  it('honors the Core-owned selectable modes and plan-review marker', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    response.result.session.modeOptions = [
+      { mode: 'ask', requiresPlanReview: false, selectable: true },
+      { mode: 'plan', requiresPlanReview: false, selectable: false },
+      { mode: 'agent', requiresPlanReview: true, selectable: true },
+    ];
+    const sessionSummary = response.result.session.summary;
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: { nextCursor: null, sessions: [sessionSummary], status: 'available' as const },
+      })),
+    });
+
+    await screen.findByText('Was macht A^3?');
+    const plan = screen.getByRole('button', { name: /Plan\s*Gemeinsam ausarbeiten/u });
+    const agent = screen.getByRole('button', { name: /Agent\s*Änderungen ausführen/u });
+    await waitFor(() => expect((plan as HTMLButtonElement).disabled).toBe(true));
+    await fireEvent.click(agent);
+    expect(agent.textContent).toContain('Nach Planfreigabe');
+  });
+
+  it('keeps the header menu keyboard reachable and returns focus on Escape', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const sessionSummary = response.result.session.summary;
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: { nextCursor: null, sessions: [sessionSummary], status: 'available' as const },
+      })),
+    });
+
+    const trigger = await screen.findByRole('button', { name: 'Session-Aktionen' });
+    await fireEvent.click(trigger);
+    expect(await screen.findByRole('button', { name: 'Umbenennen' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Umbenennen' }));
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('button', { name: 'Umbenennen' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('selects a mode-compatible slash command and locks the Core-owned depth', async () => {
@@ -522,10 +627,19 @@ describe('AgentWorkspace', () => {
 
   it('implements only the exact visible plan revision', async () => {
     const response = reviewedPlan();
-    const sessionController = vi.fn(async () => response);
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const session = response.result.session;
+    const planStarter = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        outcome: 'started' as const,
+        session,
+        status: 'available' as const,
+      },
+    }));
     render(AgentWorkspace, {
       activeProject: true,
-      sessionController,
+      planStarter,
       sessionLoader: vi.fn(async () => response),
       sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
         protocolVersion: 1,
@@ -544,25 +658,20 @@ describe('AgentWorkspace', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Plan umsetzen' }));
-    await waitFor(() =>
-      expect(sessionController).toHaveBeenCalledWith(sessionId, '2', {
-        kind: 'implementPlan',
-        planRevision: 1,
-      }),
-    );
+    await waitFor(() => expect(planStarter).toHaveBeenCalledWith(sessionId, '2', 1));
   });
 
-  it('turns a completed Ask session into a planning conversation through an explicit control', async () => {
+  it('selects Plan for the next message without mutating the completed Ask work item', async () => {
     const response = reviewedPlan();
     if (response.result.status !== 'available') throw new Error('fixture must be available');
     response.result.session.summary.mode = 'ask';
     response.result.session.summary.state = 'completed';
     response.result.session.summary.currentPlanRevision = null;
     const sessionSummary = response.result.session.summary;
-    const sessionController = vi.fn(async () => response);
+    const messageSubmitter = vi.fn(async () => reviewedPlan());
     render(AgentWorkspace, {
       activeProject: true,
-      sessionController,
+      messageSubmitter,
       sessionLoader: vi.fn(async () => response),
       sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
         protocolVersion: 1,
@@ -574,11 +683,22 @@ describe('AgentWorkspace', () => {
       })),
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Session-Aktionen' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'In Plan wechseln' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /Plan\s*Gemeinsam ausarbeiten/u }),
+    );
+    await fireEvent.input(screen.getByLabelText('Nachricht an A^3'), {
+      target: { value: 'Plane die nächste Änderung' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
 
     await waitFor(() =>
-      expect(sessionController).toHaveBeenCalledWith(sessionId, '2', { kind: 'switchToPlan' }),
+      expect(messageSubmitter).toHaveBeenCalledWith({
+        expectedSessionRevision: '2',
+        message: 'Plane die nächste Änderung',
+        mode: 'plan',
+        researchDepth: 'standard',
+        sessionId,
+      }),
     );
   });
 
@@ -613,7 +733,7 @@ describe('AgentWorkspace', () => {
     await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
     await waitFor(() => {
       const researchSummaries = screen.getAllByText('Recherche & Quellen');
-      expect(researchSummaries.length).toBeGreaterThanOrEqual(2);
+      expect(researchSummaries).toHaveLength(1);
       expect(researchSummaries.some((summary) => summary.closest('details')?.open === true)).toBe(
         true,
       );
@@ -754,6 +874,10 @@ describe('AgentWorkspace', () => {
     });
 
     expect(await screen.findByText('Änderungen werden umgesetzt')).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Agentenlauf' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fortschritt' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Änderungen' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review' })).toBeTruthy();
     expect(screen.getByText('Umsetzung vorbereitet')).toBeTruthy();
     expect(screen.getByText('Sichere Aktion ausgeführt')).toBeTruthy();
     expect(screen.queryByText('controllerDecision')).toBeNull();

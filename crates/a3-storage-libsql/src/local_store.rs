@@ -488,6 +488,112 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn enqueue_message<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected_session_revision: a3_domain::AgentSessionRevision,
+        message: &'a a3_domain::AgentQueuedMessage,
+    ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::enqueue_message(
+                &connection,
+                project.worktree().id(),
+                expected_session_revision,
+                message,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn load_message_queue<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: a3_domain::AgentSessionId,
+    ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::load_message_queue(
+                &connection,
+                project.worktree().id(),
+                session_id,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn transition_queued_message<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: a3_domain::AgentSessionId,
+        expected_queue_revision: a3_domain::AgentSessionQueueRevision,
+        message_id: a3_domain::AgentQueuedMessageId,
+        state: a3_domain::AgentQueuedMessageState,
+    ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::transition_queued_message(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                expected_queue_revision,
+                message_id,
+                state,
+                queue_timestamp()?,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
+    fn set_message_queue_paused<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        session_id: a3_domain::AgentSessionId,
+        expected_queue_revision: a3_domain::AgentSessionQueueRevision,
+        paused: bool,
+    ) -> AgentSessionStoreFuture<'a, a3_application::AgentSessionQueue> {
+        Box::pin(async move {
+            let database = self
+                .open_project_knowledge_for_agent_session(project)
+                .await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| AgentSessionStoreFailure::Unavailable)?;
+            agent_session_repository::set_message_queue_paused(
+                &connection,
+                project.worktree().id(),
+                session_id,
+                expected_queue_revision,
+                paused,
+                queue_timestamp()?,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn delete_presentation<'a>(
         &'a self,
         project: &'a ProjectIdentity,
@@ -514,6 +620,13 @@ impl AgentSessionStore for LibsqlKnowledgeStore {
             .map_err(|error| error.classify())
         })
     }
+}
+
+fn queue_timestamp() -> Result<u64, AgentSessionStoreFailure> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .map_err(|_| AgentSessionStoreFailure::Unavailable)
 }
 
 impl AskResearchStore for LibsqlKnowledgeStore {

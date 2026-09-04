@@ -1060,6 +1060,9 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
+- [x] sichtbare nächste Moduswahl mit erneuter Planfreigabe nach unterbrochener Agent-Kontinuität
+- [x] begrenzte dauerhafte FIFO für Folgenachrichten mit Pause und expliziter Wiederaufnahme
+- [x] taskgebundene Agentenlauf-Seitenleiste ohne doppelte Rechercheprojektion
 - [x] exakte Planfreigabe materialisiert Goal, Ledger und Run
 - [x] produktiver AgentRunExecutor führt typisierte Actions bis Approval, Recovery oder Review aus
 - [x] Component-, Accessibility-, responsive und native UX-Verifikation
@@ -1169,6 +1172,17 @@ die Live-Timeline bleibt bis zum terminalen Einklappen als dieselbe Komponenteni
 ohne eine gemessene Layout-Höhe zu konservieren. Eine manuell gelöste Scrollbindung wird nur nach
 einer bewussten Abwärtsbewegung bis ans Ende wieder aktiviert, nicht durch programmatisches Scrollen
 oder ein schrumpfendes Layout.
+
+Modus- und Queue-Erweiterung vom 2026-09-04 nach ADR-0041: Die stets sichtbare Stufenleiste trennt
+den laufenden Modus vom Ziel der nächsten Nachricht. Weitere validierte Nachrichten werden in
+Knowledge V33 begrenzt und FIFO-geordnet vorgemerkt, nach Erfolg automatisch verarbeitet und an
+menschlichen Haltepunkten beziehungsweise nach Fehler oder Abbruch angehalten. Nach Neustart ist
+eine ausdrückliche Fortsetzung nötig. Ein Rückwechsel aus Agent entfernt die Ausführbarkeit des
+früheren Plans; der nächste Agent-Auftrag endet zunächst an einer neuen Planfreigabe. Recherche
+bleibt ausschließlich im Chat. Fortschritt, Änderungen und Review erscheinen in der rechten
+Seitenleiste erst mit einer materialisierten Task und der Header ordnet Menü, Laufsteuerung und
+Seitenleistenschalter ohne Überlagerung an. Terminale Agent-Runs belegen den Planstart nicht mehr;
+die kurze Abschlussübergabe wartet auf den noch auslaufenden Conversationbesitzer.
 
 Abnahme der Slash-Command-Erweiterung vom 2026-09-04: 61 Frontend-Testdateien mit 294 bestandenen
 Tests prüfen zusätzlich Palette, Tastaturnavigation, fail-closed Katalog-Retry, Chips, feste Tiefe,

@@ -260,6 +260,14 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   V30–V32 in einer gemeinsamen Read-Transaktion projiziert. Öffentliche `S`-Labels entstehen
   flüchtig aus der vorhandenen turnlokalen Ordinalzahl; weder Labels noch Antwortanreicherung oder
   Quelltext werden zusätzlich persistiert.
+- Knowledge-Schema V33 ergänzt `agent_message_queue_items` und
+  `agent_message_queue_events`. Der unveränderliche Eintrag enthält ausschließlich Sessionbindung,
+  FIFO-Position, Zielmodus, geschlossene Rechercheauswahl, den bereits begrenzten Nachrichtentext
+  und den Core-Zeitpunkt. Vormerken, Start, Entfernen, Pausieren und Fortsetzen werden als
+  append-only Zustandsereignisse mit einer monotonen Queue-Revision gespeichert. Aktuell wartende
+  Nachrichten sind pro Session auf 16 Einträge und 1 MiB sowie pro Worktree auf 64 Einträge und
+  4 MiB begrenzt. Archivierung erhält und pausiert sie; Presentation Delete entfernt ihre
+  Präsentationsdaten über die Sessionbindung. Die Migration erzeugt keinen Backfill.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.

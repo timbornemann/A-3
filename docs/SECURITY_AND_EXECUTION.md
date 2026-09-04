@@ -614,6 +614,13 @@ V1 ist offline-first:
 
 Quellcode, Embeddings, Projektkarten, Prompts und Logs werden nie ohne ausdrückliche Aktivierung übertragen.
 
+Die ADR-0041-Nachrichtenwarteschlange ist keine zusätzliche Autorität. Vor der Persistenz prüft
+der Rust-Core Zielmodus, Slash-Command-Profil, Rechercheauswahl und UTF-8-Grenzen; vor dem Start
+prüft er Sessionrevision, Capability und aktuelle Projektanker erneut. Ein vorgemerkter
+Agent-Auftrag umgeht weder eine neue Planfreigabe nach Ask/Plan noch Policy, Approval, Reindex oder
+Verification. Queue-Requests akzeptieren nur eine opake sessiongebundene Referenz und die exakte
+Queue-Revision. Modus-Chips und deaktivierte UI-Schritte sind ausschließlich Darstellung.
+
 Google Gemini verwendet ausschließlich den festen Origin
 `https://generativelanguage.googleapis.com`. Der Adapter setzt `x-goog-api-key` erst nach der
 exakten Produktionspolicy-Prüfung, deaktiviert Redirects und Umgebungsproxies und sendet zusätzlich

@@ -82,6 +82,15 @@ A^3 ermöglicht einem Entwickler, einen lokalen Coding-Agenten mit begrenztem Mo
 - **FR-075** Ask, Plan und Agent-Vorbereitung MÜSSEN ihren endlichen Evidence-Arbeitsweg mit
   öffentlichen Befunden und Quellen nachvollziehbar anzeigen; internes Chain-of-Thought bleibt
   ausgeschlossen.
+- **FR-076** Ask, Plan und Agent MÜSSEN als sichtbare Stufen für die nächste Nachricht wählbar
+  sein, ohne laufende Arbeit zu unterbrechen oder Capability-Grenzen zu verschieben.
+- **FR-077** Während laufender Arbeit angenommene Folgenachrichten MÜSSEN begrenzt, dauerhaft und
+  FIFO-geordnet sichtbar bleiben; Fehler, Abbruch und Neustart DÜRFEN sie nicht still starten oder
+  verlieren.
+- **FR-078** Nach einem Rückwechsel zu Ask oder Plan MUSS ein späterer Agent-Auftrag einen neuen
+  aktuellen Plan und eine ausdrückliche Planfreigabe verlangen.
+- **FR-079** Die operative Agentenlauf-Seitenleiste DARF erst nach Task-Materialisierung erscheinen;
+  Recherche und Quellen erscheinen ausschließlich beim zugehörigen Chat-Turn.
 
 ## Nichtfunktionale Anforderungen
 

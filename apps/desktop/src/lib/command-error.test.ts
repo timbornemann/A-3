@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentGoalRecoveryMessage,
+  agentSessionRecoveryMessage,
   deepMapRecoveryMessage,
   parseCommandErrorV1,
   projectActionRecoveryMessage,
@@ -88,4 +89,22 @@ describe('command error recovery', () => {
       expect(parseCommandErrorV1(commandError(code))?.code).toBe(code);
     },
   );
+
+  it.each([
+    ['invalidAgentSessionRequest', 'aktuellen Zustand'],
+    ['agentSessionRevisionConflict', 'Session wurde'],
+    ['agentSessionUnavailable', 'lokale Agentenlaufzeit'],
+    ['agentSessionBusy', 'aktuelle Arbeit'],
+  ])('maps the Agent-session boundary code %s without exposing adapter text', (code, expected) => {
+    const secret = 'C:\\private\\agent.db';
+    const message = agentSessionRecoveryMessage(commandError(code, secret), 'control');
+    expect(message).toContain(expected);
+    expect(message).not.toContain(secret);
+  });
+
+  it('does not claim a busy plan start was queued when no queue acceptance was returned', () => {
+    const message = agentSessionRecoveryMessage(commandError('agentSessionBusy'), 'implementPlan');
+    expect(message).toContain('nicht gestartet');
+    expect(message).not.toContain('wird nach');
+  });
 });

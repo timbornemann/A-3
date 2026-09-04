@@ -271,6 +271,15 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   werden vor dem sichtbaren Austausch vollständig geladen, ohne die natürliche Höhe der Timeline
   festzuschreiben. Ein Layout-Resize allein darf eine manuell gelöste Scrollbindung nicht
   reaktivieren.
+- Der ADR-0041-Contract prüft vorwärts und rückwärts wählbare nächste Modi, die Planpflicht nach
+  unterbrochener Agent-Kontinuität sowie eine dauerhaft wiederherstellbare FIFO mit Session- und
+  Worktreegrenzen. Migrationstests decken Neuinstallation und V32→V33 samt Rollback ab;
+  Storageverträge prüfen Revisionen, Reihenfolge, Claim-Retry, Entfernen und Pause/Fortsetzen.
+  Desktoptests müssen belegen, dass terminale Agent-Run-Zustände einen neuen Planstart nicht
+  blockieren, ein veralteter Plan verständlich zu einem Nutzerhaltepunkt führt und Fehler oder
+  Abbruch eine vorhandene Queue pausieren. Component-Tests prüfen Stufenleiste, Queue-Leiste,
+  Core-selektierbare Modi, die ausschließlich taskgebundene Agentenlauf-Seitenleiste und einen
+  überlagerungsfreien, per Escape schließbaren Header-Aktionsbereich.
 - Der erste U5-Agent-Workspace-Contract prüft die vollständige Goal-Neuanlage mit ausschließlich
   Core-generierten Task- und Kriterien-IDs sowie immutable Revisionen gegen einen sichtbar
   gebundenen Vorgänger. Application-Tests lehnen WebView-IDs bei Revision eins, erfundene
