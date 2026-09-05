@@ -15,7 +15,7 @@ use std::error::Error;
 use std::fmt;
 use tree_sitter::Language;
 
-const RUST_ADAPTER_REVISION: &str = "rust-tree-sitter-0.24.2-cargo-v1-contract-v1";
+const RUST_ADAPTER_REVISION: &str = "rust-tree-sitter-0.24.2-cargo-v1-flow-v1-contract-v1";
 
 /// Deterministic Rust source and Cargo-manifest adapter.
 #[derive(Debug)]

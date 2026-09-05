@@ -28,7 +28,7 @@ pub(super) fn parse(
     }
     let parsed = parser_pool.parse(input.source(), policy, control)?;
     let (tree, _parser_coverage, diagnostics) = parsed.into_parts();
-    let artifacts =
+    let (artifacts, flows) =
         PackageManifestExtractor::new(input, policy, control, diagnostics).extract(&tree)?;
     let (coverage, diagnostics) = normalize_parse_diagnostics(
         input.source().len(),
@@ -45,6 +45,8 @@ pub(super) fn parse(
             ..artifacts
         },
     )
+    .map_err(|_| LanguageParseFailure::InvalidResult)?
+    .with_function_flows(flows)
     .map_err(|_| LanguageParseFailure::InvalidResult)
 }
 
@@ -61,6 +63,7 @@ struct PackageManifestExtractor<'a> {
     policy: LanguageParsePolicy,
     control: &'a dyn LanguageParseControl,
     artifacts: LanguageParseArtifacts,
+    flows: Vec<a3_domain::FunctionFlow>,
     next_symbol_id: u32,
     started: Instant,
     visited: usize,
@@ -75,6 +78,7 @@ impl<'a> PackageManifestExtractor<'a> {
     ) -> Self {
         Self {
             input,
+            flows: Vec::new(),
             policy,
             control,
             artifacts: LanguageParseArtifacts {
@@ -87,7 +91,10 @@ impl<'a> PackageManifestExtractor<'a> {
         }
     }
 
-    fn extract(mut self, tree: &Tree) -> Result<LanguageParseArtifacts, LanguageParseFailure> {
+    fn extract(
+        mut self,
+        tree: &Tree,
+    ) -> Result<(LanguageParseArtifacts, Vec<a3_domain::FunctionFlow>), LanguageParseFailure> {
         self.ensure_active()?;
         let root = tree.root_node();
         let Some(object) = root.named_child(0).filter(|node| node.kind() == "object") else {
@@ -98,7 +105,7 @@ impl<'a> PackageManifestExtractor<'a> {
                     "package.json root must be a JSON object",
                 )?)?;
             }
-            return Ok(self.artifacts);
+            return Ok((self.artifacts, self.flows));
         };
         let fields = self.object_fields(object)?;
         let name_field = fields.iter().find(|field| field.name == "name");
@@ -161,7 +168,7 @@ impl<'a> PackageManifestExtractor<'a> {
             }
         }
         self.ensure_active()?;
-        Ok(self.artifacts)
+        Ok((self.artifacts, self.flows))
     }
 
     fn add_root_module(
@@ -308,10 +315,48 @@ impl<'a> PackageManifestExtractor<'a> {
         }
         for field in self.object_fields(value)? {
             self.poll()?;
-            if decode_json_string(self.input.source(), field.value).is_none() {
+            let Some(command) = decode_json_string(self.input.source(), field.value) else {
                 self.unsupported_value(field.value, "package script command must be a string")?;
                 continue;
-            }
+            };
+            let id = self.take_symbol_id()?;
+            let range = source_range_for_node(field.pair)?;
+            let name = SymbolName::try_from_string(format!("scripts:{}", field.name))
+                .map_err(|_| LanguageParseFailure::InvalidResult)?;
+            let role = if field.name == "test" || field.name.starts_with("test:") {
+                SymbolRole::Test
+            } else {
+                SymbolRole::Entrypoint
+            };
+            self.push_symbol(
+                ParsedSymbol::new(
+                    id,
+                    SymbolKind::Function,
+                    name,
+                    range,
+                    source_range_for_node(field.key)?,
+                )
+                .map_err(|_| LanguageParseFailure::InvalidResult)?
+                .with_visibility(SymbolVisibility::Internal)
+                .with_role(role),
+            )?;
+            self.push_relation(SyntaxRelation::new(
+                SyntaxSource::Symbol(root),
+                SyntaxTarget::Symbol(id),
+                SyntaxRelationKind::Defines,
+                SyntaxProvider::Manifest,
+                Confidence::certain(),
+                range,
+            ))?;
+            self.flows.push(
+                crate::function_flow::package_script(
+                    id,
+                    self.input.revision().path(),
+                    range,
+                    &command,
+                )
+                .map_err(|_| LanguageParseFailure::InvalidResult)?,
+            );
             let kind = if field.name == "test" || field.name.starts_with("test:") {
                 SyntaxRelationKind::Tests
             } else if field.name == "build"

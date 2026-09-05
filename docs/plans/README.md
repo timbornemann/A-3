@@ -12,6 +12,7 @@ Diese Pläne zerlegen A^3 in überprüfbare vertikale Arbeitspakete. Sie sind f�
 6. [Editing und Verification](05-EDITING_AND_VERIFICATION.md)
 7. [Desktop Product](06-DESKTOP_PRODUCT.md)
 8. [Hardening und Release](07-HARDENING_AND_RELEASE.md)
+9. [Fast-Index-Ablauf- und Wertanalyse](08-FAST_INDEX_FLOW_ANALYSIS.md)
 
 ## Ausführungsregeln für Codex
 
@@ -32,4 +33,3 @@ Die Checkboxen bilden den geplanten Ausgangszustand ab. Nach Übernahme in das e
 ## Schätzung
 
 Die Pläne verwenden keine Zeitversprechen. Jeder Abschnitt endet mit einem technischen Gate und kann unabhängig reviewt werden.
-

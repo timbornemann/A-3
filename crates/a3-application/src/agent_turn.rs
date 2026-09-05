@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn valid_search_executes_exactly_one_read_action() -> Result<(), Box<dyn Error>> {
         let mut fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":3,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":4,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {
@@ -1288,7 +1288,7 @@ mod tests {
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
         let fixture = turn_fixture(vec![provider_response(
-            r#"{"schema_version":3,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
+            r#"{"schema_version":4,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
         let provider = ScriptedProvider {

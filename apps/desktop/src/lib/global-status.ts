@@ -1,6 +1,6 @@
 import type { AgentControllerStateV1 } from './agent-activity';
 
-export const WORKSPACE_AREAS = ['projects', 'map', 'agent', 'settings'] as const;
+export const WORKSPACE_AREAS = ['projects', 'map', 'flows', 'agent', 'settings'] as const;
 
 export type WorkspaceArea = (typeof WORKSPACE_AREAS)[number];
 export type GlobalStatusTone = 'failed' | 'neutral' | 'pending' | 'ready' | 'warning';

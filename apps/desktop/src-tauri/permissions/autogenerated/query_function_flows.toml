@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-query-function-flows"
+description = "Enables the query_function_flows command without any pre-configured scope."
+commands.allow = ["query_function_flows"]
+
+[[permission]]
+identifier = "deny-query-function-flows"
+description = "Denies the query_function_flows command without any pre-configured scope."
+commands.deny = ["query_function_flows"]

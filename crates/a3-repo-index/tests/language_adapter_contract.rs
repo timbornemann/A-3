@@ -202,7 +202,7 @@ fn rust_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
             valid_source: VALID_RUST,
             invalid_source: INVALID_RUST,
             expected_golden: concat!(
-                "path=7372632f6c69622e7273 hash=c478091adfc0f68932a250d62387a2a921fd7d47b3faaec65e8e101e6a10550f language=rust adapter=rust-tree-sitter-0.24.2-cargo-v1-contract-v1 contract=1 coverage=45/45/0\n",
+                "path=7372632f6c69622e7273 hash=c478091adfc0f68932a250d62387a2a921fd7d47b3faaec65e8e101e6a10550f language=rust adapter=rust-tree-sitter-0.24.2-cargo-v1-flow-v1-contract-v1 contract=1 coverage=45/45/0\n",
                 "symbol id=1 kind=Module name=\"lib\" signature=None declaration=0..45@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=true\n",
                 "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"pub fn alpha()\") declaration=0..30@0:0..2:1 selection=7..12@0:7..0:12 documentation=- visibility=Public test=false entrypoint=false\n",
                 "symbol id=3 kind=Function name=\"beta\" signature=Some(\"fn beta()\") declaration=32..44@4:0..4:12 selection=35..39@4:3..4:7 documentation=- visibility=Private test=false entrypoint=false\n",
@@ -227,7 +227,7 @@ fn typescript_javascript_adapter_satisfies_the_shared_v1_contract() -> ContractR
             valid_source: VALID_TYPESCRIPT,
             invalid_source: INVALID_TYPESCRIPT,
             expected_golden: concat!(
-                "path=7372632f696e6465782e7473 hash=e594b82bec6b1823c4e94d3e239ff3d7f5a0230c97798c146434655c96de8e79 language=typescript-javascript adapter=typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-contract-v1 contract=1 coverage=92/92/0\n",
+                "path=7372632f696e6465782e7473 hash=e594b82bec6b1823c4e94d3e239ff3d7f5a0230c97798c146434655c96de8e79 language=typescript-javascript adapter=typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-flow-v1-contract-v1 contract=1 coverage=92/92/0\n",
                 "symbol id=1 kind=Module name=\"index\" signature=None declaration=0..92@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=true\n",
                 "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"function alpha(): number\") declaration=7..52@0:7..2:1 selection=16..21@0:16..0:21 documentation=- visibility=Public test=false entrypoint=false\n",
                 "symbol id=3 kind=Function name=\"beta\" signature=Some(\"function beta(): number\") declaration=54..91@4:0..4:37 selection=63..67@4:9..4:13 documentation=- visibility=Internal test=false entrypoint=false\n",
@@ -252,7 +252,7 @@ fn python_adapter_satisfies_the_shared_v1_contract() -> ContractResult<()> {
             valid_source: VALID_PYTHON,
             invalid_source: INVALID_PYTHON,
             expected_golden: concat!(
-                "path=7372632f636f72652e7079 hash=d44fbff365fa31cd6a340a24582b052ce1fd773a69b87626569e03cbe6ef6701 language=python adapter=python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-contract-v1 contract=1 coverage=57/57/0\n",
+                "path=7372632f636f72652e7079 hash=d44fbff365fa31cd6a340a24582b052ce1fd773a69b87626569e03cbe6ef6701 language=python adapter=python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-flow-v1-contract-v1 contract=1 coverage=57/57/0\n",
                 "symbol id=1 kind=Module name=\"core\" signature=None declaration=0..57@0:0..5:0 selection=0..0@0:0..0:0 documentation=- visibility=Internal test=false entrypoint=false\n",
                 "symbol id=2 kind=Function name=\"alpha\" signature=Some(\"def alpha()\") declaration=0..30@0:0..1:17 selection=4..9@0:4..0:9 documentation=- visibility=Public test=false entrypoint=false\n",
                 "symbol id=3 kind=Function name=\"beta\" signature=Some(\"def beta()\") declaration=32..56@3:0..4:12 selection=36..40@3:4..3:8 documentation=- visibility=Public test=false entrypoint=false\n",

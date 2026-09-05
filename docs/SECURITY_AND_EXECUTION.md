@@ -579,7 +579,9 @@ Run-Memory-Checkpoint verhindert außerdem den Abschluss mit einer offenen aktue
 taskbezogenen Hypothesis. Diese Entscheidungen sind content-freie Rust-Resultate; weder WebView,
 LLM noch Storageadapter können den Success-Bool liefern.
 
-E7 lässt nur das geschlossene `AgentAction`-V3-Schema über die Modellgrenze. V3 ergänzt neben der
+E7 lässt bei neuen Turns nur das geschlossene `AgentAction`-V4-Schema über die Modellgrenze.
+V4 ergänzt ausschließlich einen begrenzten, quellengebundenen Ablauf-Read nach
+[ADR-0045](FAST_INDEX_FLOWS.md), ohne Ausführungsautorität. V3 ergänzte neben der
 unverändert typisierten Aktion ausschließlich eine begrenzte öffentliche Arbeitsnotiz ohne
 Ausführungsautorität. `ApplyPatch` enthält
 sämtliche bestehenden E3-Anker und vollständige Inhalte; `Run` enthält ausschließlich Step- und

@@ -76,6 +76,8 @@
     | { kind: 'available'; value: T }
     | { kind: 'unavailable'; message: string };
   interface Props {
+    initialSelection?: ProjectMapEntitySelectionV1 | null;
+    onFunctionFlow?: (selection: import('./function-flow').FlowSelection) => void;
     /** @deprecated U11 compatibility seam; the progressive Atlas uses `atlasSceneLoader`. */
     sceneLoader?: (query: { focusModuleId: string | null }) => Promise<unknown>;
     /** @deprecated U11 compatibility seam; Module Cards no longer source Atlas scenes. */
@@ -145,6 +147,8 @@
     deepMapCardLoader?: (query: ModuleCardDetailQueryV1) => Promise<ModuleCardDetailResponseV1>;
   }
   const {
+    initialSelection = null,
+    onFunctionFlow,
     projectKey,
     publicationKey = null,
     atlasSceneLoader = queryProjectMapAtlasScene,
@@ -325,7 +329,13 @@
     inventory = { kind: 'idle' };
     flow = { kind: 'idle' };
     preview = { kind: 'idle' };
-    void loadScene(null);
+    void loadScene(initialSelection).then((loaded) => {
+      if (!loaded || !initialSelection) return;
+      const node = loaded.nodes.find(
+        (n) => selectionKey(n.selection) === selectionKey(initialSelection),
+      );
+      if (node) void selectNode(node);
+    });
   });
 
   function clampInspectorWidth(width: number): number {
@@ -896,6 +906,21 @@
       ></div>
     {/if}
     <MapInspector
+      onfunctionflow={onFunctionFlow
+        ? () => {
+            if (
+              selected?.selection?.kind !== 'symbol' ||
+              scene.kind !== 'available' ||
+              ['queued', 'running', 'cancelling'].includes(indexActivityState)
+            )
+              return;
+            onFunctionFlow?.({
+              runId: scene.value.indexRunId,
+              root: selected.selection.symbolId,
+              callPath: [],
+            });
+          }
+        : undefined}
       selected={inspectorMode === 'code' ? selected : null}
       {context}
       {inventory}

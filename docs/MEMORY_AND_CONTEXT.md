@@ -173,10 +173,11 @@ validiert das Domain-Aggregat erneut.
 ## Context Compiler
 
 Der vorgezogene H6-Systemvertrag bleibt mit der konservativen ModelProfile-Zählung unter 900
-Tokens. Neu kompilierter Kontext verwendet das geschlossene `AgentAction`-V3-Schema für Search,
+Tokens. Neu kompilierter Kontext verwendet das geschlossene `AgentAction`-V4-Schema für Search,
 Inspect, vollständig gebundene ApplyPatch-Aktionen, ausschließlich per `DiscoveredCommandId`
 adressierte Runs, sichere Ledger-Intents und eine Finish-Anforderung. Die öffentliche V3-Notiz
-bleibt von dieser Aktionsautorität getrennt. Die historischen V1-/V2-Verträge
+bleibt von dieser Aktionsautorität getrennt. V4 ergänzt ausschließlich die begrenzten
+[Fast-Index-Ablaufreads](FAST_INDEX_FLOWS.md). Die historischen V1-/V2-/V3-Verträge
 bleiben separat lesbar. Repository- und Context-Inhalte werden darin
 explizit als untrusted data bezeichnet. Das Structured-Output-Schema liegt gleichzeitig im
 Provider-Formatfeld; nur Profile mit `RepeatSchemaInPrompt` erhalten zusätzlich dieselbe

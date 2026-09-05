@@ -17,6 +17,7 @@ use std::fmt;
 const AGENT_ACTION_SCHEMA_V1: &str = include_str!("../schemas/agent-action-v1.schema.json");
 const AGENT_ACTION_SCHEMA_V2: &str = include_str!("../schemas/agent-action-v2.schema.json");
 const AGENT_ACTION_SCHEMA_V3: &str = include_str!("../schemas/agent-action-v3.schema.json");
+const AGENT_ACTION_SCHEMA_V4: &str = include_str!("../schemas/agent-action-v4.schema.json");
 const MAX_AGENT_ACTION_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Versioned JSON Schema supplied to a structured-output model provider.
@@ -53,7 +54,9 @@ impl AgentActionJsonSchema {
     /// Returns the schema used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
-        Self::version_three()
+        Self {
+            version: AgentActionSchemaVersion::V4,
+        }
     }
 
     /// Returns the schema version named by the document.
@@ -69,7 +72,7 @@ impl AgentActionJsonSchema {
             AgentActionSchemaVersion::V1 => AGENT_ACTION_SCHEMA_V1,
             AgentActionSchemaVersion::V2 => AGENT_ACTION_SCHEMA_V2,
             AgentActionSchemaVersion::V3 => AGENT_ACTION_SCHEMA_V3,
-            _ => AGENT_ACTION_SCHEMA_V3,
+            _ => AGENT_ACTION_SCHEMA_V4,
         }
     }
 
@@ -125,7 +128,9 @@ impl DecodeAgentAction {
     /// Creates the decoder used for newly compiled controller turns.
     #[must_use]
     pub const fn current() -> Self {
-        Self::version_three()
+        Self {
+            version: AgentActionSchemaVersion::V4,
+        }
     }
 
     /// Returns the exact JSON Schema paired with this decoder.
@@ -156,7 +161,7 @@ impl DecodeAgentAction {
         let root = serde_json::from_str::<Value>(raw)
             .map_err(|_| AgentActionDecodeError::MalformedJson)?;
         let root = object(&root)?;
-        let expected = if self.version == AgentActionSchemaVersion::V3 {
+        let expected = if self.version >= AgentActionSchemaVersion::V3 {
             &["schema_version", "public_note", "action"][..]
         } else {
             &["schema_version", "action"][..]
@@ -165,7 +170,7 @@ impl DecodeAgentAction {
         if unsigned(root, "schema_version")? != u64::from(self.version.get()) {
             return Err(AgentActionDecodeError::UnsupportedVersion);
         }
-        let public_note = if self.version == AgentActionSchemaVersion::V3 {
+        let public_note = if self.version >= AgentActionSchemaVersion::V3 {
             Some(
                 decode_note(required(root, "public_note")?)
                     .map_err(|_| AgentActionDecodeError::InvalidValue)?,
@@ -218,7 +223,7 @@ fn decode_action(
 ) -> Result<AgentAction, AgentActionDecodeError> {
     match string(action, "kind")? {
         "search" => decode_search(action),
-        "inspect" => decode_inspect(action),
+        "inspect" => decode_inspect(version, action),
         "update_ledger" => decode_update_ledger(action),
         "finish" => decode_finish(action),
         "apply_patch" if version >= AgentActionSchemaVersion::V2 => decode_apply_patch(action),
@@ -337,10 +342,16 @@ fn decode_search(action: &Map<String, Value>) -> Result<AgentAction, AgentAction
     Ok(AgentAction::Search(AgentSearchAction::new(query, limit)))
 }
 
-fn decode_inspect(action: &Map<String, Value>) -> Result<AgentAction, AgentActionDecodeError> {
+fn decode_inspect(
+    version: AgentActionSchemaVersion,
+    action: &Map<String, Value>,
+) -> Result<AgentAction, AgentActionDecodeError> {
     exact_keys(action, &["kind", "target"])?;
     let target = object(required(action, "target")?)?;
     let target = match string(target, "kind")? {
+        "function_flow" if version >= AgentActionSchemaVersion::V4 => {
+            AgentInspectTarget::FunctionFlow(decode_function_flow_target(target)?)
+        }
         "file" => decode_file_target(target)?,
         "symbol" => decode_symbol_target(target)?,
         "graph" => decode_graph_target(target)?,
@@ -349,6 +360,66 @@ fn decode_inspect(action: &Map<String, Value>) -> Result<AgentAction, AgentActio
         _ => return Err(AgentActionDecodeError::InvalidValue),
     };
     Ok(AgentAction::Inspect(AgentInspectAction::new(target)))
+}
+
+pub(crate) fn decode_function_flow_target(
+    target: &Map<String, Value>,
+) -> Result<a3_domain::FunctionFlowReadRequest, AgentActionDecodeError> {
+    exact_keys(target, &["kind", "symbol_id", "call_path", "view"])?;
+    let (path, view) =
+        decode_function_flow_parts(required(target, "call_path")?, required(target, "view")?)?;
+    a3_domain::FunctionFlowReadRequest::new(
+        SymbolId::from_bytes(hex_id(string(target, "symbol_id")?)?),
+        path,
+        view,
+    )
+    .map_err(|_| AgentActionDecodeError::InvalidValue)
+}
+pub(crate) fn decode_function_flow_parts(
+    path: &Value,
+    view: &Value,
+) -> Result<(Vec<a3_domain::FlowStepId>, a3_domain::FunctionFlowReadView), AgentActionDecodeError> {
+    let path = path
+        .as_array()
+        .filter(|p| p.len() < 8)
+        .ok_or(AgentActionDecodeError::InvalidValue)?;
+    let path = path
+        .iter()
+        .map(|v| {
+            v.as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .and_then(|v| a3_domain::FlowStepId::new(v).ok())
+                .ok_or(AgentActionDecodeError::InvalidValue)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let view = object(view)?;
+    let view = match string(view, "kind")? {
+        "steps" | "values" => {
+            exact_keys(view, &["kind", "offset"])?;
+            let offset = unsigned_u16(view, "offset")?;
+            if string(view, "kind")? == "steps" {
+                a3_domain::FunctionFlowReadView::Steps(offset)
+            } else {
+                a3_domain::FunctionFlowReadView::Values(offset)
+            }
+        }
+        "origins" | "uses" => {
+            exact_keys(view, &["kind", "value"])?;
+            let value = a3_domain::FlowValueId::new(unsigned_u32(view, "value")?)
+                .map_err(|_| AgentActionDecodeError::InvalidValue)?;
+            if string(view, "kind")? == "origins" {
+                a3_domain::FunctionFlowReadView::Origins(value)
+            } else {
+                a3_domain::FunctionFlowReadView::Uses(value)
+            }
+        }
+        _ => return Err(AgentActionDecodeError::InvalidValue),
+    };
+    if matches!(view,a3_domain::FunctionFlowReadView::Steps(n)|a3_domain::FunctionFlowReadView::Values(n) if n>4050 || n%50!=0)
+    {
+        return Err(AgentActionDecodeError::InvalidValue);
+    }
+    Ok((path, view))
 }
 
 fn decode_file_target(
@@ -600,6 +671,49 @@ impl Error for AgentActionDecodeError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn version_four_flow_reads_are_bounded_and_never_backported_to_v3()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = serde_json::json!({"schema_version":4,"public_note":{"goal":"Trace","finding_kind":"hypothesis","finding":"Not yet verified","finding_source_refs":[],"gap":"Origins","next_step":"Inspect"},"action":{"kind":"inspect","target":{"kind":"function_flow","symbol_id":"a".repeat(64),"call_path":[1,2],"view":{"kind":"origins","value":3}}}});
+        assert!(matches!(
+            super::DecodeAgentAction::current().decode(&document.to_string())?,
+            a3_domain::AgentAction::Inspect(_)
+        ));
+        document["schema_version"] = serde_json::json!(3);
+        assert!(
+            super::DecodeAgentAction::version_three()
+                .decode(&document.to_string())
+                .is_err()
+        );
+        document["schema_version"] = serde_json::json!(4);
+        for path in [
+            serde_json::json!([0]),
+            serde_json::json!([4097]),
+            serde_json::json!([1, 1, 1, 1, 1, 1, 1, 1]),
+        ] {
+            document["action"]["target"]["call_path"] = path;
+            assert!(
+                super::DecodeAgentAction::current()
+                    .decode(&document.to_string())
+                    .is_err()
+            );
+        }
+        document["action"]["target"]["call_path"] = serde_json::json!([]);
+        for view in [
+            serde_json::json!({"kind":"steps","offset":1}),
+            serde_json::json!({"kind":"values","offset":4100}),
+            serde_json::json!({"kind":"uses","value":0}),
+            serde_json::json!({"kind":"origins","value":1,"shell":"run"}),
+        ] {
+            document["action"]["target"]["view"] = view;
+            assert!(
+                super::DecodeAgentAction::current()
+                    .decode(&document.to_string())
+                    .is_err()
+            );
+        }
+        Ok(())
+    }
     use super::*;
 
     #[test]
@@ -775,7 +889,7 @@ mod tests {
     #[test]
     fn version_three_keeps_public_notes_outside_action_authority()
     -> Result<(), Box<dyn std::error::Error>> {
-        let schema = AgentActionJsonSchema::current();
+        let schema = AgentActionJsonSchema::version_three();
         let document = schema.as_json()?;
         assert_eq!(schema.version(), AgentActionSchemaVersion::V3);
         assert_eq!(document["properties"]["schema_version"]["const"], 3);
@@ -784,7 +898,7 @@ mod tests {
             false
         );
 
-        let decoded = DecodeAgentAction::current().decode_envelope(
+        let decoded = DecodeAgentAction::version_three().decode_envelope(
             r#"{"schema_version":3,"public_note":{"goal":"Aufrufer finden","finding_kind":"hypothesis","finding":"Die Aufrufstelle ist noch unbekannt.","finding_source_refs":[],"gap":"Direkte Aufrufer","next_step":"Gezielt im Index suchen"},"action":{"kind":"search","query":"create_task","limit":20}}"#,
         )?;
         assert!(matches!(decoded.action(), AgentAction::Search(_)));
@@ -793,7 +907,7 @@ mod tests {
             Some("Aufrufer finden")
         );
         assert_eq!(
-            DecodeAgentAction::current().decode(
+            DecodeAgentAction::version_three().decode(
                 r#"{"schema_version":3,"public_note":{"goal":"g","finding_kind":"hypothesis","finding":"f","finding_source_refs":[],"gap":"g","next_step":"n","action":{"kind":"finish"}},"action":{"kind":"finish"}}"#,
             ),
             Err(AgentActionDecodeError::InvalidValue)

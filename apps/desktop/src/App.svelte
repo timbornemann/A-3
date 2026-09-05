@@ -217,6 +217,7 @@
 
   type AgentWorkspaceComponent = typeof import('./lib/AgentWorkspace.svelte').default;
   type MapWorkspaceComponent = typeof import('./lib/MapWorkspace.svelte').default;
+  type FlowWorkspaceComponent = typeof import('./lib/FlowWorkspace.svelte').default;
   type SettingsPanelComponent = typeof import('./lib/SettingsPanel.svelte').default;
   type LazySurfaceState = 'error' | 'idle' | 'loading' | 'ready';
 
@@ -329,10 +330,23 @@
   let settingsState = $state<LazySurfaceState>('idle');
   let mapWorkspaceComponent = $state<MapWorkspaceComponent | null>(null);
   let mapWorkspaceState = $state<LazySurfaceState>('idle');
+  let flowWorkspaceComponent = $state<FlowWorkspaceComponent | null>(null);
+  let flowWorkspaceState = $state<LazySurfaceState>('idle');
+  let flowMapLink = $state<{
+    project: string;
+    publication: string;
+    selection: import('./lib/project-map-atlas').ProjectMapEntitySelectionV1;
+  } | null>(null);
+  let mapFlowLink = $state<{
+    project: string;
+    publication: string;
+    selection: import('./lib/function-flow').FlowSelection;
+  } | null>(null);
 
   const workspaceTitles: Record<WorkspaceArea, string> = {
     projects: 'Projects',
     map: 'Project Map',
+    flows: 'Abläufe',
     agent: 'Agent',
     settings: 'Settings',
   };
@@ -342,6 +356,7 @@
     resetWorkspaceScroll();
     if (area === 'agent') void loadAgentWorkspaceChunk();
     if (area === 'map') void loadMapWorkspaceChunk();
+    if (area === 'flows') void loadFlowWorkspaceChunk();
     if (area === 'settings') void loadSettingsChunk();
     document.getElementById(area)?.focus({ preventScroll: true });
   }
@@ -356,6 +371,7 @@
     if (focusTarget) resetWorkspaceScroll();
     if (currentWorkspaceArea === 'agent') void loadAgentWorkspaceChunk();
     if (currentWorkspaceArea === 'map') void loadMapWorkspaceChunk();
+    if (currentWorkspaceArea === 'flows') void loadFlowWorkspaceChunk();
     if (currentWorkspaceArea === 'settings') void loadSettingsChunk();
     if (focusTarget) document.getElementById(currentWorkspaceArea)?.focus({ preventScroll: true });
   }
@@ -527,6 +543,19 @@
       mapWorkspaceState = 'ready';
     } catch {
       if (appMounted) mapWorkspaceState = 'error';
+    }
+  }
+
+  async function loadFlowWorkspaceChunk(): Promise<void> {
+    if (flowWorkspaceState === 'loading' || flowWorkspaceState === 'ready') return;
+    flowWorkspaceState = 'loading';
+    try {
+      const component = await import('./lib/FlowWorkspace.svelte');
+      if (!appMounted) return;
+      flowWorkspaceComponent = component.default;
+      flowWorkspaceState = 'ready';
+    } catch {
+      if (appMounted) flowWorkspaceState = 'error';
     }
   }
 
@@ -1567,6 +1596,25 @@
                 {#if mapWorkspaceComponent !== null}
                   {@const MapWorkspace = mapWorkspaceComponent}
                   <MapWorkspace
+                    initialSelection={flowMapLink?.project ===
+                      projectStatusView.result.project.worktreeId &&
+                    indexOverviewView.kind === 'published' &&
+                    flowMapLink?.publication === indexOverviewView.result.overview.snapshotId
+                      ? flowMapLink.selection
+                      : null}
+                    onFunctionFlow={(selection) => {
+                      if (
+                        projectStatusView.kind !== 'active' ||
+                        indexOverviewView.kind !== 'published'
+                      )
+                        return;
+                      mapFlowLink = {
+                        project: projectStatusView.result.project.worktreeId,
+                        publication: indexOverviewView.result.overview.snapshotId,
+                        selection,
+                      };
+                      navigateWorkspace('flows');
+                    }}
                     projectKey={projectStatusView.result.project.worktreeId}
                     indexActivityState={indexActivityView.kind === 'active'
                       ? indexActivityView.result.activity.state
@@ -1815,6 +1863,51 @@
             {/if}
           </section>
         {/if}
+
+        <div id="flows" class="lazy-boundary" tabindex="-1">
+          {#if currentWorkspaceArea === 'flows'}
+            {#if flowWorkspaceComponent !== null}
+              {@const FlowWorkspace = flowWorkspaceComponent}
+              <FlowWorkspace
+                initialSelection={projectStatusView.kind === 'active' &&
+                indexOverviewView.kind === 'published' &&
+                mapFlowLink?.project === projectStatusView.result.project.worktreeId &&
+                mapFlowLink?.publication === indexOverviewView.result.overview.snapshotId
+                  ? mapFlowLink.selection
+                  : null}
+                onMap={(selection) => {
+                  if (projectStatusView.kind !== 'active' || indexOverviewView.kind !== 'published')
+                    return;
+                  flowMapLink = {
+                    project: projectStatusView.result.project.worktreeId,
+                    publication: indexOverviewView.result.overview.snapshotId,
+                    selection,
+                  };
+                  navigateWorkspace('map');
+                }}
+                projectKey={projectStatusView.kind === 'active'
+                  ? projectStatusView.result.project.worktreeId
+                  : null}
+                publicationKey={indexOverviewView.kind === 'published'
+                  ? indexOverviewView.result.overview.snapshotId
+                  : null}
+                indexBusy={indexActivityView.kind === 'active' &&
+                  ['queued', 'running', 'cancelling'].includes(
+                    indexActivityView.result.activity.state,
+                  )}
+              />
+            {:else}
+              <section class="lazy-surface" aria-labelledby="lazy-flows-heading">
+                <h2 id="lazy-flows-heading">Abläufe</h2>
+                {#if flowWorkspaceState === 'error'}<p role="alert">
+                    Die Ablaufansicht konnte nicht geladen werden.
+                  </p>
+                  <button type="button" onclick={loadFlowWorkspaceChunk}>Erneut laden</button>
+                {:else}<p role="status">Die Ablaufansicht wird geladen …</p>{/if}
+              </section>
+            {/if}
+          {/if}
+        </div>
 
         <div id="agent" class="lazy-boundary" bind:this={agentWorkspaceBoundary} tabindex="-1">
           {#if agentWorkspaceComponent !== null}

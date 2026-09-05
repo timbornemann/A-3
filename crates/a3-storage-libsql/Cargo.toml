@@ -11,6 +11,8 @@ a3-application.workspace = true
 a3-domain.workspace = true
 blake3.workspace = true
 libsql.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true

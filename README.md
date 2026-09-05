@@ -299,6 +299,13 @@ Diese Pfade erweitern die WebView-Capabilities nicht.
 
 ## Lokale Qualitätsgates
 
+Der zusätzliche Hauptbereich **Abläufe** erschließt aufrufstellenbezogene Schritte,
+Skriptübergänge und Wertabhängigkeiten aus dem normalen Fast Index. Quellen und
+Karte sind verlinkt; Ask, Plan, Agent und Deep Map verwenden dieselben aktuellen
+Analysebelege. Es handelt sich um statische Möglichkeiten, nicht aufgezeichnete
+Laufzeitwerte. Funktionsumfang, Grenzen und V4-Toolverträge beschreibt
+[Abläufe und Werte](docs/FAST_INDEX_FLOWS.md).
+
 Die CI-relevanten lokalen Prüfungen sind als stabile Root-Skripte verfügbar:
 
 ```text

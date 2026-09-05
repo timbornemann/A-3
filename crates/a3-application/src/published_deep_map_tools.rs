@@ -69,8 +69,47 @@ impl DeepMapReadTools for PublishedIndexDeepMapReadTools {
         control: &'a dyn DeepMapReadControl,
     ) -> DeepMapReadFuture<'a> {
         Box::pin(async move {
+            let operation = PublishedReadControl::new(control, timeout.duration());
             let published = self.load(project, snapshot_id, timeout, control).await?;
-            inspect_target(&published, target)
+            let observation = inspect_target(&published, target)?;
+            let ExploreTarget::Symbol(root) = target else {
+                return Ok(observation);
+            };
+            let request = a3_domain::FunctionFlowReadRequest::new(
+                *root,
+                Vec::new(),
+                a3_domain::FunctionFlowReadView::Steps(0),
+            )
+            .map_err(|_| DeepMapReadFailure::Rejected)?;
+            let document = crate::ExploreFunctionFlows::new(Arc::clone(&self.store))
+                .read_document(project, published.run().id(), &request, &operation)
+                .await
+                .map_err(|e| match e {
+                    crate::FunctionFlowReadFailure::Storage(failure) => operation.classify(failure),
+                    _ => DeepMapReadFailure::InvalidResponse,
+                })?;
+            let Some(document) = document else {
+                return Ok(observation);
+            };
+            let mut preview = BoundedPreview::new();
+            preview.push(observation.preview().to_owned());
+            let mut evidence = observation.evidence_ids().to_vec();
+            for (ordinal, source) in document.evidence.iter().enumerate() {
+                let id = ModuleCardEvidenceId::for_file_revision_v1(source.revision());
+                if !evidence.contains(&id) {
+                    evidence.push(id);
+                }
+                preview.push(format!(
+                    "flow_source={ordinal} evidence_id={}",
+                    hex(id.as_bytes())
+                ));
+            }
+            preview.push(document.text);
+            if observation.truncated() || document.truncated {
+                preview.mark_truncated();
+            }
+            operation.ensure_active()?;
+            found(preview, evidence)
         })
     }
 

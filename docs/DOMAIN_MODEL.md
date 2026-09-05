@@ -501,11 +501,12 @@ zweite atomare Operation pensioniert offene Schritte und hängt das adaptive Tod
 an. Ein Modell kann damit Bedarf und Grund melden, aber weder historische Schritte ändern noch
 seine eigene Verifikation festlegen.
 
-Die eingebetteten `agent-action-v1`-, `agent-action-v2`- und `agent-action-v3`-JSON-Schemas setzen auf jeder
+Die eingebetteten `agent-action-v1`- bis `agent-action-v4`-JSON-Schemas setzen auf jeder
 Objektebene `additionalProperties: false`; getrennte Runtime-Decoder prüfen das vollständige
 Dokument bis 64 KiB erneut gegen exakte Schlüssel, Version, lowercase IDs, sichere Pfade, Zahlen-,
-Text- und Patchgrößen sowie Domaininvarianten. V1 und V2 bleiben rückwärtskompatibel decodierbar,
-während neu kompilierter Kontext ausschließlich V3 verlangt. Der aktuelle statische Systemvertrag kostet
+Text- und Patchgrößen sowie Domaininvarianten. V1 bis V3 bleiben rückwärtskompatibel decodierbar,
+während neu kompilierter Kontext ausschließlich V4 verlangt. V4 ergänzt den begrenzten
+`FunctionFlowReadRequest` nach [ADR-0045](FAST_INDEX_FLOWS.md). Der aktuelle statische Systemvertrag kostet
 mit der konservativen Zählung weniger als 900 Tokens und kann nur für ein ModelProfile mit live verifiziertem
 Structured Output vorbereitet werden. Profilabhängiges Schema-Grounding wiederholt bei Bedarf
 dieselbe kanonische Schemafassung. Ein ungültiges Primärergebnis erzeugt genau eine nicht clonebare,

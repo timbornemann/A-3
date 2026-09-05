@@ -159,3 +159,101 @@ fn benchmark_source(file: usize, alternate: bool) -> String {
     }
     source
 }
+
+#[test]
+#[ignore = "manual cold Fast Index and targeted flow-read P95 baseline"]
+fn cold_index_and_flow_reads_keep_existing_budgets() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let repository = TempDirectory::new()?;
+        repository.git(["init", "--initial-branch=main"])?;
+        repository.write(
+            "Cargo.toml",
+            b"[package]\nname='cold-flow-benchmark'\nversion='0.1.0'\n",
+        )?;
+        for index in 0..FILE_COUNT {
+            repository.write(
+                format!("src/file_{index:03}.rs"),
+                benchmark_source(index, false).as_bytes(),
+            )?;
+        }
+        repository.git(["add", "."])?;
+        let project = RepositoryInspector::new().inspect(repository.path())?;
+        let mut cold = Vec::new();
+        let mut reads = Vec::new();
+        for _ in 0..5 {
+            let data = TempDirectory::new()?;
+            let store = Arc::new(
+                LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("app-data"))?)
+                    .await?,
+            );
+            store.record_opened_project(&project).await?;
+            let refresh = RefreshRepositoryIndex::new(
+                Arc::new(Blake3RepositorySnapshotBuilder::new()),
+                store.clone(),
+                Arc::new(Blake3IndexRunIdFactory),
+            );
+            let started = Instant::now();
+            let mut compiler = BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?;
+            let result = refresh
+                .execute(
+                    &project,
+                    &RepositoryChangeBatch::full_rescan(
+                        Vec::new(),
+                        RepositoryRescanReason::InitialObservation,
+                    )?,
+                    &mut compiler,
+                    &SilentControl,
+                )
+                .await?;
+            assert!(result.published());
+            assert_eq!(result.compilation().parsed_paths().len(), FILE_COUNT + 1);
+            cold.push(started.elapsed());
+            let explorer = a3_application::ExploreFunctionFlows::new(store);
+            let page = explorer
+                .catalog(&project, "file_000_variant_a_00", 0, &FlowReadControl)
+                .await?
+                .ok_or("catalog")?;
+            let owner = page.symbols.first().ok_or("flow owner")?;
+            let selection = a3_application::FunctionFlowSelection {
+                run_id: page.run_id,
+                root: owner.id(),
+                call_path: Vec::new(),
+            };
+            for _ in 0..6 {
+                let started = Instant::now();
+                assert!(
+                    explorer
+                        .inspect(&project, &selection, &FlowReadControl)
+                        .await?
+                        .is_some()
+                );
+                reads.push(started.elapsed());
+            }
+        }
+        cold.sort_unstable();
+        reads.sort_unstable();
+        let p95 = cold[cold.len() * 95 / 100];
+        let read_p95 = reads[(reads.len() * 95).div_ceil(100) - 1];
+        println!(
+            "A^3 flow-v1: {FILE_COUNT} files, 100000 LOC, 5 cold-index samples P50={:?} P95={p95:?}; 30 targeted reads P50={:?} P95={read_p95:?}",
+            cold[cold.len() / 2],
+            reads[reads.len() / 2]
+        );
+        assert!(p95 <= Duration::from_secs(30));
+        assert!(read_p95 <= Duration::from_secs(2));
+        Ok(())
+    })
+}
+#[derive(Debug)]
+struct FlowReadControl;
+impl a3_application::IndexPersistenceControl for FlowReadControl {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+    fn report_progress(
+        &self,
+        _: Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        Ok(())
+    }
+}

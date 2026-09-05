@@ -57,6 +57,10 @@ pub enum ErrorCodeV1 {
     InvalidProjectMapSearchQuery,
     /// A scene focus identity violated the strict atlas request contract.
     InvalidProjectMapSceneQuery,
+    /// Flow selection or pagination exceeded the fixed read contract.
+    InvalidFunctionFlowQuery,
+    /// Current static flow evidence could not be read safely.
+    FunctionFlowUnavailable,
     /// A task or active-plan step identity violated the strict Task Lens selector contract.
     InvalidTaskLensSelection,
     /// Durable anchors or deterministic Task Lens retrieval could not be read safely.
@@ -243,6 +247,12 @@ impl CommandErrorV1 {
             }
             ErrorCodeV1::InvalidProjectMapSceneQuery => {
                 "The Project Map scene request is outside the supported bounds."
+            }
+            ErrorCodeV1::InvalidFunctionFlowQuery => {
+                "The function flow request is outside the supported bounds."
+            }
+            ErrorCodeV1::FunctionFlowUnavailable => {
+                "Current function flow evidence is unavailable."
             }
             ErrorCodeV1::InvalidTaskLensSelection => {
                 "The Task Lens task or step selection is outside the supported bounds."

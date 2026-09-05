@@ -35,8 +35,15 @@ mod embedding_provider;
 mod evidence_diagram;
 mod exact_search;
 mod explorer_model_provider;
+mod function_flow;
 mod goal_contract;
 mod graph_traversal;
+pub use function_flow::{
+    ExploreFunctionFlows, FUNCTION_FLOW_MAX_CONTEXTS, FUNCTION_FLOW_PAGE_SIZE, FlowTraceDirection,
+    FlowValueAddress, FlowValueTrace, FlowValueTraceNode, FunctionFlowCatalog, FunctionFlowFrame,
+    FunctionFlowInspection, FunctionFlowReadDocument, FunctionFlowReadFailure,
+    FunctionFlowSelection,
+};
 mod health_query;
 mod index_overview;
 mod jobs;

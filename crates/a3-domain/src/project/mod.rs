@@ -14,15 +14,22 @@ mod deep_map_explorer;
 mod deep_map_run;
 mod discovery;
 mod embedding;
+mod function_flow;
+mod function_flow_read;
+pub use function_flow_read::{FunctionFlowReadRequest, FunctionFlowReadView};
 mod git;
+pub use function_flow::StaticImportBinding;
+pub use function_flow::{FlowProcess, FlowProcessMode, FlowProcessTarget};
 mod goal_contract;
 mod graph;
 mod graph_retrieval;
 mod id;
 mod index_analysis;
 mod index_run;
+mod indexed_function_flow;
 mod invalidation;
 mod language;
+pub use indexed_function_flow::{FlowCallLink, FunctionFlowBatch, IndexedFunctionFlow};
 mod lexical_retrieval;
 mod model;
 mod model_profile;
@@ -149,6 +156,11 @@ pub use embedding::{
     EmbeddingVectorError, EmbeddingVectorNormalization, SemanticEmbedding, VectorHit,
     VectorSearchCapability, VectorSearchLimit, VectorSearchLimitError, VectorSearchResult,
     VectorSearchResultError,
+};
+pub use function_flow::{
+    FlowArgument, FlowGap, FlowGapKind, FlowStep, FlowStepId, FlowStepKind, FlowValue, FlowValueId,
+    FlowValueKind, FunctionFlow, FunctionFlowError, MAX_FUNCTION_FLOW_ELEMENTS,
+    MAX_INDEX_FLOW_ELEMENTS,
 };
 pub use git::{GitHead, GitObjectId, GitObjectIdError, GitReferenceName, GitReferenceNameError};
 pub use goal_contract::{

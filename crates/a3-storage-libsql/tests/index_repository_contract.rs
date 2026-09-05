@@ -1202,6 +1202,111 @@ fn persistence_control_cancels_before_mutation_and_bounds_progress()
 }
 
 #[test]
+fn function_flow_publish_is_atomic_immutable_and_rejects_corrupt_bodies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _test_lock = lock_index_repository_test()?;
+    run_index_test(async {
+        let fixture = ProjectFixture::new([221; 32], [222; 32])?;
+        let store = LibsqlKnowledgeStore::open(&fixture.layout).await?;
+        let snapshot = snapshot(
+            [223; 32],
+            fixture.project.worktree().id(),
+            None,
+            1,
+            vec![change(
+                b"src/lib.rs",
+                [224; 32],
+                SnapshotChangeKind::Upsert,
+            )?],
+        )?;
+        store.append_snapshot(&fixture.project, &snapshot).await?;
+        let run = store
+            .start_index_run(&fixture.project, run([225; 32], snapshot.id(), 1)?)
+            .await?;
+        let publication = symbol_publication(snapshot.id(), b"src/lib.rs", [224; 32])?;
+        let owner = &publication.graph().symbols()[0];
+        let flow = a3_domain::IndexedFunctionFlow::new(
+            owner,
+            a3_domain::FunctionFlow::new(
+                owner.parsed().id(),
+                owner.parsed().declaration_range(),
+                Vec::new(),
+                Vec::new(),
+                vec![a3_domain::FlowGap {
+                    kind: a3_domain::FlowGapKind::Unsupported,
+                    range: owner.parsed().declaration_range(),
+                }],
+            )?,
+            Vec::new(),
+        )?;
+        let batch = a3_domain::FunctionFlowBatch::new(&publication, vec![flow.clone()])?;
+        let path = fixture
+            .layout
+            .prepare_project(fixture.project.worktree())?
+            .knowledge_path()
+            .to_path_buf();
+        assert_eq!(
+            store
+                .publish_index_with_flows(
+                    &fixture.project,
+                    run.id(),
+                    &publication,
+                    &batch,
+                    &UnavailableProgressControl
+                )
+                .await,
+            Err(KnowledgeIndexFailure::ProgressUnavailable)
+        );
+        assert_eq!(read_count(&path, "index_function_flows").await?, 0);
+        store
+            .publish_index_with_flows(
+                &fixture.project,
+                run.id(),
+                &publication,
+                &batch,
+                &TestIndexControl::default(),
+            )
+            .await?;
+        assert_eq!(
+            store
+                .read_function_flow(
+                    &fixture.project,
+                    run.id(),
+                    owner,
+                    &TestIndexControl::default()
+                )
+                .await?,
+            Some(flow)
+        );
+        assert_eq!(
+            store
+                .read_function_flow(&fixture.project, run.id(), owner, &CancelledIndexControl)
+                .await,
+            Err(KnowledgeIndexFailure::Cancelled)
+        );
+        assert!(
+            mutate_knowledge(&path, "UPDATE index_function_flows SET body='{}'")
+                .await
+                .is_err()
+        );
+        mutate_knowledge(&path, "DROP TRIGGER index_function_flows_update_guard").await?;
+        mutate_knowledge(&path, "UPDATE index_function_flows SET body='{}'").await?;
+        assert!(
+            store
+                .read_function_flow(
+                    &fixture.project,
+                    run.id(),
+                    owner,
+                    &TestIndexControl::default()
+                )
+                .await
+                .is_err()
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn published_file_analysis_roundtrip_retains_coverage_and_safe_diagnostics()
 -> Result<(), Box<dyn std::error::Error>> {
     let _test_lock = lock_index_repository_test()?;
@@ -5375,6 +5480,7 @@ async fn read_count(path: &Path, table: &str) -> Result<i64, Box<dyn std::error:
         "snapshot_changes" => "SELECT COUNT(*) FROM snapshot_changes",
         "snapshots" => "SELECT COUNT(*) FROM snapshots",
         "index_runs" => "SELECT COUNT(*) FROM index_runs",
+        "index_function_flows" => "SELECT COUNT(*) FROM index_function_flows",
         "file_revisions" => "SELECT COUNT(*) FROM file_revisions",
         "module_cards" => "SELECT COUNT(*) FROM module_cards",
         "module_card_fields" => "SELECT COUNT(*) FROM module_card_fields",

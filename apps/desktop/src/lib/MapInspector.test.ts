@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import MapInspector from './MapInspector.svelte';
 import type {
@@ -55,6 +55,34 @@ function relation(
 }
 
 describe('MapInspector', () => {
+  it('offers the step explorer for a callable without granting a path capability', async () => {
+    const onfunctionflow = vi.fn();
+    const selected: ProjectMapAtlasNodeV1 = {
+      ...node(1, 'A'),
+      kind: 'callable',
+      selection: { kind: 'symbol', moduleId: id(9), symbolId: id(1), evidenceId: id(11) },
+    };
+    render(MapInspector, {
+      props: {
+        selected,
+        onfunctionflow,
+        context: { kind: 'idle' },
+        flow: { kind: 'idle' },
+        inventory: { kind: 'idle' },
+        preview: { kind: 'idle' },
+        onclose: vi.fn(),
+        onevidence: vi.fn(),
+        onflow: vi.fn(),
+        oninventory: vi.fn(),
+        onopen: vi.fn(),
+        onselect: vi.fn(),
+      },
+    });
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Schritte und Werte in Abläufe erkunden' }),
+    );
+    expect(onfunctionflow).toHaveBeenCalledTimes(1);
+  });
   it('renders one related entity when multiple relations reference the same node', () => {
     const selected = node(1, 'source.py');
     const related = node(2, 'shared.py');

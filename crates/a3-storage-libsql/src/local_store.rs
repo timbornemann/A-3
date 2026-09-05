@@ -2270,6 +2270,63 @@ impl KnowledgeIndexStore for LibsqlKnowledgeStore {
         })
     }
 
+    fn publish_index_with_flows<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: IndexRunId,
+        publication: &'a IndexPublication,
+        flows: &'a a3_domain::FunctionFlowBatch,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            let published = index_publication::publish_index_with_flows(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                publication,
+                flows,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())?;
+            let record = published.run();
+            self.cache_published_index(project, published);
+            Ok(record)
+        })
+    }
+
+    fn read_function_flow<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: IndexRunId,
+        owner: &'a a3_domain::GraphSymbol,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, Option<a3_domain::IndexedFunctionFlow>> {
+        Box::pin(async move {
+            let knowledge = self.open_project_knowledge_for_index_read(project).await?;
+            let connection = knowledge
+                .connection_for_operation()
+                .await
+                .map_err(classify_knowledge_open_error)
+                .map_err(KnowledgeIndexFailure::Storage)?;
+            crate::function_flow_repository::read(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                owner,
+                control,
+            )
+            .await
+            .map_err(|error| error.classify())
+        })
+    }
+
     fn latest_index_run<'a>(
         &'a self,
         project: &'a ProjectIdentity,

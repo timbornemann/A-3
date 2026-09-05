@@ -24,6 +24,16 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - TypeScript Typecheck
 - Unit- und Component-Tests der Änderung
 - Accessibility-Prüfung für neue Interaktionen
+- Der Fast-Index-Flow-Contract aus [ADR-0045](adrs/0045-fast-index-function-flow-analysis.md)
+  prüft getrennte Aufrufstellen und Wertkontexte bis zu lokalen Node-/Python-Skripten,
+  Kontrollbereiche, unbekannte Ziele und harte Analyse-/Lesebudgets. Reale Parser-,
+  libSQL-, Refresh-/Rebuild- und Agent-Controller-Verträge verlangen aktuelle Quellen,
+  atomare V34-Persistenz und Ablehnung eines Live-Edits vor erneuter Analyse. Der
+  pfadlose `query_function_flows`-Contract erlaubt ausschließlich geschlossene,
+  rungebundene Catalog-/Inspect-/Trace-/Source-Auswahlen; Source nutzt unverändert
+  die Safe-Reader-Grenzen. Components prüfen Lifecycle, Quellen, Wertpfade und
+  Kartenlinks. Browserfixture, Vorher-/Nachher-Messungen und verbleibende
+  Freigabenachweise stehen in [Plan 08](plans/08-FAST_INDEX_FLOW_ANALYSIS.md).
 - U2-Projects-Contracts prüfen strikt versionierte Commands für Status, Rebuild, den 25er-
   Projektkatalog, Aktivierung, Startwiederherstellung und Entfernen. Katalogreads übertragen nur
   sichere Anzeigen und opake Cursor; Aktivieren und Entfernen akzeptieren ausschließlich eine

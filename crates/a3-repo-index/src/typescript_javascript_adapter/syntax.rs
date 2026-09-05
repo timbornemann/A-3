@@ -33,7 +33,7 @@ pub(super) fn parse(
         policy.max_diagnostics(),
         artifacts.diagnostics,
     )?;
-    LanguageParseResult::new(
+    let result = LanguageParseResult::new(
         input.revision().clone(),
         revision.clone(),
         policy.contract_version(),
@@ -43,7 +43,8 @@ pub(super) fn parse(
             ..artifacts
         },
     )
-    .map_err(|_| LanguageParseFailure::InvalidResult)
+    .map_err(|_| LanguageParseFailure::InvalidResult)?;
+    crate::function_flow::attach(&tree, input, result, control)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

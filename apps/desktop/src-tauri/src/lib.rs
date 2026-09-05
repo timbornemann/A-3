@@ -15,6 +15,7 @@ pub mod commands;
 mod deep_map_manager;
 mod deep_map_runtime;
 mod diagram_export;
+mod function_flow_commands;
 mod job_ids;
 mod model_settings_manager;
 mod platform;
@@ -302,6 +303,7 @@ pub struct CompositionRoot {
     deep_map_publication_state: Option<Arc<dyn DeepMapPublicationStateStore>>,
     deep_map_journal: Option<Arc<dyn DeepMapRunJournalStore>>,
     deep_map_dashboard_index: Option<Arc<dyn KnowledgeIndexStore>>,
+    function_flow_index: Option<Arc<dyn KnowledgeIndexStore>>,
     agent_run_manager: Option<Arc<AgentRunManager>>,
     agent_sessions: Option<AgentSessionManager>,
     ui_preferences: Option<Arc<dyn UiPreferencesStore>>,
@@ -5447,14 +5449,20 @@ impl CompositionBase {
             ports.task_lens_claim_store.as_ref(),
             ports.ask_research_store.as_ref(),
         ) {
-            (Some(index), Some(search), Some(claims), Some(trace)) => {
-                Some(AgentAskResearcher::new(
+            (Some(index), Some(search), Some(claims), Some(trace)) => Some(
+                AgentAskResearcher::new(
                     Arc::clone(index),
                     Arc::clone(search),
                     Arc::clone(claims),
                     Arc::clone(trace),
-                ))
-            }
+                )
+                .with_function_flows(
+                    ports
+                        .index_store
+                        .as_ref()
+                        .map(|store| a3_application::ExploreFunctionFlows::new(Arc::clone(store))),
+                ),
+            ),
             _ => None,
         };
         let production_agent_run_executor = match (
@@ -5739,6 +5747,7 @@ impl CompositionBase {
             deep_map_runtime,
             deep_map_publication_state: ports.deep_map_publication_state,
             deep_map_journal: ports.deep_map_journal,
+            function_flow_index: ports.index_store.clone(),
             deep_map_dashboard_index: ports.index_store,
             agent_run_manager,
             agent_sessions,
@@ -5859,6 +5868,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            function_flow_commands::query_function_flows,
             commands::activate_catalog_project,
             commands::cancel_model_probe,
             commands::cancel_deep_map,

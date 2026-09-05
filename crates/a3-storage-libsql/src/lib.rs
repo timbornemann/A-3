@@ -9,6 +9,8 @@ mod deep_map_journal_repository;
 mod deep_map_repository;
 mod exact_search_projection;
 mod exact_search_repository;
+mod function_flow_codec;
+mod function_flow_repository;
 mod goal_contract_repository;
 mod graph_traversal_repository;
 mod index_codec;

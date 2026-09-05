@@ -3186,6 +3186,22 @@ const KNOWLEDGE_AGENT_MESSAGE_QUEUE_MIGRATION: Migration = Migration {
         SELECT RAISE(ABORT, 'Agent queue events are immutable'); END;",
 };
 
+const KNOWLEDGE_FUNCTION_FLOW_MIGRATION: Migration = Migration {
+    version: 34,
+    name: "fast_index_function_flow_analysis",
+    sql: "CREATE TABLE index_function_flows (
+        index_run_id BLOB NOT NULL CHECK (length(index_run_id) = 32),
+        symbol_id BLOB NOT NULL CHECK (length(symbol_id) = 32),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        body TEXT NOT NULL CHECK (length(CAST(body AS BLOB)) BETWEEN 1 AND 8388608),
+        PRIMARY KEY (index_run_id, symbol_id),
+        FOREIGN KEY (index_run_id, symbol_id) REFERENCES symbols(index_run_id, symbol_id)
+            ON UPDATE RESTRICT ON DELETE CASCADE
+    ) STRICT;
+    CREATE TRIGGER index_function_flows_update_guard BEFORE UPDATE ON index_function_flows BEGIN
+        SELECT RAISE(ABORT, 'Function flows are immutable'); END;",
+};
+
 const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_BOOTSTRAP_MIGRATION,
     KNOWLEDGE_PROJECT_INDEX_MIGRATION,
@@ -3220,6 +3236,7 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_AGENT_WORK_TRACE_MIGRATION,
     KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION,
     KNOWLEDGE_AGENT_MESSAGE_QUEUE_MIGRATION,
+    KNOWLEDGE_FUNCTION_FLOW_MIGRATION,
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3252,7 +3269,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(33);
+    pub const CURRENT: Self = Self::new(34);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3881,6 +3898,7 @@ mod tests {
         (knowledge_upgrades_from_v30, 30),
         (knowledge_upgrades_from_v31, 31),
         (knowledge_upgrades_from_v32, 32),
+        (knowledge_upgrades_from_v33, 33),
     );
 
     #[test]
@@ -6245,7 +6263,10 @@ mod tests {
                 super::migrate_knowledge(&connection, &repository_id, &worktree_id).await?;
 
             assert_eq!(version, KnowledgeSchemaVersion::CURRENT);
-            assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 33);
+            assert_eq!(
+                query_i64(&connection, "PRAGMA user_version").await?,
+                i64::from(KnowledgeSchemaVersion::CURRENT.get())
+            );
             assert_eq!(
                 query_i64(
                     &connection,
@@ -6310,6 +6331,52 @@ mod tests {
                 .await?,
                 0
             );
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v34_adds_empty_flow_storage_and_rolls_back_on_conflict()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for conflict in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                let repository = [121; 32];
+                let worktree = [122; 32];
+                super::apply_knowledge_bootstrap(&connection, &repository, &worktree).await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..33],
+                    33,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                if conflict {
+                    connection
+                        .execute("CREATE TABLE index_function_flows (conflict INTEGER)", ())
+                        .await?;
+                }
+                let result = super::migrate_knowledge(&connection, &repository, &worktree).await;
+                if conflict {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 34, .. })
+                    ));
+                    assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 33);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                        33
+                    );
+                } else {
+                    assert_eq!(result?, KnowledgeSchemaVersion::CURRENT);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM index_function_flows").await?,
+                        0
+                    );
+                    assert_eq!(query_i64(&connection,"SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='index_function_flows'").await?,1);
+                }
+            }
             Ok::<(), Box<dyn std::error::Error>>(())
         })
     }

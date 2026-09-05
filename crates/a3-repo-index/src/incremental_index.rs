@@ -112,7 +112,7 @@ impl BuiltinIncrementalIndexCompiler {
 impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
     fn compatibility(&self) -> Result<SnapshotCompatibility, RepositoryIndexCompilerFailure> {
         SnapshotCompatibility::new(
-            IndexSchemaVersion::v5(),
+            IndexSchemaVersion::v6(),
             self.adapters()
                 .into_iter()
                 .map(|adapter| adapter.revision().clone())
@@ -277,8 +277,10 @@ impl RepositoryIndexCompiler for BuiltinIncrementalIndexCompiler {
         .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
 
         self.cached_snapshot = Some(snapshot.id());
+        let flows =
+            crate::function_flow::link(&publication, next_parses.values(), control, started)?;
         self.parses = next_parses;
-        RepositoryIndexCompilation::new(publication, mode, parse_paths)
+        RepositoryIndexCompilation::new(publication, mode, parse_paths)?.with_function_flows(flows)
     }
 }
 
@@ -343,7 +345,7 @@ fn read_source(
     Ok(source)
 }
 
-fn ensure_active(
+pub(super) fn ensure_active(
     control: &dyn RepositoryIndexControl,
     started: Instant,
 ) -> Result<(), RepositoryIndexCompilerFailure> {

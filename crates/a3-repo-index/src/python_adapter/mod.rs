@@ -19,7 +19,7 @@ use std::fmt;
 use tree_sitter::Language;
 
 const ADAPTER_REVISION: &str =
-    "python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-contract-v1";
+    "python-tree-sitter-0.25.0-pyproject-setup-requirements-v1-flow-v1-contract-v1";
 
 /// Deterministic Python source and packaging-metadata adapter.
 #[derive(Debug)]

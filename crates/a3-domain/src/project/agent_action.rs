@@ -23,8 +23,10 @@ impl AgentActionSchemaVersion {
     pub const V2: Self = Self(2);
     /// Editing-phase schema adding a non-authoritative public work note beside the action.
     pub const V3: Self = Self(3);
+    /// Same action set with a bounded, evidence-grounded function-flow inspection.
+    pub const V4: Self = Self(4);
     /// Schema emitted for newly compiled mutating-controller turns.
-    pub const CURRENT: Self = Self::V3;
+    pub const CURRENT: Self = Self::V4;
 
     /// Reconstructs a schema version understood by this build.
     pub const fn from_u16(value: u16) -> Result<Self, AgentActionSchemaVersionError> {
@@ -32,6 +34,7 @@ impl AgentActionSchemaVersion {
             1 => Ok(Self::V1),
             2 => Ok(Self::V2),
             3 => Ok(Self::V3),
+            4 => Ok(Self::V4),
             _ => Err(AgentActionSchemaVersionError { value }),
         }
     }
@@ -431,6 +434,8 @@ impl AgentGraphInspection {
 /// Target of one general read-only inspect action.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AgentInspectTarget {
+    /// Follow current Fast Index operations or value dependencies without execution.
+    FunctionFlow(crate::FunctionFlowReadRequest),
     /// Read a bounded page of one repository file.
     File(AgentFileInspection),
     /// Resolve and inspect one current indexed symbol.
@@ -446,6 +451,9 @@ pub enum AgentInspectTarget {
 impl fmt::Debug for AgentInspectTarget {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::FunctionFlow(target) => {
+                formatter.debug_tuple("FunctionFlow").field(target).finish()
+            }
             Self::File(target) => target.fmt(formatter),
             Self::Symbol(id) => formatter.debug_tuple("Symbol").field(id).finish(),
             Self::Graph(target) => formatter.debug_tuple("Graph").field(target).finish(),

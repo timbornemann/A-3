@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a3.local/schemas/ask-research-decision-v4.schema.json",
+  "title": "A^3 Ask Research Decision V4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 4
+    },
+    "decision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "evidence_status",
+            "note",
+            "markdown",
+            "source_refs"
+          ],
+          "properties": {
+            "kind": {
+              "const": "answer"
+            },
+            "evidence_status": {
+              "enum": [
+                "sufficient",
+                "incomplete"
+              ]
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            },
+            "markdown": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 262144
+            },
+            "source_refs": {
+              "$ref": "#/$defs/sourceRefs"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "evidence_status",
+            "note",
+            "actions"
+          ],
+          "properties": {
+            "kind": {
+              "const": "research"
+            },
+            "evidence_status": {
+              "const": "incomplete"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            },
+            "actions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "$ref": "#/$defs/action"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sourceRef": {
+      "type": "string",
+      "pattern": "^S(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|200)$"
+    },
+    "sourceRefs": {
+      "type": "array",
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal",
+        "finding_kind",
+        "finding",
+        "finding_source_refs",
+        "gap",
+        "next_step"
+      ],
+      "properties": {
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "finding_kind": {
+          "enum": [
+            "observation",
+            "hypothesis",
+            "conclusion"
+          ]
+        },
+        "finding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "finding_source_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        },
+        "gap": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "next_step": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "query"
+          ],
+          "properties": {
+            "kind": {
+              "const": "searchIndex"
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "literals"
+          ],
+          "properties": {
+            "kind": {
+              "const": "searchSourceText"
+            },
+            "literals": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "start_line"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectPath"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectSource"
+            },
+            "source_ref": {
+              "$ref": "#/$defs/sourceRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source_ref",
+            "relation"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectRelations"
+            },
+            "source_ref": {
+              "$ref": "#/$defs/sourceRef"
+            },
+            "relation": {
+              "enum": [
+                "callers",
+                "callees",
+                "imports",
+                "exports",
+                "tests"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "const": "listDirectory"
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectWorkingChanges"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "queryIndexDiagnostics"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectDependencyGraph"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectTestTopology"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "scanSecurityCandidates"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source_ref",
+            "call_path",
+            "view"
+          ],
+          "properties": {
+            "kind": {
+              "const": "inspectFunctionFlow"
+            },
+            "source_ref": {
+              "$ref": "#/$defs/sourceRef"
+            },
+            "call_path": {
+              "type": "array",
+              "maxItems": 7,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              }
+            },
+            "view": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "offset"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "steps",
+                        "values"
+                      ]
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4050,
+                      "multipleOf": 50
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "origins",
+                        "uses"
+                      ]
+                    },
+                    "value": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 4096
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

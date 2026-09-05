@@ -3,6 +3,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "query_function_flows",
             "activate_catalog_project",
             "cancel_model_probe",
             "list_recent_projects",

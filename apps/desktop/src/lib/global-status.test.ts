@@ -5,6 +5,7 @@ describe('workspaceAreaFromHash', () => {
   it.each([
     ['#projects', 'projects'],
     ['#map', 'map'],
+    ['#flows', 'flows'],
     ['#agent', 'agent'],
     ['#settings', 'settings'],
   ] as const)('restores the %s route', (hash, expected) => {

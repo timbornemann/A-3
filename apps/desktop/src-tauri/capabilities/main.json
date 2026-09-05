@@ -4,6 +4,7 @@
   "description": "Allows the main window to invoke only typed A^3 product commands.",
   "windows": ["main"],
   "permissions": [
+    "allow-query-function-flows",
     "allow-activate-catalog-project",
     "allow-cancel-model-probe",
     "allow-list-recent-projects",

@@ -3,6 +3,7 @@
 mod classification;
 mod config;
 mod discovery;
+mod function_flow;
 mod graph;
 mod hashing;
 mod incremental_index;

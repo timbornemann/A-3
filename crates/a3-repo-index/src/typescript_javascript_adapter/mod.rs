@@ -17,7 +17,7 @@ use std::fmt;
 use tree_sitter::Language;
 
 const ADAPTER_REVISION: &str =
-    "typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-contract-v1";
+    "typescript-javascript-ts-0.23.2-js-0.25.0-json-0.24.8-package-v1-flow-v1-contract-v1";
 
 /// Deterministic TypeScript, JavaScript, package, and workspace adapter.
 #[derive(Debug)]

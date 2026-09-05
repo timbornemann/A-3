@@ -165,12 +165,14 @@ impl ProductionAgentRunExecutor {
         }
 
         let source = WorkspaceAgentSourceReader;
+        let flows = a3_application::ExploreFunctionFlows::new(Arc::clone(&self.ports.index));
         let read_tools = DeterministicAgentReadTools::new(
             self.ports.lens_index.as_ref(),
             self.ports.search.as_ref(),
             self.ports.claims.as_ref(),
             &source,
-        );
+        )
+        .with_function_flows(&flows);
         let context_compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
             self.ports.lens_index.as_ref(),
             self.ports.search.as_ref(),

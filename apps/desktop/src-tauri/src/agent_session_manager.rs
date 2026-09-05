@@ -403,6 +403,7 @@ struct MaterializedAgentTask {
 /// Bounded evidence retrieval used only by Ask before the reporting model is invoked.
 #[derive(Clone)]
 pub(crate) struct AgentAskResearcher {
+    flows: Option<a3_application::ExploreFunctionFlows>,
     index: Arc<dyn TaskLensIndexStore>,
     search: Arc<dyn KnowledgeSearchStore>,
     claims: Arc<dyn TaskLensClaimStore>,
@@ -412,6 +413,13 @@ pub(crate) struct AgentAskResearcher {
 }
 
 impl AgentAskResearcher {
+    pub(crate) fn with_function_flows(
+        mut self,
+        flows: Option<a3_application::ExploreFunctionFlows>,
+    ) -> Self {
+        self.flows = flows;
+        self
+    }
     #[must_use]
     pub(crate) fn new(
         index: Arc<dyn TaskLensIndexStore>,
@@ -421,6 +429,7 @@ impl AgentAskResearcher {
     ) -> Self {
         Self {
             index,
+            flows: None,
             search,
             claims,
             trace,
@@ -1686,6 +1695,12 @@ impl AgentAskResearcher {
                         "Quelle S{ordinal} wurde mit erweitertem Kontext gelesen."
                     ));
                 }
+                action @ AskResearchAction::InspectFunctionFlow { .. } => {
+                    results.push(
+                        self.read_function_flow(project, published, turn, state, &action, control)
+                            .await?,
+                    );
+                }
                 AskResearchAction::InspectRelations {
                     source_ordinal,
                     relation,
@@ -2144,6 +2159,8 @@ mod research_regression_tests;
 
 #[path = "agent_research_context.rs"]
 mod research_context;
+#[path = "agent_research_flows.rs"]
+mod research_flows;
 
 struct AskResearchWorkingSet {
     sources: Vec<AskResearchSource>,
@@ -6054,9 +6071,10 @@ async fn ask_decision(
                                 AskResearchAction::InspectSource(ordinal) => {
                                     usize::from(*ordinal) <= source_count
                                 }
-                                AskResearchAction::InspectRelations { source_ordinal, .. } => {
-                                    usize::from(*source_ordinal) <= source_count
-                                }
+                                AskResearchAction::InspectRelations { source_ordinal, .. }
+                                | AskResearchAction::InspectFunctionFlow {
+                                    source_ordinal, ..
+                                } => usize::from(*source_ordinal) <= source_count,
                                 _ => true,
                             })
                     }

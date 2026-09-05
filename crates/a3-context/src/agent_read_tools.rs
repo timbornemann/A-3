@@ -29,6 +29,7 @@ pub struct DeterministicAgentReadTools<'a> {
     search: &'a dyn KnowledgeSearchStore,
     claims: &'a dyn TaskLensClaimStore,
     source: &'a dyn AgentSourceReader,
+    flows: Option<&'a a3_application::ExploreFunctionFlows>,
 }
 
 impl<'a> DeterministicAgentReadTools<'a> {
@@ -45,7 +46,18 @@ impl<'a> DeterministicAgentReadTools<'a> {
             search,
             claims,
             source,
+            flows: None,
         }
+    }
+
+    /// Adds same-run Fast Index flow reads without widening the source or execution capability.
+    #[must_use]
+    pub const fn with_function_flows(
+        mut self,
+        flows: &'a a3_application::ExploreFunctionFlows,
+    ) -> Self {
+        self.flows = Some(flows);
+        self
     }
 
     async fn execute_action(
@@ -154,6 +166,51 @@ impl<'a> DeterministicAgentReadTools<'a> {
     ) -> Result<RenderedToolResult, AgentReadToolFailure> {
         let published = self.current_index(project, snapshot_id, deadline).await?;
         match target {
+            AgentInspectTarget::FunctionFlow(request) => {
+                let flows = self.flows.ok_or(AgentReadToolFailure::Unavailable)?;
+                let document = flows
+                    .read_document(project, published.run().id(), request, deadline)
+                    .await
+                    .map_err(|e| match e {
+                        a3_application::FunctionFlowReadFailure::Storage(
+                            KnowledgeIndexFailure::Cancelled,
+                        ) => AgentReadToolFailure::Cancelled,
+                        a3_application::FunctionFlowReadFailure::Storage(
+                            KnowledgeIndexFailure::TimedOut,
+                        ) => AgentReadToolFailure::TimedOut,
+                        _ => AgentReadToolFailure::Unavailable,
+                    })?
+                    .ok_or(AgentReadToolFailure::Unavailable)?;
+                let mut evidence = EvidenceCollector::default();
+                let mut output = String::new();
+                // Put all dependent revisions before the bounded analysis, so preview truncation
+                // cannot silently drop the provenance of a cross-script result.
+                let mut verified = std::collections::BTreeSet::new();
+                for (ordinal, source) in document.evidence.into_iter().enumerate() {
+                    if verified.insert(source.revision().path().clone()) {
+                        let probe = a3_domain::AgentFileInspection::new(
+                            source.revision().path().clone(),
+                            a3_domain::AgentFileStartLine::new(1)
+                                .map_err(|_| AgentReadToolFailure::InvalidResult)?,
+                            a3_domain::AgentFileLineCount::new(1)
+                                .map_err(|_| AgentReadToolFailure::InvalidResult)?,
+                        );
+                        self.source
+                            .read_page(project, source.revision(), &probe, deadline)
+                            .await
+                            .map_err(map_source_failure)?;
+                    }
+                    let marker = evidence.insert(AgentToolEvidence::for_span(source));
+                    writeln!(output, "flow_source={ordinal} {marker}")
+                        .map_err(|_| AgentReadToolFailure::InvalidResult)?;
+                }
+                output.push_str(&document.text);
+                Ok(RenderedToolResult::new(
+                    output,
+                    evidence,
+                    document.truncated,
+                ))
+            }
             AgentInspectTarget::File(request) => {
                 let graph = published.publication().graph();
                 let position = graph
@@ -361,6 +418,17 @@ impl KnowledgeSearchControl for AgentReadDeadline<'_> {
 impl AgentSourceReadControl for AgentReadDeadline<'_> {
     fn is_cancelled(&self) -> bool {
         self.control.is_cancelled() || self.started.elapsed() >= self.timeout
+    }
+}
+impl a3_application::IndexPersistenceControl for AgentReadDeadline<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.control.is_cancelled() || self.started.elapsed() >= self.timeout
+    }
+    fn report_progress(
+        &self,
+        _: Progress,
+    ) -> Result<(), a3_application::IndexPersistenceControlError> {
+        Ok(())
     }
 }
 

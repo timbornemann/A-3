@@ -102,6 +102,37 @@ pub trait KnowledgeIndexStore: fmt::Debug + Send + Sync {
         control: &'a dyn IndexPersistenceControl,
     ) -> KnowledgeIndexFuture<'a, IndexRunRecord>;
 
+    /// Publishes the additional flow projection in the existing index transaction.
+    /// Adapters without this capability must never silently discard nonempty analysis.
+    fn publish_index_with_flows<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: IndexRunId,
+        publication: &'a IndexPublication,
+        flows: &'a a3_domain::FunctionFlowBatch,
+        control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, IndexRunRecord> {
+        Box::pin(async move {
+            if !flows.functions().is_empty() {
+                return Err(KnowledgeIndexFailure::IndexPublicationMismatch);
+            }
+            self.publish_index(project, run_id, publication, control)
+                .await
+        })
+    }
+
+    /// Reads one flow body only if its run is still the latest published snapshot.
+    /// Absence also denotes an older index without a flow projection.
+    fn read_function_flow<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _run_id: IndexRunId,
+        _owner: &'a a3_domain::GraphSymbol,
+        _control: &'a dyn IndexPersistenceControl,
+    ) -> KnowledgeIndexFuture<'a, Option<a3_domain::IndexedFunctionFlow>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Returns the latest attempted run in durable worktree-local order.
     fn latest_index_run<'a>(
         &'a self,

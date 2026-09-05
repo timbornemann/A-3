@@ -9,6 +9,7 @@
   const entries: ReadonlyArray<{ area: WorkspaceArea; label: string }> = [
     { area: 'projects', label: 'Projects' },
     { area: 'map', label: 'Map' },
+    { area: 'flows', label: 'Abläufe' },
     { area: 'agent', label: 'Agent' },
     { area: 'settings', label: 'Settings' },
   ];
@@ -37,6 +38,8 @@
               <circle cx="18" cy="6" r="2" />
               <circle cx="12" cy="18" r="2" />
               <path d="m7.8 7 3.1 8.9M16.2 7l-3.1 8.9M8 6h8" />
+            {:else if entry.area === 'flows'}
+              <path d="M5 5h5v4H5zM14 15h5v4h-5zM7.5 9v8H14M10 7h7v8" />
             {:else if entry.area === 'agent'}
               <path d="M5 5.5h14v13H5z" />
               <path d="m8.5 10 2 2-2 2M13 14h3" />

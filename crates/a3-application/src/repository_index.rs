@@ -100,6 +100,7 @@ pub enum RepositoryIndexMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryIndexCompilation {
     publication: IndexPublication,
+    function_flows: a3_domain::FunctionFlowBatch,
     mode: RepositoryIndexMode,
     parsed_paths: Vec<RepositoryPath>,
 }
@@ -117,6 +118,7 @@ impl RepositoryIndexCompilation {
         }
         Ok(Self {
             publication,
+            function_flows: a3_domain::FunctionFlowBatch::default(),
             mode,
             parsed_paths,
         })
@@ -126,6 +128,23 @@ impl RepositoryIndexCompilation {
     #[must_use]
     pub const fn publication(&self) -> &IndexPublication {
         &self.publication
+    }
+
+    /// Attaches flow artifacts validated against this exact publication.
+    pub fn with_function_flows(
+        mut self,
+        flows: a3_domain::FunctionFlowBatch,
+    ) -> Result<Self, RepositoryIndexCompilerFailure> {
+        self.function_flows =
+            a3_domain::FunctionFlowBatch::new(&self.publication, flows.functions().to_vec())
+                .map_err(|_| RepositoryIndexCompilerFailure::InvalidResult)?;
+        Ok(self)
+    }
+
+    /// Returns the additional payload for the same atomic publication.
+    #[must_use]
+    pub const fn function_flows(&self) -> &a3_domain::FunctionFlowBatch {
+        &self.function_flows
     }
 
     /// Returns whether the parent parse cache was reused.
@@ -383,7 +402,13 @@ impl RefreshRepositoryIndex {
         if let Some(run_id) = active_run
             && let Err(error) = self
                 .store
-                .publish_index(project, run_id, compilation.publication(), &muted)
+                .publish_index_with_flows(
+                    project,
+                    run_id,
+                    compilation.publication(),
+                    compilation.function_flows(),
+                    &muted,
+                )
                 .await
         {
             let outcome = if matches!(error, KnowledgeIndexFailure::Cancelled) {

@@ -188,7 +188,7 @@ impl DeterministicGraphLinker {
             }
         }
 
-        let indexes = ResolutionIndexes::new(input.files(), &symbols)?;
+        let indexes = ResolutionIndexes::new(input.files(), &symbols, input.parses())?;
         let mut edges = Vec::new();
         let mut unresolved = Vec::new();
         for result in &parse_order {
@@ -259,7 +259,11 @@ fn link_relation(
             }
         }
         SyntaxTarget::Unresolved(reference) => {
-            indexes.resolve(result.language(), path, reference, relation.kind())?
+            if relation.kind() == a3_domain::SyntaxRelationKind::Calls {
+                indexes.resolve_call(result, relation, reference)?
+            } else {
+                indexes.resolve(result.language(), path, reference, relation.kind())?
+            }
         }
     };
 

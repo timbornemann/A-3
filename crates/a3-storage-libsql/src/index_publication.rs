@@ -106,11 +106,34 @@ pub(crate) async fn publish_index(
     publication: &IndexPublication,
     control: &dyn IndexPersistenceControl,
 ) -> Result<PublishedIndex, IndexPublicationRepositoryError> {
+    publish_index_with_flows(
+        connection,
+        worktree_id,
+        run_id,
+        publication,
+        &a3_domain::FunctionFlowBatch::default(),
+        control,
+    )
+    .await
+}
+
+pub(crate) async fn publish_index_with_flows(
+    connection: &Connection,
+    worktree_id: WorktreeId,
+    run_id: IndexRunId,
+    publication: &IndexPublication,
+    flows: &a3_domain::FunctionFlowBatch,
+    control: &dyn IndexPersistenceControl,
+) -> Result<PublishedIndex, IndexPublicationRepositoryError> {
     validate_resource_limits(publication)?;
+    a3_domain::FunctionFlowBatch::new(publication, flows.functions().to_vec())
+        .map_err(|_| IndexPublicationRepositoryError::PublicationMismatch)?;
     let search_projection = exact_search_projection::build_projection(publication)?;
     let lexical_projection =
         lexical_search_projection::build_projection(publication, &search_projection)?;
-    let total = publication_work_units(publication, &search_projection, &lexical_projection)?;
+    let total = publication_work_units(publication, &search_projection, &lexical_projection)?
+        .checked_add(flows.functions().len() as u64)
+        .ok_or(IndexPublicationRepositoryError::ResourceLimit)?;
     let mut progress = MutationProgress::new(control, total)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -121,8 +144,11 @@ pub(crate) async fn publish_index(
         worktree_id,
         run_id,
         publication,
-        &search_projection,
-        &lexical_projection,
+        &PreparedIndexProjections {
+            search_projection: &search_projection,
+            lexical_projection: &lexical_projection,
+            flows,
+        },
         &mut progress,
     )
     .await;
@@ -137,15 +163,25 @@ pub(crate) async fn publish_index(
     Ok(published)
 }
 
+struct PreparedIndexProjections<'a> {
+    search_projection: &'a exact_search_projection::ExactSearchProjection,
+    lexical_projection: &'a lexical_search_projection::LexicalSearchProjection,
+    flows: &'a a3_domain::FunctionFlowBatch,
+}
+
 async fn publish_index_in_transaction(
     transaction: &Transaction,
     worktree_id: WorktreeId,
     run_id: IndexRunId,
     publication: &IndexPublication,
-    search_projection: &exact_search_projection::ExactSearchProjection,
-    lexical_projection: &lexical_search_projection::LexicalSearchProjection,
+    projections: &PreparedIndexProjections<'_>,
     progress: &mut MutationProgress<'_>,
 ) -> Result<PublishedIndex, IndexPublicationRepositoryError> {
+    let PreparedIndexProjections {
+        search_projection,
+        lexical_projection,
+        flows,
+    } = projections;
     progress.checkpoint()?;
     let Some(run) = read_index_run(transaction, worktree_id, run_id).await? else {
         return Err(IndexPublicationRepositoryError::IndexRunNotFound);
@@ -175,6 +211,7 @@ async fn publish_index_in_transaction(
     write_file_delta_projection(transaction, worktree_id, run).await?;
     progress.advance(1)?;
     index_codec::write_publication_rows(transaction, run_id, publication, progress).await?;
+    crate::function_flow_repository::write(transaction, run_id, flows, progress).await?;
     exact_search_projection::write_projection(transaction, run_id, search_projection, progress)
         .await?;
     lexical_search_projection::write_projection(transaction, run_id, lexical_projection, progress)
@@ -217,6 +254,7 @@ async fn delete_superseded_publication_rows(
     progress: &MutationProgress<'_>,
 ) -> Result<(), IndexPublicationRepositoryError> {
     for table in [
+        "index_function_flows",
         "repository_card_entrypoints",
         "module_tests",
         "module_entrypoints",
@@ -441,6 +479,7 @@ pub(crate) async fn rebuild_regenerable_index(
             "exact_search_symbols",
             "exact_search_manifests",
             "exact_search_projections",
+            "index_function_flows",
             "index_parse_diagnostics",
             "index_file_analyses",
             "symbols",
@@ -635,6 +674,7 @@ async fn rebuild_row_count(
 ) -> Result<u64, IndexPublicationRepositoryError> {
     let mut total = 0_u64;
     for table in [
+        "index_function_flows",
         "repository_card_entrypoints",
         "module_tests",
         "module_entrypoints",
@@ -851,6 +891,7 @@ async fn publication_rows_exist(
     run_id: IndexRunId,
 ) -> Result<bool, IndexPublicationRepositoryError> {
     for table in [
+        "index_function_flows",
         "file_revisions",
         "index_file_analyses",
         "index_parse_diagnostics",

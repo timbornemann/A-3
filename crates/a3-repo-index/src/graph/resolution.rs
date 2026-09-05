@@ -23,7 +23,13 @@ pub(super) enum ResolutionOutcome {
     },
 }
 
+type ScopedCallable = (SymbolId, a3_domain::SourceRange, a3_domain::SourceRange);
+
 pub(super) struct ResolutionIndexes {
+    callables: BTreeMap<(RepositoryPath, String), Vec<ScopedCallable>>,
+    shadowing:
+        BTreeMap<(RepositoryPath, String), Vec<(a3_domain::SourceRange, a3_domain::SourceRange)>>,
+    callable_visibility: BTreeMap<SymbolId, a3_domain::SymbolVisibility>,
     files: BTreeSet<RepositoryPath>,
     symbols_by_file_name: BTreeMap<(RepositoryPath, String), Vec<SymbolId>>,
     symbols_by_name: BTreeMap<String, Vec<(RepositoryPath, SymbolId)>>,
@@ -34,6 +40,7 @@ impl ResolutionIndexes {
     pub(super) fn new(
         files: &RepositoryFileState,
         symbols: &[GraphSymbol],
+        parses: &[a3_domain::LanguageParseResult],
     ) -> Result<Self, GraphLinkFailure> {
         let files = files
             .revisions()
@@ -77,7 +84,55 @@ impl ResolutionIndexes {
             values.dedup();
         }
 
+        let by_local = symbols
+            .iter()
+            .map(|s| ((s.revision().path(), s.parsed().id()), s))
+            .collect::<BTreeMap<_, _>>();
+        let mut callables = BTreeMap::<_, Vec<_>>::new();
+        let mut shadowing = BTreeMap::<_, Vec<_>>::new();
+        let mut callable_visibility = BTreeMap::new();
+        for parse in parses {
+            for flow in parse.function_flows() {
+                let owner = by_local
+                    .get(&(parse.revision().path(), flow.owner()))
+                    .ok_or(GraphLinkFailure::InvalidInput)?;
+                if matches!(
+                    owner.parsed().kind(),
+                    SymbolKind::Function | SymbolKind::Method
+                ) {
+                    callables
+                        .entry((
+                            parse.revision().path().clone(),
+                            owner.parsed().name().as_str().to_owned(),
+                        ))
+                        .or_default()
+                        .push((
+                            owner.id(),
+                            flow.lexical_scope(),
+                            owner.parsed().selection_range(),
+                        ));
+                    callable_visibility.insert(owner.id(), owner.parsed().visibility());
+                }
+                for value in flow.values().iter().filter(|v| {
+                    matches!(
+                        v.kind,
+                        a3_domain::FlowValueKind::Parameter | a3_domain::FlowValueKind::Local
+                    )
+                }) {
+                    shadowing
+                        .entry((
+                            parse.revision().path().clone(),
+                            value.name.as_str().to_owned(),
+                        ))
+                        .or_default()
+                        .push((value.scope, value.range));
+                }
+            }
+        }
         Ok(Self {
+            callables,
+            shadowing,
+            callable_visibility,
             files,
             symbols_by_file_name,
             symbols_by_name,
@@ -87,6 +142,132 @@ impl ResolutionIndexes {
 
     pub(super) fn contains_file(&self, path: &RepositoryPath) -> bool {
         self.files.contains(path)
+    }
+
+    pub(super) fn resolve_call(
+        &self,
+        parse: &a3_domain::LanguageParseResult,
+        relation: &a3_domain::SyntaxRelation,
+        reference: &SymbolReference,
+    ) -> Result<ResolutionOutcome, GraphLinkFailure> {
+        let name = reference.as_str();
+        let path = parse.revision().path();
+        let at = relation.evidence_range();
+        let (base, suffix) = name
+            .split_once('.')
+            .or_else(|| name.split_once("::"))
+            .map_or((name, None), |(b, s)| (b, Some(s)));
+        let candidates = self.callables.get(&(path.clone(), base.to_owned()));
+        let shadowed = self
+            .shadowing
+            .get(&(path.clone(), base.to_owned()))
+            .is_some_and(|bindings| {
+                bindings.iter().any(|(scope, definition)| {
+                    scope.contains(at)
+                        && (parse.language() != IndexLanguage::Rust
+                            || definition.start_byte() < at.start_byte())
+                        && !candidates.is_some_and(|c| {
+                            c.iter()
+                                .any(|(_, s, r)| s.contains(at) && r.contains(*definition))
+                        })
+                })
+            });
+        if shadowed {
+            return unresolved_reference(name, UnresolvedReason::DynamicReference);
+        }
+        if suffix.is_none() {
+            let mut eligible = candidates
+                .into_iter()
+                .flatten()
+                .filter(|(_, scope, _)| scope.contains(at))
+                .collect::<Vec<_>>();
+            eligible.sort_by_key(|(_, scope, _)| scope.len());
+            if let Some((id, scope, _)) = eligible.first() {
+                if eligible
+                    .get(1)
+                    .is_some_and(|(_, next, _)| next.len() == scope.len())
+                {
+                    return ambiguous_reference(name);
+                }
+                return resolved_symbol(
+                    *id,
+                    LinkResolution::UniqueFileLocalName,
+                    FILE_LOCAL_CONFIDENCE_CAP,
+                );
+            }
+        }
+        let mut imports = parse
+            .static_imports()
+            .iter()
+            .filter(|i| i.local.as_str() == base && i.scope.contains(at))
+            .collect::<Vec<_>>();
+        imports.sort_by_key(|i| i.scope.len());
+        if let Some(import) = imports.first() {
+            if imports
+                .get(1)
+                .is_some_and(|i| i.scope.len() == import.scope.len())
+            {
+                return ambiguous_reference(name);
+            }
+            if parse.language() == IndexLanguage::Rust {
+                let qualified = suffix.map_or_else(
+                    || import.module.as_str().to_owned(),
+                    |s| format!("{}::{s}", import.module.as_str()),
+                );
+                if let Some(outcome) =
+                    self.resolve_rust(path, &qualified, SyntaxRelationKind::Calls)?
+                {
+                    return Ok(outcome);
+                }
+            } else {
+                let export = match (&import.export, suffix) {
+                    (Some(e), None) => Some(e.as_str()),
+                    (None, Some(s)) if is_simple_identifier(s) => Some(s),
+                    _ => None,
+                };
+                if let Some(export) = export {
+                    let module = match parse.language() {
+                        IndexLanguage::TypeScriptJavaScript => self.resolve_javascript(
+                            path,
+                            import.module.as_str(),
+                            SyntaxRelationKind::Imports,
+                        )?,
+                        IndexLanguage::Python => self.resolve_python(
+                            path,
+                            import.module.as_str(),
+                            SyntaxRelationKind::Imports,
+                        )?,
+                        _ => None,
+                    };
+                    if let Some(ResolutionOutcome::Resolved {
+                        endpoint: GraphEndpoint::File(file),
+                        ..
+                    }) = module
+                    {
+                        let ids = self
+                            .callables
+                            .get(&(file, export.to_owned()))
+                            .into_iter()
+                            .flatten()
+                            .filter(|(id, scope, _)| {
+                                scope.start_byte() == 0
+                                    && (parse.language() != IndexLanguage::TypeScriptJavaScript
+                                        || self.callable_visibility.get(id)
+                                            == Some(&a3_domain::SymbolVisibility::Public))
+                            })
+                            .map(|(id, _, _)| GraphEndpoint::Symbol(*id))
+                            .collect();
+                        return canonical_resolution(ids, name);
+                    }
+                }
+            }
+            return unresolved_reference(name, UnresolvedReason::NoDeterministicMatch);
+        }
+        // Never fall back to a file-wide simple name when lexical metadata says otherwise.
+        if suffix.is_none() && !parse.function_flows().is_empty() {
+            return unresolved_reference(name, UnresolvedReason::NoDeterministicMatch);
+        }
+        self.resolve(parse.language(), path, reference, SyntaxRelationKind::Calls)
     }
 
     pub(super) fn resolve(
@@ -686,6 +867,7 @@ mod tests {
                 symbol(SymbolId::from_bytes([3; 32]), first.clone())?,
                 symbol(SymbolId::from_bytes([4; 32]), second)?,
             ],
+            &[],
         )?;
         let reference = SymbolReference::try_from_string("Base".to_owned())?;
         assert!(matches!(

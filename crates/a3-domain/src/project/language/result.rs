@@ -150,6 +150,8 @@ pub struct LanguageParseArtifacts {
 /// Canonical language-adapter output for one exact file revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageParseResult {
+    function_flows: Vec<crate::FunctionFlow>,
+    static_imports: Vec<crate::StaticImportBinding>,
     revision: FileRevision,
     adapter_revision: LanguageAdapterRevision,
     contract_version: LanguageAdapterContractVersion,
@@ -222,6 +224,8 @@ impl LanguageParseResult {
             return Err(LanguageParseResultError::DuplicateDiagnostic);
         }
         Ok(Self {
+            function_flows: Vec::new(),
+            static_imports: Vec::new(),
             revision,
             adapter_revision,
             contract_version,
@@ -278,6 +282,61 @@ impl LanguageParseResult {
     #[must_use]
     pub fn diagnostics(&self) -> &[ParseDiagnostic] {
         &self.diagnostics
+    }
+
+    /// Attaches validated flow artifacts without inserting local values into global symbols.
+    pub fn with_function_flows(
+        mut self,
+        flows: Vec<crate::FunctionFlow>,
+    ) -> Result<Self, crate::FunctionFlowError> {
+        let mut owners = BTreeSet::new();
+        let mut total = 0usize;
+        for flow in &flows {
+            if flow.lexical_scope().end_byte() > self.coverage.total_bytes() {
+                return Err(crate::FunctionFlowError::OutsideOwner);
+            }
+            if !owners.insert(flow.owner())
+                || !self.symbols.iter().any(|symbol| {
+                    symbol.id() == flow.owner() && symbol.declaration_range().contains(flow.range())
+                })
+            {
+                return Err(crate::FunctionFlowError::InvalidReference);
+            }
+            total = total.saturating_add(flow.element_count());
+            if total > crate::MAX_INDEX_FLOW_ELEMENTS {
+                return Err(crate::FunctionFlowError::Limit);
+            }
+        }
+        self.function_flows = flows;
+        Ok(self)
+    }
+
+    /// Returns source-derived local analyses from the same parse and file revision.
+    #[must_use]
+    pub fn function_flows(&self) -> &[crate::FunctionFlow] {
+        &self.function_flows
+    }
+
+    /// Attaches bounded explicit alias metadata without adding global symbols.
+    pub fn with_static_imports(
+        mut self,
+        imports: Vec<crate::StaticImportBinding>,
+    ) -> Result<Self, crate::FunctionFlowError> {
+        if imports.len() > 4096
+            || imports.iter().any(|i| {
+                !i.scope.contains(i.range) || i.scope.end_byte() > self.coverage.total_bytes()
+            })
+        {
+            return Err(crate::FunctionFlowError::Limit);
+        }
+        self.static_imports = imports;
+        Ok(self)
+    }
+
+    /// Returns aliases for the shared call and dependency resolver.
+    #[must_use]
+    pub fn static_imports(&self) -> &[crate::StaticImportBinding] {
+        &self.static_imports
     }
 }
 

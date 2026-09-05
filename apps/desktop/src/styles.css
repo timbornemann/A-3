@@ -1371,6 +1371,7 @@ body {
 .app-shell[data-workspace-area='map'] .workspace-content > .project-card.project-active,
 .app-shell[data-workspace-area='map'] .workspace-content > .route-placeholder,
 .app-shell[data-workspace-area='agent'] .workspace-content > #agent,
+.app-shell[data-workspace-area='flows'] .workspace-content > #flows,
 .app-shell[data-workspace-area='settings'] .workspace-content > #settings {
   display: block;
 }

@@ -473,6 +473,7 @@ mod tests {
         assert_eq!(
             capability.get("permissions"),
             Some(&json!([
+                "allow-query-function-flows",
                 "allow-activate-catalog-project",
                 "allow-cancel-model-probe",
                 "allow-list-recent-projects",

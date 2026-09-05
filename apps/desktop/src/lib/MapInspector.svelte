@@ -16,6 +16,7 @@
     | { kind: 'available'; value: T }
     | { kind: 'unavailable'; message: string };
   interface Props {
+    onfunctionflow?: () => void;
     context: ReadState<ProjectMapEntityContextV1>;
     flow: ReadState<ProjectMapFlowSceneV1>;
     inventory: ReadState<ProjectMapInventoryPageV1>;
@@ -30,6 +31,7 @@
   }
 
   const {
+    onfunctionflow,
     selected,
     context,
     inventory,
@@ -254,6 +256,9 @@
       </section>
     {/if}
 
+    {#if onfunctionflow && selected.kind === 'callable' && selected.selection?.kind === 'symbol'}
+      <button type="button" onclick={onfunctionflow}>Schritte und Werte in Abläufe erkunden</button>
+    {/if}
     {#if selected.selection !== null}
       <details class="inspector-section" open>
         <summary

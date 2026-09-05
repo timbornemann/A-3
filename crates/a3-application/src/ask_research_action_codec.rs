@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v3.schema.json");
+const SCHEMA: &str = include_str!("../schemas/ask-research-decision-v4.schema.json");
 const MAX_OUTPUT_BYTES: usize = 320 * 1024;
 
 /// Static strict JSON Schema for one bounded multi-round research decision.
@@ -11,7 +11,7 @@ const MAX_OUTPUT_BYTES: usize = 320 * 1024;
 pub struct AskResearchDecisionJsonSchema;
 
 impl AskResearchDecisionJsonSchema {
-    /// Returns the version-three provider-neutral JSON Schema document.
+    /// Returns the version-four provider-neutral JSON Schema document.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         SCHEMA
@@ -25,6 +25,15 @@ impl AskResearchDecisionJsonSchema {
 /// One strictly bounded, read-only follow-up action.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AskResearchAction {
+    /// Inspect static steps or values from a previously issued current source.
+    InspectFunctionFlow {
+        /// Previously issued source containing the exact root callable.
+        source_ordinal: u16,
+        /// Exact call occurrences from that root.
+        call_path: Vec<a3_domain::FlowStepId>,
+        /// Same bounded view as the interactive and mutating-agent readers.
+        view: a3_domain::FunctionFlowReadView,
+    },
     /// Recompile Task Lens with a more specific query.
     SearchIndex(String),
     /// Search safe current source for one to eight literals.
@@ -154,7 +163,8 @@ impl DecodeAskResearchDecision {
             serde_json::from_str(raw).map_err(|_| AskResearchDecisionDecodeError::MalformedJson)?;
         let root = object(&root)?;
         exact(root, &["schema_version", "decision"])?;
-        if root.get("schema_version").and_then(Value::as_u64) != Some(3) {
+        let version = root.get("schema_version").and_then(Value::as_u64);
+        if !matches!(version, Some(3 | 4)) {
             return Err(AskResearchDecisionDecodeError::UnsupportedVersion);
         }
         let decision = object(
@@ -163,7 +173,7 @@ impl DecodeAskResearchDecision {
         )?;
         match string(decision, "kind")? {
             "answer" => decode_answer(decision),
-            "research" => decode_research(decision),
+            "research" => decode_research(decision, version == Some(4)),
             _ => Err(AskResearchDecisionDecodeError::InvalidValue),
         }
     }
@@ -276,6 +286,7 @@ fn markdown_source_ordinals(
 
 fn decode_research(
     value: &Map<String, Value>,
+    function_flows: bool,
 ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
     exact(value, &["kind", "evidence_status", "note", "actions"])?;
     if string(value, "evidence_status")? != "incomplete" {
@@ -294,6 +305,23 @@ fn decode_research(
     for value in values {
         let action = object(value)?;
         actions.push(match string(action, "kind")? {
+            "inspectFunctionFlow" if function_flows => {
+                exact(action, &["kind", "source_ref", "call_path", "view"])?;
+                let (call_path, view) = crate::agent_action_codec::decode_function_flow_parts(
+                    action
+                        .get("call_path")
+                        .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+                    action
+                        .get("view")
+                        .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+                )
+                .map_err(|_| AskResearchDecisionDecodeError::InvalidValue)?;
+                AskResearchAction::InspectFunctionFlow {
+                    source_ordinal: source_ordinal(string(action, "source_ref")?)?,
+                    call_path,
+                    view,
+                }
+            }
             "searchIndex" => {
                 exact(action, &["kind", "query"])?;
                 AskResearchAction::SearchIndex(bounded(string(action, "query")?, 4096)?)
@@ -540,13 +568,44 @@ impl Error for AskResearchDecisionDecodeError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flow_research_requires_v4_an_issued_source_and_bounded_view()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut doc = serde_json::json!({"schema_version":4,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"Trace","finding_kind":"hypothesis","finding":"Unknown","finding_source_refs":[],"gap":"Inputs","next_step":"Read"},"actions":[{"kind":"inspectFunctionFlow","source_ref":"S1","call_path":[1],"view":{"kind":"values","offset":0}}]}});
+        assert!(
+            super::DecodeAskResearchDecision
+                .decode(&doc.to_string())
+                .is_ok()
+        );
+        doc["schema_version"] = serde_json::json!(3);
+        assert!(
+            super::DecodeAskResearchDecision
+                .decode(&doc.to_string())
+                .is_err()
+        );
+        doc["schema_version"] = serde_json::json!(4);
+        doc["decision"]["actions"][0]["source_ref"] = serde_json::json!("S0");
+        assert!(
+            super::DecodeAskResearchDecision
+                .decode(&doc.to_string())
+                .is_err()
+        );
+        doc["decision"]["actions"][0]["source_ref"] = serde_json::json!("S1");
+        doc["decision"]["actions"][0]["view"]["offset"] = serde_json::json!(1);
+        assert!(
+            super::DecodeAskResearchDecision
+                .decode(&doc.to_string())
+                .is_err()
+        );
+        Ok(())
+    }
     use super::*;
 
     #[test]
     fn current_schema_requires_evidence_status_and_paged_path_reads() -> Result<(), Box<dyn Error>>
     {
         let document = AskResearchDecisionJsonSchema.as_json()?;
-        assert_eq!(document["properties"]["schema_version"]["const"], 3);
+        assert_eq!(document["properties"]["schema_version"]["const"], 4);
         assert!(
             AskResearchDecisionJsonSchema
                 .as_str()

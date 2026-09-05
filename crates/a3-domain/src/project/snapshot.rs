@@ -190,6 +190,12 @@ impl IndexSchemaVersion {
         Self(5)
     }
 
+    /// Returns the same-run function-flow projection and shared lexical resolver revision.
+    #[must_use]
+    pub const fn v6() -> Self {
+        Self(6)
+    }
+
     /// Creates a non-zero index schema version.
     pub fn new(value: u32) -> Result<Self, IndexSchemaVersionError> {
         if value == 0 {

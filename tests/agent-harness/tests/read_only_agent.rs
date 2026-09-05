@@ -337,6 +337,94 @@ fn invalid_primary_and_repair_never_execute_the_real_read_tools() -> Result<(), 
     })
 }
 
+#[test]
+fn controller_reads_real_flow_evidence_and_rejects_a_live_unindexed_edit()
+-> Result<(), Box<dyn Error>> {
+    run_libsql_test(async {
+        let fixture = IndexedFixture::new(FIXTURES[1]).await?;
+        let durable = DurableRun::new(&fixture).await?;
+        let published = fixture
+            .store
+            .latest_published_index(&fixture.project, &ActiveControl)
+            .await?
+            .ok_or("index")?;
+        let owner = published
+            .publication()
+            .graph()
+            .symbols()
+            .iter()
+            .find(|s| {
+                s.parsed().kind() == a3_domain::SymbolKind::Function
+                    && s.revision().path().as_bytes().ends_with(b".ts")
+            })
+            .ok_or("function")?;
+        let source = WorkspaceAgentSourceReader;
+        let flows = a3_application::ExploreFunctionFlows::new(fixture.store.clone());
+        let tools = DeterministicAgentReadTools::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            &source,
+        )
+        .with_function_flows(&flows);
+        let compiler = DeterministicAgentContextCompiler::new(CompileTaskLens::new(
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+            fixture.store.as_ref(),
+        ));
+        let provider = StubModelProvider::new(
+            durable.profile.provider_id().clone(),
+            StubModelProviderBehavior::Events(provider_events(&format!(
+                r#"{{"schema_version":4,"public_note":{{"goal":"Ablauf lesen","finding_kind":"hypothesis","finding":"Ablauf noch unbekannt","finding_source_refs":[],"gap":"Schritte","next_step":"Lesen"}},"action":{{"kind":"inspect","target":{{"kind":"function_flow","symbol_id":"{}","call_path":[],"view":{{"kind":"steps","offset":0}}}}}}}}"#,
+                owner.id()
+            ))?),
+        );
+        let input = durable.context_input(&fixture, Vec::new())?;
+        let outcome =
+            ExecuteReadOnlyAgentTurn::new(&compiler, &provider, &tools, fixture.store.as_ref())
+                .execute(&durable.run, &input, timestamp(20)?, &ActiveControl)
+                .await?;
+        let a3_application::AgentTurnOutcome::Executed(mut execution) = outcome else {
+            return Err(test_error("flow rejected"));
+        };
+        let result = execution.take_tool_result().ok_or("flow result")?;
+        assert!(result.preview().as_str().contains("FUNCTION_FLOW_V1"));
+        assert!(
+            result
+                .evidence()
+                .evidence()
+                .iter()
+                .any(|e| e.location().revision() == owner.revision())
+        );
+        let action = a3_application::AgentReadAction::Inspect(a3_domain::AgentInspectAction::new(
+            a3_domain::AgentInspectTarget::FunctionFlow(a3_domain::FunctionFlowReadRequest::new(
+                owner.id(),
+                Vec::new(),
+                a3_domain::FunctionFlowReadView::Steps(0),
+            )?),
+        ));
+        fixture.repository.write(
+            std::str::from_utf8(owner.revision().path().as_bytes())?,
+            b"export function changed() {}\n",
+        )?;
+        let stale = tools
+            .execute(
+                &fixture.project,
+                fixture.snapshot_id,
+                a3_domain::ToolRunId::from_bytes([247; 32]),
+                &action,
+                AgentReadTimeout::from_millis(2000)?,
+                &ActiveControl,
+            )
+            .await;
+        assert!(
+            stale.is_err(),
+            "unobserved live edits must not reach reasoning"
+        );
+        Ok(())
+    })
+}
+
 async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Error>> {
     let fixture = IndexedFixture::new(fixture).await?;
     let baseline = fixture.repository_tree.clone();
@@ -357,7 +445,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
     let search_provider = StubModelProvider::new(
         durable.profile.provider_id().clone(),
         StubModelProviderBehavior::Events(provider_events(&format!(
-            r#"{{"schema_version":3,"public_note":{{"goal":"Relevante Implementierung finden","finding_kind":"hypothesis","finding":"Die Implementierung ist noch nicht lokalisiert.","finding_source_refs":[],"gap":"Aktuelle Source-Evidence","next_step":"Gezielt im Index suchen"}},"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
+            r#"{{"schema_version":4,"public_note":{{"goal":"Relevante Implementierung finden","finding_kind":"hypothesis","finding":"Die Implementierung ist noch nicht lokalisiert.","finding_source_refs":[],"gap":"Aktuelle Source-Evidence","next_step":"Gezielt im Index suchen"}},"action":{{"kind":"search","query":"{}","limit":5}}}}"#,
             fixture.definition.query
         ))?),
     );
@@ -420,7 +508,7 @@ async fn evaluate_fixture(fixture: FixtureDefinition) -> Result<(), Box<dyn Erro
         .await?;
 
     let update_document = format!(
-        r#"{{"schema_version":3,"public_note":{{"goal":"Zwischenbefund festhalten","finding_kind":"hypothesis","finding":"Die aktuelle Suche lieferte eine relevante Quelle; der Controller prüft sie separat.","finding_source_refs":[],"gap":"Deterministische Verifikation","next_step":"Unverifiziertes Ergebnis im Ledger festhalten"}},"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
+        r#"{{"schema_version":4,"public_note":{{"goal":"Zwischenbefund festhalten","finding_kind":"hypothesis","finding":"Die aktuelle Suche lieferte eine relevante Quelle; der Controller prüft sie separat.","finding_source_refs":[],"gap":"Deterministische Verifikation","next_step":"Unverifiziertes Ergebnis im Ledger festhalten"}},"action":{{"kind":"update_ledger","step_id":"{}","update":{{"kind":"record_result","summary":"located current source evidence for {}"}}}}}}"#,
         durable.step_id, fixture.definition.query
     );
     let update_provider = StubModelProvider::new(
