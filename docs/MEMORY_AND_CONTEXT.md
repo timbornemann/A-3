@@ -500,9 +500,18 @@ angehängt. Der flüchtige Source-Cache hält höchstens 200 Ausschnitte zu je 3
 modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte, jeweils
 höchstens einen pro Revision. Kurze
 relevante Dateien werden nach Möglichkeit vollständig gepackt, statt jedem Treffer pauschal
-denselben kleinen Textanteil zu geben. Vollständig enthaltene Ausschnitte derselben aktuellen
+denselben kleinen Textanteil zu geben. Ein Aktionsbatch hält mehrere Dateifokusse gleichzeitig;
+Cacheprüfung und erneute Priorisierung dürfen nicht wieder nur sein letztes Ziel auswählen.
+Die Verteilung berücksichtigt die vollständigen Kosten einschließlich Source-Header und
+Kürzungsmarker: explizite Fokusse und kurze Quellen erhalten das feste Gewicht vier, übrige
+Quellen eins. Vollständige kurze Quellen geben unbenutzte Anteile an die übrigen Fenster zurück.
+Ein Index-Symbolhinweis darf einen groben Read innerhalb seiner ausgewählten Datei präzisieren,
+aber keine andere angeforderte Datei verdrängen. Vollständig enthaltene Ausschnitte derselben aktuellen
 Revision werden nur einmal übertragen; große Dateien behalten ihren angeforderten späteren
 Bereich. Quellenordinalzahlen und persistierte Quellenhistorie bleiben dabei unverändert.
+Der vollständige Auftrag ist Pflichtinhalt. Passt er mit 256 Bytes Mindestkontext nicht in das
+verfügbare Fenster, endet der Abschnitt vor dem ersten Modellaufruf mit einem expliziten
+Kontextgrenzenhinweis, statt nachgestellte Anforderungen still abzuschneiden.
 Frage, Zielauflösung, öffentliche Notizen und Seitenhinweise zählen zum selben Gesamtbudget,
 berechnet gegen den tatsächlich verwendeten Modus, das Command-Profil und das Modell-Schema.
 Eindeutig aufgelöste Dateinennungen werden zusätzlich als bestehende `ExplicitPath`-Seeds an die
@@ -516,6 +525,13 @@ UTF-8-Bytespalten getrennt geführt. Überlappende Reads und neue Ordinale erzeu
 Scheinfortschritt; eine neue zusammenhängende Kontextstelle ist dagegen echter Zugangsfortschritt.
 Der adaptive Fokus kann aktuelle Index-Symbolbereiche aus der Frage oder einer validierten
 Lücke auswählen. Kürzung innerhalb einer langen Zeile setzt an einer gültigen Byteposition fort.
+Ein wiederholter Seitenanfang kann auch über mehrere bereits ausgelieferte Zeilen hinweg zur
+gecachten Reststelle springen. Explizite innere Zeilen und `inspectSource` bleiben dagegen zur
+erneuten Betrachtung bereits gelieferter Schnittstellen nutzbar. Der kompakte Notizblock packt
+bis zu drei jüngste öffentliche Befunde samt vollständigen Source-Referenzen als einzelne
+Einheiten; Text darf begrenzt werden, Referenzen nicht. Die letzte offene Frage bleibt im
+Checkpoint und aktuellen Feedback, steht aber nicht mehr als verdrängender Präfix vor Befunden.
+Notizen bleiben ausdrücklich nicht autoritativ und müssen an aktuellen Quellen geprüft werden.
 Vor jedem Modellversuch prüft der bestehende Safe Reader die aktuelle Revision der gelieferten
 Quellen; diese Validierung lädt keine neue Evidence und verändert keinen Lesecursor. Zitierte
 Antwort- und Diagrammquellen werden nach der Modellausgabe erneut geprüft.
@@ -555,6 +571,19 @@ aus dem Gesamtbudget und eine reguläre abschließende Modellentscheidung ohne w
 Fehlende Datei-Evidence oder ein `incomplete`-Ergebnis erfordern weiterhin echte Vertiefung
 innerhalb des Budgets beziehungsweise einen ehrlich markierten Zwischenstand. Auch ein
 transienter Retry darf eine bereits auf Abschluss begrenzte Entscheidung nicht wieder öffnen.
+
+Plan- und Agent-Vorbereitung zielen auf einen entscheidungsreifen Plan, nicht auf einen schon
+fertigen Patch. Vorhandene Einstiegspunkte, APIs und Integrationsbedingungen benötigen Evidence;
+neue CSV-Spalten, Schnittstellen und Tests dürfen als explizite Entwurfsannahmen vorgeschlagen
+werden. Ihr Fehlen ist bei einer gewünschten neuen Funktion keine zusätzliche Belegpflicht.
+Ein `sufficient`-Plan muss bereits an der Decision-Grenze die fünf Planabschnitte, Quellen und
+die Kompilierung durch `AgentWorkPlan` bestehen. Ein Formfehler nutzt denselben Einzelrepair
+wie JSON-/Quellenfehler, statt als erfundene Nutzerfrage veröffentlicht zu werden. Auch eine
+danach noch fehlende Zielattribution erhält keinen zweiten Repair desselben Dokuments.
+Echte explizite `QUESTION:`-Antworten bleiben ohne erzwungene Quellen gültig. Ein gültiger Plan
+wird als neue Revision in `AwaitingPlanReview` gespeichert; daraus entsteht keine Ausführung.
+Auch unvollständige Antworten ohne nächste mögliche Aktion zählen zu den zwei Nullrunden.
+Es gibt weder ein Budgetreset noch ein automatisches Hochstufen von `incomplete` zu `sufficient`.
 
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum

@@ -8,6 +8,192 @@ use a3_domain::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[path = "../../../../fixtures/research-plan-v1/c604618_context.rs"]
+mod plan_baseline;
+
+#[test]
+fn working_findings_survive_long_obsolete_gaps_with_intact_references() -> TestResult {
+    for budget in [1024, 2048, 4096] {
+        let mut state = AskResearchWorkingSet::new(budget);
+        let item = source(1, "manager.py", 2)?;
+        state.render(&item, 1, "def add_task(title):\n    save(title)\n", true);
+        state.sources.push(item);
+        state.record_note(
+            "CSV planen",
+            &AskResearchDecisionNote {
+                goal: "CSV planen".to_owned(),
+                finding_kind: AskResearchFindingKind::Observation,
+                finding: "add_task speichert Aufgaben".to_owned(),
+                source_ordinals: vec![1],
+                gap: "Eine früher fehlende Schnittstelle erneut suchen. ".repeat(8),
+                next_step: "Aktuelle Quelle prüfen".to_owned(),
+            },
+        )?;
+        let packet = state.model_evidence("CSV planen", &[]);
+        assert!(packet.contains("PUBLIC WORKING NOTES (not evidence"));
+        assert!(packet.contains("[S1]"));
+        assert!(packet.contains("Observation: add_task"));
+        assert!(!packet.contains("Eine früher fehlende"));
+        assert!(packet.len() <= budget);
+    }
+    Ok(())
+}
+
+#[test]
+fn sufficient_plan_requires_a_compilable_plan_and_explicit_questions_remain_valid() -> TestResult {
+    use research_model::{DecisionIssue, validate_decision, validate_outcome};
+    for (markdown, sufficient, valid) in [
+        ("PLAN:\n## Summary\nHalbfertig 【S1】", true, false),
+        (
+            "PLAN:\n## Summary\nBereit 【S1】\n## Implementation Changes\n## Interfaces\nKeine\n## Test Plan\n## Assumptions\nKeine",
+            true,
+            false,
+        ),
+        ("Ich brauche einen Neustart. 【S1】", true, false),
+        (
+            "PLAN:\n## Summary\nBereit 【S1】\n## Implementation Changes\n1. Import ergänzen.\n## Interfaces\n## Test Plan\n1. Prüfen.\n## Assumptions\nKeine",
+            true,
+            false,
+        ),
+        (
+            "PLAN:\nQuelle 【S1】\n```markdown\n## Summary\nBereit\n## Implementation Changes\n1. Import ergänzen.\n## Interfaces\nNeu.\n## Test Plan\n1. Prüfen.\n## Assumptions\nKeine\n```",
+            true,
+            false,
+        ),
+        (
+            "PLAN:\n## Summary\nBereit 【S1】\n## Implementation Changes\n1. Import ergänzen.\n## Interfaces\nNeue CSV-Spalten.\n## Test Plan\n1. Zeilen validieren.\n## Assumptions\nCSV ist eine neue Schnittstelle.",
+            true,
+            true,
+        ),
+        ("PLAN:\nNoch offen. 【S1】", false, true),
+    ] {
+        let raw = serde_json::json!({"schema_version":4,"decision":{"kind":"answer","evidence_status":if sufficient {"sufficient"} else {"incomplete"},"markdown":markdown,"source_refs":["S1"],"note":{"goal":"Planen","finding_kind":"hypothesis","finding":"Noch prüfen","finding_source_refs":[],"gap":"Prüfen","next_step":"Planen"}}}).to_string();
+        let decision = validate_decision(&raw, BeginResearchDecision::SearchAllowed, 1)
+            .map_err(|_| "decode")?;
+        assert!(validate_outcome(decision.clone(), AgentSessionMode::Ask).is_ok());
+        for mode in [AgentSessionMode::Plan, AgentSessionMode::Agent] {
+            let result = validate_outcome(decision.clone(), mode);
+            assert_eq!(result.is_ok(), valid, "{mode:?}: {markdown}");
+            if !valid {
+                assert_eq!(result, Err(DecisionIssue::PlanShape));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn plan_research_keeps_all_requested_interfaces_and_the_complete_goal() -> TestResult {
+    let query = "Erstelle einen CLI-Befehl python main.py import-csv <filepath.csv>, der Aufgaben validiert und ausschließlich über den TaskFlowManager speichert; bestehende Aufgaben bleiben erhalten.";
+    for budget in [2048, 4096, 8192] {
+        let mut state = AskResearchWorkingSet::new(budget);
+        let mut actions = Vec::new();
+        for (ordinal, path, api) in [
+            (1, "main.py", "cli_main()"),
+            (2, "taskflow/cli.py", "def cli_main():"),
+            (
+                3,
+                "taskflow/manager.py",
+                "def add_task(title, description):",
+            ),
+            (4, "taskflow/models.py", "class Task:"),
+        ] {
+            let body = format!(
+                "{}\n{api}\n{}",
+                "# earlier code\n".repeat(20),
+                "# later code\n".repeat(200)
+            );
+            let item = source(ordinal, path, 223)?;
+            state.render(&item, 1, &body, false);
+            state.sources.push(item);
+            actions.push(AskResearchAction::InspectPath {
+                path: path.to_owned(),
+                start_line: 22,
+            });
+        }
+        state.focus_actions(&actions);
+        let baseline = state.legacy_plan_evidence_window(&[], budget);
+        let packet = state.model_evidence(query, &[]);
+        assert!(
+            packet.contains(query),
+            "complete task must survive at {budget} bytes"
+        );
+        assert!(packet.len() <= budget);
+        for api in [
+            "cli_main()",
+            "def cli_main():",
+            "def add_task(title, description):",
+            "class Task:",
+        ] {
+            assert!(packet.contains(api), "missing {api} at {budget} bytes");
+        }
+        assert_eq!(state.current_delivery.len(), 4);
+        let old_visible = [
+            "cli_main()",
+            "def cli_main():",
+            "def add_task(title, description):",
+            "class Task:",
+        ]
+        .iter()
+        .filter(|api| baseline.contains(**api))
+        .count();
+        eprintln!(
+            "plan-window fixture: {budget} bytes; c604618 {old_visible}/4 interfaces, current 4/4; current packet {} bytes; no adaptive reads",
+            packet.len()
+        );
+        if budget <= 4096 {
+            assert!(old_visible < 4);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn precise_api_lines_and_source_references_can_revisit_delivered_evidence() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(1024);
+    let item = source(1, "cli.py", 200)?;
+    state.render(
+        &item,
+        1,
+        &format!("# CLI\ndef cli_main():\n{}", "    pass\n".repeat(198)),
+        true,
+    );
+    state.sources.push(item);
+    state.evidence_window();
+    state.commit_delivery();
+    for action in [
+        AskResearchAction::InspectPath {
+            path: "cli.py".to_owned(),
+            start_line: 2,
+        },
+        AskResearchAction::InspectSource(1),
+    ] {
+        assert!(state.focus_cached(&action));
+        assert!(state.evidence_window().contains("def cli_main():"));
+        assert_eq!(state.evidence_revision, 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn repeated_cached_line_read_advances_past_previously_delivered_lines() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(1024);
+    let item = source(1, "cli.py", 200)?;
+    state.render(&item, 1, &"# some code here\n".repeat(200), true);
+    state.sources.push(item);
+    state.evidence_window();
+    let frontier = state.current_delivery[0].end;
+    state.commit_delivery();
+    assert!(state.focus_cached(&AskResearchAction::InspectPath {
+        path: "cli.py".to_owned(),
+        start_line: 1
+    }));
+    state.evidence_window();
+    assert_eq!(state.current_delivery[0].start, frontier);
+    assert_eq!(state.evidence_revision, 1);
+    Ok(())
+}
+
 #[path = "../../../../fixtures/research-progressive-v1/legacy_context.rs"]
 mod legacy_context;
 
@@ -533,6 +719,11 @@ fn only_the_latest_gap_is_an_active_obligation() -> TestResult {
         )?;
     }
     assert_eq!(state.memory_gaps, ["Only configuration remains unclear"]);
+    let feedback = state.context_feedback("Current read results");
+    assert!(feedback.contains("Only configuration remains unclear"));
+    assert!(feedback.contains("Read the relevant configuration"));
+    assert!(feedback.contains("not evidence; may now be resolved"));
+    assert!(!feedback.contains("server.py has not been read"));
     assert!(
         !state
             .model_evidence("Explain REST routing", &[])

@@ -72,6 +72,7 @@ pub(super) enum DecisionIssue {
     Truncated,
     UnknownSource,
     ReadsClosed,
+    PlanShape,
 }
 
 impl DecisionIssue {
@@ -86,10 +87,14 @@ impl DecisionIssue {
             Self::Truncated => "research-v1/output-truncated",
             Self::UnknownSource => "research-v1/source",
             Self::ReadsClosed => "research-v1/reads-closed",
+            Self::PlanShape => "research-v1/plan-shape",
         }
     }
     pub(super) fn repair_hint(self, source_count: usize) -> String {
         let detail = match self {
+            Self::PlanShape => {
+                "A sufficient planning answer must begin PLAN: with Markdown headings Summary, Implementation Changes, Interfaces, Test Plan, Assumptions. Include nonempty ordered change and test steps (at most 64 total) and current source citations. Use QUESTION: only for a genuinely blocking user choice. Proposed new interfaces and formats belong in the plan as explicit design assumptions, not missing evidence. Do not ask the user to restart for an output-format error."
+            }
             Self::Json => {
                 "Return a complete JSON object, without fences or prose. Close all strings, arrays and objects."
             }
@@ -182,6 +187,36 @@ pub(super) fn validate_decision(
     } else {
         Err(DecisionIssue::UnknownSource)
     }
+}
+
+/// Validate the planning outcome at the SAME document boundary as JSON and references. A
+/// structurally invalid plan must use its single repair, never masquerade as a user question.
+pub(super) fn validate_outcome(
+    decision: a3_application::AskResearchDecision,
+    mode: AgentSessionMode,
+) -> Result<a3_application::AskResearchDecision, DecisionIssue> {
+    if mode != AgentSessionMode::Ask
+        && let a3_application::AskResearchDecision::Answer {
+            markdown,
+            source_ordinals,
+            evidence_status: AskResearchEvidenceStatus::Sufficient,
+            ..
+        } = &decision
+    {
+        let text = markdown.trim();
+        let question = text
+            .strip_prefix("QUESTION:")
+            .is_some_and(|text| !text.trim().is_empty());
+        let plan = text.strip_prefix("PLAN:").is_some_and(|plan| {
+            has_required_plan_sections(plan)
+                && a3_domain::AgentWorkPlan::from_reviewed_markdown(plan).is_ok()
+                && !source_ordinals.is_empty()
+        });
+        if !question && !plan {
+            return Err(DecisionIssue::PlanShape);
+        }
+    }
+    Ok(decision)
 }
 
 pub(super) trait ResearchModel: Send + Sync {

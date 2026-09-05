@@ -1048,6 +1048,27 @@ behauptet keine Verbesserung gegenüber U11.
 
 Abhängigkeiten: ADR-0033, Gate M8
 
+Plan-Recherche-Korrektur 2026-09-06 (ADR-0038/0042/0046): Ziel ist ein belegter,
+prüfbarer Plan innerhalb derselben endlichen Recherche, ohne manuelle Neustarts wegen
+Kontextverdrängung oder reparierbarer Ausgabeform. Nicht-Ziele: TaskFlows CSV-Import
+implementieren, Read-/Repairbudgets erhöhen, neue Indizes oder Berechtigungen einführen.
+
+- [x] Gleichzeitige gecachte API-Ausschnitte und vollständigen Auftrag deterministisch packen;
+      wiederholte Zeilencursor dürfen den bereits ausgelieferten Präfix überspringen.
+- [x] Öffentliche Befunde behalten ihre Source-Referenzen; offene Altfragen verdrängen sie nicht.
+- [x] Planreife von Patchreife unterscheiden; neue Entwurfsentscheidungen als Annahmen erlauben.
+- [x] Planform vor Veröffentlichung mit dem bestehenden Work-Plan-Compiler prüfen und im
+      Einzelrepair korrigieren; echte Rückfragen und Freigabe vor Ausführung erhalten.
+- [x] Fortschrittslose unvollständige Antworten zählen zur unveränderten Stagnationsgrenze.
+- [x] Reale Index-/Reader-/Storage-Regression, negative Verträge und Rust-Workspacegate bestehen.
+
+Abnahme dieser Korrektur: 41 Recherchetests, 58 Sessiontests und das vollständige
+Release-Workspacegate einschließlich 160 Desktop- und 111 Storage-Unit-Tests bestanden.
+Clippy mit `-D warnings`, Rust-Formatierung und Linkprüfung sind grün. Der stateless
+Planvertrag speichert nach drei Modellaufrufen einschließlich Einzelrepair eine echte
+prüfbare Planrevision; er behauptet keinen Live-Modellerfolg. Ursachen, Messungen und
+Grenzen stehen in der [Plan-Recherche-Fixture](../../fixtures/research-plan-v1/README.md).
+
 - [x] eine Agent-Seite mit Sessionverlauf, Conversation und Inspector
 - [x] projektlokale revisionierte Sessions und inhaltsfreie Layoutpräferenzen
 - [x] geschlossene `Ask`-, `Plan`- und `Agent`-IPC-Verträge

@@ -97,6 +97,7 @@ pub(super) enum ResearchStopReason {
     InvalidDecision,
     CitationRepair,
     ModelRetryLimit,
+    ContextLimit,
 }
 
 impl ResearchStopReason {
@@ -110,6 +111,9 @@ impl ResearchStopReason {
 
     pub(super) const fn message(self) -> &'static str {
         match self {
+            Self::ContextLimit => {
+                "Der vollständige Auftrag passt zusammen mit dem Mindestkontext nicht in das verfügbare Modellfenster. Wähle ein größeres Kontextfenster oder teile den Auftrag; der Auftrag wurde nicht still gekürzt."
+            }
             Self::TimeLimit => "Die Zeitgrenze dieses Rechercheabschnitts ist erreicht.",
             Self::DecisionLimit => {
                 "Die zulässigen Modellschritte dieses Rechercheabschnitts sind aufgebraucht."

@@ -134,14 +134,21 @@ impl AskResearchWorkingSet {
             _ => None,
         };
         target.is_some_and(|(revision, start)| {
-            // The tool has a line cursor; the Core owns precise continuation inside a long line.
+            // Only a repeated page-start cursor resumes its unseen suffix. A precise interior
+            // line or issued source reference must remain usable to compare an earlier API.
+            let page_start = matches!(action, AskResearchAction::InspectPath { .. })
+                && self.excerpts.iter().any(|item| {
+                    self.revision_for(item) == Some(&revision)
+                        && item.start_line == start.row().saturating_add(1)
+                });
             let continuation = self
                 .delivered
                 .iter()
                 .find(|range| {
-                    range.revision == revision
-                        && range.end.row() == start.row()
-                        && range.end.column() > start.column()
+                    page_start
+                        && range.revision == revision
+                        && range.start <= start
+                        && range.end > start
                 })
                 .map(|range| range.end);
             if let Some(next) = continuation
@@ -158,7 +165,18 @@ impl AskResearchWorkingSet {
             self.revision_for(item) == Some(&revision) && offset(item, start).is_some()
         });
         if cached {
-            self.focus = Some(SourceFocus { revision, start });
+            if let Some(focus) = self
+                .focus
+                .iter_mut()
+                .find(|focus| focus.revision == revision)
+            {
+                focus.start = start;
+            } else {
+                self.focus.push(SourceFocus { revision, start });
+            }
+            if self.focus.len() > 8 {
+                self.focus.remove(0);
+            }
         }
         cached
     }
@@ -172,6 +190,23 @@ impl AskResearchWorkingSet {
 
     /// Use only names and ranges from the pinned index. Unvalidated output never reaches here.
     pub(super) fn focus_hint(&mut self, published: &a3_domain::PublishedIndex, hint: &str) -> bool {
+        self.focus_index_hint(published, hint, false)
+    }
+
+    pub(super) fn refine_action_focus(
+        &mut self,
+        published: &a3_domain::PublishedIndex,
+        hint: &str,
+    ) {
+        self.focus_index_hint(published, hint, true);
+    }
+
+    fn focus_index_hint(
+        &mut self,
+        published: &a3_domain::PublishedIndex,
+        hint: &str,
+        selected_only: bool,
+    ) -> bool {
         let tokens = hint
             .split(|c: char| !(c.is_alphanumeric() || c == '_'))
             .filter(|token| token.len() >= 3 && token.len() <= 128)
@@ -185,6 +220,8 @@ impl AskResearchWorkingSet {
             .take(32_768)
             .collect::<Vec<_>>();
         symbols.sort_by_key(|symbol| symbol.parsed().kind() == a3_domain::SymbolKind::Class);
+        let mut focused = false;
+        let mut refined = Vec::new();
         for symbol in symbols {
             if !tokens.contains(symbol.parsed().name().as_str())
                 || !matches!(
@@ -198,32 +235,52 @@ impl AskResearchWorkingSet {
             }
             let range = symbol.parsed().declaration_range();
             let mut start = SourcePosition::new(range.start_position().row(), 0);
-            if self.delivered.iter().any(|old| {
-                old.revision == *symbol.revision()
-                    && old.start <= start
-                    && old.end >= range.end_position()
-            }) {
+            if selected_only
+                && (refined.contains(symbol.revision())
+                    || !self
+                        .focus
+                        .iter()
+                        .any(|focus| focus.revision == *symbol.revision() && focus.start <= start))
+            {
+                continue;
+            }
+            if !selected_only
+                && self.delivered.iter().any(|old| {
+                    old.revision == *symbol.revision()
+                        && old.start <= start
+                        && old.end >= range.end_position()
+                })
+            {
                 continue;
             }
             for old in &self.delivered {
-                if old.revision == *symbol.revision() && old.start <= start && old.end > start {
+                if !selected_only
+                    && old.revision == *symbol.revision()
+                    && old.start <= start
+                    && old.end > start
+                {
                     start = old.end;
                 }
             }
             if self.focus_at(symbol.revision().clone(), start) {
-                return true;
+                if !selected_only {
+                    return true;
+                }
+                focused = true;
+                refined.push(symbol.revision().clone());
             }
         }
-        false
+        focused
     }
 
     /// Select a byte-position frontier in cached current source, not another file read.
     pub(super) fn advance_cached_frontier(&mut self) -> bool {
         let mut items = self.excerpts.iter().collect::<Vec<_>>();
         items.sort_by_key(|item| {
-            self.focus
-                .as_ref()
-                .is_none_or(|focus| self.revision_for(item) != Some(&focus.revision))
+            !self
+                .focus
+                .iter()
+                .any(|focus| self.revision_for(item) == Some(&focus.revision))
         });
         for item in items {
             let Some(revision) = self.revision_for(item) else {
@@ -236,10 +293,9 @@ impl AskResearchWorkingSet {
                 }
             }
             if offset(item, start).is_some() {
-                self.focus = Some(SourceFocus {
-                    revision: revision.clone(),
-                    start,
-                });
+                let revision = revision.clone();
+                self.focus.clear();
+                self.focus.push(SourceFocus { revision, start });
                 return true;
             }
         }
@@ -253,12 +309,12 @@ impl AskResearchWorkingSet {
     ) -> String {
         let mut candidates = self.excerpts.iter().collect::<Vec<_>>();
         candidates.sort_by_key(|item| {
-            let focused = self.focus.as_ref().is_some_and(|focus| {
+            let focused = self.focus.iter().position(|focus| {
                 self.revision_for(item) == Some(&focus.revision)
                     && offset(item, focus.start).is_some()
             });
             (
-                !focused,
+                focused.unwrap_or(usize::MAX),
                 !(item.text.len() <= limit / 2
                     && self
                         .revision_for(item)
@@ -276,8 +332,8 @@ impl AskResearchWorkingSet {
             }
             let item = if self
                 .focus
-                .as_ref()
-                .is_some_and(|focus| self.revision_for(item) == Some(&focus.revision))
+                .iter()
+                .any(|focus| self.revision_for(item) == Some(&focus.revision))
             {
                 item
             } else {
@@ -301,30 +357,76 @@ impl AskResearchWorkingSet {
                 break;
             }
         }
+        let parts = selected
+            .iter()
+            .map(|item| {
+                let focus = self.focus.iter().find(|focus| {
+                    self.revision_for(item) == Some(&focus.revision)
+                        && offset(item, focus.start).is_some()
+                });
+                let start = focus.map_or(
+                    SourcePosition::new(item.start_line.saturating_sub(1), 0),
+                    |focus| focus.start,
+                );
+                let body = &item.text[offset(item, start).unwrap_or(0)..];
+                let header = format!(
+                    "\n[S{}] {} ab Zeile {} (Spalte {}; aktueller Ausschnitt)\n",
+                    item.ordinal,
+                    item.path,
+                    start.row().saturating_add(1),
+                    start.column()
+                );
+                (item, start, body, header)
+            })
+            .collect::<Vec<_>>();
+        // Water-fill complete packet costs. Large files cannot starve the other requested
+        // interfaces; short complete sources return their unused share to remaining views.
+        let mut quotas = vec![0; parts.len()];
+        let weights = parts
+            .iter()
+            .map(|(item, _, body, _)| {
+                if body.len() <= limit / 2
+                    || self
+                        .focus
+                        .iter()
+                        .any(|focus| self.revision_for(item) == Some(&focus.revision))
+                {
+                    4
+                } else {
+                    1
+                }
+            })
+            .collect::<Vec<usize>>();
+        let mut pending = (0..parts.len()).collect::<Vec<_>>();
+        let mut remaining = limit;
+        while !pending.is_empty() {
+            let total_weight = pending.iter().map(|index| weights[*index]).sum::<usize>();
+            let share = remaining / total_weight;
+            let complete = pending
+                .iter()
+                .copied()
+                .filter(|index| {
+                    let (_, _, body, header) = &parts[*index];
+                    header.len() + body.len() < share * weights[*index]
+                })
+                .collect::<Vec<_>>();
+            if complete.is_empty() {
+                for index in pending {
+                    quotas[index] = share * weights[index];
+                }
+                break;
+            }
+            for index in complete {
+                let (_, _, body, header) = &parts[index];
+                quotas[index] = header.len() + body.len() + 1;
+                remaining = remaining.saturating_sub(quotas[index]);
+                pending.retain(|candidate| *candidate != index);
+            }
+        }
         let mut output = String::new();
         let mut delivered = Vec::new();
-        for (index, item) in selected.iter().enumerate() {
-            let focus = self.focus.as_ref().filter(|focus| {
-                self.revision_for(item) == Some(&focus.revision)
-                    && offset(item, focus.start).is_some()
-            });
-            let start = focus.map_or(
-                SourcePosition::new(item.start_line.saturating_sub(1), 0),
-                |focus| focus.start,
-            );
-            let body = &item.text[offset(item, start).unwrap_or(0)..];
-            let header = format!(
-                "\n[S{}] {} ab Zeile {} (Spalte {}; aktueller Ausschnitt)\n",
-                item.ordinal,
-                item.path,
-                start.row().saturating_add(1),
-                start.column()
-            );
-            let remaining = limit.saturating_sub(output.len());
-            let reserve = (selected.len() - index - 1) * 64;
-            let available = remaining
-                .saturating_sub(reserve)
-                .saturating_sub(header.len());
+        for ((item, start, body, header), quota) in parts.into_iter().zip(quotas) {
+            let available = quota.saturating_sub(header.len());
             let clipped = body.len().saturating_add(1) > available;
             let allowance = if clipped {
                 available.saturating_sub(160)

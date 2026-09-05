@@ -35,7 +35,7 @@ impl ResearchModel for SequenceModel {
     }
 }
 
-fn owned(
+pub(super) fn owned(
     check: impl FnOnce(JobContext, JobSubmitter) -> Result<(), Box<dyn Error>> + Send + 'static,
 ) -> Result<(), Box<dyn Error>> {
     let (scheduler, events) =
@@ -75,6 +75,48 @@ fn owned(
 fn valid() -> String {
     serde_json::json!({"schema_version":4,"decision":{"kind":"answer","evidence_status":"incomplete","markdown":"Offene Evidence-Lücke.","source_refs":[],
         "note":{"goal":"Erklären","finding_kind":"hypothesis","finding":"Offen","finding_source_refs":[],"gap":"Aufrufer","next_step":"Lesen"}}}).to_string()
+}
+
+#[test]
+fn a_plan_shape_failure_after_json_repair_cannot_obtain_a_second_document_repair()
+-> Result<(), Box<dyn Error>> {
+    owned(|control, _| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()?;
+        let repository = support::TempDirectory::new()?;
+        repository.git(["init", "--initial-branch=main"])?;
+        let project = RepositoryInspector::new().inspect(repository.path())?;
+        let guard = research_model::EvidenceGuard {
+            project: &project,
+            revisions: Vec::new(),
+        };
+        let invalid_plan = serde_json::json!({"schema_version":4,"decision":{"kind":"answer","evidence_status":"sufficient","markdown":"PLAN:\n## Summary\nFehlende Schritte. 【S1】","source_refs":["S1"],"note":{"goal":"Planen","finding_kind":"hypothesis","finding":"Offen","finding_source_refs":[],"gap":"Planform","next_step":"Korrigieren"}}}).to_string();
+        let model = SequenceModel(std::sync::Mutex::new(
+            [Ok("{".to_owned()), Ok(invalid_plan), Ok(valid())].into(),
+        ));
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        let permission = controller.begin_decision(0)?;
+        let (result, diagnostics) = runtime.block_on(ask_decision(
+            &model,
+            AgentSessionMode::Plan,
+            permission,
+            &mut Vec::new(),
+            &control,
+            &mut controller,
+            Instant::now(),
+            1,
+            None,
+            &guard,
+            false,
+        ))?;
+        assert_eq!(result, Err(ResearchStopReason::InvalidDecision));
+        assert_eq!(controller.repairs_used(), 1);
+        assert_eq!(controller.decisions_used(), 2);
+        assert!(diagnostics[1].contains("research-v1/plan-shape"));
+        assert_eq!(model.0.lock().map_err(|_| "lock")?.len(), 1);
+        Ok(())
+    })
 }
 
 #[test]

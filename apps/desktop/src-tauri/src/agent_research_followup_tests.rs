@@ -19,6 +19,15 @@ mod support;
 #[path = "agent_research_recovery_tests.rs"]
 mod recovery_contract;
 
+#[path = "agent_research_plan_tests.rs"]
+mod plan_contract;
+
+fn fixture_plan(summary: &str) -> String {
+    format!(
+        "PLAN:\n## Summary\n{summary}\n## Implementation Changes\n1. Die gewünschte Erweiterung über die bestehende Manager-API integrieren.\n## Interfaces\nNeue CSV-Spalten als vorgeschlagenen Vertrag dokumentieren.\n## Test Plan\n1. Gültige und fehlerhafte CSV-Zeilen sowie unveränderte Bestandsaufgaben prüfen.\n## Assumptions\nNeue CSV-Spalten werden entworfen, nicht als vorhandene Schnittstelle behauptet."
+    )
+}
+
 const QUERY: &str =
     "Wie schalten taskflow/storage/factory.py und config.ini zwischen den Storage-Treibern um?";
 const MANAGER: &str = "from .config import TaskFlowConfig\nfrom .storage.factory import get_storage\nclass TaskFlowManager:\n    def __init__(self):\n        self.config = TaskFlowConfig()\n        self.storage = get_storage(self.config.storage_type, self.config)\n";
@@ -124,8 +133,18 @@ impl ResearchModel for ProgressiveModel {
                 .iter()
                 .map(|source| format!("【{source}】"))
                 .collect::<String>();
+            let finding = format!(
+                "add_task speichert und verteilt task_created; das Audit-Plugin erfasst die Aufgabe. {markers}"
+            );
+            let markdown = if mode == AgentSessionMode::Ask {
+                finding
+            } else {
+                format!(
+                    "PLAN:\n## Summary\n{finding}\n## Implementation Changes\n1. Den belegten Aufgabenfluss dokumentieren.\n## Interfaces\nManager und Plugin-Hooks bleiben unverändert.\n## Test Plan\n1. Die Dokumentation mit den aktuellen Aufrufstellen abgleichen.\n## Assumptions\nKeine Codeänderung erforderlich."
+                )
+            };
             Ok(serde_json::json!({"schema_version":4,"decision":{"kind":"answer","evidence_status":"sufficient","note":note,
-                "markdown":format!("{}add_task speichert und verteilt task_created; das Audit-Plugin erfasst die Aufgabe. {markers}", if mode == AgentSessionMode::Ask {""} else {"PLAN:\n"}),"source_refs":refs}}).to_string())
+                "markdown":markdown,"source_refs":refs}}).to_string())
         }
     }
     async fn complete_evidence_diagrams(
@@ -486,17 +505,18 @@ impl ResearchModel for StorageModel {
             .iter()
             .map(|reference| format!("【{reference}】"))
             .collect::<String>();
-        let prefix = if mode == AgentSessionMode::Ask {
-            ""
+        let finding = format!("Storage-Auswahl durch Factory und Konfiguration. {markers}");
+        let markdown = if mode == AgentSessionMode::Ask {
+            finding
         } else {
-            "PLAN:\n"
+            fixture_plan(&finding)
         };
         Ok(serde_json::json!({"schema_version":4,"decision":{
             "kind":"answer", "evidence_status":if call == 0 {"incomplete"} else {"sufficient"},
             "note":{"goal":"Storage erklären", "finding_kind":"conclusion", "finding":"Factory und INI sind gelesen", "finding_source_refs":refs,
                 "gap":if call == 0 {"Aufrufstelle von get_storage und TaskFlowConfig nicht belegt"} else {"Keine wesentliche Lücke"},
                 "next_step":if call == 0 {"Aufrufer von get_storage prüfen"} else {"Antworten"}},
-            "markdown":format!("{prefix}Storage-Auswahl durch Factory und Konfiguration. {markers}"), "source_refs":refs
+            "markdown":markdown, "source_refs":refs
         }}).to_string())
     }
     async fn complete_evidence_diagrams(
@@ -820,7 +840,7 @@ fn repair_that_uses_the_final_decision_keeps_followup_reads_closed() -> Result<(
                     &guard,
                     false,
                 ))?;
-                let (_, permission) =
+                let (_, permission, _) =
                     decision.map_err(|_| "expected repaired incomplete answer")?;
                 assert_eq!(permission, BeginResearchDecision::FinalOnly);
                 assert_eq!(model.calls.load(Ordering::SeqCst), 2);

@@ -274,7 +274,6 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Modellturn erscheint. Eine dateihaltige `searchIndex`-Aktion muss das eindeutige Ziel direkt
   lesen; eine Nullrunde muss den Zugang wechseln, ohne Stagnations-, Aktions- oder Zeitgrenzen zu
   lockern.
-- Recherche-Fortsetzungsregressionen bilden wiederholte Router-/Server-Reads nach: pro
 - Der ADR-0046-Contract prüft den 143-Zeilen-TaskFlow-Manager mit spätem `add_task`,
   Plugin-Dispatcher und Audit-Plugin über realen Parser, Index, libSQL, Safe Reader und
   besessenen Scheduler bei 1/2/4/8 KiB. Ask, Plan, Agent-Vorbereitung und `/diagram`
@@ -297,6 +296,17 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   die ursprüngliche Frage bei verschachtelten Legacy-Fortsetzungen, Priorität zuletzt belegter
   Quellen, vollständige Bereichsrevalidierung, neue Fragen ohne alte offene Ziele sowie erhaltene
   Teilantworten und Zitate. Der Component-Test verlangt einen kompakten Fortsetzungseintrag.
+- Plan-Recherche nach der Korrektur vom 2026-09-06 prüft vier gleichzeitig benötigte APIs
+  bei 2/4/8 KiB gegen den eingefrorenen Packer aus `c604618`. Ein stateless Modellstub darf
+  keine außerhalb des aktuellen Pakets erinnerte Evidence verwenden. Reale Parser, Index,
+  Reader, Recherchecontroller, produktive Plan-Zustandsauswahl und atomarer libSQL-Commit
+  müssen ohne Neustart zu einer gespeicherten `AwaitingPlanReview`-Revision gelangen.
+  Regressionen verlangen vollständigen Auftrag, intakte Notizreferenzen, wiederholbare
+  präzise API-Ansichten, fortschreitende Seitenanfänge und Erhalt kurzer kompletter Quellen.
+  Negative Fälle prüfen unvollständige Pläne, Planformfehler nach JSON-Repair, fehlende
+  Zielattribution nach Plan-Repair, echte Rückfragen ohne Zitate, Context-Limit vor dem
+  ersten Modellaufruf sowie Stagnation ohne Verbrauch sämtlicher Modellaufrufe.
+  Details und Messgrenzen: [Plan-Recherche-Fixture](../fixtures/research-plan-v1/README.md).
 - Die autonome Core-Vertiefung muss ein reales TaskFlow-Storage-Fixture in Ask, Plan
   und Agent-Vorbereitung ohne Fortsetzungsklick bearbeiten: unveränderter Index,
   libSQL, sicherer Reader, gezielte Textsuche und besessener Scheduler; ausschließlich

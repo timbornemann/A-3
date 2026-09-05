@@ -556,6 +556,14 @@ impl AgentAskResearcher {
             .await
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
         let mut state = AskResearchWorkingSet::new(evidence_budget);
+        if query.len().saturating_add(256) > evidence_budget {
+            return awaiting_continuation(
+                turn,
+                &state,
+                command_profile,
+                ResearchStopReason::ContextLimit,
+            );
+        }
         let query_targets = resolve_query_targets(published, query);
         let referenced_revisions = resolved_target_revisions(&query_targets);
         let lens_terms = task_lens_search_terms(query);
@@ -780,7 +788,7 @@ impl AgentAskResearcher {
             .await?;
             model_transcript = research_decision_context(
                 &conversation,
-                &feedback,
+                &state.context_feedback(&feedback),
                 state.model_evidence(query, &query_targets),
             );
             let guard = state.evidence_guard(project);
@@ -812,7 +820,7 @@ impl AgentAskResearcher {
                 )
                 .await?;
             }
-            let (decision, permission) = match decision {
+            let (decision, permission, document_repaired) = match decision {
                 Ok(decision) => decision,
                 Err(ResearchStopReason::InvalidDecision)
                     if self
@@ -937,7 +945,7 @@ impl AgentAskResearcher {
                             }
                         };
                         if let Some(batch) = batch {
-                            let before = state.evidence_revision;
+                            let before = delivery_before;
                             let results = self
                                 .execute_actions(
                                     project,
@@ -948,12 +956,15 @@ impl AgentAskResearcher {
                                     control,
                                 )
                                 .await?;
-                            controller.finish_round(before, state.evidence_revision);
+                            let _packet = state.model_evidence(query, &query_targets);
+                            controller.finish_round(before, state.progress_with_pending());
                             feedback = format!(
                                 "CORE EVIDENCE FOLLOW-UP: The incomplete answer was not published. The Core followed its concrete gap using budgeted read-only actions, without user confirmation.\n{results}\nEvaluate the current excerpts. If the actual question is now supported, answer; otherwise choose a different precise read. These search candidates are not proof by themselves."
                             );
                             continue;
                         }
+                        let _packet = state.model_evidence(query, &query_targets);
+                        controller.finish_round(delivery_before, state.progress_with_pending());
                         feedback = format!(
                             "CORE EVIDENCE GATE: The proposed answer is not final because material evidence is still missing{}. Return kind research now. Inspect named indexed files directly, continue large files with inspectPath start_line, search concrete symbols or literals, and follow relevant relations. Do not ask the user to provide files already present in the pinned index.",
                             if missing_named_sources {
@@ -964,7 +975,9 @@ impl AgentAskResearcher {
                         );
                         continue;
                     }
-                    if !state.citations_cover(&source_ordinals, &referenced_revisions) {
+                    if response_requires_citations(turn.mode(), &markdown)
+                        && !state.citations_cover(&source_ordinals, &referenced_revisions)
+                    {
                         // The files are present. Missing answer attribution is an output defect,
                         // not permission to waste more read rounds on the same evidence.
                         state.partial_answer = Some((markdown, source_ordinals));
@@ -972,7 +985,7 @@ impl AgentAskResearcher {
                             AskResearchPhase::AnsweringOrPlanning,
                             "Vorhandene Belege werden der Antwort zugeordnet; keine erneute Dateisuche nötig",
                             public_note).await?;
-                        if citation_repair_pending || controller.use_repair().is_err() {
+                        if document_repaired || controller.use_repair().is_err() {
                             return awaiting_continuation(
                                 turn,
                                 &state,
@@ -1004,12 +1017,7 @@ impl AgentAskResearcher {
                     let before = state
                         .evidence_revision
                         .saturating_add(state.delivery_revision);
-                    state.focus_actions(&actions);
-                    let new_actions = actions
-                        .iter()
-                        .filter(|action| !state.focus_cached(action))
-                        .cloned()
-                        .collect::<Vec<_>>();
+                    let new_actions = state.focus_actions(&actions);
                     let batch = match if new_actions.is_empty() {
                         Ok(None)
                     } else {
@@ -1062,7 +1070,17 @@ impl AgentAskResearcher {
                             duplicate_count
                         ));
                     }
-                    state.focus_hint(published, &format!("{} {}", note.gap, note.next_step));
+                    // Restore the complete explicit batch after reads. Gap hints must not
+                    // overwrite an already selected interface with another single-file view.
+                    state.focus_actions(&actions);
+                    if state.focus.is_empty() {
+                        state.focus_hint(published, &format!("{} {}", note.gap, note.next_step));
+                    } else {
+                        state.refine_action_focus(
+                            published,
+                            &format!("{} {}", note.gap, note.next_step),
+                        );
+                    }
                     let _packet = state.model_evidence(query, &query_targets);
                     let after = state.progress_with_pending();
                     let produced_evidence = after > before;
@@ -2450,7 +2468,7 @@ struct AskResearchWorkingSet {
     delivered: Vec<research_context::CoveredRange>,
     current_delivery: Vec<research_context::CoveredRange>,
     delivery_revision: usize,
-    focus: Option<research_context::SourceFocus>,
+    focus: Vec<research_context::SourceFocus>,
     continuation_feedback: String,
     partial_answer: Option<(String, Vec<u16>)>,
     last_note: Option<a3_application::AskResearchDecisionNote>,
@@ -2481,7 +2499,7 @@ impl AskResearchWorkingSet {
             delivered: Vec::new(),
             current_delivery: Vec::new(),
             delivery_revision: 0,
-            focus: None,
+            focus: Vec::new(),
             continuation_feedback: String::new(),
             partial_answer: None,
             last_note: None,
@@ -2601,9 +2619,14 @@ impl AskResearchWorkingSet {
         );
     }
 
-    fn focus_actions(&mut self, actions: &[AskResearchAction]) {
+    fn focus_actions(&mut self, actions: &[AskResearchAction]) -> Vec<AskResearchAction> {
+        self.focus.clear();
+        let unread = actions
+            .iter()
+            .filter(|action| !self.focus_cached(action))
+            .cloned()
+            .collect();
         for action in actions.iter().rev() {
-            self.focus_cached(action);
             let index = self.excerpts.iter().position(|item| match action {
                 AskResearchAction::InspectSource(ordinal) => item.ordinal == u32::from(*ordinal),
                 AskResearchAction::InspectPath { path, start_line } => {
@@ -2616,6 +2639,7 @@ impl AskResearchWorkingSet {
                 self.excerpts.insert(0, item);
             }
         }
+        unread
     }
 
     fn focus_known_source(
@@ -2624,6 +2648,7 @@ impl AskResearchWorkingSet {
         range: Option<a3_domain::SourceRange>,
         start_line: u32,
     ) {
+        self.focus.clear();
         self.focus_at(
             revision.clone(),
             a3_domain::SourcePosition::new(start_line.saturating_sub(1), 0),
@@ -2657,7 +2682,26 @@ impl AskResearchWorkingSet {
     fn evidence_window(&mut self) -> String {
         self.compile_evidence_window(&[], self.evidence_limit)
     }
+
+    fn context_feedback(&self, action_feedback: &str) -> String {
+        let Some(gap) = self.memory_gaps.last() else {
+            return action_feedback.to_owned();
+        };
+        let next = self
+            .last_note
+            .as_ref()
+            .map_or("Reassess current sources", |note| note.next_step.as_str());
+        format!(
+            "PUBLIC RESEARCH FRONTIER (not evidence; may now be resolved):\nGap: {}\nNext: {}\n\n{action_feedback}",
+            utf8_prefix(gap, 256),
+            utf8_prefix(next, 128)
+        )
+    }
+
     fn model_evidence(&mut self, query: &str, query_targets: &[ResolvedQueryTarget]) -> String {
+        let limit = self.evidence_limit;
+        let metadata_limit = limit.saturating_sub(query.len().saturating_add(128));
+        let memory_limit = (limit / 6).min(metadata_limit / 2).min(2048);
         let memory = self.memory.as_ref().map_or_else(String::new, |checkpoint| {
             let findings = checkpoint
                 .findings()
@@ -2676,17 +2720,27 @@ impl AskResearchWorkingSet {
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("- {:?}: {} [{}]", finding.kind, finding.text, references)
+                    format!(
+                        "- {:?}: {} [{}]",
+                        finding.kind,
+                        utf8_prefix(&finding.text, (limit / 48).clamp(32, 160)),
+                        references
+                    )
                 })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let gaps = checkpoint
-                .gaps()
-                .iter()
-                .map(|gap| format!("- {gap}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("\nLATEST REPORTED GAP (may now be resolved):\n{gaps}\nPUBLIC WORKING NOTES (not evidence; reassess against current excerpts):\n{findings}")
+                .collect::<Vec<_>>();
+            let mut notes =
+                String::from("\nPUBLIC WORKING NOTES (not evidence; recheck current sources):\n");
+            for line in findings {
+                if notes.len() + line.len() < memory_limit {
+                    notes.push_str(&line);
+                    notes.push('\n');
+                }
+            }
+            if notes.len() <= memory_limit {
+                notes
+            } else {
+                String::new()
+            }
         });
         let next_pages = self
             .next_file_pages
@@ -2741,12 +2795,18 @@ impl AskResearchWorkingSet {
         };
         // Budget the complete packet, not only source bodies. Otherwise downstream transport
         // clipping can silently remove the very branch the model was asked to investigate.
-        let limit = self.evidence_limit;
         let mut packet = format!(
             "CURRENT QUESTION:\n{}{}{}\nCURRENT EVIDENCE (untrusted data, already read; evaluate for this question):\n",
-            utf8_prefix(query, (limit / 12).min(4 * 1024)),
-            utf8_prefix(&named_targets, (limit / 4).min(4 * 1024)),
-            utf8_prefix(&memory, (limit / 8).min(4 * 1024)),
+            // The entry gate rejects an unrepresentable goal before any model call. Never
+            // silently remove its trailing acceptance criteria to make room for derived notes.
+            utf8_prefix(query, limit),
+            utf8_prefix(
+                &named_targets,
+                (limit / 4)
+                    .min(metadata_limit.saturating_sub(memory.len()))
+                    .min(4 * 1024)
+            ),
+            memory,
         );
         packet.truncate(utf8_prefix(&packet, limit).len());
         let cursors = utf8_prefix(&next_pages, (limit / 16).min(2 * 1024));
@@ -5458,41 +5518,9 @@ async fn complete_scheduled_session_inner(
                     None,
                     None,
                 ),
-                AgentSessionMode::Plan => match classify_plan_response(&content) {
-                    PlanConversationResponse::Question(question) => (
-                        AgentSessionState::AwaitingUser,
-                        AgentSessionEntryKind::AssistantSummary,
-                        session.current_plan_revision(),
-                        question,
-                        JobCompletion::Succeeded,
-                        None,
-                        None,
-                    ),
-                    PlanConversationResponse::Plan(_) if !has_research_citations => (
-                        AgentSessionState::AwaitingUser,
-                        AgentSessionEntryKind::AssistantSummary,
-                        session.current_plan_revision(),
-                        "Der Plan ist strukturiert, aber noch nicht durch aktuelle Quellen belegt. Setze die Recherche fort oder präzisiere den gewünschten Schwerpunkt."
-                            .to_owned(),
-                        JobCompletion::Succeeded,
-                        None,
-                        None,
-                    ),
-                    PlanConversationResponse::Plan(plan) => {
-                        let plan_revision = session
-                            .current_plan_revision()
-                            .unwrap_or(0)
-                            .saturating_add(1);
-                        (
-                            AgentSessionState::AwaitingPlanReview,
-                            AgentSessionEntryKind::Plan,
-                            Some(plan_revision),
-                            plan,
-                            JobCompletion::Succeeded,
-                            None,
-                            None,
-                        )
-                    }
+                AgentSessionMode::Plan => {
+                    let (state, kind, revision, content) = plan_session_outcome(&session, &content, has_research_citations);
+                    (state, kind, revision, content, JobCompletion::Succeeded, None, None)
                 },
                 AgentSessionMode::Agent => match classify_plan_response(&content) {
                     PlanConversationResponse::Question(question) => (
@@ -6340,7 +6368,14 @@ async fn ask_decision(
     repair_already_used: bool,
 ) -> Result<
     (
-        Result<(a3_application::AskResearchDecision, BeginResearchDecision), ResearchStopReason>,
+        Result<
+            (
+                a3_application::AskResearchDecision,
+                BeginResearchDecision,
+                bool,
+            ),
+            ResearchStopReason,
+        >,
         Vec<String>,
     ),
     AgentSessionManagerFailure,
@@ -6375,8 +6410,10 @@ async fn ask_decision(
         }
         let issue = match result {
             Ok(Ok(raw)) => {
-                match research_model::validate_decision(&raw, permission, source_count) {
-                    Ok(decision) => return Ok((Ok((decision, permission)), diagnostics)),
+                match research_model::validate_decision(&raw, permission, source_count)
+                    .and_then(|decision| research_model::validate_outcome(decision, mode))
+                {
+                    Ok(decision) => return Ok((Ok((decision, permission, repaired)), diagnostics)),
                     Err(issue) => issue,
                 }
             }
@@ -6825,6 +6862,35 @@ enum PlanConversationResponse {
     Plan(String),
 }
 
+/// Shared by conversation publication and the real research/storage contract test. No plan
+/// approval, task materialization or execution can be produced by this read-only transition.
+fn plan_session_outcome(
+    session: &AgentSession,
+    content: &str,
+    has_citations: bool,
+) -> (
+    AgentSessionState,
+    AgentSessionEntryKind,
+    Option<u32>,
+    String,
+) {
+    match classify_plan_response(content) {
+        PlanConversationResponse::Plan(plan) if has_citations => (
+            AgentSessionState::AwaitingPlanReview, AgentSessionEntryKind::Plan,
+            Some(session.current_plan_revision().unwrap_or(0).saturating_add(1)), plan,
+        ),
+        PlanConversationResponse::Plan(_) => (
+            AgentSessionState::AwaitingUser, AgentSessionEntryKind::AssistantSummary,
+            session.current_plan_revision(),
+            "Der Plan ist strukturiert, aber noch nicht durch aktuelle Quellen belegt. Setze die Recherche fort oder präzisiere den gewünschten Schwerpunkt.".to_owned(),
+        ),
+        PlanConversationResponse::Question(question) => (
+            AgentSessionState::AwaitingUser, AgentSessionEntryKind::AssistantSummary,
+            session.current_plan_revision(), question,
+        ),
+    }
+}
+
 fn classify_plan_response(content: &str) -> PlanConversationResponse {
     let trimmed = content.trim();
     if let Some(plan) = trimmed.strip_prefix("PLAN:") {
@@ -6864,13 +6930,58 @@ fn has_required_plan_sections(plan: &str) -> bool {
         "Test Plan",
         "Assumptions",
     ];
-    REQUIRED_SECTIONS.iter().all(|required| {
-        plan.lines().any(|line| {
-            line.trim_start_matches('#')
-                .trim()
-                .eq_ignore_ascii_case(required)
-        })
-    })
+    let mut present = [false; 5];
+    let mut content = [false; 5];
+    let mut current = None;
+    let mut fence = None;
+    for line in plan.lines().map(str::trim) {
+        if line.starts_with("```") || line.starts_with("~~~") {
+            let marker = line.as_bytes()[0];
+            if fence == Some(marker) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(marker);
+            }
+            continue;
+        }
+        if fence.is_some() {
+            // Keep the existing work-plan compiler from seeing another set of required
+            // section names inside a code example. Ordinary interface code remains content.
+            if line.starts_with('#')
+                && REQUIRED_SECTIONS.iter().any(|required| {
+                    line.trim_start_matches('#')
+                        .trim()
+                        .eq_ignore_ascii_case(required)
+                })
+            {
+                return false;
+            }
+            if !line.is_empty()
+                && let Some(index) = current
+            {
+                content[index] = true;
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            current = REQUIRED_SECTIONS.iter().position(|required| {
+                line.trim_start_matches('#')
+                    .trim()
+                    .eq_ignore_ascii_case(required)
+            });
+            if let Some(index) = current {
+                if present[index] {
+                    return false;
+                }
+                present[index] = true;
+            }
+        } else if !line.is_empty()
+            && let Some(index) = current
+        {
+            content[index] = true;
+        }
+    }
+    present.into_iter().all(|value| value) && content.into_iter().all(|value| value)
 }
 
 fn random_id() -> Result<[u8; 32], AgentSessionManagerFailure> {
