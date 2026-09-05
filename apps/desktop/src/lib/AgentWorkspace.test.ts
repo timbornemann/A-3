@@ -726,6 +726,25 @@ describe('AgentWorkspace', () => {
     );
   });
 
+  it('shows a compact continuation instead of repeating the original question', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    response.result.session.entries[0].text =
+      'Recherche fortsetzen. Ursprüngliche Frage:\nUntersuche den REST-API Server und router.py.';
+    const summary = response.result.session.summary;
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionLoader: vi.fn(async () => response),
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: { nextCursor: null, sessions: [summary], status: 'available' },
+      })),
+    });
+    expect(await screen.findByText('Recherche fortsetzen')).toBeTruthy();
+    expect(screen.queryByText(/Ursprüngliche Frage:/u)).toBeNull();
+    expect(screen.queryByText(/Untersuche den REST-API Server/u)).toBeNull();
+  });
+
   it('keeps polling a running Ask session after a transient read failure', async () => {
     const running = askSession('running');
     const completed = askSession('completed');

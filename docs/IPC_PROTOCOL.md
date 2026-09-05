@@ -376,6 +376,12 @@ gewählte `researchDepth: standard | thorough`. Der kompatible V1-Command verwen
 Core löst damit ausschließlich den neuesten sichtbaren `awaitingContinuation`-Abschnitt auf und
 bindet ihn an den dann aktuellen Index.
 
+Intern wird dessen exakte User-Sequenz als Fortsetzungsbindung an den Recherchejob übergeben.
+Die ursprüngliche Frage sowie revalidierte Quellen, öffentliche Befunde und die letzte offene
+Lücke werden aus der bestehenden Persistenz rekonstruiert, statt die Fortsetzung als neue Frage
+zu lokalisieren. Die WebView liefert dafür weiterhin weder Source-Identitäten noch Pfade;
+Sessionrevision, fortsetzbarer Endzustand und gespeichertes Slash-Profil werden erneut geprüft.
+
 ADR-0043 ändert keine WebView-Parameter. Intern verwendet der gemeinsame Conversation-Use-Case
 Ask-Research-Decision V3: `evidence_status` ist geschlossen, und `inspectPath` trägt eine positive
 `start_line` für die nächste begrenzte Source-Seite. Beide Werte stammen ausschließlich aus dem

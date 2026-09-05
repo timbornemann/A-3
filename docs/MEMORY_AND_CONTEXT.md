@@ -466,6 +466,32 @@ begrenzt, während die persistierte sichtbare Timeline unverändert vollständig
 Core-Zielprojektion aus angefragtem Namen, aktuellem Pfad und turnlokalem `S`-Label ist
 Navigationsmetadatum und keine fachliche Evidence.
 
+Die Modellnachrichten werden pro Entscheidung aus dem begrenzten ursprünglichen
+Conversation-Ausschnitt, genau dem aktuellen Aktionsfeedback und einem frisch kompilierten
+Evidence-Paket aufgebaut. Frühere kompilierte Pakete werden nicht erneut als Conversation
+angehängt. Der flüchtige Source-Cache hält höchstens 200 Ausschnitte zu je 32 KiB; das kleinere
+modellprofilgebundene Evidence-Fenster verteilt seinen Platz auf höchstens acht fokussierte
+Ausschnitte. Ein erneutes identisches Lesen ersetzt beziehungsweise fokussiert den vorhandenen
+Ausschnitt, zählt aber nicht als Evidence-Zuwachs. Später angeforderte Zeilenbereiche bleiben
+vorrangig; eine Kontextkürzung nennt einen konkreten Fortsetzungsbereich. Im Modellcheckpoint
+bleibt nur die zuletzt gemeldete offene Lücke aktiv, während ältere Notizen im Journal erhalten
+bleiben. Nach zwei echten Nullrunden darf eine verbleibende Entscheidung den vorhandenen Stand
+noch auswerten; sie eröffnet keine weiteren Reads und endet weiterhin an `AwaitingContinuation`.
+
+Die explizite Fortsetzung ist kein neuer fachlicher Auftrag: Der Core bindet intern die exakte
+vorherige User-Sequenz, verwendet die ursprüngliche Frage ohne verschachtelte Fortsetzungstexte
+und priorisiert bei der Revalidierung die Quellen der letzten drei öffentlichen Befunde, danach
+die zuletzt gefundenen Quellen. Die bisherigen Grenzen von höchstens acht zusätzlich
+revalidierten Quellen und 200 Quellen insgesamt gelten weiter. Dateiseiten müssen den alten
+Belegbereich abdecken; nur vollständig revalidierte Beobachtungen oder Schlussfolgerungen
+erhalten neue turnlokale Source-Verweise. Übernommene öffentliche Notizen werden mit diesen
+Verweisen im neuen Abschnitt aufgezeichnet, sodass eine weitere Fortsetzung nach Reopen den
+Arbeitsstand erneut rekonstruieren kann. Frühere Suchversuche und offene Ziele sind begrenzte
+Navigationshinweise, keine Evidence oder ausführbare Anweisungen. Sind aktuelle Quellen vorhanden,
+entfällt die erneute breite Task-Lens-Basisrecherche; gezielte weitere Werkzeuge bleiben möglich.
+Eine andere neue Frage übernimmt dagegen keine frühere offene Lücke. Neue Budgets benötigen
+weiterhin eine ausdrückliche Nutzeraktion; es gibt keine selbststartende Fortsetzungsschleife.
+
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum
 Sessionmodus. Nach Ask oder Plan werden frühere Agent-Anker nur im Verlauf dargestellt; ein neuer

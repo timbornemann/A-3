@@ -1514,9 +1514,12 @@
                   ]?.sources ?? [])
                 : []}
               {@const displayedEntryText =
-                entryCommands.length > 0
-                  ? commandSubjectText(entry.text, entryCommands)
-                  : entry.text}
+                entry.kind === 'userMessage' &&
+                entry.text.startsWith('Recherche fortsetzen. Ursprüngliche Frage:\n')
+                  ? 'Recherche fortsetzen'
+                  : entryCommands.length > 0
+                    ? commandSubjectText(entry.text, entryCommands)
+                    : entry.text}
               <article
                 class:user-message={entry.kind === 'userMessage'}
                 class:agent-message={entry.kind !== 'userMessage'}

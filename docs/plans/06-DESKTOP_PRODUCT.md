@@ -1153,6 +1153,16 @@ Repositorypfad und `S`-Quelle. Spätere adaptive Reads besitzen reservierten Kon
 dateihaltige `searchIndex`-Aktionen lesen das eindeutige Ziel direkt. Die vorhandenen Standard-,
 Gründlich-, Stagnations- und Sicherheitsgrenzen bleiben unverändert.
 
+Fortsetzungs- und Schleifenkorrektur vom 2026-09-05: Eine explizite Recherchefortsetzung behält
+das ursprüngliche Ziel und übernimmt bevorzugt die revalidierten Quellen und öffentlichen
+Arbeitsnotizen des letzten Abschnitts. Sie führt bei vorhandenen Quellen nicht erneut die breite
+Basisrecherche aus. Normale Fortsetzungsnachrichten zeigen im Chat nur „Recherche fortsetzen“
+statt die Frage mehrfach auszuschreiben; die ursprüngliche Frage bleibt dauerhaft rekonstruierbar.
+Pro Modellrunde wird nur ein aktuelles Evidence-Paket kompiliert; identische Reads blähen den
+Kontext nicht auf und zählen nicht als neuer Fortschritt. Eine letzte Auswertung nach Stagnation
+und bereits validierte Teilantworten bleiben als zitierter Zwischenstand mit ausdrücklicher
+Fortsetzungsaktion erhalten. Die Recherche beginnt keine neuen Budgets ohne Nutzeraktion.
+
 Abschluss- und Scrollkorrektur vom 2026-09-05: Die Conversation positioniert einen ausdrücklich
 gestarteten oder geöffneten Turn einmalig, folgt danach aber nicht mehr jeder progressiven
 Höhenänderung des Rechercheblocks. Manuelles Scrollen und jede Pointer-, Touch- oder

@@ -261,6 +261,13 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Modellturn erscheint. Eine dateihaltige `searchIndex`-Aktion muss das eindeutige Ziel direkt
   lesen; eine Nullrunde muss den Zugang wechseln, ohne Stagnations-, Aktions- oder Zeitgrenzen zu
   lockern.
+- Recherche-Fortsetzungsregressionen bilden wiederholte Router-/Server-Reads nach: pro
+  Entscheidung genau ein aktuelles Evidence-Paket, keine doppelten Ausschnitte oder künstlichen
+  Fortschrittszähler, kein Rückfall vom fokussierten späteren Bereich zum Dateianfang, konkrete
+  Kontextkürzung und Auswertung vor der expliziten Stagnationsfortsetzung. Sie prüfen außerdem
+  die ursprüngliche Frage bei verschachtelten Legacy-Fortsetzungen, Priorität zuletzt belegter
+  Quellen, vollständige Bereichsrevalidierung, neue Fragen ohne alte offene Ziele sowie erhaltene
+  Teilantworten und Zitate. Der Component-Test verlangt einen kompakten Fortsetzungseintrag.
 - Conversation-Regressions müssen belegen, dass ein zweites ungültiges strukturiertes Ergebnis
   nach genau einem Repair als `AwaitingContinuation` mit erhaltenen Quellen endet. `/diagram`
   muss eine zweite feste Formatierungsentscheidung reservieren und bei weiterem Fehler Antwort
