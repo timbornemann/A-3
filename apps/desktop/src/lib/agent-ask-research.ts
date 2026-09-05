@@ -96,6 +96,9 @@ export interface AgentWorkTraceSourceV2 extends AgentAskResearchSourceV1 {
   referenceLabel: string;
 }
 export interface AgentWorkTracePresentationV1 {
+  additionalSourcesExpanded?: boolean;
+  autoCollapseDone?: boolean;
+  disclosureOverride?: boolean;
   detail: AgentAskResearchDetailV1;
   expanded: boolean;
   loadState: 'available';

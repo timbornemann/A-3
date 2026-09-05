@@ -832,16 +832,18 @@ describe('AgentWorkspace', () => {
     expect(container.querySelector('.messages details.ask-research')).toBe(research);
   });
 
-  it('keeps the viewport stable while progressive research changes its height', async () => {
+  it('coalesces live follow and respects manual browsing, layout clamping and cleanup', async () => {
     let observerCount = 0;
+    let notifyResize = () => {};
+    const disconnect = vi.fn();
     class ResizeObserverMock {
       constructor(callback: ResizeObserverCallback) {
-        void callback;
+        notifyResize = () => callback([], this);
         observerCount += 1;
       }
 
       observe(): void {}
-      disconnect(): void {}
+      disconnect = disconnect;
       unobserve(): void {}
     }
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
@@ -849,7 +851,7 @@ describe('AgentWorkspace', () => {
     const response = askSession('completed');
     if (response.result.status !== 'available') throw new Error('fixture must be available');
     const session = response.result.session;
-    const { container } = render(AgentWorkspace, {
+    const { container, unmount } = render(AgentWorkspace, {
       activeProject: true,
       pollIntervalMs: 60_000,
       sessionLoader: vi.fn(async () => response),
@@ -873,18 +875,78 @@ describe('AgentWorkspace', () => {
       get: () => scrollHeight,
     });
 
-    viewport.scrollTop = 500;
-    await fireEvent.scroll(viewport);
+    notifyResize();
+    await waitFor(() => expect(viewport.scrollTop).toBe(700));
     scrollHeight = 1_200;
-    await Promise.resolve();
-    expect(viewport.scrollTop).toBe(500);
+    for (let count = 0; count < 30; count += 1) notifyResize();
+    expect(viewport.scrollTop).toBe(700); // no write in observer delivery
+    await waitFor(() => expect(viewport.scrollTop).toBe(900));
 
     await fireEvent.pointerDown(viewport);
     viewport.scrollTop = 420;
+    await fireEvent.scroll(viewport);
     scrollHeight = 1_300;
-    await Promise.resolve();
+    notifyResize();
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
     expect(viewport.scrollTop).toBe(420);
-    expect(observerCount).toBe(0);
+    // Shrinking content can clamp to the end; it must not reattach the reader.
+    scrollHeight = 600;
+    viewport.scrollTop = 300;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_400;
+    notifyResize();
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    expect(viewport.scrollTop).toBe(300);
+    await fireEvent.click(screen.getByRole('button', { name: /Zum neuesten Schritt/ }));
+    await waitFor(() => expect(viewport.scrollTop).toBe(1_100));
+    await fireEvent.wheel(viewport, { deltaY: -100 });
+    viewport.scrollTop = 900;
+    await fireEvent.scroll(viewport);
+    await fireEvent.wheel(viewport, { deltaY: 100 });
+    viewport.scrollTop = 1_100;
+    await fireEvent.scroll(viewport);
+    scrollHeight = 1_500;
+    notifyResize();
+    await waitFor(() => expect(viewport.scrollTop).toBe(1_200));
+    expect(observerCount).toBe(1);
+    unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the same research element and disclosure when the next user turn starts', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const session = response.result.session;
+    const next = structuredClone(session);
+    next.summary.revision = '3';
+    next.summary.state = 'running';
+    next.entries.push({ ...next.entries[0], sequence: '3', text: 'Und die Tests?' });
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 60_000,
+      sessionLoader: vi.fn(async () => response),
+      messageSubmitter: vi.fn(async (): Promise<AgentSessionResponseV1> => ({
+        protocolVersion: 1,
+        result: { status: 'available', session: next },
+      })),
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: { nextCursor: null, sessions: [session.summary], status: 'available' },
+      })),
+    });
+    await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
+    const research = container.querySelector<HTMLDetailsElement>('.ask-research');
+    if (!research) throw new Error('missing research');
+    await fireEvent.click(research.querySelector('summary') as HTMLElement);
+    expect(research.open).toBe(true);
+    await fireEvent.input(screen.getByLabelText('Nachricht an A^3'), {
+      target: { value: 'Und die Tests?' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+    await screen.findByText('Und die Tests?');
+    await waitFor(() => expect(container.querySelectorAll('.ask-research')).toHaveLength(2));
+    expect(container.querySelector('.ask-research')).toBe(research);
+    expect(research.open).toBe(true);
   });
 
   it('keeps one polling owner across fresh running-session projections', async () => {
@@ -917,6 +979,60 @@ describe('AgentWorkspace', () => {
     expect(
       clearTimer.mock.calls.some(([timer]) => timer !== undefined && ownedTimers.has(timer)),
     ).toBe(true);
+  });
+
+  it('polls only the latest research turn, not historical traces with fresh parent objects', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    response.result.session.entries.push({
+      ...response.result.session.entries[0],
+      sequence: '3',
+      text: 'Weiter recherchieren',
+    });
+    response.result.session.summary.state = 'running';
+    const summary = response.result.session.summary;
+    const sessionLoader = vi.fn(async () => structuredClone(response));
+    const researchProjectionLoader = vi.fn(async (_session: string, userSequence: string) => ({
+      protocolVersion: 1 as const,
+      result: {
+        status: 'available' as const,
+        projectionRef: 'c'.repeat(128),
+        nextCursor: null,
+        sources: [],
+        detail: {
+          userSequence,
+          citedSourceCount: 0,
+          sourceCount: 0,
+          depth: 'standard' as const,
+          legacy: false,
+          mode: 'ask' as const,
+          stale: false,
+          steps: [],
+        },
+      },
+    }));
+    const view = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 20,
+      sessionLoader,
+      researchProjectionLoader,
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: { status: 'available', sessions: [summary], nextCursor: null },
+      })),
+    });
+    await waitFor(() => expect(sessionLoader.mock.calls.length).toBeGreaterThanOrEqual(5));
+    expect(researchProjectionLoader.mock.calls.filter(([, turn]) => turn === '1')).toHaveLength(1);
+    expect(
+      researchProjectionLoader.mock.calls.filter(([, turn]) => turn === '3').length,
+    ).toBeGreaterThanOrEqual(4);
+    expect(
+      warn.mock.calls
+        .flat()
+        .some((message) => String(message).includes('state_proxy_equality_mismatch')),
+    ).toBe(false);
+    view.unmount();
   });
 
   it('does not remount a completed diagram while the following Ask turn is polled', async () => {

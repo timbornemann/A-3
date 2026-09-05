@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import {
     queryAgentAskResearchDetail,
     queryAgentAskResearchSourcePreview,
@@ -70,13 +70,14 @@
   let request = 0;
   let loadInFlight = false;
   let loadQueued = false;
+  let destroyed = false;
   let activeTurnKey = '';
   let revealTarget = 0;
+  let revealDeadline = 0;
   let revealTimer: ReturnType<typeof setTimeout> | null = null;
   let collapseTimer: ReturnType<typeof setTimeout> | null = null;
   let autoCollapseEligible = false;
   let autoCollapseDone = false;
-  let terminalObserved = false;
   let terminalDisclosureOverride = false;
   let handledSourceRequest = 0;
   let additionalSourcesExpanded = $state(false);
@@ -97,59 +98,74 @@
   const searchLimited = $derived(
     detail?.steps.some((step) => step.completeness === 'limited') ?? false,
   );
+  const loadIdentity = $derived(
+    `${sessionId}:${userSequence}:${refreshKey}:${live}:${recentlyCompleted}:${mirror}`,
+  );
+  const mirroredPresentation = $derived(mirror ? presentation : null);
 
   $effect(() => {
-    const turnKey = `${sessionId}:${userSequence}`;
-    if (turnKey !== activeTurnKey) {
-      activeTurnKey = turnKey;
-      request += 1;
-      resetPresentation();
-      detail = null;
-      sources = [];
-      selectedSource = null;
-      preview = null;
-      previewState = 'idle';
-      additionalSourcesExpanded = false;
-      loadState = 'loading';
-      sourceLoadState = 'loading';
-      expansionInitialized = false;
-      if (presentation?.detail.userSequence === userSequence) {
-        restorePresentation(presentation);
+    void loadIdentity;
+    // Only input changes may request a read. Publishing a projection must never
+    // subscribe this effect to its own detail, preview or parent's presentation.
+    untrack(() => {
+      const turnKey = `${sessionId}:${userSequence}`;
+      const isLive = live || recentlyCompleted;
+      if (turnKey !== activeTurnKey) {
+        activeTurnKey = turnKey;
+        request += 1;
+        resetPresentation();
+        detail = null;
+        sources = [];
+        selectedSource = null;
+        preview = null;
+        previewState = 'idle';
+        additionalSourcesExpanded = false;
+        loadState = 'loading';
+        sourceLoadState = 'loading';
+        expansionInitialized = false;
+        if (presentation?.detail.userSequence === userSequence) {
+          restorePresentation(presentation);
+          expansionInitialized = true;
+        }
+      }
+      if (!expansionInitialized) {
+        expanded = isLive;
         expansionInitialized = true;
       }
-    }
-    if (!expansionInitialized) {
-      expanded = live || recentlyCompleted;
-      expansionInitialized = true;
-    }
-    if (live || recentlyCompleted) autoCollapseEligible = true;
-    if (mirror) {
-      void presentation;
-      if (presentation) {
-        detail = presentation.detail;
-        loadState = presentation.loadState;
-        sourceLoadState = presentation.sourceLoadState;
-        sources = presentation.sources;
-        visibleStepCount = presentation.visibleStepCount;
+      if (isLive) autoCollapseEligible = true;
+      if (mirror) {
+        return;
       }
-      return;
-    }
-    void refreshKey;
-    requestResearchLoad();
+      requestResearchLoad();
+    });
+  });
+
+  $effect(() => {
+    const next = mirroredPresentation;
+    if (next)
+      untrack(() => {
+        detail = next.detail;
+        loadState = next.loadState;
+        sourceLoadState = next.sourceLoadState;
+        sources = next.sources;
+        visibleStepCount = next.visibleStepCount;
+      });
   });
 
   $effect(() => {
     if (mirror) return;
     if (!sourceRequest || sourceRequest.userSequence !== userSequence) return;
     if (sourceRequest.nonce === handledSourceRequest) return;
-    handledSourceRequest = sourceRequest.nonce;
     const source = sources.find((candidate) => candidate.referenceLabel === sourceRequest.label);
     if (!source) return;
-    expanded = true;
-    terminalDisclosureOverride = true;
-    clearCollapseTimer();
-    publishPresentation();
-    void showSource(source.sourceRef);
+    handledSourceRequest = sourceRequest.nonce;
+    untrack(() => {
+      expanded = true;
+      terminalDisclosureOverride = true;
+      clearCollapseTimer();
+      publishPresentation();
+      void showSource(source.sourceRef);
+    });
   });
 
   $effect(() => {
@@ -170,18 +186,22 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
+    request += 1;
+    loadQueued = false;
     clearRevealTimer();
     clearCollapseTimer();
   });
 
   function requestResearchLoad(): void {
+    if (destroyed) return;
     loadQueued = true;
     if (!loadInFlight) void drainResearchLoads();
   }
 
   async function drainResearchLoads(): Promise<void> {
     loadInFlight = true;
-    while (loadQueued) {
+    while (loadQueued && !destroyed) {
       loadQueued = false;
       await loadResearch(request);
     }
@@ -205,6 +225,7 @@
       try {
         response = await projectionLoader(requestedSessionId, requestedUserSequence);
       } catch {
+        if (current !== request) return;
         await loadLegacyResearch(current, requestedSessionId, requestedUserSequence);
         return;
       }
@@ -247,7 +268,8 @@
             cursor,
           );
         } catch {
-          if (!hadLoadedProjection) commitProjection(nextDetail, found, 'error');
+          if (current === request && !hadLoadedProjection)
+            commitProjection(nextDetail, found, 'error');
           return;
         }
         if (current !== request) return;
@@ -265,7 +287,6 @@
         cursor = page.result.nextCursor;
       }
       commitProjection(nextDetail, found, 'available');
-      onprojectionchange({ detail: nextDetail, sources: found });
     } catch {
       if (current === request) {
         if (detail === null) loadState = 'error';
@@ -307,7 +328,8 @@
       try {
         page = await sourcesLoader(requestedSessionId, requestedUserSequence, cursor);
       } catch {
-        if (!hadLoadedProjection) commitProjection(nextDetail, found, 'error');
+        if (current === request && !hadLoadedProjection)
+          commitProjection(nextDetail, found, 'error');
         return;
       }
       if (current !== request) return;
@@ -321,7 +343,6 @@
       cursor = page.result.nextCursor;
     } while (cursor !== null && found.length < 200);
     commitProjection(nextDetail, found, 'available');
-    onprojectionchange({ detail: nextDetail, sources: found });
   }
 
   function isAppendOnlyUpdate(previous: TimelineStep[], next: TimelineStep[]): boolean {
@@ -338,12 +359,30 @@
     nextSources: AgentWorkTraceSourceV2[],
     nextSourceLoadState: 'available' | 'error',
   ): void {
-    detail = nextDetail;
-    sources = nextSources;
+    const detailChanged = JSON.stringify(detail) !== JSON.stringify(nextDetail);
+    const sourcesChanged = JSON.stringify(sources) !== JSON.stringify(nextSources);
+    const selectedLabel = sources.find(
+      (source) => source.sourceRef === selectedSource,
+    )?.referenceLabel;
+    if (detailChanged) detail = nextDetail;
+    if (sourcesChanged) {
+      sources = nextSources;
+      // Opaque action references rotate with the trace revision; S labels retain
+      // their turn-local identity and must not remount controls or lose focus.
+      if (selectedLabel)
+        selectedSource =
+          sources.find((source) => source.referenceLabel === selectedLabel)?.sourceRef ?? null;
+    }
+    if (nextDetail.stale && preview) {
+      preview = null;
+      previewState = 'stale';
+    }
     loadState = 'available';
     sourceLoadState = nextSourceLoadState;
     synchronizeVisibleSteps(groupTimeline(nextDetail.steps).length);
     publishPresentation();
+    if (detailChanged || sourcesChanged)
+      onprojectionchange({ detail: detail ?? nextDetail, sources });
   }
 
   function groupTimeline(steps: AgentAskResearchDetailV1['steps']): TimelineStep[] {
@@ -377,6 +416,7 @@
   }
 
   function synchronizeVisibleSteps(stepCount: number): void {
+    if (stepCount > revealTarget) revealDeadline = performance.now() + REVEAL_WINDOW_MILLIS;
     revealTarget = stepCount;
     if (stepCount === 0) {
       visibleStepCount = 0;
@@ -399,7 +439,8 @@
   }
 
   function scheduleRemainingSteps(): void {
-    clearRevealTimer();
+    // An unchanged poll or an appended batch must not postpone a pending reveal.
+    if (revealTimer !== null) return;
     const remaining = revealTarget - visibleStepCount;
     if (remaining <= 0) {
       observeTerminalState();
@@ -407,13 +448,13 @@
     }
     const interval = Math.min(
       MAX_REVEAL_INTERVAL_MILLIS,
-      Math.max(1, Math.floor(REVEAL_WINDOW_MILLIS / remaining)),
+      Math.max(1, Math.floor((revealDeadline - performance.now()) / remaining)),
     );
     const revealNext = (): void => {
       revealTimer = null;
       visibleStepCount = Math.min(visibleStepCount + 1, revealTarget);
       publishPresentation();
-      if (visibleStepCount < revealTarget) revealTimer = setTimeout(revealNext, interval);
+      if (visibleStepCount < revealTarget) scheduleRemainingSteps();
       else observeTerminalState();
     };
     revealTimer = setTimeout(revealNext, interval);
@@ -426,7 +467,6 @@
       !isSuccessfulTerminal(timelineSteps.at(-1))
     )
       return;
-    terminalObserved = true;
     if (
       !autoCollapseEligible ||
       !responseVisible ||
@@ -456,10 +496,8 @@
   function handleDisclosureClick(event: MouseEvent): void {
     event.preventDefault();
     expanded = !expanded;
-    if (terminalObserved) {
-      terminalDisclosureOverride = true;
-      clearCollapseTimer();
-    }
+    terminalDisclosureOverride = true;
+    clearCollapseTimer();
     publishPresentation();
   }
 
@@ -468,9 +506,9 @@
     clearCollapseTimer();
     visibleStepCount = 0;
     revealTarget = 0;
+    revealDeadline = 0;
     autoCollapseEligible = false;
     autoCollapseDone = false;
-    terminalObserved = false;
     terminalDisclosureOverride = false;
   }
 
@@ -487,8 +525,11 @@
   }
 
   function publishPresentation(): void {
-    if (mirror || !detail || loadState !== 'available') return;
+    if (destroyed || mirror || !detail || loadState !== 'available') return;
     onpresentationchange({
+      additionalSourcesExpanded,
+      autoCollapseDone,
+      disclosureOverride: terminalDisclosureOverride,
       detail,
       expanded,
       loadState: 'available',
@@ -502,6 +543,9 @@
   }
 
   function restorePresentation(next: AgentWorkTracePresentationV1): void {
+    additionalSourcesExpanded = next.additionalSourcesExpanded ?? false;
+    autoCollapseDone = next.autoCollapseDone ?? false;
+    terminalDisclosureOverride = next.disclosureOverride ?? false;
     detail = next.detail;
     expanded = next.expanded;
     loadState = next.loadState;
@@ -514,20 +558,37 @@
   }
 
   async function showSource(sourceRef: string): Promise<void> {
+    const current = request;
+    const label = sourceForRef(sourceRef)?.referenceLabel;
     selectedSource = sourceRef;
     preview = null;
     previewState = 'loading';
     publishPresentation();
     try {
       const response = await previewLoader(sessionId, userSequence, sourceRef);
-      if (selectedSource !== sourceRef) return;
+      if (
+        current !== request ||
+        !label ||
+        sourceForRef(selectedSource ?? '')?.referenceLabel !== label
+      )
+        return;
+      if (detail?.stale) {
+        previewState = 'stale';
+        publishPresentation();
+        return;
+      }
       if (response.result.status === 'available') {
         preview = response.result.preview;
         previewState = 'idle';
       } else if (response.result.status === 'stale') previewState = 'stale';
       else previewState = 'error';
     } catch {
-      if (selectedSource === sourceRef) previewState = 'error';
+      if (
+        current === request &&
+        label &&
+        sourceForRef(selectedSource ?? '')?.referenceLabel === label
+      )
+        previewState = 'error';
     }
     publishPresentation();
   }
@@ -630,7 +691,7 @@
   }
 </script>
 
-<details class:compact class="ask-research" bind:open={expanded}>
+<details class:compact class="ask-research" data-live={live} bind:open={expanded}>
   <summary onclick={handleDisclosureClick}>
     <span class:live-dot={live}></span>
     <span>
@@ -721,7 +782,7 @@
                     <div class="note-sources">
                       <span>Quellen dieses Befunds</span>
                       <div>
-                        {#each step.note.sourceRefs as sourceRef (sourceRef)}
+                        {#each step.note.sourceRefs as sourceRef, sourceIndex (sourceIndex)}
                           {@const noteSource = sourceForRef(sourceRef)}
                           <button
                             type="button"
@@ -785,7 +846,7 @@
             <span>{usedSources.length}</span>
           </div>
           <ul class="source-list">
-            {#each usedSources as source (source.sourceRef)}
+            {#each usedSources as source (source.referenceLabel)}
               <li>
                 <button
                   type="button"
@@ -810,13 +871,16 @@
             type="button"
             aria-expanded={additionalSourcesExpanded}
             aria-label={`Zusätzlich gefunden: ${additionalSources.length} Quellen ${additionalSourcesExpanded ? 'einklappen' : 'anzeigen'}`}
-            onclick={() => (additionalSourcesExpanded = !additionalSourcesExpanded)}
+            onclick={() => {
+              additionalSourcesExpanded = !additionalSourcesExpanded;
+              publishPresentation();
+            }}
           >
             <span>Zusätzlich gefunden</span><small>{additionalSources.length}</small>
           </button>
           {#if additionalSourcesExpanded}
             <ul class="source-list additional-source-list">
-              {#each additionalSources as source (source.sourceRef)}
+              {#each additionalSources as source (source.referenceLabel)}
                 <li>
                   <button
                     type="button"
@@ -1270,11 +1334,9 @@
   @keyframes research-step-in {
     from {
       opacity: 0;
-      transform: translateY(0.25rem);
     }
     to {
       opacity: 1;
-      transform: translateY(0);
     }
   }
   @keyframes research-active-pulse {

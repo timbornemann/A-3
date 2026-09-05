@@ -55,6 +55,140 @@ afterEach(() => {
 });
 
 describe('AgentAskResearch', () => {
+  it('does not start fallback reads after an unmounted projection fails', async () => {
+    let fail: ((reason: Error) => void) | undefined;
+    const projectionLoader = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const detailLoader = vi.fn(async () => detailResponse([]));
+    const view = render(AgentAskResearch, {
+      projectionLoader,
+      detailLoader,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await tick();
+    view.unmount();
+    fail?.(new Error('late failure'));
+    await tick();
+    expect(detailLoader).not.toHaveBeenCalled();
+  });
+  it('retains focused S-source controls and selection when opaque references rotate', async () => {
+    let revision = '2';
+    const source = () => ({
+      referenceLabel: 'S1',
+      sourceRef: id(revision),
+      path: 'src/manager.py',
+      startLine: 18,
+      endLine: 32,
+      kind: 'file' as const,
+      reason: 'sourceText' as const,
+      symbol: null,
+      usedForAnswer: true,
+    });
+    const projectionLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        status: 'available' as const,
+        projectionRef: id('4'),
+        nextCursor: null,
+        sources: [source()],
+        detail: {
+          ...detailResponse([step('Prüfen', '100', 'reading')]).result.detail,
+          sourceCount: 1,
+          citedSourceCount: 1,
+        },
+      },
+    }));
+    const previewLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: { status: 'stale' as const },
+    }));
+    const view = render(AgentAskResearch, {
+      projectionLoader,
+      previewLoader,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    const button = await screen.findByRole('button', { name: /Quelle S1: src\/manager.py/ });
+    button.focus();
+    await fireEvent.click(button);
+    revision = '3';
+    await view.rerender({ refreshKey: '2' });
+    await waitFor(() => expect(projectionLoader).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: /Quelle S1: src\/manager.py/ })).toBe(button);
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(button);
+    expect(previewLoader).toHaveBeenLastCalledWith(id('1'), '1', id('3'));
+  });
+
+  it('does not reload itself or postpone reveals when identical polls arrive rapidly', async () => {
+    vi.useFakeTimers();
+    const response = detailResponse([
+      step('Start', '100', 'preparing'),
+      step('Suche', '101'),
+      step('Entscheiden', '102', 'deciding'),
+      step('Lesen', '103', 'reading'),
+      step('Auswerten', '104', 'evaluating'),
+    ]);
+    const detailLoader = vi.fn(async () => structuredClone(response));
+    const view = render(AgentAskResearch, {
+      detailLoader,
+      sourcesLoader: emptySources,
+      live: true,
+      refreshKey: '0',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await tick();
+    expect(detailLoader).toHaveBeenCalledOnce();
+    const first = view.container.querySelector('.research-steps li');
+    for (let poll = 1; poll <= 18; poll += 1) {
+      await vi.advanceTimersByTimeAsync(50);
+      await view.rerender({ refreshKey: String(poll) });
+    }
+    expect(view.container.querySelectorAll('.research-steps li')).toHaveLength(5);
+    expect(view.container.querySelector('.research-steps li')).toBe(first);
+    expect(detailLoader).toHaveBeenCalledTimes(19);
+    await vi.advanceTimersByTimeAsync(900);
+    expect(detailLoader).toHaveBeenCalledTimes(19);
+  });
+
+  it('discards an in-flight projection after unmount without publishing or restarting', async () => {
+    let finish: ((value: ReturnType<typeof detailResponse>) => void) | undefined;
+    const detailLoader = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof detailResponse>>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onpresentationchange = vi.fn();
+    const view = render(AgentAskResearch, {
+      detailLoader,
+      sourcesLoader: emptySources,
+      onpresentationchange,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await tick();
+    view.unmount();
+    finish?.(detailResponse([step('Verspätet', '100', 'preparing')]));
+    await tick();
+    expect(onpresentationchange).not.toHaveBeenCalled();
+    expect(detailLoader).toHaveBeenCalledOnce();
+  });
+
   it('keeps the understandable trace and citations under a completed answer', async () => {
     const previewLoader = vi.fn(async () => ({
       protocolVersion: 1 as const,

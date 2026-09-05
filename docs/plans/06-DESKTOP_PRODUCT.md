@@ -1177,13 +1177,24 @@ Der Live-Pollingbesitzer richtet sich nach Session und Laufzustand, nicht nach d
 jeder neu geladenen Projektion. Unveränderte laufende Sessions setzen ihren Timer deshalb nicht
 bei jedem Read neu auf; Sessionwechsel, Haltepunkte und Unmount behalten die bisherige Bereinigung.
 
-Abschluss- und Scrollkorrektur vom 2026-09-05: Die Conversation positioniert einen ausdrücklich
-gestarteten oder geöffneten Turn einmalig, folgt danach aber nicht mehr jeder progressiven
-Höhenänderung des Rechercheblocks. Manuelles Scrollen und jede Pointer-, Touch- oder
-Wheelinteraktion behalten deshalb stabil die Nutzerposition. Erschöpfte strukturierte Repairs
+Abschluss- und Scrollkorrektur vom 2026-09-05: Die zunächst einmalige Conversationpositionierung
+wird durch die nachfolgende Langchat-Korrektur um ein explizit lösbares Live-Mitlaufen ergänzt.
+Manuelles Lesen bleibt gegenüber automatischen Positionierungen vorrangig. Erschöpfte strukturierte Repairs
 enden mit erhaltenen Quellen in `AwaitingContinuation`; die Diagrammphase reserviert eine zweite
 Formatierungsentscheidung und bewahrt bei erneutem Fehler die bereits validierte Antwort samt
 Quellen, statt den ganzen Lauf als fehlgeschlagen zu markieren.
+
+Langchat-Korrektur vom 2026-09-05: Ein turngebundener Renderbereich behält Recherche, Antwort und
+Diagramme über Live-Abschluss und Folgenachrichten. Primitive Eingabeschlüssel verhindern
+historische Recherche-Reads bei identischen Elternprojektionen; laufende Einblendtimer werden
+nicht durch Polls zurückgesetzt. Veröffentlichter Markdown-Text wird unabhängig von Quellenupdates
+einmal zerlegt. S-Quellenlabels erhalten Controls und Fokus über rotierende Vorschau-Referenzen.
+Mermaid verwendet pro Instanz eindeutige Render-IDs, damit eine weitere Zeichnung kein früheres SVG
+entfernt. Geometrieänderungen lösen höchstens einen besessenen Folgeframe aus; dieser folgt dem
+letzten sichtbaren Arbeitsschritt, nicht dem Quellenfooter. Aufwärtslesen löst die Bindung,
+„Zum neuesten Schritt“ beziehungsweise bewusstes Zurückscrollen ans Ende aktiviert sie wieder.
+Fade-only-Einblendung vermeidet geometrische Drift; Reduced Motion bleibt sofortig. Fehler,
+Abbruch, explizite Fortsetzung, Vorschaugrenzen und Recherchebudget ändern sich nicht.
 
 Diagramm-Folgeturn-Korrektur vom 2026-09-05: Ein veröffentlichtes Diagramm bleibt dauerhaft an der
 zugehörigen Antwort montiert. Das Polling einer späteren Ask-Recherche invalidiert weder seine

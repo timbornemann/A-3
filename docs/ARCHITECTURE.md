@@ -569,6 +569,18 @@ Plan werden Task-, Run- und Plananker nicht übernommen. Ein späterer Agent-Auf
 erneut als Planvorbereitung. Die operative Seitenleiste wird ausschließlich aus einem tatsächlich
 materialisierten `activeTaskId` abgeleitet; Recherche und Quellen bleiben turngebunden im Chat.
 
+Die Conversation rendert je Nutzerturn einen stabilen, sessiongebundenen Komponentenbereich.
+Antworten werden vor dessen bestehender Rechercheinstanz ergänzt; ein Folgeturn hängt einen neuen
+Bereich an. Recherche-Reads folgen einem primitiven Session-/Turn-/Refresh-Schlüssel, nicht der
+Objektidentität frisch geladener Elternprojektionen. Identische Projektionen behalten ihre
+Darstellungsobjekte, Markdown wird nur bei geändertem Text neu zerlegt und Quellencontrols werden
+über ihre öffentlichen turnlokalen `S`-Labels gekeyt. Mermaid-Render-IDs sind instanzgebunden.
+Ein besessener ResizeObserver meldet ausschließlich Geometrieänderungen; höchstens ein folgender
+Animation Frame positioniert den Viewport zum neuesten sichtbaren Arbeitsschritt. Er schreibt
+nicht bei unverändertem Ziel und reaktiviert niemals eine manuell gelöste Scrollbindung. Cleanup
+verwirft Timer und verspätete Projektionen. Diese UI-Regeln ändern weder IPC noch Persistenz,
+Recherchebudget oder fachliche Autorität.
+
 1. Ein Goal Contract wird erstellt oder bestätigt.
 2. Der Controller lokalisiert relevante Evidenz.
 3. Der Context Compiler erzeugt ein tokenbegrenztes Context Pack.

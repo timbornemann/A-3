@@ -286,9 +286,10 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - Conversation-Regressions müssen belegen, dass ein zweites ungültiges strukturiertes Ergebnis
   nach genau einem Repair als `AwaitingContinuation` mit erhaltenen Quellen endet. `/diagram`
   muss eine zweite feste Formatierungsentscheidung reservieren und bei weiterem Fehler Antwort
-  und Quellen erhalten. Die Chatoberfläche darf während progressiver Timeline-Höhenänderungen
-  keinen `ResizeObserver`-getriebenen Scrollwrite ausführen; Pointer-, Touch- oder Wheelinteraktion
-  muss eine noch ausstehende einmalige Positionierung abbrechen.
+  und Quellen erhalten. Die Chatoberfläche darf während der `ResizeObserver`-Auslieferung keinen
+  Scrollwrite ausführen. Tatsächliche Geometrieänderungen werden auf höchstens einen folgenden
+  Animation Frame zusammengeführt; unveränderte Ziele schreiben nicht erneut. Pointer-, Touch-,
+  Wheel- und Tastatur-Scrollinteraktion muss eine ausstehende Positionierung abbrechen.
 - Der ADR-0039-Contract prüft den vollständigen Slash-Katalog, Modusmatrix, leere Themen, `//`-
   Escape, höchstens zwei unterschiedliche Linsen und die Ablehnung unbekannter oder mehrfacher
   Hauptaufträge vor Sessionappend und Jobstart. V32-Tests decken Neuinstallation, V31→V32,
@@ -323,6 +324,20 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   werden vor dem sichtbaren Austausch vollständig geladen, ohne die natürliche Höhe der Timeline
   festzuschreiben. Ein Layout-Resize allein darf eine manuell gelöste Scrollbindung nicht
   reaktivieren.
+- Der Langchat-Contract erhält dieselbe Rechercheinstanz auch beim nächsten Nutzerturn, lädt
+  historische Traces nicht mit dessen Live-Polls nach und zerlegt unverändertes Markdown nicht
+  erneut. Rotierende opake Source-Referenzen erhalten Fokus und Auswahl über ihr turnlokales
+  S-Label. Verspätete Reads/Renderer dürfen nach Unmount nicht mehr publizieren. Identische Polls
+  dürfen eine laufende 900-ms-Einblendfolge nicht verschieben; neue Punkte blenden nur über
+  Opazität ein, damit die Scrollzielmessung nicht durch Translation driftet.
+  Zwei getrennte Diagrammkomponenten benötigen unterschiedliche tatsächliche Mermaid-Render-IDs;
+  eine reine Freshness-Aktualisierung erhält das SVG ohne zweiten Render.
+  Das Offline-Browserprofil `apps/desktop/performance/u13-chat-stability.html` prüft 20 historische
+  Turns, zwei echte Mermaid-Diagramme und sechs Live-Runden. Über 60 Stichproben dürfen keine
+  historischen Knoten entfernt oder verändert werden und keine Zwischenhöhen schrumpfen.
+  Der aktuelle Arbeitsschritt bleibt nach Layoutabschluss am unteren Viewportrand sichtbar;
+  Quellen-Fußbereiche dürfen ihn bei 720×520 und 680×760 nicht verdrängen. Manuelle Aufwärtsgesten,
+  bewusstes Wiederanknüpfen, Abschluss und Folgeturn werden zusätzlich im Browser geprüft.
 - Der ADR-0041-Contract prüft vorwärts und rückwärts wählbare nächste Modi, die Planpflicht nach
   unterbrochener Agent-Kontinuität sowie eine dauerhaft wiederherstellbare FIFO mit Session- und
   Worktreegrenzen. Migrationstests decken Neuinstallation und V32→V33 samt Rollback ab;

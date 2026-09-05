@@ -52,13 +52,13 @@
   import AgentAskResearch from './AgentAskResearch.svelte';
   import AgentDiagrams from './AgentDiagrams.svelte';
   import { queryAgentDiagramArtifact } from './agent-diagram';
-  import SourceLinkedText from './SourceLinkedText.svelte';
+  import ChatMarkdown from './ChatMarkdown.svelte';
   import type {
     AgentAskResearchDetailV1,
     AgentWorkTracePresentationV1,
     AgentWorkTraceSourceV2,
   } from './agent-ask-research';
-  import { parseChatMarkdown } from './chat-markdown';
+  import { queryAgentWorkTraceProjection } from './agent-ask-research';
   import { agentSessionRecoveryMessage } from './command-error';
   import { queryTaskLensTask, type TaskLensStepV1, type TaskLensTaskResponseV1 } from './task-lens';
 
@@ -66,6 +66,7 @@
     activeProject: boolean;
     activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
     diagramArtifactLoader?: typeof queryAgentDiagramArtifact;
+    researchProjectionLoader?: typeof queryAgentWorkTraceProjection;
     workPlanLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     approvalController?: (
       taskId: string,
@@ -136,6 +137,7 @@
     activeProject,
     activityLoader = queryAgentActivity,
     diagramArtifactLoader = queryAgentDiagramArtifact,
+    researchProjectionLoader = queryAgentWorkTraceProjection,
     approvalController,
     approvalLoader,
     inspectionLoader,
@@ -196,10 +198,10 @@
   let workPlanRequest = 0;
   let researchRefresh = $state(0);
   let recentlyCompletedResearchSequence = $state<string | null>(null);
-  let researchProjections = $state<
+  let researchProjections = $state.raw<
     Record<string, { detail: AgentAskResearchDetailV1; sources: AgentWorkTraceSourceV2[] }>
   >({});
-  let researchPresentations = $state<Record<string, AgentWorkTracePresentationV1>>({});
+  let researchPresentations = $state.raw<Record<string, AgentWorkTracePresentationV1>>({});
   let researchSourceRequest = $state<{
     label: string;
     nonce: number;
@@ -207,8 +209,11 @@
   } | null>(null);
   let researchSourceRequestNonce = 0;
   let messageScrollElement = $state<HTMLDivElement | null>(null);
-  let followConversation = true;
+  let messageContentElement = $state<HTMLDivElement | null>(null);
+  let followConversation = $state(true);
   let followFrame: number | null = null;
+  let manualScrollIntent = false;
+  let previousScrollTop = 0;
   const autoOpenedAgentTasks = new SvelteSet<string>();
 
   const CONVERSATION_END_TOLERANCE_PX = 12;
@@ -249,6 +254,24 @@
   const latestResearchHasResponse = $derived(
     selectedSession?.entries.at(-1)?.kind !== 'userMessage',
   );
+  const conversationTurns = $derived.by(() => {
+    const turns: {
+      key: string;
+      userSequence: string | null;
+      entries: AgentSessionV1['entries'];
+    }[] = [];
+    for (const entry of selectedSession?.entries ?? []) {
+      if (entry.kind === 'userMessage' || turns.length === 0) {
+        turns.push({
+          key: `${selectedSummary?.sessionId}:${entry.sequence}`,
+          userSequence: entry.kind === 'userMessage' ? entry.sequence : null,
+          entries: [],
+        });
+      }
+      turns[turns.length - 1].entries.push(entry);
+    }
+    return turns;
+  });
 
   function rememberResearchProjection(
     sessionId: string | undefined,
@@ -256,6 +279,8 @@
     projection: { detail: AgentAskResearchDetailV1; sources: AgentWorkTraceSourceV2[] },
   ): void {
     if (!sessionId) return;
+    const previous = researchProjections[`${sessionId}:${userSequence}`];
+    if (previous?.detail === projection.detail && previous?.sources === projection.sources) return;
     researchProjections = {
       ...researchProjections,
       [`${sessionId}:${userSequence}`]: projection,
@@ -278,11 +303,17 @@
   ): void {
     if (!sessionId) return;
     const key = `${sessionId}:${userSequence}`;
+    const previous = researchPresentations[key];
+    if (
+      previous &&
+      Object.entries(presentation).every(
+        ([field, value]) => previous[field as keyof AgentWorkTracePresentationV1] === value,
+      )
+    )
+      return;
     researchPresentations = { ...researchPresentations, [key]: presentation };
-    researchProjections = {
-      ...researchProjections,
-      [key]: { detail: presentation.detail, sources: presentation.sources },
-    };
+    rememberResearchProjection(sessionId, userSequence, presentation);
+    if (userSequence === latestResearchSequence) queueConversationFollow();
   }
   const presentationCanBeHidden = $derived(
     selectedSummary !== null &&
@@ -388,6 +419,8 @@
   }
 
   function handleSessionMenuKeydown(event: KeyboardEvent): void {
+    if (event.target instanceof Node && messageScrollElement?.contains(event.target))
+      handleConversationKeydown(event);
     if (event.key !== 'Escape' || !sessionMenuOpen) return;
     event.preventDefault();
     sessionMenuOpen = false;
@@ -395,13 +428,31 @@
   }
 
   function scrollConversationToEnd(viewport: HTMLDivElement): void {
-    viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    const tail = viewport.querySelector<HTMLElement>(
+      '.conversation-turn:last-child .ask-research[data-live="true"][open] .research-steps li:last-child',
+    );
+    const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    // Keep the latest *work*, not the source-list footer, visible in small windows.
+    const end = tail
+      ? Math.max(
+          0,
+          Math.min(
+            maximum,
+            viewport.scrollTop +
+              tail.getBoundingClientRect().bottom -
+              viewport.getBoundingClientRect().bottom +
+              12,
+          ),
+        )
+      : maximum;
+    if (Math.abs(viewport.scrollTop - end) > 1) viewport.scrollTop = end;
+    previousScrollTop = viewport.scrollTop;
   }
 
   function queueConversationFollow(): void {
     const viewport = messageScrollElement;
     if (!viewport || !followConversation) return;
-    if (followFrame !== null) window.cancelAnimationFrame(followFrame);
+    if (followFrame !== null) return;
     followFrame = window.requestAnimationFrame(() => {
       followFrame = null;
       if (followConversation && viewport === messageScrollElement)
@@ -411,26 +462,61 @@
 
   function resumeConversationFollow(): void {
     followConversation = true;
+    manualScrollIntent = false;
     queueConversationFollow();
   }
 
   function handleConversationScroll(event: Event): void {
     const viewport = event.currentTarget as HTMLDivElement;
     const distanceFromEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-    followConversation = distanceFromEnd <= CONVERSATION_END_TOLERANCE_PX;
+    // Layout clamping and our own writes are not user intent. Only a deliberate
+    // downward scroll may reattach after the reader has left the live tail.
+    if (
+      manualScrollIntent &&
+      viewport.scrollTop > previousScrollTop &&
+      distanceFromEnd <= CONVERSATION_END_TOLERANCE_PX
+    )
+      resumeConversationFollow();
+    previousScrollTop = viewport.scrollTop;
   }
 
   function handleConversationWheel(event: WheelEvent): void {
-    if (event.deltaY !== 0) followConversation = false;
+    if (event.deltaY !== 0) pauseConversationFollow();
+  }
+
+  function pauseConversationFollow(): void {
+    followConversation = false;
+    manualScrollIntent = true;
+    previousScrollTop = messageScrollElement?.scrollTop ?? 0;
+    if (followFrame !== null) window.cancelAnimationFrame(followFrame);
+    followFrame = null;
   }
 
   function handleConversationPointerDown(): void {
-    followConversation = false;
+    pauseConversationFollow();
   }
 
   function handleConversationTouchStart(): void {
-    followConversation = false;
+    pauseConversationFollow();
   }
+
+  function handleConversationKeydown(event: KeyboardEvent): void {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))
+      pauseConversationFollow();
+  }
+
+  $effect(() => {
+    const viewport = messageScrollElement;
+    const content = messageContentElement;
+    if (!viewport || !content || typeof ResizeObserver === 'undefined') return;
+    // Observe real geometry, not poll identities. Coalesce after layout; never
+    // measure/freeze block heights or write during ResizeObserver delivery.
+    const observer = new ResizeObserver(() => untrack(queueConversationFollow));
+    observer.observe(content);
+    observer.observe(viewport);
+    untrack(queueConversationFollow);
+    return () => observer.disconnect();
+  });
 
   $effect(() => {
     if (!activeProject) onRunStatusChange({ kind: 'noProject' });
@@ -939,17 +1025,6 @@
     if (previousTail === undefined) return true;
     if (nextTail === undefined) return false;
     return BigInt(nextTail) >= BigInt(previousTail);
-  }
-
-  function precedingUserSequence(entries: AgentSessionV1['entries'], index: number): string | null {
-    for (let current = index - 1; current >= 0; current -= 1) {
-      if (entries[current].kind === 'userMessage') return entries[current].sequence;
-    }
-    return null;
-  }
-
-  function directlyAnswersUser(entries: AgentSessionV1['entries'], index: number): boolean {
-    return index > 0 && entries[index - 1]?.kind === 'userMessage';
   }
 
   async function applySessionAction(action: AgentSessionControlActionV1): Promise<void> {
@@ -1501,169 +1576,125 @@
             </div>
           </div>
         {:else}
-          <div class="messages">
-            {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
-              {@const entryCommands = entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
-              {@const responseUserSequence =
-                entry.kind !== 'userMessage' &&
-                directlyAnswersUser(sessionView.session.entries, entryIndex)
-                  ? precedingUserSequence(sessionView.session.entries, entryIndex)
-                  : null}
-              {@const entryResearchSources = responseUserSequence
-                ? (researchProjections[
-                    `${sessionView.session.summary.sessionId}:${responseUserSequence}`
-                  ]?.sources ?? [])
-                : []}
-              {@const displayedEntryText =
-                entry.kind === 'userMessage' &&
-                entry.text.startsWith('Recherche fortsetzen. Ursprüngliche Frage:\n')
-                  ? 'Recherche fortsetzen'
-                  : entryCommands.length > 0
-                    ? commandSubjectText(entry.text, entryCommands)
-                    : entry.text}
-              <article
-                class:user-message={entry.kind === 'userMessage'}
-                class:agent-message={entry.kind !== 'userMessage'}
-                class:plan-message={entry.kind === 'plan'}
-                class="message"
-              >
-                <header>
-                  <span
-                    >{entry.kind === 'userMessage'
-                      ? 'Du'
-                      : entry.kind === 'plan'
-                        ? `Plan R${entry.planRevision}`
-                        : 'A^3'}</span
-                  ><time>{relativeTime(entry.createdAtUnixMillis)}</time>
-                </header>
-                <div class="message-text">
-                  {#if entryCommands.length > 0}
-                    <div class="message-command-chips" aria-label="Slash Commands">
-                      {#each entryCommands as command (command.name)}
-                        <span>{command.name}</span>
-                      {/each}
-                    </div>
-                  {/if}
-                  {#each parseChatMarkdown(displayedEntryText) as block, blockIndex (blockIndex)}
-                    {#if block.kind === 'heading'}
-                      <div class="markdown-heading" data-level={block.level}>
-                        <SourceLinkedText
-                          text={block.text}
-                          sources={entryResearchSources}
-                          onsource={(source) =>
-                            responseUserSequence &&
-                            openResearchSource(responseUserSequence, source)}
-                        />
-                      </div>
-                    {:else if block.kind === 'paragraph'}
-                      <p>
-                        <SourceLinkedText
-                          text={block.text}
-                          sources={entryResearchSources}
-                          onsource={(source) =>
-                            responseUserSequence &&
-                            openResearchSource(responseUserSequence, source)}
-                        />
-                      </p>
-                    {:else if block.kind === 'list'}
-                      {#if block.ordered}
-                        <ol>
-                          {#each block.items as item, itemIndex (itemIndex)}<li>
-                              <SourceLinkedText
-                                text={item}
-                                sources={entryResearchSources}
-                                onsource={(source) =>
-                                  responseUserSequence &&
-                                  openResearchSource(responseUserSequence, source)}
-                              />
-                            </li>{/each}
-                        </ol>
-                      {:else}
-                        <ul>
-                          {#each block.items as item, itemIndex (itemIndex)}<li>
-                              <SourceLinkedText
-                                text={item}
-                                sources={entryResearchSources}
-                                onsource={(source) =>
-                                  responseUserSequence &&
-                                  openResearchSource(responseUserSequence, source)}
-                              />
-                            </li>{/each}
-                        </ul>
-                      {/if}
-                    {:else if block.kind === 'quote'}
-                      <blockquote>
-                        <SourceLinkedText
-                          text={block.text}
-                          sources={entryResearchSources}
-                          onsource={(source) =>
-                            responseUserSequence &&
-                            openResearchSource(responseUserSequence, source)}
-                        />
-                      </blockquote>
-                    {:else}
-                      <pre><code data-language={block.language}>{block.text}</code></pre>
-                    {/if}
-                  {/each}
-                </div>
-                {#if responseUserSequence}
-                  {#if responseUserSequence !== latestResearchSequence}
-                    <AgentAskResearch
-                      sessionId={sessionView.session.summary.sessionId}
-                      userSequence={responseUserSequence}
-                      refreshKey={`${sessionView.session.summary.sessionId}:${responseUserSequence}:completed`}
-                      responseVisible
-                      sourceRequest={researchSourceRequest}
-                      presentation={researchPresentations[
+          <div class="messages" bind:this={messageContentElement}>
+            {#each conversationTurns as turn (turn.key)}
+              <div class="conversation-turn" data-turn={turn.userSequence}>
+                {#each turn.entries as entry, entryIndex (entry.sequence)}
+                  {@const entryCommands =
+                    entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
+                  {@const responseUserSequence =
+                    entry.kind !== 'userMessage' && entryIndex === 1 ? turn.userSequence : null}
+                  {@const entryResearchSources = responseUserSequence
+                    ? (researchProjections[
                         `${sessionView.session.summary.sessionId}:${responseUserSequence}`
-                      ] ?? null}
-                      onprojectionchange={(projection) =>
-                        rememberResearchProjection(
-                          selectedSummary?.sessionId,
-                          responseUserSequence,
-                          projection,
-                        )}
-                      onpresentationchange={(presentation) =>
-                        rememberResearchPresentation(
-                          selectedSummary?.sessionId,
-                          responseUserSequence,
-                          presentation,
-                        )}
-                      oncontinue={() => void continueResearch()}
-                    />
-                  {/if}
-                  <AgentDiagrams
-                    artifactLoader={diagramArtifactLoader}
+                      ]?.sources ?? [])
+                    : []}
+                  {@const displayedEntryText =
+                    entry.kind === 'userMessage' &&
+                    entry.text.startsWith('Recherche fortsetzen. Ursprüngliche Frage:\n')
+                      ? 'Recherche fortsetzen'
+                      : entryCommands.length > 0
+                        ? commandSubjectText(entry.text, entryCommands)
+                        : entry.text}
+                  <article
+                    class:user-message={entry.kind === 'userMessage'}
+                    class:agent-message={entry.kind !== 'userMessage'}
+                    class:plan-message={entry.kind === 'plan'}
+                    class="message"
+                  >
+                    <header>
+                      <span
+                        >{entry.kind === 'userMessage'
+                          ? 'Du'
+                          : entry.kind === 'plan'
+                            ? `Plan R${entry.planRevision}`
+                            : 'A^3'}</span
+                      ><time>{relativeTime(entry.createdAtUnixMillis)}</time>
+                    </header>
+                    <div class="message-text">
+                      {#if entryCommands.length > 0}
+                        <div class="message-command-chips" aria-label="Slash Commands">
+                          {#each entryCommands as command (command.name)}
+                            <span>{command.name}</span>
+                          {/each}
+                        </div>
+                      {/if}
+                      <ChatMarkdown
+                        text={displayedEntryText}
+                        sources={entryResearchSources}
+                        onsource={(source) =>
+                          responseUserSequence && openResearchSource(responseUserSequence, source)}
+                      />
+                    </div>
+                    {#if responseUserSequence}
+                      <AgentDiagrams
+                        artifactLoader={diagramArtifactLoader}
+                        sessionId={sessionView.session.summary.sessionId}
+                        userSequence={responseUserSequence}
+                        refreshKey={`${sessionView.session.summary.sessionId}:${responseUserSequence}:completed`}
+                        summaries={sessionView.session.entries.find(
+                          (candidate) => candidate.sequence === responseUserSequence,
+                        )?.diagrams}
+                        onregenerate={() => regenerateDiagram(responseUserSequence)}
+                      />
+                    {/if}
+                    {#if entry.kind === 'plan' && entry.planRevision === sessionView.session.summary.currentPlanRevision && sessionView.session.summary.mode === 'plan' && sessionView.session.summary.state === 'awaitingPlanReview'}
+                      <div class="plan-actions">
+                        <button
+                          class="primary"
+                          type="button"
+                          disabled={submitting}
+                          onclick={() =>
+                            void applySessionAction({
+                              kind: 'implementPlan',
+                              planRevision: entry.planRevision ?? 0,
+                            })}>Plan umsetzen</button
+                        >
+                        <button
+                          type="button"
+                          onclick={() => {
+                            composer = 'Überarbeite den Plan mit folgenden Änderungen: ';
+                          }}>Änderungen anfragen</button
+                        >
+                      </div>
+                    {/if}
+                  </article>
+                {/each}
+                {#if turn.userSequence}
+                  <AgentAskResearch
+                    projectionLoader={researchProjectionLoader}
                     sessionId={sessionView.session.summary.sessionId}
-                    userSequence={responseUserSequence}
-                    refreshKey={`${sessionView.session.summary.sessionId}:${responseUserSequence}:completed`}
-                    summaries={sessionView.session.entries.find(
-                      (candidate) => candidate.sequence === responseUserSequence,
-                    )?.diagrams}
-                    onregenerate={() => regenerateDiagram(responseUserSequence)}
+                    userSequence={turn.userSequence}
+                    refreshKey={turn.userSequence === latestResearchSequence
+                      ? `${sessionView.session.summary.revision}-${researchRefresh}`
+                      : `${turn.key}:completed`}
+                    live={turn.userSequence === latestResearchSequence &&
+                      !latestResearchHasResponse &&
+                      sessionView.session.summary.state === 'running'}
+                    recentlyCompleted={turn.userSequence === recentlyCompletedResearchSequence}
+                    responseVisible={turn.entries.length > 1}
+                    sourceRequest={researchSourceRequest}
+                    presentation={researchPresentations[turn.key] ?? null}
+                    onprojectionchange={(projection) =>
+                      rememberResearchProjection(
+                        sessionView.kind === 'available'
+                          ? sessionView.session.summary.sessionId
+                          : undefined,
+                        turn.userSequence ?? '',
+                        projection,
+                      )}
+                    onpresentationchange={(presentation) =>
+                      rememberResearchPresentation(
+                        sessionView.kind === 'available'
+                          ? sessionView.session.summary.sessionId
+                          : undefined,
+                        turn.userSequence ?? '',
+                        presentation,
+                      )}
+                    oncontinue={() => void continueResearch()}
                   />
                 {/if}
-                {#if entry.kind === 'plan' && entry.planRevision === sessionView.session.summary.currentPlanRevision && sessionView.session.summary.mode === 'plan' && sessionView.session.summary.state === 'awaitingPlanReview'}
-                  <div class="plan-actions">
-                    <button
-                      class="primary"
-                      type="button"
-                      disabled={submitting}
-                      onclick={() =>
-                        void applySessionAction({
-                          kind: 'implementPlan',
-                          planRevision: entry.planRevision ?? 0,
-                        })}>Plan umsetzen</button
-                    >
-                    <button
-                      type="button"
-                      onclick={() => {
-                        composer = 'Überarbeite den Plan mit folgenden Änderungen: ';
-                      }}>Änderungen anfragen</button
-                    >
-                  </div>
-                {/if}
-              </article>
+              </div>
             {/each}
             {#if pendingMessage}
               <article class="message user-message pending">
@@ -1686,38 +1717,16 @@
                 </div>
               </article>
             {/if}
-            {#if latestResearchSequence}
-              <AgentAskResearch
-                sessionId={sessionView.session.summary.sessionId}
-                userSequence={latestResearchSequence}
-                refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                live={!latestResearchHasResponse && sessionView.session.summary.state === 'running'}
-                recentlyCompleted={latestResearchSequence === recentlyCompletedResearchSequence}
-                responseVisible={latestResearchHasResponse}
-                sourceRequest={researchSourceRequest}
-                presentation={researchPresentations[
-                  `${sessionView.session.summary.sessionId}:${latestResearchSequence}`
-                ] ?? null}
-                onprojectionchange={(projection) =>
-                  rememberResearchProjection(
-                    selectedSummary?.sessionId,
-                    latestResearchSequence,
-                    projection,
-                  )}
-                onpresentationchange={(presentation) =>
-                  rememberResearchPresentation(
-                    selectedSummary?.sessionId,
-                    latestResearchSequence,
-                    presentation,
-                  )}
-                oncontinue={() => void continueResearch()}
-              />
-            {/if}
           </div>
         {/if}
       </div>
 
       <div class="composer-wrap">
+        {#if !followConversation && selectedSummary}
+          <button class="follow-latest" type="button" onclick={resumeConversationFollow}>
+            ↓ Zum neuesten Schritt
+          </button>
+        {/if}
         {#if selectedSession?.queuedMessages && selectedSession.queuedMessages.length > 0}
           <section class="message-queue" aria-label="Vorgemerkte Nachrichten">
             <header>
@@ -2300,6 +2309,15 @@
     margin: 0 auto;
     padding: var(--space-6) 0 var(--space-7);
   }
+  .conversation-turn + .conversation-turn {
+    margin-block-start: var(--space-5);
+  }
+  .follow-latest {
+    display: block;
+    margin: 0 auto var(--space-2);
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
   .message {
     margin-block-end: var(--space-5);
   }
@@ -2318,53 +2336,6 @@
   .message-text {
     overflow-wrap: anywhere;
     line-height: 1.6;
-  }
-  .message-text p {
-    margin: 0 0 var(--space-3);
-    white-space: pre-wrap;
-  }
-  .message-text p:last-child,
-  .message-text :is(ul, ol, pre, blockquote):last-child {
-    margin-bottom: 0;
-  }
-  .message-text :is(ul, ol) {
-    margin: 0 0 var(--space-3);
-    padding-inline-start: var(--space-5);
-  }
-  .message-text li + li {
-    margin-top: var(--space-1);
-  }
-  .markdown-heading {
-    margin: var(--space-4) 0 var(--space-2);
-    color: var(--color-heading);
-    font-weight: 750;
-  }
-  .markdown-heading:first-child {
-    margin-top: 0;
-  }
-  .markdown-heading[data-level='1'],
-  .markdown-heading[data-level='2'] {
-    font-size: 1.05rem;
-  }
-  .message-text blockquote {
-    margin: 0 0 var(--space-3);
-    padding-inline-start: var(--space-3);
-    border-inline-start: 2px solid var(--color-border-strong);
-    color: var(--color-muted);
-  }
-  .message-text pre {
-    max-width: 100%;
-    margin: 0 0 var(--space-3);
-    padding: var(--space-3);
-    overflow: auto;
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
-    background: var(--color-surface);
-  }
-  .message-text code {
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    white-space: pre;
   }
   .message-command-chips,
   .composer-command-chips {

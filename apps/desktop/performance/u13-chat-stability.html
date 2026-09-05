@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A^3 Chat-Stabilitätsprofil</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      nav {
+        min-width: 0;
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #profile-root {
+        min-width: 0;
+        min-height: 0;
+      }
+      #profile-result {
+        max-width: 100%;
+        overflow: auto;
+        font-size: 0.7rem;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Offline-Profil">
+      <button id="run-profile" type="button">Live-Prüfung starten</button>
+      <button id="finish-turn" type="button">Abschluss</button>
+      <button id="next-turn" type="button">Folgefrage</button>
+      <output id="profile-result">Bereit · 20 historische Turns · 2 echte Mermaid-Diagramme</output>
+    </nav>
+    <main id="profile-root"></main>
+    <script type="module" src="/src/performance/u13-chat-stability-profile.ts"></script>
+  </body>
+</html>

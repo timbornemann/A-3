@@ -44,6 +44,8 @@
   let theme = $state<AgentDiagramExportThemeV1>('light');
   let loadState = $state<'idle' | 'loading' | 'available' | 'error'>('idle');
   let request = 0;
+  const instanceId = $props.id();
+  let renderRevision = 0;
   let destroyed = false;
   let loadedInputKey: string | null = null;
   const summariesSignature = $derived(
@@ -106,18 +108,28 @@
         const detail = await artifactLoader(requestedSession, summary.artifactRef);
         if (staleRequest(requestedSession, requestedTurn, current)) return;
         if (detail.result.kind !== 'available') continue;
-        loaded.push({
-          artifact: detail.result.artifact,
-          error: null,
-          exporting: false,
-          exportMessage: null,
-          regenerating: false,
-          svg: null,
-        });
+        const artifact = detail.result.artifact;
+        const retained = artifacts.find(
+          (item) =>
+            item.artifact.summary.artifactRef === summary.artifactRef &&
+            item.artifact.mermaid === artifact.mermaid,
+        );
+        loaded.push(
+          retained
+            ? { ...retained, artifact: detail.result.artifact }
+            : {
+                artifact: detail.result.artifact,
+                error: null,
+                exporting: false,
+                exportMessage: null,
+                regenerating: false,
+                svg: null,
+              },
+        );
       }
       artifacts = loaded;
       loadState = loaded.length > 0 ? 'available' : 'idle';
-      await renderAll(current);
+      await renderAll(current, false);
     } catch {
       if (!staleRequest(requestedSession, requestedTurn, current)) loadState = 'error';
     }
@@ -132,21 +144,26 @@
     );
   }
 
-  async function renderAll(current = request): Promise<void> {
+  async function renderAll(current = request, force = true): Promise<void> {
     if (artifacts.length === 0) return;
+    const rendering = ++renderRevision;
     const mermaid = (await import('mermaid')).default;
+    if (current !== request || rendering !== renderRevision || destroyed) return;
     mermaid.initialize(mermaidConfig(theme));
     for (let index = 0; index < artifacts.length; index += 1) {
-      if (current !== request) return;
+      if (current !== request || rendering !== renderRevision || destroyed) return;
+      if (!force && artifacts[index].svg) continue;
       try {
         const rendered = await mermaid.render(
-          `a3-diagram-${current}-${index}`,
+          `a3-diagram-${instanceId.replace(/[^a-zA-Z0-9_-]/gu, '_')}-${rendering}-${index}`,
           prepareMermaidForRendering(artifacts[index].artifact.mermaid),
         );
+        if (current !== request || rendering !== renderRevision || destroyed) return;
         const svg = sanitizeSvg(rendered.svg, theme === 'transparent');
         artifacts[index].svg = svg;
         artifacts[index].error = null;
       } catch (error) {
+        if (current !== request || rendering !== renderRevision || destroyed) return;
         artifacts[index].svg = null;
         artifacts[index].error = isSyntaxError(error) ? 'syntax' : 'runtime';
       }

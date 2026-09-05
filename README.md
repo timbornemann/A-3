@@ -227,7 +227,10 @@ ADR-0044 priorisiert dabei aktuelle explizite Dateiziele und aktuelle Task-Lens-
 historischem Conversation-Kontext. Der Modellturn erhält die Core-aufgelöste Zuordnung von
 angefragtem Namen, aktuellem Repositorypfad und `S`-Quelle; adaptive Reads behalten reservierten
 Kontextplatz und eine dateihaltige `searchIndex`-Aktion liest das eindeutige Ziel direkt.
-Progressive Recherchehöhen verändern die Chatposition nicht mehr fortlaufend. Ein ungültiger
+Während der Recherche folgt die Ansicht dem neuesten sichtbaren Arbeitsschritt, solange der
+Nutzer nicht manuell im Verlauf liest. „Zum neuesten Schritt“ aktiviert das Mitlaufen wieder.
+Unveränderte historische Antworten, Quellen und Diagramme behalten ihre DOM-Instanzen; ein
+Folgeturn versetzt seinen Vorgänger nicht an einen neuen Renderort. Ein ungültiger
 Modell- oder Diagrammschritt darf nach dem einzigen sicheren Reparaturversuch keine vorhandenen
 Quellen in einen technischen Fehlschlag verwandeln, sondern endet fortsetzbar; `/diagram`
 reserviert innerhalb seines festen Profils auch die dafür benötigte Formatierungsentscheidung.
