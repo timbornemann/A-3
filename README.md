@@ -227,6 +227,16 @@ ADR-0044 priorisiert dabei aktuelle explizite Dateiziele und aktuelle Task-Lens-
 historischem Conversation-Kontext. Der Modellturn erhält die Core-aufgelöste Zuordnung von
 angefragtem Namen, aktuellem Repositorypfad und `S`-Quelle; adaptive Reads behalten reservierten
 Kontextplatz und eine dateihaltige `searchIndex`-Aktion liest das eindeutige Ziel direkt.
+Progressive Recherchehöhen verändern die Chatposition nicht mehr fortlaufend. Ein ungültiger
+Modell- oder Diagrammschritt darf nach dem einzigen sicheren Reparaturversuch keine vorhandenen
+Quellen in einen technischen Fehlschlag verwandeln, sondern endet fortsetzbar; `/diagram`
+reserviert innerhalb seines festen Profils auch die dafür benötigte Formatierungsentscheidung.
+Flowchart-Kanten werden vom Core so quotiert, dass Methoden- und Signaturnamen keine Mermaid-
+Syntax auslösen. Bereits persistierte V32-Diagramme erhalten vor dem lokalen Strict-Rendering
+dieselbe enge Kompatibilitätskorrektur. Bleibt ein echter Syntaxfehler, kann der Nutzer über
+„Diagramm neu erzeugen“ einen neuen evidence-gebundenen `/diagram`-Turn mit dem ursprünglichen
+Auftrag starten; roher Mermaid-Code wird dabei weder ausgeführt noch als privilegierter Prompt
+übernommen.
 `open_project` öffnet den nativen Ordnerdialog im Rust-Kern und bietet bei einem eindeutig
 evidenzbasiert erkannten Worktree-Umzug eine zweite native Auswahl zum Reconciliieren, separaten
 Öffnen oder Abbrechen an. `query_project_catalog` liefert höchstens 25 validierte
@@ -315,16 +325,16 @@ Crates und Frontend-Pakete werden erst angelegt, wenn ein verifizierbarer vertik
 
 ## Dokumentenkarte
 
-| Dokument | Zweck |
-| --- | --- |
-| [AGENTS.md](AGENTS.md) | Verbindlicher Arbeits- und Engineeringvertrag |
-| [Produktanforderungen](docs/PRODUCT_REQUIREMENTS.md) | V1-Funktionsumfang und messbare Produktziele |
-| [Architektur](docs/ARCHITECTURE.md) | Systemaufbau, Komponenten und Abhängigkeiten |
-| [Architekturregeln](docs/ARCHITECTURE_RULES.md) | Verbindliche Code- und Modulregeln |
-| [Qualitätsgates](docs/QUALITY_GATES.md) | Tests, Leistungsbudgets und Definition of Done |
-| [Continuous Integration](docs/CI.md) | Lokale Gates, Plattformmatrix und Lizenzbericht |
-| [ADRs](docs/adrs/README.md) | Akzeptierte Architekturentscheidungen |
-| [Entwicklungspläne](docs/plans/README.md) | Reihenfolge, Arbeitspakete und Abnahmekriterien |
+| Dokument                                             | Zweck                                           |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| [AGENTS.md](AGENTS.md)                               | Verbindlicher Arbeits- und Engineeringvertrag   |
+| [Produktanforderungen](docs/PRODUCT_REQUIREMENTS.md) | V1-Funktionsumfang und messbare Produktziele    |
+| [Architektur](docs/ARCHITECTURE.md)                  | Systemaufbau, Komponenten und Abhängigkeiten    |
+| [Architekturregeln](docs/ARCHITECTURE_RULES.md)      | Verbindliche Code- und Modulregeln              |
+| [Qualitätsgates](docs/QUALITY_GATES.md)              | Tests, Leistungsbudgets und Definition of Done  |
+| [Continuous Integration](docs/CI.md)                 | Lokale Gates, Plattformmatrix und Lizenzbericht |
+| [ADRs](docs/adrs/README.md)                          | Akzeptierte Architekturentscheidungen           |
+| [Entwicklungspläne](docs/plans/README.md)            | Reihenfolge, Arbeitspakete und Abnahmekriterien |
 
 ## Lizenz
 

@@ -173,7 +173,7 @@ impl EvidenceDiagramDraft {
             let label = mermaid_text(&relationship.label);
             match self.kind {
                 EvidenceDiagramKind::Flowchart => {
-                    output.push_str(&format!("  {from} -->|{label}| {to}\n"));
+                    output.push_str(&format!("  {from} -->|\"{label}\"| {to}\n"));
                 }
                 EvidenceDiagramKind::Sequence => {
                     output.push_str(&format!("  {from}->>{to}: {label}\n"));
@@ -583,7 +583,7 @@ mod tests {
                 "flowchart",
                 "flowchart TD\n",
                 "n0[\"A\"]",
-                "n0 -->|uses| n1",
+                "n0 -->|\"uses\"| n1",
             ),
             (
                 "sequence",
@@ -614,6 +614,20 @@ mod tests {
             assert!(mermaid.contains(node));
             assert!(mermaid.contains(edge));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn flowchart_compiler_quotes_method_shaped_edge_labels() -> Result<(), Box<dyn Error>> {
+        let diagrams = DecodeEvidenceDiagrams.decode(
+            r#"{"schema_version":1,"diagrams":[{"type":"flowchart","title":"Task flow","description":"Current flow","elements":[{"id":"manager","label":"TaskFlowManager.add_task(...)","category":"function","source_refs":["S1"]},{"id":"plugin","label":"AuditLogPlugin","category":"class","source_refs":["S2"]}],"relationships":[{"from":"manager","to":"plugin","label":"ruft p.on_task_created(task_data) auf","source_refs":["S1","S2"]}]}]}"#,
+        )?;
+
+        assert!(
+            diagrams[0]
+                .compile_mermaid()
+                .contains("n0 -->|\"ruft p.on_task_created(task_data) auf\"| n1")
+        );
         Ok(())
     }
 

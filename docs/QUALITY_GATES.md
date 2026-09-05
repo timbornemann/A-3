@@ -259,6 +259,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Modellturn erscheint. Eine dateihaltige `searchIndex`-Aktion muss das eindeutige Ziel direkt
   lesen; eine Nullrunde muss den Zugang wechseln, ohne Stagnations-, Aktions- oder Zeitgrenzen zu
   lockern.
+- Conversation-Regressions müssen belegen, dass ein zweites ungültiges strukturiertes Ergebnis
+  nach genau einem Repair als `AwaitingContinuation` mit erhaltenen Quellen endet. `/diagram`
+  muss eine zweite feste Formatierungsentscheidung reservieren und bei weiterem Fehler Antwort
+  und Quellen erhalten. Die Chatoberfläche darf während progressiver Timeline-Höhenänderungen
+  keinen `ResizeObserver`-getriebenen Scrollwrite ausführen; Pointer-, Touch- oder Wheelinteraktion
+  muss eine noch ausstehende einmalige Positionierung abbrechen.
 - Der ADR-0039-Contract prüft den vollständigen Slash-Katalog, Modusmatrix, leere Themen, `//`-
   Escape, höchstens zwei unterschiedliche Linsen und die Ablehnung unbekannter oder mehrfacher
   Hauptaufträge vor Sessionappend und Jobstart. V32-Tests decken Neuinstallation, V31→V32,
@@ -272,6 +278,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Tiefe, getrennte Darstellung des Auftrags, Render-Retry, Theme und Export. Die Mermaid-Lazy-
   Erweiterung muss initiales Bundle-, DOM-, Reduced-Motion- und Schmalfensterbudget weiterhin
   einhalten.
+- Die Diagramm-Regression muss eine reale Flowchart-Kante mit einer Methodensignatur wie
+  `p.on_task_created(task_data)` durch Core-Kompilierung und Mermaid 11 rendern. Bereits
+  persistierte unquotierte V32-Kanten werden ausschließlich durch die enge lokale
+  Kompatibilitätsnormalisierung akzeptiert. Ein danach verbleibender Parsefehler bietet eine neue
+  typisierte, evidence-gebundene Erzeugung an und darf weder rohen Mermaid-Code ausführen noch eine
+  allgemeine Modell- oder Dateicapability öffnen.
 - Der ADR-0040-Contract reproduziert einen Turn mit zwölf gefundenen und drei verwendeten Quellen,
   erzwingt einen kohärenten Projektionsread und verbietet die falsche Leermeldung bei temporär
   fehlenden Sourcedetails. Fake-Timer-Tests prüfen gruppierte Runden, logische Vorbereitung,

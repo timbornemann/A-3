@@ -90,4 +90,28 @@ describe('AgentDiagrams', () => {
     await waitFor(() => expect(screen.getByRole('img', { name: 'Ablauf' })).toBeTruthy());
     expect(mermaidMocks.render).toHaveBeenCalledTimes(2);
   });
+
+  it('offers a new evidence-bound generation after a Mermaid syntax failure', async () => {
+    mermaidMocks.render.mockRejectedValue(new Error('Parse error on line 3'));
+    const onregenerate = vi.fn(async () => {});
+    const artifactLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        artifact: { mermaid: 'flowchart TD\n  n0["A"]\n', summary },
+        kind: 'available' as const,
+      },
+    }));
+
+    render(AgentDiagrams, {
+      artifactLoader,
+      onregenerate,
+      refreshKey: '1',
+      sessionId,
+      summaries: [summary],
+      userSequence: '1',
+    });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Diagramm neu erzeugen' }));
+    expect(onregenerate).toHaveBeenCalledWith(summary);
+  });
 });

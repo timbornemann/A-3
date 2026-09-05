@@ -1060,8 +1060,10 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] Core-gesteuerte Evidence-Vertiefung, abschnittsweise Dateireads und begrenztes Retry
 - [x] priorisierter Recherchekontext mit deterministischer Zielauflösung und adaptiver Reserve
+- [x] ruhige Chatposition und fortsetzbarer Modell-/Diagrammabschluss nach begrenztem Repair
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
+- [x] Mermaid-sichere Flowchart-Labels mit V32-Kompatibilität und evidence-gebundener Neuerzeugung
 - [x] sichtbare nächste Moduswahl mit erneuter Planfreigabe nach unterbrochener Agent-Kontinuität
 - [x] begrenzte dauerhafte FIFO für Folgenachrichten mit Pause und expliziter Wiederaufnahme
 - [x] taskgebundene Agentenlauf-Seitenleiste ohne doppelte Rechercheprojektion
@@ -1151,6 +1153,14 @@ Repositorypfad und `S`-Quelle. Spätere adaptive Reads besitzen reservierten Kon
 dateihaltige `searchIndex`-Aktionen lesen das eindeutige Ziel direkt. Die vorhandenen Standard-,
 Gründlich-, Stagnations- und Sicherheitsgrenzen bleiben unverändert.
 
+Abschluss- und Scrollkorrektur vom 2026-09-05: Die Conversation positioniert einen ausdrücklich
+gestarteten oder geöffneten Turn einmalig, folgt danach aber nicht mehr jeder progressiven
+Höhenänderung des Rechercheblocks. Manuelles Scrollen und jede Pointer-, Touch- oder
+Wheelinteraktion behalten deshalb stabil die Nutzerposition. Erschöpfte strukturierte Repairs
+enden mit erhaltenen Quellen in `AwaitingContinuation`; die Diagrammphase reserviert eine zweite
+Formatierungsentscheidung und bewahrt bei erneutem Fehler die bereits validierte Antwort samt
+Quellen, statt den ganzen Lauf als fehlgeschlagen zu markieren.
+
 Slash-Command-Erweiterung vom 2026-09-04 nach ADR-0039: Ein `/` öffnet den vom Core gelieferten,
 modusgefilterten Katalog. Hauptauftrag und höchstens zwei Linsen erscheinen als entfernbare Chips;
 die feste Tiefe kann für diese Nachricht nicht überschrieben werden. Der Rust-Core validiert
@@ -1160,6 +1170,14 @@ im Strict Mode geladen und das SVG zusätzlich sanitisiert. SVG-/PNG-Export wäh
 nativen Rust-Dialog, validiert den gerenderten Inhalt erneut und gibt der WebView keinen Pfad.
 Knowledge V32 hält Command-Aufruf und Artefaktquellen über Reopen, während Presentation Delete sie
 entfernt und ein Indexwechsel den historischen Stand sichtbar kennzeichnet.
+
+Diagramm-Renderkorrektur vom 2026-09-05: Flowchart-Kantenbeschriftungen werden deterministisch
+quotiert, sodass Methodensignaturen und Klammern nicht mehr als Mermaid-Syntax gelesen werden.
+Eine eng auf die frühere Core-Ausgabe begrenzte Präsentationsnormalisierung hält bereits
+persistierte V32-Artefakte darstellbar. Falls Mermaid danach weiterhin einen echten Parsefehler
+meldet, startet die sichtbare Neuerzeugungsaktion einen normalen evidence-gebundenen
+`/diagram`-Turn aus dem ursprünglichen Auftrag; rohe Mermaid-Ausgabe bleibt außerhalb der
+Modell- und Ausführungsgrenze.
 
 Arbeitsweg-Beruhigung vom 2026-09-04 nach ADR-0040: Der neueste Turn behält vom ersten Live-Event
 bis zur Antwort dieselbe Rechercheinstanz. Timeline und Inspector verwenden eine gemeinsame

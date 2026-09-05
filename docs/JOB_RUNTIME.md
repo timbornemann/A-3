@@ -12,7 +12,7 @@ F4 umfasst noch keine Persistenz, Priorisierung, IPC-Freigabe oder Agentenlogik.
 
 ## Zustandsmodell
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
     [*] --> Queued
     Queued --> Running
@@ -24,7 +24,7 @@ stateDiagram-v2
     Succeeded --> [*]
     Failed --> [*]
     Cancelled --> [*]
-~~~
+```
 
 `Succeeded`, `Failed` und `Cancelled` sind terminal. Eine Cancellation ist kooperativ: Die Laufzeit setzt den Token und den Status synchron auf `Cancelling`; die Aufgabe muss den Token beobachten und kontrolliert zurückkehren. Eine bereits wartende Aufgabe wird nach einer Cancellation nicht mehr ausgeführt.
 
@@ -111,6 +111,14 @@ verpflichtenden Wechselhinweis; nur zwei aufeinanderfolgende Runden ohne neue Ev
 weiterhin zu `AwaitingContinuation`. Runden mit Erkenntnisgewinn können das vollständige feste
 Profil nutzen.
 
+Die Abschlusskorrektur vom 2026-09-05 hält für `/diagram` zwei der unveränderten
+Modellentscheidungen als primäre Formatierung und möglichen begrenzten Retry frei. Scheitert die
+strukturierte Ausgabe nach dem einzigen zulässigen Repair weiterhin, wird weder ein Toolinput
+interpretiert noch der gesamte Conversationjob als technischer Fehler verworfen. Der Abschnitt
+endet mit erhaltenen Quellen in `AwaitingContinuation`. Eine nicht sicher erzeugbare
+Diagrammprojektion veröffentlicht die bereits validierte Antwort und ihre Quellen atomar und
+bietet für das fehlende Artefakt dieselbe explizite Fortsetzung an.
+
 Slash-Command-Nachrichten verwenden dieselben besessenen Conversationjobs und die festen
 ADR-0038-Budgets. Die zusätzlichen Analyseaktionen zählen wie bestehende Reads; ein Command
 erzeugt keinen zweiten Scheduler und keinen eigenen offenen Loop. `/diagram` reserviert innerhalb
@@ -118,6 +126,14 @@ des Profils die letzte verfügbare Modellentscheidung für die typisierte Artefa
 sodass die letzte Entscheidung weiterhin keine neue Suche anfordern kann. Antwort, Zitate,
 Diagramme, terminales Event und Sessionrevision werden gemeinsam abgeschlossen; Cancellation oder
 Fehler exportieren kein unvollständiges Artefakt.
+
+Der deterministische Mermaid-Compiler quotiert insbesondere Flowchart-Kantenbeschriftungen, damit
+gewöhnliche Methodensignaturen mit Klammern nicht als Mermaid-Grammatik interpretiert werden. Die
+WebView normalisiert ausschließlich die exakt erkennbare ältere V32-Compilerform vor dem lokalen
+Rendern. Scheitert danach weiterhin die Syntaxanalyse, startet „Diagramm neu erzeugen“ über den
+gewöhnlichen besessenen Conversationjob einen neuen typisierten `/diagram`-Turn aus dem begrenzten
+ursprünglichen Auftrag. Der fehlerhafte Mermaid-Text wird dem Modell nicht als ausführbare oder
+privilegierte Eingabe übergeben.
 
 Ein zielpflichtiger Command ohne Ziel schließt seinen kurzen besessenen Job deterministisch mit
 `AwaitingUser` ab, ohne Recherchemodell, Tool oder Agent-Run zu öffnen. Die direkte Nutzerantwort

@@ -8,7 +8,7 @@
     type AgentDiagramExportThemeV1,
     type AgentDiagramSummaryV1,
   } from './agent-diagram';
-  import { mermaidConfig } from './agent-diagram-rendering';
+  import { mermaidConfig, prepareMermaidForRendering } from './agent-diagram-rendering';
 
   interface Props {
     artifactLoader?: typeof queryAgentDiagramArtifact;
@@ -18,13 +18,15 @@
     sessionId: string;
     summaries?: AgentDiagramSummaryV1[];
     userSequence: string;
+    onregenerate?: (summary: AgentDiagramSummaryV1) => void | Promise<void>;
   }
 
   interface RenderedArtifact {
     artifact: AgentDiagramArtifactV1;
-    error: boolean;
+    error: 'runtime' | 'syntax' | null;
     exporting: boolean;
     exportMessage: string | null;
+    regenerating: boolean;
     svg: string | null;
   }
 
@@ -36,6 +38,7 @@
     sessionId,
     summaries,
     userSequence,
+    onregenerate,
   }: Props = $props();
   let artifacts = $state<RenderedArtifact[]>([]);
   let theme = $state<AgentDiagramExportThemeV1>('light');
@@ -80,9 +83,10 @@
         if (detail.result.kind !== 'available') continue;
         loaded.push({
           artifact: detail.result.artifact,
-          error: false,
+          error: null,
           exporting: false,
           exportMessage: null,
+          regenerating: false,
           svg: null,
         });
       }
@@ -112,14 +116,14 @@
       try {
         const rendered = await mermaid.render(
           `a3-diagram-${current}-${index}`,
-          artifacts[index].artifact.mermaid,
+          prepareMermaidForRendering(artifacts[index].artifact.mermaid),
         );
         const svg = sanitizeSvg(rendered.svg, theme === 'transparent');
         artifacts[index].svg = svg;
-        artifacts[index].error = false;
-      } catch {
+        artifacts[index].error = null;
+      } catch (error) {
         artifacts[index].svg = null;
-        artifacts[index].error = true;
+        artifacts[index].error = isSyntaxError(error) ? 'syntax' : 'runtime';
       }
     }
   }
@@ -129,10 +133,29 @@
     theme = next;
     for (const artifact of artifacts) {
       artifact.svg = null;
-      artifact.error = false;
+      artifact.error = null;
       artifact.exportMessage = null;
     }
     void renderAll();
+  }
+
+  async function regenerateArtifact(index: number): Promise<void> {
+    const item = artifacts[index];
+    if (!onregenerate || item.regenerating) return;
+    item.regenerating = true;
+    item.exportMessage = null;
+    try {
+      await onregenerate(item.artifact.summary);
+    } catch {
+      item.exportMessage = 'Die neue Diagrammerzeugung konnte nicht gestartet werden.';
+    } finally {
+      item.regenerating = false;
+    }
+  }
+
+  function isSyntaxError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message.toLowerCase() : '';
+    return message.includes('parse error') || message.includes('syntax error');
   }
 
   async function exportArtifact(index: number, format: 'svg' | 'png'): Promise<void> {
@@ -268,8 +291,26 @@
         </header>
         {#if item.error}
           <div class="render-error" role="alert">
-            <strong>Das Diagramm konnte lokal nicht dargestellt werden.</strong>
-            <button type="button" onclick={() => void renderAll()}>Erneut rendern</button>
+            <div>
+              <strong
+                >{item.error === 'syntax'
+                  ? 'Die Diagrammbeschreibung konnte nicht sicher dargestellt werden.'
+                  : 'Der lokale Diagramm-Renderer konnte nicht abgeschlossen werden.'}</strong
+              >
+              {#if item.exportMessage}<small>{item.exportMessage}</small>{/if}
+            </div>
+            <div class="render-error-actions">
+              {#if item.error === 'syntax' && onregenerate}
+                <button
+                  type="button"
+                  disabled={item.regenerating}
+                  onclick={() => void regenerateArtifact(index)}
+                  >{item.regenerating ? 'Wird neu erzeugt …' : 'Diagramm neu erzeugen'}</button
+                >
+              {:else}
+                <button type="button" onclick={() => void renderAll()}>Erneut rendern</button>
+              {/if}
+            </div>
           </div>
         {:else if item.svg}
           <div class="diagram-canvas" role="img" aria-label={item.artifact.summary.title}>
@@ -406,6 +447,17 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .render-error > div:first-child {
+    display: grid;
+    gap: 0.2rem;
+  }
+  .render-error small {
+    color: var(--color-muted);
+  }
+  .render-error-actions {
+    display: flex;
     gap: var(--space-2);
   }
   @media (max-width: 720px) {

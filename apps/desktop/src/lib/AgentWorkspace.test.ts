@@ -803,18 +803,12 @@ describe('AgentWorkspace', () => {
     expect(container.querySelector('.messages details.ask-research')).toBe(research);
   });
 
-  it('follows live growth only until the user scrolls away from the conversation end', async () => {
-    let observerReady = false;
-    let notifyResize = (): void => {
-      throw new Error('resize observer was not initialized');
-    };
+  it('keeps the viewport stable while progressive research changes its height', async () => {
+    let observerCount = 0;
     class ResizeObserverMock {
-      private readonly callback: ResizeObserverCallback;
-
       constructor(callback: ResizeObserverCallback) {
-        this.callback = callback;
-        observerReady = true;
-        notifyResize = () => this.callback([], this as unknown as ResizeObserver);
+        void callback;
+        observerCount += 1;
       }
 
       observe(): void {}
@@ -841,7 +835,6 @@ describe('AgentWorkspace', () => {
     });
 
     await screen.findByText('A^3 ist ein evidenzgebundener Coding-Agent.');
-    await waitFor(() => expect(observerReady).toBe(true));
     const viewport = container.querySelector<HTMLDivElement>('.message-scroll');
     if (!viewport) throw new Error('scroll fixture was not initialized');
     let scrollHeight = 1_000;
@@ -851,31 +844,18 @@ describe('AgentWorkspace', () => {
       get: () => scrollHeight,
     });
 
-    viewport.scrollTop = 700;
-    await fireEvent.scroll(viewport);
-    scrollHeight = 1_200;
-    notifyResize();
-    expect(viewport.scrollTop).toBe(900);
-
-    await fireEvent.wheel(viewport, { deltaY: -60 });
     viewport.scrollTop = 500;
     await fireEvent.scroll(viewport);
-    scrollHeight = 1_300;
-    notifyResize();
+    scrollHeight = 1_200;
+    await Promise.resolve();
     expect(viewport.scrollTop).toBe(500);
 
-    viewport.scrollTop = 1_000;
-    await fireEvent.scroll(viewport);
-    scrollHeight = 1_400;
-    notifyResize();
-    expect(viewport.scrollTop).toBe(1_000);
-
-    await fireEvent.wheel(viewport, { deltaY: 60 });
-    viewport.scrollTop = 1_100;
-    await fireEvent.scroll(viewport);
-    scrollHeight = 1_500;
-    notifyResize();
-    expect(viewport.scrollTop).toBe(1_200);
+    await fireEvent.pointerDown(viewport);
+    viewport.scrollTop = 420;
+    scrollHeight = 1_300;
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(420);
+    expect(observerCount).toBe(0);
   });
 
   it('projects Agent execution without internal identifiers or raw event codes', async () => {

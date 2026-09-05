@@ -204,10 +204,7 @@
   } | null>(null);
   let researchSourceRequestNonce = 0;
   let messageScrollElement = $state<HTMLDivElement | null>(null);
-  let messageContentElement = $state<HTMLDivElement | null>(null);
   let followConversation = true;
-  let conversationResumeIntent = false;
-  let conversationTouchY: number | null = null;
   let followFrame: number | null = null;
   const autoOpenedAgentTasks = new SvelteSet<string>();
 
@@ -351,17 +348,6 @@
   });
 
   $effect(() => {
-    const viewport = messageScrollElement;
-    const content = messageContentElement;
-    if (!viewport || !content || typeof ResizeObserver !== 'function') return;
-    const observer = new ResizeObserver(() => {
-      if (followConversation) scrollConversationToEnd(viewport);
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  });
-
-  $effect(() => {
     const hasDispatchableQueue =
       (selectedSession?.queuedMessages?.length ?? 0) > 0 && !selectedSession?.queuePaused;
     const sessionId =
@@ -421,56 +407,25 @@
 
   function resumeConversationFollow(): void {
     followConversation = true;
-    conversationResumeIntent = false;
     queueConversationFollow();
   }
 
   function handleConversationScroll(event: Event): void {
     const viewport = event.currentTarget as HTMLDivElement;
     const distanceFromEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
-    if (followConversation) {
-      followConversation = distanceFromEnd <= CONVERSATION_END_TOLERANCE_PX;
-      return;
-    }
-    if (conversationResumeIntent && distanceFromEnd <= 1) {
-      followConversation = true;
-      conversationResumeIntent = false;
-    }
+    followConversation = distanceFromEnd <= CONVERSATION_END_TOLERANCE_PX;
   }
 
   function handleConversationWheel(event: WheelEvent): void {
-    if (event.deltaY < 0) {
-      followConversation = false;
-      conversationResumeIntent = false;
-    } else if (event.deltaY > 0 && !followConversation) conversationResumeIntent = true;
+    if (event.deltaY !== 0) followConversation = false;
   }
 
-  function handleConversationPointerDown(event: PointerEvent): void {
-    if (!followConversation && event.target === event.currentTarget)
-      conversationResumeIntent = true;
-  }
-
-  function handleConversationPointerEnd(): void {
-    if (!followConversation) conversationResumeIntent = false;
-  }
-
-  function handleConversationTouchStart(event: TouchEvent): void {
+  function handleConversationPointerDown(): void {
     followConversation = false;
-    conversationResumeIntent = false;
-    conversationTouchY = event.touches.item(0)?.clientY ?? null;
   }
 
-  function handleConversationTouchMove(event: TouchEvent): void {
-    const currentY = event.touches.item(0)?.clientY ?? null;
-    if (currentY === null || conversationTouchY === null) return;
-    if (currentY < conversationTouchY) conversationResumeIntent = true;
-    else if (currentY > conversationTouchY) conversationResumeIntent = false;
-    conversationTouchY = currentY;
-  }
-
-  function handleConversationTouchEnd(): void {
-    conversationTouchY = null;
-    if (!followConversation) conversationResumeIntent = false;
+  function handleConversationTouchStart(): void {
+    followConversation = false;
   }
 
   $effect(() => {
@@ -616,6 +571,8 @@
       if (response.result.status === 'available') {
         sessionView = { kind: 'available', session: response.result.session };
         targetMode = response.result.session.summary.mode;
+        await tick();
+        queueConversationFollow();
       } else if (response.result.status === 'notFound') sessionView = { kind: 'missing' };
       else sessionView = { kind: 'error' };
     } catch {
@@ -666,9 +623,18 @@
     if (!canSubmit) return;
     const message = composer.trim();
     const submittedDepth = effectiveMessageDepth;
+    composer = '';
+    await dispatchMessage(message, targetMode, submittedDepth, true);
+  }
+
+  async function dispatchMessage(
+    message: string,
+    mode: AgentSessionModeV1,
+    submittedDepth: AgentResearchDepthSelectionV1,
+    restoreComposerOnFailure: boolean,
+  ): Promise<void> {
     const current = selectedSession;
     resumeConversationFollow();
-    composer = '';
     pendingMessage = message;
     submitting = true;
     actionError = null;
@@ -679,28 +645,53 @@
           ? {
               expectedSessionRevision: current.summary.revision,
               message,
-              mode: targetMode,
+              mode,
               researchDepth: submittedDepth,
               sessionId: current.summary.sessionId,
             }
-          : { message, mode: targetMode, researchDepth: submittedDepth },
+          : { message, mode, researchDepth: submittedDepth },
       );
       if (response.result.status === 'available') {
         selectedSessionId = response.result.session.summary.sessionId;
         researchDepthBySession.set(response.result.session.summary.sessionId, researchDepth);
         sessionView = { kind: 'available', session: response.result.session };
         researchRefresh += 1;
+        await tick();
+        queueConversationFollow();
         await loadSessions(selectedSessionId);
       } else {
         actionError = 'Das aktive Projekt ist nicht mehr verfügbar.';
       }
     } catch (error) {
-      composer = message;
+      if (restoreComposerOnFailure) composer = message;
       actionError = agentSessionRecoveryMessage(error, 'submit');
     } finally {
       pendingMessage = null;
       submitting = false;
     }
+  }
+
+  async function regenerateDiagram(userSequence: string): Promise<void> {
+    const current = selectedSession;
+    if (!current || submitting) return;
+    const original = current.entries.find(
+      (entry) => entry.kind === 'userMessage' && entry.sequence === userSequence,
+    )?.text;
+    if (!original) {
+      actionError = 'Der ursprüngliche Diagrammauftrag ist nicht mehr in dieser Ansicht verfügbar.';
+      return;
+    }
+    const subject = original
+      .replace(/^\s*\/diagram(?:\s+|$)/u, '')
+      .trim()
+      .slice(0, 48 * 1024);
+    if (!subject) {
+      actionError = 'Das Thema des ursprünglichen Diagramms konnte nicht wiederhergestellt werden.';
+      return;
+    }
+    targetMode = 'ask';
+    const message = `/diagram ${subject}\n\nErzeuge das Diagramm erneut als einfache, sicher darstellbare Struktur. Behalte nur belegte Elemente und Beziehungen bei.`;
+    await dispatchMessage(message, 'ask', 'command', false);
   }
 
   async function removeQueuedMessage(queueReference: string): Promise<void> {
@@ -756,6 +747,8 @@
       }
       sessionView = { kind: 'available', session: response.result.session };
       researchRefresh += 1;
+      await tick();
+      queueConversationFollow();
       await loadSessions(response.result.session.summary.sessionId);
     } catch {
       actionError = 'Die Recherche konnte nicht sicher fortgesetzt werden.';
@@ -1453,11 +1446,7 @@
         onscroll={handleConversationScroll}
         onwheel={handleConversationWheel}
         onpointerdown={handleConversationPointerDown}
-        onpointerup={handleConversationPointerEnd}
-        onpointercancel={handleConversationPointerEnd}
         ontouchstart={handleConversationTouchStart}
-        ontouchmove={handleConversationTouchMove}
-        ontouchend={handleConversationTouchEnd}
       >
         {#if sessionView.kind === 'loading'}
           <div class="center-state" role="status">Session wird geladen …</div>
@@ -1508,7 +1497,7 @@
             </div>
           </div>
         {:else}
-          <div class="messages" bind:this={messageContentElement}>
+          <div class="messages">
             {#each sessionView.session.entries as entry, entryIndex (entry.sequence)}
               {@const entryCommands = entry.kind === 'userMessage' ? entryCommandChips(entry) : []}
               {@const responseUserSequence =
@@ -1641,6 +1630,7 @@
                     summaries={sessionView.session.entries.find(
                       (candidate) => candidate.sequence === responseUserSequence,
                     )?.diagrams}
+                    onregenerate={() => regenerateDiagram(responseUserSequence)}
                   />
                 {/if}
                 {#if entry.kind === 'plan' && entry.planRevision === sessionView.session.summary.currentPlanRevision && sessionView.session.summary.mode === 'plan' && sessionView.session.summary.state === 'awaitingPlanReview'}
@@ -1720,6 +1710,7 @@
                   summaries={sessionView.session.entries.find(
                     (candidate) => candidate.sequence === latestResearchSequence,
                   )?.diagrams}
+                  onregenerate={() => regenerateDiagram(latestResearchSequence)}
                 />
               {/if}
             {/if}

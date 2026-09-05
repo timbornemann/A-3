@@ -61,6 +61,7 @@ const MAX_REUSED_RESEARCH_SOURCES: usize = 8;
 const MAX_ADAPTIVE_SEARCH_SOURCES: usize = 16;
 const MAX_RESEARCH_MEMORY_FINDINGS: usize = 12;
 const MAX_RESEARCH_MEMORY_GAPS: usize = 8;
+const DIAGRAM_DECISION_RESERVE: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageResearchSelection {
@@ -704,9 +705,14 @@ impl AgentAskResearcher {
         let diagrams_requested = command_profile
             .is_some_and(|profile| profile.invocation().primary() == SlashCommand::Diagram);
         let (markdown, ordinals) = loop {
-            let permission = match controller
-                .begin_decision_reserving(elapsed_millis(started), u8::from(diagrams_requested))
-            {
+            let permission = match controller.begin_decision_reserving(
+                elapsed_millis(started),
+                if diagrams_requested {
+                    DIAGRAM_DECISION_RESERVE
+                } else {
+                    0
+                },
+            ) {
                 Ok(permission) => permission,
                 Err(_) => return awaiting_continuation(turn, &state, command_profile),
             };
@@ -896,7 +902,7 @@ impl AgentAskResearcher {
             )
             .await?;
         }
-        let diagrams = compile_diagram_artifacts(
+        let diagram_outcome = compile_diagram_artifacts(
             runtime,
             command_profile,
             &mut model_transcript,
@@ -906,26 +912,38 @@ impl AgentAskResearcher {
             control,
         )
         .await?;
+        let diagrams = diagram_outcome.artifacts;
+        let diagram_incomplete = diagrams_requested && !diagram_outcome.complete;
         let terminal_event = research_event(
             turn.session_id(),
             turn.user_sequence(),
             state.event_sequence.saturating_add(1),
             AskResearchPhase::Completed,
-            AskResearchState::Completed,
-            if diagrams.is_empty() {
+            if diagram_incomplete {
+                AskResearchState::AwaitingContinuation
+            } else {
+                AskResearchState::Completed
+            },
+            if diagram_incomplete {
+                "Antwort und Quellen veröffentlicht; Diagrammerzeugung benötigt einen weiteren begrenzten Versuch"
+            } else if diagrams.is_empty() {
                 "Antwort und verwendete Quellen veröffentlicht"
             } else {
                 "Antwort, Diagramme und verwendete Quellen veröffentlicht"
             },
             None,
-            AskResearchCompleteness::NotApplicable,
+            if diagram_incomplete {
+                AskResearchCompleteness::Limited
+            } else {
+                AskResearchCompleteness::NotApplicable
+            },
         )?;
         Ok(AskResearchResult {
             markdown,
             citations,
             diagrams,
             terminal_event,
-            awaiting_continuation: false,
+            awaiting_continuation: diagram_incomplete,
             handoff: research_handoff(turn, &state, command_profile)?,
         })
     }
@@ -5565,22 +5583,22 @@ async fn compile_diagram_artifacts(
     controller: &mut BoundedResearchController,
     started: Instant,
     control: &JobContext,
-) -> Result<Vec<EvidenceDiagramArtifact>, AgentSessionManagerFailure> {
+) -> Result<DiagramCompilationOutcome, AgentSessionManagerFailure> {
     if command_profile.is_none_or(|profile| profile.invocation().primary() != SlashCommand::Diagram)
     {
-        return Ok(Vec::new());
+        return Ok(DiagramCompilationOutcome::complete(Vec::new()));
     }
     let mut transient_retry_used = false;
     loop {
-        controller
-            .begin_decision(elapsed_millis(started))
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        if controller.begin_decision(elapsed_millis(started)).is_err() {
+            return Ok(DiagramCompilationOutcome::incomplete());
+        }
         let remaining = controller
             .limits()
             .duration_millis()
             .saturating_sub(elapsed_millis(started));
         if remaining == 0 {
-            return Err(AgentSessionManagerFailure::Unavailable);
+            return Ok(DiagramCompilationOutcome::incomplete());
         }
         let raw = match tokio::time::timeout(
             Duration::from_millis(remaining),
@@ -5598,7 +5616,10 @@ async fn compile_diagram_artifacts(
                 ));
                 continue;
             }
-            Ok(Err(_)) | Err(_) => return Err(AgentSessionManagerFailure::Unavailable),
+            Ok(Err(_)) | Err(_) if control.cancellation_token().is_cancelled() => {
+                return Err(AgentSessionManagerFailure::Unavailable);
+            }
+            Ok(Err(_)) | Err(_) => return Ok(DiagramCompilationOutcome::incomplete()),
         };
         let diagrams = DecodeEvidenceDiagrams.decode(&raw).ok().and_then(|drafts| {
             drafts
@@ -5622,25 +5643,49 @@ async fn compile_diagram_artifacts(
                 .collect::<Option<Vec<_>>>()
         });
         if let Some(diagrams) = diagrams {
-            return diagrams
+            let artifacts = diagrams
                 .into_iter()
-                .map(|(draft, source_ids)| {
-                    Ok(EvidenceDiagramArtifact::new(
-                        AgentDiagramArtifactId::from_bytes(random_id()?),
-                        &draft,
-                        source_ids,
-                    ))
-                })
-                .collect();
+                .map(
+                    |(draft, source_ids)| -> Result<_, AgentSessionManagerFailure> {
+                        Ok(EvidenceDiagramArtifact::new(
+                            AgentDiagramArtifactId::from_bytes(random_id()?),
+                            &draft,
+                            source_ids,
+                        ))
+                    },
+                )
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(DiagramCompilationOutcome::complete(artifacts));
         }
-        controller
-            .use_repair()
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        if controller.use_repair().is_err() {
+            return Ok(DiagramCompilationOutcome::incomplete());
+        }
         transcript.push((
             ModelMessageRole::User,
             "The previous diagram object violated the strict typed schema or cited an unavailable source. Return one corrected object only; do not add Mermaid or prose."
                 .to_owned(),
         ));
+    }
+}
+
+struct DiagramCompilationOutcome {
+    artifacts: Vec<EvidenceDiagramArtifact>,
+    complete: bool,
+}
+
+impl DiagramCompilationOutcome {
+    fn complete(artifacts: Vec<EvidenceDiagramArtifact>) -> Self {
+        Self {
+            artifacts,
+            complete: true,
+        }
+    }
+
+    fn incomplete() -> Self {
+        Self {
+            artifacts: Vec::new(),
+            complete: false,
+        }
     }
 }
 
@@ -5655,12 +5700,12 @@ fn awaiting_continuation(
         state.event_sequence.saturating_add(1),
         AskResearchPhase::Evaluating,
         AskResearchState::AwaitingContinuation,
-        "Das feste Recherchebudget ist ausgeschöpft; der belegte Zwischenstand bleibt erhalten",
+        "Der aktuelle Rechercheabschnitt benötigt eine sichere Fortsetzung; der belegte Zwischenstand bleibt erhalten",
         None,
         AskResearchCompleteness::Limited,
     )?;
     Ok(AskResearchResult {
-        markdown: "Die Recherche hat den verfügbaren Rahmen erreicht. Die bisher gefundenen Quellen bleiben erhalten. Mit „Recherche fortsetzen“ kann A^3 den aktuellen Projektstand neu binden und gezielt weiterarbeiten.".to_owned(),
+        markdown: "Die Recherche benötigt einen weiteren begrenzten Abschnitt. Die bisher gefundenen Quellen bleiben erhalten. Mit „Recherche fortsetzen“ kann A^3 den aktuellen Projektstand neu binden und gezielt weiterarbeiten.".to_owned(),
         citations: Vec::new(),
         diagrams: Vec::new(),
         terminal_event,
@@ -5706,10 +5751,13 @@ async fn ask_decision(
 ) -> Result<(Option<a3_application::AskResearchDecision>, u8), AgentSessionManagerFailure> {
     let mut permission = initial_permission;
     let mut transient_retries = 0_u8;
-    let reserved_decisions = u8::from(
-        command_profile
-            .is_some_and(|profile| profile.invocation().primary() == SlashCommand::Diagram),
-    );
+    let reserved_decisions = if command_profile
+        .is_some_and(|profile| profile.invocation().primary() == SlashCommand::Diagram)
+    {
+        DIAGRAM_DECISION_RESERVE
+    } else {
+        0
+    };
     loop {
         let elapsed = elapsed_millis(started);
         let remaining = controller
@@ -5752,12 +5800,14 @@ async fn ask_decision(
             Ok(Err(
                 AgentConversationFailure::InvalidOutput | AgentConversationFailure::OutputTooLarge,
             )) => {
-                controller
-                    .use_repair()
-                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
-                permission = controller
-                    .begin_decision_reserving(elapsed_millis(started), reserved_decisions)
-                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                let Some(next_permission) = reserve_research_repair_decision(
+                    controller,
+                    elapsed_millis(started),
+                    reserved_decisions,
+                ) else {
+                    return Ok((None, transient_retries));
+                };
+                permission = next_permission;
                 transcript.push((ModelMessageRole::User, "REPAIR: Die vorige Modellausgabe war unvollständig. Setze mit dem unveränderten Evidence-Stand fort und gib genau ein vollständiges gültiges JSON-Dokument zurück.".to_owned()));
                 continue;
             }
@@ -5799,14 +5849,27 @@ async fn ask_decision(
         if let Some(decision) = decision {
             return Ok((Some(decision), transient_retries));
         }
-        controller
-            .use_repair()
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
-        permission = controller
-            .begin_decision_reserving(elapsed_millis(started), reserved_decisions)
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        let Some(next_permission) = reserve_research_repair_decision(
+            controller,
+            elapsed_millis(started),
+            reserved_decisions,
+        ) else {
+            return Ok((None, transient_retries));
+        };
+        permission = next_permission;
         transcript.push((ModelMessageRole::User, "REPAIR: Die vorige Ausgabe entsprach nicht vollständig dem bereitgestellten JSON-Schema oder verwies auf eine unbekannte S-Quelle. Gib genau ein vollständiges gültiges Dokument zurück; keine Erklärung außerhalb des JSON.".to_owned()));
     }
+}
+
+fn reserve_research_repair_decision(
+    controller: &mut BoundedResearchController,
+    elapsed_millis: u64,
+    reserved_decisions: u8,
+) -> Option<BeginResearchDecision> {
+    controller.use_repair().ok()?;
+    controller
+        .begin_decision_reserving(elapsed_millis, reserved_decisions)
+        .ok()
 }
 
 const fn is_transient_conversation_failure(error: AgentConversationFailure) -> bool {
@@ -6309,14 +6372,15 @@ impl Drop for AgentSessionManager {
 mod tests {
     use super::{
         AgentConversationFailure, AskResearchWorkingSet, ConversationTaskLensControl,
-        ConversationTerminal, PlanConversationResponse, QueueDispatchTrigger, ResolvedQueryTarget,
-        agent_run_blocks_plan_start, answer_requires_deeper_research, classify_plan_response,
+        ConversationTerminal, DIAGRAM_DECISION_RESERVE, PlanConversationResponse,
+        QueueDispatchTrigger, ResolvedQueryTarget, agent_run_blocks_plan_start,
+        answer_requires_deeper_research, awaiting_continuation, classify_plan_response,
         command_clarification_question, command_message, index_path_matches_request,
         is_transient_conversation_failure, model_safe_path, parse_working_change_paths,
         presentation_can_be_hidden, query_path_candidates, queue_dispatch_allows_state,
-        read_bounded_process_output, resolve_next_message_mode, response_requires_citations,
-        restore_command_profile, safe_failure_message, settle_unfinished_conversation,
-        verification_command_order, visible_research_query,
+        read_bounded_process_output, reserve_research_repair_decision, resolve_next_message_mode,
+        response_requires_citations, restore_command_profile, safe_failure_message,
+        settle_unfinished_conversation, verification_command_order, visible_research_query,
     };
     use a3_application::{
         AgentSessionCommandPresentation, AgentSessionDetail, AgentSessionListQuery,
@@ -6324,15 +6388,16 @@ mod tests {
         JobClock, JobCompletion, JobContext, JobEventKind, JobScheduler, JobSchedulerConfig,
         JobTimestamp, TaskLensControl,
     };
-    use a3_application::{AskResearchEvidenceStatus, AskResearchSource};
+    use a3_application::{AskResearchEvidenceStatus, AskResearchSource, AskResearchTurn};
     use a3_domain::{
         AgentSession, AgentSessionEntry, AgentSessionEntryKind, AgentSessionId, AgentSessionMode,
         AgentSessionRevision, AgentSessionSequence, AgentSessionState, AgentSessionText,
         AgentSessionTimestamp, AgentSessionTitle, AskResearchSelectionReason, AskResearchSourceId,
-        AskResearchSourceKind, ContentHash, DiscoveredCommandKind, FileRevision, JobId, JobOwner,
-        Progress, ProjectIdentity, RepositoryId, RepositoryIdentity, RepositoryPath, SlashCommand,
-        SlashCommandCatalogVersion, SlashCommandLens, SlashCommandVerificationProfile,
-        WorktreeAnchorId, WorktreeId, WorktreeIdentity,
+        AskResearchSourceKind, AskResearchState, ContentHash, DiscoveredCommandKind, FileRevision,
+        IndexRunId, JobId, JobOwner, Progress, ProjectIdentity, RepositoryId, RepositoryIdentity,
+        RepositoryPath, SlashCommand, SlashCommandCatalogVersion, SlashCommandLens,
+        SlashCommandVerificationProfile, SnapshotId, WorktreeAnchorId, WorktreeId,
+        WorktreeIdentity,
     };
     use futures::executor::block_on;
     use std::io::Cursor;
@@ -6740,6 +6805,53 @@ mod tests {
         assert!(!is_transient_conversation_failure(
             AgentConversationFailure::ModelRejected
         ));
+    }
+
+    #[test]
+    fn invalid_research_output_exhaustion_becomes_a_safe_continuation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut controller =
+            a3_application::BoundedResearchController::new(a3_domain::AgentResearchDepth::Standard);
+
+        assert!(reserve_research_repair_decision(&mut controller, 0, 0).is_some());
+        assert!(reserve_research_repair_decision(&mut controller, 1, 0).is_none());
+        let turn = AskResearchTurn::new(
+            AgentSessionId::from_bytes([21; 32]),
+            AgentSessionSequence::FIRST,
+            IndexRunId::from_bytes([22; 32]),
+            SnapshotId::from_bytes([23; 32]),
+            AgentSessionTimestamp::from_unix_millis(1)?,
+        );
+        let result = awaiting_continuation(&turn, &AskResearchWorkingSet::new(1_024), None)?;
+        assert!(result.awaiting_continuation);
+        assert_eq!(
+            result.terminal_event.state(),
+            AskResearchState::AwaitingContinuation
+        );
+        assert!(result.markdown.contains("Recherche fortsetzen"));
+        Ok(())
+    }
+
+    #[test]
+    fn diagram_profile_reserves_a_decision_for_its_bounded_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut controller =
+            a3_application::BoundedResearchController::new(a3_domain::AgentResearchDepth::Standard);
+        for elapsed in [0, 1, 2] {
+            assert_eq!(
+                controller.begin_decision_reserving(elapsed, DIAGRAM_DECISION_RESERVE)?,
+                a3_application::BeginResearchDecision::SearchAllowed
+            );
+        }
+        assert_eq!(
+            controller.begin_decision_reserving(3, DIAGRAM_DECISION_RESERVE)?,
+            a3_application::BeginResearchDecision::FinalOnly
+        );
+
+        assert!(controller.begin_decision(4).is_ok());
+        controller.use_repair()?;
+        assert!(controller.begin_decision(5).is_ok());
+        Ok(())
     }
 
     #[test]
