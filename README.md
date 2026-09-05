@@ -230,10 +230,18 @@ Kontextplatz und eine dateihaltige `searchIndex`-Aktion liest das eindeutige Zie
 Während der Recherche folgt die Ansicht dem neuesten sichtbaren Arbeitsschritt, solange der
 Nutzer nicht manuell im Verlauf liest. „Zum neuesten Schritt“ aktiviert das Mitlaufen wieder.
 Unveränderte historische Antworten, Quellen und Diagramme behalten ihre DOM-Instanzen; ein
-Folgeturn versetzt seinen Vorgänger nicht an einen neuen Renderort. Ein ungültiger
-Modell- oder Diagrammschritt darf nach dem einzigen sicheren Reparaturversuch keine vorhandenen
-Quellen in einen technischen Fehlschlag verwandeln, sondern endet fortsetzbar; `/diagram`
-reserviert innerhalb seines festen Profils auch die dafür benötigte Formatierungsentscheidung.
+Folgeturn versetzt seinen Vorgänger nicht an einen neuen Renderort. ADR-0046 trennt sicher
+gelesenen Code vom tatsächlich ans Modell gegebenen Ausschnitt: gecachte Funktionen können
+gezielt fokussiert werden, ohne erneut Read-Budget zu verbrauchen. Standard/Gründlich erlauben
+12/24 Recherche-Modellaufrufe und 24/48 neue Reads, bei unveränderten 5/15 Minuten.
+Jedes ungültige Dokument erhält höchstens einen Repair; unabhängige Schritte teilen 3/6 Repairs
+und 2/4 transiente Retries. Eine deterministische Recovery darf ohne Nutzerklick eine neue
+bekannte Evidence-Frontier wählen, niemals frische Budgets starten oder Sicherheitsgrenzen umgehen.
+`/diagram` erhält separat zwei Formatierungsversuche und bewahrt bei Fehlschlag die Textantwort.
+Knowledge V35 bewahrt bestehende Arbeitswege und erlaubt bis zu 1.024 Ereignisse je Auftrag;
+die begrenzte Verlaufsprojektion zeigt die neuesten 64 und rückt während langer Läufe weiter.
+Quellen, Notizen und vollständige gespeicherte Ereignisse bleiben erhalten. Reproduzierbare
+Offline-Nachweise und Grenzen stehen im [Abnahmebericht](fixtures/research-progressive-v1/README.md).
 Abgeschlossene Diagramme und historische Rechercheblöcke sind vom Polling eines nachfolgenden
 Turns getrennt. Ein bereits gerendertes Diagramm bleibt an seiner Antwort montiert und wird nicht
 bei jedem Live-Read kurz entfernt und erneut durch Mermaid aufgebaut.

@@ -262,6 +262,17 @@ impl SlashCommandExecutionProfile {
             format!("{primary} Apply these specialist constraints: {lenses}{materialization}")
         }
     }
+
+    /// Phase-specific research contract; diagram serialization is a separate, tool-free phase.
+    #[must_use]
+    pub fn research_constraint(&self, mode: AgentSessionMode) -> String {
+        let mut constraint = self.system_constraint(mode);
+        if self.invocation.primary() == SlashCommand::Diagram {
+            constraint = constraint.replace(primary_constraint(SlashCommand::Diagram, mode),
+                "Research the requested architecture or behavior and return an evidence-grounded text answer. A later separate phase produces the diagram; do not emit diagram JSON in this research decision.");
+        }
+        constraint
+    }
 }
 
 fn objective(invocation: &SlashCommandInvocation) -> String {

@@ -8,6 +8,114 @@ use a3_domain::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[path = "../../../../fixtures/research-progressive-v1/legacy_context.rs"]
+mod legacy_context;
+
+#[test]
+fn progressive_cache_delivers_late_code_with_exact_utf8_ranges_without_new_reads() -> TestResult {
+    let manager = include_str!("../../../../fixtures/research-progressive-v1/taskflow/manager.py");
+    assert_eq!(manager.lines().count(), 143);
+    for budget in [1024, 2048, 4096, 8192] {
+        let item = source(1, "taskflow/manager.py", 143)?;
+        let revision = item.revision().clone();
+        let mut state = AskResearchWorkingSet::new(budget);
+        state.render(&item, 1, manager, true);
+        state.sources.push(item);
+        let read_before = state.evidence_revision;
+        let initial = state.model_evidence("Erkläre die Aufgabenerstellung", &[]);
+        assert!(initial.len() <= budget);
+        state.commit_delivery();
+        // The old beginning-only packet misses the actual call site at these small budgets.
+        assert!(!initial.contains("self.plugins.dispatch"));
+        let action = AskResearchAction::InspectPath {
+            path: "taskflow/manager.py".to_owned(),
+            start_line: 130,
+        };
+        assert!(state.focus_cached(&action));
+        let before_upgrade = state.legacy_evidence_window(&[], budget);
+        assert!(!before_upgrade.contains("self.plugins.dispatch"));
+        let packet = state.model_evidence("Erkläre die Aufgabenerstellung", &[]);
+        assert!(packet.len() <= budget);
+        assert!(packet.contains("self.plugins.dispatch"), "budget {budget}");
+        assert_eq!(state.evidence_revision, read_before);
+        assert_eq!(state.current_delivery.len(), 1);
+        assert_eq!(state.current_delivery[0].start, SourcePosition::new(129, 0));
+        state.commit_delivery();
+
+        // Shifted overlapping ranges of the SAME revision are not new source coverage.
+        let overlap = AskResearchSource::new(
+            turn()?.session_id(),
+            turn()?.user_sequence(),
+            AskResearchSourceId::from_bytes([9; 32]),
+            2,
+            revision,
+            None,
+            None,
+            AskResearchSourceKind::File,
+            AskResearchSelectionReason::ExactNameOrPath,
+        )?;
+        state.render(
+            &overlap,
+            7,
+            &manager.lines().skip(6).collect::<Vec<_>>().join("\n"),
+            true,
+        );
+        state.sources.push(overlap);
+        assert_eq!(state.evidence_revision, read_before);
+        assert_eq!(
+            state
+                .model_evidence("Aufgabenerstellung", &[])
+                .matches("self.plugins.dispatch")
+                .count(),
+            1
+        );
+    }
+
+    let item = source(1, "wide.py", 1)?;
+    let body = "ä🦀".repeat(1000);
+    let mut state = AskResearchWorkingSet::new(1024);
+    state.render(&item, 1, &body, true);
+    state.sources.push(item);
+    let first = state.evidence_window();
+    assert!(first.len() <= 1024);
+    let boundary = state.current_delivery[0].end;
+    assert_eq!(boundary.row(), 0);
+    assert!(body.is_char_boundary(boundary.column() as usize));
+    state.commit_delivery();
+    assert!(state.focus_cached(&AskResearchAction::InspectPath {
+        path: "wide.py".to_owned(),
+        start_line: 1
+    }));
+    let second = state.evidence_window();
+    assert!(second.len() <= 1024);
+    assert_eq!(state.current_delivery[0].start, boundary);
+    assert_eq!(state.evidence_revision, 1);
+    Ok(())
+}
+
+#[test]
+fn delivery_interval_union_is_revision_bound_and_order_independent() -> TestResult {
+    use research_context::{CoveredRange, cover};
+    let revision = source(1, "manager.py", 143)?.revision().clone();
+    let mut ranges = Vec::new();
+    for (start, end) in [(30, 40), (10, 20), (20, 30), (12, 19)] {
+        cover(
+            &mut ranges,
+            CoveredRange {
+                revision: revision.clone(),
+                start: SourcePosition::new(start, 0),
+                end: SourcePosition::new(end, 0),
+            },
+        );
+    }
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].start.row(), 10);
+    assert_eq!(ranges[0].end.row(), 40);
+    let duplicate = ranges[0].clone();
+    assert!(!cover(&mut ranges, duplicate));
+    Ok(())
+}
+
 #[test]
 fn decision_repair_distinguishes_shape_sources_and_closed_reads_without_raw_replay() {
     use research_model::{DecisionIssue, validate_decision};
@@ -36,7 +144,7 @@ fn decision_repair_distinguishes_shape_sources_and_closed_reads_without_raw_repl
             BeginResearchDecision::SearchAllowed,
             2
         ),
-        Err(DecisionIssue::Shape)
+        Err(DecisionIssue::Json)
     );
     for issue in [
         DecisionIssue::Shape,
@@ -60,7 +168,7 @@ fn exhausted_repair_reports_the_actual_time_or_decision_limit() -> TestResult {
         repair_stop_reason(&controller, 0, 0),
         ResearchStopReason::InvalidDecision
     );
-    for time in 0..6 {
+    for time in 0..12 {
         controller.begin_decision(time)?;
     }
     assert_eq!(
@@ -249,7 +357,8 @@ fn missing_attribution_repairs_once_without_reopening_reads() -> TestResult {
         restrict_research_permission(BeginResearchDecision::FinalOnly, next),
         BeginResearchDecision::FinalOnly
     );
-    assert!(reserve_research_repair_decision(&mut controller, 2, 0).is_none());
+    // A later independent document retains its repair allowance; FinalOnly stays restrictive.
+    assert!(reserve_research_repair_decision(&mut controller, 2, 0).is_some());
     state.sources.pop();
     assert!(answer_requires_deeper_research(
         AskResearchEvidenceStatus::Sufficient,
@@ -394,7 +503,7 @@ fn a_later_requested_range_is_not_replaced_by_a_clipped_whole_file() -> TestResu
         &"    early_declaration = True\n".repeat(90),
         false,
     );
-    assert!(state.evidence_window().contains("inspectPath start_line"));
+    assert!(state.evidence_window().contains("Rest im Cache"));
     state.render(&later, 90, "    return {'error': 'Not found'}, 404\n", true);
     let focused = state.evidence_window();
     assert!(focused.contains("ab Zeile 90"));

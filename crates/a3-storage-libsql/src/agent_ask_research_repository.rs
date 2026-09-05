@@ -403,9 +403,9 @@ pub(crate) async fn load_detail(
         turn = turn.as_legacy();
     }
     let event_query = if legacy {
-        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence"
+        "SELECT * FROM (SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_ask_research_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence DESC LIMIT 64) ORDER BY event_sequence"
     } else {
-        "SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_work_trace_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence"
+        "SELECT * FROM (SELECT event_sequence, phase, state, action, query_text, completeness, occurred_at_unix_millis FROM agent_work_trace_events WHERE worktree_id = ?1 AND session_id = ?2 AND user_sequence = ?3 ORDER BY event_sequence DESC LIMIT 64) ORDER BY event_sequence"
     };
     let mut event_rows = connection
         .query(
@@ -1457,6 +1457,81 @@ mod tests {
         ContentHash, FileRevision, IndexRunId, ParsedSlashCommand, RepositoryPath, SlashCommand,
         SlashCommandLens, SnapshotId, TaskId, WorktreeId, parse_slash_command,
     };
+
+    #[test]
+    fn long_research_keeps_complete_storage_and_a_bounded_latest_event_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            let database = libsql::Builder::new_local(":memory:").build().await?;
+            let connection = database.connect()?;
+            let worktree_id = WorktreeId::from_bytes([2; 32]);
+            crate::migration::migrate_knowledge(&connection, &[1; 32], worktree_id.as_bytes())
+                .await?;
+            let session_id = AgentSessionId::from_bytes([3; 32]);
+            let sequence = AgentSessionSequence::FIRST;
+            let running = session(
+                session_id,
+                1,
+                AgentSessionState::Running,
+                10,
+                Some(sequence),
+                false,
+            )?;
+            let user = entry(
+                session_id,
+                sequence,
+                AgentSessionEntryKind::UserMessage,
+                "Explain flow",
+                10,
+            )?;
+            agent_session_repository::create(&connection, worktree_id, &running, Some(&user), None)
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            let turn = a3_application::AskResearchTurn::new_for_mode(
+                session_id,
+                sequence,
+                IndexRunId::from_bytes([4; 32]),
+                SnapshotId::from_bytes([5; 32]),
+                AgentSessionTimestamp::from_unix_millis(11)?,
+                AgentSessionMode::Ask,
+                AgentResearchDepth::Thorough,
+            );
+            for ordinal in 1..=100 {
+                let event = AskResearchEvent::new(
+                    session_id,
+                    sequence,
+                    ordinal,
+                    AskResearchPhase::Deciding,
+                    AskResearchState::Running,
+                    "Bounded progress".to_owned(),
+                    None,
+                    AskResearchCompleteness::NotApplicable,
+                    AgentSessionTimestamp::from_unix_millis(12)?,
+                )?;
+                if ordinal == 1 {
+                    begin(&connection, worktree_id, &turn, &event)
+                        .await
+                        .map_err(|error| format!("{error:?}"))?;
+                } else {
+                    append_event(&connection, worktree_id, &event)
+                        .await
+                        .map_err(|error| format!("{error:?}"))?;
+                }
+            }
+            let detail = load_detail(&connection, worktree_id, session_id, sequence)
+                .await
+                .map_err(|error| format!("{error:?}"))?
+                .ok_or("detail")?;
+            assert_eq!(detail.events().len(), 64);
+            assert_eq!(detail.events()[0].sequence(), 37);
+            assert_eq!(detail.events()[63].sequence(), 100);
+            let mut rows = connection
+                .query("SELECT COUNT(*) FROM agent_work_trace_events", ())
+                .await?;
+            assert_eq!(rows.next().await?.ok_or("count")?.get::<i64>(0)?, 100);
+            Ok(())
+        })
+    }
 
     #[test]
     fn answer_event_citations_and_session_revision_commit_atomically_and_delete_together()

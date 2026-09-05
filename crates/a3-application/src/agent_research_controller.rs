@@ -16,26 +16,29 @@ pub struct ResearchLimits {
     duration_millis: u64,
     source_references: u16,
     repairs: u8,
+    model_retries: u8,
 }
 
 impl ResearchLimits {
-    /// Returns the fixed ADR-0038 profile for a user-selected depth.
+    /// Returns the fixed ADR-0046 profile for a user-selected depth.
     #[must_use]
     pub const fn for_depth(depth: AgentResearchDepth) -> Self {
         match depth {
             AgentResearchDepth::Standard => Self {
-                model_decisions: 6,
-                read_actions: 12,
-                duration_millis: 5 * 60 * 1_000,
-                source_references: 200,
-                repairs: 1,
-            },
-            AgentResearchDepth::Thorough => Self {
                 model_decisions: 12,
                 read_actions: 24,
+                duration_millis: 5 * 60 * 1_000,
+                source_references: 200,
+                repairs: 3,
+                model_retries: 2,
+            },
+            AgentResearchDepth::Thorough => Self {
+                model_decisions: 24,
+                read_actions: 48,
                 duration_millis: 15 * 60 * 1_000,
                 source_references: 200,
-                repairs: 1,
+                repairs: 6,
+                model_retries: 4,
             },
         }
     }
@@ -46,7 +49,7 @@ impl ResearchLimits {
         self.model_decisions
     }
     #[must_use]
-    /// Returns the maximum number of requested read actions.
+    /// Returns the maximum number of executed novel adaptive read actions.
     pub const fn read_actions(self) -> u8 {
         self.read_actions
     }
@@ -61,9 +64,15 @@ impl ResearchLimits {
         self.source_references
     }
     #[must_use]
-    /// Returns the total structured-output repair allowance.
+    /// Returns the total repair allowance; each invalid document still allows only one repair.
     pub const fn repairs(self) -> u8 {
         self.repairs
+    }
+
+    /// Returns the total transient model retry allowance, charged as research decisions too.
+    #[must_use]
+    pub const fn model_retries(self) -> u8 {
+        self.model_retries
     }
 }
 
@@ -86,7 +95,7 @@ pub struct ResearchActionBatch {
 
 impl ResearchActionBatch {
     #[must_use]
-    /// Returns how many actions were charged for this batch.
+    /// Returns how many actions were requested before deduplication.
     pub const fn requested(&self) -> u8 {
         self.requested
     }
@@ -109,6 +118,9 @@ pub struct BoundedResearchController {
     decisions_used: u8,
     actions_used: u8,
     repairs_used: u8,
+    model_retries_used: u8,
+    diagram_decisions_used: u8,
+    recovery_used: bool,
     stagnant_rounds: u8,
     seen_actions: BTreeSet<AskResearchAction>,
 }
@@ -122,6 +134,9 @@ impl BoundedResearchController {
             decisions_used: 0,
             actions_used: 0,
             repairs_used: 0,
+            model_retries_used: 0,
+            diagram_decisions_used: 0,
+            recovery_used: false,
             stagnant_rounds: 0,
             seen_actions: BTreeSet::new(),
         }
@@ -159,7 +174,7 @@ impl BoundedResearchController {
         })
     }
 
-    /// Accounts for the single permitted structured-output repair.
+    /// Charges one independent document repair. The caller enforces once per document.
     pub fn use_repair(&mut self) -> Result<(), ResearchControllerError> {
         if self.repairs_used >= self.limits.repairs {
             return Err(ResearchControllerError::RepairBudgetExhausted);
@@ -168,27 +183,66 @@ impl BoundedResearchController {
         Ok(())
     }
 
-    /// Consumes requested actions and returns only actions not executed before.
+    /// Charges a transient retry; the caller must also reserve its model decision.
+    pub fn use_model_retry(&mut self) -> Result<(), ResearchControllerError> {
+        if self.model_retries_used >= self.limits.model_retries {
+            return Err(ResearchControllerError::RetryBudgetExhausted);
+        }
+        self.model_retries_used = self.model_retries_used.saturating_add(1);
+        Ok(())
+    }
+
+    /// Reserves one of two formatting attempts, without consuming research capacity or reads.
+    pub fn begin_diagram_decision(
+        &mut self,
+        elapsed_millis: u64,
+    ) -> Result<(), ResearchControllerError> {
+        if elapsed_millis >= self.limits.duration_millis {
+            return Err(ResearchControllerError::TimedOut);
+        }
+        if self.diagram_decisions_used >= 2 {
+            return Err(ResearchControllerError::DecisionBudgetExhausted);
+        }
+        self.diagram_decisions_used += 1;
+        Ok(())
+    }
+
+    /// Consumes the single Core recovery and clears only stagnation, never spent budgets.
+    pub fn begin_recovery(&mut self, elapsed_millis: u64) -> Result<(), ResearchControllerError> {
+        if elapsed_millis >= self.limits.duration_millis {
+            return Err(ResearchControllerError::TimedOut);
+        }
+        if self.recovery_used || self.decisions_used >= self.limits.model_decisions {
+            return Err(ResearchControllerError::RecoveryExhausted);
+        }
+        self.recovery_used = true;
+        self.stagnant_rounds = 0;
+        Ok(())
+    }
+
+    /// Atomically charges novel actions; duplicate requests do not consume read capacity.
     pub fn prepare_actions(
         &mut self,
         actions: Vec<AskResearchAction>,
     ) -> Result<ResearchActionBatch, ResearchControllerError> {
         let requested = u8::try_from(actions.len())
             .map_err(|_| ResearchControllerError::ActionBudgetExhausted)?;
-        if requested == 0
-            || requested > 4
-            || self.actions_used.saturating_add(requested) > self.limits.read_actions
-        {
+        if requested == 0 || requested > 4 {
             return Err(ResearchControllerError::ActionBudgetExhausted);
         }
-        self.actions_used = self.actions_used.saturating_add(requested);
+        let mut batch_seen = BTreeSet::new();
         let mut unique = Vec::with_capacity(actions.len());
         for action in actions {
-            if self.seen_actions.insert(action.clone()) {
+            if !self.seen_actions.contains(&action) && batch_seen.insert(action.clone()) {
                 unique.push(action);
             }
         }
         let unique_count = u8::try_from(unique.len()).unwrap_or(u8::MAX);
+        if self.actions_used.saturating_add(unique_count) > self.limits.read_actions {
+            return Err(ResearchControllerError::ActionBudgetExhausted);
+        }
+        self.actions_used = self.actions_used.saturating_add(unique_count);
+        self.seen_actions.extend(unique.iter().cloned());
         Ok(ResearchActionBatch {
             requested,
             duplicate_count: requested.saturating_sub(unique_count),
@@ -254,6 +308,22 @@ impl BoundedResearchController {
     /// Returns the number of charged read actions.
     pub const fn actions_used(&self) -> u8 {
         self.actions_used
+    }
+
+    /// Content-free counters for bounded progress diagnostics.
+    #[must_use]
+    pub const fn repairs_used(&self) -> u8 {
+        self.repairs_used
+    }
+    /// Number of charged transient research retries.
+    #[must_use]
+    pub const fn model_retries_used(&self) -> u8 {
+        self.model_retries_used
+    }
+    /// Number of independent formatting attempts.
+    #[must_use]
+    pub const fn diagram_decisions_used(&self) -> u8 {
+        self.diagram_decisions_used
     }
 }
 
@@ -418,8 +488,12 @@ pub enum ResearchControllerError {
     DecisionBudgetExhausted,
     /// The read-action budget or batch bound was exceeded.
     ActionBudgetExhausted,
-    /// The sole structured-output repair was already consumed.
+    /// The total independent-document repair allowance was consumed.
     RepairBudgetExhausted,
+    /// The total transient model retry allowance was consumed.
+    RetryBudgetExhausted,
+    /// The single Core recovery was consumed or no decision remains to evaluate it.
+    RecoveryExhausted,
     /// A memory or handoff invariant was violated.
     InvalidMemory,
 }
@@ -474,29 +548,31 @@ mod tests {
     }
 
     #[test]
-    fn profiles_match_adr_0038_limits() {
+    fn profiles_match_adr_0046_limits() {
         let standard = ResearchLimits::for_depth(AgentResearchDepth::Standard);
         assert_eq!(
             (standard.model_decisions(), standard.read_actions()),
-            (6, 12)
+            (12, 24)
         );
         assert_eq!(standard.duration_millis(), 300_000);
         let thorough = ResearchLimits::for_depth(AgentResearchDepth::Thorough);
         assert_eq!(
             (thorough.model_decisions(), thorough.read_actions()),
-            (12, 24)
+            (24, 48)
         );
         assert_eq!(thorough.duration_millis(), 900_000);
+        assert_eq!((standard.repairs(), standard.model_retries()), (3, 2));
+        assert_eq!((thorough.repairs(), thorough.model_retries()), (6, 4));
     }
 
     #[test]
-    fn duplicates_count_but_do_not_execute_twice() -> Result<(), Box<dyn Error>> {
+    fn duplicates_neither_charge_nor_execute_twice() -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
         assert_eq!(controller.prepare_actions(actions(2))?.actions().len(), 2);
         let duplicate = controller.prepare_actions(actions(2))?;
         assert_eq!(duplicate.duplicate_count(), 2);
         assert!(duplicate.actions().is_empty());
-        assert_eq!(controller.actions_used(), 4);
+        assert_eq!(controller.actions_used(), 2);
         Ok(())
     }
 
@@ -521,14 +597,14 @@ mod tests {
             &[AskResearchAction::ScanSecurityCandidates]
         );
         assert_eq!(repeated.duplicate_count(), 2);
-        assert_eq!(controller.actions_used(), 7);
+        assert_eq!(controller.actions_used(), 5);
         Ok(())
     }
 
     #[test]
     fn final_decision_and_stagnation_are_finite() -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
-        for turn in 0..5 {
+        for turn in 0..11 {
             assert_eq!(
                 controller.begin_decision(turn * 100)?,
                 BeginResearchDecision::SearchAllowed
@@ -545,22 +621,28 @@ mod tests {
     }
 
     #[test]
-    fn result_formatting_reservation_keeps_one_model_decision_available()
+    fn result_formatting_has_independent_capacity_and_the_same_deadline()
     -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
-        for turn in 0..4 {
+        for turn in 0..11 {
             assert_eq!(
-                controller.begin_decision_reserving(turn * 100, 1)?,
+                controller.begin_decision(turn * 100)?,
                 BeginResearchDecision::SearchAllowed
             );
         }
         assert_eq!(
-            controller.begin_decision_reserving(500, 1)?,
+            controller.begin_decision(1100)?,
             BeginResearchDecision::FinalOnly
         );
+        controller.begin_diagram_decision(1200)?;
+        controller.begin_diagram_decision(1300)?;
+        assert!(controller.begin_diagram_decision(1400).is_err());
+        assert_eq!(controller.decisions_used(), 12);
+        assert_eq!(controller.repairs_used(), 0);
+        let mut expired = BoundedResearchController::new(AgentResearchDepth::Standard);
         assert_eq!(
-            controller.begin_decision(600)?,
-            BeginResearchDecision::FinalOnly
+            expired.begin_diagram_decision(300_000),
+            Err(ResearchControllerError::TimedOut)
         );
         Ok(())
     }
@@ -609,7 +691,7 @@ mod tests {
     #[test]
     fn standard_action_timeout_and_repair_limits_are_hard() -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
-        for round in 0..3 {
+        for round in 0..6 {
             let offset = round * 4;
             controller.prepare_actions(
                 actions(4)
@@ -623,12 +705,14 @@ mod tests {
                     .collect(),
             )?;
         }
-        assert_eq!(controller.actions_used(), 12);
+        assert_eq!(controller.actions_used(), 24);
         assert!(matches!(
             controller.prepare_actions(actions(1)),
             Err(ResearchControllerError::ActionBudgetExhausted)
         ));
-        controller.use_repair()?;
+        for _ in 0..3 {
+            controller.use_repair()?;
+        }
         assert!(matches!(
             controller.use_repair(),
             Err(ResearchControllerError::RepairBudgetExhausted)
@@ -682,9 +766,9 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
         controller.begin_decision(0)?;
-        for batch in 0..3 {
+        for batch in 0..6 {
             controller.prepare_actions(
-                (0..if batch == 2 { 3 } else { 4 })
+                (0..if batch == 5 { 3 } else { 4 })
                     .map(|n| AskResearchAction::SearchIndex(format!("query-{batch}-{n}")))
                     .collect(),
             )?;
@@ -703,14 +787,14 @@ mod tests {
             .prepare_followup_actions(candidates.clone(), 1)?
             .ok_or("remaining action")?;
         assert_eq!(batch.actions().len(), 1);
-        assert_eq!(controller.actions_used(), 12);
+        assert_eq!(controller.actions_used(), 24);
         assert!(
             controller
                 .prepare_followup_actions(candidates.clone(), 2)?
                 .is_none()
         );
         let mut final_controller = BoundedResearchController::new(AgentResearchDepth::Standard);
-        for time in 0..6 {
+        for time in 0..12 {
             final_controller.begin_decision(time)?;
         }
         assert!(
@@ -732,5 +816,55 @@ mod tests {
         assert!(
             ResearchMemoryCheckpoint::build("frage".to_owned(), vec![finding], vec![]).is_err()
         );
+    }
+
+    #[test]
+    fn one_recovery_preserves_spent_budgets_and_retries_are_global() -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        controller.begin_decision(0)?;
+        controller.prepare_actions(actions(4))?;
+        controller.use_repair()?;
+        controller.use_model_retry()?;
+        controller.use_model_retry()?;
+        assert_eq!(
+            controller.use_model_retry(),
+            Err(ResearchControllerError::RetryBudgetExhausted)
+        );
+        controller.finish_round(1, 1);
+        controller.finish_round(1, 1);
+        assert!(controller.is_stagnant());
+        controller.begin_recovery(1)?;
+        assert!(!controller.is_stagnant());
+        assert_eq!(
+            (
+                controller.decisions_used(),
+                controller.actions_used(),
+                controller.repairs_used(),
+                controller.model_retries_used()
+            ),
+            (1, 4, 1, 2)
+        );
+        assert_eq!(
+            controller.begin_recovery(2),
+            Err(ResearchControllerError::RecoveryExhausted)
+        );
+        assert!(controller.begin_recovery(300_000).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_batch_does_not_mark_unexecuted_actions_as_seen() -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        let rejected = actions(5);
+        assert!(controller.prepare_actions(rejected.clone()).is_err());
+        assert_eq!(controller.actions_used(), 0);
+        assert_eq!(
+            controller
+                .prepare_actions(rejected[..4].to_vec())?
+                .actions()
+                .len(),
+            4
+        );
+        Ok(())
     }
 }

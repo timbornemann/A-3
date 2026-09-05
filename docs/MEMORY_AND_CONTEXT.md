@@ -466,15 +466,18 @@ Aktionen direkt aus, ohne einen zusätzlichen Modellentscheid allein zur Werkzeu
 oder eine Nutzerbestätigung zu verlangen. Vollständig gelesene aktuelle Dateien
 werden nicht erneut als offener Dateianfang behandelt. Die Kandidaten sind weder
 Beweise noch ausführbare Repositoryanweisungen; Aktionsdeduplizierung, Stagnation,
-Final-only-, Reparatur- und Gesamtgrenzen bleiben unverändert. Fehlt ein eindeutiger
+Final-only- und Sicherheitsgrenzen bleiben bestehen; die endlichen Ressourcenprofile folgen
+ADR-0046. Fehlt ein eindeutiger
 Ansatz, wählt das Modell weiterhin selbst die nächste erlaubte Rechercheaktion.
 
 Ein notwendiger Fortsetzungszustand benennt seinen Core-Grund: Zeit-/Entscheidungs-/
 Aktionsende, Stagnation, verbleibende Beleglücke oder ungültige Ausgabe beziehungsweise
-Zitatzuteilung. Ein Formatfehler wird nicht als begrenzte Suche ausgegeben. Der einzige
-Reparaturhinweis unterscheidet Schemaform, nicht ausgegebene Quellen und geschlossene
-Leserunden, ohne Rohantworten zu wiederholen. Auch die zweite ungültige Ausgabe führt
-weiterhin zu keiner Werkzeugausführung; ein neuer Abschnitt verlangt eine explizite
+Zitatzuteilung. Ein Formatfehler wird nicht als begrenzte Suche ausgegeben. Versionierte,
+content-freie Diagnosen unterscheiden JSON, Form, Felder, Version, Werte, Quellen,
+Markerabweichung, geschlossene Reads und abgeschnittene Ausgabe. Ein frisch gepackter Repair
+behält Frage und Evidence ungekürzt gegenüber dem Primärpaket; sein kurzer Hinweis darf
+historische Conversation verdrängen, nicht die aktuelle Evidence. Auch die zweite ungültige
+Ausgabe desselben Dokuments führt zu keiner Werkzeugausführung. Ein neuer Abschnitt verlangt eine explizite
 Fortsetzung und ist keine Freigabe für Dateiänderungen, Prozesse oder Netzwerk.
 
 Der flüchtige Recherchekontext folgt ADR-0044: aktuelle explizite Repositoryziele stehen vor
@@ -482,7 +485,11 @@ höchstens zwölf aktuellen Task-Lens-Zielen; höchstens acht revalidierte Quell
 Turns folgen nur nachrangig und werden bei einem neuen Auftrag mit expliziten Dateizielen nicht
 pauschal übernommen. Ein Teil des Evidence-Fensters bleibt für adaptive Reads späterer Runden frei.
 Identische öffentliche Lücken werden im Modellcheckpoint dedupliziert und ältere Hinweise
-begrenzt, während die persistierte sichtbare Timeline unverändert vollständig bleibt. Die
+begrenzt, während die persistierte Timeline vollständig bleibt (Anzeige: neueste 64 Ereignisse).
+Ein weitergerücktes vollständiges Anzeigefenster wird anhand seiner gemeinsamen Ereignisse
+übernommen, ohne deren DOM-Zeilen neu anzulegen. Ein vollständig verpasster Abschnitt verlangt
+durchgängig spätere Zeitstempel; ältere oder verkürzte Polls ersetzen keinen vorhandenen Stand.
+Diese Präsentationsprüfung verleiht keine Evidence- oder Ausführungsautorität. Die
 Core-Zielprojektion aus angefragtem Namen, aktuellem Pfad und turnlokalem `S`-Label ist
 Navigationsmetadatum und keine fachliche Evidence.
 
@@ -490,7 +497,8 @@ Die Modellnachrichten werden pro Entscheidung aus dem begrenzten ursprünglichen
 Conversation-Ausschnitt, genau dem aktuellen Aktionsfeedback und einem frisch kompilierten
 Evidence-Paket aufgebaut. Frühere kompilierte Pakete werden nicht erneut als Conversation
 angehängt. Der flüchtige Source-Cache hält höchstens 200 Ausschnitte zu je 32 KiB; das kleinere
-modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte. Kurze
+modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte, jeweils
+höchstens einen pro Revision. Kurze
 relevante Dateien werden nach Möglichkeit vollständig gepackt, statt jedem Treffer pauschal
 denselben kleinen Textanteil zu geben. Vollständig enthaltene Ausschnitte derselben aktuellen
 Revision werden nur einmal übertragen; große Dateien behalten ihren angeforderten späteren
@@ -498,13 +506,31 @@ Bereich. Quellenordinalzahlen und persistierte Quellenhistorie bleiben dabei unv
 Frage, Zielauflösung, öffentliche Notizen und Seitenhinweise zählen zum selben Gesamtbudget,
 berechnet gegen den tatsächlich verwendeten Modus, das Command-Profil und das Modell-Schema.
 Eindeutig aufgelöste Dateinennungen werden zusätzlich als bestehende `ExplicitPath`-Seeds an die
-Task Lens übergeben; das Ranking und die Recherchebudgets werden nicht geändert.
+Task Lens übergeben; das Ranking wird nicht geändert.
 Ein erneutes identisches Lesen ersetzt beziehungsweise fokussiert den vorhandenen
 Ausschnitt, zählt aber nicht als Evidence-Zuwachs. Später angeforderte Zeilenbereiche bleiben
 vorrangig; eine Kontextkürzung nennt einen konkreten Fortsetzungsbereich. Im Modellcheckpoint
 bleibt nur die zuletzt gemeldete offene Lücke aktiv, während ältere Notizen im Journal erhalten
-bleiben. Nach zwei echten Nullrunden darf eine verbleibende Entscheidung den vorhandenen Stand
-noch auswerten; sie eröffnet keine weiteren Reads und endet weiterhin an `AwaitingContinuation`.
+bleiben. Gelesene und ausgelieferte Intervalle werden revisionsgebunden mit Zeilen und
+UTF-8-Bytespalten getrennt geführt. Überlappende Reads und neue Ordinale erzeugen keinen
+Scheinfortschritt; eine neue zusammenhängende Kontextstelle ist dagegen echter Zugangsfortschritt.
+Der adaptive Fokus kann aktuelle Index-Symbolbereiche aus der Frage oder einer validierten
+Lücke auswählen. Kürzung innerhalb einer langen Zeile setzt an einer gültigen Byteposition fort.
+Vor jedem Modellversuch prüft der bestehende Safe Reader die aktuelle Revision der gelieferten
+Quellen; diese Validierung lädt keine neue Evidence und verändert keinen Lesecursor. Zitierte
+Antwort- und Diagrammquellen werden nach der Modellausgabe erneut geprüft.
+
+ADR-0046 begrenzt Standard/Gründlich auf 12/24 Rechercheaufrufe inklusive Repair/Retry,
+24/48 neue adaptive Read-Aktionen, 3/6 unabhängige Dokumentrepairs und 2/4 transiente
+Modellwiederholungen. Je Dokument bleibt genau ein Repair erlaubt, auch bei Zitatkorrekturen.
+Diagramme nutzen höchstens zwei zusätzliche, ausschließlich formatierende Aufrufe.
+Gesamtdeadline (5/15 Minuten), 200 Quellen und maximal vier sequenzielle Reads pro Runde bleiben.
+Nach zwei echten Nullrunden oder erfolglosem Einzelrepair darf genau eine Core-Recovery
+bekannte Cachefrontier neu packen und gegebenenfalls bis zu vier neue sichere Reads aus dem
+Restbudget wählen. Ungültige Rohantworten werden dabei nie ausgewertet. Kein Budget wird
+zurückgesetzt. Ohne neuen Zugang bleibt ein Zwischenstand; eine inzwischen vollständig belegte
+Antwort darf auch nach Nullrunden regulär abschließen. Geschlossene Leserunden erhalten ein
+Answer-only-Schema, Diagramme ihr eigenes Schema und keine widersprüchlichen Recherche-Repairs.
 
 Die explizite Fortsetzung ist kein neuer fachlicher Auftrag: Der Core bindet intern die exakte
 vorherige User-Sequenz, verwendet die ursprüngliche Frage ohne verschachtelte Fortsetzungstexte
@@ -524,8 +550,8 @@ Eine andere neue Frage übernimmt dagegen keine frühere offene Lücke. Neue Bud
 weiterhin eine ausdrückliche Nutzeraktion; es gibt keine selbststartende Fortsetzungsschleife.
 
 Ein fehlender Antwortverweis auf eine bereits sicher gelesene benannte Datei ist ein
-Zuordnungsfehler der Ausgabe, keine neue Leselücke. Er nutzt den vorhandenen einzigen
-Reparaturversuch und eine reguläre abschließende Modellentscheidung ohne weitere Reads.
+Zuordnungsfehler der Ausgabe, keine neue Leselücke. Er nutzt den Einzelrepair dieses Dokuments
+aus dem Gesamtbudget und eine reguläre abschließende Modellentscheidung ohne weitere Reads.
 Fehlende Datei-Evidence oder ein `incomplete`-Ergebnis erfordern weiterhin echte Vertiefung
 innerhalb des Budgets beziehungsweise einen ehrlich markierten Zwischenstand. Auch ein
 transienter Retry darf eine bereits auf Abschluss begrenzte Entscheidung nicht wieder öffnen.

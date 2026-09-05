@@ -278,6 +278,18 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   4 MiB begrenzt. Archivierung erhält und pausiert sie; Presentation Delete entfernt ihre
   Präsentationsdaten über die Sessionbindung. Die Migration erzeugt keinen Backfill.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
+- Knowledge-Schema V35 erweitert nach ADR-0046 die Eventsequenz der generischen Work Traces
+  von 64 auf 1.024. Events, öffentliche Notizen und ihre Source-Verknüpfungen werden in einer
+  `IMMEDIATE`-Transaktion vollständig in gleichartig geprüfte Ersatztabellen kopiert und erst
+  danach in Kind-/Elternreihenfolge ausgetauscht. Fremdschlüssel bleiben eingeschaltet;
+  Update-Guards und sämtliche bestehenden Bezüge bleiben erhalten. Der getestete Fehler nach
+  dem Tabellenaustausch rollt Daten, Trigger, Checksum-Historie und Version auf V34 zurück.
+  Es werden keine fachlichen Zeilen entfernt oder zusätzliche Inhalte gespeichert. V30-Legacy
+  bleibt unverändert. Detailreads begrenzen ausschließlich die Projektion auf die neuesten
+  64 Ereignisse in chronologischer Reihenfolge, nicht das gespeicherte Journal. Phase, endliche
+  Verbrauchszähler und geschlossene Diagnosecodes dürfen in sicheren Aktionsbeschreibungen
+  stehen; rohe Modell-/Providerfehler oder Prompts weiterhin nicht.
+- Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.
 - Die dev-only Suite `a3-storage-contract-tests` prüft Katalog, Snapshot-Ketten, Linked-Worktree-

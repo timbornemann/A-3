@@ -24,6 +24,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - TypeScript Typecheck
 - Unit- und Component-Tests der Änderung
 - Accessibility-Prüfung für neue Interaktionen
+- V35-Recherchefenster müssen nach mehr als 64 Ereignissen weiterlaufen: beide bestehenden
+  Projektions-APIs, erhaltene überlappende DOM-Zeilen, verpasste vollständige Fenster,
+  Ablehnung veralteter Polls und sichtbarer terminaler Abschluss sind als Components zu prüfen.
 - Der Fast-Index-Flow-Contract aus [ADR-0045](adrs/0045-fast-index-function-flow-analysis.md)
   prüft getrennte Aufrufstellen und Wertkontexte bis zu lokalen Node-/Python-Skripten,
   Kontrollbereiche, unbekannte Ziele und harte Analyse-/Lesebudgets. Reale Parser-,
@@ -271,6 +274,22 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   Modellturn erscheint. Eine dateihaltige `searchIndex`-Aktion muss das eindeutige Ziel direkt
   lesen; eine Nullrunde muss den Zugang wechseln, ohne Stagnations-, Aktions- oder Zeitgrenzen zu
   lockern.
+- Recherche-Fortsetzungsregressionen bilden wiederholte Router-/Server-Reads nach: pro
+- Der ADR-0046-Contract prüft den 143-Zeilen-TaskFlow-Manager mit spätem `add_task`,
+  Plugin-Dispatcher und Audit-Plugin über realen Parser, Index, libSQL, Safe Reader und
+  besessenen Scheduler bei 1/2/4/8 KiB. Ask, Plan, Agent-Vorbereitung und `/diagram`
+  müssen ohne Routine-Fortsetzung abschließen. Getrennte Read-/Delivery-Intervalle verhindern
+  überlappenden Scheinfortschritt und UTF-8-/Einzeilenschleifen; neue Cachefokussierung
+  verbraucht keinen adaptiven Read. Provider-Stubs erfassen die tatsächlichen neutralen
+  Requests: Frage und vollständiges aktuelles Paket bleiben auch im Repair erhalten,
+  Search-/Answer-only-/Diagrammschema entsprechen der Phase, Überläufe scheitern geschlossen.
+  Eigenständige Fehler dürfen je einmal repariert werden, ungültige Repairs nie ein zweites
+  Mal. Globale Repair-/Retry-/Read-/Modell-/Zeitgrenzen, die einzige Core-Recovery, Cancellation,
+  Live-Edits und Symlink-Escape werden negativ getestet. Knowledge V35 erhält alte Events,
+  Notizen und Bezüge sowie alle Fremdschlüssel/Update-Guards, einschließlich vollständigem
+  Rollback nach bereits ausgeführtem Tabellenaustausch. Ein 100-Event-Lauf speichert alle
+  Ereignisse und projiziert exakt die letzten 64. Offline-Verträge ersetzen keinen
+  ausdrücklich freizugebenden Live-Modellvergleich.
 - Recherche-Fortsetzungsregressionen bilden wiederholte Router-/Server-Reads nach: pro
   Entscheidung genau ein aktuelles Evidence-Paket, keine doppelten Ausschnitte oder künstlichen
   Fortschrittszähler, kein Rückfall vom fokussierten späteren Bereich zum Dateianfang, konkrete

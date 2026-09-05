@@ -66,6 +66,7 @@
   let preview = $state<ProjectMapSourcePreviewV1 | null>(null);
   let previewState = $state<'idle' | 'loading' | 'stale' | 'error'>('idle');
   let visibleStepCount = $state(0);
+  let timelineOffset = $state(0);
   let reducedMotion = $state(false);
   let request = 0;
   let loadInFlight = false;
@@ -114,6 +115,7 @@
         activeTurnKey = turnKey;
         request += 1;
         resetPresentation();
+        timelineOffset = 0;
         detail = null;
         sources = [];
         selectedSource = null;
@@ -251,8 +253,7 @@
         return;
       }
       const nextDetail = response.result.detail;
-      const nextTimeline = groupTimeline(nextDetail.steps);
-      if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) {
+      if (windowAdvance(nextDetail.steps) === null) {
         return;
       }
       const hadLoadedProjection = hasLoadedProjection();
@@ -316,8 +317,7 @@
       return;
     }
     const nextDetail = response.result.detail;
-    const nextTimeline = groupTimeline(nextDetail.steps);
-    if (detail && !isAppendOnlyUpdate(timelineSteps, nextTimeline)) {
+    if (windowAdvance(nextDetail.steps) === null) {
       return;
     }
     const hadLoadedProjection = hasLoadedProjection();
@@ -350,6 +350,40 @@
     return previous.every((step, index) => step.id === next[index]?.id);
   }
 
+  function windowAdvance(next: AgentAskResearchDetailV1['steps']): number | null {
+    if (!detail || isAppendOnlyUpdate(timelineSteps, groupTimeline(next))) return 0;
+    // V35 retains the entire journal, but projects only its latest 64 events.
+    // A matching suffix is forward progress, not a regressing/truncated poll.
+    if (next.length !== 64 || detail.steps.length === 0) return null;
+    const identity = (step: AgentAskResearchDetailV1['steps'][number]): string =>
+      JSON.stringify([
+        step.occurredAtUnixMillis,
+        step.phase,
+        step.state,
+        step.action,
+        step.query,
+        step.completeness,
+        step.note && { ...step.note, sourceRefs: step.note.sourceRefs.length },
+      ]);
+    for (let dropped = 1; dropped < detail.steps.length; dropped += 1) {
+      if (
+        detail.steps.slice(dropped).every((step, index) => identity(step) === identity(next[index]))
+      )
+        return dropped;
+    }
+    // Polling can miss a complete window. Accept only an entirely later tail;
+    // never use presentation timestamps as execution or evidence authority.
+    const previousLast = detail.steps.at(-1);
+    if (
+      previousLast &&
+      next.every(
+        (step) => BigInt(step.occurredAtUnixMillis) > BigInt(previousLast.occurredAtUnixMillis),
+      )
+    )
+      return detail.steps.length;
+    return null;
+  }
+
   function hasLoadedProjection(): boolean {
     return detail !== null && loadState === 'available';
   }
@@ -359,12 +393,22 @@
     nextSources: AgentWorkTraceSourceV2[],
     nextSourceLoadState: 'available' | 'error',
   ): void {
+    const advance = windowAdvance(nextDetail.steps);
+    if (advance === null) return;
     const detailChanged = JSON.stringify(detail) !== JSON.stringify(nextDetail);
     const sourcesChanged = JSON.stringify(sources) !== JSON.stringify(nextSources);
     const selectedLabel = sources.find(
       (source) => source.sourceRef === selectedSource,
     )?.referenceLabel;
-    if (detailChanged) detail = nextDetail;
+    if (detailChanged) {
+      if (advance > 0 && detail) {
+        const removed = timelineSteps.length - groupTimeline(detail.steps.slice(advance)).length;
+        timelineOffset += advance;
+        visibleStepCount = Math.max(0, visibleStepCount - removed);
+        revealTarget = Math.max(0, revealTarget - removed);
+      }
+      detail = nextDetail;
+    }
     if (sourcesChanged) {
       sources = nextSources;
       // Opaque action references rotate with the trace revision; S labels retain
@@ -407,7 +451,7 @@
       } else {
         grouped.push({
           ...step,
-          id: `${index}:${step.occurredAtUnixMillis}:${step.phase}`,
+          id: `${timelineOffset + index}:${step.occurredAtUnixMillis}:${step.phase}`,
           section,
         });
       }

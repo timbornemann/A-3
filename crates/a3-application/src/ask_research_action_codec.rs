@@ -217,8 +217,11 @@ fn decode_answer(
         }
         ordinals.push(ordinal);
     }
-    if markdown_source_ordinals(&markdown)? != seen {
-        return Err(AskResearchDecisionDecodeError::InvalidValue);
+    if markdown_source_ordinals(&markdown)
+        .map_err(|_| AskResearchDecisionDecodeError::CitationMismatch)?
+        != seen
+    {
+        return Err(AskResearchDecisionDecodeError::CitationMismatch);
     }
     Ok(AskResearchDecision::Answer {
         markdown,
@@ -451,7 +454,7 @@ pub(crate) fn decode_note(
         source_ordinals.push(ordinal);
     }
     if finding_kind != AskResearchFindingKind::Hypothesis && source_ordinals.is_empty() {
-        return Err(AskResearchDecisionDecodeError::InvalidValue);
+        return Err(AskResearchDecisionDecodeError::MissingSources);
     }
     Ok(AskResearchDecisionNote {
         goal: bounded(string(note, "goal")?, 1024)?,
@@ -558,6 +561,10 @@ pub enum AskResearchDecisionDecodeError {
     UnsupportedVersion,
     /// A value crossed a closed enum or resource boundary.
     InvalidValue,
+    /// Answer markers and the declared source list disagree.
+    CitationMismatch,
+    /// An asserted observation or conclusion has no supporting sources.
+    MissingSources,
 }
 impl fmt::Display for AskResearchDecisionDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

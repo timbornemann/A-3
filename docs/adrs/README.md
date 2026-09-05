@@ -70,6 +70,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0043](0043-core-gesteuerte-evidence-vertiefung-und-retry.md)                | Core-gesteuerte Evidence-Vertiefung und Retry        |
 | [0044](0044-priorisierter-recherchekontext-und-zielauflösung.md)             | Priorisierter Recherchekontext und Zielauflösung     |
 | [0045](0045-fast-index-function-flow-analysis.md) | Ablauf- und Wertanalyse im Fast Index |
+| [0046](0046-progressive-recherche-und-getrennte-recoverybudgets.md) | Progressive Recherche und getrennte Recoverybudgets |
 
 ## Neue ADRs
 

@@ -1060,7 +1060,8 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] Core-gesteuerte Evidence-Vertiefung, abschnittsweise Dateireads und begrenztes Retry
 - [x] priorisierter Recherchekontext mit deterministischer Zielauflösung und adaptiver Reserve
-- [ ] autonome Core-Vertiefung konkreter Beleglücken und unterscheidbare Fortsetzungsgründe
+- [x] autonome Core-Vertiefung konkreter Beleglücken und unterscheidbare Fortsetzungsgründe
+- [x] progressive Kontextabdeckung und getrennte Recovery-/Diagrammbudgets nach ADR-0046
 - [x] ruhige Chatposition und fortsetzbarer Modell-/Diagrammabschluss nach begrenztem Repair
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
@@ -1163,6 +1164,51 @@ Pro Modellrunde wird nur ein aktuelles Evidence-Paket kompiliert; identische Rea
 Kontext nicht auf und zählen nicht als neuer Fortschritt. Eine letzte Auswertung nach Stagnation
 und bereits validierte Teilantworten bleiben als zitierter Zwischenstand mit ausdrücklicher
 Fortsetzungsaktion erhalten. Die Recherche beginnt keine neuen Budgets ohne Nutzeraktion.
+
+Erneute TaskFlow-Untersuchung vom 2026-09-05: Der neue Export zeigt wiederholte
+Kontextkürzungen derselben Manager-Datei, frühe Reparaturenden und den knappen
+Standard-Rechercherahmen mit zwei reservierten Diagrammentscheidungen. Gelesene und
+tatsächlich an das Modell ausgelieferte Bereiche sind nicht getrennt; die frühere
+kleine Storage-Fixture deckt diesen Fall nicht ab. Diagnose, neues endliches
+Budgetmodell, Recovery und größere Negativ-/Kontextabnahmen stehen in
+[ADR-0046](../adrs/0046-progressive-recherche-und-getrennte-recoverybudgets.md).
+Tim Bornemann hat die Entscheidung am 2026-09-05 ausdrücklich angenommen.
+Implementierung und Offline-Abnahme sind in folgenden Schnitten abgeschlossen; Nicht-Ziele bleiben
+neue Berechtigungen, automatische Budgetneustarts und Live-Providerzugriffe:
+
+- [x] revisionsgebundene Read-/Delivery-Abdeckung, Cachefokus und brauchbare Quellbereiche
+- [x] getrennte Recherche-/Diagramm-, Einzelrepair-/Gesamt- und Recoverygrenzen
+- [x] phasengenaue Schemas, konkrete Fehlerdiagnosen und unverdrängter Reparaturkontext
+- [x] große TaskFlow-/Provider-Paketregressionen, Negativfälle und Abschlussgates
+- [x] notwendige V35-Ereignisgrenze mit Datenerhalt, Rollback und weiterlaufendem UI-Fenster
+
+Abnahme ADR-0046 vom 2026-09-05: 24 reale Parser-/Index-/libSQL-/Reader-/Scheduler-
+Szenarien schließen die späte TaskFlow-Mehrdateikette bei 1/2/4/8 KiB ohne Fortsetzungsklick
+ab. 48 produktiv aufgebaute Provider-Pakete prüfen aktuelle Frage, Evidence und Phasenschema
+auch beim Repair. Der eingefrorene vorherige Packer liefert den späten Dispatch-Aufruf in
+keinem der vier Fenster; der neue liefert ihn in allen, ohne zusätzliche adaptive Reads.
+V35 erhält sämtliche Ereignisse, Notizen und Quellenbezüge, erlaubt 1024 Sequenzen und zeigt
+die neuesten 64. Deren UI-Übergang hält gemeinsame DOM-Zeilen und akzeptiert keine älteren Polls.
+
+Der nachfolgend historisch dokumentierte Start/Pause-Gatefehler ist mit einem eigenen
+Test-Synchronisationsnachweis behoben: Ein begrenzter Kanal bestätigt den Executor-Eintritt
+vor den unveränderten exakten Startzähler-Assertions. Der Scheduler meldet `Running` bereits
+vor diesem Callback. Keine Produktionssteuerung wurde hierfür verändert. Der exakte Test
+besteht in 25/25 frischen Prozessen; alle sieben Run-Manager-Tests und das vollständige
+Release-Workspace-Gate bestehen ebenfalls. Historische fehlgeschlagene Läufe bleiben unten
+als Verlauf erhalten und werden nicht nachträglich als bestanden dargestellt.
+
+Final verifiziert: `cargo fmt --all --check`, gezielte Controller-, Desktop-Recherche-,
+Run-Manager- und V35-/Langjournaltests,
+`cargo clippy --workspace --all-targets --all-features --offline --locked -- -D warnings`,
+`cargo test --workspace --all-features --release --offline --locked`, `pnpm format:check`,
+`pnpm lint`, `pnpm typecheck`, `pnpm --filter @a3/desktop test -- AgentAskResearch.test.ts`
+(29 Tests), `pnpm test -- --run` (371 bestanden, 14 vorgesehene Skips, fünf Script-Tests),
+`pnpm check:links` und `git diff --check`. Keine neuen Dependencies, Capabilities oder
+Provider-/Netzwerkfreigaben. Reproduktion, Testgrenzen, Windows-Temp-/Debug-Lock-Umgebung
+und Node-Pin-Abweichung stehen im
+[Abnahmebericht](../../fixtures/research-progressive-v1/README.md). Ein Live-Modell-Replay
+und plattformfremde Ausführung werden nicht als Teil dieser Offline-Abnahme behauptet.
 
 Autonomie-Korrektur vom 2026-09-05 (implementiert, Gesamtgate offen): Der gemeldete TaskFlow-Verlauf endet
 nach einer gültigen unvollständigen Antwort und einer zweiten sichtbaren Entscheidung

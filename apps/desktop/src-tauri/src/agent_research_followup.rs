@@ -96,6 +96,7 @@ pub(super) enum ResearchStopReason {
     EvidenceIncomplete,
     InvalidDecision,
     CitationRepair,
+    ModelRetryLimit,
 }
 
 impl ResearchStopReason {
@@ -123,7 +124,10 @@ impl ResearchStopReason {
                 "Die Frage ist noch nicht vollständig belegt; im aktuellen Abschnitt sind keine weiteren Leserunden verfügbar."
             }
             Self::InvalidDecision => {
-                "Der nächste Modellschritt war nicht gültig; der einmalige Reparaturversuch dieses Abschnitts ist bereits verbraucht. Seine Leseaktionen wurden nicht ausgeführt."
+                "Der Modellschritt blieb nach seinem Einzelrepair ungültig oder das Reparaturbudget ist erschöpft; eine weitere sichere Recovery ist nicht verfügbar. Ungültige Leseaktionen wurden nicht ausgeführt."
+            }
+            Self::ModelRetryLimit => {
+                "Die begrenzten Wiederholungen vorübergehend fehlgeschlagener Modellaufrufe sind ausgeschöpft."
             }
             Self::CitationRepair => {
                 "Die Antwort konnte innerhalb des zulässigen Reparaturversuchs nicht vollständig ihren vorhandenen Quellen zugeordnet werden."

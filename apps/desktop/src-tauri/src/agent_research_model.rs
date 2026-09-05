@@ -2,16 +2,110 @@
 use super::*;
 use std::future::Future;
 
+/// Revalidation is not an adaptive read: it adds no evidence and cannot advance a cursor.
+/// The existing reader verifies canonical path, full revision, encoding and secret policy.
+pub(super) struct EvidenceGuard<'a> {
+    pub project: &'a ProjectIdentity,
+    pub revisions: Vec<(a3_domain::FileRevision, u32)>,
+}
+impl EvidenceGuard<'_> {
+    pub(super) async fn validate(
+        &self,
+        control: &JobContext,
+    ) -> Result<(), AgentSessionManagerFailure> {
+        if control.cancellation_token().is_cancelled() {
+            return Err(AgentSessionManagerFailure::Unavailable);
+        }
+        for (revision, start_line) in &self.revisions {
+            let request = AgentFileInspection::new(
+                revision.path().clone(),
+                AgentFileStartLine::new(*start_line)
+                    .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+                AgentFileLineCount::new(1).map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
+            );
+            WorkspaceAgentSourceReader
+                .read_page(self.project, revision, &request, control)
+                .await
+                .map_err(|error| {
+                    if error == AgentSourceReadFailure::Stale {
+                        AgentSessionManagerFailure::IndexChanged
+                    } else {
+                        AgentSessionManagerFailure::Unavailable
+                    }
+                })?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn diagnostic(
+    code: &str,
+    permission: BeginResearchDecision,
+    controller: &BoundedResearchController,
+) -> String {
+    format!(
+        "{code}; phase={}; model={}/{}; reads={}/{}; repairs={}/{}; retries={}/{}",
+        if permission == BeginResearchDecision::FinalOnly {
+            "answer"
+        } else {
+            "research"
+        },
+        controller.decisions_used(),
+        controller.limits().model_decisions(),
+        controller.actions_used(),
+        controller.limits().read_actions(),
+        controller.repairs_used(),
+        controller.limits().repairs(),
+        controller.model_retries_used(),
+        controller.limits().model_retries()
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DecisionIssue {
+    Json,
     Shape,
+    Fields,
+    Version,
+    Value,
+    Markers,
+    Truncated,
     UnknownSource,
     ReadsClosed,
 }
 
 impl DecisionIssue {
+    pub(super) const fn code(self) -> &'static str {
+        match self {
+            Self::Json => "research-v1/json",
+            Self::Shape => "research-v1/shape",
+            Self::Fields => "research-v1/fields",
+            Self::Version => "research-v1/version",
+            Self::Value => "research-v1/value",
+            Self::Markers => "research-v1/markers",
+            Self::Truncated => "research-v1/output-truncated",
+            Self::UnknownSource => "research-v1/source",
+            Self::ReadsClosed => "research-v1/reads-closed",
+        }
+    }
     pub(super) fn repair_hint(self, source_count: usize) -> String {
         let detail = match self {
+            Self::Json => {
+                "Return a complete JSON object, without fences or prose. Close all strings, arrays and objects."
+            }
+            Self::Fields => {
+                "Use exactly the required fields of the supplied schema; omit unknown fields. Do not omit the public note or evidence_status."
+            }
+            Self::Version => "Use schema_version 4 and the exact supplied phase schema.",
+            Self::Value => {
+                "Use only the schema's closed enums and bounded values. Source labels are S1..S200 and start_line is positive."
+            }
+            Self::Markers => {
+                "Markdown markers and source_refs must name exactly the same sources. Do not place markers in code."
+            }
+            Self::Truncated => {
+                "The output was cut off. Return a substantially SHORTER complete schema-conforming object. Use a concise note and answer; do not repeat source excerpts."
+            }
             Self::Shape => {
                 "The document violates the supplied schema. Use only its exact field and action names. A research decision requires evidence_status=incomplete and 1-4 actions; inspectPath requires path and a positive start_line. An answer requires markdown and exactly matching source_refs. Keep the public note concise."
             }
@@ -35,7 +129,26 @@ pub(super) fn validate_decision(
 ) -> Result<a3_application::AskResearchDecision, DecisionIssue> {
     let decision = DecodeAskResearchDecision
         .decode(raw)
-        .map_err(|_| DecisionIssue::Shape)?;
+        .map_err(|error| match error {
+            a3_application::AskResearchDecisionDecodeError::MalformedJson => DecisionIssue::Json,
+            a3_application::AskResearchDecisionDecodeError::UnknownOrMissingField => {
+                DecisionIssue::Fields
+            }
+            a3_application::AskResearchDecisionDecodeError::UnsupportedVersion => {
+                DecisionIssue::Version
+            }
+            a3_application::AskResearchDecisionDecodeError::InvalidValue => DecisionIssue::Value,
+            a3_application::AskResearchDecisionDecodeError::CitationMismatch => {
+                DecisionIssue::Markers
+            }
+            a3_application::AskResearchDecisionDecodeError::MissingSources => {
+                DecisionIssue::UnknownSource
+            }
+            a3_application::AskResearchDecisionDecodeError::OutputTooLarge => {
+                DecisionIssue::Truncated
+            }
+            _ => DecisionIssue::Shape,
+        })?;
     let valid = match &decision {
         a3_application::AskResearchDecision::Answer {
             source_ordinals,

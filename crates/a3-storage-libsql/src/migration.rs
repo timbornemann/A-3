@@ -3237,6 +3237,11 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
     KNOWLEDGE_SLASH_COMMAND_ARTIFACT_MIGRATION,
     KNOWLEDGE_AGENT_MESSAGE_QUEUE_MIGRATION,
     KNOWLEDGE_FUNCTION_FLOW_MIGRATION,
+    Migration {
+        version: 35,
+        name: "progressive_research_trace_capacity",
+        sql: include_str!("migrations/knowledge_v35.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3269,7 +3274,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(34);
+    pub const CURRENT: Self = Self::new(35);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3899,6 +3904,7 @@ mod tests {
         (knowledge_upgrades_from_v31, 31),
         (knowledge_upgrades_from_v32, 32),
         (knowledge_upgrades_from_v33, 33),
+        (knowledge_upgrades_from_v34, 34),
     );
 
     #[test]
@@ -6332,6 +6338,230 @@ mod tests {
                 0
             );
             Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v35_preserves_notes_sources_guards_and_rolls_back_even_after_table_replacement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            use a3_application::{
+                AskResearchEvent, AskResearchPublicFindingKind, AskResearchPublicNote,
+                AskResearchSource, AskResearchTurn,
+            };
+            use a3_domain::*;
+            for conflict in 0..3 {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                connection.execute("PRAGMA foreign_keys = ON", ()).await?;
+                let repository = [121; 32];
+                let worktree = WorktreeId::from_bytes([122; 32]);
+                super::apply_knowledge_bootstrap(&connection, &repository, worktree.as_bytes())
+                    .await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..34],
+                    34,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                let session_id = AgentSessionId::from_bytes([3; 32]);
+                let sequence = AgentSessionSequence::FIRST;
+                let time = AgentSessionTimestamp::from_unix_millis(1)?;
+                let session = AgentSession::from_parts(
+                    session_id,
+                    AgentSessionRevision::new(1)?,
+                    AgentSessionTitle::try_from_string("Migration fixture".to_owned())?,
+                    AgentSessionMode::Ask,
+                    AgentSessionState::Running,
+                    time,
+                    time,
+                    Some(sequence),
+                    None,
+                    None,
+                    false,
+                );
+                let entry = AgentSessionEntry::try_new(
+                    session_id,
+                    sequence,
+                    AgentSessionEntryKind::UserMessage,
+                    AgentSessionText::try_from_string("Explain".to_owned())?,
+                    time,
+                    None,
+                    None,
+                    None,
+                )?;
+                crate::agent_session_repository::create(
+                    &connection,
+                    worktree,
+                    &session,
+                    Some(&entry),
+                    None,
+                )
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+                let turn = AskResearchTurn::new(
+                    session_id,
+                    sequence,
+                    IndexRunId::from_bytes([4; 32]),
+                    SnapshotId::from_bytes([5; 32]),
+                    time,
+                );
+                let event = AskResearchEvent::new(
+                    session_id,
+                    sequence,
+                    1,
+                    AskResearchPhase::Preparing,
+                    AskResearchState::Running,
+                    "Initial evidence".to_owned(),
+                    None,
+                    AskResearchCompleteness::NotApplicable,
+                    time,
+                )?;
+                crate::agent_ask_research_repository::begin(&connection, worktree, &turn, &event)
+                    .await
+                    .map_err(|error| format!("{error:?}"))?;
+                let source_id = AskResearchSourceId::from_bytes([6; 32]);
+                let source = AskResearchSource::new(
+                    session_id,
+                    sequence,
+                    source_id,
+                    1,
+                    FileRevision::new(
+                        RepositoryPath::try_from_bytes(b"manager.py".to_vec())?,
+                        ContentHash::from_bytes([7; 32]),
+                    ),
+                    None,
+                    None,
+                    AskResearchSourceKind::File,
+                    AskResearchSelectionReason::SourceText,
+                )?;
+                crate::agent_ask_research_repository::append_sources(
+                    &connection,
+                    worktree,
+                    &[source],
+                )
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+                let note = AskResearchPublicNote::new(
+                    "Goal".to_owned(),
+                    AskResearchPublicFindingKind::Observation,
+                    "Finding".to_owned(),
+                    vec![source_id],
+                    "Gap".to_owned(),
+                    "Next".to_owned(),
+                )?;
+                let event = AskResearchEvent::new(
+                    session_id,
+                    sequence,
+                    2,
+                    AskResearchPhase::Evaluating,
+                    AskResearchState::Running,
+                    "Source evaluated".to_owned(),
+                    None,
+                    AskResearchCompleteness::NotApplicable,
+                    time,
+                )?
+                .with_public_note(note);
+                crate::agent_ask_research_repository::append_event(&connection, worktree, &event)
+                    .await
+                    .map_err(|error| format!("{error:?}"))?;
+                let original = crate::agent_ask_research_repository::load_detail(
+                    &connection,
+                    worktree,
+                    session_id,
+                    sequence,
+                )
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+                if conflict == 1 {
+                    connection
+                        .execute(
+                            "CREATE TABLE agent_work_trace_note_sources_v35 (conflict INTEGER)",
+                            (),
+                        )
+                        .await?;
+                }
+                let late_failure = Migration {
+                    version: 35,
+                    name: "forced_late_failure",
+                    sql: concat!(
+                        include_str!("migrations/knowledge_v35.sql"),
+                        "\nSELECT * FROM missing_migration_fixture;"
+                    ),
+                };
+                let result = if conflict == 2 {
+                    super::apply_migration(
+                        &connection,
+                        &late_failure,
+                        super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                    )
+                    .await
+                } else {
+                    super::migrate_knowledge(&connection, &repository, worktree.as_bytes())
+                        .await
+                        .map(|_| ())
+                };
+                assert_eq!(result.is_ok(), conflict == 0);
+                assert_eq!(
+                    query_i64(&connection, "PRAGMA user_version").await?,
+                    if conflict == 0 { 35 } else { 34 }
+                );
+                assert_eq!(
+                    crate::agent_ask_research_repository::load_detail(
+                        &connection,
+                        worktree,
+                        session_id,
+                        sequence
+                    )
+                    .await
+                    .map_err(|error| format!("{error:?}"))?,
+                    original
+                );
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM agent_work_trace_notes").await?,
+                    1
+                );
+                assert_eq!(
+                    query_i64(
+                        &connection,
+                        "SELECT COUNT(*) FROM agent_work_trace_note_sources"
+                    )
+                    .await?,
+                    1
+                );
+                assert_eq!(
+                    query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check").await?,
+                    0
+                );
+                assert!(
+                    connection
+                        .execute("UPDATE agent_work_trace_notes SET gap = 'changed'", ())
+                        .await
+                        .is_err()
+                );
+                if conflict == 0 {
+                    assert!(connection.execute("INSERT INTO agent_work_trace_events SELECT worktree_id,session_id,user_sequence,1025,phase,state,action,query_text,completeness,occurred_at_unix_millis FROM agent_work_trace_events WHERE event_sequence=1",()).await.is_err());
+                    crate::agent_ask_research_repository::append_event(
+                        &connection,
+                        worktree,
+                        &AskResearchEvent::new(
+                            session_id,
+                            sequence,
+                            3,
+                            AskResearchPhase::Deciding,
+                            AskResearchState::Running,
+                            "Next step".to_owned(),
+                            None,
+                            AskResearchCompleteness::NotApplicable,
+                            time,
+                        )?,
+                    )
+                    .await
+                    .map_err(|error| format!("{error:?}"))?;
+                }
+            }
+            Ok(())
         })
     }
 

@@ -849,6 +849,7 @@ mod tests {
     #[derive(Debug)]
     struct PausingExecutor {
         attempts: AtomicUsize,
+        started: Option<std::sync::mpsc::SyncSender<usize>>,
     }
 
     impl AgentRunExecutor for PausingExecutor {
@@ -858,7 +859,10 @@ mod tests {
             _request: AgentRunExecutionRequest,
             control: &'a a3_application::JobContext,
         ) -> AgentRunExecutionFuture<'a> {
-            self.attempts.fetch_add(1, Ordering::AcqRel);
+            let attempt = self.attempts.fetch_add(1, Ordering::AcqRel) + 1;
+            if let Some(started) = &self.started {
+                assert!(started.try_send(attempt).is_ok());
+            }
             Box::pin(async move {
                 control.cancellation_token().cancelled().await;
                 Ok(AgentRunExecutionOutcome::Cancelled)
@@ -914,8 +918,10 @@ mod tests {
             JobSchedulerConfig::new(1, 4, 64)?,
             Arc::new(TestClock(AtomicU64::new(1))),
         )?;
+        let (started_sender, started_receiver) = std::sync::mpsc::sync_channel(2);
         let executor = Arc::new(PausingExecutor {
             attempts: AtomicUsize::new(0),
+            started: Some(started_sender),
         });
         let recovery = Arc::new(Recovery {
             pauses: AtomicUsize::new(0),
@@ -939,6 +945,9 @@ mod tests {
         let request = request()?;
         manager.start_attempt(request)?;
         wait_for_state(&manager, AgentRunActivityState::Running)?;
+        // Scheduler Running precedes the executor callback. Observe its explicit start,
+        // not an incidental scheduling delay, before checking callback side effects.
+        assert_eq!(started_receiver.recv_timeout(Duration::from_secs(1))?, 1);
         assert_eq!(executor.attempts.load(Ordering::Acquire), 1);
 
         manager.pause(request.task_id())?;
@@ -957,6 +966,7 @@ mod tests {
         );
         manager.start_attempt(resumed_request)?;
         wait_for_state(&manager, AgentRunActivityState::Running)?;
+        assert_eq!(started_receiver.recv_timeout(Duration::from_secs(1))?, 2);
         assert_eq!(executor.attempts.load(Ordering::Acquire), 2);
 
         manager.cancel_owned_worker(resumed_request)?;
@@ -987,6 +997,7 @@ mod tests {
 
         let executor = Arc::new(PausingExecutor {
             attempts: AtomicUsize::new(0),
+            started: None,
         });
         let recovery = Arc::new(Recovery {
             pauses: AtomicUsize::new(0),
@@ -1038,6 +1049,7 @@ mod tests {
             events,
             Arc::new(PausingExecutor {
                 attempts: AtomicUsize::new(0),
+                started: None,
             }),
             recovery.clone(),
             Arc::new(DesktopJobIds::new()),
@@ -1073,6 +1085,7 @@ mod tests {
             events,
             Arc::new(PausingExecutor {
                 attempts: AtomicUsize::new(0),
+                started: None,
             }),
             Arc::new(Recovery {
                 pauses: AtomicUsize::new(0),
@@ -1107,6 +1120,7 @@ mod tests {
         )?;
         let executor = Arc::new(PausingExecutor {
             attempts: AtomicUsize::new(0),
+            started: None,
         });
         let recovery = Arc::new(Recovery {
             pauses: AtomicUsize::new(0),
@@ -1146,6 +1160,7 @@ mod tests {
             events,
             Arc::new(PausingExecutor {
                 attempts: AtomicUsize::new(0),
+                started: None,
             }),
             Arc::new(Recovery {
                 pauses: AtomicUsize::new(0),

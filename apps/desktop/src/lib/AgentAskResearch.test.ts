@@ -55,6 +55,86 @@ afterEach(() => {
 });
 
 describe('AgentAskResearch', () => {
+  it.each(['projection', 'legacy'] as const)(
+    'advances a full 64-event %s window through completion without replacing retained rows',
+    async (api) => {
+      vi.useFakeTimers();
+      const all = Array.from({ length: 130 }, (_, index) =>
+        step(`Schritt ${index + 1}`, String(100 + index), 'reading'),
+      );
+      all[129] = step('Recherche fertig', '229', 'completed', 'completed');
+      let current = all.slice(0, 64);
+      const detailLoader = vi.fn(async () => detailResponse(current));
+      const projectionLoader = vi.fn(async () => ({
+        protocolVersion: 1 as const,
+        result: {
+          status: 'available' as const,
+          detail: detailResponse(current).result.detail,
+          nextCursor: null,
+          projectionRef: id('4'),
+          sources: [],
+        },
+      }));
+      const view = render(AgentAskResearch, {
+        ...(api === 'projection'
+          ? { projectionLoader }
+          : { detailLoader, sourcesLoader: emptySources }),
+        live: true,
+        refreshKey: '1',
+        sessionId: id('1'),
+        userSequence: '1',
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      const retained = timelineAction('Schritt 40').closest('li');
+      expect(view.container.querySelectorAll('.research-steps li')).toHaveLength(64);
+      current = all.slice(36, 100);
+      await view.rerender({ refreshKey: '2' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(timelineAction('Schritt 40').closest('li')).toBe(retained);
+      expect(timelineAction('Schritt 100')).toBeTruthy();
+      expect(screen.queryByText('Schritt 1')).toBeNull();
+      current = all.slice(0, 64); // stale full window must not undo progress
+      await view.rerender({ refreshKey: '3' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(timelineAction('Schritt 100')).toBeTruthy();
+      current = all.slice(66, 130);
+      await view.rerender({ refreshKey: '4' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(timelineAction('Recherche fertig')).toBeTruthy();
+      expect(view.container.querySelectorAll('.research-steps li')).toHaveLength(64);
+      view.unmount();
+    },
+  );
+
+  it('accepts a wholly later full window after missed polls but rejects an older one', async () => {
+    vi.useFakeTimers();
+    const windows = [100, 300].map((start) =>
+      Array.from({ length: 64 }, (_, index) =>
+        step(`Ereignis ${start + index}`, String(start + index), 'reading'),
+      ),
+    );
+    let current = windows[0];
+    const view = render(AgentAskResearch, {
+      detailLoader: vi.fn(async () => detailResponse(current)),
+      sourcesLoader: emptySources,
+      live: true,
+      refreshKey: '1',
+      sessionId: id('1'),
+      userSequence: '1',
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    current = windows[1];
+    await view.rerender({ refreshKey: '2' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(timelineAction('Ereignis 363')).toBeTruthy();
+    current = windows[0];
+    await view.rerender({ refreshKey: '3' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(timelineAction('Ereignis 363')).toBeTruthy();
+    expect(screen.queryByText('Ereignis 100')).toBeNull();
+    view.unmount();
+  });
+
   it('does not start fallback reads after an unmounted projection fails', async () => {
     let fail: ((reason: Error) => void) | undefined;
     const projectionLoader = vi.fn(

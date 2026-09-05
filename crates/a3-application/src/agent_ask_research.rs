@@ -396,7 +396,7 @@ impl AskResearchEvent {
         completeness: AskResearchCompleteness,
         occurred_at: AgentSessionTimestamp,
     ) -> Result<Self, AskResearchDataError> {
-        if sequence == 0 || !safe_text(&action, MAX_ACTION_BYTES) {
+        if sequence == 0 || sequence > 1024 || !safe_text(&action, MAX_ACTION_BYTES) {
             return Err(AskResearchDataError::InvalidEvent);
         }
         if query
