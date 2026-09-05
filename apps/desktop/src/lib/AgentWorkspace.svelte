@@ -51,6 +51,7 @@
   import AgentInspectionPanel from './AgentInspectionPanel.svelte';
   import AgentAskResearch from './AgentAskResearch.svelte';
   import AgentDiagrams from './AgentDiagrams.svelte';
+  import { queryAgentDiagramArtifact } from './agent-diagram';
   import SourceLinkedText from './SourceLinkedText.svelte';
   import type {
     AgentAskResearchDetailV1,
@@ -64,6 +65,7 @@
   interface Props {
     activeProject: boolean;
     activityLoader?: (taskId: string) => Promise<AgentActivityResponseV1>;
+    diagramArtifactLoader?: typeof queryAgentDiagramArtifact;
     workPlanLoader?: (query: { taskId: string }) => Promise<TaskLensTaskResponseV1>;
     approvalController?: (
       taskId: string,
@@ -133,6 +135,7 @@
   let {
     activeProject,
     activityLoader = queryAgentActivity,
+    diagramArtifactLoader = queryAgentDiagramArtifact,
     approvalController,
     approvalLoader,
     inspectionLoader,
@@ -1599,34 +1602,37 @@
                     {/if}
                   {/each}
                 </div>
-                {#if responseUserSequence && responseUserSequence !== latestResearchSequence}
-                  <AgentAskResearch
-                    sessionId={sessionView.session.summary.sessionId}
-                    userSequence={responseUserSequence}
-                    refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                    responseVisible
-                    sourceRequest={researchSourceRequest}
-                    presentation={researchPresentations[
-                      `${sessionView.session.summary.sessionId}:${responseUserSequence}`
-                    ] ?? null}
-                    onprojectionchange={(projection) =>
-                      rememberResearchProjection(
-                        selectedSummary?.sessionId,
-                        responseUserSequence,
-                        projection,
-                      )}
-                    onpresentationchange={(presentation) =>
-                      rememberResearchPresentation(
-                        selectedSummary?.sessionId,
-                        responseUserSequence,
-                        presentation,
-                      )}
-                    oncontinue={() => void continueResearch()}
-                  />
+                {#if responseUserSequence}
+                  {#if responseUserSequence !== latestResearchSequence}
+                    <AgentAskResearch
+                      sessionId={sessionView.session.summary.sessionId}
+                      userSequence={responseUserSequence}
+                      refreshKey={`${sessionView.session.summary.sessionId}:${responseUserSequence}:completed`}
+                      responseVisible
+                      sourceRequest={researchSourceRequest}
+                      presentation={researchPresentations[
+                        `${sessionView.session.summary.sessionId}:${responseUserSequence}`
+                      ] ?? null}
+                      onprojectionchange={(projection) =>
+                        rememberResearchProjection(
+                          selectedSummary?.sessionId,
+                          responseUserSequence,
+                          projection,
+                        )}
+                      onpresentationchange={(presentation) =>
+                        rememberResearchPresentation(
+                          selectedSummary?.sessionId,
+                          responseUserSequence,
+                          presentation,
+                        )}
+                      oncontinue={() => void continueResearch()}
+                    />
+                  {/if}
                   <AgentDiagrams
+                    artifactLoader={diagramArtifactLoader}
                     sessionId={sessionView.session.summary.sessionId}
                     userSequence={responseUserSequence}
-                    refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
+                    refreshKey={`${sessionView.session.summary.sessionId}:${responseUserSequence}:completed`}
                     summaries={sessionView.session.entries.find(
                       (candidate) => candidate.sequence === responseUserSequence,
                     )?.diagrams}
@@ -1702,17 +1708,6 @@
                   )}
                 oncontinue={() => void continueResearch()}
               />
-              {#if latestResearchHasResponse}
-                <AgentDiagrams
-                  sessionId={sessionView.session.summary.sessionId}
-                  userSequence={latestResearchSequence}
-                  refreshKey={`${sessionView.session.summary.revision}-${researchRefresh}`}
-                  summaries={sessionView.session.entries.find(
-                    (candidate) => candidate.sequence === latestResearchSequence,
-                  )?.diagrams}
-                  onregenerate={() => regenerateDiagram(latestResearchSequence)}
-                />
-              {/if}
             {/if}
           </div>
         {/if}

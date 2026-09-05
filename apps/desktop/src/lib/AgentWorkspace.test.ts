@@ -858,6 +858,99 @@ describe('AgentWorkspace', () => {
     expect(observerCount).toBe(0);
   });
 
+  it('does not remount a completed diagram while the following Ask turn is polled', async () => {
+    const diagramSummary = {
+      artifactRef: 'f'.repeat(128),
+      description: 'Bereits vollständig gerenderter Ablauf',
+      kind: 'flowchart' as const,
+      stale: false,
+      title: 'Vorheriger Ablauf',
+      userSequence: '1',
+    };
+    const response: AgentSessionResponseV1 = {
+      protocolVersion: 1,
+      result: {
+        session: {
+          activeTaskId: null,
+          entries: [
+            {
+              createdAtUnixMillis: '100',
+              diagrams: [diagramSummary],
+              kind: 'userMessage',
+              planRevision: null,
+              sequence: '1',
+              text: '/diagram Zeige den Ablauf',
+            },
+            {
+              createdAtUnixMillis: '101',
+              kind: 'finalReport',
+              planRevision: null,
+              sequence: '2',
+              text: 'Der belegte Ablauf.',
+            },
+            {
+              createdAtUnixMillis: '102',
+              kind: 'userMessage',
+              planRevision: null,
+              sequence: '3',
+              text: 'Erkläre den nächsten Teil.',
+            },
+          ],
+          hasOlderEntries: false,
+          summary: {
+            currentPlanRevision: null,
+            mode: 'ask',
+            revision: '3',
+            sessionId,
+            state: 'running',
+            title: 'Ablauf erklären',
+            updatedAtUnixMillis: '102',
+          },
+        },
+        status: 'available',
+      },
+    };
+    const artifactLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        artifact: {
+          mermaid: 'flowchart TD\n  n0["Start"]\n',
+          summary: diagramSummary,
+        },
+        kind: 'available' as const,
+      },
+    }));
+    const sessionLoader = vi.fn(async () => structuredClone(response));
+    const { container } = render(AgentWorkspace, {
+      activeProject: true,
+      diagramArtifactLoader: artifactLoader,
+      pollIntervalMs: 5,
+      sessionLoader,
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          sessions: [
+            response.result.status === 'available'
+              ? response.result.session.summary
+              : (() => {
+                  throw new Error('fixture must be available');
+                })(),
+          ],
+          status: 'available',
+        },
+      })),
+    });
+
+    await waitFor(() => expect(artifactLoader).toHaveBeenCalledTimes(1));
+    const mountedDiagram = container.querySelector('.diagram-section');
+    expect(mountedDiagram).not.toBeNull();
+    await waitFor(() => expect(sessionLoader.mock.calls.length).toBeGreaterThanOrEqual(3));
+
+    expect(container.querySelector('.diagram-section')).toBe(mountedDiagram);
+    expect(artifactLoader).toHaveBeenCalledTimes(1);
+  });
+
   it('projects Agent execution without internal identifiers or raw event codes', async () => {
     const response = activeAgentSession();
     if (response.result.status !== 'available') throw new Error('fixture must be available');

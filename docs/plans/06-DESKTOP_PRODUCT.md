@@ -1161,6 +1161,13 @@ enden mit erhaltenen Quellen in `AwaitingContinuation`; die Diagrammphase reserv
 Formatierungsentscheidung und bewahrt bei erneutem Fehler die bereits validierte Antwort samt
 Quellen, statt den ganzen Lauf als fehlgeschlagen zu markieren.
 
+Diagramm-Folgeturn-Korrektur vom 2026-09-05: Ein veröffentlichtes Diagramm bleibt dauerhaft an der
+zugehörigen Antwort montiert. Das Polling einer späteren Ask-Recherche invalidiert weder seine
+Artefaktprojektion noch startet es den lokalen Mermaid-Renderer erneut. Historische
+Rechercheprojektionen erhalten ebenfalls keinen fremden Live-Refresh. Damit verschwindet kein
+großer Inhaltsblock oberhalb des laufenden Turns und der Nachrichten-Viewport behält auch in der
+Folge `/diagram` → normaler Ask seine Höhe und Nutzerposition.
+
 Slash-Command-Erweiterung vom 2026-09-04 nach ADR-0039: Ein `/` öffnet den vom Core gelieferten,
 modusgefilterten Katalog. Hauptauftrag und höchstens zwei Linsen erscheinen als entfernbare Chips;
 die feste Tiefe kann für diese Nachricht nicht überschrieben werden. Der Rust-Core validiert

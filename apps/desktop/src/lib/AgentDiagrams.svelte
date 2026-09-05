@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     exportAgentDiagram,
     queryAgentDiagramArtifact,
@@ -45,14 +45,35 @@
   let loadState = $state<'idle' | 'loading' | 'available' | 'error'>('idle');
   let request = 0;
   let destroyed = false;
+  let loadedInputKey: string | null = null;
+  const summariesSignature = $derived(
+    summaries === undefined
+      ? null
+      : JSON.stringify(
+          summaries.map((summary) => ({
+            artifactRef: summary.artifactRef,
+            description: summary.description,
+            kind: summary.kind,
+            stale: summary.stale,
+            title: summary.title,
+            userSequence: summary.userSequence,
+          })),
+        ),
+  );
 
   $effect(() => {
-    void refreshKey;
-    void summaries;
+    const providedSummariesSignature = summariesSignature;
     const requestedSession = sessionId;
     const requestedTurn = userSequence;
+    const loadKey =
+      providedSummariesSignature === null
+        ? `${requestedSession}:${requestedTurn}:listed:${refreshKey}`
+        : `${requestedSession}:${requestedTurn}:provided:${providedSummariesSignature}`;
+    if (loadKey === loadedInputKey) return;
+    loadedInputKey = loadKey;
+    const requestedSummaries = untrack(() => summaries);
     const current = ++request;
-    void load(requestedSession, requestedTurn, current);
+    void load(requestedSession, requestedTurn, current, requestedSummaries);
   });
 
   onDestroy(() => {
@@ -60,16 +81,20 @@
     request += 1;
   });
 
-  async function load(requestedSession: string, requestedTurn: string, current: number) {
-    loadState = 'loading';
+  async function load(
+    requestedSession: string,
+    requestedTurn: string,
+    current: number,
+    requestedSummaries: AgentDiagramSummaryV1[] | undefined,
+  ) {
+    if (untrack(() => artifacts.length === 0)) loadState = 'loading';
     try {
-      const listed = summaries;
       const listedArtifacts =
-        listed === undefined
+        requestedSummaries === undefined
           ? await listLoader(requestedSession, requestedTurn).then((response) =>
               response.result.kind === 'available' ? response.result.artifacts : [],
             )
-          : listed;
+          : requestedSummaries;
       if (staleRequest(requestedSession, requestedTurn, current)) return;
       if (listedArtifacts.length === 0) {
         artifacts = [];

@@ -231,6 +231,9 @@ Progressive Recherchehöhen verändern die Chatposition nicht mehr fortlaufend. 
 Modell- oder Diagrammschritt darf nach dem einzigen sicheren Reparaturversuch keine vorhandenen
 Quellen in einen technischen Fehlschlag verwandeln, sondern endet fortsetzbar; `/diagram`
 reserviert innerhalb seines festen Profils auch die dafür benötigte Formatierungsentscheidung.
+Abgeschlossene Diagramme und historische Rechercheblöcke sind vom Polling eines nachfolgenden
+Turns getrennt. Ein bereits gerendertes Diagramm bleibt an seiner Antwort montiert und wird nicht
+bei jedem Live-Read kurz entfernt und erneut durch Mermaid aufgebaut.
 Flowchart-Kanten werden vom Core so quotiert, dass Methoden- und Signaturnamen keine Mermaid-
 Syntax auslösen. Bereits persistierte V32-Diagramme erhalten vor dem lokalen Strict-Rendering
 dieselbe enge Kompatibilitätskorrektur. Bleibt ein echter Syntaxfehler, kann der Nutzer über

@@ -114,4 +114,42 @@ describe('AgentDiagrams', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Diagramm neu erzeugen' }));
     expect(onregenerate).toHaveBeenCalledWith(summary);
   });
+
+  it('keeps a completed diagram mounted during unrelated conversation polling', async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>Stabil</text></svg>',
+    });
+    const artifactLoader = vi.fn(async () => ({
+      protocolVersion: 1 as const,
+      result: {
+        artifact: { mermaid: 'flowchart TD\n  n0["A"]\n', summary },
+        kind: 'available' as const,
+      },
+    }));
+    const view = render(AgentDiagrams, {
+      artifactLoader,
+      refreshKey: 'conversation-poll-1',
+      sessionId,
+      summaries: [summary],
+      userSequence: '1',
+    });
+
+    await screen.findByRole('img', { name: 'Ablauf' });
+    const mountedSection = view.container.querySelector('.diagram-section');
+    const mountedCanvas = view.container.querySelector('.diagram-canvas');
+
+    await view.rerender({
+      artifactLoader,
+      refreshKey: 'conversation-poll-2',
+      sessionId,
+      summaries: [{ ...summary }],
+      userSequence: '1',
+    });
+    await Promise.resolve();
+
+    expect(view.container.querySelector('.diagram-section')).toBe(mountedSection);
+    expect(view.container.querySelector('.diagram-canvas')).toBe(mountedCanvas);
+    expect(artifactLoader).toHaveBeenCalledTimes(1);
+    expect(mermaidMocks.render).toHaveBeenCalledTimes(1);
+  });
 });

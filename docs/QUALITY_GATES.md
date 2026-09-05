@@ -222,7 +222,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   libSQL-Operationsverbindungen; ein fremder offener Transaktionskontext darf sie nicht blockieren.
   Component-Tests müssen nach einem transienten Readfehler weiter nicht überlappend pollen, bis die
   terminale Antwort sichtbar ist. Mount und Polling starten weiterhin keine Evidenz- oder
-  Modellarbeit.
+  Modellarbeit. Die Folge aus abgeschlossenem `/diagram`-Turn und anschließendem laufendem
+  Ask-Turn muss das bestehende Diagramm über mehrere Polls als dieselbe DOM-Instanz behalten;
+  Artefakt-Read und Mermaid-Rendering dürfen dabei nicht erneut starten.
 - Der gemeinsame Recherche-Contract bindet jeden Ask-, Plan- und Agent-Vorbereitungsturn vor dem
   Modellaufruf an genau einen veröffentlichten Index. Controllerverträge prüfen den Ein-Turn-Pfad,
   mehrstufige Symbol-/Aufrufer-/Source-Folgen, die exakten Standard-/Gründlich-Grenzen, höchstens
