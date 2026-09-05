@@ -458,6 +458,25 @@ besitzen. Abschnittsweise `inspectPath`-Reads erzeugen jeweils eine eigene exakt
 nächste sichere Seitenanfang bleibt nur im aktuellen Working Set. Quelltext und Seiten-Cursor
 werden weiterhin weder im Checkpoint noch im Journal persistiert.
 
+Bei einer validierten unvollständigen Antwort leitet der Core aus ihrer konkreten
+öffentlichen Lücke und dem nächsten Schritt selbst begrenzte Suchkandidaten ab:
+eindeutig aufgelöste aktuelle Dateien, sichere nächste Seiten und exakt im aktuellen
+Graphen vorkommende Funktions- oder Typnamen. Er führt höchstens vier neue vorhandene Read-only-
+Aktionen direkt aus, ohne einen zusätzlichen Modellentscheid allein zur Werkzeugwahl
+oder eine Nutzerbestätigung zu verlangen. Vollständig gelesene aktuelle Dateien
+werden nicht erneut als offener Dateianfang behandelt. Die Kandidaten sind weder
+Beweise noch ausführbare Repositoryanweisungen; Aktionsdeduplizierung, Stagnation,
+Final-only-, Reparatur- und Gesamtgrenzen bleiben unverändert. Fehlt ein eindeutiger
+Ansatz, wählt das Modell weiterhin selbst die nächste erlaubte Rechercheaktion.
+
+Ein notwendiger Fortsetzungszustand benennt seinen Core-Grund: Zeit-/Entscheidungs-/
+Aktionsende, Stagnation, verbleibende Beleglücke oder ungültige Ausgabe beziehungsweise
+Zitatzuteilung. Ein Formatfehler wird nicht als begrenzte Suche ausgegeben. Der einzige
+Reparaturhinweis unterscheidet Schemaform, nicht ausgegebene Quellen und geschlossene
+Leserunden, ohne Rohantworten zu wiederholen. Auch die zweite ungültige Ausgabe führt
+weiterhin zu keiner Werkzeugausführung; ein neuer Abschnitt verlangt eine explizite
+Fortsetzung und ist keine Freigabe für Dateiänderungen, Prozesse oder Netzwerk.
+
 Der flüchtige Recherchekontext folgt ADR-0044: aktuelle explizite Repositoryziele stehen vor
 höchstens zwölf aktuellen Task-Lens-Zielen; höchstens acht revalidierte Quellen des vorherigen
 Turns folgen nur nachrangig und werden bei einem neuen Auftrag mit expliziten Dateizielen nicht

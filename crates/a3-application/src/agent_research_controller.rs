@@ -196,6 +196,36 @@ impl BoundedResearchController {
         })
     }
 
+    /// Selects novel Core-derived follow-up reads inside the existing section budget.
+    /// The caller must hold SearchAllowed, including any formatting/repair restrictions.
+    /// This never resets budgets or reopens an expired section or stagnant read loop.
+    pub fn prepare_followup_actions(
+        &mut self,
+        actions: Vec<AskResearchAction>,
+        elapsed_millis: u64,
+    ) -> Result<Option<ResearchActionBatch>, ResearchControllerError> {
+        if elapsed_millis >= self.limits.duration_millis {
+            return Err(ResearchControllerError::TimedOut);
+        }
+        if self.decisions_used >= self.limits.model_decisions || self.is_stagnant() {
+            return Ok(None);
+        }
+        let available =
+            usize::from(self.limits.read_actions.saturating_sub(self.actions_used)).min(4);
+        let mut unique = BTreeSet::new();
+        let actions = actions
+            .into_iter()
+            .take(64)
+            .filter(|action| !self.seen_actions.contains(action) && unique.insert(action.clone()))
+            .take(available)
+            .collect::<Vec<_>>();
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            self.prepare_actions(actions).map(Some)
+        }
+    }
+
     /// Records whether one full action round produced new source Evidence.
     pub fn finish_round(&mut self, evidence_before: usize, evidence_after: usize) {
         if evidence_after > evidence_before {
@@ -607,6 +637,88 @@ mod tests {
             controller.begin_decision(300_000),
             Err(ResearchControllerError::TimedOut)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_followups_share_budget_and_never_reopen_terminal_reads()
+    -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        controller.begin_decision(0)?;
+        let first = AskResearchAction::SearchSourceText(vec!["get_storage".to_owned()]);
+        let next = AskResearchAction::InspectPath {
+            path: "config.py".to_owned(),
+            start_line: 65,
+        };
+        let batch = controller
+            .prepare_followup_actions(vec![first.clone(), first.clone()], 1)?
+            .ok_or("batch")?;
+        assert_eq!(batch.actions(), std::slice::from_ref(&first));
+        assert_eq!(controller.actions_used(), 1);
+        assert!(
+            controller
+                .prepare_followup_actions(vec![first], 2)?
+                .is_none()
+        );
+        assert_eq!(controller.actions_used(), 1);
+        assert_eq!(controller.decisions_used(), 1);
+        assert!(matches!(
+            controller.prepare_followup_actions(vec![next.clone()], 300_000),
+            Err(ResearchControllerError::TimedOut)
+        ));
+        controller.finish_round(1, 1);
+        controller.finish_round(1, 1);
+        assert!(
+            controller
+                .prepare_followup_actions(vec![next], 3)?
+                .is_none()
+        );
+        assert_eq!(controller.actions_used(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_followups_use_only_remaining_action_capacity_and_reserve_final_answer()
+    -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        controller.begin_decision(0)?;
+        for batch in 0..3 {
+            controller.prepare_actions(
+                (0..if batch == 2 { 3 } else { 4 })
+                    .map(|n| AskResearchAction::SearchIndex(format!("query-{batch}-{n}")))
+                    .collect(),
+            )?;
+        }
+        let candidates = vec![
+            AskResearchAction::InspectPath {
+                path: "config.py".to_owned(),
+                start_line: 1,
+            },
+            AskResearchAction::InspectPath {
+                path: "manager.py".to_owned(),
+                start_line: 1,
+            },
+        ];
+        let batch = controller
+            .prepare_followup_actions(candidates.clone(), 1)?
+            .ok_or("remaining action")?;
+        assert_eq!(batch.actions().len(), 1);
+        assert_eq!(controller.actions_used(), 12);
+        assert!(
+            controller
+                .prepare_followup_actions(candidates.clone(), 2)?
+                .is_none()
+        );
+        let mut final_controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        for time in 0..6 {
+            final_controller.begin_decision(time)?;
+        }
+        assert!(
+            final_controller
+                .prepare_followup_actions(candidates, 6)?
+                .is_none()
+        );
+        assert_eq!(final_controller.actions_used(), 0);
         Ok(())
     }
 

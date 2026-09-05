@@ -8,6 +8,68 @@ use a3_domain::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[test]
+fn decision_repair_distinguishes_shape_sources_and_closed_reads_without_raw_replay() {
+    use research_model::{DecisionIssue, validate_decision};
+    let raw = serde_json::json!({"schema_version":4,"decision":{
+        "kind":"research","evidence_status":"incomplete",
+        "note":{"goal":"Read","finding_kind":"hypothesis","finding":"Check", "finding_source_refs":[],"gap":"Missing caller","next_step":"Read caller"},
+        "actions":[{"kind":"inspectSource","source_ref":"S2"}]
+    }}).to_string();
+    assert_eq!(
+        validate_decision(&raw, BeginResearchDecision::SearchAllowed, 1),
+        Err(DecisionIssue::UnknownSource)
+    );
+    assert_eq!(
+        validate_decision(&raw, BeginResearchDecision::FinalOnly, 2),
+        Err(DecisionIssue::ReadsClosed)
+    );
+    assert!(validate_decision(&raw, BeginResearchDecision::SearchAllowed, 2).is_ok());
+    assert!(
+        DecisionIssue::ReadsClosed
+            .repair_hint(2)
+            .contains("sufficient or incomplete evidence_status")
+    );
+    assert_eq!(
+        validate_decision(
+            "raw invalid output",
+            BeginResearchDecision::SearchAllowed,
+            2
+        ),
+        Err(DecisionIssue::Shape)
+    );
+    for issue in [
+        DecisionIssue::Shape,
+        DecisionIssue::UnknownSource,
+        DecisionIssue::ReadsClosed,
+    ] {
+        let hint = issue.repair_hint(2);
+        assert!(!hint.contains("raw invalid output"));
+        assert!(hint.contains("No actions from the invalid output were executed"));
+    }
+}
+
+#[test]
+fn exhausted_repair_reports_the_actual_time_or_decision_limit() -> TestResult {
+    let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+    assert_eq!(
+        repair_stop_reason(&controller, 300_000, 0),
+        ResearchStopReason::TimeLimit
+    );
+    assert_eq!(
+        repair_stop_reason(&controller, 0, 0),
+        ResearchStopReason::InvalidDecision
+    );
+    for time in 0..6 {
+        controller.begin_decision(time)?;
+    }
+    assert_eq!(
+        repair_stop_reason(&controller, 6, 0),
+        ResearchStopReason::DecisionLimit
+    );
+    Ok(())
+}
+
 const STORAGE_FACTORY: &str =
     include_str!("../../../../fixtures/research-storage-v1/taskflow/storage/factory.py");
 const STORAGE_CONFIG: &str =
@@ -464,7 +526,7 @@ fn exhausted_research_retains_the_validated_intermediate_answer_and_citations() 
         vec![1],
     ));
     state.sources.push(item.clone());
-    let result = awaiting_continuation(&turn()?, &state, None)?;
+    let result = awaiting_continuation(&turn()?, &state, None, ResearchStopReason::Stagnation)?;
     assert!(result.awaiting_continuation);
     assert_eq!(result.citations, vec![item.id()]);
     assert!(

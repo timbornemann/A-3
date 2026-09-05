@@ -441,7 +441,7 @@ impl AgentAskResearcher {
     #[allow(clippy::too_many_arguments)]
     async fn research(
         &self,
-        runtime: &AgentConversationRuntime,
+        runtime: &impl ResearchModel,
         project: &ProjectIdentity,
         session_id: AgentSessionId,
         user_sequence: AgentSessionSequence,
@@ -537,7 +537,7 @@ impl AgentAskResearcher {
     #[allow(clippy::too_many_arguments)]
     async fn research_after_begin(
         &self,
-        runtime: &AgentConversationRuntime,
+        runtime: &impl ResearchModel,
         project: &ProjectIdentity,
         published: &Arc<a3_domain::PublishedIndex>,
         turn: &AskResearchTurn,
@@ -744,7 +744,14 @@ impl AgentAskResearcher {
                         permission
                     }
                 }
-                Err(_) => return awaiting_continuation(turn, &state, command_profile),
+                Err(error) => {
+                    return awaiting_continuation(
+                        turn,
+                        &state,
+                        command_profile,
+                        ResearchStopReason::for_controller(error),
+                    );
+                }
             };
             state.event_sequence = state.event_sequence.saturating_add(1);
             self.append_running_event(
@@ -791,8 +798,9 @@ impl AgentAskResearcher {
                 )
                 .await?;
             }
-            let Some(decision) = decision else {
-                return awaiting_continuation(turn, &state, command_profile);
+            let (decision, permission) = match decision {
+                Ok(decision) => decision,
+                Err(reason) => return awaiting_continuation(turn, &state, command_profile, reason),
             };
             match decision {
                 a3_application::AskResearchDecision::Answer {
@@ -814,7 +822,12 @@ impl AgentAskResearcher {
                             "Vorhandene Quellen ausgewertet; weitere Recherche benötigt eine ausdrückliche Fortsetzung",
                             public_note,
                         ).await?;
-                        return awaiting_continuation(turn, &state, command_profile);
+                        return awaiting_continuation(
+                            turn,
+                            &state,
+                            command_profile,
+                            ResearchStopReason::Stagnation,
+                        );
                     }
                     let missing_named_sources = !state.covers(&referenced_revisions);
                     if answer_requires_deeper_research(evidence_status, !missing_named_sources) {
@@ -833,7 +846,47 @@ impl AgentAskResearcher {
                         )
                         .await?;
                         if permission == BeginResearchDecision::FinalOnly {
-                            return awaiting_continuation(turn, &state, command_profile);
+                            return awaiting_continuation(
+                                turn,
+                                &state,
+                                command_profile,
+                                ResearchStopReason::EvidenceIncomplete,
+                            );
+                        }
+                        // A validated gap already describes useful next evidence. Try the Core's
+                        // existing safe reads directly instead of spending a decision asking the
+                        // model to restate its next step as an action. No budget is reset.
+                        let followups = research_followup::candidates(published, &state, &note);
+                        let batch = match controller
+                            .prepare_followup_actions(followups, elapsed_millis(started))
+                        {
+                            Ok(batch) => batch,
+                            Err(error) => {
+                                return awaiting_continuation(
+                                    turn,
+                                    &state,
+                                    command_profile,
+                                    ResearchStopReason::for_controller(error),
+                                );
+                            }
+                        };
+                        if let Some(batch) = batch {
+                            let before = state.evidence_revision;
+                            let results = self
+                                .execute_actions(
+                                    project,
+                                    published,
+                                    turn,
+                                    &mut state,
+                                    batch.actions().to_vec(),
+                                    control,
+                                )
+                                .await?;
+                            controller.finish_round(before, state.evidence_revision);
+                            feedback = format!(
+                                "CORE EVIDENCE FOLLOW-UP: The incomplete answer was not published. The Core followed its concrete gap using budgeted read-only actions, without user confirmation.\n{results}\nEvaluate the current excerpts. If the actual question is now supported, answer; otherwise choose a different precise read. These search candidates are not proof by themselves."
+                            );
+                            continue;
                         }
                         feedback = format!(
                             "CORE EVIDENCE GATE: The proposed answer is not final because material evidence is still missing{}. Return kind research now. Inspect named indexed files directly, continue large files with inspectPath start_line, search concrete symbols or literals, and follow relevant relations. Do not ask the user to provide files already present in the pinned index.",
@@ -854,7 +907,12 @@ impl AgentAskResearcher {
                             "Vorhandene Belege werden der Antwort zugeordnet; keine erneute Dateisuche nötig",
                             public_note).await?;
                         if controller.use_repair().is_err() {
-                            return awaiting_continuation(turn, &state, command_profile);
+                            return awaiting_continuation(
+                                turn,
+                                &state,
+                                command_profile,
+                                ResearchStopReason::CitationRepair,
+                            );
                         }
                         citation_repair_pending = true;
                         feedback = "CORE CITATION REPAIR: All explicitly named indexed files have already been safely read. Evaluate the current excerpts. Return kind answer with justified citations for the named targets; markdown markers and source_refs must match. This is an attribution correction, not a new research round. If the evidence really cannot support the question, return an honest incomplete intermediate result. Do not invent support or request new reads.".to_owned();
@@ -880,7 +938,14 @@ impl AgentAskResearcher {
                     state.focus_actions(&actions);
                     let batch = match controller.prepare_actions(actions) {
                         Ok(batch) => batch,
-                        Err(_) => return awaiting_continuation(turn, &state, command_profile),
+                        Err(error) => {
+                            return awaiting_continuation(
+                                turn,
+                                &state,
+                                command_profile,
+                                ResearchStopReason::for_controller(error),
+                            );
+                        }
                     };
                     state.record_note(query, &note)?;
                     state.event_sequence = state.event_sequence.saturating_add(1);
@@ -941,7 +1006,12 @@ impl AgentAskResearcher {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if citations.is_empty() && response_requires_citations(turn.mode(), &markdown) {
-            return awaiting_continuation(turn, &state, command_profile);
+            return awaiting_continuation(
+                turn,
+                &state,
+                command_profile,
+                ResearchStopReason::CitationRepair,
+            );
         }
         if diagrams_requested {
             state.event_sequence = state.event_sequence.saturating_add(1);
@@ -1387,6 +1457,13 @@ impl AgentAskResearcher {
                 page.next_start_line().map(AgentFileStartLine::get),
             );
         }
+        if page.start_line().get() == 1
+            && page.next_start_line().is_none()
+            && !state.complete_files.contains(&revision)
+            && state.evidence_limit >= 64
+        {
+            state.complete_files.push(revision.clone());
+        }
         let source_range = range.or(Some(page.range()));
         if state.contains(&revision, source_range) {
             state.focus_known_source(&revision, source_range, start);
@@ -1523,6 +1600,9 @@ impl AgentAskResearcher {
     ) -> Result<String, AgentSessionManagerFailure> {
         let mut results = Vec::new();
         for action in actions {
+            if control.cancellation_token().is_cancelled() {
+                return Err(AgentSessionManagerFailure::Unavailable);
+            }
             match action {
                 AskResearchAction::SearchSourceText(literals) => results.push(
                     self.search_source(project, published, turn, state, literals, control)
@@ -2154,6 +2234,9 @@ struct AskResearchResult {
 }
 
 #[cfg(test)]
+#[path = "agent_research_followup_tests.rs"]
+mod research_followup_tests;
+#[cfg(test)]
 #[path = "agent_research_regression_tests.rs"]
 mod research_regression_tests;
 
@@ -2161,6 +2244,12 @@ mod research_regression_tests;
 mod research_context;
 #[path = "agent_research_flows.rs"]
 mod research_flows;
+#[path = "agent_research_followup.rs"]
+mod research_followup;
+use research_followup::ResearchStopReason;
+#[path = "agent_research_model.rs"]
+mod research_model;
+use research_model::ResearchModel;
 
 struct AskResearchWorkingSet {
     sources: Vec<AskResearchSource>,
@@ -2173,6 +2262,7 @@ struct AskResearchWorkingSet {
     memory_gaps: Vec<String>,
     read_retries_used: u8,
     next_file_pages: BTreeMap<a3_domain::RepositoryPath, u32>,
+    complete_files: Vec<a3_domain::FileRevision>,
     continuation_feedback: String,
     partial_answer: Option<(String, Vec<u16>)>,
 }
@@ -2197,6 +2287,7 @@ impl AskResearchWorkingSet {
             memory_gaps: Vec::new(),
             read_retries_used: 0,
             next_file_pages: BTreeMap::new(),
+            complete_files: Vec::new(),
             continuation_feedback: String::new(),
             partial_answer: None,
         }
@@ -5782,7 +5873,7 @@ fn public_note(
 
 #[allow(clippy::too_many_arguments)]
 async fn compile_diagram_artifacts(
-    runtime: &AgentConversationRuntime,
+    runtime: &impl ResearchModel,
     command_profile: Option<&SlashCommandExecutionProfile>,
     transcript: &mut Vec<(ModelMessageRole, String)>,
     state: &AskResearchWorkingSet,
@@ -5899,6 +5990,7 @@ fn awaiting_continuation(
     turn: &AskResearchTurn,
     state: &AskResearchWorkingSet,
     command_profile: Option<&SlashCommandExecutionProfile>,
+    reason: ResearchStopReason,
 ) -> Result<AskResearchResult, AgentSessionManagerFailure> {
     let terminal_event = research_event(
         turn.session_id(),
@@ -5906,11 +5998,14 @@ fn awaiting_continuation(
         state.event_sequence.saturating_add(1),
         AskResearchPhase::Evaluating,
         AskResearchState::AwaitingContinuation,
-        "Der aktuelle Rechercheabschnitt benötigt eine sichere Fortsetzung; der belegte Zwischenstand bleibt erhalten",
+        reason.message(),
         None,
-        AskResearchCompleteness::Limited,
+        AskResearchCompleteness::NotApplicable,
     )?;
-    let notice = "Die Recherche benötigt einen weiteren begrenzten Abschnitt. Mit „Recherche fortsetzen“ übernimmt A^3 den revalidierten Arbeitsstand und untersucht die noch offene Frage gezielt weiter.";
+    let notice = format!(
+        "{} Die bisherigen Belege bleiben erhalten. Das ist keine Sicherheitsfreigabe für Dateizugriff oder Ausführung. Mit „Recherche fortsetzen“ startest du einen weiteren begrenzten Abschnitt mit revalidiertem Arbeitsstand.",
+        reason.message()
+    );
     let (markdown, citations) = if let Some((markdown, ordinals)) = &state.partial_answer {
         (
             format!("{markdown}\n\n{notice}"),
@@ -5973,7 +6068,7 @@ fn elapsed_millis(started: Instant) -> u64 {
 
 #[allow(clippy::too_many_arguments)]
 async fn ask_decision(
-    runtime: &AgentConversationRuntime,
+    runtime: &impl ResearchModel,
     mode: AgentSessionMode,
     initial_permission: BeginResearchDecision,
     transcript: &mut Vec<(ModelMessageRole, String)>,
@@ -5982,7 +6077,13 @@ async fn ask_decision(
     started: Instant,
     source_count: usize,
     command_profile: Option<&SlashCommandExecutionProfile>,
-) -> Result<(Option<a3_application::AskResearchDecision>, u8), AgentSessionManagerFailure> {
+) -> Result<
+    (
+        Result<(a3_application::AskResearchDecision, BeginResearchDecision), ResearchStopReason>,
+        u8,
+    ),
+    AgentSessionManagerFailure,
+> {
     let mut permission = initial_permission;
     let mut transient_retries = 0_u8;
     let reserved_decisions = if command_profile
@@ -5999,7 +6100,7 @@ async fn ask_decision(
             .duration_millis()
             .saturating_sub(elapsed);
         if remaining == 0 {
-            return Ok((None, transient_retries));
+            return Ok((Err(ResearchStopReason::TimeLimit), transient_retries));
         }
         let raw = match tokio::time::timeout(
             Duration::from_millis(remaining),
@@ -6022,7 +6123,12 @@ async fn ask_decision(
                     .begin_decision_reserving(elapsed_millis(started), reserved_decisions)
                 {
                     Ok(next) => restrict_research_permission(permission, next),
-                    Err(_) => return Ok((None, transient_retries)),
+                    Err(error) => {
+                        return Ok((
+                            Err(ResearchStopReason::for_controller(error)),
+                            transient_retries,
+                        ));
+                    }
                 };
                 transcript.push((
                     ModelMessageRole::User,
@@ -6039,60 +6145,42 @@ async fn ask_decision(
                     elapsed_millis(started),
                     reserved_decisions,
                 ) else {
-                    return Ok((None, transient_retries));
+                    return Ok((
+                        Err(repair_stop_reason(
+                            controller,
+                            elapsed_millis(started),
+                            reserved_decisions,
+                        )),
+                        transient_retries,
+                    ));
                 };
                 permission = restrict_research_permission(permission, next_permission);
                 transcript.push((ModelMessageRole::User, "REPAIR: Die vorige Modellausgabe war unvollständig. Setze mit dem unveränderten Evidence-Stand fort und gib genau ein vollständiges gültiges JSON-Dokument zurück.".to_owned()));
                 continue;
             }
             Ok(Err(_)) => return Err(AgentSessionManagerFailure::Unavailable),
-            Err(_) => return Ok((None, transient_retries)),
+            Err(_) => return Ok((Err(ResearchStopReason::TimeLimit), transient_retries)),
         };
-        let decision = DecodeAskResearchDecision
-            .decode(&raw)
-            .ok()
-            .and_then(|decision| {
-                let valid = match &decision {
-                    a3_application::AskResearchDecision::Answer {
-                        source_ordinals,
-                        note,
-                        ..
-                    } => source_ordinals
-                        .iter()
-                        .chain(note.source_ordinals.iter())
-                        .all(|ordinal| usize::from(*ordinal) <= source_count),
-                    a3_application::AskResearchDecision::Research { note, actions } => {
-                        permission == BeginResearchDecision::SearchAllowed
-                            && note
-                                .source_ordinals
-                                .iter()
-                                .all(|ordinal| usize::from(*ordinal) <= source_count)
-                            && actions.iter().all(|action| match action {
-                                AskResearchAction::InspectSource(ordinal) => {
-                                    usize::from(*ordinal) <= source_count
-                                }
-                                AskResearchAction::InspectRelations { source_ordinal, .. }
-                                | AskResearchAction::InspectFunctionFlow {
-                                    source_ordinal, ..
-                                } => usize::from(*source_ordinal) <= source_count,
-                                _ => true,
-                            })
-                    }
-                };
-                valid.then_some(decision)
-            });
-        if let Some(decision) = decision {
-            return Ok((Some(decision), transient_retries));
-        }
+        let issue = match research_model::validate_decision(&raw, permission, source_count) {
+            Ok(decision) => return Ok((Ok((decision, permission)), transient_retries)),
+            Err(issue) => issue,
+        };
         let Some(next_permission) = reserve_research_repair_decision(
             controller,
             elapsed_millis(started),
             reserved_decisions,
         ) else {
-            return Ok((None, transient_retries));
+            return Ok((
+                Err(repair_stop_reason(
+                    controller,
+                    elapsed_millis(started),
+                    reserved_decisions,
+                )),
+                transient_retries,
+            ));
         };
         permission = restrict_research_permission(permission, next_permission);
-        transcript.push((ModelMessageRole::User, "REPAIR: Die vorige Ausgabe entsprach nicht vollständig dem bereitgestellten JSON-Schema oder verwies auf eine unbekannte S-Quelle. Gib genau ein vollständiges gültiges Dokument zurück; keine Erklärung außerhalb des JSON.".to_owned()));
+        transcript.push((ModelMessageRole::User, issue.repair_hint(source_count)));
     }
 }
 
@@ -6105,6 +6193,22 @@ fn reserve_research_repair_decision(
     controller
         .begin_decision_reserving(elapsed_millis, reserved_decisions)
         .ok()
+}
+
+fn repair_stop_reason(
+    controller: &BoundedResearchController,
+    elapsed: u64,
+    reserved: u8,
+) -> ResearchStopReason {
+    if elapsed >= controller.limits().duration_millis() {
+        ResearchStopReason::TimeLimit
+    } else if controller.decisions_used().saturating_add(reserved)
+        >= controller.limits().model_decisions()
+    {
+        ResearchStopReason::DecisionLimit
+    } else {
+        ResearchStopReason::InvalidDecision
+    }
 }
 
 fn restrict_research_permission(
@@ -6720,7 +6824,7 @@ mod tests {
     use super::{
         AgentConversationFailure, AskResearchWorkingSet, ConversationTaskLensControl,
         ConversationTerminal, DIAGRAM_DECISION_RESERVE, PlanConversationResponse,
-        QueueDispatchTrigger, ResolvedQueryTarget, agent_run_blocks_plan_start,
+        QueueDispatchTrigger, ResearchStopReason, ResolvedQueryTarget, agent_run_blocks_plan_start,
         answer_requires_deeper_research, awaiting_continuation, classify_plan_response,
         command_clarification_question, command_message, index_path_matches_request,
         is_transient_conversation_failure, model_safe_path, parse_working_change_paths,
@@ -7169,7 +7273,12 @@ mod tests {
             SnapshotId::from_bytes([23; 32]),
             AgentSessionTimestamp::from_unix_millis(1)?,
         );
-        let result = awaiting_continuation(&turn, &AskResearchWorkingSet::new(1_024), None)?;
+        let result = awaiting_continuation(
+            &turn,
+            &AskResearchWorkingSet::new(1_024),
+            None,
+            ResearchStopReason::InvalidDecision,
+        )?;
         assert!(result.awaiting_continuation);
         assert_eq!(
             result.terminal_event.state(),

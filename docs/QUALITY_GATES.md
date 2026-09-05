@@ -278,6 +278,19 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   die ursprüngliche Frage bei verschachtelten Legacy-Fortsetzungen, Priorität zuletzt belegter
   Quellen, vollständige Bereichsrevalidierung, neue Fragen ohne alte offene Ziele sowie erhaltene
   Teilantworten und Zitate. Der Component-Test verlangt einen kompakten Fortsetzungseintrag.
+- Die autonome Core-Vertiefung muss ein reales TaskFlow-Storage-Fixture in Ask, Plan
+  und Agent-Vorbereitung ohne Fortsetzungsklick bearbeiten: unveränderter Index,
+  libSQL, sicherer Reader, gezielte Textsuche und besessener Scheduler; ausschließlich
+  Modelloutput darf skriptiert sein. Controllerverträge prüfen dasselbe Restbudget,
+  Deduplizierung, höchstens vier Aktionen, Timeout und Stagnation. Separate Fälle
+  verlangen echte nächste Seiten statt Dateianfang, keine erneute vollständige
+  Datei, keine Aktion aus unbekannten Pfad-/Shellhinweisen und null Leseaktionen
+  nach ungültiger Primär-/Reparaturausgabe. Stopgründe dürfen Formatfehler nicht
+  fälschlich als Suchbegrenzung darstellen; Reparaturfeedback darf keine Rohantwort
+  wiederholen und muss Form, Quellen und geschlossene Leserunden unterscheiden.
+  Verbraucht die Reparatur den letzten Modellentscheid, muss dessen tatsächliches
+  Final-only-Ergebnis bis zum Aufrufer erhalten bleiben; neue Follow-up-Reads sind
+  dann auch bei einer gültigen unvollständigen Antwort gesperrt.
 - Die Offline-Fixture `fixtures/research-storage-v1` misst vollständige relevante Dateiausschnitte
   in einem festen 4.096-Byte-Gesamtpaket einschließlich Frage und Metadaten: vor der Korrektur
   1/3 bei 4.373 Bytes, danach 3/3 innerhalb des Budgets. Sie ist ein deterministischer

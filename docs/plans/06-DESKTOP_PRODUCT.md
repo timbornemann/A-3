@@ -1060,6 +1060,7 @@ Abhängigkeiten: ADR-0033, Gate M8
 - [x] pro Nachricht wählbare Tiefe, öffentliche Arbeitsnotizen und explizite Fortsetzung
 - [x] Core-gesteuerte Evidence-Vertiefung, abschnittsweise Dateireads und begrenztes Retry
 - [x] priorisierter Recherchekontext mit deterministischer Zielauflösung und adaptiver Reserve
+- [ ] autonome Core-Vertiefung konkreter Beleglücken und unterscheidbare Fortsetzungsgründe
 - [x] ruhige Chatposition und fortsetzbarer Modell-/Diagrammabschluss nach begrenztem Repair
 - [x] modusgefilterte Slash-Command-Palette mit Tastatursteuerung und festen Profilen
 - [x] evidence-gebundene Diagramme mit sicherem lokalen Rendern und nativem SVG-/PNG-Export
@@ -1162,6 +1163,58 @@ Pro Modellrunde wird nur ein aktuelles Evidence-Paket kompiliert; identische Rea
 Kontext nicht auf und zählen nicht als neuer Fortschritt. Eine letzte Auswertung nach Stagnation
 und bereits validierte Teilantworten bleiben als zitierter Zwischenstand mit ausdrücklicher
 Fortsetzungsaktion erhalten. Die Recherche beginnt keine neuen Budgets ohne Nutzeraktion.
+
+Autonomie-Korrektur vom 2026-09-05 (implementiert, Gesamtgate offen): Der gemeldete TaskFlow-Verlauf endet
+nach einer gültigen unvollständigen Antwort und einer zweiten sichtbaren Entscheidung
+mit einer pauschalen Fortsetzungsanforderung. Der Export enthält keinen konkreten
+Stopgrund; ein Format-/Reparaturfehler ist damit nicht von einem Zeitende beweisbar
+zu unterscheiden. Der bisherige Code verwarf diese Unterscheidung als `None` und
+verlangte selbst bei konkret benannter Beleglücke zunächst einen weiteren
+Modellentscheid ausschließlich zur Auswahl der nächsten Leseaktion.
+
+Ziel/Abnahme: Ask, Plan und Agent-Vorbereitung verfolgen solche konkreten Lücken im
+selben Abschnitt selbstständig über die vorhandenen Read-only-Aktionen. Ein echtes
+TaskFlow-Fixture muss im realen Index-/libSQL-/Safe-Reader-/Scheduler-Pfad ohne
+Fortsetzungsklick abschließen; nur die Modellentscheidungen werden skriptiert.
+Unbekannte Ziele, abgelaufene Budgets, zwei Nullrunden, Cancellation und die zweite
+ungültige Ausgabe dürfen keine neuen Reads freischalten. Notizen bleiben Hinweise,
+keine Beweise oder Autorität. Nicht-Ziele: neue Budgets, automatische Abschnitts-
+Neustarts, mutierende Freigaben, Providerzugriffe oder Änderungen an akzeptierten ADRs.
+
+Umgesetzt: Core-Kandidaten aus aktuellen Pfaden, Seiten und Symbolnamen; höchstens
+vier neue Aktionen aus dem unveränderten verbleibenden Budget; kein erneutes Lesen
+vollständig gelesener Dateien; konkrete content-freie Stopgründe sowie gezielte
+einmalige Format-/Quellen-/Final-only-Reparaturhinweise. Eine schmale interne
+Modell-Testgrenze erlaubt den vollständigen Recherchepfad ohne Provider oder Keys.
+Die tatsächlich nach einem Retry oder einer Reparatur gültige Leseberechtigung
+kommt zum Aufrufer zurück; ein verbrauchter letzter Modellentscheid öffnet auch
+bei einer unvollständigen Antwort keine neue Core-Leserunde.
+Neue Tabellen, Schemas, Dependencies und WebView-Capabilities sind nicht erforderlich.
+Verifiziert auf Windows: `cargo fmt --all --check`,
+`cargo test -p a3-application --offline --locked agent_research_controller` (10 Tests),
+`cargo test -p a3-desktop --lib --offline --locked research -- --nocapture` (27 Tests),
+`cargo clippy --workspace --all-targets --all-features --offline --locked -- -D warnings`,
+`pnpm --filter @a3/desktop test -- AgentAskResearch.test.ts` (26 Component-Tests),
+`pnpm check:links` und `git diff --check`. Finaler Code-Diffreview: keine neuen
+Rechte, Dependencies, Persistenzschemas oder sachfremden Produktionsänderungen.
+
+Gesamtgate noch nicht bestanden: `cargo test --workspace --all-features --offline --locked`
+kann die laufende Debug-Programmdatei unter Windows nicht ersetzen. Der alternative
+`cargo test --workspace --all-features --release --offline --locked -- --test-threads=1`
+erreicht auf dem finalen Stand 145 bestandene Desktop-Tests und einen Fehler in
+`agent_run_manager::tests::explicit_start_pause_and_cancel_require_owned_terminal_work`
+(`agent_run_manager.rs:942`: Startzähler 0 statt 1 nach bereits sichtbarem Running).
+Der unveränderte Test war auch in parallelen Läufen wechselnd fehlgeschlagen;
+ein isolierter früherer Retest bestand. Seine Synchronisation wurde hier nicht geändert.
+Die ergänzende Prüfung aller übrigen Pakete mit
+`cargo test --workspace --exclude a3-desktop --all-features --release --offline --locked -- --test-threads=1`
+bestand vollständig; sie ersetzt ausdrücklich nicht das fehlgeschlagene Gesamtgate.
+Frühere Gesamtläufe trafen außerdem bestehende Windows-Temp-/Junction-Fixtureprobleme;
+die letzte Prüfung verwendet einen frischen isolierten Standard-Temp-Pfad ohne Caret.
+Der Planpunkt bleibt deshalb offen. Die laufende Nutzerinstanz wurde nicht manuell
+beendet; es gab keinen Provider-/Netzwerkzugriff und keinen Live-LLM-Replay des Exports.
+Die vorhandene Node-Version 25.6.1 weicht vom Projektpin 24.14.0 ab; der ausgeführte
+Component-Test bestand, ein vollständiges Frontendgate wird damit nicht behauptet.
 
 Storage-Recherchekorrektur vom 2026-09-05: Auf denselben aktuellen Beleg zusammenlaufende
 historische Source-Verweise werden nach vollständiger Revalidierung einmalig als Notizquelle
