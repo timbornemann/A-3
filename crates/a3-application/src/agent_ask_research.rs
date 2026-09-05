@@ -302,7 +302,7 @@ impl AskResearchPublicNote {
         goal: String,
         finding_kind: AskResearchPublicFindingKind,
         finding: String,
-        source_ids: Vec<AskResearchSourceId>,
+        mut source_ids: Vec<AskResearchSourceId>,
         gap: String,
         next_step: String,
     ) -> Result<Self, AskResearchDataError> {
@@ -315,6 +315,17 @@ impl AskResearchPublicNote {
         {
             return Err(AskResearchDataError::InvalidEvent);
         }
+        // Revalidation can map several historical spans to one current, enclosing source.
+        // Keep the original bound before canonicalization, and preserve citation order.
+        let mut seen = Vec::with_capacity(source_ids.len());
+        source_ids.retain(|id| {
+            if seen.contains(id) {
+                false
+            } else {
+                seen.push(*id);
+                true
+            }
+        });
         Ok(Self {
             goal,
             finding_kind,
@@ -972,6 +983,30 @@ fn safe_text(value: &str, maximum: usize) -> bool {
 mod tests {
     use super::*;
     use a3_domain::{ContentHash, RepositoryPath, SourcePosition};
+
+    #[test]
+    fn revalidated_note_sources_are_unique_without_weakening_bounds() -> Result<(), Box<dyn Error>>
+    {
+        let first = AskResearchSourceId::from_bytes([1; 32]);
+        let second = AskResearchSourceId::from_bytes([2; 32]);
+        let note = |sources| {
+            AskResearchPublicNote::new(
+                "Explain storage selection".to_owned(),
+                AskResearchPublicFindingKind::Observation,
+                "The configuration selects a storage implementation".to_owned(),
+                sources,
+                "Check the default".to_owned(),
+                "Read the factory".to_owned(),
+            )
+        };
+        assert_eq!(
+            note(vec![second, first, second, first])?.source_ids(),
+            &[second, first]
+        );
+        assert!(note(vec![first; 33]).is_err());
+        assert!(note(Vec::new()).is_err());
+        Ok(())
+    }
 
     #[test]
     fn source_search_contract_enforces_literal_and_resource_bounds() -> Result<(), Box<dyn Error>> {

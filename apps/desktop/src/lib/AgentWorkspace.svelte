@@ -215,6 +215,14 @@
 
   const selectedSession = $derived(sessionView.kind === 'available' ? sessionView.session : null);
   const selectedSummary = $derived(selectedSession?.summary ?? null);
+  // Poll ownership follows the session/halt state, not each freshly loaded object projection.
+  const pollingSessionId = $derived(
+    selectedSummary &&
+      (['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state) ||
+        ((selectedSession?.queuedMessages?.length ?? 0) > 0 && !selectedSession?.queuePaused))
+      ? selectedSummary.sessionId
+      : null,
+  );
   const composerMode = $derived(targetMode);
   const commandActive = $derived(isCommandInput(composer));
   const commandChips = $derived(resolveCommandChips(composer, slashCommands));
@@ -351,14 +359,7 @@
   });
 
   $effect(() => {
-    const hasDispatchableQueue =
-      (selectedSession?.queuedMessages?.length ?? 0) > 0 && !selectedSession?.queuePaused;
-    const sessionId =
-      selectedSummary &&
-      (['running', 'awaitingApproval', 'paused'].includes(selectedSummary.state) ||
-        hasDispatchableQueue)
-        ? selectedSummary.sessionId
-        : null;
+    const sessionId = pollingSessionId;
     if (!sessionId) return;
     let stopped = false;
     let timer: number | undefined;

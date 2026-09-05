@@ -8,6 +8,194 @@ use a3_domain::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+const STORAGE_FACTORY: &str =
+    include_str!("../../../../fixtures/research-storage-v1/taskflow/storage/factory.py");
+const STORAGE_CONFIG: &str =
+    include_str!("../../../../fixtures/research-storage-v1/taskflow/config.py");
+const STORAGE_INI: &str = include_str!("../../../../fixtures/research-storage-v1/config.ini");
+
+#[test]
+fn storage_selection_evidence_fits_without_reading_short_files_in_rounds() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4_096);
+    for (ordinal, path, body) in [
+        (1, "taskflow/storage/factory.py", STORAGE_FACTORY),
+        (2, "config.ini", STORAGE_INI),
+        (3, "taskflow/config.py", STORAGE_CONFIG),
+    ] {
+        let item = source(ordinal, path, u32::try_from(body.lines().count())?)?;
+        state.render(&item, 1, body, false);
+        state.sources.push(item);
+    }
+    for ordinal in 4..=8 {
+        let item = source(ordinal, &format!("unrelated/module{ordinal}.py"), 100)?;
+        state.render(&item, 1, &"unrelated_detail = True\n".repeat(100), false);
+        state.sources.push(item);
+    }
+    let evidence = state.model_evidence(
+        "Wie wählen factory.py und config.ini SQLite, JSON und Memory aus?",
+        &[],
+    );
+    let complete = [STORAGE_FACTORY, STORAGE_CONFIG, STORAGE_INI]
+        .iter()
+        .filter(|text| evidence.contains(**text))
+        .count();
+    eprintln!(
+        "storage-research fixture: {complete}/3 complete relevant files, {} context bytes, 4096-byte budget",
+        evidence.len()
+    );
+    assert!(evidence.contains(STORAGE_FACTORY));
+    assert!(evidence.contains(STORAGE_CONFIG));
+    assert!(evidence.contains(STORAGE_INI));
+    assert!(evidence.len() <= 4_096);
+    Ok(())
+}
+
+#[test]
+fn converging_continuation_sources_keep_one_reference_and_require_the_full_fresh_chain()
+-> TestResult {
+    let first = AskResearchSourceId::from_bytes([1; 32]);
+    let second = AskResearchSourceId::from_bytes([2; 32]);
+    let current = AskResearchSourceId::from_bytes([3; 32]);
+    let note = AskResearchPublicNote::new(
+        "Explain storage".to_owned(),
+        AskResearchPublicFindingKind::Conclusion,
+        "The factory selects the configured driver".to_owned(),
+        vec![first, second],
+        "Check overrides".to_owned(),
+        "Inspect config".to_owned(),
+    )?;
+    assert!(rebind_public_note(&note, &[(first, current)])?.is_none());
+    let mapped = rebind_public_note(&note, &[(first, current), (second, current)])?
+        .ok_or("expected revalidated finding")?;
+    assert_eq!(mapped.source_ids(), &[current]);
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.record_revalidated_note(
+        "Explain storage",
+        &mapped,
+        mapped.source_ids().to_vec(),
+        true,
+    )?;
+    assert_eq!(state.memory_findings[0].sources, vec![current]);
+    assert_eq!(state.memory_gaps, ["Check overrides"]);
+    Ok(())
+}
+
+#[test]
+fn task_lens_receives_unique_resolved_paths_and_not_ambiguous_names() -> TestResult {
+    let revision = source(1, "taskflow/storage/factory.py", 24)?
+        .revision()
+        .clone();
+    let targets = vec![
+        ResolvedQueryTarget {
+            requested: "factory.py".to_owned(),
+            revision: Some(revision.clone()),
+        },
+        ResolvedQueryTarget {
+            requested: "taskflow/storage/factory.py".to_owned(),
+            revision: Some(revision.clone()),
+        },
+        ResolvedQueryTarget {
+            requested: "config.py".to_owned(),
+            revision: None,
+        },
+    ];
+    let query = "Explain storage selection in factory.py";
+    let seeds = research_lens_seeds(query, &targets)?;
+    assert_eq!(seeds.goal().as_str(), query);
+    assert_eq!(seeds.step().as_str(), query);
+    assert_eq!(
+        seeds.supplemental(),
+        &[a3_domain::TaskLensSeed::ExplicitPath(
+            revision.path().clone()
+        )]
+    );
+    Ok(())
+}
+
+#[test]
+fn overlapping_short_file_sources_do_not_displace_named_branches() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4096);
+    let whole = source(1, "taskflow/storage/factory.py", 24)?;
+    let tail = AskResearchSource::new(
+        whole.session_id(),
+        whole.user_sequence(),
+        AskResearchSourceId::from_bytes([2; 32]),
+        2,
+        whole.revision().clone(),
+        whole.range(),
+        None,
+        AskResearchSourceKind::File,
+        AskResearchSelectionReason::ExactNameOrPath,
+    )?;
+    let tail_text = STORAGE_FACTORY
+        .lines()
+        .skip(8)
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.render(&whole, 1, STORAGE_FACTORY, false);
+    state.render(&tail, 9, &tail_text, true);
+    state.sources = vec![whole.clone(), tail];
+    let packed = state.compile_evidence_window(&[whole.revision().clone()], 4096);
+    assert!(packed.contains(STORAGE_FACTORY));
+    assert_eq!(packed.matches("return MemoryStorage()").count(), 1);
+    assert!(packed.contains("[S1]"));
+    assert!(!packed.contains("[S2]"));
+    assert_eq!(state.sources.len(), 2); // Presentation history is not modified by packing.
+    let changed = source(3, "taskflow/storage/factory.py", 24)?;
+    state.render(&changed, 9, &tail_text, true);
+    state.sources.push(changed);
+    assert!(state.evidence_window().contains("[S3]")); // Never merge across revisions.
+    Ok(())
+}
+
+#[test]
+fn the_complete_context_packet_respects_even_tiny_and_unicode_budgets() -> TestResult {
+    for limit in [0, 20, 64, 128, 320, 1024, 4096] {
+        let mut state = AskResearchWorkingSet::new(limit);
+        let item = source(1, "src/überblick.py", 200)?;
+        state.render(&item, 1, &"    return 'Größe 🦀'\n".repeat(200), true);
+        state.sources.push(item);
+        let first = state.model_evidence(&"Wie funktioniert Größe? ".repeat(200), &[]);
+        assert!(first.len() <= limit, "{limit}: {}", first.len());
+        assert_eq!(
+            first,
+            state.model_evidence(&"Wie funktioniert Größe? ".repeat(200), &[])
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_attribution_repairs_once_without_reopening_reads() -> TestResult {
+    let factory = source(1, "taskflow/storage/factory.py", 24)?;
+    let config = source(2, "config.ini", 16)?;
+    let required = vec![factory.revision().clone(), config.revision().clone()];
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.sources = vec![factory, config];
+    assert!(!answer_requires_deeper_research(
+        AskResearchEvidenceStatus::Sufficient,
+        state.covers(&required)
+    ));
+    assert!(!state.citations_cover(&[1], &required));
+    assert!(state.citations_cover(&[1, 2], &required));
+    assert!(!state.citations_cover(&[1, 3], &required));
+    let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+    controller.begin_decision(0)?;
+    controller.use_repair()?;
+    let next = controller.begin_decision(1)?;
+    assert_eq!(
+        restrict_research_permission(BeginResearchDecision::FinalOnly, next),
+        BeginResearchDecision::FinalOnly
+    );
+    assert!(reserve_research_repair_decision(&mut controller, 2, 0).is_none());
+    state.sources.pop();
+    assert!(answer_requires_deeper_research(
+        AskResearchEvidenceStatus::Sufficient,
+        state.covers(&required)
+    ));
+    Ok(())
+}
+
 fn turn() -> Result<AskResearchTurn, Box<dyn std::error::Error>> {
     Ok(AskResearchTurn::new(
         AgentSessionId::from_bytes([1; 32]),

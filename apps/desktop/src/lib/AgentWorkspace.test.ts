@@ -9,6 +9,16 @@ import type {
 } from './agent-session';
 import type { TaskLensTaskResponseV1 } from './task-lens';
 
+// This suite verifies conversation/poll ownership, not Mermaid's layout in jsdom.
+// Renderer and sanitizer contracts live in AgentDiagrams and agent-diagram-rendering tests.
+const diagramRenderer = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async () => ({
+    svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>Start</text></svg>',
+  })),
+}));
+vi.mock('mermaid', () => ({ default: diagramRenderer }));
+
 const sessionId = 'a'.repeat(64);
 
 const noSessions = (): AgentSessionsResponseV1 => ({
@@ -877,7 +887,40 @@ describe('AgentWorkspace', () => {
     expect(observerCount).toBe(0);
   });
 
+  it('keeps one polling owner across fresh running-session projections', async () => {
+    const response = askSession('running');
+    if (response.result.status !== 'available') throw new Error('fixture must be available');
+    const summary = response.result.session.summary;
+    const scheduleTimer = vi.spyOn(window, 'setTimeout');
+    const clearTimer = vi.spyOn(window, 'clearTimeout');
+    const sessionLoader = vi.fn(async () => structuredClone(response));
+    const view = render(AgentWorkspace, {
+      activeProject: true,
+      pollIntervalMs: 37,
+      sessionLoader,
+      sessionsLoader: vi.fn(async (): Promise<AgentSessionsResponseV1> => ({
+        protocolVersion: 1,
+        result: { nextCursor: null, sessions: [summary], status: 'available' },
+      })),
+    });
+    await waitFor(() => expect(sessionLoader.mock.calls.length).toBeGreaterThanOrEqual(4));
+    const ownedTimers = new Set<unknown>();
+    scheduleTimer.mock.calls.forEach(([, timeout], index) => {
+      const result = scheduleTimer.mock.results[index];
+      if (timeout === 37 && result?.type === 'return') ownedTimers.add(result.value);
+    });
+    expect(ownedTimers.size).toBeGreaterThanOrEqual(3);
+    expect(
+      clearTimer.mock.calls.filter(([timer]) => timer !== undefined && ownedTimers.has(timer)),
+    ).toHaveLength(0);
+    view.unmount();
+    expect(
+      clearTimer.mock.calls.some(([timer]) => timer !== undefined && ownedTimers.has(timer)),
+    ).toBe(true);
+  });
+
   it('does not remount a completed diagram while the following Ask turn is polled', async () => {
+    diagramRenderer.render.mockClear();
     const diagramSummary = {
       artifactRef: 'f'.repeat(128),
       description: 'Bereits vollständig gerenderter Ablauf',
@@ -968,6 +1011,7 @@ describe('AgentWorkspace', () => {
 
     expect(container.querySelector('.diagram-section')).toBe(mountedDiagram);
     expect(artifactLoader).toHaveBeenCalledTimes(1);
+    expect(diagramRenderer.render).toHaveBeenCalledTimes(1);
   });
 
   it('projects Agent execution without internal identifiers or raw event codes', async () => {

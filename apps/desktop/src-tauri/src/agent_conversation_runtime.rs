@@ -65,13 +65,17 @@ impl AgentConversationRuntime {
         .await
     }
 
-    /// Returns a conservative current-profile budget for source excerpts in one Ask turn.
-    pub(crate) async fn ask_evidence_budget(&self) -> Result<usize, AgentConversationFailure> {
+    /// Budgets the full evidence packet against the actual mode, command and schema grounding.
+    pub(crate) async fn research_evidence_budget(
+        &self,
+        mode: AgentSessionMode,
+        command_constraint: Option<&str>,
+    ) -> Result<usize, AgentConversationFailure> {
         let (_, profile) = self.execution_model().await?;
         let settings = profile.settings();
         let schema = ask_research_schema()?;
         let grounded_system = schema_grounded_system(
-            &research_system_prompt(AgentSessionMode::Ask, true, None),
+            &research_system_prompt(mode, true, command_constraint),
             Some(&schema),
             settings.schema_grounding(),
         )?;
@@ -325,7 +329,7 @@ fn research_system_prompt(
         }
     };
     let action_rule = if search_allowed {
-        "If any material evidence is still missing, you MUST set evidence_status to incomplete and return kind research with one to four sequential read-only actions. Do not answer early and do not ask the user to provide a file that is already present in the pinned index. Treat CORE-RESOLVED NAMED TARGETS as authoritative navigation hints: when a target already has an S source, use or inspect that source instead of searching for its filename again. Prefer exact inspectPath reads for unresolved named files, searchSourceText for concrete identifiers, inspectRelations for callers or data flow, and continue large files with a later inspectPath start_line. Change the access path when a previous read produced no new evidence; do not spend consecutive rounds rephrasing searchIndex queries for the same target."
+        "If material evidence for the actual user question is still missing, you MUST set evidence_status to incomplete and return kind research with one to four sequential read-only actions. Do not expand the question to unrelated implementation details. First evaluate the excerpts already supplied; a complete short file does not need another read just because a broader search was limited. Do not answer early and do not ask the user to provide a file that is already present in the pinned index. Treat NAMED TARGETS as authoritative navigation hints: when a target already has an S source, use or inspect that source instead of searching for its filename again. Prefer exact inspectPath reads for unresolved named files, searchSourceText for concrete identifiers, inspectRelations for callers or data flow, and continue large files with a later inspectPath start_line. Change the access path when a previous read produced no new evidence; do not spend consecutive rounds rephrasing searchIndex queries for the same target."
     } else {
         "This is the final available model decision. You MUST return kind answer; do not request another action. Set evidence_status to sufficient only when current sources support the requested result. Otherwise set it to incomplete and give an honest bounded intermediate result; the Core will offer continuation."
     };
@@ -514,7 +518,9 @@ mod tests {
         assert!(searchable.contains("MUST set evidence_status to incomplete"));
         assert!(searchable.contains("continue large files"));
         assert!(searchable.contains("Do not answer early"));
-        assert!(searchable.contains("CORE-RESOLVED NAMED TARGETS"));
+        assert!(searchable.contains("NAMED TARGETS"));
+        assert!(searchable.contains("Do not expand the question"));
+        assert!(searchable.contains("First evaluate the excerpts already supplied"));
         assert!(searchable.contains("do not spend consecutive rounds"));
 
         let final_only = research_system_prompt(AgentSessionMode::Plan, false, None);

@@ -251,7 +251,11 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   lesbar und wird ohne Backfill als Legacy projiziert. Ergebnis, Abschlussereignis, Zitate,
   Sessionrevision und vorhandene interne Links committen atomar. Presentation Delete entfernt
   V31 über die bestehende Session-Entry-Cascade, Archivieren erhält die Daten. Quelltext, Prompts,
-  Rohantworten und internes Denken werden weiterhin nicht persistiert.
+  Rohantworten und internes Denken werden weiterhin nicht persistiert. Öffentliche Notizen
+  kanonisieren ihre Source-Verweise vor dem Schreiben in ursprünglicher Reihenfolge. Mehrere
+  historische Bereiche können nach vollständiger Revalidierung denselben aktuellen Beleg
+  erhalten; dessen Verknüpfung wird genau einmal angelegt. Die bestehende Unique-Constraint
+  bleibt erhalten, ebenso das Limit vor Deduplizierung. Dafür ist keine Migration erforderlich.
 - Knowledge-Schema V32 ergänzt `agent_slash_command_invocations`,
   `agent_slash_command_lenses`, `agent_diagram_artifacts` und
   `agent_diagram_artifact_sources`. Ein Command-Aufruf bindet genau einen bereits Core-validierten

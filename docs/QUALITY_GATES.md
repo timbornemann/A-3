@@ -268,6 +268,21 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   die ursprüngliche Frage bei verschachtelten Legacy-Fortsetzungen, Priorität zuletzt belegter
   Quellen, vollständige Bereichsrevalidierung, neue Fragen ohne alte offene Ziele sowie erhaltene
   Teilantworten und Zitate. Der Component-Test verlangt einen kompakten Fortsetzungseintrag.
+- Die Offline-Fixture `fixtures/research-storage-v1` misst vollständige relevante Dateiausschnitte
+  in einem festen 4.096-Byte-Gesamtpaket einschließlich Frage und Metadaten: vor der Korrektur
+  1/3 bei 4.373 Bytes, danach 3/3 innerhalb des Budgets. Sie ist ein deterministischer
+  Kontextabdeckungsvergleich, keine Latenz- oder Modell-Erfolgsquote. Weitere Regressionen
+  schützen Unicode-/Minimalbudgets, kompakte überlappende Bereiche, Revisionsisolation, explizite
+  Task-Lens-Pfadseeds und eine einmalige Zitatkorrektur ohne erneute Reads. Der reale libSQL-Test
+  für atomaren Antwortabschluss und Presentation Delete muss eine mehrfach auf denselben
+  aktuellen Beleg abgebildete Notiz erfolgreich speichern; unvollständige alte Belegketten
+  bleiben ausgeschlossen. Die Unique-Constraint wird dafür nicht abgeschwächt.
+- Der Conversation-Pollingvertrag verlangt einen unveränderten Timerbesitzer über frische
+  Projektionen derselben laufenden Session; erst Unmount oder ein anderes Pollingziel beendet
+  ihn. Der Regressionstest weist drei unnötige Timerabbrüche im alten Pfad und keinen im
+  korrigierten Pfad nach. Der separate Diagramm-Mounttest isoliert Mermaid-Layout vom
+  Conversation-Timing und verlangt sowohl dieselbe DOM-Instanz als auch genau einen Render.
+  Renderer- und SVG-Sicherheitsverträge bleiben in ihren eigenen Tests erhalten.
 - Conversation-Regressions müssen belegen, dass ein zweites ungültiges strukturiertes Ergebnis
   nach genau einem Repair als `AwaitingContinuation` mit erhaltenen Quellen endet. `/diagram`
   muss eine zweite feste Formatierungsentscheidung reservieren und bei weiterem Fehler Antwort

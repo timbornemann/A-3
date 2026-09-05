@@ -1163,6 +1163,20 @@ Kontext nicht auf und zählen nicht als neuer Fortschritt. Eine letzte Auswertun
 und bereits validierte Teilantworten bleiben als zitierter Zwischenstand mit ausdrücklicher
 Fortsetzungsaktion erhalten. Die Recherche beginnt keine neuen Budgets ohne Nutzeraktion.
 
+Storage-Recherchekorrektur vom 2026-09-05: Auf denselben aktuellen Beleg zusammenlaufende
+historische Source-Verweise werden nach vollständiger Revalidierung einmalig als Notizquelle
+gespeichert. Kurze relevante Dateien bleiben im begrenzten Kontext vollständig; überlappende
+Bereiche derselben Revision werden nicht mehrfach übertragen. Das Gesamtbudget umfasst auch
+Frage, öffentliche Notizen und Navigation und berücksichtigt das tatsächliche Modus-/Command-
+Profil. Eindeutig genannte aktuelle Pfade erreichen die bestehenden exakten Task-Lens-Kanäle.
+Fehlende Zitate bereits gelesener Dateien lösen eine einzige begrenzte Antwortkorrektur statt
+weiterer Suchrunden aus. Recherchewerkzeuge, Capability-Grenzen und Persistenzschema bleiben
+unverändert; Rohantworten und Quelltexte werden nicht zusätzlich gespeichert.
+
+Der Live-Pollingbesitzer richtet sich nach Session und Laufzustand, nicht nach der Identität
+jeder neu geladenen Projektion. Unveränderte laufende Sessions setzen ihren Timer deshalb nicht
+bei jedem Read neu auf; Sessionwechsel, Haltepunkte und Unmount behalten die bisherige Bereinigung.
+
 Abschluss- und Scrollkorrektur vom 2026-09-05: Die Conversation positioniert einen ausdrücklich
 gestarteten oder geöffneten Turn einmalig, folgt danach aber nicht mehr jeder progressiven
 Höhenänderung des Rechercheblocks. Manuelles Scrollen und jede Pointer-, Touch- oder

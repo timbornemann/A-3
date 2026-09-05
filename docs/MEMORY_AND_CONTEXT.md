@@ -470,8 +470,16 @@ Die Modellnachrichten werden pro Entscheidung aus dem begrenzten ursprünglichen
 Conversation-Ausschnitt, genau dem aktuellen Aktionsfeedback und einem frisch kompilierten
 Evidence-Paket aufgebaut. Frühere kompilierte Pakete werden nicht erneut als Conversation
 angehängt. Der flüchtige Source-Cache hält höchstens 200 Ausschnitte zu je 32 KiB; das kleinere
-modellprofilgebundene Evidence-Fenster verteilt seinen Platz auf höchstens acht fokussierte
-Ausschnitte. Ein erneutes identisches Lesen ersetzt beziehungsweise fokussiert den vorhandenen
+modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte. Kurze
+relevante Dateien werden nach Möglichkeit vollständig gepackt, statt jedem Treffer pauschal
+denselben kleinen Textanteil zu geben. Vollständig enthaltene Ausschnitte derselben aktuellen
+Revision werden nur einmal übertragen; große Dateien behalten ihren angeforderten späteren
+Bereich. Quellenordinalzahlen und persistierte Quellenhistorie bleiben dabei unverändert.
+Frage, Zielauflösung, öffentliche Notizen und Seitenhinweise zählen zum selben Gesamtbudget,
+berechnet gegen den tatsächlich verwendeten Modus, das Command-Profil und das Modell-Schema.
+Eindeutig aufgelöste Dateinennungen werden zusätzlich als bestehende `ExplicitPath`-Seeds an die
+Task Lens übergeben; das Ranking und die Recherchebudgets werden nicht geändert.
+Ein erneutes identisches Lesen ersetzt beziehungsweise fokussiert den vorhandenen
 Ausschnitt, zählt aber nicht als Evidence-Zuwachs. Später angeforderte Zeilenbereiche bleiben
 vorrangig; eine Kontextkürzung nennt einen konkreten Fortsetzungsbereich. Im Modellcheckpoint
 bleibt nur die zuletzt gemeldete offene Lücke aktiv, während ältere Notizen im Journal erhalten
@@ -485,12 +493,22 @@ die zuletzt gefundenen Quellen. Die bisherigen Grenzen von höchstens acht zusä
 revalidierten Quellen und 200 Quellen insgesamt gelten weiter. Dateiseiten müssen den alten
 Belegbereich abdecken; nur vollständig revalidierte Beobachtungen oder Schlussfolgerungen
 erhalten neue turnlokale Source-Verweise. Übernommene öffentliche Notizen werden mit diesen
-Verweisen im neuen Abschnitt aufgezeichnet, sodass eine weitere Fortsetzung nach Reopen den
+Verweisen im neuen Abschnitt aufgezeichnet. Wenn mehrere alte Bereiche denselben aktuellen Beleg
+erhalten, wird dessen Notizverknüpfung in ursprünglicher Reihenfolge genau einmal gespeichert.
+Die vollständige alte Source-Kette wird vor dieser Deduplizierung auf Freshness geprüft; kein
+fehlender Beleg darf dadurch verschwinden. So kann eine weitere Fortsetzung nach Reopen den
 Arbeitsstand erneut rekonstruieren kann. Frühere Suchversuche und offene Ziele sind begrenzte
 Navigationshinweise, keine Evidence oder ausführbare Anweisungen. Sind aktuelle Quellen vorhanden,
 entfällt die erneute breite Task-Lens-Basisrecherche; gezielte weitere Werkzeuge bleiben möglich.
 Eine andere neue Frage übernimmt dagegen keine frühere offene Lücke. Neue Budgets benötigen
 weiterhin eine ausdrückliche Nutzeraktion; es gibt keine selbststartende Fortsetzungsschleife.
+
+Ein fehlender Antwortverweis auf eine bereits sicher gelesene benannte Datei ist ein
+Zuordnungsfehler der Ausgabe, keine neue Leselücke. Er nutzt den vorhandenen einzigen
+Reparaturversuch und eine reguläre abschließende Modellentscheidung ohne weitere Reads.
+Fehlende Datei-Evidence oder ein `incomplete`-Ergebnis erfordern weiterhin echte Vertiefung
+innerhalb des Budgets beziehungsweise einen ehrlich markierten Zwischenstand. Auch ein
+transienter Retry darf eine bereits auf Abschluss begrenzte Entscheidung nicht wieder öffnen.
 
 Eine nach ADR-0041 vorgemerkte Nachricht übernimmt keine fachlichen Task-, Run-, Evidence- oder
 Plananker des vorherigen Work Items. Der Zielmodus wird erst beim FIFO-Start atomar zum

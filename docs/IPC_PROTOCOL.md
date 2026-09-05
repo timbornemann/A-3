@@ -382,6 +382,10 @@ Lücke werden aus der bestehenden Persistenz rekonstruiert, statt die Fortsetzun
 zu lokalisieren. Die WebView liefert dafür weiterhin weder Source-Identitäten noch Pfade;
 Sessionrevision, fortsetzbarer Endzustand und gespeichertes Slash-Profil werden erneut geprüft.
 
+Zusammenlaufende alte Source-Verweise werden erst nach vollständiger Revalidierung der
+Belegkette zu einer aktuellen Notizquelle zusammengefasst. Dies korrigiert den Fortsetzungsabbruch
+bei überlappenden Dateibereichen ohne neue IPC-Felder oder Lockerung der Vorschaugrenze.
+
 ADR-0043 ändert keine WebView-Parameter. Intern verwendet der gemeinsame Conversation-Use-Case
 Ask-Research-Decision V3: `evidence_status` ist geschlossen, und `inspectPath` trägt eine positive
 `start_line` für die nächste begrenzte Source-Seite. Beide Werte stammen ausschließlich aus dem

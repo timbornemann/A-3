@@ -1550,7 +1550,9 @@ mod tests {
                 "TODOs lokalisieren".to_owned(),
                 AskResearchPublicFindingKind::Observation,
                 "Ein aktueller Treffer wurde gelesen".to_owned(),
-                vec![source_id],
+                // Continuation can map a whole-file source and several contained old spans
+                // to this same fresh source. The public note must canonicalize that chain.
+                vec![source_id, source_id, source_id],
                 "Weitere Aufrufstellen sind offen".to_owned(),
                 "Direkte Beziehungen prüfen".to_owned(),
             )?;
@@ -1569,6 +1571,7 @@ mod tests {
             append_event(&connection, worktree_id, &note_event)
                 .await
                 .map_err(|error| error.classify())?;
+            assert_eq!(note.source_ids(), &[source_id]);
 
             let completed = session(
                 session_id,
