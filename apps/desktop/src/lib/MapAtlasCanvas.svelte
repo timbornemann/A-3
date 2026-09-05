@@ -199,15 +199,24 @@
 
   function kindLabel(node: ProjectMapAtlasNodeV1): string {
     return {
-      boundary: 'Boundary',
+      boundary: 'Offene Verbindung',
       callable: 'Funktion',
       file: 'Datei',
-      manifestModule: 'Package',
-      member: 'Member',
-      namespace: 'Namespace',
+      manifestModule: 'Paket',
+      member: 'Element',
+      namespace: 'Namensraum',
       pathModule: 'Modul',
       type: 'Typ',
     }[node.kind];
+  }
+
+  function mappingLabel(status: NonNullable<ProjectMapAtlasNodeV1['mappingStatus']>): string {
+    return {
+      current: 'Aktuell',
+      needsReview: 'Prüfung nötig',
+      stale: 'Veraltet',
+      unmapped: 'Noch nicht analysiert',
+    }[status];
   }
 </script>
 
@@ -299,18 +308,17 @@
             >
               <span class="node-kind">{kindLabel(node)}</span>
               <strong>{node.displayName}</strong>
-              {#if rect.height > 102 && node.detail !== null}<small>{node.detail}</small>{/if}
               <span class="node-counts">
                 {#if node.kind === 'file'}{node.symbolCount} Struktursymbole
-                {:else if node.kind === 'type' || node.kind === 'callable'}{node.memberCount} Member
+                {:else if node.kind === 'type' || node.kind === 'callable'}{node.memberCount} Elemente
                 {:else}{node.fileCount} Dateien · {node.symbolCount} Symbole{/if}
-                · {connectionCount(node.nodeId)} Routen
+                · {connectionCount(node.nodeId)} Verbindungen
               </span>
               {#if node.mappingStatus !== null}
-                <span class="node-status">{node.mappingStatus}</span>
+                <span class="node-status">{mappingLabel(node.mappingStatus)}</span>
               {/if}
               {#if node.claimBadgeCount > 0}<span class="claim-badge"
-                  >{node.claimBadgeCount} Claims</span
+                  >{node.claimBadgeCount} Aussagen</span
                 >{/if}
               {#if node.currentRiskCount !== '0'}<span class="risk-badge"
                   >{node.currentRiskCount} Risiken</span
@@ -328,7 +336,7 @@
       {#each scene.nodes as node (node.nodeId)}
         <li>
           <button type="button" onclick={() => onselect(node)}
-            >{node.displayName} · {kindLabel(node)} · {connectionCount(node.nodeId)} Routen</button
+            >{node.displayName} · {kindLabel(node)} · {connectionCount(node.nodeId)} Verbindungen</button
           >
         </li>
       {/each}
@@ -352,7 +360,7 @@
   .canvas-shell {
     position: relative;
     min-width: 0;
-    min-height: 280px;
+    min-height: 0;
     height: 100%;
     overflow: hidden;
     background: var(--surface-canvas);
@@ -360,7 +368,7 @@
   .canvas-host {
     position: relative;
     min-width: 0;
-    min-height: 280px;
+    min-height: 0;
     height: 100%;
     overflow: auto;
     overscroll-behavior: contain;
@@ -480,7 +488,7 @@
     color: var(--text);
     text-align: left;
     overflow: hidden;
-    box-shadow: 0 5px 18px color-mix(in srgb, var(--surface-canvas) 62%, transparent);
+    box-shadow: none;
     transition:
       background-color 120ms ease,
       border-color 120ms ease;
@@ -521,7 +529,6 @@
     border-left-color: var(--color-neutral);
   }
   .atlas-node strong,
-  .atlas-node small,
   .atlas-node span {
     display: block;
     overflow: hidden;
@@ -539,7 +546,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .atlas-node small,
   .node-counts {
     margin-top: 5px;
     color: var(--muted);
@@ -552,7 +558,6 @@
     margin: 7px 5px 0 0;
     color: var(--muted);
     font-size: 0.65rem;
-    text-transform: capitalize;
   }
   .claim-badge {
     color: var(--color-accent-text);
@@ -592,7 +597,7 @@
     text-transform: uppercase;
   }
   .atlas-summary button {
-    min-height: 32px;
+    min-height: var(--control-min-size);
     border: 0;
     background: transparent;
     color: inherit;

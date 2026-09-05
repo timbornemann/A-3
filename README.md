@@ -299,6 +299,15 @@ Diese Pfade erweitern die WebView-Capabilities nicht.
 
 ## Lokale Qualitätsgates
 
+Die Desktopoberfläche folgt dem [A^3 Corporate Design](docs/corporate-design-a3.md):
+eine beschriftete Aktivitätsleiste verbindet Projekte, Agent, Karte, Abläufe und Einstellungen.
+Flache Arbeitsflächen, ein gemeinsamer Crimson-Akzent und Hell/Dunkel/System-Themes schaffen
+eine durchgehende Umgebung. Im Agentenbereich führen Fragen, Planen und Umsetzen durch die Arbeit;
+Verlauf und Prüfdetails lassen sich per Tastatur öffnen, schließen und in der Breite verändern.
+Technische Prüfanker bleiben aufklappbar, während Aktion, Risiko und konkrete Freigabe sichtbar
+bleiben. Native Dialoge, 44-Pixel-Controls, Fokusrahmen und Reduced Motion gelten durchgehend.
+Die Abnahme ist in [Plan 09](docs/plans/09-COHESIVE_DESKTOP_UI.md) dokumentiert.
+
 Der zusätzliche Hauptbereich **Abläufe** erschließt aufrufstellenbezogene Schritte,
 Skriptübergänge und Wertabhängigkeiten aus dem normalen Fast Index. Quellen und
 Karte sind verlinkt; Ask, Plan, Agent und Deep Map verwenden dieselben aktuellen

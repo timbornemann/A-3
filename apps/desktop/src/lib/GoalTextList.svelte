@@ -81,7 +81,7 @@
   }
 
   button {
-    min-height: 2.4rem;
+    min-height: var(--control-min-size);
   }
 
   @media (max-width: 720px) {

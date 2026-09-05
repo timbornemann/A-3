@@ -803,10 +803,8 @@ describe('A^3 desktop shell', () => {
       },
     });
     try {
-      expect(
-        await screen.findByText(/Agent Workspace wird bei Sichtbarkeit geladen/u),
-      ).toBeTruthy();
-      expect(screen.getByText(/Settings werden bei Sichtbarkeit geladen/u)).toBeTruthy();
+      expect(await screen.findByText(/Dein Agentenbereich wird geladen/u)).toBeTruthy();
+      expect(screen.getByText(/Die Einstellungen werden geladen/u)).toBeTruthy();
       expect(screen.queryByRole('heading', { name: 'Lokaler Provider' })).toBeNull();
 
       const explicitLoadButtons = screen.getAllByRole('button', { name: 'Jetzt laden' });
@@ -852,7 +850,7 @@ describe('A^3 desktop shell', () => {
 
     const settings = container.querySelector<HTMLElement>('#settings');
     expect(settings).not.toBeNull();
-    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.click(screen.getByRole('link', { name: 'Einstellungen' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Info' }));
     await waitFor(() => expect(settings?.textContent).toContain('0.1.0'));
     expect(settings?.textContent).toContain('V1');
@@ -897,15 +895,17 @@ describe('A^3 desktop shell', () => {
     };
     let view = render(App, { props });
     try {
-      const settings = screen.getByRole('link', { name: 'Settings' });
+      const settings = screen.getByRole('link', { name: 'Einstellungen' });
       expect(settings.getAttribute('aria-current')).toBe('page');
       expect(screen.getByRole('main').getAttribute('data-workspace-area')).toBe('settings');
-      expect(screen.getByRole('region', { name: 'Settings workspace' })).toBeTruthy();
+      expect(screen.getByRole('region', { name: 'Einstellungen workspace' })).toBeTruthy();
 
       const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });
-      const toolbar = globalStatus.closest('header');
+      const toolbar = view.container.querySelector('.workspace-toolbar');
       expect(toolbar?.classList.contains('workspace-toolbar')).toBe(true);
-      expect(toolbar?.textContent).toContain('Settings');
+      expect(toolbar?.textContent).toContain('Einstellungen');
+      expect(globalStatus.closest('header')).toBeNull();
+      expect(globalStatus.parentElement?.lastElementChild).toBe(globalStatus);
       await waitFor(() => {
         expect(globalStatus.textContent).toContain('C:\\worktree');
         expect(globalStatus.textContent).toContain('Zusammenhänge erkennen · 4/6');
@@ -915,12 +915,12 @@ describe('A^3 desktop shell', () => {
 
       view.unmount();
       view = render(App, { props });
-      expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe(
+      expect(screen.getByRole('link', { name: 'Einstellungen' }).getAttribute('aria-current')).toBe(
         'page',
       );
       await waitFor(() => expect(projectStatusLoader).toHaveBeenCalledTimes(2));
 
-      const projects = screen.getByRole('link', { name: 'Projects' });
+      const projects = screen.getByRole('link', { name: 'Projekte' });
       const workspace = document.getElementById('workspace-content');
       if (workspace === null) throw new Error('workspace content is missing');
       workspace.scrollTop = 240;
@@ -928,7 +928,7 @@ describe('A^3 desktop shell', () => {
       await fireEvent.click(projects);
       expect(projects.getAttribute('aria-current')).toBe('page');
       expect(screen.getByRole('main').getAttribute('data-workspace-area')).toBe('projects');
-      expect(screen.getByRole('region', { name: 'Projects workspace' })).toBeTruthy();
+      expect(screen.getByRole('region', { name: 'Projekte workspace' })).toBeTruthy();
       expect(document.activeElement?.id).toBe('projects');
       expect(workspace.scrollTop).toBe(0);
       expect(workspace.scrollLeft).toBe(0);
@@ -1569,7 +1569,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.click(screen.getByRole('link', { name: 'Einstellungen' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Info' }));
     const heading = await screen.findByRole('heading', { name: 'Info' });
     const page = heading.closest('section');
@@ -1609,7 +1609,7 @@ describe('A^3 desktop shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'worktree' })).toBeTruthy();
       expect(screen.getAllByText('C:\\worktree')).toHaveLength(2);
     });
     expect(projectOpener).toHaveBeenCalledTimes(1);
@@ -1685,7 +1685,7 @@ describe('A^3 desktop shell', () => {
 
     expect(await screen.findByRole('heading', { name: 'Deine Projekte' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Projekt hinzufügen' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Gespeicherte Worktrees' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Deine Projektbibliothek' })).toBeTruthy();
     expect(screen.getByRole('search')).toBeTruthy();
   });
 
@@ -1710,7 +1710,7 @@ describe('A^3 desktop shell', () => {
       },
     });
 
-    expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'worktree' })).toBeTruthy();
     expect(order.slice(0, 2)).toEqual(['restore', 'status']);
     expect(projectRestorer).toHaveBeenCalledTimes(1);
   });
@@ -1739,7 +1739,7 @@ describe('A^3 desktop shell', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Projekt konnte nicht automatisch geöffnet werden');
     expect(alert.textContent).toContain('Prüfe Laufwerk und Zugriffsrechte');
-    expect(alert.textContent).toContain('füge seinen neuen Root erneut hinzu');
+    expect(alert.textContent).toContain('wähle ihn erneut aus');
     expect(alert.textContent).not.toContain('secret');
     expect(await screen.findByText('worktree')).toBeTruthy();
     expect(projectCatalogLoader).toHaveBeenCalled();
@@ -1831,7 +1831,9 @@ describe('A^3 desktop shell', () => {
     );
     expect((await screen.findAllByText('D:\\clients\\next-worktree')).length).toBeGreaterThan(0);
 
-    const refreshedRow = screen.getByText('next-worktree').closest('li');
+    const refreshedRow = within(screen.getByRole('list', { name: 'Gespeicherte Projekte' }))
+      .getByText('next-worktree')
+      .closest('li');
     expect(refreshedRow).not.toBeNull();
     await fireEvent.click(
       within(refreshedRow!).getByRole('button', { name: 'Nur aus A^3 entfernen' }),

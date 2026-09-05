@@ -254,18 +254,39 @@
   const indexRebuildLabel = $derived.by(() => {
     if (indexRebuildView === 'submitting') return 'Wird eingeplant …';
     if (indexActivityState === 'queued') return 'Startet …';
-    if (indexActivityState === 'running') return 'Fast Index läuft';
+    if (indexActivityState === 'running') return 'Code wird gelesen';
     if (indexActivityState === 'cancelling') return 'Wird beendet …';
     if (indexRebuildView === 'queued') return 'Eingeplant';
     if (indexRebuildView === 'error') return 'Erneut versuchen';
-    return 'Fast Index';
+    return 'Code aktualisieren';
   });
+
+  let workspaceElement: HTMLElement | undefined = $state();
 
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        !workspaceElement?.contains(
+          event.target instanceof Node ? event.target : document.activeElement,
+        ) ||
+        (event.target instanceof Element && event.target.closest('dialog'))
+      )
+        return;
       if (event.key === 'Escape') {
-        if (inspectorMode === 'deepMap') inspectorMode = null;
-        else void goBack();
+        event.preventDefault();
+        if (lensOpen) {
+          lensOpen = false;
+          workspaceElement?.querySelector<HTMLButtonElement>('.lens > button')?.focus();
+        } else if (searchState.kind !== 'idle') {
+          searchState = { kind: 'idle' };
+          workspaceElement?.querySelector<HTMLInputElement>('#atlas-search')?.focus();
+        } else if (inspectorMode !== null) {
+          inspectorMode = null;
+          workspaceElement
+            ?.querySelector<HTMLButtonElement>('.atlas-toolbar button[aria-current="page"]')
+            ?.focus();
+        } else void goBack();
       }
     };
     const updateWorkspaceWidth = (width: number) => {
@@ -737,15 +758,16 @@
 
 <section
   class="map-shell map-workspace"
+  bind:this={workspaceElement}
   aria-labelledby="atlas-title"
   data-project-key={projectKey}
 >
   <header class="command-bar">
     <div class="title">
-      <span aria-hidden="true">A³</span>
+      <span aria-hidden="true">A^3</span>
       <div>
         <h2 id="atlas-title">Code Atlas</h2>
-        <p>Projekt → Modul → Datei → Typ/Symbol</p>
+        <p>Zusammenhänge in deinem Code</p>
       </div>
     </div>
     <form role="search" onsubmit={submitSearch}>
@@ -780,16 +802,17 @@
           type="button"
           class:active={lens !== null}
           aria-expanded={lensOpen}
-          onclick={toggleLens}>◎ Task Lens{lens === null ? '' : ` · ${lensModuleIds.size}`}</button
+          onclick={toggleLens}
+          >◎ Aufgabenfokus{lens === null ? '' : ` · ${lensModuleIds.size}`}</button
         >
         {#if lensOpen}<div class="lens-popover">
-            <strong>Aktuellen Task fokussieren</strong>{#if lensBusy}<p role="status">
+            <strong>Aufgabe in der Karte hervorheben</strong>{#if lensBusy}<p role="status">
                 Task Lens wird geladen …
               </p>{:else if lensError}<p role="alert">
                 Task Lens konnte nicht geladen werden.
               </p>{:else}<label
-                >Task<select value={selectedTaskId} onchange={selectTask}
-                  ><option value="">Task wählen</option
+                >Aufgabe<select value={selectedTaskId} onchange={selectTask}
+                  ><option value="">Aufgabe wählen</option
                   >{#if lensTasks?.status === 'available'}{#each lensTasks.tasks as task (task.taskId)}<option
                         value={task.taskId}>{task.objective}</option
                       >{/each}{/if}</select
@@ -802,9 +825,9 @@
                       >{/each}</select
                   ></label
                 ><button type="button" disabled={selectedStepId === ''} onclick={applyLens}
-                  >Lens anwenden</button
+                  >Fokus anwenden</button
                 >{/if}{#if lens !== null}<button type="button" onclick={clearLens}
-                  >Lens entfernen</button
+                  >Fokus entfernen</button
                 >{/if}{/if}
           </div>{/if}
       </div>
@@ -813,9 +836,7 @@
 
   {#if searchState.kind !== 'idle'}
     <aside class="search-results" aria-label="Suchergebnisse">
-      {#if searchState.kind === 'loading'}<p role="status">
-          Der aktuelle Snapshot wird durchsucht …
-        </p>
+      {#if searchState.kind === 'loading'}<p role="status">Dein Projekt wird durchsucht …</p>
       {:else if searchState.kind === 'error'}<p role="alert">
           Die Suche konnte nicht sicher ausgeführt werden.
         </p>
@@ -846,8 +867,8 @@
     </nav>
     {#if scene.kind === 'available'}<div class="scene-facts">
         <strong>{scene.value.nodeCount} Objekte</strong><span
-          >{scene.value.relationCount} Routen</span
-        ><span>{scene.value.boundaryCount} Boundaries</span
+          >{scene.value.relationCount} Beziehungen</span
+        ><span>{scene.value.boundaryCount} offene Verbindungen</span
         >{#if scene.value.nodesTruncated || scene.value.relationsTruncated}<b>begrenzt</b>{/if}
       </div>{/if}
     <div class="legend">
@@ -857,7 +878,7 @@
     </div>
   </div>
 
-  <main
+  <div
     class:resizing={resizingInspector}
     class="workspace-body"
     bind:this={workspaceBody}
@@ -951,7 +972,7 @@
       onshowinatlas={showDeepMapModuleInAtlas}
       onclose={() => (inspectorMode = null)}
     />
-  </main>
+  </div>
 
   <DeepMapDock
     statusLoader={deepMapStatusLoader}
@@ -970,10 +991,10 @@
     --surface: var(--color-surface);
     --surface-raised: var(--color-surface-raised);
     --surface-canvas: var(--color-canvas-deep);
-    --line: var(--color-border);
+    --line: var(--color-border-soft);
     --text: var(--color-text);
     --muted: var(--color-muted);
-    --accent: var(--color-accent);
+    --accent: var(--color-accent-strong);
     --focus: var(--color-focus);
     position: relative;
     display: flex;
@@ -992,11 +1013,11 @@
     position: relative;
     z-index: 40;
     display: grid;
-    grid-template-columns: minmax(210px, auto) minmax(260px, 1fr) auto;
+    grid-template-columns: minmax(10rem, auto) minmax(12rem, 1fr) auto;
     align-items: center;
-    gap: 16px;
-    min-height: 70px;
-    padding: 10px 14px;
+    gap: var(--space-3);
+    min-height: 4rem;
+    padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--line);
     background: var(--surface);
   }
@@ -1008,10 +1029,12 @@
   .title > span {
     display: grid;
     place-items: center;
-    width: 40px;
+    width: 2rem;
     height: 40px;
-    background: var(--color-surface-muted);
+    background: transparent;
     font-weight: 800;
+    color: var(--color-accent-text);
+    font-family: var(--font-display);
   }
   .title h2 {
     margin: 0;
@@ -1028,6 +1051,7 @@
     align-items: center;
     border: 1px solid var(--line);
     background: var(--surface-canvas);
+    border-radius: var(--radius-control);
   }
   .command-bar input {
     min-width: 0;
@@ -1040,7 +1064,7 @@
   .command-bar button {
     min-height: 44px;
     border: 1px solid var(--line);
-    border-radius: 0;
+    border-radius: var(--radius-control);
     background: transparent;
     color: inherit;
     padding: 8px 12px;
@@ -1088,11 +1112,13 @@
     right: 0;
     display: grid;
     gap: 9px;
-    width: 320px;
+    width: min(20rem, calc(100vw - 7rem));
     padding: 14px;
     border: 1px solid var(--line);
     background: var(--surface);
-    box-shadow: 0 18px 45px color-mix(in srgb, var(--color-shadow) 35%, transparent);
+    box-shadow: none;
+    border-radius: var(--radius-panel);
+    animation: app-surface-in var(--motion-normal) var(--ease-out);
   }
   .lens-popover label {
     display: grid;
@@ -1101,7 +1127,7 @@
     font-size: 0.7rem;
   }
   .lens-popover select {
-    min-height: 42px;
+    min-height: var(--control-min-size);
     border: 1px solid var(--line);
     border-radius: 0;
     background: var(--surface-canvas);
@@ -1111,13 +1137,14 @@
     position: absolute;
     z-index: 35;
     top: 70px;
-    left: max(230px, 24%);
-    width: min(620px, 64vw);
+    left: var(--space-4);
+    width: calc(100% - 2 * var(--space-4));
     max-height: 380px;
     overflow: auto;
     border: 1px solid var(--line);
     background: var(--surface);
-    box-shadow: 0 18px 45px color-mix(in srgb, var(--color-shadow) 35%, transparent);
+    box-shadow: none;
+    border-radius: var(--radius-panel);
   }
   .search-results ul {
     margin: 0;
@@ -1162,7 +1189,7 @@
     overflow: hidden;
   }
   .atlas-toolbar nav button {
-    min-height: 36px;
+    min-height: var(--control-min-size);
     border: 0;
     border-radius: 0;
     background: transparent;
@@ -1335,7 +1362,7 @@
     }
     .search-results {
       left: 8px;
-      width: calc(100vw - 16px);
+      width: calc(100% - 16px);
     }
   }
   @media (prefers-reduced-motion: reduce) {

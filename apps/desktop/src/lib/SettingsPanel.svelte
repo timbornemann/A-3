@@ -715,13 +715,13 @@
         <section class="settings-page" aria-labelledby="general-settings-heading">
           <header class="settings-page-heading">
             <h3 id="general-settings-heading">Allgemein</h3>
-            <p>Darstellung und grundlegendes Verhalten der Desktopanwendung.</p>
+            <p>Gestalte A^3 so, wie du am liebsten arbeitest.</p>
           </header>
           <div class="settings-list">
             <div class="settings-row settings-row-control">
               <div>
                 <strong>Farbschema</strong>
-                <span>Systemeinstellung verwenden oder bewusst überschreiben.</span>
+                <span>Automatisch, hell oder dunkel.</span>
               </div>
               <ThemeControls />
             </div>
@@ -732,10 +732,7 @@
           <header class="settings-page-heading">
             <div>
               <h3 id="model-settings-heading">KI &amp; Modelle</h3>
-              <p>
-                Verbinde einen Provider, lade dessen Modelle und ordne sie den Funktionen von A^3
-                zu. Jeder Schritt bleibt bewusst und kontrolliert.
-              </p>
+              <p>Verbinde deine KI und wähle die Modelle für deine Arbeit.</p>
             </div>
           </header>
 
@@ -744,11 +741,8 @@
               <div>
                 <span class="setup-step" aria-hidden="true">1</span>
                 <div>
-                  <h4 id="provider-setup-heading">Provider verbinden</h4>
-                  <p>
-                    Wähle, wo A^3 Modelle findet. Es ist immer nur eine Verbindung gleichzeitig
-                    aktiv.
-                  </p>
+                  <h4 id="provider-setup-heading">KI verbinden</h4>
+                  <p>Lokal mit Ollama oder über einen unterstützten Online-Anbieter.</p>
                 </div>
               </div>
             </header>
@@ -758,8 +752,8 @@
                 <div>
                   <strong>Bereit für deine Modellverbindung</strong>
                   <p>
-                    Der Indexbrowser funktioniert weiterhin ohne Modell. Wähle einen Provider, um
-                    KI-Funktionen einzurichten.
+                    Deinen Code kannst du bereits erkunden. Verbinde jetzt ein Modell für Fragen,
+                    Pläne und Agentenaufgaben.
                   </p>
                 </div>
                 <div class="provider-choice-grid" aria-label="Provider auswählen">
@@ -947,7 +941,7 @@
         <section class="settings-page" aria-labelledby="project-page-heading">
           <header class="settings-page-heading">
             <h3 id="project-page-heading">Projekt</h3>
-            <p>Repository-eigene Index- und Ausführungsgrenzen.</p>
+            <p>Dateien und Befehle, die A^3 in diesem Projekt nutzen darf.</p>
           </header>
           <ProjectSettingsPanel />
         </section>
@@ -955,9 +949,7 @@
         <section class="settings-page" aria-labelledby="privacy-heading">
           <header class="settings-page-heading">
             <h3 id="privacy-heading">Datenschutz</h3>
-            <p>
-              Local-first Grenzen dieses Builds. Nicht verfügbare Funktionen sind keine Schalter.
-            </p>
+            <p>Du bestimmst, welche Daten A^3 weitergeben darf.</p>
           </header>
           <div class="settings-list privacy-list">
             <div class="settings-row"><span>Telemetrie</span><strong>Aus</strong></div>

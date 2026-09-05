@@ -152,7 +152,7 @@ describe('AgentInspectionPanel', () => {
     expect(screen.getByText('old')).toBeTruthy();
     expect(screen.getByText('new')).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Side-by-side' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Nebeneinander' }));
     expect(screen.getByRole('table', { name: 'Side-by-side Diff' })).toBeTruthy();
     expect(screen.getByText('old')).toBeTruthy();
     expect(screen.getByText('new')).toBeTruthy();
@@ -234,7 +234,9 @@ describe('AgentInspectionPanel', () => {
     const current = inspection();
     render(AgentInspectionPanel, { loader: async () => current, taskId });
 
-    expect(await screen.findByText(/Done · alle Muss-Kriterien/u)).toBeTruthy();
+    expect(await screen.findByText(/Abschluss belegt · alle Muss-Kriterien/u)).toBeTruthy();
+    expect(screen.getByText('Nachweise anzeigen · 1').closest('details')?.open).toBe(false);
+    expect(screen.getByText('Technischer Prüfstand').closest('details')?.open).toBe(false);
     expect(screen.getAllByText(stepId)).not.toHaveLength(0);
     expect(screen.getAllByText(evidenceId)).not.toHaveLength(0);
 
@@ -251,8 +253,8 @@ describe('AgentInspectionPanel', () => {
     };
     await fireEvent.click(screen.getByRole('button', { name: 'Aktualisieren' }));
     await waitFor(() => expect(screen.getAllByText('Veraltet')).not.toHaveLength(0));
-    expect(screen.getByText(/Verification ist stale/u)).toBeTruthy();
-    expect(screen.getByText(/Done ist nicht belegt/u)).toBeTruthy();
+    expect(screen.getByText(/Prüfung ist veraltet/u)).toBeTruthy();
+    expect(screen.getByText(/Abschluss noch nicht belegt/u)).toBeTruthy();
   });
 
   it('reveals exact changed paths retained by diff evidence', async () => {

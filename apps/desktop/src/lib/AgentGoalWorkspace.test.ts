@@ -151,12 +151,36 @@ function cancelledActivity(): AgentActivityResponseV1 {
 }
 
 describe('AgentGoalWorkspace', () => {
+  it('cancels the native goal dialog without saving and restores the opener focus', async () => {
+    const goalCreator = vi.fn();
+    render(AgentGoalWorkspace, {
+      activeProject: true,
+      goalCreator,
+      tasksLoader: async () => ({
+        protocolVersion: 1,
+        result: { status: 'available', tasks: [], truncated: false },
+      }),
+    });
+    const initialDialog = await screen.findByRole('dialog', { name: 'Aufgabe anlegen' });
+    expect(initialDialog.tagName).toBe('DIALOG');
+    await fireEvent(initialDialog, new Event('cancel', { cancelable: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const opener = screen.getByRole('button', { name: 'Neue Aufgabe' });
+    opener.focus();
+    await fireEvent.click(opener);
+    expect(await screen.findByRole('dialog', { name: 'Aufgabe anlegen' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText('Ziel'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    expect(goalCreator).not.toHaveBeenCalled();
+  });
+
   it('does not cross the Core boundary without an active project', () => {
     const tasksLoader = vi.fn<() => Promise<TaskLensTasksResponseV1>>();
 
     render(AgentGoalWorkspace, { activeProject: false, tasksLoader });
 
-    expect(screen.getByText(/Öffne einen lokalen Worktree/)).toBeTruthy();
+    expect(screen.getByText(/Öffne ein lokales Projekt/)).toBeTruthy();
     expect(tasksLoader).not.toHaveBeenCalled();
   });
 
@@ -183,7 +207,7 @@ describe('AgentGoalWorkspace', () => {
       tasksLoader,
     });
 
-    expect(await screen.findByRole('heading', { name: 'Goal Contract anlegen' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Aufgabe anlegen' })).toBeTruthy();
     await fireEvent.input(screen.getByLabelText('Ziel'), {
       target: { value: 'Agent Workspace aufbauen' },
     });
@@ -193,7 +217,7 @@ describe('AgentGoalWorkspace', () => {
     await fireEvent.input(screen.getByLabelText('Abschlussprüfung'), {
       target: { value: 'Die gespeicherte Revision erneut laden und vergleichen.' },
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Goal Contract anlegen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Aufgabe anlegen' }));
 
     await waitFor(() => expect(goalCreator).toHaveBeenCalledTimes(1));
     expect(goalCreator).toHaveBeenCalledWith({
@@ -210,7 +234,7 @@ describe('AgentGoalWorkspace', () => {
       successVerification: 'Die gespeicherte Revision erneut laden und vergleichen.',
       userDecisions: [],
     });
-    expect(await screen.findByText('Goal Contract dauerhaft angelegt.')).toBeTruthy();
+    expect(await screen.findByText('Aufgabe dauerhaft angelegt.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText('Muss')).toBeTruthy();
@@ -244,14 +268,14 @@ describe('AgentGoalWorkspace', () => {
 
     expect(await screen.findByRole('heading', { name: 'Agent Workspace aufbauen' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Neue Revision' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Auftrag anpassen' }));
     await fireEvent.input(screen.getByLabelText('Änderungsgrund'), {
       target: { value: 'Ziel präzisiert' },
     });
     await fireEvent.input(screen.getByLabelText('Ziel'), {
       target: { value: 'Agent Workspace vollständig aufbauen' },
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Neue Revision anhängen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Änderung speichern' }));
 
     await waitFor(() => expect(goalReviser).toHaveBeenCalledTimes(1));
     const [selectedTaskId, expectedRevision, reason, submittedDraft] = goalReviser.mock.calls[0];
@@ -319,9 +343,9 @@ describe('AgentGoalWorkspace', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
-    expect(await screen.findByRole('heading', { name: 'Diff und Verification' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Änderungen & Prüfungen' })).toBeTruthy();
     await waitFor(() => expect(inspectionLoader).toHaveBeenCalledWith(taskId));
-    expect(screen.getByText(/noch kein verifizierbares Ledger/u)).toBeTruthy();
+    expect(screen.getByText(/noch kein prüfbarer Arbeitsplan/u)).toBeTruthy();
   });
 
   it('shows bounded budget, blockers, and separates model selection from execution', async () => {
@@ -427,8 +451,15 @@ describe('AgentGoalWorkspace', () => {
     expect(await screen.findByText('Explizite Freigabe fehlt.')).toBeTruthy();
     expect(screen.getByText('Aktionsauswahl Prozess · noch keine Ausführung')).toBeTruthy();
     expect(screen.getByText('Ausführungsaktion · Tool tatsächlich aufgerufen')).toBeTruthy();
+    const technical = screen.getByText('Technische Laufdetails').closest('details');
+    expect(technical?.open).toBe(false);
+    expect(screen.getByRole('heading', { name: 'Nutzung und Limits' }).closest('details')).toBe(
+      technical,
+    );
+    await fireEvent.click(screen.getByText('Technische Laufdetails'));
+    expect(screen.getByRole('heading', { name: 'Nutzung und Limits' })).toBeTruthy();
     expect(screen.getAllByText('1 / 8')).toHaveLength(2);
-    expect(screen.getByText('Run aktiv oder fortsetzbar')).toBeTruthy();
+    expect(screen.getByText('Aktiv oder fortsetzbar')).toBeTruthy();
     expect(activityLoader).toHaveBeenCalledWith(taskId);
     expect(onRunStatusChange).toHaveBeenLastCalledWith({
       kind: 'available',
@@ -494,19 +525,19 @@ describe('AgentGoalWorkspace', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
-    const resume = await screen.findByRole('button', { name: 'Resume' });
-    const replan = screen.getByRole('button', { name: 'Replan' });
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const resume = await screen.findByRole('button', { name: 'Fortsetzen' });
+    const replan = screen.getByRole('button', { name: 'Neu planen' });
+    const cancel = screen.getByRole('button', { name: 'Abbrechen' });
     expect(resume.hasAttribute('disabled')).toBe(true);
     expect(replan.hasAttribute('disabled')).toBe(false);
     expect(cancel.hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText(/Abgeschlossene Evidence ist veraltet/)).toBeTruthy();
+    expect(screen.getByText(/Frühere Nachweise sind veraltet/)).toBeTruthy();
 
     await fireEvent.click(cancel);
     await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
     expect(runController).toHaveBeenCalledWith(taskId, 3, '7', 'cancel');
-    expect(await screen.findByText('Der Agent Run wurde dauerhaft abgebrochen.')).toBeTruthy();
-    expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
+    expect(await screen.findByText('Der Agentenlauf wurde dauerhaft abgebrochen.')).toBeTruthy();
+    expect(await screen.findByText('Lauf beendet')).toBeTruthy();
     expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
     expect(activityLoader).toHaveBeenCalledTimes(2);
   });
@@ -568,32 +599,32 @@ describe('AgentGoalWorkspace', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
-    const pause = await screen.findByRole('button', { name: 'Pause' });
+    const pause = await screen.findByRole('button', { name: 'Pausieren' });
     expect(pause.hasAttribute('disabled')).toBe(false);
     await fireEvent.click(pause);
     await waitFor(() => expect(runController).toHaveBeenCalledTimes(1));
     expect(runController).toHaveBeenCalledWith(taskId, 3, '7', 'pause');
     expect(await screen.findByText(/Pause wurde angefordert/)).toBeTruthy();
     expect(await screen.findByText('Pause läuft')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Pause' }).hasAttribute('disabled')).toBe(true);
-    expect(screen.queryByText(/Produktlaufzeit pausiert/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Pausieren' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByText(/Sicher pausiert/)).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Status aktualisieren' }));
-    expect(await screen.findByText(/Produktlaufzeit pausiert/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
+    expect(await screen.findByText(/Sicher pausiert/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fortsetzen' })).toBeTruthy();
   });
 
   it.each([
     {
       action: 'resume' as const,
-      button: 'Resume',
-      message: /neuer besessener Versuch eingereiht/u,
+      button: 'Fortsetzen',
+      message: /Der Agent setzt die Aufgabe fort/u,
       outcome: 'resumed' as const,
     },
     {
       action: 'replan' as const,
-      button: 'Replan',
-      message: /neuer besessener Replan-Versuch eingereiht/u,
+      button: 'Neu planen',
+      message: /Die Neuplanung startet gleich/u,
       outcome: 'replanRequired' as const,
     },
   ])('starts $button only after the durable recovery commit', async (scenario) => {
@@ -736,7 +767,7 @@ describe('AgentGoalWorkspace', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Aktivität' }));
-    expect(await screen.findByText('Terminaler Zustand')).toBeTruthy();
+    expect(await screen.findByText('Lauf beendet')).toBeTruthy();
     expect(screen.getAllByText('Abgebrochen')).not.toHaveLength(0);
   });
 });

@@ -213,8 +213,11 @@
     {/if}
     <i aria-hidden="true"><em style={`width:${progressPercent}%`}></em></i>
   </div>
-  <button class="details" type="button" aria-label="Details" onclick={() => ondetails(false)}
-    >Details</button
+  <button
+    class="details"
+    type="button"
+    aria-label="Analysefortschritt"
+    onclick={() => ondetails(false)}>Fortschritt</button
   >
 </section>
 
@@ -223,14 +226,15 @@
     position: relative;
     z-index: 30;
     display: flex;
-    flex: 0 0 52px;
+    flex: 0 0 auto;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
-    height: 52px;
-    padding: 4px 10px;
+    height: auto;
+    padding: var(--space-1) var(--space-3);
     border-top: 1px solid var(--line);
     background: var(--surface);
+    min-height: 3.5rem;
   }
   .brand {
     display: flex;
@@ -244,14 +248,14 @@
     place-items: center;
     width: 32px;
     height: 32px;
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    background: transparent;
     color: var(--color-accent-text);
   }
   select,
   button {
     min-height: 44px;
     border: 1px solid var(--line);
-    border-radius: 0;
+    border-radius: var(--radius-control);
     background: var(--surface-raised);
     color: inherit;
   }
@@ -352,12 +356,17 @@
       max-width: 110px;
     }
     .details {
+      position: relative;
       width: 44px;
       padding: 0;
       overflow: hidden;
       color: transparent;
     }
     .details::after {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
       color: var(--text);
       content: '⋯';
       font-size: 1.2rem;

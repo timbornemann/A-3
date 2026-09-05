@@ -90,7 +90,7 @@
         current: 'Aktuell',
         needsReview: 'Prüfung nötig',
         stale: 'Veraltet',
-        unmapped: 'Nicht gemappt',
+        unmapped: 'Noch nicht analysiert',
       } as const
     )[status];
   }
@@ -620,10 +620,11 @@
     grid-template-columns: minmax(90px, 1fr) auto auto;
     align-items: center;
     gap: 8px;
-    min-height: 38px;
-    padding: 5px 8px;
-    border: 1px solid var(--line);
+    min-height: var(--control-min-size);
+    padding: var(--space-2) 0;
+    border: 0;
     font-size: 0.68rem;
+    border-block-end: 1px solid var(--line);
   }
   .relation-counts span {
     color: var(--muted);
@@ -655,10 +656,11 @@
   }
   .supporting-details {
     margin: 12px 16px 16px !important;
-    border: 1px solid var(--line);
+    border: 0;
+    border-block-start: 1px solid var(--line);
   }
   .supporting-details > summary {
-    min-height: 42px;
+    min-height: var(--control-min-size);
     padding: 11px;
     cursor: pointer;
     color: var(--muted);
@@ -689,7 +691,7 @@
     font-size: 0.65rem;
   }
   .route-list button {
-    min-height: 36px;
+    min-height: var(--control-min-size);
     padding: 4px 8px;
   }
   .notice {
@@ -712,13 +714,15 @@
   .flow-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    gap: 1px;
   }
   .flow-actions button {
     display: grid;
     min-width: 0;
     min-height: 58px;
     text-align: left;
+    border: 0;
+    border-block-end: 1px solid var(--line);
   }
   .flow-actions span {
     margin-top: 2px;
@@ -792,10 +796,10 @@
       top: 0;
       right: 0;
       bottom: 0;
-      box-shadow: -10px 0 30px color-mix(in srgb, var(--color-shadow) 28%, transparent);
+      box-shadow: none;
     }
     .inspector.open {
-      width: min(390px, 92vw);
+      width: min(390px, 100%);
       border-left: 1px solid var(--line);
     }
   }

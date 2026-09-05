@@ -522,7 +522,7 @@
       centralSymbol: 'Dieses zentrale Symbol erklärt die Kernaufgaben des Moduls.',
       testRoot: 'Diese Tests machen Regeln, Sonderfälle und Risiken sichtbar.',
       graphCommunity: 'Starke Beziehungen weisen auf einen gemeinsamen Architekturbereich hin.',
-      uncoveredModule: 'Für wichtige Card-Felder fehlen noch bestätigte Hinweise.',
+      uncoveredModule: 'Für wichtige Wissensbereiche fehlen noch bestätigte Hinweise.',
     }[value];
   }
 
@@ -633,7 +633,7 @@
 >
   <header class="inspector-head">
     <div>
-      <span>Live-Informationssystem</span>
+      <span>Projektwissen</span>
       <h3>Deep Map</h3>
     </div>
     <button type="button" aria-label="Deep-Map-Details schließen" onclick={onclose}>×</button>
@@ -807,8 +807,8 @@
             <small>{modules.length} Module geladen</small>
           </div>
           {#if dashboard.historicalPlanLimited}<p class="limited">
-              Dieser ältere Lauf enthält nur einen kompakten Plan; konkrete Ziele und Card-Felder
-              wurden damals noch nicht gespeichert.
+              Dieser ältere Lauf enthält nur einen kompakten Plan; konkrete Ziele und
+              Wissensbereiche wurden damals noch nicht gespeichert.
             </p>{/if}
           <div class="module-list">
             {#each modules as module, moduleIndex (module.selection)}
@@ -858,8 +858,8 @@
                         {#if stepsByModule[module.selection].historicalDetailsLimited}<p
                             class="limited"
                           >
-                            Für diese historischen Schritte sind Ziel und geplante Card-Felder nicht
-                            mehr vollständig verfügbar.
+                            Für diese historischen Schritte sind Ziel und geplante Wissensbereiche
+                            nicht mehr vollständig verfügbar.
                           </p>{/if}
                         {#if stepsByModule[module.selection].nextCursor}<button
                             class="page-button"
@@ -872,7 +872,7 @@
 
                     <section class="card-detail" aria-labelledby={`deep-map-card-${moduleIndex}`}>
                       <div class="card-heading">
-                        <h6 id={`deep-map-card-${moduleIndex}`}>Module Card</h6>
+                        <h6 id={`deep-map-card-${moduleIndex}`}>Modulwissen</h6>
                         <span class={`status ${module.state}`}
                           >{moduleStateLabel(module.state)}</span
                         >
@@ -883,7 +883,7 @@
                             : 'Die Card erscheint hier erst nach erfolgreicher Prüfung und Veröffentlichung.'}
                         </p>
                       {:else if cardsByModule[module.selection] === undefined}<p class="loading">
-                          Veröffentlichte Card wird geladen …
+                          Bestätigtes Wissen wird geladen …
                         </p>
                       {:else}
                         {@const card = availableCard(module.selection)}
@@ -1112,7 +1112,7 @@
   }
   .run-choice select {
     min-width: 0;
-    min-height: 42px;
+    min-height: var(--control-min-size);
     border: 1px solid var(--line);
     background: var(--surface-canvas);
     color: inherit;
@@ -1124,8 +1124,9 @@
   .failure-card,
   .history,
   .notice {
-    border: 1px solid var(--line);
-    background: var(--surface-raised);
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
   }
   .overview,
   .current-work,
@@ -1133,7 +1134,7 @@
   .atlas-impact,
   .failure-card,
   .notice {
-    padding: 12px;
+    padding: 12px 0 18px;
   }
   .overview-title,
   .section-heading,
@@ -1173,7 +1174,8 @@
     gap: 5px;
     min-height: 62px;
     padding: 7px;
-    border: 1px solid var(--line);
+    border: 0;
+    border-top: 2px solid var(--line);
     color: var(--muted);
     font-size: 0.66rem;
   }
@@ -1187,8 +1189,7 @@
   .phases li.active {
     color: var(--text);
     background: color-mix(in srgb, var(--accent) 12%, transparent);
-    outline: 2px solid var(--focus);
-    outline-offset: -2px;
+    border-top-color: var(--focus);
   }
   .phases li.stopped {
     color: var(--color-status-failed);
@@ -1215,7 +1216,8 @@
     margin-top: 8px;
   }
   .current-work {
-    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+    border-left: 2px solid var(--accent);
   }
   .chips {
     display: flex;
@@ -1236,7 +1238,8 @@
     margin-top: 10px;
   }
   .module-card {
-    border: 1px solid var(--line);
+    border: 0;
+    border-block-end: 1px solid var(--line);
     background: var(--surface);
   }
   .module-card.expanded {
@@ -1263,8 +1266,8 @@
     color: var(--muted);
   }
   .status.published {
-    border-color: var(--color-status-success);
-    color: var(--color-status-success);
+    border-color: var(--color-status-ready);
+    color: var(--color-status-ready);
   }
   .status.incomplete {
     border-color: var(--color-warning);
@@ -1302,7 +1305,7 @@
     border-color: var(--accent);
   }
   .step-list li.confirmed {
-    border-color: var(--color-status-success);
+    border-color: var(--color-status-ready);
   }
   .step-list li > div:first-child {
     display: flex;
@@ -1322,9 +1325,10 @@
     gap: 9px;
   }
   .fields > section {
-    padding: 9px;
-    border: 1px solid var(--line);
-    background: var(--surface-raised);
+    padding: 9px 0;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
   }
   .fields ul {
     display: grid;
@@ -1352,7 +1356,7 @@
     font-size: 0.65rem;
   }
   .claim-meta .fact {
-    color: var(--color-status-success);
+    color: var(--color-status-ready);
   }
   .claim-meta .hypothesis {
     color: var(--color-warning);
@@ -1479,10 +1483,10 @@
       position: absolute;
       z-index: 20;
       inset: 0 0 0 auto;
-      box-shadow: -10px 0 30px color-mix(in srgb, var(--color-shadow) 28%, transparent);
+      box-shadow: none;
     }
     .inspector.open {
-      width: min(620px, 96vw);
+      width: min(620px, 100%);
     }
   }
   @media (max-width: 560px) {

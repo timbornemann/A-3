@@ -925,9 +925,9 @@
 <style>
   .ask-research {
     margin: var(--space-3) 0 var(--space-5);
-    border: 1px solid var(--color-border-soft);
+    border: 0;
     border-radius: var(--radius-card);
-    background: var(--color-surface-subtle);
+    background: transparent;
   }
   summary {
     display: grid;
@@ -1140,9 +1140,10 @@
     margin-top: var(--space-2);
     padding: var(--space-2);
     gap: var(--space-2);
-    border: 1px solid var(--color-border-soft);
+    border: 0;
     border-radius: var(--radius-control);
-    background: var(--color-surface);
+    background: transparent;
+    border-inline-start: 1px solid var(--color-border);
   }
   .work-note > div {
     display: grid;
@@ -1160,7 +1161,7 @@
   }
   .note-sources button,
   .continuation-card button {
-    min-height: 1.75rem;
+    min-height: var(--control-min-size);
     padding: 0.15rem 0.4rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -1178,7 +1179,7 @@
   }
   .continuation-card button {
     width: fit-content;
-    min-height: 2rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-2);
     color: var(--color-heading);
     background: var(--color-surface-subtle);
@@ -1245,7 +1246,7 @@
     align-items: baseline;
     width: auto;
     max-width: 100%;
-    min-height: 1.8rem;
+    min-height: var(--control-min-size);
     padding: 0.2rem 0.45rem;
     gap: 0.3rem;
     border: 1px solid var(--color-border-soft);
@@ -1289,7 +1290,7 @@
     align-items: center;
     justify-content: space-between;
     width: fit-content;
-    min-height: 1.8rem;
+    min-height: var(--control-min-size);
     padding: 0.2rem 0.45rem;
     gap: var(--space-2);
     border: 0;

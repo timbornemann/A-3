@@ -470,8 +470,9 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
   annehmen. Component-Tests zeigen den weiter nutzbaren modellfreien Indexbrowser, eine nicht nur
   farbliche Remote-Warnung, explizite Probe-/Abbruchaktionen, validierte Limits, fail-closed
   Privacy, read-only Indexignore und die evidence-gebundene Commandauswahl.
-  Settings-Component-Tests prüfen zusätzlich die horizontale Bereichsnavigation ohne zweite
-  Sidebar, den zusammenhängenden Ablauf Provider verbinden und die dabei ausdrücklich ausgelöste
+  Settings-Component-Tests prüfen zusätzlich die Bereichsnavigation (vertikal in breiten Fenstern,
+  horizontal in kleinen Fenstern gemäß Plan 09), den zusammenhängenden Ablauf Provider verbinden
+  und die dabei ausdrücklich ausgelöste
   erste Modellerkennung → rollenbezogene Dropdown-Auswahl, Provider-CRUD über Modale, die one-way
   Gemini-Key-Eingabe mit ausschließlich content-freiem Sternchen-Platzhalter nach erfolgreichem
   Speichern und die Abwesenheit freier Modell-IDs. Nach einem Reload müssen gespeicherte

@@ -218,14 +218,14 @@
 <section class="inspection-panel" aria-labelledby="agent-inspection-heading">
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Nachvollziehbarkeit</p>
-      <h3 id="agent-inspection-heading">Diff und Verification</h3>
+      <p class="eyebrow">Ergebnisse prüfen</p>
+      <h3 id="agent-inspection-heading">Änderungen & Prüfungen</h3>
     </div>
     <button class="secondary" type="button" onclick={loadInspection}>Aktualisieren</button>
   </header>
 
   {#if view.kind === 'loading'}
-    <p class="empty-state">Diffs und Verification werden sicher geladen …</p>
+    <p class="empty-state">Änderungen und Prüfergebnisse werden geladen …</p>
   {:else if view.kind === 'error'}
     <div class="notice error">
       <p>Die Inspektion konnte nicht sicher geladen werden.</p>
@@ -239,7 +239,7 @@
   {:else if view.result.status !== 'available'}
     <p class="empty-state">
       {view.result.status === 'ledgerUnavailable'
-        ? 'Für diesen Task existiert noch kein verifizierbares Ledger.'
+        ? 'Für diese Aufgabe liegt noch kein prüfbarer Arbeitsplan vor.'
         : view.result.status === 'goalRevisionMismatch'
           ? 'Goal Contract und Ledger müssen vor der Inspektion neu abgeglichen werden.'
           : 'Für diesen Task ist keine Inspektion verfügbar.'}
@@ -255,18 +255,13 @@
     <section class="verification-summary" aria-labelledby="acceptance-proof-heading">
       <div class="subheading">
         <div>
-          <p class="eyebrow">Goal Contract</p>
-          <h4 id="acceptance-proof-heading">Acceptance-Beweise</h4>
+          <h4 id="acceptance-proof-heading">Abschlussprüfung</h4>
         </div>
-        <span class="anchor"
-          >Goal R{inspection.verification.goalRevision} · Ledger R{inspection.verification
-            .ledgerRevision}</span
-        >
       </div>
       <p class:proof-summary={doneProven} class="done-proof-state">
         {doneProven
-          ? 'Done · alle Muss-Kriterien besitzen exakte frische Beweise.'
-          : 'Done ist nicht belegt · mindestens ein Muss-Kriterium besitzt keinen frischen Beweis.'}
+          ? 'Abschluss belegt · alle Muss-Kriterien sind aktuell nachgewiesen.'
+          : 'Abschluss noch nicht belegt · mindestens ein Muss-Kriterium ist noch nicht aktuell nachgewiesen.'}
       </p>
       <ul class="criterion-list">
         {#each inspection.verification.criteria as criterion (criterion.criterionId)}
@@ -279,16 +274,19 @@
             </div>
             <p>{criterion.statement}</p>
             {#if criterion.proofs.length > 0}
-              <ul class="proof-list" aria-label="Exakte Beweise">
-                {#each criterion.proofs as proof (proof.stepId)}
-                  <li>
-                    <span>Step <code>{proof.stepId}</code></span>
-                    {#each proof.evidenceIds as evidenceId (evidenceId)}
-                      <span>Evidence <code>{evidenceId}</code></span>
-                    {/each}
-                  </li>
-                {/each}
-              </ul>
+              <details class="technical-details">
+                <summary>Nachweise anzeigen · {criterion.proofs.length}</summary>
+                <ul class="proof-list" aria-label="Exakte Beweise">
+                  {#each criterion.proofs as proof (proof.stepId)}
+                    <li>
+                      <span>Schritt <code>{proof.stepId}</code></span>
+                      {#each proof.evidenceIds as evidenceId (evidenceId)}
+                        <span>Nachweis <code>{evidenceId}</code></span>
+                      {/each}
+                    </li>
+                  {/each}
+                </ul>
+              </details>
             {/if}
           </li>
         {/each}
@@ -298,8 +296,7 @@
     <section class="diff-section" aria-labelledby="patch-heading">
       <div class="subheading">
         <div>
-          <p class="eyebrow">Exakte E3-Vorschau</p>
-          <h4 id="patch-heading">Dateien und Hunks</h4>
+          <h4 id="patch-heading">Dateiänderungen</h4>
         </div>
         {#if inspection.patch !== null}
           <div class="segmented" aria-label="Diff-Darstellung">
@@ -307,13 +304,13 @@
               type="button"
               class:active={layout === 'unified'}
               aria-pressed={layout === 'unified'}
-              onclick={() => (layout = 'unified')}>Unified</button
+              onclick={() => (layout = 'unified')}>Untereinander</button
             >
             <button
               type="button"
               class:active={layout === 'sideBySide'}
               aria-pressed={layout === 'sideBySide'}
-              onclick={() => (layout = 'sideBySide')}>Side-by-side</button
+              onclick={() => (layout = 'sideBySide')}>Nebeneinander</button
             >
           </div>
         {/if}
@@ -324,10 +321,7 @@
           Evidence-Metadaten erhalten.
         </p>
       {:else}
-        <p class="anchor">
-          Snapshot <code>{inspection.patch.snapshotId}</code> · {inspection.patch.files.length}
-          Datei(en)
-        </p>
+        <p class="anchor">{inspection.patch.files.length} Datei(en)</p>
         <div class="file-list">
           {#each inspection.patch.files as file, index (`${file.sourcePath?.pathHex ?? ''}:${file.targetPath?.pathHex ?? ''}:${index}`)}
             <article class="diff-file">
@@ -353,8 +347,8 @@
               </details>
               {#if file.contentTruncated}
                 <p class="truncation-warning">
-                  Inhalt ist eine exakte E3-Präfixvorschau. Der vollständige Hash und die Bytezahl
-                  bleiben sichtbar; der ausgelassene Tail ist nicht nachladbar.
+                  Die Vorschau zeigt nur den Anfang dieser Änderung. Der ausgelassene Teil kann hier
+                  nicht nachgeladen werden.
                 </p>
               {/if}
               {#each file.hunks as hunk, hunkIndex (`${hunk.beforeStart}:${hunk.afterStart}:${hunkIndex}`)}
@@ -374,12 +368,11 @@
     <section class="process-section" aria-labelledby="process-results-heading">
       <div class="subheading">
         <div>
-          <p class="eyebrow">Test · Build · Diagnostic</p>
-          <h4 id="process-results-heading">Prozessergebnisse</h4>
+          <h4 id="process-results-heading">Tests & Befehle</h4>
         </div>
       </div>
       {#if inspection.processes.length === 0}
-        <p class="empty-state">Keine flüchtigen Prozessresultate in dieser Laufzeit.</p>
+        <p class="empty-state">In dieser App-Sitzung liegen noch keine Befehlsausgaben vor.</p>
       {:else}
         <div class="process-list">
           {#each inspection.processes as process (process.inspectionId)}
@@ -402,7 +395,7 @@
                   {#if summary.redaction !== null}
                     <p class="redacted">Ausgabe redigiert: {summary.redaction}</p>
                   {:else if summary.retainedBytes === '0'}
-                    <p class="empty-state">Keine retained Ausgabe.</p>
+                    <p class="empty-state">Keine gespeicherte Ausgabe.</p>
                   {:else if selectedLog.kind === 'idle'}
                     <button
                       type="button"
@@ -416,7 +409,7 @@
                     <pre>{selectedLog.text}</pre>
                     {#if selectedLog.pageTruncated && selectedLog.nextOffset !== null}
                       <p class="truncation-note">
-                        Weitere retained Ausgabe ist gezielt nachladbar.
+                        Weitere gespeicherte Ausgabe kann geladen werden.
                       </p>
                       <button
                         type="button"
@@ -433,8 +426,8 @@
                   {/if}
                   {#if summary.sourceTruncated || (selectedLog.kind === 'available' && selectedLog.sourceTruncated)}
                     <p class="source-truncated">
-                      Ausgabe jenseits des Retention-Limits wurde dauerhaft verworfen und ist nicht
-                      nachladbar.
+                      Ausgabe oberhalb des Speicherlimits wurde dauerhaft verworfen und kann nicht
+                      nachgeladen werden.
                     </p>
                   {/if}
                 </section>
@@ -448,12 +441,8 @@
     <section class="evidence-section" aria-labelledby="step-evidence-heading">
       <div class="subheading">
         <div>
-          <p class="eyebrow">Dauerhafte Wahrheit</p>
-          <h4 id="step-evidence-heading">Steps und Evidence</h4>
+          <h4 id="step-evidence-heading">Schritte & Nachweise</h4>
         </div>
-        <span class="anchor"
-          >Published <code>{inspection.verification.publishedSnapshotId}</code></span
-        >
       </div>
       <div class="step-list">
         {#each inspection.verification.steps as step (step.stepId)}
@@ -463,21 +452,20 @@
                 <strong>{step.intendedOutcome}</strong>
                 <span>{stepStatusLabel(step)}</span>
               </div>
-              <code>{step.stepId}</code>
             </header>
             {#if step.staleCause !== null}
               <p class="source-truncated">
-                Verification ist stale: {step.staleCause.kind === 'dependency'
-                  ? 'ein abhängiger Step ist veraltet.'
-                  : `${step.staleCause.evidenceIds.length} Evidence-Artefakt(e) wurden invalidiert.`}
+                Prüfung ist veraltet: {step.staleCause.kind === 'dependency'
+                  ? 'ein abhängiger Schritt ist nicht mehr aktuell.'
+                  : `${step.staleCause.evidenceIds.length} Nachweis(e) sind nicht mehr aktuell.`}
               </p>
             {/if}
             {#each step.attempts as attempt (attempt.number)}
               <details open={attempt.number === step.attempts.length}>
                 <summary>
                   Versuch {attempt.number} · {attempt.outcome.status === 'passed'
-                    ? 'Ledger-Verifikation bestanden'
-                    : 'Ledger-Verifikation fehlgeschlagen'}
+                    ? 'Prüfung bestanden'
+                    : 'Prüfung fehlgeschlagen'}
                 </summary>
                 <div class="evidence-list">
                   {#each attempt.evidence as evidence (evidence.evidenceId)}
@@ -488,13 +476,15 @@
                       <header>
                         <strong>{evidenceLabel(evidence)}</strong>
                         <span>
-                          {evidence.evaluation.status === 'passed'
-                            ? 'Semantik bestanden'
-                            : 'Semantik fehlgeschlagen'}
-                          · {evidence.freshness.status === 'fresh' ? 'Frisch' : 'Stale'}
+                          {evidence.evaluation.status === 'passed' ? 'Bestanden' : 'Fehlgeschlagen'}
+                          · {evidence.freshness.status === 'fresh' ? 'Aktuell' : 'Veraltet'}
                         </span>
                       </header>
-                      <code>{evidence.evidenceId}</code>
+                      <details class="technical-details">
+                        <summary>Nachweisdetails</summary>
+                        <p>Schritt <code>{step.stepId}</code></p>
+                        <p>Nachweis <code>{evidence.evidenceId}</code></p>
+                      </details>
                       {#if evidence.detail.kind === 'test'}
                         <p>
                           {evidence.detail.passed} bestanden · {evidence.detail.failed} fehlgeschlagen
@@ -537,6 +527,17 @@
         {/each}
       </div>
     </section>
+    <details class="technical-details">
+      <summary>Technischer Prüfstand</summary>
+      <p>
+        Zielrevision {inspection.verification.goalRevision} · Planrevision {inspection.verification
+          .ledgerRevision}
+      </p>
+      <p>Veröffentlichter Stand <code>{inspection.verification.publishedSnapshotId}</code></p>
+      {#if inspection.patch !== null}<p>
+          Änderungsbasis <code>{inspection.patch.snapshotId}</code>
+        </p>{/if}
+    </details>
   {/if}
 </section>
 
@@ -544,10 +545,8 @@
   .inspection-panel {
     display: grid;
     gap: 1rem;
-    padding: 1.15rem;
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
-    background: color-mix(in srgb, var(--color-surface-raised) 92%, var(--color-warning-surface));
+    padding: 0.3rem 0;
+    min-width: 0;
   }
 
   .panel-heading,
@@ -606,16 +605,18 @@
   .process-card,
   .verification-step,
   .evidence-card {
-    padding: 0.8rem;
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
-    background: var(--color-surface-raised);
+    min-width: 0;
+    padding: 0.9rem 0;
+    border: 0;
+    border-bottom: 1px solid var(--color-border-soft);
+    background: transparent;
   }
 
   .criterion-list > li.stale,
   .verification-step.stale,
   .evidence-card.stale {
-    border-color: var(--color-warning-strong);
+    border-inline-start: 2px solid var(--color-warning-strong);
+    padding-inline: 0.7rem;
     background: var(--color-warning-surface);
   }
 
@@ -638,8 +639,7 @@
 
   .done-proof-state {
     padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-warning-strong);
-    border-radius: var(--radius-control);
+    border-inline-start: 2px solid var(--color-warning-strong);
     background: var(--color-warning-surface);
   }
 
@@ -656,15 +656,13 @@
   .proof-list li {
     display: grid;
     gap: 0.25rem;
-    padding: 0.55rem;
-    border-radius: var(--radius-control);
-    background: var(--color-positive-surface);
+    padding: 0.4rem 0;
     font-size: 0.78rem;
   }
 
   code {
     overflow-wrap: anywhere;
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .secondary,
@@ -705,7 +703,7 @@
   .step-list,
   .evidence-list {
     display: grid;
-    gap: 0.75rem;
+    gap: 0;
   }
 
   .path {
@@ -756,8 +754,7 @@
   .hunk {
     margin-top: 0.65rem;
     overflow: auto;
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    border-block: 1px solid var(--color-border-soft);
     background: var(--color-surface-subtle);
   }
 
@@ -819,6 +816,34 @@
 
   details summary {
     cursor: pointer;
+    min-height: var(--control-min-size);
+    display: flex;
+    align-items: center;
+  }
+
+  details summary::before {
+    content: '+';
+    margin-right: 0.5rem;
+  }
+  details[open] > summary::before {
+    content: '−';
+  }
+  .technical-details {
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .technical-details p {
+    margin-block: 0.4rem;
+  }
+  .evidence-card {
+    padding-inline-start: 0.8rem;
+    border-inline-start: 1px solid var(--color-border-soft);
+  }
+  button,
+  details summary {
+    transition:
+      background var(--motion-fast, 120ms) var(--ease-out, ease-out),
+      color var(--motion-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .empty-state {

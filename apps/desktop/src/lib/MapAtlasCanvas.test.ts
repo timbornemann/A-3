@@ -76,6 +76,24 @@ function scene(nodes: ProjectMapAtlasNodeV1[]): ProjectMapAtlasSceneV1 {
 }
 
 describe('MapAtlasCanvas', () => {
+  it('explains knowledge freshness in German without changing the source state', () => {
+    const source = { ...node(1, 'source.py'), mappingStatus: 'stale' as const, claimBadgeCount: 2 };
+    const target = { ...node(2, 'target.py'), mappingStatus: 'unmapped' as const };
+    render(MapAtlasCanvas, {
+      onopen: vi.fn(),
+      onselect: vi.fn(),
+      scene: scene([source, target]),
+      selectedNodeId: null,
+    });
+    const sourceButton = screen.getByRole('button', { name: /source\.py, Datei/ });
+    expect(sourceButton.textContent).toContain('Veraltet');
+    expect(sourceButton.textContent).toContain('2 Aussagen');
+    expect(sourceButton.getAttribute('data-status')).toBe('stale');
+    expect(screen.getByRole('button', { name: /target\.py, Datei/ }).textContent).toContain(
+      'Noch nicht analysiert',
+    );
+  });
+
   it('renders a routed dependency graph and emphasizes the selected node connections', async () => {
     const source = node(1, 'source.py');
     const target = node(2, 'target.py');

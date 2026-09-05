@@ -70,7 +70,8 @@
         await onChanged();
         await load();
       } else if (response.result.status === 'activityChanged') {
-        actionError = 'Approval oder Ledger haben sich geändert. Der aktuelle Stand wurde geladen.';
+        actionError =
+          'Die Anfrage oder der Arbeitsplan hat sich geändert. Der aktuelle Stand wurde geladen.';
         choice = null;
         await onChanged();
         await load();
@@ -79,7 +80,8 @@
         await load();
       }
     } catch {
-      actionError = 'Die Approval-Entscheidung konnte nicht sicher abgeschlossen werden.';
+      actionError =
+        'Die Entscheidung konnte nicht gespeichert werden. Bitte prüfe den aktuellen Stand.';
     } finally {
       controlling = false;
     }
@@ -94,17 +96,17 @@
   ): string {
     switch (result.outcome) {
       case 'grantStored':
-        return 'Die exakte einmalige Freigabe wurde gespeichert. Die Mutation wurde noch nicht gestartet.';
+        return 'Die einmalige Freigabe wurde gespeichert. Die Aktion wurde noch nicht gestartet.';
       case 'denied':
-        return 'Die Anfrage wurde abgelehnt; der Schritt ist dauerhaft blockiert und kann über Replan oder Cancel aufgelöst werden.';
+        return 'Die Anfrage wurde abgelehnt. Plane die Aufgabe neu oder brich sie ab, um fortzufahren.';
       case 'revoked':
         return 'Die noch ungenutzte Freigabe wurde widerrufen.';
       case 'continueRequested':
         return result.runtimeStart === 'queued'
-          ? 'Ein neuer vom Scheduler verwalteter Agent-Versuch wurde mit der exakten Freigabe eingereiht.'
+          ? 'Der Agent wird mit der einmaligen Freigabe fortgesetzt.'
           : result.runtimeStart === 'failed'
-            ? 'Die Freigabe bleibt aktiv; der Agent-Versuch konnte nicht eingereiht werden.'
-            : 'Die Freigabe bleibt aktiv; derzeit ist keine ausführbare Agent-Capability verfügbar.';
+            ? 'Die Freigabe bleibt aktiv; der Agent konnte gerade nicht fortgesetzt werden.'
+            : 'Die Freigabe bleibt aktiv; richte zuerst ein geeignetes Agentenmodell ein.';
     }
   }
 
@@ -142,13 +144,24 @@
       } as const
     )[value];
   }
+
+  function readableTime(value: string): string {
+    const date = new Date(Number(value));
+    return Number.isNaN(date.getTime())
+      ? 'Zeitpunkt nicht darstellbar'
+      : new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  }
+
+  function operationLabel(operation: 'add' | 'update' | 'move' | 'delete'): string {
+    return { add: 'Anlegen', update: 'Ändern', move: 'Verschieben', delete: 'Löschen' }[operation];
+  }
 </script>
 
 <section class="approval-center" aria-labelledby="approval-center-heading">
   <header>
     <div>
-      <p>Explizite Policy-Entscheidung</p>
-      <h3 id="approval-center-heading">Approval Center</h3>
+      <p>Deine Entscheidung</p>
+      <h3 id="approval-center-heading">Aktion freigeben</h3>
     </div>
     {#if view.kind === 'result' && view.result.status === 'available'}
       <span class="status-chip">{statusLabel(view.result.approval.status)}</span>
@@ -156,27 +169,26 @@
   </header>
 
   {#if view.kind === 'loading'}
-    <p role="status" aria-live="polite">Exakte Approval-Anfrage wird geprüft …</p>
+    <p role="status" aria-live="polite">Freigabe wird geladen …</p>
   {:else if view.kind === 'error'}
     <div class="error-state" role="alert">
-      <p>Die Approval-Anfrage konnte nicht sicher gelesen werden.</p>
+      <p>Die Freigabeanfrage konnte nicht geladen werden.</p>
       <button type="button" onclick={load}>Erneut prüfen</button>
     </div>
   {:else if view.result.status === 'unavailable'}
-    <p class="empty-state">Für diese Aufgabe liegt keine aktuelle Approval-Anfrage vor.</p>
+    <p class="empty-state">Für diese Aufgabe ist gerade keine Freigabe erforderlich.</p>
   {:else if view.result.status === 'activityChanged'}
     <div class="error-state" role="status">
-      <p>Approval oder Ledger haben sich während des Lesens geändert.</p>
+      <p>Die Anfrage oder der Arbeitsplan hat sich geändert. Lade den aktuellen Stand.</p>
       <button type="button" onclick={load}>Aktuellen Stand laden</button>
     </div>
   {:else if view.result.status === 'goalRevisionMismatch'}
     <p class="error-state" role="alert">
-      Goal R{view.result.currentRevision} und Ledger-Goal R{view.result.ledgerRevision} stimmen nicht
-      überein.
+      Das Ziel wurde geändert. Der Arbeitsplan muss vor einer Freigabe aktualisiert werden.
     </p>
   {:else if view.result.status === 'noProject' || view.result.status === 'taskNotFound' || view.result.status === 'ledgerUnavailable'}
     <p class="empty-state">
-      Ohne aktuelle Aufgabe und Ledger ist keine Approval-Entscheidung möglich.
+      Wähle eine aktuelle Aufgabe mit Arbeitsplan, um eine Aktion freizugeben.
     </p>
   {:else if view.result.status === 'available'}
     {@const approval = view.result.approval}
@@ -190,46 +202,43 @@
         <dd>{riskLabel(approval.risk)}</dd>
       </div>
       <div>
-        <dt>Scope</dt>
-        <dd><code>{approval.scopeDigest}</code></dd>
+        <dt>Gilt für</dt>
+        <dd>Nur diese Aktion, die angezeigten Ziele und den aktuellen Lauf. Einmalig.</dd>
       </div>
       <div>
         <dt>Grund</dt>
         <dd>
           {approval.reason === 'workspacePolicy'
-            ? 'Workspace-Policy verlangt Freigabe'
-            : 'System-Policy verlangt Freigabe'}
+            ? 'Die Projektregeln verlangen deine Freigabe.'
+            : 'Die Sicherheitsregeln verlangen deine Freigabe.'}
         </dd>
       </div>
       <div>
-        <dt>Gültigkeit</dt>
-        <dd>{approval.requestedAtUnixMillis}–{approval.expiresAtUnixMillis} ms</dd>
-      </div>
-      <div>
-        <dt>Anker</dt>
-        <dd>
-          Ledger R{approval.ledgerRevision} · Schritt <code>{approval.stepId.slice(0, 12)}</code>
-        </dd>
+        <dt>Gültig bis</dt>
+        <dd>{readableTime(approval.expiresAtUnixMillis)}</dd>
       </div>
     </dl>
 
     {#if approval.action.kind === 'patch'}
       <section class="action-detail" aria-labelledby="approval-patch-heading">
-        <h4 id="approval-patch-heading">Exakter Patch-Scope</h4>
+        <h4 id="approval-patch-heading">Diese Dateien werden geändert</h4>
         <p>{approval.action.patch.rationale}</p>
         <ul>
           {#each approval.action.patch.files as file, index (`${file.operation}-${index}`)}
             <li>
-              <strong>{file.operation}</strong>
+              <strong>{operationLabel(file.operation)}</strong>
               <code
                 >{file.sourcePath?.displayPath ?? '∅'} → {file.targetPath?.displayPath ?? '∅'}</code
               >
-              {#if file.sourcePath !== null}
-                <small>Quelle (Bytes): <code>{file.sourcePath.pathHex}</code></small>
-              {/if}
-              {#if file.targetPath !== null}
-                <small>Ziel (Bytes): <code>{file.targetPath.pathHex}</code></small>
-              {/if}
+              <details class="technical-details">
+                <summary>Pfaddetails</summary>
+                {#if file.sourcePath !== null}
+                  <small>Quelle (Bytes): <code>{file.sourcePath.pathHex}</code></small>
+                {/if}
+                {#if file.targetPath !== null}
+                  <small>Ziel (Bytes): <code>{file.targetPath.pathHex}</code></small>
+                {/if}
+              </details>
             </li>
           {/each}
         </ul>
@@ -237,10 +246,10 @@
     {:else}
       {@const process = approval.action.process}
       <section class="action-detail" aria-labelledby="approval-process-heading">
-        <h4 id="approval-process-heading">Exakte ProcessSpec</h4>
+        <h4 id="approval-process-heading">Dieser Befehl wird ausgeführt</h4>
         <dl>
           <div>
-            <dt>argv</dt>
+            <dt>Programm und Argumente</dt>
             <dd>
               <ol class="argv">
                 {#each [process.executable, ...process.arguments] as argument, index (`${index}-${argument}`)}
@@ -250,7 +259,7 @@
             </dd>
           </div>
           <div>
-            <dt>CWD</dt>
+            <dt>Arbeitsordner</dt>
             <dd>
               <code
                 >{process.workingDirectory.kind === 'root'
@@ -260,7 +269,7 @@
             </dd>
           </div>
           <div>
-            <dt>Env-Namen</dt>
+            <dt>Umgebungsvariablen</dt>
             <dd>
               {process.environmentAllowlist.length === 0
                 ? 'Keine'
@@ -268,11 +277,11 @@
             </dd>
           </div>
           <div>
-            <dt>Timeout</dt>
+            <dt>Zeitlimit</dt>
             <dd>{process.timeoutMillis} ms</dd>
           </div>
           <div>
-            <dt>Outputgrenzen</dt>
+            <dt>Ausgabegrenzen</dt>
             <dd>stdout {process.stdoutLimit} B · stderr {process.stderrLimit} B</dd>
           </div>
           <div>
@@ -280,7 +289,7 @@
             <dd>{process.executionMode}</dd>
           </div>
           <div>
-            <dt>Process-Klasse</dt>
+            <dt>Befehlstyp</dt>
             <dd>{process.processKind}</dd>
           </div>
           <div>
@@ -299,13 +308,33 @@
                 : `Angefordert · Scope ${process.network.scopeDigest}`}
             </dd>
           </div>
-          <div>
-            <dt>Specification-ID</dt>
-            <dd><code>{process.specificationId}</code></dd>
-          </div>
         </dl>
       </section>
     {/if}
+
+    <details class="technical-details approval-audit">
+      <summary>Technische Freigabedetails</summary>
+      <dl>
+        <div>
+          <dt>Exakter Scope</dt>
+          <dd><code>{approval.scopeDigest}</code></dd>
+        </div>
+        <div>
+          <dt>Arbeitsplan</dt>
+          <dd>Revision {approval.ledgerRevision} · <code>{approval.stepId}</code></dd>
+        </div>
+        <div>
+          <dt>Zeitanker</dt>
+          <dd>{approval.requestedAtUnixMillis}–{approval.expiresAtUnixMillis} ms</dd>
+        </div>
+        {#if approval.action.kind === 'process'}
+          <div>
+            <dt>Specification-ID</dt>
+            <dd><code>{approval.action.process.specificationId}</code></dd>
+          </div>
+        {/if}
+      </dl>
+    </details>
 
     {#if approval.status === 'pending'}
       <fieldset class="decision-options">
@@ -317,7 +346,7 @@
             value="allowOnce"
             bind:group={choice}
             disabled={!approval.canAllowOnce || controlling}
-          /> Einmalig für genau diese Aktion und diesen Scope erlauben</label
+          /> Diese Aktion einmal erlauben</label
         >
         <label
           ><input
@@ -326,16 +355,16 @@
             value="deny"
             bind:group={choice}
             disabled={!approval.canDeny || controlling}
-          /> Ablehnen und Schritt blockieren</label
+          /> Ablehnen und diesen Schritt stoppen</label
         >
       </fieldset>
       <button type="button" disabled={choice === null || controlling} onclick={confirmPending}
-        >Ausgewählte Entscheidung bestätigen</button
+        >Entscheidung bestätigen</button
       >
     {:else if approval.status === 'active'}
       <p class="bounded-note">
-        Die Freigabe ist gespeichert, aber noch ungenutzt. Erst „Agent fortsetzen“ startet einen
-        neuen vom Scheduler verwalteten Versuch.
+        Die Freigabe ist gespeichert. Erst „Agent fortsetzen“ startet die Aktion. Bis dahin kannst
+        du die Freigabe widerrufen.
       </p>
       <div class="decision-actions">
         <button
@@ -351,13 +380,13 @@
       </div>
     {:else if approval.status === 'denied'}
       <p class="bounded-note">
-        Die Ablehnung ist dauerhaft. Nutze die Run-Steuerung für Replan oder Cancel.
+        Die Aktion wurde abgelehnt. Du kannst die Aufgabe neu planen oder abbrechen.
       </p>
     {:else}
       <p class="bounded-note">Diese Anfrage ist abgeschlossen oder nicht mehr verwendbar.</p>
     {/if}
   {:else}
-    <p class="empty-state">Der Approval-Zustand ist nicht verfügbar.</p>
+    <p class="empty-state">Der Freigabestatus ist gerade nicht verfügbar.</p>
   {/if}
 
   {#if message !== null}<p class="success-state" role="status" aria-live="polite">{message}</p>{/if}
@@ -366,11 +395,10 @@
 
 <style>
   .approval-center {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
     display: grid;
-    gap: 0.9rem;
-    padding: 1rem;
+    min-width: 0;
+    gap: 1.1rem;
+    padding: 0.3rem 0;
   }
   header {
     align-items: start;
@@ -392,42 +420,43 @@
     margin-block: 0;
   }
   .status-chip {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
-    padding: 0.3rem 0.65rem;
+    color: var(--color-accent-text);
+    font-size: var(--font-size-xs);
+    padding: 0.3rem 0;
   }
   .approval-facts,
   .action-detail dl {
     display: grid;
-    gap: 0.55rem;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0;
     margin: 0;
   }
   .approval-facts div,
   .action-detail dl div {
-    background: color-mix(in srgb, var(--color-surface-raised) 88%, var(--color-info-surface));
-    border-radius: var(--radius-control);
     display: grid;
-    gap: 0.2rem;
-    padding: 0.65rem;
+    grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0.5rem 0.9rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--color-border-soft);
   }
   dt {
     color: var(--color-muted);
     font-size: 0.78rem;
     font-weight: 700;
-    text-transform: uppercase;
   }
   dd {
     margin: 0;
     overflow-wrap: anywhere;
   }
   code {
+    font-family: var(--font-mono);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
   .action-detail {
     display: grid;
     gap: 0.65rem;
+    min-width: 0;
   }
   .action-detail ul {
     display: grid;
@@ -439,6 +468,7 @@
   .action-detail li {
     display: grid;
     gap: 0.25rem;
+    padding-block: 0.4rem;
   }
   .action-detail small {
     color: var(--color-muted);
@@ -459,17 +489,59 @@
     font-size: 0.78rem;
   }
   .decision-options {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    border: 0;
+    border-top: 1px solid var(--color-border-soft);
     display: grid;
-    gap: 0.7rem;
-    padding: 0.8rem;
+    gap: 0.3rem;
+    margin: 0;
+    padding: 0.8rem 0 0;
+  }
+  .decision-options legend {
+    padding: 0 0.6rem 0 0;
+    font-weight: 650;
   }
   .decision-options label {
-    align-items: start;
+    align-items: center;
     display: grid;
+    min-height: var(--control-min-size);
     gap: 0.55rem;
     grid-template-columns: auto 1fr;
+    cursor: pointer;
+  }
+  .technical-details {
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .technical-details summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-min-size);
+    cursor: pointer;
+  }
+  .technical-details summary::before {
+    content: '+';
+    margin-right: 0.5rem;
+  }
+  .technical-details[open] summary::before {
+    content: '−';
+  }
+  .technical-details dl {
+    display: grid;
+    gap: 0.8rem;
+    margin: 0.4rem 0;
+  }
+  .technical-details small {
+    display: block;
+  }
+  .approval-audit {
+    border-bottom: 1px solid var(--color-border-soft);
+  }
+  button,
+  .decision-options label,
+  .technical-details summary {
+    transition:
+      background var(--motion-fast, 120ms) var(--ease-out, ease-out),
+      color var(--motion-fast, 120ms) var(--ease-out, ease-out);
   }
   .decision-actions {
     display: flex;
@@ -483,6 +555,11 @@
     color: inherit;
     cursor: pointer;
     padding: 0.55rem 0.8rem;
+    min-height: var(--control-min-size);
+  }
+  button:hover:not(:disabled),
+  .decision-options label:hover {
+    background: var(--color-surface-subtle);
   }
   button:disabled {
     cursor: not-allowed;

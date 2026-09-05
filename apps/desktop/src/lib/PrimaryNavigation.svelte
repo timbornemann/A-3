@@ -7,11 +7,11 @@
   }
 
   const entries: ReadonlyArray<{ area: WorkspaceArea; label: string }> = [
-    { area: 'projects', label: 'Projects' },
-    { area: 'map', label: 'Map' },
-    { area: 'flows', label: 'Abläufe' },
+    { area: 'projects', label: 'Projekte' },
     { area: 'agent', label: 'Agent' },
-    { area: 'settings', label: 'Settings' },
+    { area: 'map', label: 'Karte' },
+    { area: 'flows', label: 'Abläufe' },
+    { area: 'settings', label: 'Einstellungen' },
   ];
 
   let { current, onNavigate }: Props = $props();
@@ -25,6 +25,7 @@
           href={`#${entry.area}`}
           aria-current={current === entry.area ? 'page' : undefined}
           aria-label={entry.label}
+          title={entry.label}
           onclick={() => onNavigate(entry.area)}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">

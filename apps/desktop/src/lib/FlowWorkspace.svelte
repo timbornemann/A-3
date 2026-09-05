@@ -212,7 +212,7 @@
 <section class="flows" aria-labelledby="flows-heading" aria-busy={busy}>
   <header class="flows-heading">
     <div>
-      <p class="eyebrow">FAST INDEX · STATISCHE ANALYSE</p>
+      <p class="eyebrow">CODE ERKUNDEN</p>
       <h2 id="flows-heading">Abläufe verstehen</h2>
       <p>Was ruft was auf – und woher kommen die Werte?</p>
     </div>
@@ -530,8 +530,8 @@
 
 <style>
   .flows {
-    padding: clamp(1rem, 3vw, 2rem);
-    max-width: 1440px;
+    padding: clamp(var(--space-4), 3vw, var(--space-7));
+    max-width: 76rem;
     margin: auto;
   }
   .flows-heading,
@@ -551,7 +551,9 @@
     margin: 0 0 0.65rem;
   }
   h2 {
-    font-size: 1.8rem;
+    font-size: 1.5rem;
+    font-family: var(--font-display);
+    letter-spacing: -0.025em;
   }
   h3 {
     font-size: 1.25rem;
@@ -598,6 +600,8 @@
   input,
   button {
     font: inherit;
+    border-radius: var(--radius-control);
+    min-height: var(--control-min-size);
   }
   button {
     cursor: pointer;
@@ -617,8 +621,8 @@
   }
   .catalog {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
-    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-6);
   }
   ul,
   .step-list {
@@ -627,13 +631,19 @@
     margin: 0;
   }
   .entry {
-    display: flex;
+    display: grid;
     flex-direction: column;
     text-align: left;
     width: 100%;
     gap: 0.45rem;
-    padding: 1rem;
-    margin-bottom: 0.6rem;
+    padding: var(--space-4) var(--space-2);
+    margin-bottom: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    border: 0;
+    border-block-end: 1px solid var(--color-border-soft);
+    border-radius: 0;
+    background: transparent;
   }
   .entry span,
   .entry strong {
@@ -689,10 +699,11 @@
     padding-left: 1.5rem;
   }
   .step-list > li {
-    border: 1px solid var(--color-border);
-    border-radius: 0.6rem;
-    margin: 0.55rem 0;
+    border: 0;
+    border-radius: 0;
+    margin: 0;
     overflow: hidden;
+    border-block-end: 1px solid var(--color-border-soft);
   }
   .step-list > li.conditional {
     border-left: 3px solid var(--color-focus);
@@ -732,10 +743,11 @@
     font-size: 0.78rem;
   }
   .step-detail {
-    padding: 0.8rem 1rem;
+    padding: var(--space-4);
     border-top: 1px solid var(--color-border);
     font-size: 0.82rem;
     overflow-wrap: anywhere;
+    background: var(--color-surface-subtle);
   }
   .value-list li {
     padding: 0.8rem 0;
@@ -758,9 +770,11 @@
   .notice,
   .empty {
     padding: 1rem;
-    border: 1px solid var(--color-border);
-    border-radius: 0.6rem;
+    border: 0;
+    border-radius: 0;
     margin: 1rem 0;
+    border-inline-start: 2px solid var(--color-border);
+    background: var(--color-surface-subtle);
   }
   .notice {
     font-size: 0.85rem;

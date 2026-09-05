@@ -419,7 +419,7 @@
     background: var(--color-surface-subtle);
   }
   button {
-    min-height: 2rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -438,11 +438,11 @@
   .diagram-card {
     display: grid;
     min-width: 0;
-    padding: var(--space-3);
+    padding: var(--space-3) 0;
     gap: var(--space-3);
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-card);
-    background: var(--color-surface-subtle);
+    border: 0;
+    border-block-start: 1px solid var(--color-border-soft);
+    background: transparent;
   }
   .diagram-card h4,
   .diagram-card p {

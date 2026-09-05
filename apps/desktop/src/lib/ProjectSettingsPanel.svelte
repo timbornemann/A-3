@@ -176,18 +176,18 @@
   <div class="settings-section-heading">
     <div>
       <p class="section-kicker">Projekt-Policy</p>
-      <h3 id="project-settings-heading">Indexignore und sichere Befehle</h3>
+      <h3 id="project-settings-heading">Ausgeschlossene Dateien und sichere Befehle</h3>
       <p>
         Ausschlüsse stammen ausschließlich aus <code>.a3/project.toml</code>. Befehle werden aus
         veröffentlichter Manifest-Evidenz abgeleitet und hier nur bestätigt, nicht ausgeführt.
       </p>
     </div>
-    <button type="button" onclick={loadProjectSettings}>Projekt-Settings neu laden</button>
+    <button type="button" onclick={loadProjectSettings}>Einstellungen aktualisieren</button>
   </div>
 
   {#if view.kind === 'loading'}
     <p class="settings-status" role="status" aria-live="polite">
-      Projekt-Settings werden lokal rekonstruiert …
+      Projekteinstellungen werden geladen …
     </p>
   {:else if view.kind === 'error'}
     <div class="settings-error" role="status" aria-live="polite">
@@ -202,8 +202,8 @@
     <div class="project-policy-grid">
       <div class="project-policy-block" aria-labelledby="indexignore-heading">
         <div>
-          <h4 id="indexignore-heading">Indexignore</h4>
-          <p class="settings-meta">Read-only · repository-eigene Konfiguration</p>
+          <h4 id="indexignore-heading">Ausgeschlossene Dateien</h4>
+          <p class="settings-meta">In der Projektkonfiguration festgelegt</p>
         </div>
         {#if !view.response.result.settings.ignore.configurationPresent}
           <p>
@@ -226,7 +226,7 @@
 
       <div class="project-policy-block command-policy" aria-labelledby="command-allowlist-heading">
         <div>
-          <h4 id="command-allowlist-heading">Command Allowlist</h4>
+          <h4 id="command-allowlist-heading">Erlaubte Projektbefehle</h4>
           <p class="settings-meta">Direktes argv · keine Shell · Netzwerk aus</p>
         </div>
         {#if view.response.result.settings.commands.status === 'noPublishedIndex'}

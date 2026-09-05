@@ -21,10 +21,18 @@ describe('AgentApprovalCenter', () => {
     expect(
       (
         screen.getByRole('button', {
-          name: 'Ausgewählte Entscheidung bestätigen',
+          name: 'Entscheidung bestätigen',
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+    const audit = screen.getByText('Technische Freigabedetails').closest('details');
+    expect(audit?.open).toBe(false);
+    expect(
+      screen.getByText('Nur diese Aktion, die angezeigten Ziele und den aktuellen Lauf. Einmalig.'),
+    ).toBeTruthy();
+    expect(screen.getByText('Gültig bis')).toBeTruthy();
+    await fireEvent.click(screen.getByText('Technische Freigabedetails'));
+    expect(screen.getByText('a'.repeat(64))).toBeTruthy();
   });
 
   it('requires an explicit neutral choice before storing a grant', async () => {
@@ -45,17 +53,15 @@ describe('AgentApprovalCenter', () => {
     render(AgentApprovalCenter, { taskId, loader, controller });
     await fireEvent.click(
       await screen.findByRole('radio', {
-        name: 'Einmalig für genau diese Aktion und diesen Scope erlauben',
+        name: 'Diese Aktion einmal erlauben',
       }),
     );
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Ausgewählte Entscheidung bestätigen' }),
-    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Entscheidung bestätigen' }));
     await waitFor(() => expect(controller).toHaveBeenCalledTimes(1));
     expect(controller.mock.calls[0]?.[2]).toBe('allowOnce');
     expect(
       await screen.findByText(
-        'Die Freigabe ist gespeichert, aber noch ungenutzt. Erst „Agent fortsetzen“ startet einen neuen vom Scheduler verwalteten Versuch.',
+        'Die Freigabe ist gespeichert. Erst „Agent fortsetzen“ startet die Aktion. Bis dahin kannst du die Freigabe widerrufen.',
       ),
     ).toBeTruthy();
   });

@@ -176,6 +176,12 @@
   let sessionMenuOpen = $state(false);
   let sessionMenuElement = $state<HTMLDivElement | null>(null);
   let sessionMenuTrigger = $state<HTMLButtonElement | null>(null);
+  const workspaceId = $props.id();
+  let workspaceElement = $state<HTMLElement | null>(null);
+  let renameOpen = $state(false);
+  let renameTitle = $state('');
+  let renameSaving = $state(false);
+  let resizeCleanup: (() => void) | null = null;
   let historyOpen = $state(true);
   let inspectorOpen = $state(true);
   let inspectorTab = $state<InspectorTab>('progress');
@@ -408,6 +414,7 @@
   });
 
   onDestroy(() => {
+    resizeCleanup?.();
     if (followFrame !== null) window.cancelAnimationFrame(followFrame);
   });
 
@@ -419,12 +426,37 @@
   }
 
   function handleSessionMenuKeydown(event: KeyboardEvent): void {
+    if (
+      event.defaultPrevented ||
+      !workspaceElement?.contains(
+        event.target instanceof Node ? event.target : document.activeElement,
+      ) ||
+      (event.target instanceof Element && event.target.closest('dialog'))
+    )
+      return;
     if (event.target instanceof Node && messageScrollElement?.contains(event.target))
       handleConversationKeydown(event);
-    if (event.key !== 'Escape' || !sessionMenuOpen) return;
-    event.preventDefault();
-    sessionMenuOpen = false;
-    sessionMenuTrigger?.focus();
+    if (event.key !== 'Escape') return;
+    if (sessionMenuOpen) {
+      event.preventDefault();
+      sessionMenuOpen = false;
+      sessionMenuTrigger?.focus();
+    } else if (
+      agentSidebarVisible &&
+      inspectorOpen &&
+      (mediaMatches('(max-width: 1100px)', false) ||
+        workspaceElement?.querySelector('.inspector')?.contains(document.activeElement))
+    ) {
+      event.preventDefault();
+      void toggleInspector();
+    } else if (
+      historyOpen &&
+      (mediaMatches('(max-width: 760px)', false) ||
+        workspaceElement?.querySelector('.session-rail')?.contains(document.activeElement))
+    ) {
+      event.preventDefault();
+      void toggleHistory();
+    }
   }
 
   function scrollConversationToEnd(viewport: HTMLDivElement): void {
@@ -549,6 +581,8 @@
   }
 
   function reset(): void {
+    resizeCleanup?.();
+    renameOpen = false;
     researchDepthBySession.clear();
     researchDepth = 'standard';
     sessionsView = { kind: 'noProject' };
@@ -1085,11 +1119,45 @@
   }
 
   function renameSession(): void {
-    const current = selectedSummary;
-    if (!current) return;
-    const title = window.prompt('Session umbenennen', current.title)?.trim();
-    if (title) void applySessionAction({ kind: 'rename', title });
+    if (!selectedSummary) return;
+    renameTitle = selectedSummary.title;
     sessionMenuOpen = false;
+    renameOpen = true;
+  }
+
+  async function closeRename(event?: Event): Promise<void> {
+    if (renameSaving) {
+      event?.preventDefault();
+      return;
+    }
+    renameOpen = false;
+    await tick();
+    sessionMenuTrigger?.focus();
+  }
+
+  function presentRename(node: HTMLDialogElement): { destroy: () => void } {
+    if (typeof node.showModal === 'function') node.showModal();
+    else node.setAttribute('open', '');
+    node.querySelector<HTMLInputElement>('input')?.select();
+    return {
+      destroy: () => {
+        if (node.open && typeof node.close === 'function') node.close();
+      },
+    };
+  }
+
+  async function saveRename(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    if (renameSaving || submitting) return;
+    const title = renameTitle.trim();
+    if (!title) return;
+    renameSaving = true;
+    try {
+      await applySessionAction({ kind: 'rename', title });
+    } finally {
+      renameSaving = false;
+    }
+    if (!actionError) await closeRename();
   }
 
   async function loadActivity(taskId: string): Promise<void> {
@@ -1136,40 +1204,74 @@
     return labels[status];
   }
 
-  function toggleHistory(): void {
+  async function toggleHistory(): Promise<void> {
     historyOpen = !historyOpen;
     void persistLayout();
+    await tick();
+    workspaceElement
+      ?.querySelector<HTMLButtonElement>(historyOpen ? '.rail-header button' : '.history-toggle')
+      ?.focus();
   }
 
-  function toggleInspector(): void {
+  async function toggleInspector(): Promise<void> {
     inspectorOpen = !inspectorOpen;
+    void persistLayout();
+    await tick();
+    workspaceElement
+      ?.querySelector<HTMLButtonElement>(
+        inspectorOpen ? '.inspector-header button' : '.inspector-toggle',
+      )
+      ?.focus();
+  }
+
+  function setPaneWidth(pane: 'history' | 'inspector', width: number): void {
+    preferences =
+      pane === 'history'
+        ? { ...preferences, sessionRailWidth: Math.max(220, Math.min(360, width)) }
+        : { ...preferences, inspectorWidth: Math.max(320, Math.min(640, width)) };
+  }
+
+  function resizeWithKeyboard(event: KeyboardEvent, pane: 'history' | 'inspector'): void {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const width = pane === 'history' ? preferences.sessionRailWidth : preferences.inspectorWidth;
+    const direction = pane === 'history' ? 1 : -1;
+    setPaneWidth(
+      pane,
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? 640
+          : width + (event.key === 'ArrowRight' ? 16 : -16) * direction,
+    );
     void persistLayout();
   }
 
   function beginResize(event: PointerEvent, pane: 'history' | 'inspector'): void {
     if (event.button !== 0) return;
     event.preventDefault();
+    resizeCleanup?.();
     const startX = event.clientX;
     const startWidth =
       pane === 'history' ? preferences.sessionRailWidth : preferences.inspectorWidth;
     const move = (moveEvent: PointerEvent): void => {
       const delta = moveEvent.clientX - startX;
-      const width =
-        pane === 'history'
-          ? Math.max(220, Math.min(360, startWidth + delta))
-          : Math.max(320, Math.min(640, startWidth - delta));
-      preferences =
-        pane === 'history'
-          ? { ...preferences, sessionRailWidth: width }
-          : { ...preferences, inspectorWidth: width };
+      setPaneWidth(pane, startWidth + (pane === 'history' ? delta : -delta));
     };
-    const finish = (): void => {
+    const cleanup = (): void => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      resizeCleanup = null;
+    };
+    const finish = (): void => {
+      cleanup();
       void persistLayout();
     };
+    resizeCleanup = cleanup;
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish, { once: true });
+    window.addEventListener('pointercancel', finish, { once: true });
   }
 
   async function persistLayout(): Promise<void> {
@@ -1334,6 +1436,7 @@
 
 <section
   class="agent-workspace"
+  bind:this={workspaceElement}
   class:history-collapsed={!historyOpen}
   class:inspector-collapsed={!agentSidebarVisible || !inspectorOpen}
   style={`--history-width:${preferences.sessionRailWidth}px;--inspector-width:${preferences.inspectorWidth}px`}
@@ -1341,26 +1444,32 @@
 >
   {#if !activeProject}
     <div class="no-project">
-      <span class="empty-icon" aria-hidden="true">A³</span>
+      <span class="empty-icon" aria-hidden="true">A^3</span>
       <h2>Öffne zuerst ein Projekt</h2>
-      <p>Chats, Pläne und Agent-Runs bleiben an genau einen lokalen Worktree gebunden.</p>
+      <p>Wähle ein Projekt, um Fragen zu stellen, Änderungen zu planen oder Aufgaben umzusetzen.</p>
     </div>
   {:else}
-    <aside class="session-rail" aria-label="Session-Verlauf">
+    <aside
+      class="session-rail"
+      id={`${workspaceId}-history`}
+      aria-label="Unterhaltungen"
+      aria-hidden={!historyOpen}
+      inert={!historyOpen}
+    >
       <div class="rail-header">
-        <strong>Sessions</strong>
+        <strong>Unterhaltungen</strong>
         <button
           class="icon-button"
           type="button"
           onclick={toggleHistory}
-          aria-label="Verlauf einklappen">‹</button
+          aria-label="Verlauf schließen">‹</button
         >
       </div>
       <button class="new-session" type="button" onclick={startNewSession}
-        ><span>＋</span> Neue Session</button
+        ><span>＋</span> Neuer Chat</button
       >
       <label class="session-search">
-        <span class="sr-only">Sessions durchsuchen</span>
+        <span class="sr-only">Chats durchsuchen</span>
         <input
           bind:value={searchInput}
           oninput={() => void loadSessions(selectedSessionId)}
@@ -1381,7 +1490,7 @@
         {:else if sessionsView.kind === 'error'}
           <p class="rail-state" role="alert">Verlauf nicht verfügbar.</p>
         {:else if visibleSessions().length === 0}
-          <p class="rail-state">Noch keine Sessions.</p>
+          <p class="rail-state">Deine Unterhaltungen erscheinen hier.</p>
         {:else}
           {#each visibleSessions() as session (session.sessionId)}
             <button
@@ -1408,23 +1517,39 @@
       </div>
     </aside>
 
-    {#if historyOpen}<div
+    {#if historyOpen}
+      <!-- Focusable ARIA separator follows the window-splitter keyboard pattern. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div
         class="resize-handle history-resize"
         role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-valuemin={220}
+        aria-valuemax={360}
+        aria-valuenow={preferences.sessionRailWidth}
+        onkeydown={(event) => resizeWithKeyboard(event, 'history')}
         aria-label="Verlaufbreite ändern"
         onpointerdown={(event) => beginResize(event, 'history')}
       ></div>{/if}
-    {#if !historyOpen}<button
-        class="reopen-pane reopen-history"
-        type="button"
-        onclick={toggleHistory}
-        aria-label="Verlauf öffnen">☰</button
-      >{/if}
 
-    <main class="conversation" aria-label="Agent-Chat">
+    <section class="conversation" aria-label="Agent-Chat">
       <header class="conversation-header">
-        <div>
-          <h2>{selectedSummary?.title ?? 'Neue Session'}</h2>
+        <button
+          class="icon-button history-toggle"
+          type="button"
+          onclick={toggleHistory}
+          aria-label={historyOpen ? 'Verlauf einklappen' : 'Verlauf öffnen'}
+          aria-expanded={historyOpen}
+          aria-controls={`${workspaceId}-history`}
+          title="Chatverlauf"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"
+            ><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg
+          >
+        </button>
+        <div class="conversation-heading">
+          <h2>{selectedSummary?.title ?? 'Neuer Chat'}</h2>
           <p>
             {selectedSummary
               ? `${modeLabel(selectedSummary.mode)} · ${stateLabel(selectedSummary.state)}`
@@ -1472,12 +1597,15 @@
                 >
               </div>
             {/if}
-            {#if activeTaskId && !inspectorOpen}
+            {#if activeTaskId}
               <button
-                class="icon-button"
+                class="icon-button inspector-toggle"
                 type="button"
                 onclick={toggleInspector}
-                aria-label="Agentenlauf öffnen">◫</button
+                aria-controls={`${workspaceId}-inspector`}
+                aria-expanded={inspectorOpen}
+                aria-label={inspectorOpen ? 'Agentenlauf einklappen' : 'Agentenlauf öffnen'}
+                >◫</button
               >
             {/if}
             <div class="session-menu" bind:this={sessionMenuElement}>
@@ -1528,15 +1656,15 @@
         ontouchstart={handleConversationTouchStart}
       >
         {#if sessionView.kind === 'loading'}
-          <div class="center-state" role="status">Session wird geladen …</div>
+          <div class="center-state" role="status">Chat wird geladen …</div>
         {:else if sessionView.kind === 'missing'}
           <div class="center-state">
-            <p>Diese Session ist nicht mehr vorhanden.</p>
-            <button type="button" onclick={startNewSession}>Neue Session</button>
+            <p>Dieser Chat ist nicht mehr vorhanden.</p>
+            <button type="button" onclick={startNewSession}>Neuer Chat</button>
           </div>
         {:else if sessionView.kind === 'error'}
           <div class="center-state" role="alert">
-            <p>Die Session konnte nicht geladen werden.</p>
+            <p>Der Chat konnte nicht geladen werden.</p>
             <button
               type="button"
               onclick={() => selectedSessionId && void selectSession(selectedSessionId)}
@@ -1545,11 +1673,11 @@
           </div>
         {:else if sessionView.kind === 'new'}
           <div class="welcome">
-            <span class="welcome-mark" aria-hidden="true">A³</span>
+            <span class="welcome-mark" aria-hidden="true">A^3</span>
             <h3>Woran möchtest du arbeiten?</h3>
             <p>
-              Wähle einen Modus und formuliere dein Ziel. A^3 hält Kontext, Fortschritt und Review
-              in dieser Session zusammen.
+              Stelle eine Frage, plane eine Änderung oder lass A^3 eine Aufgabe umsetzen. Dein
+              Projekt ist der gemeinsame Kontext.
             </p>
             <div class="starter-grid">
               <button
@@ -1783,7 +1911,7 @@
                 selectedSummary.state === 'running'}
               aria-pressed={targetMode === 'ask'}
               onclick={() => (targetMode = 'ask')}
-              ><strong>Ask</strong><span
+              ><strong>Fragen</strong><span
                 >{selectedSummary?.mode === 'ask' && selectedSummary.state === 'running'
                   ? 'Wird ausgeführt'
                   : targetMode === 'ask'
@@ -1799,7 +1927,7 @@
                 selectedSummary.state === 'running'}
               aria-pressed={targetMode === 'plan'}
               onclick={() => (targetMode = 'plan')}
-              ><strong>Plan</strong><span
+              ><strong>Planen</strong><span
                 >{selectedSummary?.mode === 'plan' && selectedSummary.state === 'running'
                   ? 'Wird ausgeführt'
                   : targetMode === 'plan'
@@ -1816,7 +1944,7 @@
               class:requires-review={targetMode === 'agent' && modeRequiresPlanReview('agent')}
               aria-pressed={targetMode === 'agent'}
               onclick={() => (targetMode = 'agent')}
-              ><strong>Agent</strong><span
+              ><strong>Umsetzen</strong><span
                 >{selectedSummary?.mode === 'agent' && selectedSummary.state === 'running'
                   ? 'Wird ausgeführt'
                   : targetMode === 'agent' && modeRequiresPlanReview('agent')
@@ -1887,7 +2015,7 @@
           {/if}
           <div class="composer-toolbar">
             <div>
-              <span class="context-note">● Aktiver Worktree · aktueller Indexkontext</span>
+              <span class="context-note">Dein Projekt als Kontext</span>
             </div>
             <div class="research-depth" aria-label="Recherche-Tiefe für die nächste Nachricht">
               <button
@@ -1918,23 +2046,28 @@
             >
           </div>
         </div>
-        <p class="composer-hint">
-          Enter senden · Shift + Enter neue Zeile · Privilegierte Aktionen brauchen eine explizite
-          Freigabe.
-        </p>
+        <p class="composer-hint">Enter senden · Shift + Enter neue Zeile</p>
       </div>
-    </main>
+    </section>
 
-    {#if agentSidebarVisible && inspectorOpen}<div
+    {#if agentSidebarVisible && inspectorOpen}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div
         class="resize-handle inspector-resize"
         role="separator"
         aria-label="Inspectorbreite ändern"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-valuemin={320}
+        aria-valuemax={640}
+        aria-valuenow={preferences.inspectorWidth}
+        onkeydown={(event) => resizeWithKeyboard(event, 'inspector')}
         onpointerdown={(event) => beginResize(event, 'inspector')}
       ></div>{/if}
 
     {#if agentSidebarVisible && activeTaskId}
       {@const visibleTaskId = activeTaskId}
-      <aside class="inspector" aria-label="Agentenlauf">
+      <aside class="inspector" id={`${workspaceId}-inspector`} aria-label="Agentenlauf">
         <header class="inspector-header">
           <strong>Agentenlauf</strong>
           <button
@@ -2051,28 +2184,67 @@
       </aside>
     {/if}
   {/if}
+  {#if renameOpen}
+    <dialog
+      class="modal-dialog rename-dialog"
+      aria-labelledby={`${workspaceId}-rename-title`}
+      use:presentRename
+      oncancel={closeRename}
+    >
+      <form onsubmit={saveRename}>
+        <header class="modal-heading">
+          <h3 id={`${workspaceId}-rename-title`}>Chat umbenennen</h3>
+          <button
+            type="button"
+            aria-label="Umbenennen schließen"
+            disabled={renameSaving}
+            onclick={closeRename}>×</button
+          >
+        </header>
+        <div class="rename-body">
+          <label for={`${workspaceId}-rename`}>Name</label><input
+            id={`${workspaceId}-rename`}
+            bind:value={renameTitle}
+            disabled={renameSaving}
+            maxlength="256"
+            required
+          />
+          {#if actionError}<p role="alert">{actionError}</p>{/if}
+        </div>
+        <footer class="modal-actions">
+          <button type="button" disabled={renameSaving} onclick={closeRename}>Abbrechen</button
+          ><button type="submit" disabled={!renameTitle.trim() || renameSaving || submitting}
+            >{renameSaving ? 'Wird gespeichert …' : 'Speichern'}</button
+          >
+        </footer>
+      </form>
+    </dialog>
+  {/if}
 </section>
 
 <style>
   .agent-workspace {
     position: relative;
     display: grid;
-    grid-template-columns: var(--history-width) 1px minmax(26rem, 1fr) 1px var(--inspector-width);
+    grid-template-columns: min(var(--history-width), 24%) 1px minmax(0, 1fr) 1px min(
+        var(--inspector-width),
+        38%
+      );
     width: 100%;
     height: 100%;
     min-height: 0;
     overflow: hidden;
     color: var(--color-text);
-    background: var(--color-surface-raised);
+    background: var(--color-canvas);
   }
   .agent-workspace.history-collapsed {
-    grid-template-columns: 0 minmax(0, 1fr) 1px var(--inspector-width);
+    grid-template-columns: 0 0 minmax(0, 1fr) 1px min(var(--inspector-width), 40%);
   }
   .agent-workspace.inspector-collapsed {
-    grid-template-columns: var(--history-width) 1px minmax(0, 1fr) 0;
+    grid-template-columns: min(var(--history-width), 28%) 1px minmax(0, 1fr) 0 0;
   }
   .agent-workspace.history-collapsed.inspector-collapsed {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
+    grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
   }
   .session-rail,
   .inspector {
@@ -2099,11 +2271,10 @@
     padding: 0 var(--space-3);
     border-block-end: 1px solid var(--color-border-soft);
   }
-  .icon-button,
-  .reopen-pane {
+  .icon-button {
     display: grid;
-    width: 2.25rem;
-    min-height: 2.25rem;
+    width: var(--control-min-size);
+    min-height: var(--control-min-size);
     place-items: center;
     padding: 0;
     border: 0;
@@ -2112,8 +2283,7 @@
     background: transparent;
     cursor: pointer;
   }
-  .icon-button:hover,
-  .reopen-pane:hover {
+  .icon-button:hover {
     color: var(--color-text);
     background: var(--color-surface-muted);
   }
@@ -2121,13 +2291,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 2.6rem;
+    min-height: var(--control-min-size);
     margin: var(--space-3);
     gap: var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
     color: var(--color-heading);
-    background: var(--color-surface-raised);
+    background: var(--color-canvas);
     cursor: pointer;
     font-weight: 650;
   }
@@ -2140,7 +2310,7 @@
   }
   .session-search input {
     width: 100%;
-    min-height: 2.35rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border-soft);
     border-radius: var(--radius-control);
@@ -2223,13 +2393,15 @@
   }
   .conversation {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0;
     min-height: 0;
-    background: var(--color-surface-raised);
+    background: var(--color-canvas);
   }
   .conversation-header {
     display: flex;
+    min-width: 0;
     min-height: 3.5rem;
     align-items: center;
     justify-content: space-between;
@@ -2280,10 +2452,10 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
     background: var(--color-surface);
-    box-shadow: 0 10px 28px color-mix(in srgb, var(--color-overlay) 22%, transparent);
+    box-shadow: none;
   }
   .menu-popover button {
-    min-height: 2.25rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-3);
     border: 0;
     color: var(--color-text);
@@ -2298,6 +2470,7 @@
     color: var(--color-danger);
   }
   .message-scroll {
+    min-width: 0;
     min-height: 0;
     overflow-y: auto;
     overflow-anchor: none;
@@ -2403,7 +2576,7 @@
   }
   .plan-actions button,
   .center-state button {
-    min-height: 2.4rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -2433,12 +2606,13 @@
     width: 3.5rem;
     height: 3.5rem;
     place-items: center;
-    margin-block-end: var(--space-4);
+    margin-block-end: var(--space-5);
     border: 1px solid var(--color-border);
-    border-radius: 50%;
-    color: var(--color-accent-text);
-    background: var(--color-accent-surface);
-    font-weight: 800;
+    border-radius: var(--radius-card);
+    color: var(--color-heading);
+    background: var(--color-surface);
+    font-family: var(--font-display);
+    font-weight: 700;
   }
   .welcome h3 {
     margin: 0 0 var(--space-2);
@@ -2450,22 +2624,25 @@
   }
   .starter-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    width: 100%;
+    grid-template-columns: 1fr;
+    width: min(100%, 28rem);
     margin-top: var(--space-4);
-    gap: var(--space-2);
+    gap: 0;
   }
   .starter-grid button {
-    display: grid;
-    min-height: 5.5rem;
-    align-content: center;
-    padding: var(--space-3);
-    gap: var(--space-2);
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 3.25rem;
+    padding: var(--space-3) var(--space-2);
+    gap: var(--space-3);
+    border: 0;
+    border-block-end: 1px solid var(--color-border-soft);
+    border-radius: 0;
     color: var(--color-heading);
-    background: var(--color-surface-subtle);
+    background: transparent;
     cursor: pointer;
+    text-align: start;
   }
   .starter-grid button:hover {
     border-color: var(--color-accent);
@@ -2504,7 +2681,7 @@
   .message-queue li {
     display: grid;
     grid-template-columns: 1.25rem 3.5rem minmax(0, 1fr) 1.75rem;
-    min-height: 1.8rem;
+    min-height: var(--control-min-size);
     align-items: center;
     gap: var(--space-1);
   }
@@ -2522,7 +2699,8 @@
     white-space: nowrap;
   }
   .message-queue button {
-    min-height: 1.7rem;
+    min-height: var(--control-min-size);
+    min-width: var(--control-min-size);
     padding: 0 var(--space-1);
     border: 0;
     border-radius: var(--radius-control);
@@ -2543,31 +2721,30 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-card);
     background: var(--color-surface);
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 22%, transparent);
+    box-shadow: none;
   }
   .mode-switch {
     position: relative;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    padding: var(--space-1);
-    border-block-end: 1px solid var(--color-border-soft);
+    display: flex;
+    padding: var(--space-2) var(--space-2) 0;
     gap: var(--space-1);
   }
   .mode-switch button {
     position: relative;
     z-index: 1;
-    display: grid;
-    min-height: 3rem;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-min-size);
+    padding: var(--space-1) var(--space-3);
+    border: 0;
     border-radius: var(--radius-control);
     color: var(--color-muted);
     background: transparent;
     cursor: pointer;
   }
   .mode-switch button[aria-pressed='true'] {
-    border-color: var(--color-border);
-    color: var(--color-heading);
+    color: var(--color-accent-text);
     background: var(--color-accent-surface);
   }
   .mode-switch button.executing::before {
@@ -2605,7 +2782,7 @@
   }
   .composer-command-chips button {
     display: inline-flex;
-    min-height: 1.8rem;
+    min-height: var(--control-min-size);
     align-items: center;
     padding: 0 var(--space-2);
     gap: var(--space-1);
@@ -2672,13 +2849,13 @@
     gap: var(--space-3);
   }
   .slash-palette-failed button {
-    min-height: 2rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-2);
     cursor: pointer;
   }
   .slash-command-error {
     margin: var(--space-2) var(--space-3) 0;
-    color: var(--color-danger-text, var(--color-danger));
+    color: var(--color-danger, var(--color-danger));
     font-size: var(--font-size-xs);
   }
   .composer-toolbar {
@@ -2694,13 +2871,13 @@
   }
   .research-depth {
     display: flex;
-    padding: 0.15rem;
-    border: 1px solid var(--color-border-soft);
+    padding: 0;
+    border: 0;
     border-radius: var(--radius-control);
-    background: var(--color-surface-subtle);
+    background: transparent;
   }
   .research-depth button {
-    min-height: 1.9rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-2);
     border: 0;
     border-radius: calc(var(--radius-control) - 2px);
@@ -2724,11 +2901,11 @@
   }
   .send-button {
     display: grid;
-    width: 2.35rem;
-    min-height: 2.35rem;
+    width: var(--control-min-size);
+    min-height: var(--control-min-size);
     place-items: center;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-control);
     color: var(--color-on-accent);
     background: var(--color-accent-strong);
     cursor: pointer;
@@ -2763,7 +2940,7 @@
     border-block-end: 1px solid var(--color-border-soft);
   }
   .inspector-tabs button {
-    min-height: 2.25rem;
+    min-height: var(--control-min-size);
     padding: 0 var(--space-1);
     border: 0;
     border-radius: var(--radius-control);
@@ -2910,7 +3087,7 @@
     height: 0.5rem;
     margin-top: 0.35rem;
     place-items: center;
-    border-radius: 50%;
+    border-radius: var(--radius-control);
     color: var(--color-on-accent);
     background: var(--color-border-strong);
     font-size: 0.42rem;
@@ -2918,7 +3095,7 @@
   }
   .activity-timeline li.done > span,
   .activity-timeline li.done::before {
-    background: var(--color-status-success);
+    background: var(--color-status-ready);
   }
   .activity-timeline li.active > span {
     background: var(--color-status-pending);
@@ -2936,16 +3113,6 @@
     margin: var(--space-1) 0 0;
     color: var(--color-muted);
     font-size: var(--font-size-xs);
-  }
-  .reopen-pane {
-    position: absolute;
-    z-index: 5;
-    top: var(--space-2);
-    border: 1px solid var(--color-border-soft);
-    background: var(--color-surface);
-  }
-  .reopen-history {
-    left: var(--space-2);
   }
   .no-project {
     display: grid;
@@ -2974,17 +3141,17 @@
   }
   @media (max-width: 1100px) {
     .agent-workspace {
-      grid-template-columns: var(--history-width) 1px minmax(0, 1fr);
+      grid-template-columns: min(var(--history-width), 32%) 1px minmax(0, 1fr) 0 0;
     }
     .agent-workspace.history-collapsed {
-      grid-template-columns: 0 minmax(0, 1fr);
+      grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
     }
     .inspector {
       position: absolute;
-      z-index: 12;
+      z-index: 24;
       inset: 0 0 0 auto;
       width: min(var(--inspector-width), calc(100% - 3rem));
-      box-shadow: -12px 0 34px color-mix(in srgb, var(--color-overlay) 28%, transparent);
+      box-shadow: none;
     }
     .inspector-resize {
       display: none;
@@ -3001,11 +3168,11 @@
     .agent-workspace.history-collapsed,
     .agent-workspace.inspector-collapsed,
     .agent-workspace.history-collapsed.inspector-collapsed {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
     }
     .session-rail {
       position: absolute;
-      z-index: 14;
+      z-index: 25;
       inset: 0 auto 0 0;
       width: min(var(--history-width), calc(100% - 3rem));
       box-shadow: 12px 0 34px color-mix(in srgb, var(--color-overlay) 28%, transparent);
@@ -3031,7 +3198,106 @@
       padding-inline: var(--space-2);
     }
     .conversation-header {
-      padding-inline: 3.5rem;
+      padding-inline: var(--space-2);
+    }
+  }
+  .session-rail {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .history-resize {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .conversation {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .inspector-resize {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .inspector {
+    grid-column: 5;
+    grid-row: 1;
+  }
+  .conversation-heading {
+    flex: 1;
+    min-width: 0;
+    margin-inline-start: var(--space-2);
+  }
+  .conversation-header {
+    gap: var(--space-2);
+  }
+  .icon-button svg {
+    width: 1.2rem;
+    height: 1.2rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+  }
+  .archive-toggle {
+    min-height: var(--control-min-size);
+  }
+  .composer-box:focus-within {
+    border-color: var(--color-border-strong);
+    outline: var(--focus-width) solid var(--color-focus);
+    outline-offset: var(--focus-offset);
+  }
+  .composer-box {
+    background: var(--color-surface);
+  }
+  .mode-switch span {
+    font-size: 0.6875rem;
+  }
+  .rename-body {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-5);
+  }
+  .rename-body input {
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border);
+    background: var(--color-canvas);
+    color: var(--color-text);
+  }
+  .rename-body p {
+    color: var(--color-danger);
+  }
+  .rename-dialog button[type='submit'] {
+    background: var(--color-accent-strong);
+    color: var(--color-on-accent);
+    border-color: var(--color-accent-strong);
+  }
+  .welcome {
+    animation: app-surface-in var(--motion-normal) var(--ease-out);
+  }
+  @media (max-width: 1100px) {
+    .inspector {
+      grid-column: 1 / -1;
+    }
+    .mode-switch span {
+      display: none;
+    }
+  }
+  @media (max-width: 760px) {
+    .session-rail,
+    .inspector {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-height: 600px) {
+    .composer-box textarea {
+      min-height: 3rem;
+      max-height: 4rem;
+      padding-block: var(--space-1);
+    }
+    .composer-wrap {
+      padding-block: var(--space-1);
+    }
+    .mode-switch {
+      padding-top: var(--space-1);
     }
   }
 </style>

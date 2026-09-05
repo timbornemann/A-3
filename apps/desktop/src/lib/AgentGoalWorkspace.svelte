@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import {
     queryAgentActivity,
     type AgentActivityEventV1,
@@ -364,8 +365,8 @@
         case 'accepted':
           actionMessage =
             response.result.outcome === 'pauseRequested'
-              ? 'Pause wurde angefordert. Pausiert gilt der Run erst nach beendetem Worker und geprüftem Recovery-Checkpoint.'
-              : 'Cancel wurde angefordert. Der terminale Zustand erscheint erst nach Worker-Stopp und dauerhaftem H11-Commit.';
+              ? 'Pause wurde angefordert. A^3 zeigt den pausierten Zustand, sobald der laufende Vorgang beendet und der Arbeitsstand geprüft ist.'
+              : 'Abbruch wurde angefordert. Der Lauf endet, sobald der laufende Vorgang sicher beendet und der Abbruch gespeichert ist.';
           await Promise.all([
             loadLedger(selectedTaskId),
             loadActivity(selectedTaskId),
@@ -434,9 +435,29 @@
     actionMessage = null;
   }
 
-  function closeEditor(): void {
+  function closeEditor(event?: Event): void {
+    if (submitting) {
+      event?.preventDefault();
+      return;
+    }
     editorMode = 'closed';
     actionError = null;
+  }
+
+  function presentEditor(node: HTMLDialogElement): { destroy: () => void } {
+    const previousFocus = document.activeElement;
+    if (typeof node.showModal === 'function') node.showModal();
+    else node.setAttribute('open', '');
+    node.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+    return {
+      destroy: () => {
+        if (node.open && typeof node.close === 'function') node.close();
+        void tick().then(() => {
+          if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
+            previousFocus.focus();
+        });
+      },
+    };
   }
 
   function addCriterion(): void {
@@ -467,7 +488,7 @@
       editorMode = 'closed';
       actionMessage =
         response.goal.revision === 1
-          ? 'Goal Contract dauerhaft angelegt.'
+          ? 'Aufgabe dauerhaft angelegt.'
           : `Revision ${response.goal.revision} dauerhaft angehängt.`;
       await loadTasks(response.goal.taskId);
     } catch (error) {
@@ -638,24 +659,40 @@
     );
   }
 
+  function displayTime(value: string): string {
+    const date = new Date(Number(value));
+    return Number.isNaN(date.getTime())
+      ? 'Zeitpunkt nicht darstellbar'
+      : new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  }
+
+  function outcomeLabel(outcome: NonNullable<AgentActivityEventV1['outcome']>): string {
+    return {
+      succeeded: 'Erfolgreich',
+      failed: 'Fehlgeschlagen',
+      denied: 'Abgelehnt',
+      cancelled: 'Abgebrochen',
+    }[outcome];
+  }
+
   function controlOutcomeMessage(
     outcome: 'cancelled' | 'replanRequired' | 'resumed',
     runtimeStart: 'failed' | 'queued' | 'unavailable' | null,
   ): string {
     const messages = {
-      cancelled: 'Der Agent Run wurde dauerhaft abgebrochen.',
+      cancelled: 'Der Agentenlauf wurde dauerhaft abgebrochen.',
       replanRequired:
         runtimeStart === 'queued'
-          ? 'Der Recovery-Stand wurde committed und ein neuer besessener Replan-Versuch eingereiht.'
+          ? 'Der Arbeitsstand ist gespeichert. Die Neuplanung startet gleich.'
           : runtimeStart === 'failed'
-            ? 'Der Recovery-Stand wurde committed, aber der besessene Replan-Versuch konnte nicht eingereiht werden.'
-            : 'Der Recovery-Stand wurde committed; ohne ausführbare Agent-Capability bleibt Replan bereit.',
+            ? 'Der Arbeitsstand ist gespeichert. Die Neuplanung konnte gerade nicht gestartet werden.'
+            : 'Der Arbeitsstand ist gespeichert. Richte ein geeignetes Agentenmodell ein, um neu zu planen.',
       resumed:
         runtimeStart === 'queued'
-          ? 'Der aktuelle Snapshot wurde übernommen und ein neuer besessener Versuch eingereiht.'
+          ? 'Der aktuelle Projektstand wurde übernommen. Der Agent setzt die Aufgabe fort.'
           : runtimeStart === 'failed'
-            ? 'Der aktuelle Snapshot wurde übernommen, aber der besessene Versuch konnte nicht eingereiht werden.'
-            : 'Der aktuelle Snapshot wurde übernommen; ohne ausführbare Agent-Capability bleibt Resume bereit.',
+            ? 'Der aktuelle Projektstand wurde übernommen. Die Fortsetzung konnte gerade nicht gestartet werden.'
+            : 'Der aktuelle Projektstand wurde übernommen. Richte ein geeignetes Agentenmodell ein, um fortzufahren.',
     } as const;
     return messages[outcome];
   }
@@ -664,8 +701,8 @@
 <section class="agent-goal-workspace" aria-labelledby="agent-workspace-heading">
   <div class="workspace-heading">
     <div>
-      <p>Goal Contract</p>
-      <h2 id="agent-workspace-heading">Agent Workspace</h2>
+      <p>Aufgabe im Überblick</p>
+      <h2 id="agent-workspace-heading">Auftragsdetails</h2>
     </div>
     {#if activeProject}
       <button type="button" onclick={startCreate}>Neue Aufgabe</button>
@@ -673,9 +710,7 @@
   </div>
 
   {#if !activeProject}
-    <p class="empty-state">
-      Öffne einen lokalen Worktree, um einen dauerhaften Goal Contract anzulegen.
-    </p>
+    <p class="empty-state">Öffne ein lokales Projekt, um eine Aufgabe anzulegen.</p>
   {:else if taskView.kind === 'loading'}
     <p role="status" aria-live="polite">Dauerhafte Aufgaben werden geladen …</p>
   {:else if taskView.kind === 'error'}
@@ -689,15 +724,17 @@
         Aufgabe
         <select value={selectedTaskId} onchange={chooseTask}>
           {#each taskView.tasks as task (task.taskId)}
-            <option value={task.taskId}>R{task.goalRevision} · {task.objective}</option>
+            <option value={task.taskId}>{task.objective}</option>
           {/each}
         </select>
       </label>
       {#if taskView.truncated}
-        <p class="bounded-note">Es werden die ersten 20 stabil geordneten Aufgaben gezeigt.</p>
+        <p class="bounded-note">Diese Ansicht zeigt bis zu 20 Aufgaben.</p>
       {/if}
     {:else}
-      <p class="empty-state">Noch keine Aufgabe. Lege den ersten dauerhaften Goal Contract an.</p>
+      <p class="empty-state">
+        Lege deine erste Aufgabe mit einem Ziel und klaren Abschlusskriterien an.
+      </p>
     {/if}
   {/if}
 
@@ -717,7 +754,7 @@
           {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
             Noch kein dauerhafter Plan
           {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
-            Replan erforderlich
+            Neue Planung erforderlich
           {:else}
             Kein Schritt wird gerade ausgeführt
           {/if}
@@ -751,14 +788,14 @@
     {#if workspaceView === 'plan'}
       <section class="task-ledger" aria-labelledby="task-ledger-heading">
         <header>
-          <p>Dauerhafte Todos</p>
+          <p>Schritt für Schritt</p>
           <h3 id="task-ledger-heading">Arbeitsplan</h3>
         </header>
         {#if ledgerView.kind === 'loading'}
-          <p role="status" aria-live="polite">Task Ledger wird geladen …</p>
+          <p role="status" aria-live="polite">Arbeitsplan wird geladen …</p>
         {:else if ledgerView.kind === 'error'}
           <div class="error-state" role="alert">
-            <p>Das Task Ledger konnte nicht sicher gelesen werden.</p>
+            <p>Der Arbeitsplan konnte nicht geladen werden.</p>
             <button type="button" onclick={() => loadLedger(selectedTaskId)}>Erneut laden</button>
           </div>
         {:else if ledgerView.kind === 'result' && (ledgerView.result.status === 'noProject' || ledgerView.result.status === 'taskNotFound')}
@@ -766,14 +803,10 @@
             Aufgabe oder aktiver Worktree haben sich geändert. Lade die dauerhaften Aufgaben neu.
           </p>
         {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'ledgerUnavailable'}
-          <p class="empty-state">
-            Für diesen Goal Contract wurde noch kein dauerhafter Plan erzeugt.
-          </p>
+          <p class="empty-state">Für diese Aufgabe liegt noch kein Arbeitsplan vor.</p>
         {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'goalRevisionMismatch'}
           <p class="error-state" role="alert">
-            Das Ledger gehört zu Goal-Revision {ledgerView.result.ledgerGoalRevision}; aktuell ist
-            Revision {ledgerView.result.currentGoalRevision}. Vor Ausführung ist ein Replan
-            erforderlich.
+            Das Ziel wurde geändert. Der Arbeitsplan muss vor der Ausführung neu geplant werden.
           </p>
         {:else if ledgerView.kind === 'result' && ledgerView.result.status === 'available'}
           <p class="ledger-metadata">
@@ -817,7 +850,7 @@
         />
       {:else}
         <section class="detail-loader" aria-labelledby="agent-detail-loader-heading">
-          <h3 id="agent-detail-loader-heading">Diff, Verification und Freigabe</h3>
+          <h3 id="agent-detail-loader-heading">Änderungen, Prüfungen und Freigaben</h3>
           {#if detailChunkState === 'error'}
             <p role="alert">Die lokalen Inspektionsmodule konnten nicht geladen werden.</p>
             <button type="button" onclick={loadDetailChunks}>Erneut laden</button>
@@ -830,19 +863,19 @@
     {#if workspaceView === 'activity'}
       <section class="agent-activity" aria-labelledby="agent-activity-heading">
         <header>
-          <p>Durable Run</p>
-          <h3 id="agent-activity-heading">Aktivität, Kontext und Budget</h3>
+          <p>Arbeitsfortschritt</p>
+          <h3 id="agent-activity-heading">Aktivität</h3>
         </header>
         {#if activityView.kind === 'loading'}
-          <p role="status" aria-live="polite">Run-Aktivität wird geladen …</p>
+          <p role="status" aria-live="polite">Aktivität wird geladen …</p>
         {:else if activityView.kind === 'error'}
           <div class="error-state" role="alert">
-            <p>Die Run-Aktivität konnte nicht sicher gelesen werden.</p>
+            <p>Die Aktivität konnte nicht geladen werden.</p>
             <button type="button" onclick={() => loadActivity(selectedTaskId)}>Erneut laden</button>
           </div>
         {:else if activityView.kind === 'result' && activityView.result.status === 'activityChanged'}
           <div class="error-state" role="status">
-            <p>Ledger oder Run haben sich während des Lesens geändert.</p>
+            <p>Die Aufgabe wurde während des Ladens aktualisiert.</p>
             <button type="button" onclick={() => loadActivity(selectedTaskId)}>
               Aktuellen Stand laden
             </button>
@@ -852,18 +885,17 @@
             Aufgabe oder aktiver Worktree sind für diese Aktivität nicht mehr verfügbar.
           </p>
         {:else if activityView.kind === 'result' && activityView.result.status === 'ledgerUnavailable'}
-          <p class="empty-state">Ohne Task Ledger existiert noch kein kontrollierter Agent Run.</p>
+          <p class="empty-state">Erstelle zuerst einen Arbeitsplan, um den Agenten zu starten.</p>
         {:else if activityView.kind === 'result' && activityView.result.status === 'goalRevisionMismatch'}
           <p class="error-state" role="alert">
-            Goal R{activityView.result.currentRevision} und Ledger-Goal R{activityView.result
-              .ledgerRevision}
-            stimmen nicht überein. Vor weiterer Ausführung ist ein Replan erforderlich.
+            Das Ziel und der Arbeitsplan stimmen nicht mehr überein. Plane die Aufgabe vor dem
+            Fortsetzen neu.
           </p>
         {:else if activityView.kind === 'result' && activityView.result.status === 'available'}
           {@const activity = activityView.result.activity}
           {#if activity.blockers.length > 0}
             <section class="blockers" aria-labelledby="agent-blockers-heading">
-              <h4 id="agent-blockers-heading">Offene Blocker</h4>
+              <h4 id="agent-blockers-heading">Deine Aufmerksamkeit ist gefragt</h4>
               <ul>
                 {#each activity.blockers as blocker (blocker.stepId)}
                   <li>
@@ -880,37 +912,35 @@
           {/if}
           {#if activity.run === null}
             <p class="empty-state">
-              Für die Ledger-Schritte wurde noch kein Run-Versuch gestartet.
+              Der Agent hat mit diesen Arbeitsschritten noch nicht begonnen.
             </p>
           {:else}
             {@const run = activity.run}
             <div class="run-summary">
               <div>
-                <span>Controllerzustand</span>
+                <span>Aktueller Stand</span>
                 <strong>{controllerStateLabel(run.state)}</strong>
               </div>
               <span class:terminal={run.terminal} class="run-lifecycle">
-                {run.terminal ? 'Terminaler Zustand' : 'Run aktiv oder fortsetzbar'}
+                {run.terminal ? 'Lauf beendet' : 'Aktiv oder fortsetzbar'}
               </span>
-              <code>Versuch {run.attemptNumber} · Run {run.runId.slice(0, 12)}</code>
             </div>
             <section class="run-controls" aria-labelledby="run-controls-heading">
               <div>
-                <p>Explizite Recovery</p>
-                <h4 id="run-controls-heading">Run steuern</h4>
+                <h4 id="run-controls-heading">Agent steuern</h4>
               </div>
               {#if recoveryView.kind === 'loading'}
                 <p role="status" aria-live="polite">Sichere Steueroptionen werden geprüft …</p>
               {:else if recoveryView.kind === 'error'}
                 <div class="error-state" role="alert">
-                  <p>Die Recovery-Anker konnten nicht sicher geprüft werden.</p>
+                  <p>Der gespeicherte Arbeitsstand konnte nicht geprüft werden.</p>
                   <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
                     Erneut prüfen
                   </button>
                 </div>
               {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'activityChanged'}
                 <div class="error-state" role="status">
-                  <p>Der Run hat sich während der Recovery-Prüfung geändert.</p>
+                  <p>Der Arbeitsstand hat sich während der Prüfung geändert.</p>
                   <button type="button" onclick={() => loadRecovery(selectedTaskId)}>
                     Aktuellen Stand prüfen
                   </button>
@@ -919,21 +949,17 @@
                 {@const runtime = recoveryView.result.runtime}
                 <dl class="recovery-facts">
                   <div>
-                    <dt>Produktlaufzeit</dt>
+                    <dt>Agent</dt>
                     <dd>{agentRuntimeStateLabel(runtime.runtimeState)}</dd>
                   </div>
                   <div>
-                    <dt>Controller</dt>
+                    <dt>Arbeitsschritt</dt>
                     <dd>{controllerStateLabel(runtime.controllerState)}</dd>
-                  </div>
-                  <div>
-                    <dt>Ledgeranker</dt>
-                    <dd>R{runtime.ledgerRevision} · V{runtime.ledgerStoreVersion}</dd>
                   </div>
                 </dl>
                 <p class="bounded-note">
-                  Dieser Prozess besitzt den Worker. Recovery unterbricht deshalb keinen laufenden
-                  Toolversuch; Pause und Cancel stoppen zuerst kooperativ die Produktlaufzeit.
+                  Der Agent arbeitet gerade. Pausieren und Abbrechen warten darauf, dass der
+                  laufende Vorgang sicher beendet ist.
                 </p>
                 <div class="control-actions" aria-label="Agent Run Laufzeit-Aktionen">
                   <button
@@ -941,7 +967,7 @@
                     disabled={controllingRun || !runtime.canPause}
                     onclick={() => applyRunControl('pause')}
                   >
-                    Pause
+                    Pausieren
                   </button>
                   <button
                     class="danger-action"
@@ -949,7 +975,7 @@
                     disabled={controllingRun || runtime.runtimeState === 'cancelling'}
                     onclick={() => applyRunControl('cancel')}
                   >
-                    Cancel
+                    Abbrechen
                   </button>
                   <button
                     type="button"
@@ -963,38 +989,39 @@
                 {@const recovery = recoveryView.result.recovery}
                 {#if recoveryView.result.status === 'paused'}
                   <p class="bounded-note" role="status">
-                    Produktlaufzeit pausiert · der Worker ist beendet und der Recovery-Checkpoint
+                    Sicher pausiert · die Ausführung ist beendet und der gespeicherte Arbeitsstand
                     wurde geprüft.
                   </p>
                 {/if}
                 <dl class="recovery-facts">
                   <div>
-                    <dt>Snapshot</dt>
+                    <dt>Projektstand</dt>
                     <dd>{recovery.snapshotChanged ? 'Geändert' : 'Unverändert'}</dd>
                   </div>
                   <div>
-                    <dt>Stale Evidence</dt>
+                    <dt>Veraltete Nachweise</dt>
                     <dd>{recovery.staleEvidenceCount}</dd>
                   </div>
                   <div>
-                    <dt>Unterbrochene Toolversuche</dt>
+                    <dt>Unterbrochene Vorgänge</dt>
                     <dd>{recovery.interruptedToolAttempts}</dd>
                   </div>
                 </dl>
                 {#if recovery.mutationReconciliationRequired}
                   <p class="error-state" role="alert">
-                    Eine Mutation hat eine unbekannte Wirkung. Resume und Replan bleiben bis zu
-                    einem autoritativen Full-Scan gesperrt; Cancel bleibt erreichbar.
+                    Die Wirkung einer Änderung ist noch unklar. Fortsetzen und Neu planen bleiben
+                    gesperrt, bis A^3 den Projektstand vollständig abgeglichen hat. Abbrechen ist
+                    weiterhin möglich.
                   </p>
                 {:else if recovery.mutationReplanRequired}
                   <p class="bounded-note">
-                    Die unbekannte Mutationswirkung wurde reconciliert. Vor weiterer Mutation ist
-                    Replan erforderlich.
+                    Die Wirkung der Änderung wurde abgeglichen. Plane die Aufgabe vor weiteren
+                    Änderungen neu.
                   </p>
                 {:else if recovery.staleEvidenceCount > 0}
                   <p class="bounded-note">
-                    Abgeschlossene Evidence ist veraltet. Resume ist gesperrt; Replan öffnet
-                    betroffene Schritte kontrolliert neu.
+                    Frühere Nachweise sind veraltet. Fortsetzen ist gesperrt. Mit „Neu planen“
+                    werden die betroffenen Schritte erneut geprüft.
                   </p>
                 {/if}
                 <div class="control-actions" aria-label="Agent Run Recovery-Aktionen">
@@ -1003,14 +1030,14 @@
                     disabled={controllingRun || !recovery.canResume}
                     onclick={() => applyRunControl('resume')}
                   >
-                    Resume
+                    Fortsetzen
                   </button>
                   <button
                     type="button"
                     disabled={controllingRun || recovery.mutationReconciliationRequired}
                     onclick={() => applyRunControl('replan')}
                   >
-                    Replan
+                    Neu planen
                   </button>
                   <button
                     class="danger-action"
@@ -1018,100 +1045,113 @@
                     disabled={controllingRun}
                     onclick={() => applyRunControl('cancel')}
                   >
-                    Cancel
+                    Abbrechen
                   </button>
                 </div>
               {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runNotControllable'}
                 <p class="bounded-note">
-                  Dieser Run ist {controllerStateLabel(recoveryView.result.state)} und nicht mehr steuerbar.
+                  Dieser Lauf ist {controllerStateLabel(recoveryView.result.state)} und nicht mehr steuerbar.
                 </p>
               {:else if recoveryView.kind === 'result' && recoveryView.result.status === 'runUnavailable'}
-                <p class="empty-state">Noch kein aktiver Run-Versuch vorhanden.</p>
+                <p class="empty-state">Der Agent wurde noch nicht gestartet.</p>
               {:else if recoveryView.kind === 'result'}
                 <p class="error-state" role="alert">
-                  Goal, Ledger oder aktiver Worktree stimmen für die Run-Steuerung nicht überein.
+                  Ziel, Arbeitsplan oder aktives Projekt haben sich geändert. Lade die Aufgabe
+                  erneut.
                 </p>
               {/if}
             </section>
             {#if !run.ledgerRevisionMatchesCurrent}
               <p class="bounded-note">
-                Dieser letzte Run gehört zu Ledger R{run.ledgerRevision}; aktuell ist R{activity.currentLedgerRevision}.
+                Dieser Lauf gehört zu einer früheren Planversion. Der Arbeitsplan wurde inzwischen
+                aktualisiert.
               </p>
             {/if}
-            <div class="context-budget-grid">
-              <section aria-labelledby="context-status-heading">
-                <h4 id="context-status-heading">Context</h4>
-                <dl>
-                  <div>
-                    <dt>Snapshot</dt>
-                    <dd><code>{run.currentSnapshotId.slice(0, 16)}</code></dd>
-                  </div>
-                  <div>
-                    <dt>Letztes Context Pack</dt>
-                    <dd>
-                      {#if latestContextSequence(run) === null}
-                        Nicht im sichtbaren Journalfenster
-                      {:else}
-                        Ereignis #{latestContextSequence(run)}
-                      {/if}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Stand</dt>
-                    <dd>{run.updatedAtUnixMillis} ms</dd>
-                  </div>
-                </dl>
-              </section>
-              <section aria-labelledby="run-budget-heading">
-                <h4 id="run-budget-heading">Run-Budget</h4>
-                <dl class="budget-list">
-                  <div>
-                    <dt>Turns</dt>
-                    <dd>{run.usage.turnCount} / {run.budget.turnLimit}</dd>
-                  </div>
-                  <div>
-                    <dt>Prompt-Tokens</dt>
-                    <dd>{run.usage.promptTokens} / {run.budget.promptTokenLimit}</dd>
-                  </div>
-                  <div>
-                    <dt>Output-Tokens</dt>
-                    <dd>{run.usage.outputTokens} / {run.budget.outputTokenLimit}</dd>
-                  </div>
-                  <div>
-                    <dt>Aktionen</dt>
-                    <dd>{run.usage.actionCount} / {run.budget.actionLimit}</dd>
-                  </div>
-                  <div>
-                    <dt>Reparaturen</dt>
-                    <dd>{run.usage.repairCount} / {run.budget.repairLimit}</dd>
-                  </div>
-                  <div>
-                    <dt>Zeit am letzten Ereignis</dt>
-                    <dd>
-                      {run.usage.elapsedAtLastEventMillis} / {run.budget.durationLimitMillis} ms
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-            </div>
+            <details class="technical-details">
+              <summary>Technische Laufdetails</summary>
+              <p>Versuch {run.attemptNumber} · Run <code>{run.runId}</code></p>
+              <p>Planrevision {run.ledgerRevision} · aktuell {activity.currentLedgerRevision}</p>
+              {#if recoveryView.kind === 'result' && recoveryView.result.status === 'runtimeOwned'}
+                <p>
+                  Ledgeranker R{recoveryView.result.runtime.ledgerRevision} · V{recoveryView.result
+                    .runtime.ledgerStoreVersion}
+                </p>
+              {/if}
+              <div class="context-budget-grid">
+                <section aria-labelledby="context-status-heading">
+                  <h4 id="context-status-heading">Kontext</h4>
+                  <dl>
+                    <div>
+                      <dt>Snapshot</dt>
+                      <dd><code>{run.currentSnapshotId}</code></dd>
+                    </div>
+                    <div>
+                      <dt>Letztes Context Pack</dt>
+                      <dd>
+                        {#if latestContextSequence(run) === null}
+                          Nicht im sichtbaren Journalfenster
+                        {:else}
+                          Ereignis #{latestContextSequence(run)}
+                        {/if}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Stand</dt>
+                      <dd>{run.updatedAtUnixMillis} ms</dd>
+                    </div>
+                  </dl>
+                </section>
+                <section aria-labelledby="run-budget-heading">
+                  <h4 id="run-budget-heading">Nutzung und Limits</h4>
+                  <dl class="budget-list">
+                    <div>
+                      <dt>Turns</dt>
+                      <dd>{run.usage.turnCount} / {run.budget.turnLimit}</dd>
+                    </div>
+                    <div>
+                      <dt>Prompt-Tokens</dt>
+                      <dd>{run.usage.promptTokens} / {run.budget.promptTokenLimit}</dd>
+                    </div>
+                    <div>
+                      <dt>Output-Tokens</dt>
+                      <dd>{run.usage.outputTokens} / {run.budget.outputTokenLimit}</dd>
+                    </div>
+                    <div>
+                      <dt>Aktionen</dt>
+                      <dd>{run.usage.actionCount} / {run.budget.actionLimit}</dd>
+                    </div>
+                    <div>
+                      <dt>Reparaturen</dt>
+                      <dd>{run.usage.repairCount} / {run.budget.repairLimit}</dd>
+                    </div>
+                    <div>
+                      <dt>Zeit am letzten Ereignis</dt>
+                      <dd>
+                        {run.usage.elapsedAtLastEventMillis} / {run.budget.durationLimitMillis} ms
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+              </div>
+            </details>
             <section class="activity-timeline" aria-labelledby="activity-timeline-heading">
               <div class="timeline-heading">
-                <h4 id="activity-timeline-heading">Conversation- und Action-Timeline</h4>
+                <h4 id="activity-timeline-heading">Arbeitsverlauf</h4>
                 {#if run.earlierEventsOmitted}<span>Ältere Ereignisse ausgeblendet</span>{/if}
               </div>
               <ol>
                 {#each run.timeline as item (item.sequence)}
                   <li class:problem={isProblemEvent(item)}>
-                    <span class="event-sequence">#{item.sequence}</span>
+                    <span class="event-sequence" aria-hidden="true">·</span>
                     <div>
                       <strong>{activityEventLabel(item)}</strong>
                       <p>
-                        {item.occurredAtUnixMillis} ms
+                        {displayTime(item.occurredAtUnixMillis)}
                         {#if eventCodeLabel(item.code) !== null}
                           · {eventCodeLabel(item.code)}
                         {/if}
                         {#if item.outcome !== null}
-                          · {item.outcome}{/if}
+                          · {outcomeLabel(item.outcome)}{/if}
                       </p>
                     </div>
                   </li>
@@ -1125,28 +1165,32 @@
   {/if}
 
   {#if goalView.kind === 'loading'}
-    <p role="status" aria-live="polite">Aktueller Goal Contract wird geladen …</p>
+    <p role="status" aria-live="polite">Auftrag wird geladen …</p>
   {:else if goalView.kind === 'notFound'}
     <p class="error-state" role="alert">Die ausgewählte Aufgabe existiert nicht mehr.</p>
   {:else if goalView.kind === 'error'}
     <div class="error-state" role="alert">
-      <p>Der aktuelle Goal Contract konnte nicht sicher gelesen werden.</p>
+      <p>Der Auftrag konnte nicht geladen werden.</p>
       <button type="button" onclick={() => loadGoal(selectedTaskId)}>Erneut laden</button>
     </div>
   {:else if goalView.kind === 'available'}
     {#if workspaceView === 'contract'}
       <article class="goal-contract" aria-labelledby="goal-details-heading">
         <header class="goal-actions">
-          <h3 id="goal-details-heading">Vertragsdetails</h3>
-          <button type="button" onclick={startRevision}>Neue Revision</button>
+          <h3 id="goal-details-heading">Ziel und Rahmen</h3>
+          <button type="button" onclick={startRevision}>Auftrag anpassen</button>
         </header>
         <div class="goal-metadata">
-          <code>{goalView.goal.taskId}</code>
-          <span>Zeitanker {goalView.goal.createdAtUnixMillis} ms</span>
+          <span>Erstellt am {displayTime(goalView.goal.createdAtUnixMillis)}</span>
           {#if goalView.goal.revisionReason !== null}
             <span>Änderungsgrund: {goalView.goal.revisionReason}</span>
           {/if}
         </div>
+        <details class="technical-details">
+          <summary>Technische Auftragsdetails</summary>
+          <p>Aufgabe <code>{goalView.goal.taskId}</code></p>
+          <p>Zeitanker {goalView.goal.createdAtUnixMillis} ms</p>
+        </details>
         <div class="goal-columns">
           <section aria-labelledby="criteria-heading">
             <h4 id="criteria-heading">Akzeptanzkriterien</h4>
@@ -1168,16 +1212,16 @@
         </div>
         <div class="boundary-grid">
           <section>
-            <h4>Constraints</h4>
+            <h4>Rahmenbedingungen</h4>
             {#if goalView.goal.constraints.length === 0}<p>
-                Keine zusätzlichen Constraints.
+                Keine zusätzlichen Bedingungen.
               </p>{:else}<ul>
                 {#each goalView.goal.constraints as item (item)}<li>{item}</li>{/each}
               </ul>{/if}
           </section>
           <section>
-            <h4>Non-Goals</h4>
-            {#if goalView.goal.nonGoals.length === 0}<p>Keine Non-Goals festgelegt.</p>{:else}<ul>
+            <h4>Außerhalb des Auftrags</h4>
+            {#if goalView.goal.nonGoals.length === 0}<p>Keine Abgrenzung festgelegt.</p>{:else}<ul>
                 {#each goalView.goal.nonGoals as item (item)}<li>{item}</li>{/each}
               </ul>{/if}
           </section>
@@ -1195,23 +1239,22 @@
   {/if}
 
   {#if editorMode !== 'closed'}
-    <div
-      class="goal-editor-dialog"
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      class="modal-dialog goal-editor-dialog"
       aria-labelledby="goal-editor-heading"
+      use:presentEditor
+      oncancel={closeEditor}
     >
       <form class="goal-editor" onsubmit={submitGoal}>
         <div class="editor-heading">
           <div>
-            <p>{editorMode === 'create' ? 'Neue Aufgabe' : 'Immutable Revision'}</p>
+            <p>{editorMode === 'create' ? 'Neue Aufgabe' : 'Auftrag aktualisieren'}</p>
             <h3 id="goal-editor-heading">
-              {editorMode === 'create' ? 'Goal Contract anlegen' : 'Goal Contract revidieren'}
+              {editorMode === 'create' ? 'Aufgabe anlegen' : 'Auftrag anpassen'}
             </h3>
           </div>
-          {#if goalView.kind === 'available' || editorMode === 'revise'}
-            <button type="button" onclick={closeEditor}>Editor schließen</button>
-          {/if}
+          <button type="button" disabled={submitting} onclick={closeEditor}>Editor schließen</button
+          >
         </div>
         {#if editorMode === 'revise'}
           <label>
@@ -1235,7 +1278,7 @@
               <label>
                 Anforderung
                 <select bind:value={criterion.requirement}>
-                  <option value="must">Muss · blockiert Done</option>
+                  <option value="must">Muss · für den Abschluss erforderlich</option>
                   <option value="should">Soll · bleibt sichtbar</option>
                 </select>
               </label>
@@ -1257,15 +1300,15 @@
           </button>
         </fieldset>
         <GoalTextList
-          legend="Constraints"
-          itemLabel="Constraint"
-          addLabel="Constraint hinzufügen"
+          legend="Rahmenbedingungen"
+          itemLabel="Bedingung"
+          addLabel="Bedingung hinzufügen"
           bind:values={draft.constraints}
         />
         <GoalTextList
-          legend="Non-Goals"
-          itemLabel="Non-Goal"
-          addLabel="Non-Goal hinzufügen"
+          legend="Außerhalb des Auftrags"
+          itemLabel="Abgrenzung"
+          addLabel="Abgrenzung hinzufügen"
           bind:values={draft.nonGoals}
         />
         <GoalTextList
@@ -1284,31 +1327,28 @@
             {submitting
               ? 'Wird dauerhaft gespeichert …'
               : editorMode === 'create'
-                ? 'Goal Contract anlegen'
-                : 'Neue Revision anhängen'}
+                ? 'Aufgabe anlegen'
+                : 'Änderung speichern'}
           </button>
-          {#if goalView.kind === 'available' || editorMode === 'revise'}
-            <button type="button" disabled={submitting} onclick={closeEditor}>Abbrechen</button>
-          {/if}
+          <button type="button" disabled={submitting} onclick={closeEditor}>Abbrechen</button>
         </div>
+        {#if actionError !== null}<p class="error-state" role="alert">{actionError}</p>{/if}
       </form>
-    </div>
+    </dialog>
   {/if}
 
   {#if actionMessage !== null}
     <p class="success-state" role="status" aria-live="polite">{actionMessage}</p>
   {/if}
-  {#if actionError !== null}
+  {#if actionError !== null && editorMode === 'closed'}
     <p class="error-state" role="alert">{actionError}</p>
   {/if}
 </section>
 
 <style>
   .agent-goal-workspace {
-    background: color-mix(in srgb, var(--color-surface-raised) 95%, var(--color-info-surface));
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
     display: grid;
+    min-width: 0;
     gap: 1rem;
     padding: clamp(1rem, 2vw, 1.6rem);
   }
@@ -1360,20 +1400,17 @@
   }
 
   .goal-contract {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
     overflow: clip;
   }
 
   .persistent-anchors {
-    background: var(--color-surface-raised);
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    border-block: 1px solid var(--color-border-soft);
     box-shadow: none;
     display: grid;
     gap: 1rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 1rem;
+    padding: 1rem 0;
     position: sticky;
     top: 0;
     z-index: 3;
@@ -1392,41 +1429,34 @@
   }
 
   .goal-actions {
-    background: var(--color-surface-raised);
     border-bottom: 1px solid var(--color-border-soft);
-    padding: 1rem;
+    padding: 1rem 0;
   }
 
   .goal-metadata {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
-    padding: 0.8rem 1rem 0;
-  }
-
-  .goal-metadata code {
-    max-width: 100%;
-    overflow-wrap: anywhere;
+    padding: 0.8rem 0 0;
   }
 
   .goal-columns,
   .boundary-grid {
     display: grid;
     gap: 1rem;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 1rem 0;
   }
 
   .boundary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     padding-top: 0;
   }
 
   .goal-columns section,
   .boundary-grid section {
-    background: var(--color-surface-raised);
-    border-radius: var(--radius-control);
-    padding: 0.9rem;
+    border-bottom: 1px solid var(--color-border-soft);
+    padding: 0.9rem 0;
   }
 
   .criteria-list {
@@ -1473,11 +1503,10 @@
   .task-ledger,
   .agent-activity,
   .detail-loader {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
     display: grid;
     gap: 0.8rem;
-    padding: 1rem;
+    padding: 1rem 0;
+    min-width: 0;
   }
 
   .detail-loader h3,
@@ -1518,23 +1547,23 @@
 
   .ledger-steps {
     display: grid;
-    gap: 0.55rem;
+    gap: 0;
     list-style: none;
     margin: 0;
     padding: 0;
   }
 
   .ledger-steps li {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    border-bottom: 1px solid var(--color-border-soft);
     display: grid;
     gap: 0.55rem;
     grid-template-columns: minmax(9rem, auto) minmax(0, 1fr);
-    padding: 0.7rem;
+    padding: 1rem 0;
   }
 
   .ledger-steps li.current {
-    border-color: var(--color-info);
+    border-inline-start: 2px solid var(--color-accent);
+    padding-inline-start: 0.7rem;
   }
 
   .ledger-steps li > div {
@@ -1614,21 +1643,10 @@
   }
 
   .run-controls {
-    background: var(--color-surface-raised);
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    border-block: 1px solid var(--color-border-soft);
     display: grid;
     gap: 0.75rem;
-    padding: 0.8rem;
-  }
-
-  .run-controls > div:first-child p {
-    color: var(--color-muted);
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    margin: 0;
-    text-transform: uppercase;
+    padding: 1rem 0;
   }
 
   .run-controls h4 {
@@ -1675,10 +1693,8 @@
   }
 
   .context-budget-grid > section {
-    background: var(--color-surface-raised);
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
-    padding: 0.8rem;
+    min-width: 0;
+    padding: 0.8rem 0;
   }
 
   .context-budget-grid h4 {
@@ -1726,7 +1742,7 @@
 
   .activity-timeline ol {
     display: grid;
-    gap: 0.45rem;
+    gap: 0;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -1734,7 +1750,7 @@
 
   .activity-timeline li {
     align-items: start;
-    border-left: 0.2rem solid var(--color-info);
+    border-left: 1px solid var(--color-border-soft);
     display: grid;
     gap: 0.65rem;
     grid-template-columns: auto minmax(0, 1fr);
@@ -1758,12 +1774,12 @@
   }
 
   .criteria-editor {
-    border: 1px solid var(--color-border-soft);
-    border-radius: var(--radius-control);
+    border: 0;
+    border-top: 1px solid var(--color-border-soft);
     display: grid;
     gap: 0.8rem;
     margin: 0;
-    padding: 0.9rem;
+    padding: 0.9rem 0;
   }
 
   .criterion-editor {
@@ -1774,7 +1790,7 @@
   }
 
   .primary {
-    background: var(--color-info);
+    background: var(--color-accent);
     color: var(--color-on-accent);
   }
 
@@ -1792,6 +1808,35 @@
 
   .empty-state {
     color: var(--color-muted);
+  }
+
+  .technical-details {
+    border-bottom: 1px solid var(--color-border-soft);
+    color: var(--color-muted);
+    font-size: var(--font-size-xs);
+  }
+  .technical-details summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    min-height: var(--control-min-size);
+  }
+  .technical-details summary::before {
+    content: '+';
+    margin-inline-end: 0.5rem;
+  }
+  .technical-details[open] > summary::before {
+    content: '−';
+  }
+  .technical-details code {
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+  button,
+  summary {
+    transition:
+      background var(--motion-fast) var(--ease-out),
+      color var(--motion-fast) var(--ease-out);
   }
 
   @media (max-width: 860px) {

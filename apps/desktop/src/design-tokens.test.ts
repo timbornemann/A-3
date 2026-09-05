@@ -98,6 +98,17 @@ describe('U9 design tokens', () => {
     }
   });
 
+  it('defines every semantic color referenced by a component', () => {
+    const defined = new Set(
+      [...tokensCss.matchAll(/(--color-[a-z0-9-]+):/gu)].map((match) => match[1]),
+    );
+    for (const [source, css] of [['styles.css', componentCss], ...scopedComponentCss] as const) {
+      for (const match of css.matchAll(/var\((--color-[a-z0-9-]+)/gu)) {
+        expect(defined.has(match[1]), `${source} uses undefined ${match[1]}`).toBe(true);
+      }
+    }
+  });
+
   it('keeps text scalable and suppresses non-essential motion through the user preference', () => {
     const allComponentCss = [componentCss, ...scopedComponentCss.map(([, css]) => css)].join('\n');
     expect(allComponentCss).not.toMatch(/font-size:\s*[^;{}]*px\b/iu);

@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentWorkspace from './AgentWorkspace.svelte';
+import * as sessionApi from './agent-session';
 import type { AgentActivityResponseV1 } from './agent-activity';
 import type {
+  AgentSessionControlActionV1,
   AgentSessionResponseV1,
   AgentSessionsResponseV1,
   AgentSlashCommandsResponseV1,
@@ -219,6 +221,248 @@ afterEach(() => {
 });
 
 describe('AgentWorkspace', () => {
+  it('renames through a native dialog with the visible session revision and trimmed title', async () => {
+    let response = askSession('completed');
+    const sessionController = vi.fn(
+      async (_id: string, _revision: string, action: AgentSessionControlActionV1) => {
+        if (response.result.status !== 'available' || action.kind !== 'rename')
+          throw new Error('rename fixture required');
+        response = structuredClone(response);
+        if (response.result.status !== 'available') throw new Error('available fixture required');
+        response.result.session.summary.title = action.title;
+        response.result.session.summary.revision = '3';
+        return response;
+      },
+    );
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionController,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: {
+          nextCursor: null,
+          status: 'available',
+          sessions: response.result.status === 'available' ? [response.result.session.summary] : [],
+        },
+      }),
+    });
+    const trigger = await screen.findByRole('button', { name: 'Session-Aktionen' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(screen.getByRole('button', { name: 'Umbenennen' }));
+    const dialog = screen.getByRole('dialog', { name: 'Chat umbenennen' });
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog.hasAttribute('open')).toBe(true);
+    const input = within(dialog).getByRole('textbox', { name: 'Name' });
+    expect((input as HTMLInputElement).value).toBe('Was macht A^3?');
+    await fireEvent.input(input, { target: { value: '  ' } });
+    expect(
+      within(dialog).getByRole<HTMLButtonElement>('button', { name: 'Speichern' }).disabled,
+    ).toBe(true);
+    await fireEvent.input(input, { target: { value: '  Architektur verstehen  ' } });
+    await fireEvent.submit(input.closest('form')!);
+    await waitFor(() =>
+      expect(sessionController).toHaveBeenCalledWith(sessionId, '2', {
+        kind: 'rename',
+        title: 'Architektur verstehen',
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('heading', { name: 'Architektur verstehen' })).toBeTruthy();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it.each(['button', 'native cancel'] as const)(
+    'cancels rename by %s without changing the session',
+    async (method) => {
+      const response = askSession('completed');
+      if (response.result.status !== 'available') throw new Error('available fixture required');
+      const sessionController = vi.fn(async () => response);
+      const summary = response.result.session.summary;
+      render(AgentWorkspace, {
+        activeProject: true,
+        sessionController,
+        sessionLoader: async () => response,
+        sessionsLoader: async () => ({
+          protocolVersion: 1,
+          result: { nextCursor: null, status: 'available', sessions: [summary] },
+        }),
+      });
+      const trigger = await screen.findByRole('button', { name: 'Session-Aktionen' });
+      await fireEvent.click(trigger);
+      await fireEvent.click(screen.getByRole('button', { name: 'Umbenennen' }));
+      const dialog = screen.getByRole('dialog', { name: 'Chat umbenennen' });
+      const focusTrigger = trigger.focus.bind(trigger);
+      vi.spyOn(trigger, 'focus').mockImplementation(() => {
+        expect(document.querySelector('dialog[open]')).toBeNull();
+        focusTrigger();
+      });
+      await fireEvent.input(within(dialog).getByRole('textbox', { name: 'Name' }), {
+        target: { value: 'Verwerfen' },
+      });
+      if (method === 'button')
+        await fireEvent.click(within(dialog).getByRole('button', { name: 'Abbrechen' }));
+      else await fireEvent(dialog, new Event('cancel', { cancelable: true }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(sessionController).not.toHaveBeenCalled();
+      expect(screen.getByRole('heading', { name: 'Was macht A^3?' })).toBeTruthy();
+      expect(document.activeElement).toBe(trigger);
+    },
+  );
+
+  it('keeps history focus reachable across close, open and Escape', async () => {
+    render(AgentWorkspace, { activeProject: true, sessionsLoader: async () => noSessions() });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    await fireEvent.click(screen.getByRole('button', { name: 'Verlauf schließen' }));
+    const trigger = screen.getByRole('button', { name: 'Verlauf öffnen' });
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole('complementary', { name: 'Unterhaltungen' })).toBeNull();
+    const history = document.getElementById(trigger.getAttribute('aria-controls')!);
+    expect(history?.inert).toBe(true);
+    await fireEvent.click(trigger);
+    const close = screen.getByRole('button', { name: 'Verlauf schließen' });
+    expect(document.activeElement).toBe(close);
+    expect(history?.inert).toBe(false);
+    await fireEvent.keyDown(close, { key: 'Escape' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Verlauf öffnen' }));
+    expect(history?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('ignores Escape from another route while the history drawer stays open', async () => {
+    render(AgentWorkspace, { activeProject: true, sessionsLoader: async () => noSessions() });
+    await screen.findByText('Woran möchtest du arbeiten?');
+    const outside = document.createElement('button');
+    outside.textContent = 'Andere Ansicht';
+    document.body.append(outside);
+    try {
+      outside.focus();
+      await fireEvent.keyDown(outside, { key: 'Escape' });
+      await fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.getByRole('complementary', { name: 'Unterhaltungen' })).toBeTruthy();
+      expect(document.activeElement).toBe(outside);
+      const close = screen.getByRole('button', { name: 'Verlauf schließen' });
+      close.focus();
+      await fireEvent.keyDown(close, { key: 'Escape' });
+      expect(screen.queryByRole('complementary', { name: 'Unterhaltungen' })).toBeNull();
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('allows only one rename mutation and keeps the pending modal open', async () => {
+    const response = askSession('completed');
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = response.result.session.summary;
+    let resolveRename: (value: AgentSessionResponseV1) => void = () => {};
+    const sessionController = vi.fn(
+      () =>
+        new Promise<AgentSessionResponseV1>((resolve) => {
+          resolveRename = resolve;
+        }),
+    );
+    render(AgentWorkspace, {
+      activeProject: true,
+      sessionController,
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { nextCursor: null, status: 'available', sessions: [summary] },
+      }),
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Session-Aktionen' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Umbenennen' }));
+    const dialog = screen.getByRole('dialog', { name: 'Chat umbenennen' });
+    const input = within(dialog).getByRole('textbox', { name: 'Name' });
+    await fireEvent.input(input, { target: { value: 'Neuer Titel' } });
+    const form = input.closest('form')!;
+    await fireEvent.submit(form);
+    await fireEvent.submit(form);
+    expect(sessionController).toHaveBeenCalledTimes(1);
+    expect(
+      within(dialog).getByRole<HTMLButtonElement>('button', { name: 'Wird gespeichert …' })
+        .disabled,
+    ).toBe(true);
+    expect(
+      within(dialog).getByRole<HTMLButtonElement>('button', { name: 'Abbrechen' }).disabled,
+    ).toBe(true);
+    expect(
+      within(dialog).getByRole<HTMLButtonElement>('button', { name: 'Umbenennen schließen' })
+        .disabled,
+    ).toBe(true);
+    const cancel = new Event('cancel', { cancelable: true });
+    await fireEvent(dialog, cancel);
+    expect(cancel.defaultPrevented).toBe(true);
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    resolveRename(response);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('uses bounded keyboard resizing for both workspace separators', async () => {
+    vi.spyOn(sessionApi, 'updateAgentWorkspaceLayout').mockImplementation(
+      async (current, layout) => ({ ...current, ...layout }),
+    );
+    const response = activeAgentSession();
+    if (response.result.status !== 'available') throw new Error('available fixture required');
+    const summary = response.result.session.summary;
+    render(AgentWorkspace, {
+      activeProject: true,
+      activityLoader: async () => activeAgentActivity(),
+      workPlanLoader: async () => adaptiveWorkPlan(),
+      sessionLoader: async () => response,
+      sessionsLoader: async () => ({
+        protocolVersion: 1,
+        result: { nextCursor: null, status: 'available', sessions: [summary] },
+      }),
+    });
+    const history = await screen.findByRole('separator', { name: 'Verlaufbreite ändern' });
+    const inspector = await screen.findByRole('separator', { name: 'Inspectorbreite ändern' });
+    for (const [separator, min, max, arrow] of [
+      [history, '220', '360', 'ArrowRight'],
+      [inspector, '320', '640', 'ArrowLeft'],
+    ] as const) {
+      expect(separator.getAttribute('tabindex')).toBe('0');
+      expect(separator.getAttribute('aria-orientation')).toBe('vertical');
+      await fireEvent.keyDown(separator, { key: 'Home' });
+      expect(separator.getAttribute('aria-valuenow')).toBe(min);
+      await fireEvent.keyDown(separator, { key: arrow });
+      expect(separator.getAttribute('aria-valuenow')).toBe(String(Number(min) + 16));
+      await fireEvent.keyDown(separator, { key: 'End' });
+      await fireEvent.keyDown(separator, { key: arrow });
+      expect(separator.getAttribute('aria-valuenow')).toBe(max);
+    }
+  });
+
+  it('ends pointer resizing on cancellation and releases all listeners on unmount', async () => {
+    const persist = vi
+      .spyOn(sessionApi, 'updateAgentWorkspaceLayout')
+      .mockImplementation(async (current, layout) => ({ ...current, ...layout }));
+    const added = vi.spyOn(window, 'addEventListener');
+    const removed = vi.spyOn(window, 'removeEventListener');
+    const view = render(AgentWorkspace, {
+      activeProject: true,
+      sessionsLoader: async () => noSessions(),
+    });
+    const separator = await screen.findByRole('separator', { name: 'Verlaufbreite ändern' });
+    await fireEvent.pointerDown(separator, { button: 0, clientX: 100 });
+    await fireEvent.pointerMove(window, { clientX: 132 });
+    expect(separator.getAttribute('aria-valuenow')).toBe('296');
+    await fireEvent.pointerCancel(window);
+    expect(persist).toHaveBeenCalledTimes(1);
+    await fireEvent.pointerMove(window, { clientX: 190 });
+    await fireEvent.pointerUp(window);
+    expect(separator.getAttribute('aria-valuenow')).toBe('296');
+    expect(persist).toHaveBeenCalledTimes(1);
+    await fireEvent.pointerDown(separator, { button: 0, clientX: 132 });
+    const owned = added.mock.calls.filter(([event]) =>
+      ['pointermove', 'pointerup', 'pointercancel'].includes(event),
+    );
+    view.unmount();
+    for (const [event, listener] of owned) expect(removed).toHaveBeenCalledWith(event, listener);
+    await fireEvent.pointerMove(window, { clientX: 180 });
+    await fireEvent.pointerUp(window);
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps every Core boundary closed without an active project', () => {
     const sessionsLoader = vi.fn<() => Promise<AgentSessionsResponseV1>>();
 

@@ -279,7 +279,7 @@ describe('M8 desktop user workflow', () => {
     expect((await screen.findAllByText('Kein Projekt geöffnet')).length).toBeGreaterThan(0);
     expect(sessionsLoader).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Projekt hinzufügen' }));
-    expect(await screen.findByRole('heading', { name: 'Aktives Projekt' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'm8-worktree' })).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('link', { name: 'Agent' }));
     expect(
@@ -288,7 +288,7 @@ describe('M8 desktop user workflow', () => {
     expect(await screen.findByRole('heading', { name: 'Erfolgreich abgeschlossen' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     expect(
-      await screen.findByText(/Done · alle Muss-Kriterien besitzen exakte frische Beweise/u),
+      await screen.findByText(/Abschluss belegt · alle Muss-Kriterien sind aktuell nachgewiesen/u),
     ).toBeTruthy();
 
     const globalStatus = screen.getByRole('region', { name: 'Globaler Arbeitsstatus' });

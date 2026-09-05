@@ -20,7 +20,7 @@
       class:warning={project.tone === 'warning'}
     >
       <dt>Projekt</dt>
-      <dd>{project.value}</dd>
+      <dd title={project.value}>{project.value}</dd>
     </div>
     <div
       class:failed={index.tone === 'failed'}
@@ -29,7 +29,7 @@
       class:warning={index.tone === 'warning'}
     >
       <dt>Index</dt>
-      <dd>{index.value}</dd>
+      <dd title={index.value}>{index.value}</dd>
     </div>
     <div
       class:failed={model.tone === 'failed'}
@@ -38,7 +38,7 @@
       class:warning={model.tone === 'warning'}
     >
       <dt>Modell</dt>
-      <dd>{model.value}</dd>
+      <dd title={model.value}>{model.value}</dd>
     </div>
     <div
       class:failed={run.tone === 'failed'}
@@ -46,8 +46,8 @@
       class:ready={run.tone === 'ready'}
       class:warning={run.tone === 'warning'}
     >
-      <dt>Run</dt>
-      <dd>{run.value}</dd>
+      <dt>Agent</dt>
+      <dd title={run.value}>{run.value}</dd>
     </div>
   </dl>
 </section>

@@ -344,11 +344,11 @@
   } | null>(null);
 
   const workspaceTitles: Record<WorkspaceArea, string> = {
-    projects: 'Projects',
-    map: 'Project Map',
+    projects: 'Projekte',
+    map: 'Karte',
     flows: 'Abläufe',
     agent: 'Agent',
-    settings: 'Settings',
+    settings: 'Einstellungen',
   };
 
   function navigateWorkspace(area: WorkspaceArea): void {
@@ -945,7 +945,7 @@
         tone: 'running',
       },
       published: {
-        copy: 'Project Map und Agent können den aktuellen Projektstand verwenden.',
+        copy: 'Karte und Agent können den aktuellen Projektstand verwenden.',
         title: 'Analyse ist bereit',
         tone: 'ready',
       },
@@ -1080,12 +1080,16 @@
   >
     <header class="workspace-toolbar">
       <h2>{workspaceTitles[currentWorkspaceArea]}</h2>
-      <GlobalStatusBar
-        project={globalProjectItem()}
-        index={globalIndexItem()}
-        model={globalModelItem()}
-        run={globalRunItem()}
-      />
+      {#if projectStatusView.kind === 'active'}
+        <span
+          class="workspace-project"
+          title={projectStatusView.result.project.worktreeRootDisplay}
+        >
+          <span aria-hidden="true">/</span>
+          {projectDisplayName(projectStatusView.result.project.worktreeRootDisplay)}
+          <small>{branchLabel(projectStatusView.result.project.head)}</small>
+        </span>
+      {/if}
     </header>
 
     <div class="workspace-layout">
@@ -1099,7 +1103,7 @@
           id="projects"
           class="project-card"
           class:project-active={projectStatusView.kind === 'active'}
-          aria-label={currentWorkspaceArea === 'map' ? 'Project Map' : undefined}
+          aria-label={currentWorkspaceArea === 'map' ? 'Karte' : undefined}
           aria-labelledby={currentWorkspaceArea === 'projects'
             ? projectStatusView.kind === 'active'
               ? 'active-project-heading'
@@ -1115,8 +1119,8 @@
             </div>
 
             <p class="project-copy">
-              Füge einen lokalen Git-Worktree hinzu oder aktiviere ein bereits gespeichertes Projekt
-              aus deinem Katalog.
+              Öffne einen Projektordner. A^3 hilft dir, den Code zu verstehen, Änderungen zu planen
+              und Aufgaben umzusetzen.
             </p>
             <button
               class="primary-action"
@@ -1150,8 +1154,13 @@
                     </svg>
                   </div>
                   <div>
-                    <h3 id="active-project-heading">Aktives Projekt</h3>
-                    <strong>{projectStatusView.result.project.worktreeRootDisplay}</strong>
+                    <p class="section-kicker">Aktives Projekt</p>
+                    <h3 id="active-project-heading">
+                      {projectDisplayName(projectStatusView.result.project.worktreeRootDisplay)}
+                    </h3>
+                    <strong title={projectStatusView.result.project.worktreeRootDisplay}
+                      >{projectStatusView.result.project.worktreeRootDisplay}</strong
+                    >
                     <p>{branchLabel(projectStatusView.result.project.head)}</p>
                   </div>
                 </div>
@@ -1159,10 +1168,10 @@
                   <button
                     class="primary-action"
                     type="button"
-                    onclick={() => navigateWorkspace('map')}>Project Map öffnen</button
+                    onclick={() => navigateWorkspace('agent')}>Mit Agent arbeiten</button
                   >
-                  <button type="button" onclick={() => navigateWorkspace('agent')}
-                    >Agent öffnen</button
+                  <button type="button" onclick={() => navigateWorkspace('map')}
+                    >Code erkunden</button
                   >
                   <button type="button" onclick={() => openProjectDialog()}
                     >Projekt verwalten</button
@@ -1659,9 +1668,9 @@
             <section class="project-catalog" aria-labelledby="project-catalog-heading">
               <div class="project-catalog-heading">
                 <div>
-                  <p class="section-kicker">Projektkatalog</p>
-                  <h3 id="project-catalog-heading">Gespeicherte Worktrees</h3>
-                  <p>Zuletzt aktiviert zuerst · 25 Projekte pro Seite</p>
+                  <p class="section-kicker">Arbeitsumgebung</p>
+                  <h3 id="project-catalog-heading">Deine Projektbibliothek</h3>
+                  <p>Zuletzt verwendete Projekte</p>
                 </div>
                 {#if projectStatusView.kind === 'active'}
                   <button
@@ -1684,7 +1693,7 @@
                     id="project-catalog-search"
                     type="search"
                     maxlength="128"
-                    placeholder="Name oder sicherer Root-Anzeigename"
+                    placeholder="Name oder Projektordner"
                     bind:value={projectCatalogSearchInput}
                   />
                   <button type="submit">Projekte suchen</button>
@@ -1699,8 +1708,8 @@
                   <strong>Projekt konnte nicht automatisch geöffnet werden.</strong>
                   <p>{projectRestoreMessage}</p>
                   <p>
-                    Ist der Worktree verschoben, füge seinen neuen Root erneut hinzu. Ist er nicht
-                    mehr relevant, entferne nur den Katalogeintrag.
+                    Ist der Projektordner umgezogen, wähle ihn erneut aus. Nicht mehr benötigte
+                    Projekte kannst du aus der Liste entfernen.
                   </p>
                 </div>
               {/if}
@@ -1727,7 +1736,7 @@
                   >
                   <p>
                     {projectCatalogSearch === null
-                      ? 'Füge deinen ersten lokalen Git-Worktree über den nativen Ordnerdialog hinzu.'
+                      ? 'Wähle einen lokalen Git-Projektordner, um loszulegen.'
                       : 'Passe den Suchbegriff an oder setze die Suche zurück.'}
                   </p>
                 </div>
@@ -1851,15 +1860,13 @@
             aria-labelledby="map-placeholder-heading"
             tabindex="-1"
           >
-            <h2 id="map-placeholder-heading">Project Map</h2>
+            <h2 id="map-placeholder-heading">Code erkunden</h2>
             {#if projectStatusView.kind === 'loading'}
-              <p role="status">Project Map wartet auf den Projektstatus …</p>
+              <p role="status">Dein Projekt wird für die Karte geladen …</p>
             {:else if projectStatusView.kind === 'error'}
-              <p role="alert">
-                Project Map ist verfügbar, sobald der Projektstatus wieder geladen wurde.
-              </p>
+              <p role="alert">Die Karte ist verfügbar, sobald dein Projekt wieder geladen wurde.</p>
             {:else}
-              <p>Öffne einen lokalen Worktree, um Project Map und Evidence zu verwenden.</p>
+              <p>Öffne ein Projekt, um seinen Code und die zugehörigen Quellen zu erkunden.</p>
             {/if}
           </section>
         {/if}
@@ -1927,12 +1934,12 @@
             />
           {:else}
             <section class="lazy-surface" aria-labelledby="lazy-agent-heading">
-              <h2 id="lazy-agent-heading">Agent Workspace</h2>
+              <h2 id="lazy-agent-heading">Agent</h2>
               {#if agentWorkspaceState === 'error'}
                 <p role="alert">Der lokale Agent-Workspace-Chunk konnte nicht geladen werden.</p>
                 <button type="button" onclick={loadAgentWorkspaceChunk}>Erneut laden</button>
               {:else}
-                <p role="status">Agent Workspace wird bei Sichtbarkeit geladen …</p>
+                <p role="status">Dein Agentenbereich wird geladen …</p>
                 <button type="button" onclick={loadAgentWorkspaceChunk}>Jetzt laden</button>
               {/if}
             </section>
@@ -1947,10 +1954,10 @@
             <section class="lazy-surface" aria-labelledby="lazy-settings-heading">
               <h2 id="lazy-settings-heading">Modelle, Ressourcen und Datenschutz</h2>
               {#if settingsState === 'error'}
-                <p role="alert">Der lokale Settings-Chunk konnte nicht geladen werden.</p>
+                <p role="alert">Die Einstellungen konnten nicht geladen werden.</p>
                 <button type="button" onclick={loadSettingsChunk}>Erneut laden</button>
               {:else}
-                <p role="status">Settings werden bei Sichtbarkeit geladen …</p>
+                <p role="status">Die Einstellungen werden geladen …</p>
                 <button type="button" onclick={loadSettingsChunk}>Jetzt laden</button>
               {/if}
             </section>
@@ -1958,5 +1965,11 @@
         </div>
       </div>
     </div>
+    <GlobalStatusBar
+      project={globalProjectItem()}
+      index={globalIndexItem()}
+      model={globalModelItem()}
+      run={globalRunItem()}
+    />
   </section>
 </main>
