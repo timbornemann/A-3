@@ -16,6 +16,12 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 - relevante Unit- und Integrationstests
 - cargo test --workspace --all-features
 - Dokumentation für öffentliche APIs und Invarianten
+- Die zusammenhängende Recherche-Fixture muss vollständige Aufrufer-, Dispatcher-, Callback-,
+  Konstruktor- und Writer-Rümpfe gleichzeitig im aktuellen Paket nachweisen. Ein Testmodell mit
+  eigenem Evidence-Gedächtnis reicht nicht. Ask, Plan, Agent-Vorbereitung und Diagramme bleiben
+  read-only; disjunkte Bereiche derselben Revision, Überlappungen, explizite neue Stellen und
+  512–8192-Byte-Grenzen sind separat zu prüfen. Siehe
+  [Regression](../fixtures/research-coherent-v1/README.md).
 
 ### Frontend
 

@@ -2469,6 +2469,7 @@ struct AskResearchWorkingSet {
     current_delivery: Vec<research_context::CoveredRange>,
     delivery_revision: usize,
     focus: Vec<research_context::SourceFocus>,
+    retained_units: Vec<research_context::CoveredRange>,
     continuation_feedback: String,
     partial_answer: Option<(String, Vec<u16>)>,
     last_note: Option<a3_application::AskResearchDecisionNote>,
@@ -2500,6 +2501,7 @@ impl AskResearchWorkingSet {
             current_delivery: Vec::new(),
             delivery_revision: 0,
             focus: Vec::new(),
+            retained_units: Vec::new(),
             continuation_feedback: String::new(),
             partial_answer: None,
             last_note: None,
@@ -6440,7 +6442,7 @@ async fn ask_decision(
                 | AgentConversationFailure::OutputTooLarge,
             )) => research_model::DecisionIssue::Truncated,
             Ok(Err(AgentConversationFailure::InvalidOutput)) => {
-                research_model::DecisionIssue::Shape
+                research_model::DecisionIssue::Stream
             }
             Ok(Err(_)) => return Err(AgentSessionManagerFailure::Unavailable),
             Err(_) => return Ok((Err(ResearchStopReason::TimeLimit), diagnostics)),

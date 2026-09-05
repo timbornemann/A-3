@@ -15,6 +15,13 @@ pub(super) struct CoveredRange {
 pub(super) struct SourceFocus {
     pub revision: FileRevision,
     pub start: SourcePosition,
+    origin: FocusOrigin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusOrigin {
+    Navigation,
+    Explicit,
 }
 
 /// Merge overlapping/touching intervals, retaining revision and byte-column precision.
@@ -156,7 +163,17 @@ impl AskResearchWorkingSet {
             {
                 return true;
             }
-            self.focus_at(revision, start)
+            let cached = self.focus_at(revision.clone(), start);
+            if cached
+                && !page_start
+                && let Some(focus) = self
+                    .focus
+                    .iter_mut()
+                    .find(|focus| focus.revision == revision)
+            {
+                focus.origin = FocusOrigin::Explicit;
+            }
+            cached
         })
     }
 
@@ -171,8 +188,13 @@ impl AskResearchWorkingSet {
                 .find(|focus| focus.revision == revision)
             {
                 focus.start = start;
+                focus.origin = FocusOrigin::Navigation;
             } else {
-                self.focus.push(SourceFocus { revision, start });
+                self.focus.push(SourceFocus {
+                    revision,
+                    start,
+                    origin: FocusOrigin::Navigation,
+                });
             }
             if self.focus.len() > 8 {
                 self.focus.remove(0);
@@ -220,6 +242,58 @@ impl AskResearchWorkingSet {
             .take(32_768)
             .collect::<Vec<_>>();
         symbols.sort_by_key(|symbol| symbol.parsed().kind() == a3_domain::SymbolKind::Class);
+        // Keep exact, source-backed units across decisions. A newly requested constructor
+        // must not evict the caller/callback/writer established by earlier valid requests.
+        // This is a bounded selection of existing index ranges, not model-authored evidence.
+        for symbol in &symbols {
+            if !tokens.contains(symbol.parsed().name().as_str())
+                || !matches!(
+                    symbol.parsed().kind(),
+                    a3_domain::SymbolKind::Function | a3_domain::SymbolKind::Method
+                )
+                || (selected_only
+                    && !self
+                        .focus
+                        .iter()
+                        .any(|focus| focus.revision == *symbol.revision()))
+            {
+                continue;
+            }
+            let range = symbol.parsed().declaration_range();
+            let unit = CoveredRange {
+                revision: symbol.revision().clone(),
+                start: SourcePosition::new(range.start_position().row(), 0),
+                end: if range.end_position().column() == 0 {
+                    range.end_position()
+                } else {
+                    SourcePosition::new(range.end_position().row().saturating_add(1), 0)
+                },
+            };
+            if self.excerpts.iter().any(|item| {
+                self.revision_for(item) == Some(&unit.revision)
+                    && offset(item, unit.start).is_some()
+            }) {
+                self.retain_unit(unit);
+                // An indented method alone does not prove its owning class. Retain the
+                // actual enclosing declaration line as source, never an invented label.
+                if let Some(owner) = symbols
+                    .iter()
+                    .filter(|owner| {
+                        owner.revision() == symbol.revision()
+                            && owner.parsed().kind() == a3_domain::SymbolKind::Class
+                            && owner.parsed().declaration_range().contains(range)
+                    })
+                    .max_by_key(|owner| owner.parsed().declaration_range().start_position())
+                {
+                    let row = owner.parsed().declaration_range().start_position().row();
+                    self.retain_unit(CoveredRange {
+                        revision: symbol.revision().clone(),
+                        start: SourcePosition::new(row, 0),
+                        end: SourcePosition::new(row.saturating_add(1), 0),
+                    });
+                }
+            }
+        }
         let mut focused = false;
         let mut refined = Vec::new();
         for symbol in symbols {
@@ -254,10 +328,10 @@ impl AskResearchWorkingSet {
                 continue;
             }
             for old in &self.delivered {
-                if !selected_only
-                    && old.revision == *symbol.revision()
+                if old.revision == *symbol.revision()
                     && old.start <= start
                     && old.end > start
+                    && old.end < range.end_position()
                 {
                     start = old.end;
                 }
@@ -271,6 +345,27 @@ impl AskResearchWorkingSet {
             }
         }
         focused
+    }
+
+    fn retain_unit(&mut self, mut unit: CoveredRange) {
+        // Include at most two real blank separator lines so adjacent method/scope units
+        // share one header. Never bridge executable code or an unread cache gap.
+        if let Some((item, offset)) = self.excerpts.iter().find_map(|item| {
+            (self.revision_for(item) == Some(&unit.revision))
+                .then(|| offset(item, unit.end).map(|start| (item, start)))
+                .flatten()
+        }) {
+            for line in item.text[offset..].split_inclusive('\n').take(2) {
+                if !line.trim().is_empty() {
+                    break;
+                }
+                unit.end = end_position(unit.end, line);
+            }
+        }
+        cover(&mut self.retained_units, unit);
+        if self.retained_units.len() > 32 {
+            self.retained_units.remove(0);
+        }
     }
 
     /// Select a byte-position frontier in cached current source, not another file read.
@@ -295,7 +390,11 @@ impl AskResearchWorkingSet {
             if offset(item, start).is_some() {
                 let revision = revision.clone();
                 self.focus.clear();
-                self.focus.push(SourceFocus { revision, start });
+                self.focus.push(SourceFocus {
+                    revision,
+                    start,
+                    origin: FocusOrigin::Explicit,
+                });
                 return true;
             }
         }
@@ -307,14 +406,18 @@ impl AskResearchWorkingSet {
         required: &[FileRevision],
         limit: usize,
     ) -> String {
-        let mut candidates = self.excerpts.iter().collect::<Vec<_>>();
+        let units = self.unit_excerpts();
+        let is_unit =
+            |item: &ResearchSourceExcerpt| units.iter().any(|unit| std::ptr::eq(unit, item));
+        let mut candidates = units.iter().chain(self.excerpts.iter()).collect::<Vec<_>>();
         candidates.sort_by_key(|item| {
             let focused = self.focus.iter().position(|focus| {
                 self.revision_for(item) == Some(&focus.revision)
-                    && offset(item, focus.start).is_some()
+                    && (is_unit(item) || offset(item, focus.start).is_some())
             });
             (
                 focused.unwrap_or(usize::MAX),
+                !is_unit(item),
                 !(item.text.len() <= limit / 2
                     && self
                         .revision_for(item)
@@ -324,16 +427,17 @@ impl AskResearchWorkingSet {
         let mut selected: Vec<&ResearchSourceExcerpt> = Vec::new();
         for item in candidates {
             if selected.iter().any(|old| {
-                old.ordinal == item.ordinal
-                    || (self.revision_for(item).is_some()
-                        && self.revision_for(item) == self.revision_for(old))
+                self.revision_for(item).is_some()
+                    && self.revision_for(item) == self.revision_for(old)
+                    && !(is_unit(item) && is_unit(old))
             }) {
                 continue;
             }
-            let item = if self
-                .focus
-                .iter()
-                .any(|focus| self.revision_for(item) == Some(&focus.revision))
+            let item = if is_unit(item)
+                || self
+                    .focus
+                    .iter()
+                    .any(|focus| self.revision_for(item) == Some(&focus.revision))
             {
                 item
             } else {
@@ -353,7 +457,13 @@ impl AskResearchWorkingSet {
                     .unwrap_or(item)
             };
             selected.push(item);
-            if selected.len() >= 8.min((limit / 256).max(1)) {
+            if selected.len()
+                >= if units.is_empty() {
+                    8.min((limit / 256).max(1))
+                } else {
+                    8
+                }
+            {
                 break;
             }
         }
@@ -361,7 +471,8 @@ impl AskResearchWorkingSet {
             .iter()
             .map(|item| {
                 let focus = self.focus.iter().find(|focus| {
-                    self.revision_for(item) == Some(&focus.revision)
+                    (!is_unit(item) || item.text.len() > limit / 2)
+                        && self.revision_for(item) == Some(&focus.revision)
                         && offset(item, focus.start).is_some()
                 });
                 let start = focus.map_or(
@@ -370,7 +481,7 @@ impl AskResearchWorkingSet {
                 );
                 let body = &item.text[offset(item, start).unwrap_or(0)..];
                 let header = format!(
-                    "\n[S{}] {} ab Zeile {} (Spalte {}; aktueller Ausschnitt)\n",
+                    "\n[S{}] {} ab Zeile {} (Spalte {})\n",
                     item.ordinal,
                     item.path,
                     start.row().saturating_add(1),
@@ -385,7 +496,20 @@ impl AskResearchWorkingSet {
         let weights = parts
             .iter()
             .map(|(item, _, body, _)| {
-                if body.len() <= limit / 2
+                if !units.is_empty() {
+                    // Under real overflow, deliver a usable active region. Equal shares
+                    // can all be smaller than their header + truncation marker, yielding
+                    // an empty evidence packet while readable source remains cached.
+                    return if self.focus.iter().any(|focus| {
+                        self.revision_for(item) == Some(&focus.revision)
+                            && offset(item, focus.start).is_some()
+                    }) {
+                        16
+                    } else {
+                        1
+                    };
+                }
+                if (!is_unit(item) && body.len() <= limit / 2)
                     || self
                         .focus
                         .iter()
@@ -399,6 +523,29 @@ impl AskResearchWorkingSet {
             .collect::<Vec<usize>>();
         let mut pending = (0..parts.len()).collect::<Vec<_>>();
         let mut remaining = limit;
+        // When the requested units fit together, reserve them whole before background hits.
+        // Equal shares of entire file suffixes repeatedly hid other needed methods.
+        let protected = |item: &ResearchSourceExcerpt| {
+            is_unit(item)
+                || self
+                    .focus
+                    .iter()
+                    .any(|focus| self.revision_for(item) == Some(&focus.revision))
+        };
+        let unit_cost = parts
+            .iter()
+            .filter(|(item, _, _, _)| protected(item))
+            .map(|(_, _, body, header)| body.len() + header.len() + 1)
+            .sum::<usize>();
+        if unit_cost <= limit {
+            for (index, (item, _, body, header)) in parts.iter().enumerate() {
+                if protected(item) {
+                    quotas[index] = body.len() + header.len() + 1;
+                    remaining = remaining.saturating_sub(quotas[index]);
+                    pending.retain(|candidate| *candidate != index);
+                }
+            }
+        }
         while !pending.is_empty() {
             let total_weight = pending.iter().map(|index| weights[*index]).sum::<usize>();
             let share = remaining / total_weight;
@@ -462,6 +609,80 @@ impl AskResearchWorkingSet {
         }
         self.current_delivery = delivered;
         output
+    }
+
+    /// Materialize only cached, revision-matching intervals; never fill gaps from index text.
+    /// Overlap is merged in the selection, so each byte appears at most once per revision.
+    fn unit_excerpts(&self) -> Vec<ResearchSourceExcerpt> {
+        let mut result = Vec::new();
+        let mut ranges = self.retained_units.clone();
+        // Retention is not a lock: exact new lines and the sole recovery frontier must
+        // still be visible, including an unselected region of the SAME file.
+        for focus in &self.focus {
+            if focus.origin != FocusOrigin::Explicit
+                || !ranges.iter().any(|unit| unit.revision == focus.revision)
+                || ranges.iter().any(|unit| {
+                    unit.revision == focus.revision
+                        && unit.start <= focus.start
+                        && unit.end > focus.start
+                })
+            {
+                continue;
+            }
+            let start = SourcePosition::new(focus.start.row(), 0);
+            let end = ranges
+                .iter()
+                .filter(|unit| unit.revision == focus.revision && unit.start > start)
+                .map(|unit| unit.start)
+                .min()
+                .unwrap_or(SourcePosition::new(u32::MAX, 0));
+            ranges.insert(
+                0,
+                CoveredRange {
+                    revision: focus.revision.clone(),
+                    start,
+                    end,
+                },
+            );
+        }
+        for unit in &ranges {
+            let mut cursor = unit.start;
+            while cursor < unit.end && result.len() < 32 {
+                let candidate = self
+                    .excerpts
+                    .iter()
+                    .filter_map(|item| {
+                        if self.revision_for(item) != Some(&unit.revision) {
+                            return None;
+                        }
+                        let start = offset(item, cursor)?;
+                        let end = end_position(
+                            SourcePosition::new(item.start_line.saturating_sub(1), 0),
+                            &item.text,
+                        )
+                        .min(unit.end);
+                        Some((item, start, end))
+                    })
+                    .max_by_key(|(_, _, end)| *end);
+                let Some((item, start, end)) = candidate else {
+                    break;
+                };
+                // Unit starts and page ends are line-aligned. A partial overlong line uses
+                // the existing byte-cursor fallback instead of inventing a new line anchor.
+                if cursor.column() != 0 || end <= cursor {
+                    break;
+                }
+                let finish = offset(item, end).unwrap_or(item.text.len());
+                result.push(ResearchSourceExcerpt {
+                    ordinal: item.ordinal,
+                    path: item.path.clone(),
+                    start_line: cursor.row().saturating_add(1),
+                    text: item.text[start..finish].to_owned(),
+                });
+                cursor = end;
+            }
+        }
+        result
     }
 
     /// Commit only the packet handed to the model boundary, not speculative packing for progress.

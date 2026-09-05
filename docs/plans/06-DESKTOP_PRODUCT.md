@@ -1048,6 +1048,24 @@ behauptet keine Verbesserung gegenüber U11.
 
 Abhängigkeiten: ADR-0033, Gate M8
 
+Zusammenhängende Recherche, Folgeregression 2026-09-06 (ADR-0046): Mehrere vollständige
+Methodenkörper einschließlich Konstruktor und Writer sollen im selben aktuellen Paket
+auswertbar bleiben. Keine neuen Indizes, höheren Budgets, Freigaben oder automatischen Neustarts.
+
+- [x] Revisionsgebundene Funktionsbereiche über validierte Leserunden hinweg gemeinsam packen.
+- [x] Überlappungen, enge Bytebudgets und neue explizite Navigation unverändert absichern.
+- [x] Format-Typfehler und Streamfehler ohne Rohdaten unterscheiden.
+- [x] Stateless Mehrdatei-/Mehrmethoden-Regression einschließlich Diagramm und serielles
+      Windows-Rust-Workspacegate bestehen.
+
+Abnahme: 45 gezielte Recherchetests, vollständiger Release-Workspace mit `--test-threads=1`
+(darunter 164 Desktoptests), Clippy `-D warnings`, Formatierung und Linkprüfung bestanden.
+Der parallele unveränderte `catalog_contract` stürzt separat mit Windows/libSQL
+`STATUS_ACCESS_VIOLATION` ab; dieser unabhängige Testbefund bleibt offen. Kein Live-Modelllauf.
+
+Analyse und Vorher-/Nachher-Nachweis:
+[Zusammenhängende Recherche](../../fixtures/research-coherent-v1/README.md).
+
 Plan-Recherche-Korrektur 2026-09-06 (ADR-0038/0042/0046): Ziel ist ein belegter,
 prüfbarer Plan innerhalb derselben endlichen Recherche, ohne manuelle Neustarts wegen
 Kontextverdrängung oder reparierbarer Ausgabeform. Nicht-Ziele: TaskFlows CSV-Import

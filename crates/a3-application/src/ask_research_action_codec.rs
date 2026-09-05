@@ -515,7 +515,7 @@ fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDecodeError> {
 fn object(value: &Value) -> Result<&Map<String, Value>, AskResearchDecisionDecodeError> {
     value
         .as_object()
-        .ok_or(AskResearchDecisionDecodeError::InvalidShape)
+        .ok_or(AskResearchDecisionDecodeError::ExpectedObject)
 }
 fn array<'a>(
     value: &'a Map<String, Value>,
@@ -525,7 +525,7 @@ fn array<'a>(
         .get(key)
         .and_then(Value::as_array)
         .map(Vec::as_slice)
-        .ok_or(AskResearchDecisionDecodeError::InvalidShape)
+        .ok_or(AskResearchDecisionDecodeError::ExpectedArray)
 }
 fn string<'a>(
     value: &'a Map<String, Value>,
@@ -534,7 +534,7 @@ fn string<'a>(
     value
         .get(key)
         .and_then(Value::as_str)
-        .ok_or(AskResearchDecisionDecodeError::InvalidShape)
+        .ok_or(AskResearchDecisionDecodeError::ExpectedString)
 }
 fn exact(value: &Map<String, Value>, keys: &[&str]) -> Result<(), AskResearchDecisionDecodeError> {
     if value.len() == keys.len() && keys.iter().all(|key| value.contains_key(*key)) {
@@ -555,6 +555,12 @@ pub enum AskResearchDecisionDecodeError {
     MalformedJson,
     /// A required object, array, string, or integer had the wrong shape.
     InvalidShape,
+    /// An object position contained another JSON type.
+    ExpectedObject,
+    /// An array position contained another JSON type.
+    ExpectedArray,
+    /// A text position contained another JSON type.
+    ExpectedString,
     /// A required field was absent or an unknown field was present.
     UnknownOrMissingField,
     /// The document did not select schema version three.

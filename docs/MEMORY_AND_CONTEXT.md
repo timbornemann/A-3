@@ -474,6 +474,7 @@ Ein notwendiger Fortsetzungszustand benennt seinen Core-Grund: Zeit-/Entscheidun
 Aktionsende, Stagnation, verbleibende Beleglücke oder ungültige Ausgabe beziehungsweise
 Zitatzuteilung. Ein Formatfehler wird nicht als begrenzte Suche ausgegeben. Versionierte,
 content-freie Diagnosen unterscheiden JSON, Form, Felder, Version, Werte, Quellen,
+Objekt-/Array-/String-Typfehler sowie einen ungültigen oder unvollständigen Response-Stream,
 Markerabweichung, geschlossene Reads und abgeschnittene Ausgabe. Ein frisch gepackter Repair
 behält Frage und Evidence ungekürzt gegenüber dem Primärpaket; sein kurzer Hinweis darf
 historische Conversation verdrängen, nicht die aktuelle Evidence. Auch die zweite ungültige
@@ -497,8 +498,22 @@ Die Modellnachrichten werden pro Entscheidung aus dem begrenzten ursprünglichen
 Conversation-Ausschnitt, genau dem aktuellen Aktionsfeedback und einem frisch kompilierten
 Evidence-Paket aufgebaut. Frühere kompilierte Pakete werden nicht erneut als Conversation
 angehängt. Der flüchtige Source-Cache hält höchstens 200 Ausschnitte zu je 32 KiB; das kleinere
-modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte, jeweils
-höchstens einen pro Revision. Kurze
+modellprofilgebundene Evidence-Fenster enthält höchstens acht fokussierte Ausschnitte.
+Höchstens 32 aus aktuellen Fast-Index-Funktionsbereichen und ihren umschließenden
+Klassendeklarationszeilen ausgewählte Intervalle bleiben
+revisionsgebunden im flüchtigen Working Set erhalten. Mehrere disjunkte Methodenkörper
+derselben Revision dürfen gemeinsam sichtbar sein; überlappende Bytes werden vereinigt.
+Neue validierte Lücken ergänzen die Auswahl, statt bereits benötigte Aufrufer, Konstruktoren
+und Callbacks zu verdrängen. Ausgeliefert wird ausschließlich sicher gelesener Originaltext,
+kein Indexersatztext und keine Modellzusammenfassung. Passt die Auswahl mit den aktiven
+Lesezielen ins Fenster, werden ihre vollständigen Kosten vor Hintergrundtreffern reserviert.
+Bei echtem Überlauf erhält die aktive Stelle Vorrang vor älteren Bereichen, damit
+Kopfzeilen und Kürzungsmarker nicht sämtliche Textanteile aufbrauchen. Höchstens zwei
+tatsächlich gecachte Leerzeilen können benachbarte Bereiche verbinden; Code und ungelesene
+Lücken werden niemals übersprungen. Teilweise gelieferte lange Funktionen behalten ihren
+Fortsetzungscursor auch bei erneuter symbolbasierter Verfeinerung.
+Explizite neue Stellen und die einzige Recovery bleiben auch innerhalb derselben Datei
+erreichbar. Kurze
 relevante Dateien werden nach Möglichkeit vollständig gepackt, statt jedem Treffer pauschal
 denselben kleinen Textanteil zu geben. Ein Aktionsbatch hält mehrere Dateifokusse gleichzeitig;
 Cacheprüfung und erneute Priorisierung dürfen nicht wieder nur sein letztes Ziel auswählen.

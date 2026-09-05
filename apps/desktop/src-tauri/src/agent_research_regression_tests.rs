@@ -12,6 +12,123 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 mod plan_baseline;
 
 #[test]
+fn retained_units_are_source_owned_deduplicated_bounded_and_do_not_lock_focus() -> TestResult {
+    use research_context::{CoveredRange, cover};
+    for budget in [512, 1024, 2048, 4096, 8192] {
+        let mut state = AskResearchWorkingSet::new(budget);
+        let item = source(1, "flow.py", 103)?;
+        let revision = item.revision().clone();
+        let body = format!(
+            "def first():\n    return 'ä'\n{}def last():\n    return '🦀'\n",
+            "# filler\n".repeat(99)
+        );
+        state.render(&item, 1, &body, true);
+        state.sources.push(item);
+        for (start, end) in [(0, 2), (1, 2), (101, 103)] {
+            cover(
+                &mut state.retained_units,
+                CoveredRange {
+                    revision: revision.clone(),
+                    start: SourcePosition::new(start, 0),
+                    end: SourcePosition::new(end, 0),
+                },
+            );
+        }
+        let packet = state.model_evidence("Compare first and last", &[]);
+        assert!(packet.len() <= budget);
+        assert_eq!(packet.matches("return 'ä'").count(), 1);
+        assert_eq!(packet.matches("return '🦀'").count(), 1);
+        assert!(!packet.contains("# filler"));
+        assert_eq!(state.current_delivery.len(), 2);
+        state.commit_delivery();
+        let before = state.progress_with_pending();
+        assert_eq!(state.model_evidence("Compare first and last", &[]), packet);
+        assert_eq!(state.progress_with_pending(), before);
+        assert!(state.focus_cached(&AskResearchAction::InspectPath {
+            path: "flow.py".to_owned(),
+            start_line: 50
+        }));
+        let focused = state.evidence_window();
+        assert!(focused.contains("ab Zeile 50"));
+        assert!(focused.contains("# filler"));
+        assert!(focused.len() <= budget);
+        for (index, range) in state.current_delivery.iter().enumerate() {
+            assert_eq!(range.revision, revision);
+            assert!(
+                !state.current_delivery[..index]
+                    .iter()
+                    .any(|old| old.start < range.end && old.end > range.start)
+            );
+        }
+        assert_eq!(state.evidence_revision, 1, "no new read for refocusing");
+    }
+    Ok(())
+}
+
+#[test]
+fn research_repair_reports_wrong_json_types_without_raw_data() {
+    use research_model::{DecisionIssue, validate_decision};
+    let valid = serde_json::json!({"schema_version":4,"decision":{"kind":"research","evidence_status":"incomplete","note":{"goal":"Trace","finding_kind":"hypothesis","finding":"Check","finding_source_refs":[],"gap":"Unknown","next_step":"Read"},"actions":[{"kind":"inspectPath","path":"file.py","start_line":1}]}});
+    for (pointer, value, issue) in [
+        (
+            "/decision/note",
+            serde_json::json!("PRIVATE_INVALID_TEXT"),
+            DecisionIssue::Object,
+        ),
+        (
+            "/decision/actions",
+            serde_json::json!({}),
+            DecisionIssue::Array,
+        ),
+        (
+            "/decision/note/gap",
+            serde_json::Value::Null,
+            DecisionIssue::String,
+        ),
+    ] {
+        let mut raw = valid.clone();
+        if let Some(field) = raw.pointer_mut(pointer) {
+            *field = value;
+        }
+        assert_eq!(
+            validate_decision(&raw.to_string(), BeginResearchDecision::SearchAllowed, 1),
+            Err(issue)
+        );
+        assert!(!issue.repair_hint(1).contains("PRIVATE_INVALID_TEXT"));
+        assert!(issue.repair_hint(1).len() <= 768);
+        assert_ne!(issue.code(), DecisionIssue::Stream.code());
+    }
+}
+
+#[test]
+fn retained_history_cannot_starve_a_new_active_file_in_a_small_packet() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(512);
+    for ordinal in 1..=9 {
+        let item = source(ordinal, &format!("file{ordinal}.py"), 3)?;
+        let body = format!("def entry{ordinal}():\n    return {ordinal}\n");
+        state.render(&item, 1, &body, false);
+        if ordinal < 9 {
+            state.retained_units.push(research_context::CoveredRange {
+                revision: item.revision().clone(),
+                start: SourcePosition::new(0, 0),
+                end: SourcePosition::new(2, 0),
+            });
+        }
+        state.sources.push(item);
+    }
+    let reads = state.evidence_revision;
+    assert!(state.focus_cached(&AskResearchAction::InspectPath {
+        path: "file9.py".to_owned(),
+        start_line: 1
+    }));
+    let packet = state.evidence_window();
+    assert!(packet.contains("def entry9():\n    return 9\n"));
+    assert!(packet.len() <= 512);
+    assert_eq!(state.evidence_revision, reads);
+    Ok(())
+}
+
+#[test]
 fn working_findings_survive_long_obsolete_gaps_with_intact_references() -> TestResult {
     for budget in [1024, 2048, 4096] {
         let mut state = AskResearchWorkingSet::new(budget);

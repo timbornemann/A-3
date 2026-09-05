@@ -22,6 +22,9 @@ mod recovery_contract;
 #[path = "agent_research_plan_tests.rs"]
 mod plan_contract;
 
+#[path = "agent_research_coherent_tests.rs"]
+mod coherent_contract;
+
 fn fixture_plan(summary: &str) -> String {
     format!(
         "PLAN:\n## Summary\n{summary}\n## Implementation Changes\n1. Die gewünschte Erweiterung über die bestehende Manager-API integrieren.\n## Interfaces\nNeue CSV-Spalten als vorgeschlagenen Vertrag dokumentieren.\n## Test Plan\n1. Gültige und fehlerhafte CSV-Zeilen sowie unveränderte Bestandsaufgaben prüfen.\n## Assumptions\nNeue CSV-Spalten werden entworfen, nicht als vorhandene Schnittstelle behauptet."
@@ -124,7 +127,7 @@ impl ResearchModel for ProgressiveModel {
         if let Some(path) = missing {
             assert!(
                 search,
-                "evidence chain must complete inside the normal research budget"
+                "evidence chain must complete inside the normal research budget; call={call}, missing={path}"
             );
             Ok(serde_json::json!({"schema_version":4,"decision":{"kind":"research","evidence_status":"incomplete","note":note,
                 "actions":[{"kind":"inspectPath","path":path,"start_line":if path == "taskflow/manager.py" {6} else {1}}]}}).to_string())

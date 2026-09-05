@@ -65,6 +65,10 @@ pub(super) fn diagnostic(
 pub(super) enum DecisionIssue {
     Json,
     Shape,
+    Object,
+    Array,
+    String,
+    Stream,
     Fields,
     Version,
     Value,
@@ -80,6 +84,10 @@ impl DecisionIssue {
         match self {
             Self::Json => "research-v1/json",
             Self::Shape => "research-v1/shape",
+            Self::Object => "research-v1/object-type",
+            Self::Array => "research-v1/array-type",
+            Self::String => "research-v1/string-type",
+            Self::Stream => "research-v1/stream-invalid",
             Self::Fields => "research-v1/fields",
             Self::Version => "research-v1/version",
             Self::Value => "research-v1/value",
@@ -92,6 +100,18 @@ impl DecisionIssue {
     }
     pub(super) fn repair_hint(self, source_count: usize) -> String {
         let detail = match self {
+            Self::Object => {
+                "An object has the wrong JSON type. Return the root, decision, note and each action as JSON objects, not strings or arrays."
+            }
+            Self::Array => {
+                "An array has the wrong JSON type. actions, source_refs, finding_source_refs and literals must be arrays, including [] when allowed; never null, a string or an object."
+            }
+            Self::String => {
+                "A text field has the wrong JSON type. Use strings for the public note fields, markdown, kind, path and source_ref; use an empty string rather than null where the schema permits it."
+            }
+            Self::Stream => {
+                "The response stream did not produce exactly one nonempty completed document. Return one concise, complete JSON document under the supplied schema."
+            }
             Self::PlanShape => {
                 "A sufficient planning answer must begin PLAN: with Markdown headings Summary, Implementation Changes, Interfaces, Test Plan, Assumptions. Include nonempty ordered change and test steps (at most 64 total) and current source citations. Use QUESTION: only for a genuinely blocking user choice. Proposed new interfaces and formats belong in the plan as explicit design assumptions, not missing evidence. Do not ask the user to restart for an output-format error."
             }
@@ -136,6 +156,9 @@ pub(super) fn validate_decision(
         .decode(raw)
         .map_err(|error| match error {
             a3_application::AskResearchDecisionDecodeError::MalformedJson => DecisionIssue::Json,
+            a3_application::AskResearchDecisionDecodeError::ExpectedObject => DecisionIssue::Object,
+            a3_application::AskResearchDecisionDecodeError::ExpectedArray => DecisionIssue::Array,
+            a3_application::AskResearchDecisionDecodeError::ExpectedString => DecisionIssue::String,
             a3_application::AskResearchDecisionDecodeError::UnknownOrMissingField => {
                 DecisionIssue::Fields
             }
