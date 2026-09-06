@@ -67,8 +67,10 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
       gepinnten Version korrigiert; retry-freier Lebensdauertest mit 1.024 Zyklen besteht.
 - [x] Abschließende lokale Qualitätsgates auf dem korrigierten Produktionsstand.
 - [x] Lokale 60er-Vorher-/Nachher-Messung mit identischem stärkerem Modell.
-- [ ] Inhaltliche lokale Praxisabnahme: bekannte falsche Aufrufketten und
-      widersprüchliche CSV-Entwürfe trotz erfüllter Begriffrubrik bleiben offen.
+- [ ] Inhaltliche Praxisabnahme über alle geprüften Modelle: bekannte falsche oder
+      unvollständige Aufrufketten, fehlende konkrete Tests und widersprüchliche
+      CSV-Entwürfe trotz erfüllter Begriffrubrik bleiben offen; auch Luna ist hiervon
+      nicht pauschal ausgenommen.
 - [x] Abschließende Prüfung mit dem eingestellten `gpt-5.6-luna`, Sichtprüfung der
       Antworten und Behebung relevanter Befunde.
 
@@ -79,7 +81,7 @@ Fortsetzung nach Sicherungscommit `35630d6`:
 - [x] Den erneut live reproduzierten 8k-Planabbruch durch doppelte Dialogreserve
       korrigieren und mit langem vollständigem Entwurf sowie echten Providerpaketen prüfen
       ([ADR-0060](../adrs/0060-aktueller-pruefstand-vor-optionaler-dialogreserve.md)).
-- [ ] Luna und die freigegebenen lokalen Modelle nachtesten; Inhaltsbefunde und
+- [x] Luna und die freigegebenen lokalen Modelle nachtesten; Inhaltsbefunde und
       Ablaufresultate getrennt auswerten, weitere konkrete Ursachen direkt korrigieren.
 - [x] Leere zusätzliche V5-Statushinweise neutral darstellen, ohne Ergebnis- oder
       Belegprüfung zu umgehen; unabhängiger Decoder und realer Mehrmodusvertrag
@@ -90,13 +92,28 @@ Fortsetzung nach Sicherungscommit `35630d6`:
 - [x] Wiederholte gültige V5-Statusquellen ohne Repair übernehmen, Eingabegrenze
       vor Kanonisierung und strikte S-Schreibweise unabhängig prüfen
       ([ADR-0063](../adrs/0063-idempotente-v5-statusquellen.md)).
-- [ ] Abschließende Qualitätsgates und aktualisiertes Prüfprotokoll.
+- [x] Abschließende Qualitätsgates und aktualisiertes Prüfprotokoll.
 - [x] Späte passende Bestandsdetails an abhängige Entwürfe übergeben, vollständige
       Designentscheidungen schützen und unvermeidbare Auszüge markieren
       ([ADR-0064](../adrs/0064-budgetierte-bestandsuebergabe-an-entwuerfe.md)).
 - [x] Zusammengehörige Kommalisten nicht in zusätzliche isolierte Recherchepflichten
       zerlegen; wörtliche Abdeckung, alte Verträge und Quellenprüfung erhalten
       ([ADR-0065](../adrs/0065-zusammenhaengende-listen-im-core-auftrag.md)).
+- [x] Den fünfmal reproduzierten Gemma-Originalabdeckungsabbruch mit konkreten
+      tatsächlichen E-Ankern im vorhandenen Einzelrepair nachtesten: zweimal 5/5
+      Abschlüsse nach Korrektur. Alternative Fenster, fehlende Originale,
+      768-Byte-Grenze und unveränderte acht Gruppen unabhängig geprüft.
+- [x] Opt-in Testdiagnostik für identische Transkripte und tatsächliche numerische
+      Quellenzuordnung ergänzen; keine allgemeine Produktionsprotokollierung,
+      Quelltexte, beliebigen Pfade oder freien Modellausgaben in diesen neuen Feldern.
+
+Die Korrekturen sind nach vollständigen Rust-/Frontend-Gates in `030f2f1` gesichert.
+Die letzten Zwölfermatrizen haben je 12/12 Abschlüsse ohne Nutzerhalte; die
+Begriffrubrik bleibt bei den drei lokalen Modellen mit je 11/12 rot. Auch Lunas
+12/12 und seine gesonderte 60/60-Serie beweisen keine widerspruchsfreien Antworten.
+Die oben offene inhaltliche Praxisabnahme wird durch diese technischen Nachweise
+nicht geschlossen. Zuordnung, Fehlberichte, Sichtprüfung und Einschränkungen
+stehen vollständig im [Prüfprotokoll](10-RESEARCH_VALIDATION.md).
 
 [Research evaluation v1](../../fixtures/research-eval-v1/README.md) enthält das
 synthetische Mehrdateiprojekt, die vier festen Aufgabenfamilien, drei Formulierungen,

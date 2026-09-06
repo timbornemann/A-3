@@ -825,3 +825,87 @@ während sie im selben Entwurf Rollback bei Storage-/Plugin-Fehlern ausschließt
 Die Tests sichern nur Vorvalidierung ab. Diese Einschränkung behebt die anfängliche
 Atomaritätsbehauptung nicht: auch bei Luna bleibt inhaltliche Abnahme offen,
 obwohl Abschluss- und Begriffszähler grün sind.
+
+Der zusätzliche Gemma-Fünfernachtest auf demselben finalen Binary bestätigt
+5/5 Abschlüsse und Begrifferfolge, 17 Aufrufe, 87.854 Kontextbytes, 201.181 ms,
+null Nutzerhalte oder Reads. `eval-1788712330760.jsonl`, SHA-256
+`e257e0975f7da7e66865cf66881f6c42ae0ada1c5533d24bb3edb45f64ed41f3`.
+Auch hier benötigen genau zwei Fälle den erfolgreichen E1/E2-Repair; drei liefern
+beide Anker primär. Die vorherige `serde_json`-Darstellung und die nun ausschließlich
+numerische Formatierung erzeugen dieselben Hintbytes und denselben Aufruf-/Byteumfang.
+Die Produktionskorrekturen, ADR-0060 bis ADR-0065 und Regressionen sind nach den
+vollständigen Gates in `030f2f1` gesichert; `35630d6` bleibt der anfängliche
+ausdrücklich beauftragte Sicherungscommit. Kein Push oder Release.
+
+Qwen auf `030f2f1`/`final-repair` mit unverändert 8.192/2.048: 12/12 Abschlüsse,
+elf Begrifferfolge, 34 Aufrufe, 103.628 Kontextbytes, 405.890 ms, null Nutzerhalte
+oder adaptive Reads. `eval-1788712543768.jsonl`, SHA-256
+`6293ad5519eacb89eb5e404ef6ba7def920f3e5b809d00380208272f15b4b602`.
+Storage 0:1 hält die Auswahlpriorität und die zusammenhängende Liste korrekt;
+REST 2:0 erklärt Router, Handler, Manager und 200/404 anhand der tatsächlichen
+Fixture. Audit 1:0 lässt weiterhin `output.write` aus. CSV 3:0 liefert konkrete
+Tests statt des historischen Core-Auftragsechos, bleibt jedoch Englisch und
+plant weitgehend unbehandelte Exceptions. CSV 3:1 ersetzt die Bestandsanalyse
+wieder durch einen Zukunftsentwurf und wechselt von einem zusätzlichen
+Positionsargument `project_id` im Entwurf zu `--project-id` im Test. Die
+Originaldateien sind in allen drei Paketen vorhanden, die Entwurfsübergabe ist
+vollständig. Diese Fehler sind keine nachgewiesene fehlende Leserunde oder
+Kontextabschneidung und werden nicht durch weitere Reads oder eine größere
+Repairzahl als behoben erklärt.
+
+Qwens finaler Mehrmodus-Smoke schließt mit 3/3/3 Aufrufen in 122,53 s ab. Die
+geprüften Entwürfe behalten `audit_log.txt` als Ziel; Q3 nennt konkrete Erfolgs-,
+Fehler-, Reihenfolge- und Integrationstests. Gegenüber dem historischen 8k-Abbruch
+und der abgeschnittenen Zielangabe liegt damit erneut ein technischer und ein
+konkreter inhaltlicher Nachtest vor. Die teilweise englische Ausgabe und die
+separaten CSV-Widersprüche bleiben bestehen. Originale bleiben bytegleich.
+
+Ornith auf `030f2f1`/`final-repair`: 12/12 Abschlüsse, elf Begrifferfolge,
+35 Aufrufe, 127.892 Kontextbytes, 241.915 ms, null Nutzerhalte oder adaptive Reads.
+`eval-1788713079847.jsonl`, SHA-256
+`c2c7640fc367fb0589a4b11cdb17734c6831c91ff24d7038253858e177504332`.
+Storage 0:1 schließt erneut ab; die gesichtete REST-Variante 2:1 unterscheidet
+Router-, Handler- und Managerverhalten korrekt. Audit 1:0 lässt wie bei Gemma/Qwen
+`output.write` aus. CSV 3:0 legt konkrete Tests vor, lässt aber einzelne
+Fehlerentscheidungen bis zu den Tests offen, behauptet tatsächliche Persistenz und
+vermischt einen direkten `main(argv)`-Aufruf mit `SystemExit` beim Programmstart.
+Die Fixture gibt bei direktem erfolgreichem `main` eine Zahl zurück; nur der
+`__main__`-Block erzeugt daraus `SystemExit`. Diese Testverwechslung bleibt ein
+konkreter Inhaltsbefund trotz formal gültigem Entwurf.
+
+Orniths finaler Mehrmodus-Smoke besteht formal mit 4/4/4 Aufrufen in 89,51 s.
+Ask nennt weiterhin die nicht vorhandene Methode `Manager.trigger_task_created`.
+Plan und Agent erhalten vollständige Originalrümpfe, ersetzen die Testpflicht Q3
+aber erneut durch vermeintlich nötige Registrierungsnachweise und eine nicht
+belegte `add_plugin`-Annahme. Auch ein erfolgreicher Einzelrepair der Quellenliste
+macht diesen anschließenden Inhalt nicht richtig. Alle Originale bleiben bytegleich.
+
+### Abschluss dieses Korrektur- und Nachtestpakets
+
+Die letzte vollständige Zwölfermatrix je Modell (Binary-Zuordnung und Hashes oben):
+
+| Modell | Abschlüsse | Begriffrubrik | Nutzerhalte | Adaptive Reads |
+| --- | ---: | ---: | ---: | ---: |
+| gpt-5.6-luna | 12/12 | 12/12 | 0 | 0 |
+| gemma4:12b | 12/12 | 11/12 | 0 | 0 |
+| qwen38-8k:latest | 12/12 | 11/12 | 0 | 0 |
+| ornith-1.5:9b | 12/12 | 11/12 | 0 | 0 |
+
+Die lokalen Matrixprozesse enden wegen der fehlenden Writer-Nennung absichtlich
+mit Fehlerstatus; dieser wird weder verschluckt noch als Storagecrash umgedeutet.
+Der jeweilige anschließende Mehrmodus-Smoke ist ein separater technischer Nachweis.
+Alle gestarteten Modell- und Gate-Prozesse sind beendet. Kein autonomer Hintergrundlauf,
+keine Provider-/Profiländerung und kein zusätzlicher Repair wurden eingerichtet.
+
+Verifiziert abgeschlossen sind die konkreten Harness-Korrekturen, die neuen
+Regressions- und Diagnoseverträge sowie die zugeordneten Nachtests. Die inhaltliche
+Praxisabnahme bleibt offen: falsche oder unvollständige Methodenketten, freie
+Codebeschreibung statt Tests, wechselnde Schnittstellen, unbewiesene Persistenz
+und widersprüchliche Atomaritätsgarantien sind weiterhin Gegenbeispiele. Ihre
+Beseitigung wird nicht aus vorhandenen Quellenankern, Begriffstreffern oder dem
+eigenen Urteil eines weiteren LLM abgeleitet. Weitere Leserunden sind für die hier
+vollständig gelieferten Originale kein nachgewiesenes Heilmittel.
+
+Die abschließende reine Protokoll-/Checklistenänderung besteht erneut
+`pnpm check:links` (108 Markdown-Dateien, jetzt 413 lokale Links) und
+`git diff --check`. Seit `030f2f1` wurde keine Produktions- oder Testlogik geändert.
