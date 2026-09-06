@@ -30,7 +30,7 @@ const CORE_PLAN_OUTCOMES: [&str; 3] = [
 ];
 
 /// Literal request clauses, not inferred facts or a new semantic planner. Only split
-/// outside code/quotes and after sentence/list introductions; keep file lists together.
+/// outside code/quotes at sentence/line boundaries; keep lists with their introduction.
 fn request_clauses(objective: &str) -> Vec<String> {
     if objective.len() > 512 {
         return Vec::new();
@@ -38,7 +38,6 @@ fn request_clauses(objective: &str) -> Vec<String> {
     let mut clauses = Vec::new();
     let mut start = 0;
     let mut quoted = None;
-    let mut in_list = false;
     for (offset, ch) in objective.char_indices() {
         if matches!(ch, '`' | '"' | '\'') {
             if quoted == Some(ch) {
@@ -51,15 +50,14 @@ fn request_clauses(objective: &str) -> Vec<String> {
             continue;
         }
         let rest = &objective[offset + ch.len_utf8()..];
-        let sentence = matches!(ch, '.' | '?' | ':' | ';') && rest.starts_with(char::is_whitespace);
-        if sentence || ch == '\n' || (ch == ',' && in_list) {
+        let sentence = matches!(ch, '.' | '?' | ';') && rest.starts_with(char::is_whitespace);
+        if sentence || ch == '\n' {
             let end = offset + ch.len_utf8();
             let fragment = objective[start..end].trim();
             if !fragment.is_empty() {
                 clauses.push(fragment.to_owned());
             }
             start = end;
-            in_list = true;
             if clauses.len() == 5 {
                 break;
             }
@@ -120,6 +118,7 @@ impl WorkGuard {
             .count()
             == 1;
         let mut groups = Vec::new();
+        let mut singleton_anchors = Some(Vec::new());
         for revision in &self.required_revisions {
             let named = paths.iter().any(|path| {
                 let normalized = path.replace('\\', "/");
@@ -151,6 +150,13 @@ impl WorkGuard {
             if anchors.is_empty() || groups.len() == 8 {
                 return None;
             }
+            if let [anchor] = anchors.as_slice() {
+                if let Some(singletons) = &mut singleton_anchors {
+                    singletons.push(*anchor);
+                }
+            } else {
+                singleton_anchors = None;
+            }
             groups.push(format!(
                 "[{}]",
                 anchors
@@ -163,12 +169,28 @@ impl WorkGuard {
         if groups.is_empty() {
             return None;
         }
-        Some(format!(
+        let mut hint = format!(
             "Original coverage repair for Q{}. Return schema_version=5, work.questions=[], one result question_id={}, kind=interpretation, and decision kind=progress with note. Explain the requested behavior of EACH required original and cite at least one current anchor_ref from EVERY file group: {}. Multiple anchors in one group belong to the same file. Use only evidence supporting the explanation, not S labels or copied quotes. Do not substitute one file for another, omit a required file, propose new design or invent facts. The Core still validates every source; no extra read or repair is granted.",
             id.get(),
             id.get(),
             groups.join(" ")
-        ))
+        );
+        if let Some(anchors) = singleton_anchors {
+            // No arbitrary choice among multiple windows, and never inject evidence
+            // into an answer. The model still supplies and explains the actual result.
+            let evidence = anchors
+                .iter()
+                .map(|id| format!("{{\"anchor_ref\":\"E{id}\"}}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let concrete = format!(
+                " Required result.evidence=[{evidence}]. Explain both callers and callees as applicable."
+            );
+            if hint.len() + concrete.len() <= 768 {
+                hint.push_str(&concrete);
+            }
+        }
+        Some(hint)
     }
 
     pub(super) fn output_phase(&self) -> a3_application::ResearchOutputPhase {
@@ -252,6 +274,19 @@ impl WorkGuard {
                     .any(|result| result.question_id != question))
         {
             return Err(research_model::DecisionIssue::WorkEvidence);
+        }
+        // These are controller-issued instructions, not arbitrary user text. Echoing
+        // one adds no result; reject before admission or an analyzed-packet receipt.
+        if self.previous.as_ref().is_some_and(core_plan_contract)
+            && update.results.iter().any(|result| {
+                CORE_PLAN_OUTCOMES.iter().any(|outcome| {
+                    outcome
+                        .split_whitespace()
+                        .eq(result.text.split_whitespace())
+                })
+            })
+        {
+            return Err(research_model::DecisionIssue::WorkEcho);
         }
         let windows = self
             .windows
@@ -814,8 +849,10 @@ impl AskResearchWorkingSet {
         } else {
             384
         };
-        for question in results {
-            if let Some(result) = question.result() {
+        let entries = results
+            .into_iter()
+            .filter_map(|question| {
+                let result = question.result()?;
                 let references = result
                     .sources()
                     .iter()
@@ -823,20 +860,76 @@ impl AskResearchWorkingSet {
                     .map(|s| format!("S{}", s.ordinal()))
                     .collect::<Vec<_>>()
                     .join(",");
-                text.push_str(&format!(
-                    "Q{} result: kind={:?}; {} [{}]\n",
-                    question.id().get(),
-                    result.kind(),
-                    if result.kind() == a3_domain::ResearchResultKind::DesignDecision {
-                        // Dependent verification must see the actual frozen decisions,
-                        // especially policies near the end, not just a 384-byte synopsis.
-                        result.text()
-                    } else {
-                        super::utf8_prefix(result.text(), preview_limit)
-                    },
-                    references
-                ));
+                Some((
+                    result,
+                    format!(
+                        "Q{} result: kind={:?}; ",
+                        question.id().get(),
+                        result.kind()
+                    ),
+                    format!(" [{references}]\n"),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let design_phase =
+            active.is_some_and(|q| q.definition().kind == a3_domain::ResearchQuestionKind::Design);
+        // The fixed contract and complete design decisions own their bytes first. Only
+        // the remaining space can expand source-bound interpretations in a design turn.
+        let mut interpretation_room = self.evidence_limit.saturating_sub(
+            work.objective().len()
+                + self.work_packet_reserve()
+                + text.len()
+                + entries
+                    .iter()
+                    .map(|(result, head, tail)| {
+                        head.len()
+                            + tail.len()
+                            + if result.kind() == a3_domain::ResearchResultKind::DesignDecision {
+                                result.text().len()
+                            } else {
+                                0
+                            }
+                    })
+                    .sum::<usize>(),
+        );
+        let mut interpretations = entries
+            .iter()
+            .filter(|(r, _, _)| r.kind() != a3_domain::ResearchResultKind::DesignDecision)
+            .count();
+        let interpretation_bytes = entries
+            .iter()
+            .filter(|(r, _, _)| r.kind() != a3_domain::ResearchResultKind::DesignDecision)
+            .map(|(r, _, _)| r.text().len())
+            .sum::<usize>();
+        let bounded = design_phase && compact && interpretation_bytes > interpretation_room;
+        const EXCERPT: &str = " [excerpt]";
+        if bounded {
+            // Reserve every possible marker before assigning text; even an empty preview
+            // must not masquerade as a complete prerequisite or displace a later decision.
+            interpretation_room =
+                interpretation_room.saturating_sub(interpretations * EXCERPT.len());
+        }
+        for (result, head, tail) in entries {
+            text.push_str(&head);
+            if result.kind() == a3_domain::ResearchResultKind::DesignDecision {
+                text.push_str(result.text());
+            } else if bounded {
+                let limit = interpretation_room
+                    .checked_div(interpretations)
+                    .unwrap_or(0);
+                let preview = super::utf8_prefix(result.text(), limit);
+                text.push_str(preview);
+                if preview.len() < result.text().len() {
+                    text.push_str(EXCERPT);
+                }
+                interpretation_room = interpretation_room.saturating_sub(preview.len());
+                interpretations = interpretations.saturating_sub(1);
+            } else if design_phase {
+                text.push_str(result.text());
+            } else {
+                text.push_str(super::utf8_prefix(result.text(), preview_limit));
             }
+            text.push_str(&tail);
         }
         text
     }
@@ -916,6 +1009,88 @@ mod tests {
         ResearchQuestionKind, ResearchQuestionPriority, ResearchResultKind, SourcePosition,
     };
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn research_core_obligation_echo_is_not_a_result_but_literal_user_answers_remain_valid()
+    -> TestResult {
+        let mut set = AskResearchWorkingSet::new(4096);
+        set.initialize_plan_work("Plan audit destination")?;
+        let mut check = guard(set.work.clone())?;
+        check.objective = "Plan audit destination".to_owned();
+        let original = &check.windows[0];
+        let valid = ResearchResultProposal {
+            question_id: ResearchQuestionId::FIRST,
+            kind: ResearchResultKind::Interpretation,
+            text: "The writer appends to audit_log.txt".to_owned(),
+            evidence: vec![ResearchQuoteProposal {
+                source_ordinal: original.ordinal,
+                quote: "audit_log.txt".to_owned(),
+            }],
+            anchors: vec![],
+        };
+        for id in 1..=3 {
+            let mut proposal = valid.clone();
+            proposal.question_id = ResearchQuestionId::new(id)?;
+            if id > 1 {
+                proposal.kind = ResearchResultKind::DesignDecision;
+                proposal.evidence.clear();
+            }
+            for outcome in CORE_PLAN_OUTCOMES {
+                for text in [
+                    outcome.to_owned(),
+                    format!("  {}\n", outcome.replace(' ', "\n\t")),
+                ] {
+                    proposal.text = text;
+                    let before = check.previous.clone();
+                    assert!(
+                        matches!(
+                            check.admit(&ResearchWorkUpdate {
+                                questions: vec![],
+                                results: vec![proposal.clone()]
+                            }),
+                            Err(research_model::DecisionIssue::WorkEcho)
+                        ),
+                        "a Core instruction is not a phase result"
+                    );
+                    assert_eq!(check.previous, before);
+                }
+            }
+            proposal.text = if id == 1 {
+                valid.text.clone()
+            } else {
+                "Use the existing API; test valid input succeeds and invalid input preserves prior state.".to_owned()
+            };
+            check.previous = Some(
+                check
+                    .admit(&ResearchWorkUpdate {
+                        questions: vec![],
+                        results: vec![proposal],
+                    })
+                    .map_err(|e| format!("valid result: {e:?}"))?,
+            );
+        }
+        assert!(check.previous.as_ref().is_some_and(|w| w.ready_to_finish()));
+        // General Ask may legitimately quote its subject verbatim. No broad semantic heuristic.
+        let mut custom = draft();
+        custom.outcome = "audit_log.txt".to_owned();
+        let mut check = guard(Some(ResearchWorkState::new(
+            "audit destination".to_owned(),
+            vec![custom],
+        )?))?;
+        check.objective = "audit destination".to_owned();
+        let mut literal = valid;
+        literal.text = "audit_log.txt".to_owned();
+        assert!(
+            check
+                .admit(&ResearchWorkUpdate {
+                    questions: vec![],
+                    results: vec![literal]
+                })
+                .map_err(|e| format!("literal answer: {e:?}"))?
+                .ready_to_finish()
+        );
+        Ok(())
+    }
 
     #[test]
     fn research_plan_inventory_requires_complete_current_original_delivery() -> TestResult {
@@ -1000,7 +1175,7 @@ mod tests {
     }
 
     #[test]
-    fn research_repair_hints_follow_the_same_phase_evidence_contract() {
+    fn research_repair_hints_follow_the_same_phase_evidence_contract() -> TestResult {
         use a3_application::ResearchOutputPhase;
         let issue = research_model::DecisionIssue::WorkEvidence;
         let design = issue.repair_hint_for_phase(
@@ -1030,6 +1205,21 @@ mod tests {
         assert!(!summary.contains("return results=[]"));
         assert!(summary.len() <= 768);
         assert_eq!(issue.repair_hint_for_phase(None, 4), issue.repair_hint(4));
+        for phase in [
+            ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::SummarizeOriginals(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::Design(ResearchQuestionId::new(3)?),
+        ] {
+            let hint =
+                research_model::DecisionIssue::WorkEcho.repair_hint_for_phase(Some(phase), 4);
+            assert!(hint.starts_with("Core instruction echo"));
+            assert!(hint.len() <= 768);
+            assert_eq!(
+                hint.contains("evidence=[]"),
+                matches!(phase, ResearchOutputPhase::Design(_))
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -1072,6 +1262,31 @@ mod tests {
         );
         assert!(request_clauses(&"ü".repeat(257)).is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn research_literal_lists_remain_attached_to_their_request() {
+        let storage = "Wie entscheidet dieses Projekt zwischen SQLite und JSON? Verfolge main.py über taskflow/manager.py bis taskflow/storage.py. Nenne Auswahlpriorität, Umgebungsvariable, Standarddateien und Fehlerfall.";
+        assert_eq!(
+            request_clauses(storage),
+            vec![
+                "Wie entscheidet dieses Projekt zwischen SQLite und JSON?",
+                "Verfolge main.py über taskflow/manager.py bis taskflow/storage.py.",
+                "Nenne Auswahlpriorität, Umgebungsvariable, Standarddateien und Fehlerfall.",
+            ]
+        );
+        assert_eq!(
+            request_clauses("Erkläre: Äpfel, Böden, Größe und Öl."),
+            vec!["Erkläre: Äpfel, Böden, Größe und Öl."]
+        );
+        assert_eq!(
+            request_clauses("Explain. Read a.py, b.py and `f(a, b)`; retain order."),
+            vec![
+                "Explain.",
+                "Read a.py, b.py and `f(a, b)`;",
+                "retain order."
+            ]
+        );
     }
 
     fn draft() -> ResearchQuestionDraft {
@@ -1163,6 +1378,74 @@ mod tests {
     }
 
     #[test]
+    fn research_design_context_uses_fitting_prerequisites_and_marks_bounded_excerpts() -> TestResult
+    {
+        let mut state = AskResearchWorkingSet::new(3640);
+        let objective = "Plan audit destination";
+        state.initialize_plan_work(objective)?;
+        let original = guard(None)?.windows.remove(0);
+        let interpretation = format!(
+            "{} Late destination: audit_log.txt, construction-time CWD, append UTF-8 Größe 🦀.",
+            "The manager saves before the plugin callback. ".repeat(20)
+        );
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::FIRST,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::Interpretation,
+                interpretation.clone(),
+                vec![a3_domain::ResearchResultSource {
+                    source_id: original.source_id,
+                    revision: original.revision,
+                    range: original.range,
+                }],
+                None,
+            )?,
+        )?;
+        let work = state.work.clone();
+        let packet = state.model_evidence(objective, &[]);
+        assert!(
+            packet.contains(&interpretation),
+            "fitting prerequisites are not 384-byte previews"
+        );
+        assert_eq!(state.work, work);
+        let design = format!(
+            "{} No rollback. Größe 🦀.",
+            "Keep the callback ordering. ".repeat(80)
+        );
+        state.work.as_mut().ok_or("work")?.resolve(
+            ResearchQuestionId::new(2)?,
+            a3_domain::ResearchResult::new(
+                ResearchResultKind::DesignDecision,
+                design.clone(),
+                vec![],
+                None,
+            )?,
+        )?;
+        let work = state.work.clone();
+        let context = state.work_context();
+        let packet = state.model_evidence(objective, &[]);
+        assert!(context.contains("Partitioned view"));
+        assert!(
+            packet.contains(&design),
+            "full decisions have priority over interpretation previews"
+        );
+        assert!(packet.contains("[excerpt]"));
+        assert!(!packet.contains(&interpretation));
+        assert!(context.len() + objective.len() + state.work_packet_reserve() <= 3640);
+        assert!(packet.len() <= 3640);
+        assert_eq!(packet, state.model_evidence(objective, &[]));
+        assert_eq!(state.work, work);
+        assert!(
+            state.work.as_ref().ok_or("work")?.questions()[0]
+                .result()
+                .ok_or("result")?
+                .text()
+                == interpretation
+        );
+        Ok(())
+    }
+
+    #[test]
     fn research_coverage_repair_groups_only_actual_required_original_windows() -> TestResult {
         let mut guard = guard(Some(ResearchWorkState::new(
             "audit destination".to_owned(),
@@ -1200,11 +1483,60 @@ mod tests {
                 .ok_or("hint")?
                 .contains("[E1] [E2]")
         );
+        let hint = guard.coverage_repair_hint().ok_or("hint")?;
+        assert!(hint.contains("evidence=[{\"anchor_ref\":\"E1\"},{\"anchor_ref\":\"E2\"}]"));
+        assert!(hint.len() <= 768);
+        guard.windows.push(OwnedWindow {
+            anchor: Some(a3_application::ResearchEvidenceAnchorId::new(3)?),
+            ordinal: 3,
+            source_id: guard.windows[1].source_id,
+            revision: guard.windows[1].revision.clone(),
+            range: guard.windows[1].range,
+            text: "other original window".to_owned(),
+        });
+        let alternatives = guard.coverage_repair_hint().ok_or("alternatives")?;
+        assert!(alternatives.contains("[E1] [E2,E3]"));
+        assert!(!alternatives.contains("Required result.evidence="));
+        guard.windows.pop();
         guard.windows[1].anchor = None;
         assert!(
             guard.coverage_repair_hint().is_none(),
             "missing originals cannot get invented anchors"
         );
+        guard.windows[1].anchor = Some(a3_application::ResearchEvidenceAnchorId::new(2)?);
+        for index in 3_u8..=9 {
+            let revision = FileRevision::new(
+                RepositoryPath::try_from_bytes(format!("required-{index}.py").into_bytes())?,
+                ContentHash::from_bytes([index; 32]),
+            );
+            guard.required_revisions.push(revision.clone());
+            guard.windows.push(OwnedWindow {
+                anchor: Some(a3_application::ResearchEvidenceAnchorId::new(u16::from(
+                    index.min(8),
+                ))?),
+                ordinal: u16::from(index),
+                source_id: AskResearchSourceId::from_bytes([index; 32]),
+                revision,
+                range: guard.windows[0].range,
+                text: "not included in diagnostics".to_owned(),
+            });
+            if index <= 8 {
+                let hint = guard.coverage_repair_hint().ok_or("bounded hint")?;
+                assert!(hint.len() <= 768);
+                assert!(hint.contains(&format!("[E{index}]")));
+                if index == 8 {
+                    assert!(
+                        !hint.contains("Required result.evidence="),
+                        "omit the optional array rather than exceed the repair budget"
+                    );
+                }
+            } else {
+                assert!(
+                    guard.coverage_repair_hint().is_none(),
+                    "at most eight groups"
+                );
+            }
+        }
         Ok(())
     }
 

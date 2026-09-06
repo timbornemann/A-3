@@ -605,7 +605,10 @@ fn decode_note_with_evidence(
                 .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
         )?;
         if !seen.insert(ordinal) {
-            return Err(AskResearchDecisionDecodeError::InvalidValue);
+            if legacy {
+                return Err(AskResearchDecisionDecodeError::InvalidValue);
+            }
+            continue;
         }
         source_ordinals.push(ordinal);
     }
@@ -617,14 +620,29 @@ fn decode_note_with_evidence(
         // cannot become evidence, nor should a design progress label consume a repair.
         finding_kind = AskResearchFindingKind::Hypothesis;
     }
+    let navigation_hint = |field: &str, neutral: &str| {
+        if legacy {
+            bounded(string(note, field)?, 1024)
+        } else {
+            let text = bounded_allow_empty(string(note, field)?, 1024)?;
+            Ok(if text.is_empty() {
+                neutral.to_owned()
+            } else {
+                text
+            })
+        }
+    };
     Ok(AskResearchDecisionNote {
         work: None,
         goal: bounded(string(note, "goal")?, 1024)?,
         finding_kind,
         finding: bounded(string(note, "finding")?, 4096)?,
         source_ordinals,
-        gap: bounded(string(note, "gap")?, 1024)?,
-        next_step: bounded(string(note, "next_step")?, 1024)?,
+        gap: navigation_hint(
+            "gap",
+            "Keine zusätzliche Beleglücke gemeldet; der Prüfstand bleibt maßgeblich.",
+        )?,
+        next_step: navigation_hint("next_step", "Nächsten Schritt aus dem Prüfstand bestimmen.")?,
     })
 }
 
@@ -665,7 +683,7 @@ pub(crate) fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDeco
     let digits = value
         .strip_prefix('S')
         .ok_or(AskResearchDecisionDecodeError::InvalidValue)?;
-    if digits.starts_with('0') {
+    if digits.starts_with('0') || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(AskResearchDecisionDecodeError::InvalidValue);
     }
     let value = digits
@@ -677,6 +695,7 @@ pub(crate) fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDeco
         Ok(value)
     }
 }
+
 pub(crate) fn object(value: &Value) -> Result<&Map<String, Value>, AskResearchDecisionDecodeError> {
     value
         .as_object()
@@ -749,6 +768,17 @@ impl Error for AskResearchDecisionDecodeError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn research_source_labels_reject_noncanonical_numbers_independently_of_schema() {
+        assert_eq!(super::source_ordinal("S1"), Ok(1));
+        assert_eq!(super::source_ordinal("S200"), Ok(200));
+        for label in ["S+1", "S01", "S0", "S201", "S", "S-1", "S 1", "S١", "S1\n"] {
+            assert!(
+                super::source_ordinal(label).is_err(),
+                "noncanonical label {label:?}"
+            );
+        }
+    }
     #[test]
     fn flow_research_requires_v4_an_issued_source_and_bounded_view()
     -> Result<(), Box<dyn std::error::Error>> {

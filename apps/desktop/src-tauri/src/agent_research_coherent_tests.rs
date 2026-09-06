@@ -33,6 +33,26 @@ enum WorkFault {
     EmptyDesignAlways,
     MissingOriginalOnce,
     RepeatedOriginalAnchors,
+    LongDesign,
+    LongInterpretation,
+    EmptyNavigationStatus,
+    RepeatedNoteSources,
+    EchoTestObligationOnce,
+    EchoTestObligationAlways,
+}
+
+fn retained_long_design() -> String {
+    format!(
+        "{} Stop on first error. Preserve earlier writes; no rollback, no skipping. Keep UTF-8: Größe 🦀.",
+        "Preserve the existing audit call order and relative destination resolution. ".repeat(26)
+    )
+}
+
+fn retained_long_interpretation() -> String {
+    format!(
+        "{} The audit destination is os.path.abspath('audit_log.txt'), resolved against the working directory at construction. It appends UTF-8: Größe 🦀.",
+        "Manager.add_task saves tasks before calling the plugin callbacks. ".repeat(12)
+    )
 }
 
 fn quote(packet: &str, needle: &str) -> Option<serde_json::Value> {
@@ -274,6 +294,15 @@ impl ResearchModel for CoherentModel {
                 document["decision"] = serde_json::json!({"kind":"plan", "note":note, "summary":"Aufrufkette geklärt.", "changes":["Die gewünschte Dokumentation der Aufrufkette ergänzen."], "interfaces":"Keine API-Änderung.", "tests":["Dokumentation gegen Originalbelege prüfen."], "assumptions":"Bestehendes Verhalten erhalten."});
                 document["work"]["results"] = serde_json::json!([]);
             }
+            if self.fault == WorkFault::EmptyNavigationStatus {
+                document["decision"]["note"]["gap"] = serde_json::json!("");
+                document["decision"]["note"]["next_step"] = serde_json::json!("");
+            }
+            if self.fault == WorkFault::RepeatedNoteSources {
+                let source = source_ref(packet, PATHS[0])?;
+                document["decision"]["note"]["finding_source_refs"] =
+                    serde_json::json!([source, source]);
+            }
             if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 2)
                 && (self.fault == WorkFault::EmptyDesignAlways
                     || (self.fault == WorkFault::EmptyDesignOnce && call == 1))
@@ -292,6 +321,43 @@ impl ResearchModel for CoherentModel {
                         evidence.extend(evidence.clone());
                     }
                 }
+            }
+            if self.fault == WorkFault::LongDesign {
+                if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 2)
+                {
+                    document["work"]["results"][0]["text"] =
+                        serde_json::json!(retained_long_design());
+                }
+                if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 3)
+                {
+                    assert!(
+                        packet.contains(&retained_long_design()),
+                        "every late design byte must reach its test-design consumer"
+                    );
+                }
+            }
+            if self.fault == WorkFault::LongInterpretation {
+                if matches!(phase, a3_application::ResearchOutputPhase::Analyze(id) if id.get() == 1)
+                {
+                    document["work"]["results"][0]["text"] =
+                        serde_json::json!(retained_long_interpretation());
+                }
+                if matches!(phase, a3_application::ResearchOutputPhase::Design(_)) {
+                    assert!(
+                        packet.contains(&retained_long_interpretation()),
+                        "a fitting prerequisite must not lose its late destination to a fixed preview"
+                    );
+                }
+            }
+            if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 3)
+                && (self.fault == WorkFault::EchoTestObligationAlways
+                    || (self.fault == WorkFault::EchoTestObligationOnce && call == 2))
+            {
+                let outcome = packet
+                    .lines()
+                    .find_map(|line| line.strip_prefix("ACTIVE Q3: "))
+                    .ok_or(AgentConversationFailure::InvalidInput)?;
+                document["work"]["results"][0]["text"] = serde_json::json!(outcome);
             }
             return Ok(document.to_string());
         }
@@ -450,6 +516,30 @@ fn research_v5_missing_original_receives_exact_current_groups_in_its_single_repa
 }
 
 #[test]
+fn research_empty_navigation_status_preserves_all_modes_without_repair_or_extra_reads()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::EmptyNavigationStatus)
+}
+
+#[test]
+fn research_repeated_v5_status_sources_preserve_all_modes_without_repair_or_extra_reads()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::RepeatedNoteSources)
+}
+
+#[test]
+fn research_echoed_test_obligation_gets_one_repair_without_research_reads()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::EchoTestObligationOnce)
+}
+
+#[test]
+fn research_repeated_test_obligation_cannot_complete_or_poison_the_checkpoint()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::EchoTestObligationAlways)
+}
+
+#[test]
 fn research_v5_repeated_original_anchors_do_not_consume_repair_or_reads()
 -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(true, false, WorkFault::RepeatedOriginalAnchors)
@@ -478,6 +568,28 @@ fn coherent_fixture_with_query(
 #[test]
 fn research_eight_k_profile_keeps_real_originals_and_work_contract_without_larger_limits()
 -> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::None,
+        QUERY,
+        Some(&eight_k_profile()?),
+    )
+}
+
+#[test]
+fn research_eight_k_profile_preserves_long_design_before_tests_without_history_reservation()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::LongDesign,
+        QUERY,
+        Some(&eight_k_profile()?),
+    )
+}
+
+fn eight_k_profile() -> Result<a3_domain::ModelProfile, Box<dyn Error>> {
     use a3_domain::*;
     let profile = ModelProfile::from_probe(
         ModelProviderId::try_from_string("ollama".to_owned())?,
@@ -499,7 +611,31 @@ fn research_eight_k_profile_keeps_real_originals_and_work_contract_without_large
             ModelToolCallMode::NativeProviderReported,
         ),
     );
-    coherent_fixture_with_profile(true, false, WorkFault::None, QUERY, Some(&profile))
+    Ok(profile)
+}
+
+#[test]
+fn research_eight_k_profile_preserves_fitting_interpretation_across_design_steps()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::LongInterpretation,
+        QUERY,
+        Some(&eight_k_profile()?),
+    )
+}
+
+#[test]
+fn research_literal_list_does_not_create_an_isolated_extra_question() -> Result<(), Box<dyn Error>>
+{
+    coherent_fixture_with_profile(
+        true,
+        false,
+        WorkFault::None,
+        &QUERY.replace("werden aufgerufen und", "werden aufgerufen, und"),
+        Some(&eight_k_profile()?),
+    )
 }
 
 fn coherent_fixture_with_profile(
@@ -573,6 +709,10 @@ fn coherent_fixture_with_profile(
                     WorkFault::EmptyDesignOnce
                         | WorkFault::EmptyDesignAlways
                         | WorkFault::MissingOriginalOnce
+                        | WorkFault::LongDesign
+                        | WorkFault::LongInterpretation
+                        | WorkFault::EchoTestObligationOnce
+                        | WorkFault::EchoTestObligationAlways
                 ) && mode == AgentSessionMode::Ask
                 {
                     continue;
@@ -691,15 +831,90 @@ fn coherent_fixture_with_profile(
                     }
                 }
                 let result = received?;
-                if fault == WorkFault::RepeatedOriginalAnchors {
+                if matches!(
+                    fault,
+                    WorkFault::EchoTestObligationOnce | WorkFault::EchoTestObligationAlways
+                ) {
+                    let failed = fault == WorkFault::EchoTestObligationAlways;
+                    assert_eq!(
+                        model.calls.load(Ordering::SeqCst),
+                        4,
+                        "exactly one repair of Q3"
+                    );
+                    assert_eq!(result.awaiting_continuation, failed);
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    assert_eq!(work.ready_to_finish(), !failed);
+                    assert_eq!(work.resolved_count(), if failed { 2 } else { 3 });
+                    assert!(work.accesses().is_empty());
+                    if failed {
+                        assert!(work.questions()[2].attempts().is_empty());
+                        assert!(work.questions()[2].result().is_none());
+                        let mut restored = AskResearchWorkingSet::new(budget);
+                        restored.restore_work(work, &[])?;
+                        assert_eq!(
+                            restored.work.as_ref().and_then(|w| w.next_question()),
+                            Some(a3_domain::ResearchQuestionId::FIRST),
+                            "without rehydrated originals, source-dependent prerequisites reopen"
+                        );
+                        let mapping = work
+                            .questions()
+                            .iter()
+                            .filter_map(|q| q.result())
+                            .flat_map(|r| r.sources())
+                            .map(|s| (s.source_id, s.source_id))
+                            .collect::<Vec<_>>();
+                        restored.restore_work(work, &mapping)?;
+                        assert_eq!(
+                            restored.work.as_ref().and_then(|w| w.next_question()),
+                            Some(a3_domain::ResearchQuestionId::new(3)?)
+                        );
+                    }
+                    for (path, expected) in PATHS.iter().zip(&files) {
+                        assert_eq!(
+                            std::fs::read_to_string(repository.path().join(path))?,
+                            *expected
+                        );
+                    }
+                    continue;
+                }
+                if fault == WorkFault::LongDesign {
                     assert!(
                         !result.awaiting_continuation,
-                        "identical valid anchors cannot block research"
+                        "mandatory design fits the actual model window; optional dialogue cannot block Q3"
+                    );
+                    assert_eq!(model.calls.load(Ordering::SeqCst), 3);
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    assert!(work.ready_to_finish());
+                    assert!(work.accesses().is_empty());
+                    let rendered_design = retained_long_design()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert!(result.markdown.contains(&rendered_design));
+                }
+                if matches!(
+                    fault,
+                    WorkFault::RepeatedOriginalAnchors
+                        | WorkFault::LongInterpretation
+                        | WorkFault::EmptyNavigationStatus
+                        | WorkFault::RepeatedNoteSources
+                ) {
+                    assert!(
+                        !result.awaiting_continuation,
+                        "valid anchors and neutral status hints cannot block research"
                     );
                     assert_eq!(
                         model.calls.load(Ordering::SeqCst),
                         3,
-                        "no duplicate-anchor repair"
+                        "no presentation-only repair"
                     );
                     let detail = store
                         .load_detail(&project, id, AgentSessionSequence::FIRST)

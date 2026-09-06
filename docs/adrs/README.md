@@ -84,6 +84,12 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0057](0057-leerer-entwurf-ist-kein-rechercheauftrag.md) | Leerer Entwurf ist kein Rechercheauftrag |
 | [0058](0058-kompakte-recherchephasen-fuer-kleine-kontexte.md) | Kompakte Recherchephasen für kleine Kontexte |
 | [0059](0059-idempotente-originalanker-in-rechercheergebnissen.md) | Idempotente Originalanker in Rechercheergebnissen |
+| [0060](0060-aktueller-pruefstand-vor-optionaler-dialogreserve.md) | Aktueller Prüfstand vor optionaler Dialogreserve |
+| [0061](0061-neutrale-v5-statushinweise-ohne-repair.md) | Neutrale V5-Statushinweise ohne Repair |
+| [0062](0062-core-arbeitsauftrag-ist-kein-ergebnis.md) | Core-Arbeitsauftrag ist kein Ergebnis |
+| [0063](0063-idempotente-v5-statusquellen.md) | Idempotente V5-Statusquellen |
+| [0064](0064-budgetierte-bestandsuebergabe-an-entwuerfe.md) | Budgetierte Bestandsübergabe an Entwürfe |
+| [0065](0065-zusammenhaengende-listen-im-core-auftrag.md) | Zusammenhängende Listen im Core-Auftrag |
 
 ## Neue ADRs
 

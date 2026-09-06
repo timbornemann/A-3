@@ -133,12 +133,20 @@ fn profile(
     context: u32,
     grounding: ModelPromptSchemaGrounding,
 ) -> Result<ModelProfile, Box<dyn std::error::Error>> {
+    profile_with_output(context, 1024, grounding)
+}
+
+fn profile_with_output(
+    context: u32,
+    output: u32,
+    grounding: ModelPromptSchemaGrounding,
+) -> Result<ModelProfile, Box<dyn std::error::Error>> {
     Ok(ModelProfile::from_probe(
         ModelProviderId::try_from_string("ollama".to_owned())?,
         ModelId::try_from_string("offline-fixture".to_owned())?,
         ModelProfileSettings::new(
             ModelContextLimit::new(context)?,
-            ModelOutputLimit::new(1024)?,
+            ModelOutputLimit::new(output)?,
             ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
             ModelParallelismLimit::new(1)?,
             ModelSamplingProfile::new(
@@ -153,6 +161,88 @@ fn profile(
             ModelToolCallMode::NativeProviderReported,
         ),
     ))
+}
+
+#[test]
+fn research_full_current_packet_and_maximum_repair_fit_real_provider_limits()
+-> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()?;
+    for (context, output) in [(8192, 2048), (16384, 4096)] {
+        for grounding in [
+            ModelPromptSchemaGrounding::FormatFieldOnly,
+            ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
+        ] {
+            let profile = profile_with_output(context, output, grounding)?;
+            for mode in [
+                AgentSessionMode::Ask,
+                AgentSessionMode::Plan,
+                AgentSessionMode::Agent,
+            ] {
+                let budget = research_evidence_budget_for_profile(&profile, mode, None)?;
+                // Repeated large schemas can exhaust a genuinely small profile before source packing.
+                if budget < 256 {
+                    continue;
+                }
+                let head = "CURRENT QUESTION:\nPreserve the entire design.\n";
+                let tail = "\nLate policy: retain earlier writes; Größe 🦀.";
+                let packet = format!(
+                    "{head}{}{tail}",
+                    "x".repeat(budget - head.len() - tail.len())
+                );
+                assert_eq!(packet.len(), budget);
+                let hint = "R".repeat(768);
+                for phase in [
+                    a3_application::ResearchOutputPhase::Initialize,
+                    a3_application::ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
+                    a3_application::ResearchOutputPhase::SummarizeOriginals(
+                        ResearchQuestionId::FIRST,
+                    ),
+                    a3_application::ResearchOutputPhase::Design(ResearchQuestionId::FIRST),
+                    a3_application::ResearchOutputPhase::Finalize,
+                ] {
+                    let provider = CapturingProvider {
+                        id: profile.provider_id().clone(),
+                        requests: std::sync::Mutex::new(Vec::new()),
+                        finish: ModelFinishReason::Stop,
+                    };
+                    let system = research_phase_system_prompt(mode, true, phase, None);
+                    let schema = research_contract_schema(true, phase)?;
+                    let mut transcript = vec![
+                        (
+                            ModelMessageRole::Assistant,
+                            "optional historical dialogue ".repeat(2000),
+                        ),
+                        (ModelMessageRole::User, packet.clone()),
+                    ];
+                    for repair in [false, true] {
+                        if repair {
+                            transcript.push((ModelMessageRole::User, hint.clone()));
+                        }
+                        runtime.block_on(complete_with_provider(
+                            &provider,
+                            profile.clone(),
+                            &system,
+                            &transcript,
+                            Some(schema.clone()),
+                            &Control,
+                        ))?;
+                    }
+                    let requests = provider.requests.lock().map_err(|_| "capture lock")?;
+                    assert_eq!(requests.len(), 2);
+                    for request in requests.iter() {
+                        assert!(request.messages().iter().any(|m| m.content() == packet));
+                        let bytes: usize =
+                            request.messages().iter().map(|m| m.content().len()).sum();
+                        assert!(bytes + output as usize + 1024 <= context as usize);
+                    }
+                    assert!(requests[1].messages().iter().any(|m| m.content() == hint));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]

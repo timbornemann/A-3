@@ -119,6 +119,7 @@ pub(super) fn diagnostic(
 pub(super) enum DecisionIssue {
     WorkEvidence,
     WorkCoverage,
+    WorkEcho,
     WorkAdmission(a3_application::ResearchWorkAdmissionError),
     Json,
     Shape,
@@ -143,6 +144,25 @@ impl DecisionIssue {
         source_count: usize,
     ) -> String {
         use a3_application::ResearchOutputPhase;
+        if matches!(self, Self::WorkEcho)
+            && let Some(
+                ResearchOutputPhase::Analyze(id)
+                | ResearchOutputPhase::SummarizeOriginals(id)
+                | ResearchOutputPhase::Design(id),
+            ) = phase
+        {
+            let result = if matches!(phase, Some(ResearchOutputPhase::Design(_))) {
+                "kind=designDecision, evidence=[]. Make concrete future decisions; for tests give inputs, expected outcomes and a verification method consistent with prerequisite decisions"
+            } else {
+                "kind=interpretation with current E-window anchor_ref evidence. Explain the actual delivered implementation"
+            };
+            return format!(
+                "Core instruction echo in Q{}: the previous text only repeated an assigned obligation. Return schema_version=5, decision with kind=progress and note, work.questions=[], exactly one result question_id={}, {result}. Do not copy an obligation or promise to do it later. Preserve the original request and admitted prerequisites. No new reads or obligations. Failure category: {}.",
+                id.get(),
+                id.get(),
+                self.code()
+            );
+        }
         let rule = match phase {
             Some(ResearchOutputPhase::Initialize) => {
                 "Initialize: decision contains only kind=progress and note. Return schema_version=5, work.questions with the complete required investigation contract and work.results=[]. Classify existing-code questions as repository; future proposals as design. Do not answer yet."
@@ -182,6 +202,7 @@ impl DecisionIssue {
     pub(super) const fn code(self) -> &'static str {
         match self {
             Self::WorkCoverage => "research-v2/required-source-coverage",
+            Self::WorkEcho => "research-v2/core-instruction-echo",
             Self::WorkAdmission(reason) => match reason {
                 a3_application::ResearchWorkAdmissionError::AmbiguousQuote => {
                     "research-v2/quote-ambiguous"
@@ -221,6 +242,9 @@ impl DecisionIssue {
     }
     pub(super) fn repair_hint(self, source_count: usize) -> String {
         let detail = match self {
+            Self::WorkEcho => {
+                "The result only repeats a Core obligation. Provide the requested concrete result, not instructions to produce it later; preserve the original request and admitted prerequisites."
+            }
             Self::WorkCoverage => {
                 "Cover EVERY explicitly named indexed file in NAMED TARGETS with actual E-window references in required results. Leave unsupported questions unresolved. Source captions or markdown citations do not replace work.results evidence."
             }

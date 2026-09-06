@@ -848,6 +848,69 @@ Quellenidentitäten. Das 32-Elemente-Eingabelimit gilt vor der Kanonisierung; E0
 fremde Felder und ungelieferte oder mehrdeutige Fenster bleiben abgewiesen. Der Core
 fügt keine fehlenden Quellen hinzu und verbraucht keinen Repair für exakte Wiederholungen.
 
+[ADR-0060](adrs/0060-aktueller-pruefstand-vor-optionaler-dialogreserve.md) entfernt
+die zusätzliche pauschale Drittelreserve für optionalen historischen Dialog aus der
+vorgelagerten Recherche-Paketberechnung. Der abschließende Message-Packer schützt
+das vollständige aktuelle Paket einschließlich Einzelrepair bereits atomar und gibt
+historischem Dialog nur den tatsächlich verbleibenden Platz. Größter Phasenvertrag,
+gegebenenfalls wiederholtes Schema, Outputlimit, Sicherheitsreserve und Repairhinweis
+bleiben vollständig abgezogen. Ein passender langer bindender Entwurf darf deshalb
+optionale Historie verdrängen, wird aber weder gekürzt noch über die reale Profilgrenze
+geschoben. Der dokumentierte ADR-0058-Wert von 2.212/2.213 Bytes ist ein historischer
+Messstand, kein unveränderliches Modell- oder Sicherheitslimit.
+
+[ADR-0061](adrs/0061-neutrale-v5-statushinweise-ohne-repair.md) trennt die V5-
+Statusnotiz von historischen Antwort-/Recherche-Notizen. Ausschließlich leere
+zusätzliche Lücken-/Folgehinweise sind dort erlaubt und werden nach unabhängiger
+Validierung in neutrale Core-Texte übersetzt. Der dauerhafte Prüfstand entscheidet
+weiterhin die nächste Arbeit; keine leere Analyse oder fehlende Designentscheidung
+wird dadurch beantwortet. Öffentliche Notiz-, Persistenz- und IPC-Grenzen bleiben
+unverändert, ebenso Legacy-Decoder, Quellenzulassung und der Einzelrepair.
+
+[ADR-0062](adrs/0062-core-arbeitsauftrag-ist-kein-ergebnis.md) weist im eindeutig
+erkannten Core-Planvertrag neue Ergebnisse zurück, die vollständig eine seiner
+drei Pflichten wiederholen. Ausschließlich Whitespace wird beim Vergleich
+normalisiert. Der vorhandene Einzelrepair fordert ein konkretes Ergebnis an;
+eine erneut kopierte Pflicht erhält weder Abschluss noch Analysequittung.
+Allgemeine Ask-Antworten und historische Aggregate bleiben unberührt. Diese enge
+Prüfung ist kein Nachweis semantischer Richtigkeit anderer Ergebnisformulierungen.
+
+[ADR-0063](adrs/0063-idempotente-v5-statusquellen.md) kanonisiert wiederholte
+gültige S-Referenzen ausschließlich in V5-Statusnotizen. Das unveränderte
+32-Einträge-Limit gilt vor Deduplizierung; falsche Referenzen bleiben ungültig.
+Der gemeinsame S-Decoder verlangt die bereits im Schema vorgegebene reine
+Dezimalschreibweise ohne Vorzeichen; `S+1` ist kein Alias für `S1`.
+Statusquellen ersetzen weiterhin keine Originalanker in Ergebnissen.
+
+Der kompakte Modellvertrag benennt `work.results[].text` ausdrücklich als konkrete
+Antwort statt Kopie von ACTIVE Q oder dessen Outcome. Diese Feldpräzisierung
+hilft der Ausgabeerzeugung, übernimmt aber keine Core-Zulassungsprüfung. Sie wird
+mitgezählt; im konservativen 8k/2k-Profil verbleiben aktuell 3.640 Bytes für Plan/
+Agent und 3.642 für Ask. Vollständige Pflichtdaten müssen weiterhin tatsächlich passen.
+
+[ADR-0064](adrs/0064-budgetierte-bestandsuebergabe-an-entwuerfe.md) verwendet bei
+Designfragen den verbleibenden Platz für die tatsächlichen Bestandsvoraussetzungen
+statt einer pauschalen 384-Byte-Vorschau. Auftrag und vollständige Designentscheidungen
+behalten Vorrang. Eine notwendige partitionierte Bestandsvorschau trägt `[excerpt]`;
+Ergebnisart, Originalbezüge und gespeicherter Volltext ändern sich nicht. Der Text
+bleibt eine Interpretation, keine verifizierte Tatsache. Repositoryfragen behalten
+ihren Vorrang für aktuelle Originalfenster und die bisherige begrenzte Vorschau.
+
+[ADR-0065](adrs/0065-zusammenhaengende-listen-im-core-auftrag.md) hält Kommalisten
+und Doppelpunkt-Einleitungen im neuen Core-Codeauftrag zusammen. Satz-/Zeilengrenzen
+und Semikolon bleiben mögliche wörtliche Grenzen; maximal sechs Pflichten und der
+vollständige Rest bleiben unverändert. Gespeicherte Verträge werden nicht umgeschrieben.
+Der Core darf überlappende Antworten weiterhin nicht als Beweis verwenden, dass eine
+andere Pflicht ohne eigenes Ergebnis bereits abgeschlossen sei.
+
+Der vorhandene Originalabdeckungs-Repair kann bei genau einem aktuellen Fenster je
+benötigter Originaldatei zusätzlich das konkrete `result.evidence`-Array darstellen.
+Die gesamte Meldung bleibt auf 768 Bytes begrenzt; bei Alternativfenstern erfolgt
+keine willkürliche Wahl und bei Platzmangel bleibt die bisherige Gruppenansicht.
+Dies ist eine Darstellung der tatsächlich gelieferten Referenzen, kein Einfügen
+von Belegen in die Modellausgabe. Quellenbindung und inhaltliche Erläuterung bleiben
+erforderlich, der einmalige Repair und alle übrigen Grenzen unverändert.
+
 ## Erfolgsmetriken des Prüfstands
 
 - Goal-Retention über lange Runs

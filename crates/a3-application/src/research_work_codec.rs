@@ -159,13 +159,24 @@ pub fn research_work_decision_schema() -> Result<Value, DecodeError> {
     let definitions = schema["$defs"]
         .as_object_mut()
         .ok_or(DecodeError::InvalidSchema)?;
+    // V5 status is not a completion or evidence decision. Keep the historical note
+    // grammar separate so legacy answer/research payloads retain their strict bounds.
+    let mut status_note = definitions
+        .get("note")
+        .cloned()
+        .ok_or(DecodeError::InvalidSchema)?;
+    for field in ["gap", "next_step"] {
+        status_note["properties"][field]["minLength"] = json!(0);
+    }
+    status_note["properties"]["finding_source_refs"]["uniqueItems"] = json!(false);
+    definitions.insert("v5StatusNote".to_owned(), status_note);
     definitions.insert(
         "progress".to_owned(), json!({"type":"object","additionalProperties":false,
-            "required":["kind","note"], "properties":{"kind":{"const":"progress"},"note":{"$ref":"#/$defs/note"}}})
+            "required":["kind","note"], "properties":{"kind":{"const":"progress"},"note":{"$ref":"#/$defs/v5StatusNote"}}})
     );
     definitions.insert(
         "questionDecision".to_owned(), json!({"type":"object","additionalProperties":false,
-            "required":["kind","note","message"], "properties":{"kind":{"const":"question"},"note":{"$ref":"#/$defs/note"},
+            "required":["kind","note","message"], "properties":{"kind":{"const":"question"},"note":{"$ref":"#/$defs/v5StatusNote"},
             "message":{"type":"string","minLength":1,"maxLength":1024}}})
     );
     definitions.insert(
@@ -207,7 +218,7 @@ pub fn research_work_decision_schema() -> Result<Value, DecodeError> {
         "planDecision".to_owned(),
         json!({"type":"object","additionalProperties":false,
         "required":["kind","note","summary","changes","interfaces","tests","assumptions"],
-        "properties":{"kind":{"const":"plan"},"note":{"$ref":"#/$defs/note"},
+        "properties":{"kind":{"const":"plan"},"note":{"$ref":"#/$defs/v5StatusNote"},
         "summary":{"type":"string","minLength":1,"maxLength":4096},
         "changes":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/planStep"}},
         "interfaces":{"type":"string","minLength":1,"maxLength":4096},
@@ -588,6 +599,157 @@ mod tests {
             let mut variant = document.clone();
             variant["work"]["results"][0][field] = invalid;
             assert!(decode(&variant).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn research_v5_empty_navigation_status_is_neutral_not_a_completion_or_repair()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let note = json!({"goal":"Inspect originals","finding_kind":"hypothesis","finding":"Contract prepared","finding_source_refs":[],"gap":"","next_step":" \t"});
+        let raw = json!({"schema_version":5,"decision":{"kind":"progress","note":note},"work":{"questions":[],"results":[]}});
+        let crate::AskResearchDecision::Answer {
+            note: admitted,
+            evidence_status,
+            ..
+        } = crate::DecodeAskResearchDecision.decode_phase(
+            &raw.to_string(),
+            ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
+        )?
+        else {
+            return Err("progress".into());
+        };
+        assert_eq!(
+            admitted.gap,
+            "Keine zusätzliche Beleglücke gemeldet; der Prüfstand bleibt maßgeblich."
+        );
+        assert_eq!(
+            admitted.next_step,
+            "Nächsten Schritt aus dem Prüfstand bestimmen."
+        );
+        assert_eq!(
+            evidence_status,
+            crate::AskResearchEvidenceStatus::Incomplete
+        );
+        assert!(admitted.work.as_ref().ok_or("work")?.results.is_empty());
+        assert!(admitted.source_ordinals.is_empty());
+        let schema = research_work_phase_schema(ResearchOutputPhase::Initialize, true)?;
+        assert_eq!(
+            schema["$defs"]["v5StatusNote"]["properties"]["gap"]["minLength"],
+            0
+        );
+        assert_eq!(
+            schema["$defs"]["v5StatusNote"]["properties"]["next_step"]["minLength"],
+            0
+        );
+        for field in ["gap", "next_step"] {
+            for invalid in [
+                json!(null),
+                json!(false),
+                json!("x".repeat(1025)),
+                json!("\u{0000}"),
+                json!("\u{0007}"),
+            ] {
+                let mut bad = raw.clone();
+                bad["decision"]["note"][field] = invalid;
+                assert!(
+                    crate::DecodeAskResearchDecision
+                        .decode(&bad.to_string())
+                        .is_err()
+                );
+            }
+        }
+        for field in ["goal", "finding"] {
+            let mut bad = raw.clone();
+            bad["decision"]["note"][field] = json!("");
+            assert!(
+                crate::DecodeAskResearchDecision
+                    .decode(&bad.to_string())
+                    .is_err()
+            );
+        }
+        let legacy = json!({"schema_version":4,"decision":{"kind":"answer","note":note,"evidence_status":"incomplete","markdown":"Pending","source_refs":[]}});
+        assert!(
+            crate::DecodeAskResearchDecision
+                .decode(&legacy.to_string())
+                .is_err()
+        );
+        let legacy_schema = crate::DecodeAskResearchDecision.json_schema().as_json()?;
+        assert_eq!(
+            legacy_schema["$defs"]["note"]["properties"]["gap"]["minLength"],
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn research_v5_status_sources_are_a_validated_bounded_set_not_a_repair_reason()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = json!({"schema_version":5,"decision":{"kind":"progress","note":{"goal":"Inspect","finding_kind":"hypothesis","finding":"Working","finding_source_refs":["S3","S1","S3","S1"],"gap":"","next_step":""}},"work":{"questions":[],"results":[]}});
+        let phase = ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST);
+        let crate::AskResearchDecision::Answer {
+            note,
+            evidence_status,
+            ..
+        } = crate::DecodeAskResearchDecision.decode_phase(&document.to_string(), phase)?
+        else {
+            return Err("progress".into());
+        };
+        assert_eq!(note.source_ordinals, vec![3, 1]);
+        assert_eq!(
+            evidence_status,
+            crate::AskResearchEvidenceStatus::Incomplete
+        );
+        assert!(note.work.ok_or("work")?.results.is_empty());
+        document["decision"]["note"]["finding_source_refs"] = json!(vec!["S1"; 32]);
+        assert!(
+            crate::DecodeAskResearchDecision
+                .decode_phase(&document.to_string(), phase)
+                .is_ok()
+        );
+        for refs in [
+            json!(vec!["S1"; 33]),
+            json!(["S1", "S1", "S0"]),
+            json!(["S1", "S1", "S201"]),
+            json!(["S1", "S1", "S01"]),
+            json!(["S1", "S1", "S+1"]),
+            json!(["S1", "S1", null]),
+            json!(["S1", "S1", 3]),
+            json!(["S1", "S1", "E1"]),
+        ] {
+            document["decision"]["note"]["finding_source_refs"] = refs;
+            assert!(
+                crate::DecodeAskResearchDecision
+                    .decode_phase(&document.to_string(), phase)
+                    .is_err()
+            );
+        }
+        let schema = research_work_phase_schema(phase, true)?;
+        assert_ne!(
+            schema["$defs"]["v5StatusNote"]["properties"]["finding_source_refs"]["uniqueItems"],
+            true
+        );
+        assert_eq!(
+            schema["$defs"]["v5StatusNote"]["properties"]["finding_source_refs"]["maxItems"],
+            32
+        );
+        let legacy = crate::DecodeAskResearchDecision.json_schema().as_json()?;
+        assert_eq!(
+            legacy["$defs"]["note"]["properties"]["finding_source_refs"]["uniqueItems"],
+            true
+        );
+        let legacy_note = json!({"goal":"Inspect","finding_kind":"hypothesis","finding":"Working","finding_source_refs":["S1","S1"],"gap":"Open","next_step":"Check"});
+        for version in [4, 5] {
+            let historical = json!({"schema_version":version,"decision":{"kind":"answer","note":legacy_note,"evidence_status":"incomplete","markdown":"Pending","source_refs":[]},"work":{"questions":[],"results":[]}});
+            let mut historical = historical;
+            if version == 4 {
+                historical.as_object_mut().ok_or("document")?.remove("work");
+            }
+            assert!(
+                crate::DecodeAskResearchDecision
+                    .decode(&historical.to_string())
+                    .is_err()
+            );
         }
         Ok(())
     }

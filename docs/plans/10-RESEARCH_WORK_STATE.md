@@ -74,6 +74,30 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Reproduzierbare Praxisabnahme
 
+Fortsetzung nach Sicherungscommit `35630d6`:
+
+- [x] Den erneut live reproduzierten 8k-Planabbruch durch doppelte Dialogreserve
+      korrigieren und mit langem vollständigem Entwurf sowie echten Providerpaketen prüfen
+      ([ADR-0060](../adrs/0060-aktueller-pruefstand-vor-optionaler-dialogreserve.md)).
+- [ ] Luna und die freigegebenen lokalen Modelle nachtesten; Inhaltsbefunde und
+      Ablaufresultate getrennt auswerten, weitere konkrete Ursachen direkt korrigieren.
+- [x] Leere zusätzliche V5-Statushinweise neutral darstellen, ohne Ergebnis- oder
+      Belegprüfung zu umgehen; unabhängiger Decoder und realer Mehrmodusvertrag
+      ([ADR-0061](../adrs/0061-neutrale-v5-statushinweise-ohne-repair.md)).
+- [x] Den live beobachteten kopierten Core-Testauftrag als Scheinergebnis abweisen;
+      Einzelrepair, ehrlichen Fehler und unveränderte Ask-Antworten prüfen
+      ([ADR-0062](../adrs/0062-core-arbeitsauftrag-ist-kein-ergebnis.md)).
+- [x] Wiederholte gültige V5-Statusquellen ohne Repair übernehmen, Eingabegrenze
+      vor Kanonisierung und strikte S-Schreibweise unabhängig prüfen
+      ([ADR-0063](../adrs/0063-idempotente-v5-statusquellen.md)).
+- [ ] Abschließende Qualitätsgates und aktualisiertes Prüfprotokoll.
+- [x] Späte passende Bestandsdetails an abhängige Entwürfe übergeben, vollständige
+      Designentscheidungen schützen und unvermeidbare Auszüge markieren
+      ([ADR-0064](../adrs/0064-budgetierte-bestandsuebergabe-an-entwuerfe.md)).
+- [x] Zusammengehörige Kommalisten nicht in zusätzliche isolierte Recherchepflichten
+      zerlegen; wörtliche Abdeckung, alte Verträge und Quellenprüfung erhalten
+      ([ADR-0065](../adrs/0065-zusammenhaengende-listen-im-core-auftrag.md)).
+
 [Research evaluation v1](../../fixtures/research-eval-v1/README.md) enthält das
 synthetische Mehrdateiprojekt, die vier festen Aufgabenfamilien, drei Formulierungen,
 die notwendige Konzept-Rubrik und einen überprüfbaren Baseline-Testpatch.
@@ -179,4 +203,6 @@ Der jetzt belegte doppelte Connection-Drop wird über den dokumentierten
 ADR-0056-Praxisläufe enthalten diesen Patch; alte Crash-Teilberichte bleiben sichtbar.
 
 Keine Providerkonfiguration verändert, keine privaten Projekte für Modelltests
-verwendet, keine Benutzer-Knowledge-Datenbank migriert. Kein Commit, Push oder Release.
+verwendet, keine Benutzer-Knowledge-Datenbank migriert. Bis zu diesem historischen
+ADR-0059-Gate kein Commit; der anschließend ausdrücklich beauftragte Sicherungscommit
+ist `35630d6`. Kein Push oder Release.

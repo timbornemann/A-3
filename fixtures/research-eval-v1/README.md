@@ -78,6 +78,15 @@ visible. Originals are checked byte-for-byte after every case. No private source
 - Elapsed time is end-to-end case wall time on this host, not a portable speed guarantee.
   Concurrent compilation and native retries can affect it. Compare the same profile;
   changing a model is not an isolated harness performance comparison.
+- Optional `decision_diagnostics` retains at most 24 returned decision records: phase,
+  a BLAKE3 fingerprint of length-/role-framed transcript bytes, at most eight delivered
+  anchor/file-number mappings, independently decoded result anchors, and numeric/boolean
+  output-shape diagnostics. File numbers refer only to this fixed fixture's `FILES`
+  order: main, manager, storage, plugins, api (zero-based). Arbitrary paths, source text
+  and free-form output fields are not included. Failed provider calls have no returned
+  decision record; old reports lack this field. The fingerprint excludes provider-side
+  processing and the separately supplied system/schema, and is not an evidence or
+  semantic-truth judgment. Diagnostics do not alter prompts, admission or the rubric.
 
 Semantic review additionally checks selection precedence, complete caller/dispatcher/
 callback/writer order and destination, actual error conversion, and consistent proposed

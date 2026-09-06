@@ -1,5 +1,6 @@
 //! Explicit live evaluation; the actual researcher, storage, index and reader are unchanged.
 use super::*;
+use a3_application::AskResearchDecision;
 
 const FILES: [(&str, &str); 5] = [
     (
@@ -102,6 +103,103 @@ struct MatrixModel {
     calls: AtomicUsize,
     bytes: AtomicUsize,
     empty_analysis_notes: std::sync::Mutex<Vec<serde_json::Value>>,
+    decisions: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+// Only identities of this public fixture and numeric shape data, never original text,
+// free-form model fields, arbitrary paths or provider payloads. Not a fact validator.
+fn decision_diagnostic(
+    phase: a3_application::ResearchOutputPhase,
+    transcript: &[(ModelMessageRole, String)],
+    output: &str,
+) -> serde_json::Value {
+    let mut fingerprint = blake3::Hasher::new();
+    for (role, body) in transcript {
+        fingerprint.update(format!("{role:?}:{}:", body.len()).as_bytes());
+        fingerprint.update(body.as_bytes());
+    }
+    let packet = transcript
+        .iter()
+        .rev()
+        .find_map(|(_, body)| body.starts_with("CURRENT QUESTION:\n").then_some(body));
+    let delivered = packet
+        .into_iter()
+        .flat_map(|body| body.lines())
+        .filter_map(|line| {
+            let (_, rest) = line.strip_prefix("[S")?.split_once("] ")?;
+            let (path, _) = rest.split_once(" ab Zeile ")?;
+            let file = FILES.iter().position(|(known, _)| *known == path)?;
+            let (_, label) = line.rsplit_once(" [E")?;
+            let label = label.strip_suffix(']')?;
+            let anchor = label.parse::<u16>().ok()?;
+            ((1..=8).contains(&anchor) && label == anchor.to_string())
+                .then(|| serde_json::json!({"file":file,"anchor":anchor}))
+        })
+        .take(8)
+        .collect::<Vec<_>>();
+    let decoded = a3_application::DecodeAskResearchDecision.decode_phase(output, phase);
+    let results = decoded
+        .as_ref()
+        .ok()
+        .and_then(|decision| {
+            let note = match decision {
+                AskResearchDecision::Answer { note, .. }
+                | AskResearchDecision::Research { note, .. } => note,
+            };
+            note.work.as_ref()
+        })
+        .map(|work| {
+            work.results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "question":r.question_id.get(),
+                        "anchors":r.anchors.iter().map(|a| a.get()).collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+    let shape = serde_json::from_str::<serde_json::Value>(output)
+        .ok()
+        .map(|document| invalid_shape_summary(&document));
+    serde_json::json!({
+        "phase":format!("{phase:?}"),
+        "transcript_blake3":fingerprint.finalize().to_hex().to_string(),
+        "delivered":delivered,
+        "decoded":decoded.is_ok(),
+        "results":results,
+        "shape":shape
+    })
+}
+
+#[test]
+fn research_matrix_diagnostics_bind_numeric_anchors_without_source_or_model_text() {
+    let phase = a3_application::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
+    let packet = "CURRENT QUESTION:\nprivate-looking sentinel\n[S1] main.py ab Zeile 1 (Spalte 0) [E1]\nsource sentinel\n[S2] taskflow/manager.py ab Zeile 1 (Spalte 0) [E2]\n[S3] private-looking/path.py ab Zeile 1 (Spalte 0) [E3]";
+    let transcript = vec![(ModelMessageRole::User, packet.to_owned())];
+    let output = serde_json::json!({"schema_version":5,"decision":{"kind":"progress","note":{"goal":"private-looking sentinel","finding_kind":"hypothesis","finding":"output sentinel","finding_source_refs":[],"gap":"","next_step":""}},"work":{"questions":[],"results":[{"question_id":1,"kind":"interpretation","text":"model sentinel","evidence":[{"anchor_ref":"E2"}]}]}}).to_string();
+    let diagnostic = decision_diagnostic(phase, &transcript, &output);
+    assert_eq!(
+        diagnostic["delivered"],
+        serde_json::json!([{"file":0,"anchor":1},{"file":1,"anchor":2}])
+    );
+    assert_eq!(
+        diagnostic["results"],
+        serde_json::json!([{"question":1,"anchors":[2]}])
+    );
+    assert_eq!(diagnostic["decoded"], true);
+    assert!(!diagnostic.to_string().contains("sentinel"));
+    assert!(!diagnostic.to_string().contains("path.py"));
+    assert_eq!(diagnostic, decision_diagnostic(phase, &transcript, &output));
+    let changed = vec![(ModelMessageRole::User, format!("{packet}\nnew bytes"))];
+    assert_ne!(
+        diagnostic["transcript_blake3"],
+        decision_diagnostic(phase, &changed, &output)["transcript_blake3"]
+    );
+    let invalid = decision_diagnostic(phase, &transcript, "invalid sentinel");
+    assert_eq!(invalid["decoded"], false);
+    assert!(invalid["results"].is_null());
+    assert!(!invalid.to_string().contains("sentinel"));
 }
 
 // Fixed-shape diagnostics for the public fixture, never raw model/provider content.
@@ -177,6 +275,15 @@ impl ResearchModel for MatrixModel {
             .live
             .complete(mode, search, phase, transcript, control)
             .await?;
+        {
+            let mut decisions = self
+                .decisions
+                .lock()
+                .map_err(|_| AgentConversationFailure::Unavailable)?;
+            if decisions.len() < 24 {
+                decisions.push(decision_diagnostic(phase, transcript, &output));
+            }
+        }
         if matches!(
             phase,
             a3_application::ResearchOutputPhase::Analyze(_)
@@ -359,6 +466,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             calls: AtomicUsize::new(0),
                             bytes: AtomicUsize::new(0),
                             empty_analysis_notes: std::sync::Mutex::new(Vec::new()),
+                            decisions: std::sync::Mutex::new(Vec::new()),
                         });
                         let researcher = AgentAskResearcher::new(
                             store.clone(),
@@ -472,7 +580,12 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .lock()
                             .map_err(|_| "fixture notes poisoned")?
                             .clone();
-                        let record = serde_json::json!({"fixture":"research-eval-v1","family":family,"variant":variant,"repeat":repeat,"completed":completed,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes});
+                        let decisions = model
+                            .decisions
+                            .lock()
+                            .map_err(|_| "fixture diagnostics poisoned")?
+                            .clone();
+                        let record = serde_json::json!({"fixture":"research-eval-v1","family":family,"variant":variant,"repeat":repeat,"completed":completed,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
                         writeln!(report, "{record}")?;
                         report.flush()?;
                         let mut summary = record;
@@ -480,6 +593,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             object.remove("answer");
                             object.remove("work_summary");
                             object.remove("empty_analysis_notes");
+                            object.remove("decision_diagnostics");
                         }
                         println!("A3_EVAL {summary}");
                         for (path, body) in FILES {
