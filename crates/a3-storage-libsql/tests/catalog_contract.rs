@@ -86,6 +86,45 @@ fn empty_catalog_migrates_and_reopens_at_current_version() -> Result<(), Box<dyn
 }
 
 #[test]
+fn configured_model_snapshot_never_creates_migrates_or_changes_settings()
+-> Result<(), Box<dyn std::error::Error>> {
+    block_on(async {
+        let temporary = TempDirectory::new()?;
+        let absent = temporary.path().join("absent.db");
+        assert!(
+            LibsqlKnowledgeStore::read_settings_snapshot(&absent)
+                .await
+                .is_err()
+        );
+        assert!(!absent.exists());
+        let layout = StorageLayout::prepare(temporary.path().join("app-data"))?;
+        let store = LibsqlKnowledgeStore::open(&layout).await?;
+        let before = DesktopSettingsStore::load(&store).await?;
+        let bytes = fs::read(layout.catalog_path())?;
+        assert_eq!(
+            LibsqlKnowledgeStore::read_settings_snapshot(layout.catalog_path()).await?,
+            before
+        );
+        assert_eq!(DesktopSettingsStore::load(&store).await?, before);
+        assert_eq!(fs::read(layout.catalog_path())?, bytes);
+        drop(store);
+        set_user_version(&layout, CatalogSchemaVersion::CURRENT.get() + 1).await?;
+        let bytes = fs::read(layout.catalog_path())?;
+        assert!(
+            LibsqlKnowledgeStore::read_settings_snapshot(layout.catalog_path())
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read(layout.catalog_path())?, bytes);
+        assert_eq!(
+            read_user_version(&layout).await?,
+            CatalogSchemaVersion::CURRENT.get() + 1
+        );
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+}
+
+#[test]
 fn ui_preferences_are_append_only_conflict_checked_and_reopenable()
 -> Result<(), Box<dyn std::error::Error>> {
     block_on(async {

@@ -20,6 +20,9 @@ use std::fmt;
 
 const SQLITE_CONSTRAINT: i32 = 19;
 
+#[path = "replan_research_repository.rs"]
+pub(crate) mod replan;
+
 pub(crate) async fn create(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -130,6 +133,18 @@ pub(crate) async fn append_agent_read(
         )
         .await?;
         write_agent_read(&transaction, read).await?;
+        if let Some(checkpoint) = read.replan() {
+            replan::insert(&transaction, worktree_id, run, read.event(), checkpoint).await?;
+            if let Some(evidence_id) = read.original_evidence() {
+                if read.context_result().status() != a3_application::ContextToolResultStatus::Succeeded
+                    || !read.evidence().evidence().iter().any(|e| e.id() == evidence_id && e.location().range().is_some()) {
+                    return Err(RunJournalRepositoryError::InvalidInput);
+                }
+                transaction.execute("INSERT INTO agent_replan_originals (run_id,event_sequence,evidence_id) VALUES (?1,?2,?3)",
+                    params![id_bytes(run.id()), sequence_to_i64(read.event().sequence())?, evidence_id.as_bytes().to_vec()])
+                    .await.map_err(classify_unexpected_constraint)?;
+            }
+        }
         complete_agent_tool_attempt(&transaction, read).await
     }
     .await;

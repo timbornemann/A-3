@@ -192,6 +192,13 @@ where
         ),
         SourceRange::new(0, 8, SourcePosition::new(0, 0), SourcePosition::new(0, 8))?,
     ));
+    let unmarked_evidence = AgentToolEvidence::for_span(EvidenceRef::new(
+        FileRevision::new(
+            evidence.location().revision().path().clone(),
+            ContentHash::from_bytes([185; 32]),
+        ),
+        evidence.location().range().ok_or("span")?,
+    ));
     let read = AgentReadResult::new(
         tool_run_id,
         ContextToolResultStatus::Succeeded,
@@ -199,14 +206,42 @@ where
         ContextToolResultDigest::from_bytes([169; 32]),
         false,
         snapshot_id,
-        AgentToolEvidenceSet::new(snapshot_id, vec![evidence])?,
+        AgentToolEvidenceSet::new(
+            snapshot_id,
+            vec![evidence.clone(), unmarked_evidence.clone()],
+        )?,
         u64::try_from(SECRET_FIXTURE.len())?,
     )?
+    .with_original_page(a3_application::AgentSourcePage::new(
+        evidence.location().revision().clone(),
+        evidence.location().range().ok_or("span")?,
+        a3_domain::AgentFileStartLine::new(1)?,
+        "original".to_owned(),
+        None,
+        false,
+    )?)?
     .record(
         &mut current,
         RunEventId::from_bytes([168; 32]),
         AgentRunTimestamp::from_unix_millis(2_006)?,
     )?;
+    let mut checkpoint = a3_application::ReplanResearchCheckpoint::new(
+        TaskStepId::from_bytes([161; 32]),
+        snapshot_id,
+        &a3_domain::TaskReplanReason::try_from_string("Locate the serializer".to_owned())?,
+        "preserve serialized value",
+    )?;
+    checkpoint.record_read(
+        &a3_domain::AgentAction::Inspect(a3_domain::AgentInspectAction::new(
+            a3_domain::AgentInspectTarget::File(a3_domain::AgentFileInspection::new(
+                evidence.location().revision().path().clone(),
+                a3_domain::AgentFileStartLine::new(1)?,
+                a3_domain::AgentFileLineCount::new(1)?,
+            )),
+        )),
+        true,
+    )?;
+    let read = read.with_replan(checkpoint.clone());
     first_writer
         .append_agent_read(&first, expected_sequence, &current, &read)
         .await?;
@@ -324,7 +359,7 @@ where
     let reopened = factory.open(&app_data_root).await?;
     assert_eq!(
         reopened.load_agent_run(&first, run_id).await?,
-        Some(current)
+        Some(current.clone())
     );
     let reopened_ledger = reopened
         .load_task_ledger(&first, task_id)
@@ -342,6 +377,124 @@ where
         .load_run_events(&first, run_id, None, RunEventPageLimit::new(8)?)
         .await?;
     assert_eq!(all_events.events().len(), 5);
+    assert_eq!(
+        reopened
+            .load_replan_originals(&first, run_id, checkpoint.step_id, snapshot_id)
+            .await?,
+        vec![evidence.clone()]
+    );
+    assert!(
+        reopened
+            .load_replan_originals(
+                &first,
+                run_id,
+                TaskStepId::from_bytes([99; 32]),
+                snapshot_id
+            )
+            .await?
+            .is_empty()
+    );
+    assert!(
+        reopened
+            .load_replan_originals(
+                &first,
+                run_id,
+                checkpoint.step_id,
+                SnapshotId::from_bytes([99; 32])
+            )
+            .await?
+            .is_empty()
+    );
+    assert!(
+        reopened
+            .load_replan_originals(&second, run_id, checkpoint.step_id, snapshot_id)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        reopened
+            .load_replan_research(&first, run_id, checkpoint.step_id)
+            .await?,
+        Some(checkpoint.clone())
+    );
+    assert!(
+        reopened
+            .load_replan_research(&second, run_id, checkpoint.step_id)
+            .await
+            .is_err()
+    );
+    // Unsupported evidence must roll back both the charged event and checkpoint. A valid
+    // original span then commits both; none of this verifies the implementation step.
+    for case in 0..3 {
+        let valid = case == 2;
+        let mut next = checkpoint.clone();
+        next.work.begin_analysis(
+            a3_domain::ResearchQuestionId::FIRST,
+            ContentHash::from_bytes([180; 32]),
+        )?;
+        let revision = if valid {
+            evidence.location().revision().clone()
+        } else if case == 1 {
+            // A persisted search/inspection span without an actual original-page
+            // marker is still not admissible Replan research evidence.
+            unmarked_evidence.location().revision().clone()
+        } else {
+            FileRevision::new(
+                evidence.location().revision().path().clone(),
+                ContentHash::from_bytes([181; 32]),
+            )
+        };
+        next.work.resolve(a3_domain::ResearchQuestionId::FIRST, a3_domain::ResearchResult::new(a3_domain::ResearchResultKind::Interpretation,
+            "The current serializer needs the missing field preserved and a round-trip regression.".to_owned(),
+            vec![a3_domain::ResearchResultSource { source_id:a3_domain::AskResearchSourceId::from_bytes([182;32]),revision,range:evidence.location().range().ok_or("span")? }],None)?)?;
+        let mut candidate = current.clone();
+        let event = candidate.record_turn(
+            RunEventId::from_bytes([183; 32]),
+            RunEventPayload::empty(),
+            snapshot_id,
+            AgentRunTimestamp::from_unix_millis(2_010)?,
+            AgentTurnCharge::new(
+                ModelTokenCount::new(100),
+                ModelTokenCount::new(30),
+                None,
+                AgentTurnRepairUsage::None,
+            ),
+        )?;
+        let result = reopened
+            .append_replan_research(
+                &first,
+                current.last_event_sequence(),
+                &candidate,
+                &event,
+                &next,
+            )
+            .await;
+        if valid {
+            result?;
+            assert_eq!(
+                reopened
+                    .load_replan_research(&first, run_id, next.step_id)
+                    .await?,
+                Some(next)
+            );
+            assert_eq!(
+                reopened.load_agent_run(&first, run_id).await?,
+                Some(candidate)
+            );
+        } else {
+            assert!(result.is_err());
+            assert_eq!(
+                reopened.load_agent_run(&first, run_id).await?,
+                Some(current.clone())
+            );
+            assert_eq!(
+                reopened
+                    .load_replan_research(&first, run_id, next.step_id)
+                    .await?,
+                Some(checkpoint.clone())
+            );
+        }
+    }
     crate::release_contract_store(reopened);
     crate::complete_contract_phase()
 }

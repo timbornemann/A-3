@@ -10,8 +10,20 @@ mod agent_goal;
 mod agent_inspection;
 mod agent_prompt;
 mod agent_read_result;
+mod replan_research;
+pub use replan_research::{ReplanResearchCheckpoint, ReplanResearchContext};
 mod agent_recovery;
 mod agent_research_controller;
+mod research_work_admission;
+mod research_work_codec;
+mod schema_projection;
+pub use research_work_admission::{
+    ResearchEvidenceWindow, ResearchWorkAdmissionError, admit_research_work,
+};
+pub use research_work_codec::{
+    ResearchEvidenceAnchorId, ResearchOutputPhase, ResearchQuoteProposal, ResearchResultProposal,
+    ResearchWorkUpdate, research_work_decision_schema, research_work_phase_schema,
+};
 mod agent_runtime;
 mod agent_session;
 mod agent_source_reader;

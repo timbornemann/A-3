@@ -121,6 +121,18 @@ pub(crate) fn run_libsql_test<F>(future: F) -> Result<(), Box<dyn Error>>
 where
     F: Future<Output = Result<(), Box<dyn Error>>>,
 {
+    run_libsql_test_selected(future, false)
+}
+
+pub(crate) fn run_libsql_test_selected<F>(
+    future: F,
+    include_ignored: bool,
+) -> Result<(), Box<dyn Error>>
+where
+    F: Future<Output = Result<(), Box<dyn Error>>>,
+{
+    #[cfg(not(windows))]
+    let _ = include_ignored;
     #[cfg(windows)]
     let current_thread = std::thread::current();
     #[cfg(windows)]
@@ -136,9 +148,12 @@ where
         let success_marker = libsql_success_marker(test_name);
         for attempt in 1..=MAX_NATIVE_ATTEMPTS {
             remove_libsql_success_marker(&success_marker)?;
-            let mut child = std::process::Command::new(std::env::current_exe()?)
-                .arg(test_name)
-                .arg("--exact")
+            let mut command = std::process::Command::new(std::env::current_exe()?);
+            command.arg(test_name).arg("--exact");
+            if include_ignored {
+                command.arg("--include-ignored");
+            }
+            let mut child = command
                 .arg("--test-threads=1")
                 .env("A3_LIBSQL_ISOLATED_TEST", test_name)
                 .env("A3_REPO_INDEX_SUCCESS_MARKER", &success_marker)

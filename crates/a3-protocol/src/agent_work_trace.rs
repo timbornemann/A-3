@@ -192,6 +192,9 @@ pub struct AgentWorkTraceTurnV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AgentWorkTraceDetailV1 {
+    /// V36 Core checklist; absent for historical turns. Never synthesized from timeline notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_work: Option<crate::ResearchWorkV1>,
     /// User-message sequence owning this trace.
     pub user_sequence: String,
     /// Session mode using the shared controller.
@@ -397,6 +400,7 @@ mod projection_tests {
     fn projection_and_source_page_bindings_use_camel_case_wire_names()
     -> Result<(), serde_json::Error> {
         let detail = AgentWorkTraceDetailV1 {
+            research_work: None,
             user_sequence: "1".to_owned(),
             mode: AgentSessionModeV1::Ask,
             depth: AgentWorkTraceDepthV1::Standard,

@@ -1,5 +1,9 @@
 //! Desktop composition root and explicit boundary mappings for A^3.
 
+#[cfg(test)]
+#[path = "../../../../crates/a3-repo-index/tests/support/mod.rs"]
+mod index_test_support;
+
 mod agent_approval_mapping;
 mod agent_approval_metadata;
 mod agent_conversation_runtime;
@@ -901,6 +905,12 @@ impl CompositionRoot {
             protocol_version: ProtocolVersion::CURRENT,
             result: a3_protocol::AgentWorkTraceDetailResultV1::Available {
                 detail: a3_protocol::AgentWorkTraceDetailV1 {
+                    research_work: map_research_work(
+                        &detail,
+                        active.project.worktree().id(),
+                        revision,
+                        current.as_ref(),
+                    ),
                     user_sequence: user_sequence.get().to_string(),
                     mode: map_work_trace_mode(detail.turn().mode()),
                     depth: map_work_trace_depth(detail.turn().depth()),
@@ -1063,6 +1073,12 @@ impl CompositionRoot {
             protocol_version: ProtocolVersion::CURRENT,
             result: a3_protocol::AgentWorkTraceProjectionResultV1::Available {
                 detail: a3_protocol::AgentWorkTraceDetailV1 {
+                    research_work: map_research_work(
+                        detail,
+                        active.project.worktree().id(),
+                        revision,
+                        current,
+                    ),
                     user_sequence: user_sequence.get().to_string(),
                     mode: map_work_trace_mode(detail.turn().mode()),
                     depth: map_work_trace_depth(detail.turn().depth()),
@@ -6552,6 +6568,85 @@ const fn map_work_trace_state(
         a3_domain::AskResearchState::Failed => a3_protocol::AgentWorkTraceStateV1::Failed,
         a3_domain::AskResearchState::Cancelled => a3_protocol::AgentWorkTraceStateV1::Cancelled,
     }
+}
+
+fn map_research_work(
+    detail: &a3_application::AskResearchDetail,
+    worktree: WorktreeId,
+    revision: u32,
+    current: Option<&a3_domain::PublishedIndex>,
+) -> Option<a3_protocol::ResearchWorkV1> {
+    use a3_domain::{
+        ResearchQuestionPriority as Priority, ResearchQuestionStatus as Status,
+        ResearchResultKind as Kind,
+    };
+    use a3_protocol::{
+        ResearchQuestionPriorityV1 as PriorityV1, ResearchQuestionStatusV1 as StatusV1,
+        ResearchResultKindV1 as KindV1,
+    };
+    let mut work = detail.work_state()?.clone();
+    work.revalidate_in_scope(
+        current.map_or(&[], |index| index.publication().graph().files()),
+        current.map(agent_session_manager::research_access::scope),
+    )
+    .ok()?;
+    Some(a3_protocol::ResearchWorkV1 {
+        schema_version: 1,
+        revision: detail.work_state()?.revision(),
+        questions: work
+            .questions()
+            .iter()
+            .map(|q| a3_protocol::ResearchQuestionV1 {
+                id: q.id().get(),
+                outcome: q.definition().outcome.clone(),
+                priority: match q.definition().priority {
+                    Priority::Required => PriorityV1::Required,
+                    Priority::Supporting => PriorityV1::Supporting,
+                    Priority::Optional => PriorityV1::Optional,
+                },
+                status: match q.status() {
+                    Status::Open => StatusV1::Open,
+                    Status::Active => StatusV1::Active,
+                    Status::Answered => StatusV1::Answered,
+                    Status::Limited => StatusV1::Limited,
+                    Status::Blocked => StatusV1::Blocked,
+                    Status::Stale => StatusV1::Stale,
+                },
+                dependencies: q
+                    .definition()
+                    .dependencies
+                    .iter()
+                    .map(|id| id.get())
+                    .collect(),
+                result: q.result().map(|r| r.text().to_owned()),
+                result_kind: q.result().map(|r| match r.kind() {
+                    Kind::Interpretation => KindV1::Interpretation,
+                    Kind::DesignDecision => KindV1::DesignDecision,
+                    Kind::BoundedUnknown => KindV1::BoundedUnknown,
+                }),
+                source_refs: q
+                    .result()
+                    .filter(|_| q.resolved())
+                    .map_or_else(Vec::new, |r| {
+                        r.sources()
+                            .iter()
+                            .map(|s| {
+                                research_source_ref(
+                                    worktree,
+                                    detail.turn().session_id(),
+                                    detail.turn().user_sequence(),
+                                    revision,
+                                    s.source_id,
+                                    current,
+                                )
+                            })
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .collect()
+                    }),
+            })
+            .collect(),
+    })
 }
 
 fn map_work_trace_step(

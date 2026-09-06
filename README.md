@@ -6,6 +6,15 @@ Der sichtbare Produktname besteht exakt aus den drei Zeichen **A^3**. In technis
 
 ## Entwicklungsstand
 
+Die gemeinsame Recherche erhält einen dauerhaften, quellengebundenen Prüfstand für Ask,
+Plan und Agent-Vorbereitung. Der Core wählt aktive Teilfragen, verhindert identische
+Analysen desselben Belegpakets und rendert Planstruktur sowie Quellenzuordnung selbst.
+Die Workspace-Prüfliste zeigt Ergebnisse und offene Fragen getrennt vom Aktivitätsverlauf.
+Implementierungs- und Abnahmestand einschließlich bekannter Grenzen stehen in
+[Plan 10](docs/plans/10-RESEARCH_WORK_STATE.md). Die abschließenden Modellmatrizen
+schließen mit Luna und Ornith jeweils 60/60 Fälle ohne Nutzerhalt ab; bekannte
+Inhaltsfehler verhindern weiterhin die vollständige Praxisabnahme.
+
 Der Foundation-Meilenstein sowie Projektidentität, lokale Storage-Grundlage, begrenzte
 Repository-Discovery, inhaltsbasierte Worktree-Snapshots und der versionierte Tree-sitter-
 LanguageAdapter-Contract sowie die Rust-/Cargo-, TypeScript-/JavaScript-/Package- und
@@ -141,7 +150,8 @@ dauerhafte Task Ledger mit Planrevision und allen aktiven Planschritten. Bestät
 Pläne werden dabei als höchstens 64 einzeln verifizierbare Implementierungs- und Test-Todos
 materialisiert. Neue Evidence kann innerhalb des bestätigten Ziels einen begrenzten automatischen
 Replan auslösen: bereits bestätigte Arbeit bleibt erhalten, offene Nachfolger werden historisch
-pensioniert und ein neues sichtbares Planlücken-Todo wird vor frischen Ersatzschritten eingefügt.
+pensioniert. Vor frischen Ersatzschritten lokalisiert eine begrenzte read-only Phase aktuelle
+Originalquellen; ein künstliches Todo mit kopierter Änderungsverifikation wird nicht angelegt.
 Ein tatsächlich
 laufender, auf Freigabe wartender, zu verifizierender oder blockierter Schritt bleibt gemeinsam mit
 dem Ziel in einem workspaceweiten Sticky Anchor sichtbar; fehlendes Ledger und eine abweichende

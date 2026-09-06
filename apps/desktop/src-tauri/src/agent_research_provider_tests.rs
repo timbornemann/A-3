@@ -8,6 +8,82 @@ use a3_domain::*;
 
 #[derive(Debug)]
 struct Control;
+
+#[derive(Debug)]
+struct BrokenStream {
+    id: ModelProviderId,
+    failure: ConversationStreamFailure,
+}
+impl ModelProvider for BrokenStream {
+    fn provider_id(&self) -> &ModelProviderId {
+        &self.id
+    }
+    fn stream<'a>(
+        &'a self,
+        _: &'a ModelProviderRequest,
+        _: ModelRequestTimeout,
+        _: &'a dyn ModelOperationControl,
+    ) -> ModelProviderFuture<'a> {
+        Box::pin(async move {
+            let chunk = || {
+                ModelOutputChunk::try_from_string("{}".to_owned())
+                    .map(ProviderEvent::OutputText)
+                    .map_err(|_| ModelProviderFailure::InvalidResponse)
+            };
+            let done = || {
+                Ok(ProviderEvent::Completed(ModelProviderCompletion::new(
+                    ModelFinishReason::Stop,
+                    ModelProviderUsage::new(None, None),
+                )))
+            };
+            let events = match self.failure {
+                ConversationStreamFailure::MissingCompletion => vec![chunk()],
+                ConversationStreamFailure::EmptyDocument => vec![done()],
+                ConversationStreamFailure::AfterCompletion => vec![chunk(), done(), chunk()],
+                ConversationStreamFailure::ProviderProtocol => {
+                    vec![Err(ModelProviderFailure::InvalidResponse)]
+                }
+            };
+            Ok(Box::pin(futures::stream::iter(events)) as a3_application::ProviderEventStream<'a>)
+        })
+    }
+}
+
+#[test]
+fn research_stream_subcauses_are_closed_content_free_and_never_partial_documents()
+-> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()?;
+    let profile = profile(8192, ModelPromptSchemaGrounding::FormatFieldOnly)?;
+    for failure in [
+        ConversationStreamFailure::MissingCompletion,
+        ConversationStreamFailure::EmptyDocument,
+        ConversationStreamFailure::AfterCompletion,
+        ConversationStreamFailure::ProviderProtocol,
+    ] {
+        let provider = BrokenStream {
+            id: profile.provider_id().clone(),
+            failure,
+        };
+        assert_eq!(
+            runtime.block_on(complete_with_provider(
+                &provider,
+                profile.clone(),
+                "system",
+                &[(
+                    ModelMessageRole::User,
+                    "CURRENT QUESTION:\nFixture".to_owned()
+                )],
+                None,
+                &Control
+            )),
+            Err(AgentConversationFailure::Stream(failure))
+        );
+        assert!(failure.code().starts_with("research-v2/stream-"));
+    }
+    Ok(())
+}
 impl ModelOperationControl for Control {
     fn is_cancelled(&self) -> bool {
         false
@@ -90,13 +166,20 @@ fn actual_provider_packets_preserve_goal_and_evidence_during_repair_and_use_phas
             ModelPromptSchemaGrounding::FormatFieldOnly,
             ModelPromptSchemaGrounding::RepeatSchemaInPrompt,
         ] {
-            for phase in 0..3 {
+            for phase in 0..4 {
                 let schema = match phase {
                     0 => research_phase_schema(true)?,
-                    1 => research_phase_schema(false)?,
+                    1 => research_contract_schema(
+                        true,
+                        a3_application::ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
+                    )?,
+                    2 => research_contract_schema(
+                        false,
+                        a3_application::ResearchOutputPhase::Finalize,
+                    )?,
                     _ => evidence_diagram_schema()?,
                 };
-                let system = if phase == 2 {
+                let system = if phase == 3 {
                     DIAGRAM_SYSTEM_PROMPT.to_owned()
                 } else {
                     research_system_prompt(AgentSessionMode::Ask, phase == 0, None)
@@ -150,16 +233,25 @@ fn actual_provider_packets_preserve_goal_and_evidence_during_repair_and_use_phas
                             .any(|message| message.content() == packet)
                     );
                     let actual = request.structured_output().ok_or("phase schema")?.value();
-                    if phase == 1 {
+                    if phase == 2 {
                         assert_eq!(
-                            actual.pointer("/properties/decision/properties/kind/const"),
-                            Some(&serde_json::json!("answer"))
+                            actual.pointer("/$defs/planDecision/properties/kind/const"),
+                            Some(&serde_json::json!("plan"))
                         );
                     }
                     if phase == 0 {
-                        assert!(actual.pointer("/properties/decision/oneOf/1").is_some());
+                        assert_eq!(
+                            actual.pointer("/$defs/work/properties/questions/minItems"),
+                            Some(&serde_json::json!(1))
+                        );
                     }
-                    if phase == 2 {
+                    if phase == 1 {
+                        assert_eq!(
+                            actual.pointer("/$defs/result/properties/question_id/const"),
+                            Some(&serde_json::json!(1))
+                        );
+                    }
+                    if phase == 3 {
                         assert!(actual.pointer("/properties/diagrams").is_some());
                     }
                     let cost: usize = request

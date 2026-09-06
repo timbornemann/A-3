@@ -242,7 +242,9 @@ impl<'a> DeterministicAgentReadTools<'a> {
                 )
                 .map_err(|_| AgentReadToolFailure::InvalidResult)?;
                 render_numbered_source(&mut output, page.start_line().get(), page.text())?;
-                Ok(RenderedToolResult::new(output, evidence, page.truncated()))
+                let mut result = RenderedToolResult::new(output, evidence, page.truncated());
+                result.original_page = Some(page);
+                Ok(result)
             }
             AgentInspectTarget::Symbol(symbol_id) => {
                 let symbol = current_symbol(&published, *symbol_id)?;
@@ -466,6 +468,7 @@ struct RenderedToolResult {
     output: String,
     evidence: EvidenceCollector,
     truncated: bool,
+    original_page: Option<a3_application::AgentSourcePage>,
 }
 
 impl RenderedToolResult {
@@ -474,6 +477,7 @@ impl RenderedToolResult {
             output,
             evidence,
             truncated,
+            original_page: None,
         }
     }
 
@@ -492,7 +496,7 @@ impl RenderedToolResult {
         let (preview, preview_truncated) = bounded_preview(normalized);
         let evidence_truncated = self.evidence.truncated;
         let evidence = self.evidence.into_set(snapshot_id)?;
-        AgentReadResult::new(
+        let result = AgentReadResult::new(
             tool_run_id,
             ContextToolResultStatus::Succeeded,
             ContextToolResultPreview::try_from_string(preview)
@@ -503,7 +507,13 @@ impl RenderedToolResult {
             evidence,
             observed_output_bytes,
         )
-        .map_err(|_| AgentReadToolFailure::InvalidResult)
+        .map_err(|_| AgentReadToolFailure::InvalidResult)?;
+        match self.original_page {
+            Some(page) => result
+                .with_original_page(page)
+                .map_err(|_| AgentReadToolFailure::InvalidResult),
+            None => Ok(result),
+        }
     }
 }
 

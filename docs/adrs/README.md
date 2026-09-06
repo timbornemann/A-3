@@ -71,6 +71,19 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0044](0044-priorisierter-recherchekontext-und-zielauflösung.md)             | Priorisierter Recherchekontext und Zielauflösung     |
 | [0045](0045-fast-index-function-flow-analysis.md) | Ablauf- und Wertanalyse im Fast Index |
 | [0046](0046-progressive-recherche-und-getrennte-recoverybudgets.md) | Progressive Recherche und getrennte Recoverybudgets |
+| [0047](0047-verbindlicher-recherchearbeitsstand.md) | Verbindlicher Recherchearbeitsstand und kontrollierter Abschluss |
+| [0048](0048-rungebundene-replan-recherche.md) | Rungebundene Replan-Recherche |
+| [0049](0049-core-planpflichten-und-statusnotizen.md) | Core-Planpflichten und nichtautoritative Statusnotizen |
+| [0050](0050-verlustfreie-entwurfsuebergabe.md) | Verlustfreie Entwurfsübergabe und phasengebundene Belege |
+| [0051](0051-core-fallback-fuer-ungeeignete-zerlegung.md) | Core-Fallback für ungeeignete Initialzerlegung |
+| [0052](0052-literale-teilpflichten-im-core-fallback.md) | Literale Teilpflichten im Core-Fallback |
+| [0053](0053-core-pflichten-fuer-benannte-codefragen.md) | Core-Pflichten für benannte Codefragen |
+| [0054](0054-vollstaendig-gelieferte-planbestandsaufnahme.md) | Vollständig gelieferte Planbestandsaufnahme |
+| [0055](0055-libsql-einmalige-verbindungsfreigabe.md) | Einmalige libSQL-Verbindungsfreigabe |
+| [0056](0056-vollstaendige-passende-originalpakete.md) | Vollständige passende Originalpakete |
+| [0057](0057-leerer-entwurf-ist-kein-rechercheauftrag.md) | Leerer Entwurf ist kein Rechercheauftrag |
+| [0058](0058-kompakte-recherchephasen-fuer-kleine-kontexte.md) | Kompakte Recherchephasen für kleine Kontexte |
+| [0059](0059-idempotente-originalanker-in-rechercheergebnissen.md) | Idempotente Originalanker in Rechercheergebnissen |
 
 ## Neue ADRs
 

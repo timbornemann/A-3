@@ -1,5 +1,28 @@
 # Daten und Persistenz
 
+## Ergänzung: Knowledge V37
+
+`agent_replan_research_checkpoints` speichert den gemeinsamen `ResearchWorkState` unter
+Run, Schritt, Snapshot und einem bestehenden Journal-Event. Die unveränderlichen Zeilen
+werden mit dem zugehörigen Analyse- oder Read-Event atomar geschrieben. Quellenanker müssen
+exakte erfolgreich journalisierte und als Original markierte Spans desselben Runs,
+Schritts und Snapshots besitzen. Ein Suchspan ohne Originalmarker reicht nicht. Ein ungültiger
+Anker rollt auch das Event zurück. Originaltext, Providerantworten und Credentials werden
+nicht gespeichert. Reopen stellt denselben Prüfstand einschließlich Read-Zähler wieder her.
+Siehe [ADR-0048](adrs/0048-rungebundene-replan-recherche.md).
+
+`agent_replan_originals` markiert ausschließlich die genaue Tool-Evidence-ID tatsächlich
+gelieferter Originalseiten im selben Read-/Checkpoint-Commit. Die Tabelle enthält keine
+Source-Bytes. Der Wiederanlauf lädt höchstens acht markierte Spans des exakten Runs, Schritts
+und Snapshots und liest sie nach erneuter Hashprüfung durch den Safe Reader. Such- und
+Graphmetadaten werden nicht zu Originalreads umgedeutet. Ein leerer EOF-Read erhält keine
+Originalmarkierung. Direkte Updates und Deletes bleiben gesperrt.
+
+Die ausdrücklich aktivierte Modellprüfung kann Settings aus einem bestehenden Katalog
+mit SQLite-Read-only-Flags laden. Dieser Weg erstellt und migriert keine Datenbank, öffnet
+keine Projektdatenbanken und liest keine Secrets; Providerauflösung nutzt den bisherigen
+Credential-Adapter. Das ist keine neue WebView-Berechtigung.
+
 Status: verbindliche Baseline  
 Stand: 2026-08-29
 
@@ -289,6 +312,34 @@ Der S2-Unterbau liegt im Infrastruktur-Crate `a3-storage-libsql`:
   64 Ereignisse in chronologischer Reihenfolge, nicht das gespeicherte Journal. Phase, endliche
   Verbrauchszähler und geschlossene Diagnosecodes dürfen in sicheren Aktionsbeschreibungen
   stehen; rohe Modell-/Providerfehler oder Prompts weiterhin nicht.
+- Knowledge-Schema V36 ergänzt nach ADR-0047 `agent_research_work_checkpoints`. Ein streng
+  versioniertes, auf 512 KiB begrenztes Adapterdokument enthält höchstens 32 unveränderliche
+  Teilfragen, Ergebnisse, ursprüngliche Datei-/Hash-/Bereichsbezüge sowie begrenzte Core-
+  Versuchsschlüssel. Es wird atomar mit seinem bestehenden Work-Trace-Event geschrieben.
+  Zusätzlich werden höchstens 256 adaptive Zugriffsidentitäten mit Teilfrage,
+  Publikationshash, kanonischem Argumenthash, Capability-Klasse, Startzähler und getrenntem
+  Core-Ergebnis gespeichert. Vor dem Aufruf wird ein offener Versuch quittiert, danach sein
+  Ergebnis; ein Abbruch lässt ihn offen. Es werden keine Such-/Quelltexte im Zugriffskatalog
+  dupliziert. Fehlende Katalogfelder älterer V36-Checkpoints bedeuten einen leeren Katalog,
+  niemals nachträglich erfundene Suchergebnisse.
+  Fragen und Auftrag sind eingefroren, Revisionen monoton; Update und direktes Delete sind
+  gesperrt. Die bestehende explizite Präsentationslöschung darf den Prüfstand ausschließlich
+  über die Foreign-Key-Kaskade seines bereits entfernten Work-Trace-Elternereignisses löschen.
+  Die Source-Identität muss demselben Worktree und derselben Session angehören. Der genaue
+  Ergebnisbereich stammt aus dem tatsächlich ausgelieferten Safe-Reader-Fenster; er kann
+  den engeren Navigationsanker eines Symbols überragen. Ein Ergebnisbereich wird niemals
+  aus einer Modell-Zeilenangabe berechnet. Originalfenster, zum Abgleich gelieferte Zitatfelder
+  und rohe Modellantworten werden nicht gespeichert. Öffentliche Ergebnisformulierungen können
+  kurze Codebeispiele enthalten; ihre Provenienz bleiben die geprüften Originalreferenzen.
+  Der letzte Prüfstand wird unabhängig vom 64-Event-
+  Anzeigefenster geladen. Historische Traces erhalten keinen erfundenen Backfill.
+  Rebuilds des Index löschen diese nicht regenerierbare Recherchehistorie nicht.
+  Core-abgeleitete Untersuchungsgrenzen verwenden dieselben Ergebnis-/Ausschlussfelder;
+  ihr Grenzanker ist der Core-berechnete Publikationsscope. Reopen, Workspace-Projektion und
+  Agent-Handoff vergleichen diesen explizit und verlangen zugehörige Zugriffsquittungen.
+  Frühere Scopes bleiben als Historie erhalten, werden aber weder mit aktuellen Quittungen
+  vermischt noch als Sperre einer neuen Untersuchung verwendet. Ein Scopewechsel macht auch quellenlose negative Ergebnisse
+  stale. Stale Ausschlüsse dürfen bei einer Fortsetzung keinen neuen Abschluss autorisieren.
 - Häufige Status- und Dashboard-Reads verwenden die geprüfte, aktuelle Indexprojektion aus dem
   Store-Cache, sofern ihr Run-Anker exakt passt. Ein Cache-Miss wird in einem eigenen konsistenten
   Read-Kontext rekonstruiert; Card- und Atlas-Autorität bleiben dadurch unverändert.
@@ -827,6 +878,12 @@ Runs, weil Symbolziele ihre containment-abgeleiteten qualifizierten Namen als Do
 - keine automatische Datenlöschung zur Fehlerbehebung
 
 ## Retention und Wiederaufbau
+
+Der lokale libSQL-0.9.29-Adapter verwendet den in
+[ADR-0055](adrs/0055-libsql-einmalige-verbindungsfreigabe.md) dokumentierten
+Cargo-Patch zur einmaligen nativen Connection-Freigabe. Quelle und Features bleiben
+gepinnt; unabhängige Operationsverbindungen, Transaktionsisolation, Schema und
+Storage-Ports bleiben unverändert. Der native Lebensdauertest läuft ohne Crash-Retry.
 
 - Index und Embeddings dürfen sicher gelöscht und aufgebaut werden.
 - „Aus A^3 entfernen“ löscht nur den exakt identitätsgebundenen `recent_worktrees`-Eintrag und

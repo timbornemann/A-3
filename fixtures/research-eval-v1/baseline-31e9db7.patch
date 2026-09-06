@@ -1,0 +1,752 @@
+diff --git a/apps/desktop/src-tauri/src/agent_conversation_runtime.rs b/apps/desktop/src-tauri/src/agent_conversation_runtime.rs
+index 9718518..f643d12 100644
+--- a/apps/desktop/src-tauri/src/agent_conversation_runtime.rs
++++ b/apps/desktop/src-tauri/src/agent_conversation_runtime.rs
+@@ -139,7 +139,7 @@ impl AgentConversationRuntime {
+     }
+ }
+ 
+-async fn complete_with_provider(
++pub(crate) async fn complete_with_provider(
+     provider: &dyn ModelProvider,
+     profile: a3_domain::ModelProfile,
+     system: &str,
+@@ -319,7 +319,7 @@ fn ask_research_schema() -> Result<StructuredOutputSchema, AgentConversationFail
+         })
+ }
+ 
+-fn research_phase_schema(
++pub(crate) fn research_phase_schema(
+     search_allowed: bool,
+ ) -> Result<StructuredOutputSchema, AgentConversationFailure> {
+     let schema = ask_research_schema()?;
+@@ -387,7 +387,7 @@ fn system_prompt(mode: AgentSessionMode) -> &'static str {
+     }
+ }
+ 
+-fn research_system_prompt(
++pub(crate) fn research_system_prompt(
+     mode: AgentSessionMode,
+     search_allowed: bool,
+     command_constraint: Option<&str>,
+@@ -620,3 +620,26 @@ mod tests {
+         assert!(!searchable.contains("Plan readiness is not patch readiness"));
+     }
+ }
++
++
++#[cfg(test)]
++pub(crate) fn research_evidence_budget_for_profile(profile: &a3_domain::ModelProfile, mode: a3_domain::AgentSessionMode, command_constraint: Option<&str>) -> Result<usize, AgentConversationFailure> {
++        let settings = profile.settings();
++        let schema = ask_research_schema()?;
++        let grounded_system = schema_grounded_system(
++            &research_system_prompt(mode, true, command_constraint),
++            Some(&schema),
++            settings.schema_grounding(),
++        )?;
++        let system_cost = settings
++            .token_counting()
++            .count_text(&grounded_system)
++            .map_err(|_| AgentConversationFailure::InvalidInput)?
++            .get();
++        let available = ask_evidence_budget_bytes(
++            settings.context_limit().get(),
++            settings.output_limit().get(),
++            system_cost,
++        );
++        usize::try_from(available).map_err(|_| AgentConversationFailure::InvalidInput)
++}
+diff --git a/apps/desktop/src-tauri/src/agent_research_coherent_tests.rs b/apps/desktop/src-tauri/src/agent_research_coherent_tests.rs
+index b072f17..8e43176 100644
+--- a/apps/desktop/src-tauri/src/agent_research_coherent_tests.rs
++++ b/apps/desktop/src-tauri/src/agent_research_coherent_tests.rs
+@@ -1,5 +1,9 @@
+ //! No model-side evidence history: the entire call chain must coexist in one real packet.
+ use super::*;
++#[path = "agent_research_live_fixture.rs"]
++mod live_fixture;
++#[path = "agent_research_matrix.rs"]
++mod matrix;
+ 
+ const QUERY: &str = "Verfolge die Aufgabenerstellung in taskflow/manager.py, taskflow/plugins/base.py und taskflow/plugins/audit_log_plugin.py. Welche Methoden werden aufgerufen und wohin wird das Audit-Log geschrieben?";
+ const ADD: &str = "    def add_task(self, project_id, title):\n        if project_id not in self.projects:\n            raise ValueError('unknown project')\n        task = Task(title)\n        self.tasks.append(task)\n        self.storage.save_tasks(self.tasks)\n        self.plugin_manager.trigger_task_created(task.to_dict())\n        return task\n";
+diff --git a/apps/desktop/src-tauri/src/agent_research_recovery_tests.rs b/apps/desktop/src-tauri/src/agent_research_recovery_tests.rs
+index 3f3fe04..45b21e4 100644
+--- a/apps/desktop/src-tauri/src/agent_research_recovery_tests.rs
++++ b/apps/desktop/src-tauri/src/agent_research_recovery_tests.rs
+@@ -37,6 +37,13 @@ impl ResearchModel for SequenceModel {
+ 
+ pub(super) fn owned(
+     check: impl FnOnce(JobContext, JobSubmitter) -> Result<(), Box<dyn Error>> + Send + 'static,
++) -> Result<(), Box<dyn Error>> {
++    owned_with_timeout(Duration::from_secs(20), check)
++}
++
++pub(super) fn owned_with_timeout(
++    timeout: Duration,
++    check: impl FnOnce(JobContext, JobSubmitter) -> Result<(), Box<dyn Error>> + Send + 'static,
+ ) -> Result<(), Box<dyn Error>> {
+     let (scheduler, events) =
+         JobScheduler::new(JobSchedulerConfig::new(1, 2, 32)?, Arc::new(FixtureClock))?;
+@@ -56,10 +63,14 @@ pub(super) fn owned(
+             }
+         },
+     )?;
++    let started = Instant::now();
+     loop {
+-        let event = events
+-            .next_timeout(Duration::from_secs(20))?
+-            .ok_or("owned test timeout")?;
++        if started.elapsed() >= timeout {
++            return Err("owned test timeout".into());
++        }
++        let Some(event) = events.next_timeout(Duration::from_secs(2))? else {
++            continue;
++        };
+         if matches!(
+             event.kind(),
+             JobEventKind::Succeeded | JobEventKind::Failed | JobEventKind::Cancelled
+diff --git a/crates/a3-repo-index/tests/support/mod.rs b/crates/a3-repo-index/tests/support/mod.rs
+index d342896..455c161 100644
+--- a/crates/a3-repo-index/tests/support/mod.rs
++++ b/crates/a3-repo-index/tests/support/mod.rs
+@@ -121,6 +121,18 @@ pub(crate) fn run_libsql_test<F>(future: F) -> Result<(), Box<dyn Error>>
+ where
+     F: Future<Output = Result<(), Box<dyn Error>>>,
+ {
++    run_libsql_test_selected(future, false)
++}
++
++pub(crate) fn run_libsql_test_selected<F>(
++    future: F,
++    include_ignored: bool,
++) -> Result<(), Box<dyn Error>>
++where
++    F: Future<Output = Result<(), Box<dyn Error>>>,
++{
++    #[cfg(not(windows))]
++    let _ = include_ignored;
+     #[cfg(windows)]
+     let current_thread = std::thread::current();
+     #[cfg(windows)]
+@@ -136,9 +148,12 @@ where
+         let success_marker = libsql_success_marker(test_name);
+         for attempt in 1..=MAX_NATIVE_ATTEMPTS {
+             remove_libsql_success_marker(&success_marker)?;
+-            let mut child = std::process::Command::new(std::env::current_exe()?)
+-                .arg(test_name)
+-                .arg("--exact")
++            let mut command = std::process::Command::new(std::env::current_exe()?);
++            command.arg(test_name).arg("--exact");
++            if include_ignored {
++                command.arg("--include-ignored");
++            }
++            let mut child = command
+                 .arg("--test-threads=1")
+                 .env("A3_LIBSQL_ISOLATED_TEST", test_name)
+                 .env("A3_REPO_INDEX_SUCCESS_MARKER", &success_marker)
+diff --git a/apps/desktop/src-tauri/src/agent_research_live_fixture.rs b/apps/desktop/src-tauri/src/agent_research_live_fixture.rs
+new file mode 100644
+index 0000000..8caa23d
+--- /dev/null
++++ b/apps/desktop/src-tauri/src/agent_research_live_fixture.rs
+@@ -0,0 +1,98 @@
++//! Explicitly opted-in local smoke. No desktop configuration or original repository is changed.
++use super::*;
++use a3_application::{ModelCapabilityProbeRequest, ModelRequestTimeout, ProbeModelProfile};
++use a3_domain::*;
++use a3_provider::{LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider};
++
++#[derive(Clone)]
++pub(super) struct LiveResearchModel {
++    provider: Arc<dyn a3_application::ModelProvider>,
++    profile: ModelProfile,
++}
++
++impl LiveResearchModel {
++    pub(super) async fn probe() -> Result<Self, Box<dyn Error>> {
++        let model = std::env::var("A3_LOCAL_RESEARCH_MODEL")?;
++        if !matches!(model.as_str(), "qwen3.5:4b" | "qwen38-16k:latest" | "qwen38-8k:latest" | "ornith-1.5:9b" | "gemma4:12b") {
++            return Err("fixture requires an explicitly reviewed installed local model".into());
++        }
++        // Endpoint is loopback-only. The opt-in operator must also confirm local model residency.
++        let provider = Arc::new(OllamaModelProvider::new(
++            OllamaEndpoint::parse("http://127.0.0.1:11434")?,
++            Arc::new(LocalOnlyOllamaEndpointPolicy),
++        )?);
++        let (context, output) = if model == "qwen38-8k:latest" { (8192, 2048) } else { (16_384, 4096) };
++        println!("local-research-profile: model={model} context={context} output={output}");
++        let settings = ModelProfileSettings::new(
++            ModelContextLimit::new(context)?,
++            ModelOutputLimit::new(output)?,
++            ModelTokenCountingStrategy::ConservativeUtf8BytesV1,
++            ModelParallelismLimit::new(1)?,
++            ModelSamplingProfile::new(
++                ModelTemperature::from_milli(0)?,
++                ModelTopP::from_milli(1000)?,
++            ),
++            ModelStopSequences::new(vec![])?,
++            ModelPromptSchemaGrounding::FormatFieldOnly,
++        )?;
++        let control = ProbeControl;
++        let profile = ProbeModelProfile::new(provider.as_ref())
++            .execute(
++                &ModelCapabilityProbeRequest::new(ModelId::try_from_string(model)?, settings),
++                ModelRequestTimeout::DEFAULT,
++                &control,
++            )
++            .await?;
++        if profile.capabilities().structured_output() != ModelStructuredOutputCapability::Verified {
++            return Err("local structured-output capability was not verified".into());
++        }
++        Ok(Self { provider, profile })
++    }
++
++    pub(super) fn evidence_budget(
++        &self,
++        mode: AgentSessionMode,
++    ) -> Result<usize, AgentConversationFailure> {
++        crate::agent_conversation_runtime::research_evidence_budget_for_profile(
++            &self.profile,
++            mode,
++            None,
++        )
++    }
++
++    pub(super) async fn complete(
++        &self,
++        mode: AgentSessionMode,
++        search: bool,
++        transcript: &[(ModelMessageRole, String)],
++        control: &JobContext,
++    ) -> Result<String, AgentConversationFailure> {
++        use crate::agent_conversation_runtime::{
++            complete_with_provider, research_phase_schema, research_system_prompt,
++        };
++        let result = complete_with_provider(
++            self.provider.as_ref(),
++            self.profile.clone(),
++            &research_system_prompt(mode, search, None),
++            transcript,
++            Some(research_phase_schema(search)?),
++            control,
++        )
++        .await;
++        if let Err(failure) = &result {
++            println!("local-provider-category: {failure:?}");
++        }
++        result
++    }
++}
++
++#[derive(Debug)]
++struct ProbeControl;
++impl a3_application::ModelOperationControl for ProbeControl {
++    fn is_cancelled(&self) -> bool {
++        false
++    }
++    fn cancelled(&self) -> a3_application::ModelCancellationFuture<'_> {
++        Box::pin(std::future::pending())
++    }
++}
+diff --git a/apps/desktop/src-tauri/src/agent_research_matrix.rs b/apps/desktop/src-tauri/src/agent_research_matrix.rs
+new file mode 100644
+index 0000000..9d9715f
+--- /dev/null
++++ b/apps/desktop/src-tauri/src/agent_research_matrix.rs
+@@ -0,0 +1,362 @@
++//! Explicit live evaluation; the actual researcher, storage, index and reader are unchanged.
++use super::*;
++
++const FILES: [(&str, &str); 5] = [
++    (
++        "main.py",
++        include_str!("../../../../fixtures/research-eval-v1/main.py"),
++    ),
++    (
++        "taskflow/manager.py",
++        include_str!("../../../../fixtures/research-eval-v1/taskflow/manager.py"),
++    ),
++    (
++        "taskflow/storage.py",
++        include_str!("../../../../fixtures/research-eval-v1/taskflow/storage.py"),
++    ),
++    (
++        "taskflow/plugins.py",
++        include_str!("../../../../fixtures/research-eval-v1/taskflow/plugins.py"),
++    ),
++    (
++        "taskflow/api.py",
++        include_str!("../../../../fixtures/research-eval-v1/taskflow/api.py"),
++    ),
++];
++const QUESTIONS: [[&str; 3]; 4] = [
++    [
++        "Erkläre die Umschaltung zwischen JSON und SQLite in main.py, taskflow/manager.py und taskflow/storage.py: Priorität von CLI und Umgebung, Default, Dateinamen und ungültige Werte.",
++        "Wie entscheidet dieses Projekt zwischen SQLite und JSON? Verfolge main.py über taskflow/manager.py bis taskflow/storage.py. Nenne Auswahlpriorität, Umgebungsvariable, Standarddateien und Fehlerfall.",
++        "Untersuche main.py, taskflow/storage.py und taskflow/manager.py: Welcher Storage wird wann genommen, welche Einstellung gewinnt, wie heißen die Dateien und was passiert bei unbekanntem Backend?",
++    ],
++    [
++        "Verfolge add_task in taskflow/manager.py bis zum tatsächlichen Audit-Schreibvorgang in taskflow/plugins.py. Nenne alle Methoden der Kette, Reihenfolge, Logdatei, Pfadauflösung relativ zum Arbeitsverzeichnis und Schreibmodus.",
++        "Wie kommt eine neue Aufgabe aus taskflow/manager.py in das Audit-Log aus taskflow/plugins.py? Erkläre Aufrufer, Dispatcher, Callback, Writer, Default-Dateiname, Arbeitsverzeichnisbezug und Append-Verhalten.",
++        "Erkläre die vollständige Audit-Aufrufkette beim Erstellen einer Aufgabe anhand taskflow/manager.py und taskflow/plugins.py, einschließlich Writer, Dateiname, absoluter Pfadbildung aus dem Arbeitsverzeichnis und Anhängen.",
++    ],
++    [
++        "Verfolge GET /tasks/99 in taskflow/api.py und taskflow/manager.py vom Router über den Handler zum Manager. Wo entsteht KeyError, wie wird daraus 404, und was passiert beim gefundenen Task oder unbekannter Route?",
++        "Erkläre mit taskflow/api.py und taskflow/manager.py den REST-Pfad: dispatch, get_task_response und get_task. Vergleiche vorhandenen Task (200), fehlenden Task (KeyError/404) und unbekannte Route (404).",
++        "Wie werden in taskflow/api.py und taskflow/manager.py eine Aufgabenabfrage, eine fehlende Aufgabe und eine fehlende Route behandelt? Zeige die Methodenfolge, die KeyError-Umwandlung und Status 200/404.",
++    ],
++    [
++        "Plane python main.py import-csv <filepath> für dieses Projekt (main.py, taskflow/manager.py). UTF-8-CSV mit project_id,title über csv.DictReader; jede gültige Zeile soll Manager.add_task nutzen. Definiere Fehlerbehandlung und konkrete Tests. Implementiere noch nichts.",
++        "Erstelle einen umsetzbaren Plan für den neuen CLI-Befehl import-csv in main.py mit taskflow/manager.py: UTF-8, csv.DictReader, project_id und title, vorhandenes add_task, verständliche Fehler und Regressionstests. Keine Umsetzung.",
++        "Untersuche main.py und taskflow/manager.py und plane einen CSV-Import per python main.py import-csv <filepath>. Nutze UTF-8, DictReader, project_id/title und add_task; lege Validierung, Fehlerverhalten und Tests fest.",
++    ],
++];
++
++fn missing_concepts(family: usize, answer: &str) -> Vec<&'static str> {
++    let lower = answer.to_lowercase();
++    let groups: &[&[&str]] = match family {
++        0 => &[
++            &["json"],
++            &["sqlite"],
++            &["tasks.db"],
++            &["tasks.json"],
++            &["taskflow_storage"],
++            &["backend"],
++            &["valueerror", "ungültig", "unbekannt", "unsupported"],
++        ],
++        1 => &[
++            &["add_task"],
++            &["trigger_task_created"],
++            &["on_task_created"],
++            &["_log"],
++            &["write"],
++            &["audit_log.txt"],
++            &["abspath"],
++            &["arbeitsverzeichnis", "working directory", "cwd"],
++            &["append", "anhäng", "anhang", "'a'"],
++        ],
++        2 => &[
++            &["dispatch"],
++            &["get_task_response"],
++            &["get_task"],
++            &["keyerror"],
++            &["404"],
++            &["200"],
++        ],
++        _ => &[
++            &["plan:"],
++            &["import-csv"],
++            &["dictreader"],
++            &["project_id"],
++            &["title"],
++            &["add_task"],
++            &["utf-8", "utf8"],
++            &["test"],
++            &["fehler", "invalid", "ungültig"],
++        ],
++    };
++    groups
++        .iter()
++        .filter(|alternatives| !alternatives.iter().any(|s| lower.contains(s)))
++        .map(|alternatives| alternatives[0])
++        .collect()
++}
++
++struct MatrixModel {
++    live: live_fixture::LiveResearchModel,
++    budget: usize,
++    calls: AtomicUsize,
++    bytes: AtomicUsize,
++}
++impl ResearchModel for MatrixModel {
++    async fn research_evidence_budget(
++        &self,
++        _: AgentSessionMode,
++        _: Option<&str>,
++    ) -> Result<usize, AgentConversationFailure> {
++        Ok(self.budget)
++    }
++    async fn complete_research_decision(
++        &self,
++        mode: AgentSessionMode,
++        search: bool,
++        transcript: &[(ModelMessageRole, String)],
++        _: Option<String>,
++        control: &JobContext,
++    ) -> Result<String, AgentConversationFailure> {
++        self.calls.fetch_add(1, Ordering::SeqCst);
++        self.bytes.fetch_add(
++            transcript.iter().map(|(_, s)| s.len()).sum(),
++            Ordering::SeqCst,
++        );
++        let output = self
++            .live
++            .complete(mode, search, transcript, control)
++            .await?;
++
++        Ok(output)
++    }
++    async fn complete_evidence_diagrams(
++        &self,
++        _: &[(ModelMessageRole, String)],
++        _: &JobContext,
++    ) -> Result<String, AgentConversationFailure> {
++        Err(AgentConversationFailure::InvalidInput)
++    }
++}
++
++#[test]
++fn research_matrix_rubric_rejects_missing_destinations_callbacks_and_plan_requirements() {
++    assert!(
++        !missing_concepts(1, "add_task calls trigger_task_created and on_task_created").is_empty()
++    );
++    assert!(!missing_concepts(0, "sqlite or json").is_empty());
++    assert!(!missing_concepts(3, "PLAN: add a CSV command").is_empty());
++    assert!(
++        missing_concepts(
++            2,
++            "dispatch calls get_task_response and get_task; KeyError becomes 404, success 200"
++        )
++        .is_empty()
++    );
++}
++
++#[test]
++#[ignore = "Explicit approved-model evaluation only; never CI or an automatic provider call"]
++fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
++    let repeats = std::env::var("A3_RESEARCH_EVAL_REPETITIONS")
++        .unwrap_or_else(|_| "1".to_owned())
++        .parse::<usize>()?;
++    if !(1..=5).contains(&repeats) {
++        return Err("repetition count must be 1..5".into());
++    }
++    support::run_libsql_test_selected(
++        async {
++            let repository = support::TempDirectory::new()?;
++            repository.git(["init", "--initial-branch=main"])?;
++            for (path, body) in FILES {
++                repository.write(path, body)?;
++            }
++            repository.git(["add", "."])?;
++            let project = RepositoryInspector::new().inspect(repository.path())?;
++            let data = support::TempDirectory::new()?;
++            let store = Arc::new(
++                LibsqlKnowledgeStore::open(&StorageLayout::prepare(data.path().join("data"))?)
++                    .await?,
++            );
++            store.record_opened_project(&project).await?;
++            let refresh = RefreshRepositoryIndex::new(
++                Arc::new(Blake3RepositorySnapshotBuilder::new()),
++                store.clone(),
++                Arc::new(Blake3IndexRunIdFactory),
++            );
++            let mut compiler = BuiltinIncrementalIndexCompiler::new(ParserPoolSize::new(1)?)?;
++            refresh
++                .execute(
++                    &project,
++                    &RepositoryChangeBatch::full_rescan(
++                        Vec::new(),
++                        RepositoryRescanReason::InitialObservation,
++                    )?,
++                    &mut compiler,
++                    &FixtureControl,
++                )
++                .await?;
++            let live = tokio::runtime::Builder::new_current_thread()
++                .enable_all()
++                .build()?
++                .block_on(live_fixture::LiveResearchModel::probe())?;
++            let mut failed = 0;
++            use std::io::Write;
++            let reports = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
++                .join("../../../target/research-eval");
++            std::fs::create_dir_all(&reports)?;
++            let report_path = reports.join(format!(
++                "eval-{}.jsonl",
++                std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)?
++                    .as_millis()
++            ));
++            let mut report = std::fs::OpenOptions::new()
++                .write(true)
++                .create_new(true)
++                .open(&report_path)?;
++            println!("A3_EVAL_REPORT {}", report_path.canonicalize()?.display());
++            let selected = std::env::var("A3_RESEARCH_EVAL_CASE").ok();
++            let mut total = 0;
++            for (family, questions) in QUESTIONS.iter().enumerate() {
++                for (variant, question) in questions.iter().enumerate() {
++                    if selected
++                        .as_ref()
++                        .is_some_and(|s| s != &format!("{family}:{variant}"))
++                    {
++                        continue;
++                    }
++                    for repeat in 0..repeats {
++                        let mode = if family == 3 {
++                            AgentSessionMode::Plan
++                        } else {
++                            AgentSessionMode::Ask
++                        };
++                        let id = AgentSessionId::from_bytes(
++                            [u8::try_from(family * 15 + variant * 5 + repeat + 1)?; 32],
++                        );
++                        let time = timestamp()?;
++                        let session = AgentSession::from_parts(
++                            id,
++                            AgentSessionRevision::new(1)?,
++                            AgentSessionTitle::try_from_string("Research evaluation".to_owned())?,
++                            mode,
++                            AgentSessionState::Running,
++                            time,
++                            time,
++                            Some(AgentSessionSequence::FIRST),
++                            None,
++                            None,
++                            false,
++                        );
++                        let user = AgentSessionEntry::try_new(
++                            id,
++                            AgentSessionSequence::FIRST,
++                            AgentSessionEntryKind::UserMessage,
++                            AgentSessionText::try_from_string((*question).to_owned())?,
++                            time,
++                            None,
++                            None,
++                            None,
++                        )?;
++                        store
++                            .create_session(&project, &session, Some(&user), None)
++                            .await?;
++                        let model = Arc::new(MatrixModel {
++                            budget: live.evidence_budget(mode)?,
++                            live: live.clone(),
++                            calls: AtomicUsize::new(0),
++                            bytes: AtomicUsize::new(0),
++                        });
++                        let researcher = AgentAskResearcher::new(
++                            store.clone(),
++                            store.clone(),
++                            store.clone(),
++                            store.clone(),
++                        );
++                        let worker_model = model.clone();
++                        let worker_project = project.clone();
++                        let query = (*question).to_owned();
++                        let (send, receive) = std::sync::mpsc::sync_channel(1);
++                        let started = Instant::now();
++                        let job = recovery_contract::owned_with_timeout(
++                            Duration::from_secs(420),
++                            move |control, _| {
++                                let runtime = tokio::runtime::Builder::new_current_thread()
++                                    .enable_all()
++                                    .build()?;
++                                send.send(runtime.block_on(researcher.research(
++                                    worker_model.as_ref(),
++                                    &worker_project,
++                                    id,
++                                    AgentSessionSequence::FIRST,
++                                    mode,
++                                    AgentResearchDepth::Standard,
++                                    &query,
++                                    &[(ModelMessageRole::User, query.clone())],
++                                    None,
++                                    &control,
++                                )))?;
++                                Ok(())
++                            },
++                        );
++                        let result = if job.is_ok() {
++                            receive.recv_timeout(Duration::from_secs(1)).ok()
++                        } else {
++                            None
++                        };
++                        let (completed, answer, error) = match result {
++                            Some(Ok(result)) => {
++                                (!result.awaiting_continuation, result.markdown, None)
++                            }
++                            Some(Err(e)) => (false, String::new(), Some(format!("{e:?}"))),
++                            None => (false, String::new(), Some("owned_job_failed".to_owned())),
++                        };
++                        let missing = missing_concepts(family, &answer);
++                        let passed = completed && missing.is_empty();
++                        total += 1;
++                        if !passed {
++                            failed += 1;
++                            if let Some(detail) = store
++                                .load_detail(&project, id, AgentSessionSequence::FIRST)
++                                .await?
++                            {
++                                for event in detail.events() {
++                                    if let Some(query) =
++                                        event.query().filter(|q| q.starts_with("research-v"))
++                                    {
++                                        println!("A3_EVAL_DIAGNOSTIC {query}");
++                                    }
++                                }
++                            }
++                        }
++                        let record = serde_json::json!({"fixture":"research-eval-v1","family":family,"variant":variant,"repeat":repeat,"completed":completed,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer});
++                        writeln!(report, "{record}")?;
++                        report.flush()?;
++                        let mut summary = record;
++                        if let Some(object) = summary.as_object_mut() {
++                            object.remove("answer");
++                        }
++                        println!("A3_EVAL {summary}");
++                        for (path, body) in FILES {
++                            assert_eq!(
++                                std::fs::read_to_string(repository.path().join(path))?,
++                                body
++                            );
++                        }
++                    }
++                }
++            }
++            if total == 0 {
++                return Err("no evaluation case selected".into());
++            }
++            println!("A3_EVAL_SUMMARY total={total} failed={failed}");
++            if failed > 0 {
++                return Err(format!("{failed} evaluation cases require investigation").into());
++            }
++            Ok(())
++        },
++        true,
++    )
++}
++
+diff --git a/fixtures/research-eval-v1/main.py b/fixtures/research-eval-v1/main.py
+new file mode 100644
+index 0000000..2f599dd
+--- /dev/null
++++ b/fixtures/research-eval-v1/main.py
+@@ -0,0 +1,23 @@
++import argparse
++from taskflow.manager import Manager
++
++def build_parser():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--backend', choices=['json', 'sqlite'])
++    commands = parser.add_subparsers(dest='command', required=True)
++    add = commands.add_parser('add')
++    add.add_argument('project_id')
++    add.add_argument('title')
++    return parser
++
++def main(argv=None):
++    args = build_parser().parse_args(argv)
++    manager = Manager(args.backend)
++    if args.command == 'add':
++        manager.add_task(args.project_id, args.title)
++        return 0
++    return 2
++
++if __name__ == '__main__':
++    raise SystemExit(main())
++
+diff --git a/fixtures/research-eval-v1/taskflow/api.py b/fixtures/research-eval-v1/taskflow/api.py
+new file mode 100644
+index 0000000..d06f30d
+--- /dev/null
++++ b/fixtures/research-eval-v1/taskflow/api.py
+@@ -0,0 +1,11 @@
++def get_task_response(manager, task_id):
++    try:
++        return {'task': manager.get_task(task_id)}, 200
++    except KeyError:
++        return {'error': 'task not found'}, 404
++
++def dispatch(method, path, manager):
++    if method == 'GET' and path.startswith('/tasks/'):
++        return get_task_response(manager, int(path.rsplit('/', 1)[1]))
++    return {'error': 'route not found'}, 404
++
+diff --git a/fixtures/research-eval-v1/taskflow/manager.py b/fixtures/research-eval-v1/taskflow/manager.py
+new file mode 100644
+index 0000000..35b7102
+--- /dev/null
++++ b/fixtures/research-eval-v1/taskflow/manager.py
+@@ -0,0 +1,24 @@
++from taskflow.storage import create_storage
++from taskflow.plugins import PluginManager
++
++class Manager:
++    def __init__(self, backend=None):
++        self.storage = create_storage(backend)
++        self.plugins = PluginManager()
++        self.projects = {'inbox': []}
++        self.tasks = []
++
++    def add_task(self, project_id, title):
++        if project_id not in self.projects:
++            raise ValueError('unknown project')
++        task = {'project_id': project_id, 'title': title}
++        self.tasks.append(task)
++        self.storage.save_tasks(self.tasks)
++        self.plugins.trigger_task_created(task)
++        return task
++
++    def get_task(self, task_id):
++        if task_id < 0 or task_id >= len(self.tasks):
++            raise KeyError(task_id)
++        return self.tasks[task_id]
++
+diff --git a/fixtures/research-eval-v1/taskflow/plugins.py b/fixtures/research-eval-v1/taskflow/plugins.py
+new file mode 100644
+index 0000000..6854c43
+--- /dev/null
++++ b/fixtures/research-eval-v1/taskflow/plugins.py
+@@ -0,0 +1,21 @@
++import os
++
++class AuditLogPlugin:
++    def __init__(self, log_filepath='audit_log.txt'):
++        self.log_filepath = os.path.abspath(log_filepath)
++
++    def on_task_created(self, task):
++        self._log('TASK_CREATED', task)
++
++    def _log(self, event, task):
++        with open(self.log_filepath, 'a', encoding='utf-8') as output:
++            output.write(f'{event}: {task}\n')
++
++class PluginManager:
++    def __init__(self):
++        self.plugins = [AuditLogPlugin()]
++
++    def trigger_task_created(self, task):
++        for plugin in self.plugins:
++            plugin.on_task_created(task)
++
+diff --git a/fixtures/research-eval-v1/taskflow/storage.py b/fixtures/research-eval-v1/taskflow/storage.py
+new file mode 100644
+index 0000000..5df8063
+--- /dev/null
++++ b/fixtures/research-eval-v1/taskflow/storage.py
+@@ -0,0 +1,24 @@
++import os
++
++class JsonStorage:
++    def __init__(self, filepath):
++        self.filepath = filepath
++
++    def save_tasks(self, tasks):
++        return ('json', self.filepath, tasks)
++
++class SQLiteStorage:
++    def __init__(self, filepath):
++        self.filepath = filepath
++
++    def save_tasks(self, tasks):
++        return ('sqlite', self.filepath, tasks)
++
++def create_storage(backend=None):
++    selected = backend if backend is not None else os.environ.get('TASKFLOW_STORAGE', 'json')
++    if selected == 'sqlite':
++        return SQLiteStorage('tasks.db')
++    if selected == 'json':
++        return JsonStorage('tasks.json')
++    raise ValueError('unsupported storage backend')
++

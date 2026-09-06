@@ -73,6 +73,7 @@ export interface AgentAskResearchTurnV1 {
   legacy: boolean;
 }
 export interface AgentAskResearchDetailV1 {
+  researchWork?: ResearchWorkV1;
   citedSourceCount: number;
   sourceCount: number;
   stale: boolean;
@@ -81,6 +82,20 @@ export interface AgentAskResearchDetailV1 {
   mode: AgentWorkTraceModeV1;
   depth: AgentWorkTraceDepthV1;
   legacy: boolean;
+}
+export interface ResearchWorkV1 {
+  schemaVersion: 1;
+  revision: number;
+  questions: {
+    id: number;
+    outcome: string;
+    priority: 'required' | 'supporting' | 'optional';
+    status: 'open' | 'active' | 'answered' | 'limited' | 'blocked' | 'stale';
+    dependencies: number[];
+    result: string | null;
+    resultKind: 'interpretation' | 'designDecision' | 'boundedUnknown' | null;
+    sourceRefs: string[];
+  }[];
 }
 export interface AgentAskResearchSourceV1 {
   endLine: number | null;
@@ -276,6 +291,7 @@ function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
   if (status !== 'available') invalid();
   const value = record(result.detail);
   exact(value, [
+    ...('researchWork' in value ? ['researchWork'] : []),
     'citedSourceCount',
     'depth',
     'legacy',
@@ -302,6 +318,7 @@ function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
     result: {
       status: 'available',
       detail: {
+        ...('researchWork' in value ? { researchWork: researchWork(value.researchWork) } : {}),
         citedSourceCount: value.citedSourceCount,
         sourceCount: value.sourceCount,
         stale: value.stale,
@@ -313,6 +330,78 @@ function parseDetail(payload: unknown): AgentAskResearchDetailResponseV1 {
       } as AgentAskResearchDetailV1,
     },
   };
+}
+
+function researchWork(payload: unknown): ResearchWorkV1 {
+  const value = record(payload);
+  exact(value, ['schemaVersion', 'revision', 'questions']);
+  if (
+    value.schemaVersion !== 1 ||
+    !count(value.revision, 65536) ||
+    value.revision === 0 ||
+    !Array.isArray(value.questions) ||
+    value.questions.length === 0 ||
+    value.questions.length > 32
+  )
+    invalid();
+  const questions = value.questions.map((item, index) => {
+    const q = record(item);
+    exact(q, [
+      'id',
+      'outcome',
+      'priority',
+      'status',
+      'dependencies',
+      'result',
+      'resultKind',
+      'sourceRefs',
+    ]);
+    if (
+      q.id !== index + 1 ||
+      !['required', 'supporting', 'optional'].includes(String(q.priority)) ||
+      !['open', 'active', 'answered', 'limited', 'blocked', 'stale'].includes(String(q.status))
+    )
+      invalid();
+    text(q.outcome, 512);
+    if (
+      !Array.isArray(q.dependencies) ||
+      q.dependencies.some((id) => !count(id, index) || id === 0) ||
+      new Set(q.dependencies).size !== q.dependencies.length
+    )
+      invalid();
+    if (q.result !== null) text(q.result, 4096);
+    if (
+      q.resultKind !== null &&
+      !['interpretation', 'designDecision', 'boundedUnknown'].includes(String(q.resultKind))
+    )
+      invalid();
+    if (
+      (q.result === null) !== (q.resultKind === null) ||
+      (['answered', 'limited'].includes(String(q.status)) && q.result === null) ||
+      (q.status === 'limited' && q.resultKind !== 'boundedUnknown') ||
+      (q.status === 'answered' && q.resultKind === 'boundedUnknown') ||
+      (['open', 'active'].includes(String(q.status)) && q.result !== null)
+    )
+      invalid();
+    if (
+      !Array.isArray(q.sourceRefs) ||
+      q.sourceRefs.length > 32 ||
+      new Set(q.sourceRefs).size !== q.sourceRefs.length
+    )
+      invalid();
+    q.sourceRefs.forEach(stable);
+    return q as unknown as ResearchWorkV1['questions'][number];
+  });
+  if (
+    !questions.some((q) => q.priority === 'required') ||
+    questions.some(
+      (q) =>
+        ['answered', 'limited'].includes(q.status) &&
+        q.dependencies.some((id) => !['answered', 'limited'].includes(questions[id - 1].status)),
+    )
+  )
+    invalid();
+  return { schemaVersion: 1, revision: value.revision as number, questions };
 }
 
 function parseSources(payload: unknown): AgentAskResearchSourcesResponseV1 {

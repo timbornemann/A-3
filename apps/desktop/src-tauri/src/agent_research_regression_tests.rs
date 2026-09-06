@@ -8,6 +8,283 @@ use a3_domain::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[test]
+fn core_plan_packet_does_not_promote_unresolved_new_symbols_to_research_requirements() -> TestResult
+{
+    let query = "Plan a new import_csv in main.py using csv.DictReader; retain all requirements.";
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.initialize_plan_work(query)?;
+    let item = source(1, "main.py", 2)?;
+    state.render(&item, 1, "def main():\n    return 0\n", false);
+    let targets = vec![
+        ResolvedQueryTarget {
+            requested: "main.py".to_owned(),
+            revision: Some(item.revision().clone()),
+        },
+        ResolvedQueryTarget {
+            requested: "csv.DictReader".to_owned(),
+            revision: None,
+        },
+    ];
+    state.sources.push(item);
+    let packet = state.model_evidence(query, &targets);
+    assert!(packet.contains(query));
+    assert!(packet.contains("main.py => main.py => S1"));
+    assert!(!packet.contains("not uniquely resolvable"));
+    assert!(!packet.contains("list its containing directory"));
+    assert!(packet.len() <= 4096);
+    state.work = Some(a3_domain::ResearchWorkState::new(
+        query.to_owned(),
+        vec![a3_domain::ResearchQuestionDraft {
+            request_fragment: query.to_owned(),
+            outcome: "Explain existing behavior".to_owned(),
+            priority: a3_domain::ResearchQuestionPriority::Required,
+            kind: a3_domain::ResearchQuestionKind::Repository,
+            dependencies: vec![],
+        }],
+    )?);
+    assert!(
+        state
+            .model_evidence(query, &targets)
+            .contains("not uniquely resolvable")
+    );
+    state.work = None;
+    assert!(
+        state
+            .model_evidence(query, &targets)
+            .contains("not uniquely resolvable")
+    );
+    Ok(())
+}
+
+#[test]
+fn complete_named_files_that_fit_keep_imports_and_initializers_over_units() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.initialize_plan_work("Plan changes in first.py and second.py")?;
+    let mut required = Vec::new();
+    let body = "import os\nDEFAULT = 'ä'\ndef run():\n    return DEFAULT\n";
+    for (ordinal, path) in [(1, "first.py"), (2, "second.py")] {
+        let item = source(ordinal, path, 4)?;
+        let revision = item.revision().clone();
+        state.render(&item, 1, body, false);
+        state.sources.push(item);
+        state.complete_files.push(revision.clone());
+        state.retained_units.push(research_context::CoveredRange {
+            revision: revision.clone(),
+            start: SourcePosition::new(2, 0),
+            end: SourcePosition::new(4, 0),
+        });
+        required.push(revision);
+    }
+    state.work_required_revisions = required.clone();
+    let reads_before = state.read_coverage.clone();
+    let packet = state.compile_evidence_window(&required, 512);
+    assert_eq!(
+        packet.matches(body).count(),
+        2,
+        "complete originals fit with all headers"
+    );
+    assert!(packet.len() <= 512);
+    assert_eq!(state.compile_evidence_window(&required, 512), packet);
+    assert_eq!(state.read_coverage, reads_before);
+    assert_eq!(state.work_evidence_windows().len(), 2);
+    assert_eq!(
+        state.compile_evidence_window(&required, packet.len()),
+        packet
+    );
+    assert_ne!(
+        state.compile_evidence_window(&required, packet.len() - 1),
+        packet
+    );
+    state.compile_evidence_window(&required, 512);
+    assert_eq!(
+        research_work::WorkGuard::new("Plan changes in first.py and second.py", &state)
+            .output_phase(),
+        a3_application::ResearchOutputPhase::SummarizeOriginals(
+            a3_domain::ResearchQuestionId::FIRST
+        )
+    );
+    let small = state.compile_evidence_window(&required, 128);
+    assert!(small.len() <= 128);
+    assert!(!small.contains(body));
+    assert!(state.focus_cached(&AskResearchAction::InspectPath {
+        path: "first.py".to_owned(),
+        start_line: 3
+    }));
+    let focused = state.compile_evidence_window(&required, 512);
+    assert!(focused.contains("ab Zeile 3"));
+    assert_eq!(state.read_coverage, reads_before);
+    Ok(())
+}
+
+#[test]
+fn complete_file_marker_cannot_promote_a_clipped_or_unread_cache() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.initialize_plan_work("Plan changes in first.py")?;
+    let item = source(1, "first.py", 4)?;
+    let revision = item.revision().clone();
+    let body = "import os\nDEFAULT = 7\ndef run():\n    return DEFAULT\n";
+    state.render(&item, 1, body, false);
+    state.sources.push(item);
+    state.complete_files.push(revision.clone());
+    state.retained_units.push(research_context::CoveredRange {
+        revision: revision.clone(),
+        start: SourcePosition::new(2, 0),
+        end: SourcePosition::new(4, 0),
+    });
+    let required = [revision];
+    let reads = state.read_coverage.clone();
+    state.read_coverage.clear();
+    assert!(
+        !state
+            .compile_evidence_window(&required, 512)
+            .contains("import os")
+    );
+    state.read_coverage = reads;
+    state.excerpts[0].text.pop();
+    assert!(
+        !state
+            .compile_evidence_window(&required, 512)
+            .contains("import os")
+    );
+    state.excerpts[0].text.push('\n');
+    assert!(state.compile_evidence_window(&required, 512).contains(body));
+    state.complete_files.clear();
+    assert!(
+        !state
+            .compile_evidence_window(&required, 512)
+            .contains("import os")
+    );
+    Ok(())
+}
+
+#[test]
+fn complete_named_originals_do_not_hide_a_new_external_read_frontier() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4096);
+    state.initialize_plan_work("Plan changes in first.py")?;
+    let named = source(1, "first.py", 2)?;
+    let required = [named.revision().clone()];
+    state.render(&named, 1, "import external\nexternal.run()\n", false);
+    state.sources.push(named);
+    state.complete_files.extend(required.iter().cloned());
+    let dependency = source(2, "external.py", 2)?;
+    let revision = dependency.revision().clone();
+    state.render(&dependency, 1, "def run():\n    return 17\n", false);
+    state.sources.push(dependency);
+    assert!(state.focus_at(revision, SourcePosition::new(0, 0)));
+    let packet = state.compile_evidence_window(&required, 512);
+    assert!(
+        packet.contains("return 17"),
+        "new read frontier must remain deliverable"
+    );
+    assert!(packet.len() <= 512);
+    Ok(())
+}
+
+#[test]
+fn work_packet_identity_ignores_source_labels_but_detects_original_range_changes() -> TestResult {
+    let first = source(1, "router.py", 3)?;
+    let alias = AskResearchSource::new(
+        first.session_id(),
+        first.user_sequence(),
+        AskResearchSourceId::from_bytes([9; 32]),
+        9,
+        first.revision().clone(),
+        first.range(),
+        None,
+        AskResearchSourceKind::File,
+        AskResearchSelectionReason::ExactNameOrPath,
+    )?;
+    let mut left = AskResearchWorkingSet::new(2048);
+    let mut right = AskResearchWorkingSet::new(2048);
+    let body = "def dispatch():\n    return 404\n";
+    left.render(&first, 1, body, false);
+    right.render(&alias, 1, body, false);
+    left.sources.push(first.clone());
+    right.sources.push(alias);
+    left.model_evidence("dispatch", &[]);
+    right.model_evidence("dispatch", &[]);
+    assert_eq!(left.work_packet_key(), right.work_packet_key());
+    assert_eq!(left.work_evidence_windows()[0].range.start_byte(), 0);
+    assert_eq!(
+        left.work_evidence_windows()[0].range.end_byte(),
+        u32::try_from(body.len())?
+    );
+    let key = left.work_packet_key();
+    assert!(left.focus_cached(&AskResearchAction::InspectPath {
+        path: "router.py".to_owned(),
+        start_line: 2
+    }));
+    left.evidence_window();
+    assert_ne!(left.work_packet_key(), key);
+    Ok(())
+}
+
+#[test]
+fn work_resume_rebinds_original_evidence_and_retains_same_packet_history() -> TestResult {
+    use a3_domain::{
+        ResearchQuestionDraft, ResearchQuestionId, ResearchQuestionKind, ResearchQuestionPriority,
+        ResearchResult, ResearchResultKind, ResearchResultSource, ResearchWorkState,
+    };
+    let original = source(1, "router.py", 3)?;
+    let mut previous = ResearchWorkState::new(
+        "router and policy".to_owned(),
+        vec![
+            ResearchQuestionDraft {
+                request_fragment: "router".to_owned(),
+                outcome: "existing route".to_owned(),
+                priority: ResearchQuestionPriority::Required,
+                kind: ResearchQuestionKind::Repository,
+                dependencies: vec![],
+            },
+            ResearchQuestionDraft {
+                request_fragment: "policy".to_owned(),
+                outcome: "new response policy".to_owned(),
+                priority: ResearchQuestionPriority::Required,
+                kind: ResearchQuestionKind::Design,
+                dependencies: vec![ResearchQuestionId::new(1)?],
+            },
+        ],
+    )?;
+    previous.resolve(
+        ResearchQuestionId::new(1)?,
+        ResearchResult::new(
+            ResearchResultKind::Interpretation,
+            "404".to_owned(),
+            vec![ResearchResultSource {
+                source_id: original.id(),
+                revision: original.revision().clone(),
+                range: original.range().ok_or("range")?,
+            }],
+            None,
+        )?,
+    )?;
+    let packet = ContentHash::from_bytes([7; 32]);
+    previous.begin_analysis(ResearchQuestionId::new(2)?, packet)?;
+    previous.block(ResearchQuestionId::new(2)?)?;
+    let mut state = AskResearchWorkingSet::new(2048);
+    let rebound = AskResearchSourceId::from_bytes([8; 32]);
+    state.restore_work(&previous, &[(original.id(), rebound)])?;
+    let work = state.work.as_ref().ok_or("restored work")?;
+    assert!(work.questions()[0].resolved());
+    assert_eq!(
+        work.questions()[0].result().ok_or("result")?.sources()[0].source_id,
+        rebound
+    );
+    assert!(work.questions()[1].attempts().contains(&packet));
+    state.restore_work(&previous, &[])?;
+    assert!(
+        state
+            .work
+            .as_ref()
+            .ok_or("work")?
+            .questions()
+            .iter()
+            .all(|q| q.status() == a3_domain::ResearchQuestionStatus::Stale)
+    );
+    Ok(())
+}
+
 #[path = "../../../../fixtures/research-plan-v1/c604618_context.rs"]
 mod plan_baseline;
 
@@ -138,6 +415,7 @@ fn working_findings_survive_long_obsolete_gaps_with_intact_references() -> TestR
         state.record_note(
             "CSV planen",
             &AskResearchDecisionNote {
+                work: None,
                 goal: "CSV planen".to_owned(),
                 finding_kind: AskResearchFindingKind::Observation,
                 finding: "add_task speichert Aufgaben".to_owned(),
@@ -826,6 +1104,7 @@ fn only_the_latest_gap_is_an_active_obligation() -> TestResult {
         state.record_note(
             "Explain REST routing",
             &AskResearchDecisionNote {
+                work: None,
                 goal: "Explain the current request".to_owned(),
                 finding_kind: AskResearchFindingKind::Hypothesis,
                 finding: "The router may handle missing paths".to_owned(),

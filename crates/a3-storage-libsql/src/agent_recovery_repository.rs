@@ -1153,7 +1153,9 @@ async fn latest_published_snapshot(
         .transpose()
 }
 
-fn read_evidence(row: &libsql::Row) -> Result<AgentToolEvidence, AgentRecoveryRepositoryError> {
+pub(crate) fn read_evidence(
+    row: &libsql::Row,
+) -> Result<AgentToolEvidence, AgentRecoveryRepositoryError> {
     let expected_id = TaskEvidenceId::from_bytes(read_id(row, 0)?);
     let location_kind: String = row
         .get(1)

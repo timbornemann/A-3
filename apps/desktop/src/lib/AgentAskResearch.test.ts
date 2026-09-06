@@ -55,6 +55,71 @@ afterEach(() => {
 });
 
 describe('AgentAskResearch', () => {
+  it('retains required questions outside the sliding timeline and labels interpretations', async () => {
+    const response = detailResponse([step('Aktuelle Recherche', '100')]);
+    const detail: AgentAskResearchDetailV1 = {
+      ...response.result.detail,
+      researchWork: {
+        schemaVersion: 1,
+        revision: 3,
+        questions: [
+          {
+            id: 1,
+            outcome: 'Aufrufkette',
+            priority: 'required',
+            status: 'answered',
+            dependencies: [],
+            result: 'A ruft B auf.',
+            resultKind: 'interpretation',
+            sourceRefs: [],
+          },
+          {
+            id: 2,
+            outcome: 'Konkretes Logziel',
+            priority: 'required',
+            status: 'active',
+            dependencies: [],
+            result: null,
+            resultKind: null,
+            sourceRefs: [],
+          },
+          {
+            id: 3,
+            outcome: 'Pluginregistrierung',
+            priority: 'optional',
+            status: 'open',
+            dependencies: [],
+            result: null,
+            resultKind: null,
+            sourceRefs: [],
+          },
+        ],
+      },
+    };
+    const detailLoader = vi.fn(async () => ({
+      ...response,
+      result: { ...response.result, detail },
+    }));
+    const view = render(AgentAskResearch, {
+      detailLoader,
+      sourcesLoader: emptySources,
+      sessionId: id('1'),
+      userSequence: '1',
+      refreshKey: 'a',
+      live: true,
+    });
+    await screen.findByRole('region', { name: 'Recherche-Prüfstand' });
+    expect(screen.getByText('Konkretes Logziel')).toBeTruthy();
+    expect(screen.getByText('Quellengestützte Interpretation')).toBeTruthy();
+    const row = view.container.querySelector('[data-question-id="2"]');
+    detail.steps = Array.from({ length: 64 }, (_, index) =>
+      step(`Folge ${index}`, String(200 + index)),
+    );
+    await view.rerender({ refreshKey: 'b' });
+    await waitFor(() => expect(detailLoader).toHaveBeenCalledTimes(2));
+    expect(view.container.querySelector('[data-question-id="2"]')).toBe(row);
+    expect(row?.getAttribute('data-question-status')).toBe('active');
+  });
   it.each(['projection', 'legacy'] as const)(
     'advances a full 64-event %s window through completion without replacing retained rows',
     async (api) => {

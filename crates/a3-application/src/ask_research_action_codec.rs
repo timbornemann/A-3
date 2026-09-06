@@ -106,6 +106,8 @@ pub enum AskResearchEvidenceStatus {
 /// Bounded public work note. This is presentation data and never executable input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskResearchDecisionNote {
+    /// V5 work-state proposals, absent only in explicitly supported legacy documents.
+    pub work: Option<Box<crate::ResearchWorkUpdate>>,
     /// Current sub-goal.
     pub goal: String,
     /// Epistemic status of the finding.
@@ -143,12 +145,12 @@ pub enum AskResearchDecision {
     },
 }
 
-/// Strict version-three decoder paired with the provider schema.
+/// Strict V3/V4 replay decoder with an independently checked V5 production-phase contract.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAskResearchDecision;
 
 impl DecodeAskResearchDecision {
-    /// Returns the exact JSON Schema paired with this decoder.
+    /// Returns the historical V4 schema; V5 production uses `research_work_phase_schema`.
     #[must_use]
     pub const fn json_schema(self) -> AskResearchDecisionJsonSchema {
         AskResearchDecisionJsonSchema
@@ -156,27 +158,168 @@ impl DecodeAskResearchDecision {
 
     /// Validates size, shape, unknown fields, values, and all action bounds.
     pub fn decode(self, raw: &str) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
+        self.decode_document(raw, None)
+    }
+
+    /// Enforces the Core-selected V5 phase independently of provider schema support.
+    pub fn decode_phase(
+        self,
+        raw: &str,
+        phase: crate::ResearchOutputPhase,
+    ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
+        self.decode_document(raw, Some(phase))
+    }
+
+    fn decode_document(
+        self,
+        raw: &str,
+        phase: Option<crate::ResearchOutputPhase>,
+    ) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
         if raw.len() > MAX_OUTPUT_BYTES {
             return Err(AskResearchDecisionDecodeError::OutputTooLarge);
         }
         let root: Value =
             serde_json::from_str(raw).map_err(|_| AskResearchDecisionDecodeError::MalformedJson)?;
+        if let Some(phase) = phase {
+            crate::research_work_codec::validate_phase(&root, phase)?;
+        }
         let root = object(&root)?;
-        exact(root, &["schema_version", "decision"])?;
         let version = root.get("schema_version").and_then(Value::as_u64);
-        if !matches!(version, Some(3 | 4)) {
+        if !matches!(version, Some(3..=5)) {
             return Err(AskResearchDecisionDecodeError::UnsupportedVersion);
         }
+        exact(
+            root,
+            if version == Some(5) {
+                &["schema_version", "decision", "work"]
+            } else {
+                &["schema_version", "decision"]
+            },
+        )?;
+        let work = if version == Some(5) {
+            Some(crate::research_work_codec::decode_work(
+                root.get("work")
+                    .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+            )?)
+        } else {
+            None
+        };
         let decision = object(
             root.get("decision")
                 .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
         )?;
-        match string(decision, "kind")? {
+        let mut decoded = match string(decision, "kind")? {
             "answer" => decode_answer(decision),
-            "research" => decode_research(decision, version == Some(4)),
+            "research" => decode_research(decision, version != Some(3)),
+            "progress" | "question" if version == Some(5) => decode_work_progress(decision),
+            "plan" if version == Some(5) => decode_work_plan(decision),
             _ => Err(AskResearchDecisionDecodeError::InvalidValue),
+        }?;
+        match &mut decoded {
+            AskResearchDecision::Answer { note, .. }
+            | AskResearchDecision::Research { note, .. } => note.work = work.map(Box::new),
         }
+        Ok(decoded)
     }
+}
+
+fn decode_work_plan(
+    value: &Map<String, Value>,
+) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
+    exact(
+        value,
+        &[
+            "kind",
+            "note",
+            "summary",
+            "changes",
+            "interfaces",
+            "tests",
+            "assumptions",
+        ],
+    )?;
+    // The typed kind is authoritative for formatting only. The model does not have to
+    // reproduce a marker, section titles, numbering or citations to obtain a reviewable plan.
+    let section = |name| -> Result<String, AskResearchDecisionDecodeError> {
+        let text = bounded(string(value, name)?, 4096)?;
+        if text.contains(['【', '】']) {
+            return Err(AskResearchDecisionDecodeError::CitationMismatch);
+        }
+        Ok(text)
+    };
+    let steps = |name| -> Result<String, AskResearchDecisionDecodeError> {
+        let values = array(value, name)?;
+        if values.is_empty() || values.len() > 32 {
+            return Err(AskResearchDecisionDecodeError::InvalidValue);
+        }
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let text = bounded(
+                    item.as_str()
+                        .ok_or(AskResearchDecisionDecodeError::InvalidValue)?,
+                    2048,
+                )?;
+                if text.contains(['\r', '\n', '【', '】']) {
+                    return Err(AskResearchDecisionDecodeError::InvalidValue);
+                }
+                Ok(format!("{}. {}", index + 1, text))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| items.join("\n"))
+    };
+    let markdown = format!(
+        "PLAN:\n\n## Summary\n\n{}\n\n## Implementation Changes\n\n{}\n\n## Interfaces\n\n{}\n\n## Test Plan\n\n{}\n\n## Assumptions\n\n{}",
+        section("summary")?,
+        steps("changes")?,
+        section("interfaces")?,
+        steps("tests")?,
+        section("assumptions")?
+    );
+    Ok(AskResearchDecision::Answer {
+        markdown,
+        source_ordinals: vec![],
+        note: decode_v5_note(
+            value
+                .get("note")
+                .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+        )?,
+        evidence_status: AskResearchEvidenceStatus::Incomplete,
+    })
+}
+
+fn decode_work_progress(
+    value: &Map<String, Value>,
+) -> Result<AskResearchDecision, AskResearchDecisionDecodeError> {
+    let question = string(value, "kind")? == "question";
+    exact(
+        value,
+        if question {
+            &["kind", "note", "message"]
+        } else {
+            &["kind", "note"]
+        },
+    )?;
+    let markdown = if question {
+        let message = bounded(string(value, "message")?, 1024)?;
+        if message.contains(['【', '】']) {
+            return Err(AskResearchDecisionDecodeError::CitationMismatch);
+        }
+        format!("QUESTION: {message}")
+    } else {
+        "Recherchezwischenstand.".to_owned()
+    };
+    Ok(AskResearchDecision::Answer {
+        markdown,
+        source_ordinals: vec![],
+        note: decode_v5_note(
+            value
+                .get("note")
+                .ok_or(AskResearchDecisionDecodeError::InvalidShape)?,
+        )?,
+        evidence_status: AskResearchEvidenceStatus::Incomplete,
+    })
 }
 
 fn decode_answer(
@@ -418,6 +561,19 @@ fn decode_research(
 pub(crate) fn decode_note(
     value: &Value,
 ) -> Result<AskResearchDecisionNote, AskResearchDecisionDecodeError> {
+    decode_note_with_evidence(value, true)
+}
+
+fn decode_v5_note(
+    value: &Value,
+) -> Result<AskResearchDecisionNote, AskResearchDecisionDecodeError> {
+    decode_note_with_evidence(value, false)
+}
+
+fn decode_note_with_evidence(
+    value: &Value,
+    legacy: bool,
+) -> Result<AskResearchDecisionNote, AskResearchDecisionDecodeError> {
     let note = object(value)?;
     exact(
         note,
@@ -430,7 +586,7 @@ pub(crate) fn decode_note(
             "next_step",
         ],
     )?;
-    let finding_kind = match string(note, "finding_kind")? {
+    let mut finding_kind = match string(note, "finding_kind")? {
         "observation" => AskResearchFindingKind::Observation,
         "hypothesis" => AskResearchFindingKind::Hypothesis,
         "conclusion" => AskResearchFindingKind::Conclusion,
@@ -454,9 +610,15 @@ pub(crate) fn decode_note(
         source_ordinals.push(ordinal);
     }
     if finding_kind != AskResearchFindingKind::Hypothesis && source_ordinals.is_empty() {
-        return Err(AskResearchDecisionDecodeError::MissingSources);
+        if legacy {
+            return Err(AskResearchDecisionDecodeError::MissingSources);
+        }
+        // V5 work.results are the only admission boundary. Unreferenced presentation notes
+        // cannot become evidence, nor should a design progress label consume a repair.
+        finding_kind = AskResearchFindingKind::Hypothesis;
     }
     Ok(AskResearchDecisionNote {
+        work: None,
         goal: bounded(string(note, "goal")?, 1024)?,
         finding_kind,
         finding: bounded(string(note, "finding")?, 4096)?,
@@ -466,7 +628,10 @@ pub(crate) fn decode_note(
     })
 }
 
-fn bounded(value: &str, maximum: usize) -> Result<String, AskResearchDecisionDecodeError> {
+pub(crate) fn bounded(
+    value: &str,
+    maximum: usize,
+) -> Result<String, AskResearchDecisionDecodeError> {
     let value = value.trim();
     if value.is_empty()
         || value.len() > maximum
@@ -496,7 +661,7 @@ fn bounded_allow_empty(
         Ok(value.trim().to_owned())
     }
 }
-fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDecodeError> {
+pub(crate) fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDecodeError> {
     let digits = value
         .strip_prefix('S')
         .ok_or(AskResearchDecisionDecodeError::InvalidValue)?;
@@ -512,12 +677,12 @@ fn source_ordinal(value: &str) -> Result<u16, AskResearchDecisionDecodeError> {
         Ok(value)
     }
 }
-fn object(value: &Value) -> Result<&Map<String, Value>, AskResearchDecisionDecodeError> {
+pub(crate) fn object(value: &Value) -> Result<&Map<String, Value>, AskResearchDecisionDecodeError> {
     value
         .as_object()
         .ok_or(AskResearchDecisionDecodeError::ExpectedObject)
 }
-fn array<'a>(
+pub(crate) fn array<'a>(
     value: &'a Map<String, Value>,
     key: &str,
 ) -> Result<&'a [Value], AskResearchDecisionDecodeError> {
@@ -527,7 +692,7 @@ fn array<'a>(
         .map(Vec::as_slice)
         .ok_or(AskResearchDecisionDecodeError::ExpectedArray)
 }
-fn string<'a>(
+pub(crate) fn string<'a>(
     value: &'a Map<String, Value>,
     key: &str,
 ) -> Result<&'a str, AskResearchDecisionDecodeError> {
@@ -536,7 +701,10 @@ fn string<'a>(
         .and_then(Value::as_str)
         .ok_or(AskResearchDecisionDecodeError::ExpectedString)
 }
-fn exact(value: &Map<String, Value>, keys: &[&str]) -> Result<(), AskResearchDecisionDecodeError> {
+pub(crate) fn exact(
+    value: &Map<String, Value>,
+    keys: &[&str],
+) -> Result<(), AskResearchDecisionDecodeError> {
     if value.len() == keys.len() && keys.iter().all(|key| value.contains_key(*key)) {
         Ok(())
     } else {
@@ -641,6 +809,7 @@ mod tests {
                 markdown: "Fertig 【S2】".to_owned(),
                 source_ordinals: vec![2],
                 note: AskResearchDecisionNote {
+                    work: None,
                     goal: "Frage beantworten".to_owned(),
                     finding_kind: AskResearchFindingKind::Observation,
                     finding: "Quelle gelesen".to_owned(),

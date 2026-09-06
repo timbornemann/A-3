@@ -130,22 +130,35 @@ impl AgentTaskMaterializer {
             return Err(AgentSessionManagerFailure::Conflict);
         }
         let task_id = TaskId::from_bytes(random_id()?);
-        let criterion_id = AcceptanceCriterionId::from_bytes(random_id()?);
         let base = now_millis()?;
-        let criterion = AcceptanceCriterion::new(
-            criterion_id,
-            AcceptanceCriterionStatement::try_from_string(
-                "Der freigegebene Plan ist umgesetzt und mit aktueller Evidence geprüft."
-                    .to_owned(),
-            )
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
-        );
+        let work_plan = AgentWorkPlan::from_reviewed_markdown(reviewed_plan)
+            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+        let criteria = work_plan
+            .steps()
+            .iter()
+            .enumerate()
+            .map(|(index, step)| {
+                Ok(AcceptanceCriterion::new(
+                    AcceptanceCriterionId::from_bytes(random_id()?),
+                    AcceptanceCriterionStatement::try_from_string(format!(
+                        "{}. {}",
+                        index + 1,
+                        step.outcome()
+                    ))
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, AgentSessionManagerFailure>>()?;
+        let criterion_ids = criteria
+            .iter()
+            .map(AcceptanceCriterion::id)
+            .collect::<Vec<_>>();
         let goal = GoalContract::initial(
             task_id,
             GoalContractDraft::new(
                 GoalObjective::try_from_string(bounded_text(objective, 8 * 1024))
                     .map_err(|_| AgentSessionManagerFailure::InvalidInput)?,
-                vec![criterion],
+                criteria,
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -162,8 +175,6 @@ impl AgentTaskMaterializer {
         let catalog = DiscoverProjectCommands
             .execute(project.worktree().id(), &published)
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?;
-        let work_plan = AgentWorkPlan::from_reviewed_markdown(reviewed_plan)
-            .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
         let step_ids = (0..work_plan.steps().len())
             .map(|_| random_id().map(TaskStepId::from_bytes))
             .collect::<Result<Vec<_>, _>>()?;
@@ -226,7 +237,7 @@ impl AgentTaskMaterializer {
                 ],
                 verification,
             )
-            .and_then(|step| step.with_acceptance_criteria(vec![criterion_id]))
+            .and_then(|step| step.with_acceptance_criteria(vec![criterion_ids[index]]))
             .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
             definitions.push(definition);
         }
@@ -566,6 +577,7 @@ impl AgentAskResearcher {
         }
         let query_targets = resolve_query_targets(published, query);
         let referenced_revisions = resolved_target_revisions(&query_targets);
+        state.work_required_revisions = referenced_revisions.clone();
         let lens_terms = task_lens_search_terms(query);
         state.event_sequence = state.event_sequence.saturating_add(1);
         self.append_running_event(
@@ -705,8 +717,18 @@ impl AgentAskResearcher {
                 .await?;
         }
 
+        if runtime.requires_work_contract()
+            && turn.mode() != AgentSessionMode::Ask
+            && state.work.is_none()
+        {
+            state
+                .initialize_plan_work(query)
+                .map_err(|_| AgentSessionManagerFailure::InvalidInput)?;
+            self.append_work_checkpoint(project, turn, &mut state)
+                .await?;
+        }
         let conversation = bounded_conversation(transcript);
-        let mut model_transcript;
+        let mut model_transcript = Vec::new();
         let mut feedback = state.continuation_feedback.clone();
         let mut controller = BoundedResearchController::new(turn.depth());
         if let Some(profile) = command_profile {
@@ -737,7 +759,159 @@ impl AgentAskResearcher {
         let mut citation_repair_pending = false;
         state.focus_hint(published, query);
         let (markdown, ordinals) = loop {
-            if controller.is_stagnant()
+            if control.cancellation_token().is_cancelled() {
+                return Err(AgentSessionManagerFailure::Unavailable);
+            }
+            // Core-only cache/frontier transitions must obey the owner deadline too.
+            if elapsed_millis(started) >= controller.limits().duration_millis() {
+                return awaiting_continuation(
+                    turn,
+                    &state,
+                    command_profile,
+                    ResearchStopReason::TimeLimit,
+                );
+            }
+            let mut compiled_work_packet = None;
+            if turn.mode() != AgentSessionMode::Ask
+                && let Some(plan) = state.core_plan_answer()
+            {
+                let current = self
+                    .index
+                    .load_current_index(project, &ConversationTaskLensControl { context: control })
+                    .await
+                    .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+                    .ok_or(AgentSessionManagerFailure::Unavailable)?;
+                if research_access::scope(&current) != research_access::scope(published) {
+                    return Err(AgentSessionManagerFailure::IndexChanged);
+                }
+                state.evidence_guard(project).validate(control).await?;
+                break plan;
+            }
+            let mut analysis_receipt = None;
+            if state.work.is_some() {
+                state.focus_work_cache(published);
+                if state
+                    .work_context()
+                    .len()
+                    .saturating_add(query.len())
+                    .saturating_add(state.work_packet_reserve())
+                    > state.evidence_limit
+                {
+                    return awaiting_continuation(
+                        turn,
+                        &state,
+                        command_profile,
+                        ResearchStopReason::ContextLimit,
+                    );
+                }
+                let packet = state.model_evidence(query, &query_targets);
+                compiled_work_packet = Some(packet);
+                let key = state.work_packet_key();
+                let next = state
+                    .work
+                    .as_ref()
+                    .and_then(a3_domain::ResearchWorkState::next_question);
+                if let Some(id) = next {
+                    let repeated = state
+                        .work
+                        .as_ref()
+                        .and_then(|w| w.question(id))
+                        .is_some_and(|q| q.attempts().contains(&key));
+                    if repeated {
+                        // No model call is spent on the same unanswered question and packet.
+                        // Try a different safe frontier under the unchanged outer budget.
+                        if let Some(note) = state.work_followup_note() {
+                            state.focus_hint(published, &note.gap);
+                            let _packet = state.model_evidence(query, &query_targets);
+                            if state.work_packet_key() != key {
+                                continue;
+                            }
+                            let candidates =
+                                research_followup::candidates(published, &state, &note);
+                            if let Some(batch) = controller
+                                .prepare_work_frontier(candidates, elapsed_millis(started))
+                                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?
+                            {
+                                let before = state.evidence_revision;
+                                feedback = self
+                                    .execute_actions(
+                                        project,
+                                        published,
+                                        turn,
+                                        &mut state,
+                                        batch.actions().to_vec(),
+                                        control,
+                                    )
+                                    .await?;
+                                controller.finish_round(before, state.evidence_revision);
+                                continue;
+                            }
+                        }
+                        if controller.actions_used() < controller.limits().read_actions()
+                            && controller.decisions_used() < controller.limits().model_decisions()
+                            && elapsed_millis(started) < controller.limits().duration_millis()
+                            && !control.cancellation_token().is_cancelled()
+                            && state
+                                .close_investigated_boundary(research_access::scope(published))?
+                        {
+                            let current = self
+                                .index
+                                .load_current_index(
+                                    project,
+                                    &ConversationTaskLensControl { context: control },
+                                )
+                                .await
+                                .map_err(|_| AgentSessionManagerFailure::Unavailable)?
+                                .ok_or(AgentSessionManagerFailure::Unavailable)?;
+                            if research_access::scope(&current) != research_access::scope(published)
+                            {
+                                return Err(AgentSessionManagerFailure::IndexChanged);
+                            }
+                            state.evidence_guard(project).validate(control).await?;
+                            self.append_work_checkpoint(project, turn, &mut state)
+                                .await?;
+                            if turn.mode() == AgentSessionMode::Ask
+                                && state
+                                    .work
+                                    .as_ref()
+                                    .is_some_and(a3_domain::ResearchWorkState::ready_to_finish)
+                            {
+                                break state
+                                    .work_answer()
+                                    .ok_or(AgentSessionManagerFailure::InvalidOutput)?;
+                            }
+                            continue;
+                        }
+                        if let Some(work) = &mut state.work {
+                            work.block(id)
+                                .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                        }
+                        self.append_work_checkpoint(project, turn, &mut state)
+                            .await?;
+                        if let Some(partial) = state.work_answer() {
+                            state.partial_answer = Some(partial);
+                        }
+                        feedback = format!(
+                            "CORE: Q{} cannot advance with the available packet and remaining safe frontier. It remains unanswered. Continue independent required questions only.",
+                            id.get()
+                        );
+                        continue;
+                    }
+                    // Deciding events account for starts. Only a valid admitted document may
+                    // acknowledge this packet as analyzed; failed/cancelled calls cannot poison
+                    // an explicit continuation with a fictitious same-packet result.
+                    analysis_receipt = Some((id, key));
+                } else if state.work.as_ref().is_some_and(|w| !w.ready_to_finish()) {
+                    return awaiting_continuation(
+                        turn,
+                        &state,
+                        command_profile,
+                        ResearchStopReason::WorkBlocked,
+                    );
+                }
+            }
+            if state.work.is_none()
+                && controller.is_stagnant()
                 && self
                     .recover_research(
                         project,
@@ -754,9 +928,18 @@ impl AgentAskResearcher {
             {
                 feedback = "CORE RECOVERY: A new current evidence frontier was selected within the unchanged remaining budgets. Evaluate the current source window.".to_owned();
             }
-            let permission = match controller.begin_decision(elapsed_millis(started)) {
+            let permission = match if state.work.is_some() {
+                controller.begin_work_decision(elapsed_millis(started))
+            } else {
+                controller.begin_decision(elapsed_millis(started))
+            } {
                 Ok(permission) => {
-                    if citation_repair_pending {
+                    if citation_repair_pending
+                        || state
+                            .work
+                            .as_ref()
+                            .is_some_and(a3_domain::ResearchWorkState::ready_to_finish)
+                    {
                         BeginResearchDecision::FinalOnly
                     } else {
                         permission
@@ -789,11 +972,14 @@ impl AgentAskResearcher {
             model_transcript = research_decision_context(
                 &conversation,
                 &state.context_feedback(&feedback),
-                state.model_evidence(query, &query_targets),
+                compiled_work_packet.unwrap_or_else(|| state.model_evidence(query, &query_targets)),
             );
-            let guard = state.evidence_guard(project);
+            let mut guard = state.evidence_guard(project);
+            if runtime.requires_work_contract() || state.work.is_some() {
+                guard.work = Some(research_work::WorkGuard::new(query, &state));
+            }
             state.commit_delivery();
-            let (decision, diagnostics) = ask_decision(
+            let model_result = ask_decision(
                 runtime,
                 turn.mode(),
                 permission,
@@ -806,7 +992,16 @@ impl AgentAskResearcher {
                 &guard,
                 citation_repair_pending,
             )
-            .await?;
+            .await;
+            if matches!(model_result, Err(AgentSessionManagerFailure::IndexChanged)) {
+                if let Some(work) = &mut state.work {
+                    work.revalidate(&[])
+                        .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                }
+                self.append_work_checkpoint(project, turn, &mut state)
+                    .await?;
+            }
+            let (decision, diagnostics) = model_result?;
             for diagnostic in diagnostics {
                 state.event_sequence = state.event_sequence.saturating_add(1);
                 self.append_running_event(
@@ -820,35 +1015,130 @@ impl AgentAskResearcher {
                 )
                 .await?;
             }
-            let (decision, permission, document_repaired) = match decision {
+            let (mut decision, permission, document_repaired) = match decision {
                 Ok(decision) => decision,
                 Err(ResearchStopReason::InvalidDecision)
-                    if self
-                        .recover_research(
-                            project,
-                            published,
-                            turn,
-                            &mut state,
-                            &mut controller,
-                            started,
-                            query,
-                            &query_targets,
-                            control,
-                        )
-                        .await? =>
+                    if !runtime.requires_work_contract()
+                        && state.work.is_none()
+                        && self
+                            .recover_research(
+                                project,
+                                published,
+                                turn,
+                                &mut state,
+                                &mut controller,
+                                started,
+                                query,
+                                &query_targets,
+                                control,
+                            )
+                            .await? =>
                 {
                     feedback = "CORE RECOVERY: The invalid document and its failed single repair were discarded. Only previously validated goals and cached index anchors selected this new current evidence window. Choose a new decision; no invalid actions were executed.".to_owned();
                     continue;
                 }
                 Err(reason) => return awaiting_continuation(turn, &state, command_profile, reason),
             };
+            let initializing_work = runtime.requires_work_contract() && state.work.is_none();
+            let resolved_before = state
+                .work
+                .as_ref()
+                .map_or(0, a3_domain::ResearchWorkState::resolved_count);
+            let formatting = state
+                .work
+                .as_ref()
+                .is_some_and(a3_domain::ResearchWorkState::ready_to_finish);
+            state.accept_work(query, &decision, analysis_receipt)?;
+            self.append_work_checkpoint(project, turn, &mut state)
+                .await?;
+            if initializing_work {
+                feedback = "CORE: The question contract is frozen. Evaluate the cached original evidence for ACTIVE Q before any further discovery.".to_owned();
+                continue;
+            }
+            if state
+                .work
+                .as_ref()
+                .is_some_and(|w| w.resolved_count() > resolved_before)
+            {
+                controller.finish_round(0, 1);
+                if state.work.as_ref().is_some_and(|w| !w.ready_to_finish()) {
+                    feedback = "CORE: The previous question has an admitted result. Select the next active question from cached current evidence before new discovery.".to_owned();
+                    continue;
+                }
+            }
+            if state
+                .work
+                .as_ref()
+                .is_some_and(a3_domain::ResearchWorkState::ready_to_finish)
+                && matches!(
+                    decision,
+                    a3_application::AskResearchDecision::Research { .. }
+                )
+            {
+                if turn.mode() == AgentSessionMode::Ask {
+                    if let Some((markdown, source_ordinals)) = state.work_answer()
+                        && let a3_application::AskResearchDecision::Research { note, .. } = decision
+                    {
+                        decision = a3_application::AskResearchDecision::Answer {
+                            markdown,
+                            source_ordinals,
+                            note,
+                            evidence_status: AskResearchEvidenceStatus::Sufficient,
+                        };
+                    }
+                } else {
+                    feedback = "CORE: Required research results are complete. Return the requested PLAN using these results; do not open optional research.".to_owned();
+                    continue;
+                }
+            }
+            if turn.mode() != AgentSessionMode::Ask
+                && !formatting
+                && state
+                    .work
+                    .as_ref()
+                    .is_some_and(a3_domain::ResearchWorkState::ready_to_finish)
+            {
+                feedback = "CORE: All required results are admitted. Format the requested PLAN from these results without additional research.".to_owned();
+                continue;
+            }
             match decision {
                 a3_application::AskResearchDecision::Answer {
-                    markdown,
-                    source_ordinals,
-                    note,
+                    mut markdown,
+                    mut source_ordinals,
+                    mut note,
                     evidence_status,
                 } => {
+                    if let Some(work) = &state.work {
+                        if work.ready_to_finish() {
+                            if let Some((answer, references)) = state.work_answer() {
+                                if turn.mode() == AgentSessionMode::Ask {
+                                    markdown = answer;
+                                    source_ordinals = references;
+                                } else {
+                                    markdown.push_str("\n\n## Recherchegrundlage\n\n");
+                                    markdown.push_str(&answer);
+                                    for ordinal in references {
+                                        if !source_ordinals.contains(&ordinal) {
+                                            source_ordinals.push(ordinal);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(question) =
+                            work.next_question().and_then(|id| work.question(id))
+                        {
+                            note.gap = utf8_prefix(
+                                &format!(
+                                    "Q{}: {}. Missing evidence: {}",
+                                    question.id().get(),
+                                    question.definition().outcome,
+                                    note.gap
+                                ),
+                                1024,
+                            )
+                            .to_owned();
+                        }
+                    }
                     let mut cited_guard = state.evidence_guard(project);
                     for ordinal in source_ordinals.iter().chain(&note.source_ordinals) {
                         if let Some(source) =
@@ -870,7 +1160,8 @@ impl AgentAskResearcher {
                     state.record_note(query, &note)?;
                     state.event_sequence = state.event_sequence.saturating_add(1);
                     let public_note = public_note(&note, &state)?;
-                    if controller.is_stagnant()
+                    if state.work.is_none()
+                        && controller.is_stagnant()
                         && answer_requires_deeper_research(
                             evidence_status,
                             state.covers(&referenced_revisions),
@@ -931,9 +1222,11 @@ impl AgentAskResearcher {
                         // existing safe reads directly instead of spending a decision asking the
                         // model to restate its next step as an action. No budget is reset.
                         let followups = research_followup::candidates(published, &state, &note);
-                        let batch = match controller
-                            .prepare_followup_actions(followups, elapsed_millis(started))
-                        {
+                        let batch = match if state.work.is_some() {
+                            controller.prepare_work_frontier(followups, elapsed_millis(started))
+                        } else {
+                            controller.prepare_followup_actions(followups, elapsed_millis(started))
+                        } {
                             Ok(batch) => batch,
                             Err(error) => {
                                 return awaiting_continuation(
@@ -965,14 +1258,18 @@ impl AgentAskResearcher {
                         }
                         let _packet = state.model_evidence(query, &query_targets);
                         controller.finish_round(delivery_before, state.progress_with_pending());
-                        feedback = format!(
-                            "CORE EVIDENCE GATE: The proposed answer is not final because material evidence is still missing{}. Return kind research now. Inspect named indexed files directly, continue large files with inspectPath start_line, search concrete symbols or literals, and follow relevant relations. Do not ask the user to provide files already present in the pinned index.",
-                            if missing_named_sources {
-                                " and at least one explicitly named indexed file has not been read"
-                            } else {
-                                ""
-                            }
-                        );
+                        feedback = if state.work.is_some() {
+                            "CORE: The active question is still unresolved. Evaluate the delivered original evidence; return work.results only for supported answers. The Core, not model tool requests, controls the next read.".to_owned()
+                        } else {
+                            format!(
+                                "CORE EVIDENCE GATE: The proposed answer is not final because material evidence is still missing{}. Return kind research now. Inspect named indexed files directly, continue large files with inspectPath start_line, search concrete symbols or literals, and follow relevant relations. Do not ask the user to provide files already present in the pinned index.",
+                                if missing_named_sources {
+                                    " and at least one explicitly named indexed file has not been read"
+                                } else {
+                                    ""
+                                }
+                            )
+                        };
                         continue;
                     }
                     if response_requires_citations(turn.mode(), &markdown)
@@ -1008,7 +1305,13 @@ impl AgentAskResearcher {
                     .await?;
                     break (markdown, source_ordinals);
                 }
-                a3_application::AskResearchDecision::Research { note, actions } => {
+                a3_application::AskResearchDecision::Research { mut note, actions } => {
+                    if let Some(hint) = state.active_work_hint() {
+                        note.gap = hint;
+                        note.next_step =
+                            "Aktive Pflichtfrage anhand aktueller Originalquellen prüfen."
+                                .to_owned();
+                    }
                     if permission == BeginResearchDecision::FinalOnly {
                         return Err(AgentSessionManagerFailure::InvalidOutput);
                     }
@@ -1087,7 +1390,7 @@ impl AgentAskResearcher {
                     controller.finish_round(before, after);
                     feedback = format!(
                         "READ-ONLY ACTION RESULTS:\n{action_results}\n\n{}",
-                        if controller.is_stagnant() {
+                        if state.work.is_none() && controller.is_stagnant() {
                             "CORE SYNTHESIS: No further reads are permitted after two rounds without new evidence. Evaluate the current excerpts now. Earlier public claims that a file was missing are historical observations, not requirements to reread it. Return the supported answer, or a concrete intermediate result and the genuinely unresolved question."
                         } else if produced_evidence {
                             "Continue from the current evidence. Follow the remaining gap with the most direct next read."
@@ -1108,7 +1411,25 @@ impl AgentAskResearcher {
                     .ok_or(AgentSessionManagerFailure::InvalidOutput)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if citations.is_empty() && response_requires_citations(turn.mode(), &markdown) {
+        let bounded_only = turn.mode() == AgentSessionMode::Ask
+            && state.work.as_ref().is_some_and(|work| {
+                work.ready_to_finish()
+                    && work
+                        .questions()
+                        .iter()
+                        .filter(|q| {
+                            q.definition().priority == a3_domain::ResearchQuestionPriority::Required
+                        })
+                        .all(|q| {
+                            q.result().is_some_and(|r| {
+                                r.kind() == a3_domain::ResearchResultKind::BoundedUnknown
+                            })
+                        })
+            });
+        if citations.is_empty()
+            && response_requires_citations(turn.mode(), &markdown)
+            && !bounded_only
+        {
             return awaiting_continuation(
                 turn,
                 &state,
@@ -1158,6 +1479,11 @@ impl AgentAskResearcher {
         }
         let diagrams = diagram_outcome.artifacts;
         let diagram_incomplete = diagrams_requested && !diagram_outcome.complete;
+        let limited_research = state.work.as_ref().is_some_and(|work| {
+            work.questions()
+                .iter()
+                .any(|q| q.status() == a3_domain::ResearchQuestionStatus::Limited)
+        });
         let terminal_event = research_event(
             turn.session_id(),
             turn.user_sequence(),
@@ -1170,13 +1496,15 @@ impl AgentAskResearcher {
             },
             if diagram_incomplete {
                 "Antwort und Quellen veröffentlicht; Diagrammerzeugung benötigt einen weiteren begrenzten Versuch"
+            } else if limited_research {
+                "Recherche mit ausdrücklich begrenzter Erkenntnis abgeschlossen"
             } else if diagrams.is_empty() {
                 "Antwort und verwendete Quellen veröffentlicht"
             } else {
                 "Antwort, Diagramme und verwendete Quellen veröffentlicht"
             },
             None,
-            if diagram_incomplete {
+            if diagram_incomplete || limited_research {
                 AskResearchCompleteness::Limited
             } else {
                 AskResearchCompleteness::NotApplicable
@@ -1491,6 +1819,21 @@ impl AgentAskResearcher {
             }
         }
         let mut reused_findings = 0usize;
+        if self.continuation_from.is_some()
+            && let Some(work) = previous.work_state()
+            && work.objective() == query
+        {
+            state.restore_work(work, &source_mapping)?;
+            if let Some(restored) = &mut state.work {
+                restored
+                    .revalidate_in_scope(
+                        published.publication().graph().files(),
+                        Some(research_access::scope(published)),
+                    )
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+            }
+            self.append_work_checkpoint(project, turn, state).await?;
+        }
         for event in previous.events().iter().rev().take(12).rev() {
             let Some(note) = event.public_note() else {
                 continue;
@@ -1591,6 +1934,7 @@ impl AgentAskResearcher {
             return Ok(());
         }
         if state.sources.len() >= 200 {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
             return Ok(());
         }
         let start = start_override.unwrap_or_else(|| {
@@ -1647,10 +1991,16 @@ impl AgentAskResearcher {
                     Err(AgentSourceReadFailure::Cancelled) => {
                         return Err(AgentSessionManagerFailure::Unavailable);
                     }
-                    Err(_) => return Ok(()),
+                    Err(_) => {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
+                        return Ok(());
+                    }
                 }
             }
-            Err(_) => return Ok(()),
+            Err(_) => {
+                state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
+                return Ok(());
+            }
         };
         if range.is_none() {
             state.set_next_file_page(
@@ -1690,6 +2040,7 @@ impl AgentAskResearcher {
             page.text(),
             prioritize_context,
         ) {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
             return Ok(());
         }
         self.trace
@@ -1753,14 +2104,20 @@ impl AgentAskResearcher {
                         return Err(AgentSessionManagerFailure::Unavailable);
                     }
                     Err(_) => {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
                         return Ok("Quelltextsuche war vorübergehend nicht verfügbar; im nächsten Schritt muss ein anderer begrenzter Such- oder Lesepfad verwendet werden.".to_owned());
                     }
                 }
             }
             Err(_) => {
+                state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
                 return Ok("Quelltextsuche war nicht verfügbar; im nächsten Schritt muss ein anderer begrenzter Such- oder Lesepfad verwendet werden.".to_owned());
             }
         };
+        state.observe_access(research_access::search_outcome(
+            &result,
+            published.publication().graph().files().len(),
+        ));
         let before = state.sources.len();
         for hit in result.hits().iter().take(MAX_ADAPTIVE_SEARCH_SOURCES) {
             self.add_and_read_prioritized_source(
@@ -1791,6 +2148,72 @@ impl AgentAskResearcher {
     }
 
     async fn execute_actions(
+        &self,
+        project: &ProjectIdentity,
+        published: &Arc<a3_domain::PublishedIndex>,
+        turn: &AskResearchTurn,
+        state: &mut AskResearchWorkingSet,
+        actions: Vec<AskResearchAction>,
+        control: &JobContext,
+    ) -> Result<String, AgentSessionManagerFailure> {
+        let mut summaries = Vec::new();
+        for action in actions {
+            if control.cancellation_token().is_cancelled() {
+                return Err(AgentSessionManagerFailure::Unavailable);
+            }
+            let access = state
+                .work
+                .as_ref()
+                .and_then(|w| w.next_question())
+                .map(|question| {
+                    research_access::identity(published, state, &action)
+                        .map(|(key, kind)| (question, research_access::scope(published), key, kind))
+                        .ok_or(AgentSessionManagerFailure::InvalidOutput)
+                })
+                .transpose()?;
+            if let Some((question, scope, key, kind)) = access {
+                let started = state
+                    .work
+                    .as_mut()
+                    .ok_or(AgentSessionManagerFailure::InvalidOutput)?
+                    .begin_access(question, scope, key, kind)
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                if !started {
+                    summaries.push("Identischer ergebnisloser Zugriff im selben Indexstand wurde nicht erneut ausgeführt; dies ist kein Beleg allgemeiner Nichtexistenz.".to_owned());
+                    continue;
+                }
+                self.append_access_checkpoint(project, turn, state, kind, None)
+                    .await?;
+            }
+            state.access_outcome = a3_domain::ResearchAccessOutcome::Completed;
+            let result = self
+                .execute_action_batch(project, published, turn, state, vec![action], control)
+                .await;
+            // Cancellation/crash leaves a durable unfinished attempt, never an invented result.
+            if control.cancellation_token().is_cancelled() {
+                return Err(AgentSessionManagerFailure::Unavailable);
+            }
+            if let Some((question, scope, key, kind)) = access {
+                let outcome = if result.is_err() {
+                    a3_domain::ResearchAccessOutcome::Unavailable
+                } else {
+                    state.access_outcome
+                };
+                state
+                    .work
+                    .as_mut()
+                    .ok_or(AgentSessionManagerFailure::InvalidOutput)?
+                    .finish_access(question, scope, key, outcome)
+                    .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+                self.append_access_checkpoint(project, turn, state, kind, Some(outcome))
+                    .await?;
+            }
+            summaries.push(result?);
+        }
+        Ok(summaries.join("\n"))
+    }
+
+    async fn execute_action_batch(
         &self,
         project: &ProjectIdentity,
         published: &Arc<a3_domain::PublishedIndex>,
@@ -1844,6 +2267,7 @@ impl AgentAskResearcher {
                             return Err(error);
                         }
                         Err(_) => {
+                            state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
                             results.push("Die erneute Task-Lens-Auswahl war vorübergehend nicht verfügbar; wähle im nächsten Schritt eine direkte Pfad-, Text- oder Beziehungssuche.".to_owned());
                             continue;
                         }
@@ -1893,6 +2317,8 @@ impl AgentAskResearcher {
                             control,
                         )
                         .await?;
+                    } else {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Unresolved);
                     }
                     let known = state
                         .excerpts
@@ -1961,12 +2387,16 @@ impl AgentAskResearcher {
                                     return Err(AgentSessionManagerFailure::Unavailable);
                                 }
                                 Err(_) => {
+                                    state.observe_access(
+                                        a3_domain::ResearchAccessOutcome::Unavailable,
+                                    );
                                     results.push(format!("Quelle S{ordinal} konnte nicht erweitert werden; wähle im nächsten Schritt einen anderen Pfad- oder Suchzugang."));
                                     continue;
                                 }
                             }
                         }
                         Err(_) => {
+                            state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
                             results.push(format!("Quelle S{ordinal} konnte nicht erweitert werden; wähle im nächsten Schritt einen anderen Pfad- oder Suchzugang."));
                             continue;
                         }
@@ -2031,6 +2461,11 @@ impl AgentAskResearcher {
                     )
                     .await?;
                     let (children, limited) = list_index_directory(published, &path);
+                    if limited {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
+                    } else if children.is_empty() {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::NoMatch);
+                    }
                     results.push(format!(
                         "Verzeichnis {}: {}{}",
                         if path.is_empty() { "." } else { &path },
@@ -2059,6 +2494,9 @@ impl AgentAskResearcher {
                     )
                     .await?;
                     let changes = inspect_working_change_paths(project, control)?;
+                    if changes.limited {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
+                    }
                     let before = state.sources.len();
                     let mut unresolved = 0usize;
                     for path in &changes.paths {
@@ -2132,6 +2570,9 @@ impl AgentAskResearcher {
                         state.sources.len().saturating_sub(before),
                         if count == 100 { " (auf 100 begrenzt)" } else { "" }
                     ));
+                    if count == 100 {
+                        state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
+                    }
                 }
                 AskResearchAction::InspectDependencyGraph => {
                     let summary = self
@@ -2260,6 +2701,9 @@ impl AgentAskResearcher {
             .iter()
             .filter(|edge| include(edge.kind()))
             .count();
+        if total > matching || node_limited {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
+        }
         Ok(format!(
             "{matching} aktuelle Beziehung(en) geprüft; {} Evidence-Quelle(n) bereitgestellt{}.",
             state.sources.len().saturating_sub(before),
@@ -2399,6 +2843,24 @@ impl AgentAskResearcher {
         Ok(())
     }
 
+    async fn append_work_checkpoint(
+        &self,
+        project: &ProjectIdentity,
+        turn: &AskResearchTurn,
+        state: &mut AskResearchWorkingSet,
+    ) -> Result<(), AgentSessionManagerFailure> {
+        let Some(work) = &state.work else {
+            return Ok(());
+        };
+        state.event_sequence = state.event_sequence.saturating_add(1);
+        let event = research_event(turn.session_id(), turn.user_sequence(), state.event_sequence,
+            AskResearchPhase::Evaluating, AskResearchState::Running,
+            &format!("Recherche-Prüfstand gespeichert: {} von {} Teilfragen belegt oder begrenzt beantwortet", work.resolved_count(), work.questions().len()),
+            None, AskResearchCompleteness::NotApplicable)?.with_work_state(work.clone());
+        self.trace.append_event(project, &event).await?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn append_note_event(
         &self,
@@ -2448,11 +2910,18 @@ mod research_flows;
 #[path = "agent_research_followup.rs"]
 mod research_followup;
 use research_followup::ResearchStopReason;
+#[path = "agent_research_access.rs"]
+pub(crate) mod research_access;
 #[path = "agent_research_model.rs"]
 mod research_model;
+#[path = "agent_research_work.rs"]
+mod research_work;
 use research_model::ResearchModel;
 
 struct AskResearchWorkingSet {
+    access_outcome: a3_domain::ResearchAccessOutcome,
+    work: Option<a3_domain::ResearchWorkState>,
+    work_required_revisions: Vec<a3_domain::FileRevision>,
     sources: Vec<AskResearchSource>,
     excerpts: Vec<ResearchSourceExcerpt>,
     evidence_limit: usize,
@@ -2467,6 +2936,7 @@ struct AskResearchWorkingSet {
     read_coverage: Vec<research_context::CoveredRange>,
     delivered: Vec<research_context::CoveredRange>,
     current_delivery: Vec<research_context::CoveredRange>,
+    current_source_delivery: Vec<research_context::DeliveredWindow>,
     delivery_revision: usize,
     focus: Vec<research_context::SourceFocus>,
     retained_units: Vec<research_context::CoveredRange>,
@@ -2485,6 +2955,9 @@ struct ResearchSourceExcerpt {
 impl AskResearchWorkingSet {
     fn new(evidence_limit: usize) -> Self {
         Self {
+            access_outcome: a3_domain::ResearchAccessOutcome::Completed,
+            work: None,
+            work_required_revisions: Vec::new(),
             sources: Vec::new(),
             excerpts: Vec::new(),
             evidence_limit,
@@ -2499,6 +2972,7 @@ impl AskResearchWorkingSet {
             read_coverage: Vec::new(),
             delivered: Vec::new(),
             current_delivery: Vec::new(),
+            current_source_delivery: Vec::new(),
             delivery_revision: 0,
             focus: Vec::new(),
             retained_units: Vec::new(),
@@ -2686,6 +3160,9 @@ impl AskResearchWorkingSet {
     }
 
     fn context_feedback(&self, action_feedback: &str) -> String {
+        if self.work.is_some() {
+            return action_feedback.to_owned();
+        }
         let Some(gap) = self.memory_gaps.last() else {
             return action_feedback.to_owned();
         };
@@ -2704,46 +3181,51 @@ impl AskResearchWorkingSet {
         let limit = self.evidence_limit;
         let metadata_limit = limit.saturating_sub(query.len().saturating_add(128));
         let memory_limit = (limit / 6).min(metadata_limit / 2).min(2048);
-        let memory = self.memory.as_ref().map_or_else(String::new, |checkpoint| {
-            let findings = checkpoint
-                .findings()
-                .iter()
-                .rev()
-                .take(3)
-                .map(|finding| {
-                    let references = finding
-                        .sources
-                        .iter()
-                        .filter_map(|source_id| {
-                            self.sources
-                                .iter()
-                                .find(|source| source.id() == *source_id)
-                                .map(|source| format!("S{}", source.ordinal()))
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(
-                        "- {:?}: {} [{}]",
-                        finding.kind,
-                        utf8_prefix(&finding.text, (limit / 48).clamp(32, 160)),
-                        references
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut notes =
-                String::from("\nPUBLIC WORKING NOTES (not evidence; recheck current sources):\n");
-            for line in findings {
-                if notes.len() + line.len() < memory_limit {
-                    notes.push_str(&line);
-                    notes.push('\n');
+        let memory = if self.work.is_some() {
+            self.work_context()
+        } else {
+            self.memory.as_ref().map_or_else(String::new, |checkpoint| {
+                let findings = checkpoint
+                    .findings()
+                    .iter()
+                    .rev()
+                    .take(3)
+                    .map(|finding| {
+                        let references = finding
+                            .sources
+                            .iter()
+                            .filter_map(|source_id| {
+                                self.sources
+                                    .iter()
+                                    .find(|source| source.id() == *source_id)
+                                    .map(|source| format!("S{}", source.ordinal()))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!(
+                            "- {:?}: {} [{}]",
+                            finding.kind,
+                            utf8_prefix(&finding.text, (limit / 48).clamp(32, 160)),
+                            references
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let mut notes = String::from(
+                    "\nPUBLIC WORKING NOTES (not evidence; recheck current sources):\n",
+                );
+                for line in findings {
+                    if notes.len() + line.len() < memory_limit {
+                        notes.push_str(&line);
+                        notes.push('\n');
+                    }
                 }
-            }
-            if notes.len() <= memory_limit {
-                notes
-            } else {
-                String::new()
-            }
-        });
+                if notes.len() <= memory_limit {
+                    notes
+                } else {
+                    String::new()
+                }
+            })
+        };
         let next_pages = self
             .next_file_pages
             .iter()
@@ -2763,8 +3245,16 @@ impl AskResearchWorkingSet {
                 "\n\nSAFE FORWARD FILE CURSORS. Use these exact cursors when later parts are relevant:\n{next_pages}"
             )
         };
+        let plan_inventory = self
+            .work
+            .as_ref()
+            .is_some_and(research_work::core_plan_contract);
         let named_targets = query_targets
             .iter()
+            // A future symbol/library named in a plan is not an instruction to search
+            // for its containing directory. Keep the whole request, but only resolved
+            // originals contribute navigation metadata to the fixed plan inventory.
+            .filter(|target| !plan_inventory || target.revision.is_some())
             .map(|target| {
                 target.revision.as_ref().map_or_else(
                     || {
@@ -2795,6 +3285,7 @@ impl AskResearchWorkingSet {
         } else {
             format!("\nNAMED TARGETS (current):\n{named_targets}")
         };
+        let source_first = self.work.is_some();
         // Budget the complete packet, not only source bodies. Otherwise downstream transport
         // clipping can silently remove the very branch the model was asked to investigate.
         let mut packet = format!(
@@ -2803,8 +3294,14 @@ impl AskResearchWorkingSet {
             // silently remove its trailing acceptance criteria to make room for derived notes.
             utf8_prefix(query, limit),
             utf8_prefix(
-                &named_targets,
+                if source_first { "" } else { &named_targets },
                 (limit / 4)
+                    .min(if self.work.is_some() {
+                        limit
+                            .saturating_sub(query.len() + memory.len() + self.work_packet_reserve())
+                    } else {
+                        limit
+                    })
                     .min(metadata_limit.saturating_sub(memory.len()))
                     .min(4 * 1024)
             ),
@@ -2814,11 +3311,17 @@ impl AskResearchWorkingSet {
         let cursors = utf8_prefix(&next_pages, (limit / 16).min(2 * 1024));
         let source_limit = limit
             .saturating_sub(packet.len())
-            .saturating_sub(cursors.len());
+            .saturating_sub(if source_first { 0 } else { cursors.len() });
         packet.push_str(
             &self.compile_evidence_window(&resolved_target_revisions(query_targets), source_limit),
         );
         packet.push_str(utf8_prefix(cursors, limit.saturating_sub(packet.len())));
+        if source_first {
+            packet.push_str(utf8_prefix(
+                &named_targets,
+                limit.saturating_sub(packet.len()),
+            ));
+        }
         packet
     }
 
@@ -4991,12 +5494,15 @@ async fn latest_plan_research_handoff(
             break;
         }
     }
-    let handoff = ResearchHandoff::new(
+    let mut handoff = ResearchHandoff::new(
         detail.turn().index_run_id(),
         detail.turn().snapshot_id(),
         revisions,
     )
     .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+    if let Some(work) = detail.work_state() {
+        handoff = handoff.with_work_state(work.clone());
+    }
     let handoff = match command_profile {
         Some(profile) => handoff.with_command(profile.invocation().clone()),
         None => handoff,
@@ -6295,7 +6801,13 @@ fn awaiting_continuation(
         "{} Die bisherigen Belege bleiben erhalten. Das ist keine Sicherheitsfreigabe für Dateizugriff oder Ausführung. Mit „Recherche fortsetzen“ startest du einen weiteren begrenzten Abschnitt mit revalidiertem Arbeitsstand.",
         reason.message()
     );
-    let (markdown, citations) = if let Some((markdown, ordinals)) = &state.partial_answer {
+    let work_answer = state.work_answer();
+    let partial = if state.work.is_some() {
+        work_answer.as_ref()
+    } else {
+        state.partial_answer.as_ref()
+    };
+    let (mut markdown, citations) = if let Some((markdown, ordinals)) = partial {
         (
             format!("{markdown}\n\n{notice}"),
             ordinals
@@ -6322,6 +6834,21 @@ fn awaiting_continuation(
             Vec::new(),
         )
     };
+    if let Some(work) = &state.work {
+        let open = work
+            .questions()
+            .iter()
+            .filter(|q| {
+                q.definition().priority == a3_domain::ResearchQuestionPriority::Required
+                    && !q.resolved()
+            })
+            .map(|q| format!("- {}", q.definition().outcome))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !open.is_empty() {
+            markdown.push_str(&format!("\n\nNoch nicht beantwortet:\n{open}"));
+        }
+    }
     Ok(AskResearchResult {
         markdown,
         citations,
@@ -6343,8 +6870,11 @@ fn research_handoff(
             revisions.push(source.revision().clone());
         }
     }
-    let handoff = ResearchHandoff::new(turn.index_run_id(), turn.snapshot_id(), revisions)
+    let mut handoff = ResearchHandoff::new(turn.index_run_id(), turn.snapshot_id(), revisions)
         .map_err(|_| AgentSessionManagerFailure::InvalidOutput)?;
+    if let Some(work) = &state.work {
+        handoff = handoff.with_work_state(work.clone());
+    }
     Ok(match command_profile {
         Some(profile) => handoff.with_command(profile.invocation().clone()),
         None => handoff,
@@ -6401,6 +6931,10 @@ async fn ask_decision(
             runtime.complete_research_decision(
                 mode,
                 permission == BeginResearchDecision::SearchAllowed,
+                guard.work.as_ref().map_or(
+                    a3_application::ResearchOutputPhase::Initialize,
+                    research_work::WorkGuard::output_phase,
+                ),
                 transcript,
                 command_profile.map(|profile| profile.research_constraint(mode)),
                 control,
@@ -6412,23 +6946,52 @@ async fn ask_decision(
         }
         let issue = match result {
             Ok(Ok(raw)) => {
-                match research_model::validate_decision(&raw, permission, source_count)
-                    .and_then(|decision| research_model::validate_outcome(decision, mode))
-                {
+                match research_model::validate_phase_decision(
+                    &raw,
+                    permission,
+                    source_count,
+                    guard
+                        .work
+                        .as_ref()
+                        .map(research_work::WorkGuard::output_phase),
+                )
+                .and_then(|decision| {
+                    guard.admit_work(decision, runtime.requires_work_contract(), mode)
+                })
+                .and_then(|decision| {
+                    if guard.work.as_ref().is_some_and(|w| {
+                        w.output_phase() != a3_application::ResearchOutputPhase::Finalize
+                    }) {
+                        Ok(decision)
+                    } else {
+                        research_model::validate_outcome_with_attribution(
+                            decision,
+                            mode,
+                            guard.work.is_none(),
+                        )
+                    }
+                }) {
                     Ok(decision) => return Ok((Ok((decision, permission, repaired)), diagnostics)),
                     Err(issue) => issue,
                 }
             }
             Ok(Err(error)) if is_transient_conversation_failure(error) => {
                 diagnostics.push(research_model::diagnostic(
-                    "research-v1/transient",
+                    match error {
+                        AgentConversationFailure::Stream(reason) => reason.code(),
+                        _ => "research-v1/transient",
+                    },
                     permission,
                     controller,
                 ));
                 if controller.use_model_retry().is_err() {
                     return Ok((Err(ResearchStopReason::ModelRetryLimit), diagnostics));
                 }
-                permission = match controller.begin_decision(elapsed_millis(started)) {
+                permission = match if guard.work.is_some() {
+                    controller.begin_work_decision(elapsed_millis(started))
+                } else {
+                    controller.begin_decision(elapsed_millis(started))
+                } {
                     Ok(next) => restrict_research_permission(permission, next),
                     Err(error) => {
                         return Ok((Err(ResearchStopReason::for_controller(error)), diagnostics));
@@ -6455,8 +7018,15 @@ async fn ask_decision(
         if repaired {
             return Ok((Err(ResearchStopReason::InvalidDecision), diagnostics));
         }
-        let Some(next) = reserve_research_repair_decision(controller, elapsed_millis(started), 0)
-        else {
+        let next = if guard.work.is_some() {
+            controller
+                .use_repair()
+                .ok()
+                .and_then(|()| controller.begin_work_decision(elapsed_millis(started)).ok())
+        } else {
+            reserve_research_repair_decision(controller, elapsed_millis(started), 0)
+        };
+        let Some(next) = next else {
             return Ok((
                 Err(repair_stop_reason(controller, elapsed_millis(started), 0)),
                 diagnostics,
@@ -6465,7 +7035,24 @@ async fn ask_decision(
         repaired = true;
         permission = restrict_research_permission(permission, next);
         *transcript = base_transcript.clone();
-        transcript.push((ModelMessageRole::User, issue.repair_hint(source_count)));
+        let hint = if issue == research_model::DecisionIssue::WorkCoverage {
+            guard
+                .work
+                .as_ref()
+                .and_then(research_work::WorkGuard::coverage_repair_hint)
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            issue.repair_hint_for_phase(
+                guard
+                    .work
+                    .as_ref()
+                    .map(research_work::WorkGuard::output_phase),
+                source_count,
+            )
+        });
+        transcript.push((ModelMessageRole::User, utf8_prefix(&hint, 768).to_owned()));
     }
 }
 fn reserve_research_repair_decision(
@@ -6509,7 +7096,9 @@ fn restrict_research_permission(
 const fn is_transient_conversation_failure(error: AgentConversationFailure) -> bool {
     matches!(
         error,
-        AgentConversationFailure::ModelTimedOut | AgentConversationFailure::Unavailable
+        AgentConversationFailure::ModelTimedOut
+            | AgentConversationFailure::Unavailable
+            | AgentConversationFailure::Stream(_)
     )
 }
 
@@ -6676,6 +7265,9 @@ fn query_path_candidates(query: &str) -> Vec<String> {
     for raw in query.split_whitespace() {
         let explicit = raw.starts_with('@');
         let token = raw
+            // Sentence punctuation outside a quoted path is not part of the target.
+            // Stop at a quote/backtick so literal trailing ?/! names remain exact.
+            .trim_end_matches(['?', '!', ',', ';', ':', '.', ')', ']', '}'])
             .trim_start_matches(|character: char| {
                 matches!(character, '@' | '`' | '"' | '\'' | '(' | '[' | '{')
             })
@@ -6725,7 +7317,11 @@ fn resolve_index_path<'a>(
     published: &'a a3_domain::PublishedIndex,
     requested: &str,
 ) -> Option<&'a a3_domain::FileRevision> {
-    let normalized = requested.trim().trim_start_matches("./").replace('\\', "/");
+    let normalized = requested
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_owned();
     let files = published.publication().graph().files();
     if let Some(exact) = files
         .iter()
@@ -6744,7 +7340,8 @@ fn resolve_index_path<'a>(
 
 fn index_path_matches_request(path: &str, normalized: &str, lowercase_suffix: &str) -> bool {
     if normalized.contains('/') {
-        path.to_ascii_lowercase().ends_with(lowercase_suffix)
+        path.eq_ignore_ascii_case(normalized)
+            || path.to_ascii_lowercase().ends_with(lowercase_suffix)
     } else {
         path.rsplit('/')
             .next()
@@ -6994,6 +7591,8 @@ fn random_id() -> Result<[u8; 32], AgentSessionManagerFailure> {
 
 const fn safe_failure_message(error: AgentConversationFailure) -> &'static str {
     match error {
+        AgentConversationFailure::Stream(reason) => reason.code(),
+        AgentConversationFailure::Cancelled => "Die Modellanfrage wurde abgebrochen.",
         AgentConversationFailure::ModelNotConfigured => {
             "Konfiguriere und verifiziere zuerst ein Coding-Modell in den Einstellungen."
         }
@@ -7505,6 +8104,12 @@ mod tests {
     fn named_repository_files_are_detected_without_at_mentions() {
         assert_eq!(
             query_path_candidates(
+                "Wie schreibt taskflow/plugins.py? Prüfe (src/a.rs!) und `src/literal.py?`!"
+            ),
+            vec!["taskflow/plugins.py", "src/a.rs", "src/literal.py?"]
+        );
+        assert_eq!(
+            query_path_candidates(
                 "Prüfe manager.py, `plugins/base.py` und @taskflow/plugins/audit_log_plugin.py."
             ),
             vec![
@@ -7526,6 +8131,21 @@ mod tests {
         );
         assert!(index_path_matches_request(
             "taskflow/plugins/base.py",
+            "plugins/base.py",
+            "/plugins/base.py"
+        ));
+        assert!(index_path_matches_request(
+            "plugins/base.py",
+            "plugins/base.py",
+            "/plugins/base.py"
+        ));
+        assert!(index_path_matches_request(
+            "Plugins/Base.py",
+            "plugins/base.py",
+            "/plugins/base.py"
+        ));
+        assert!(!index_path_matches_request(
+            "otherplugins/base.py",
             "plugins/base.py",
             "/plugins/base.py"
         ));

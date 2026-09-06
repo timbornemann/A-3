@@ -45,6 +45,221 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let normal = input(fixture.snapshot_id)?;
+    let localized =
+        normal
+            .clone()
+            .with_replan_localization(a3_domain::TaskReplanReason::try_from_string(
+                "Find the serializer source".to_owned(),
+            )?);
+    let before = block_on(compiler.compile(&normal, &RecordingControl::default()))?;
+    let after = block_on(compiler.compile(&localized, &RecordingControl::default()))?;
+    assert_ne!(before.digest(), after.digest());
+    assert_eq!(
+        after.digest(),
+        block_on(compiler.compile(&localized, &RecordingControl::default()))?.digest()
+    );
+    assert!(after.request().messages().iter().any(|message| {
+        message.content().contains("[REPLAN_LOCALIZATION]")
+            && message
+                .content()
+                .contains("cause=Find the serializer source")
+    }));
+    let schema = after.request().structured_output().ok_or("schema")?.value();
+    assert_eq!(
+        schema["properties"]["action"]["oneOf"]
+            .as_array()
+            .ok_or("actions")?
+            .len(),
+        2
+    );
+    assert!(schema["$defs"].get("applyPatch").is_none());
+    let actual = after
+        .request()
+        .messages()
+        .iter()
+        .try_fold(0u32, |sum, message| {
+            localized
+                .model_profile()
+                .settings()
+                .token_counting()
+                .count_text(message.content())
+                .map(|count| sum + count.get())
+        })?;
+    assert_eq!(actual, after.budget_usage().prompt_total());
+    Ok(())
+}
+
+#[test]
+fn replan_shared_analysis_packs_actual_originals_and_v5_without_mutation_schema()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let normal = input(fixture.snapshot_id)?;
+    let reason =
+        a3_domain::TaskReplanReason::try_from_string("Find the serializer source".to_owned())?;
+    let checkpoint = a3_application::ReplanResearchCheckpoint::new(
+        normal.current_step_id(),
+        fixture.snapshot_id,
+        &reason,
+        "correct serialization",
+    )?;
+    let page = a3_application::AgentSourcePage::new(
+        a3_domain::FileRevision::new(
+            a3_domain::RepositoryPath::try_from_bytes(b"serializer.py".to_vec())?,
+            a3_domain::ContentHash::from_bytes([41; 32]),
+        ),
+        a3_domain::SourceRange::new(
+            0,
+            9,
+            a3_domain::SourcePosition::new(0, 0),
+            a3_domain::SourcePosition::new(1, 0),
+        )?,
+        a3_domain::AgentFileStartLine::new(1)?,
+        "return 0\n".to_owned(),
+        None,
+        false,
+    )?;
+    let input = normal
+        .with_replan_localization(reason)
+        .with_replan_research(a3_application::ReplanResearchContext {
+            checkpoint,
+            pages: vec![page],
+        })?;
+    let compiled = block_on(compiler.compile(&input, &RecordingControl::default()))?;
+    assert_eq!(
+        compiled
+            .request()
+            .structured_output()
+            .ok_or("schema")?
+            .value()["properties"]["schema_version"]["const"],
+        5
+    );
+    let messages = compiled.request().messages();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.content().contains("E1 original path=serializer.py")
+                && m.content().contains("return 0\n"))
+    );
+    assert!(
+        !compiled
+            .request()
+            .structured_output()
+            .ok_or("schema")?
+            .value()
+            .to_string()
+            .contains("applyPatch")
+    );
+    let actual = messages.iter().try_fold(0u32, |sum, m| {
+        input
+            .model_profile()
+            .settings()
+            .token_counting()
+            .count_text(m.content())
+            .map(|n| sum + n.get())
+    })?;
+    assert_eq!(actual, compiled.budget_usage().prompt_total());
+    assert_eq!(
+        compiled.digest(),
+        block_on(compiler.compile(&input, &RecordingControl::default()))?.digest()
+    );
+    Ok(())
+}
+
+#[test]
+fn replan_originals_reserve_space_before_optional_run_summaries() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let calls = Mutex::new(Vec::new());
+    let store = StubStore {
+        published: fixture.published.clone(),
+        symbol_id: fixture.symbol_id,
+        module_id: fixture.module_id,
+        calls: &calls,
+    };
+    let compiler =
+        DeterministicAgentContextCompiler::new(CompileTaskLens::new(&store, &store, &store));
+    let historical = "historical optional summary ".repeat(110);
+    let (normal, _, _) = input_with_run_memory(&fixture, &historical)?;
+    let before = block_on(compiler.compile(&normal, &RecordingControl::default()))?;
+    assert!(
+        before
+            .request()
+            .messages()
+            .iter()
+            .any(|m| m.content().contains(&historical))
+    );
+    let reason = a3_domain::TaskReplanReason::try_from_string("Find current source".to_owned())?;
+    let checkpoint = a3_application::ReplanResearchCheckpoint::new(
+        normal.current_step_id(),
+        fixture.snapshot_id,
+        &reason,
+        "correct serialization",
+    )?;
+    let original = "# current original\n".repeat(180);
+    let page = a3_application::AgentSourcePage::new(
+        fixture.published.publication().graph().files()[0].clone(),
+        SourceRange::new(
+            0,
+            original.len(),
+            SourcePosition::new(0, 0),
+            SourcePosition::new(180, 0),
+        )?,
+        a3_domain::AgentFileStartLine::new(1)?,
+        original.clone(),
+        None,
+        false,
+    )?;
+    let request = normal
+        .with_replan_localization(reason)
+        .with_replan_research(a3_application::ReplanResearchContext {
+            checkpoint,
+            pages: vec![page],
+        })?;
+    let after = block_on(compiler.compile(&request, &RecordingControl::default()))?;
+    assert!(
+        after
+            .request()
+            .messages()
+            .iter()
+            .any(|m| m.content().contains(&original) && m.content().contains("[REPLAN_RESEARCH]"))
+    );
+    assert!(
+        !after
+            .request()
+            .messages()
+            .iter()
+            .any(|m| m.content().contains(&historical))
+    );
+    assert_eq!(
+        after.digest(),
+        block_on(compiler.compile(&request, &RecordingControl::default()))?.digest()
+    );
+    assert!(after.budget_usage().prompt_total() <= 11_879);
+    Ok(())
+}
+
+#[test]
 fn context_pack_is_fresh_bounded_and_deterministic() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new()?;
     let calls = Mutex::new(Vec::new());
@@ -152,6 +367,72 @@ fn research_handoff_is_digest_bound_and_rejected_after_anchor_change() -> Result
     let grounded_input = input(fixture.snapshot_id)?.with_research_handoff(handoff.clone());
     let grounded = block_on(compiler.compile(&grounded_input, &RecordingControl::default()))?;
     assert_ne!(plain.digest(), grounded.digest());
+
+    let mut work = a3_domain::ResearchWorkState::new(
+        "Explain existing storage and propose a CLI".to_owned(),
+        vec![
+            a3_domain::ResearchQuestionDraft {
+                request_fragment: "existing storage".to_owned(),
+                outcome: "Existing storage contract".to_owned(),
+                priority: a3_domain::ResearchQuestionPriority::Required,
+                kind: a3_domain::ResearchQuestionKind::Repository,
+                dependencies: vec![],
+            },
+            a3_domain::ResearchQuestionDraft {
+                request_fragment: "propose a CLI".to_owned(),
+                outcome: "New CLI design".to_owned(),
+                priority: a3_domain::ResearchQuestionPriority::Required,
+                kind: a3_domain::ResearchQuestionKind::Design,
+                dependencies: vec![a3_domain::ResearchQuestionId::FIRST],
+            },
+        ],
+    )?;
+    work.resolve(
+        a3_domain::ResearchQuestionId::FIRST,
+        a3_domain::ResearchResult::new(
+            a3_domain::ResearchResultKind::Interpretation,
+            "Original storage interpretation".to_owned(),
+            vec![a3_domain::ResearchResultSource {
+                source_id: a3_domain::AskResearchSourceId::from_bytes([91; 32]),
+                revision: revision.clone(),
+                range: SourceRange::new(
+                    0,
+                    1,
+                    SourcePosition::new(0, 0),
+                    SourcePosition::new(0, 1),
+                )?,
+            }],
+            None,
+        )?,
+    )?;
+    work.resolve(
+        a3_domain::ResearchQuestionId::new(2)?,
+        a3_domain::ResearchResult::new(
+            a3_domain::ResearchResultKind::DesignDecision,
+            "Proposed CLI, not implemented".to_owned(),
+            vec![],
+            None,
+        )?,
+    )?;
+    let research_input = input(fixture.snapshot_id)?
+        .with_research_handoff(handoff.clone().with_work_state(work.clone()));
+    let compiled = block_on(compiler.compile(&research_input, &RecordingControl::default()))?;
+    let pack = compiled.request().messages()[1].content();
+    assert!(pack.contains("Q1 Answered: Existing storage contract"));
+    assert!(pack.contains("Q2 Answered: New CLI design"));
+    assert!(pack.contains("Original storage interpretation"));
+    assert!(pack.contains("Proposed CLI, not implemented"));
+    assert!(pack.contains("bytes=0..1"));
+    assert!(pack.contains("not verified facts or completed implementation steps"));
+    work.revalidate(&[])?;
+    let stale_work_input =
+        input(fixture.snapshot_id)?.with_research_handoff(handoff.clone().with_work_state(work));
+    let stale_work = block_on(compiler.compile(&stale_work_input, &RecordingControl::default()))?;
+    let stale_pack = stale_work.request().messages()[1].content();
+    assert!(stale_pack.contains("Q1 Stale: Existing storage contract"));
+    assert!(!stale_pack.contains("Original storage interpretation"));
+    assert!(!stale_pack.contains("Proposed CLI, not implemented"));
+    assert_ne!(compiled.digest(), stale_work.digest());
 
     let ParsedSlashCommand::Command(command) =
         parse_slash_command(AgentSessionMode::Agent, "/review /security authentication")?

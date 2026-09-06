@@ -36,6 +36,8 @@ mod project_removal;
 mod project_settings;
 mod project_status;
 mod recent_projects;
+mod research_work;
+pub use research_work::*;
 mod repository_tree;
 mod settings;
 mod task_lens;

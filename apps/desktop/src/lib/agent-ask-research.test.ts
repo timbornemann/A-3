@@ -10,6 +10,48 @@ import {
 const id = (digit: string): string => digit.repeat(64);
 
 describe('Ask research V1 client', () => {
+  it('validates the versioned stable checklist independently of timeline notes', async () => {
+    const detail = {
+      userSequence: '1',
+      mode: 'ask',
+      depth: 'standard',
+      steps: [],
+      sourceCount: 0,
+      citedSourceCount: 0,
+      stale: false,
+      legacy: false,
+      researchWork: {
+        schemaVersion: 1,
+        revision: 2,
+        questions: [
+          {
+            id: 1,
+            outcome: 'Logziel',
+            priority: 'required',
+            status: 'open',
+            dependencies: [],
+            result: null,
+            resultKind: null,
+            sourceRefs: [],
+          },
+        ],
+      },
+    };
+    const invoke = vi.fn(async () => ({
+      protocolVersion: 1,
+      result: { status: 'available', detail },
+    }));
+    const response = await queryAgentAskResearchDetail(id('1'), '1', invoke);
+    expect(
+      response.result.status === 'available' &&
+        response.result.detail.researchWork?.questions[0].status,
+    ).toBe('open');
+    detail.researchWork.questions[0].status = 'answered';
+    await expect(queryAgentAskResearchDetail(id('1'), '1', invoke)).rejects.toThrow();
+    detail.researchWork.questions[0].status = 'open';
+    detail.researchWork.schemaVersion = 2;
+    await expect(queryAgentAskResearchDetail(id('1'), '1', invoke)).rejects.toThrow();
+  });
   it('submits only session, user sequence, opaque cursor, and opaque source capability', async () => {
     const invoke = vi
       .fn()

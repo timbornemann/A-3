@@ -158,6 +158,37 @@ impl Error for RunEventPageError {}
 
 /// Persistence boundary for materialized runs and their append-only audit events.
 pub trait RunJournalStore: fmt::Debug + Send + Sync {
+    /// Loads up to eight exact original-page anchors for cache hydration in this run/step.
+    fn load_replan_originals<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _run_id: AgentRunId,
+        _step_id: a3_domain::TaskStepId,
+        _snapshot: a3_domain::SnapshotId,
+    ) -> RunJournalStoreFuture<'a, Vec<a3_domain::AgentToolEvidence>> {
+        Box::pin(async { Err(RunJournalStoreFailure::Unavailable) })
+    }
+    /// Commits a charged V5 analysis and its metadata-only checkpoint atomically.
+    fn append_replan_research<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _expected_last_sequence: RunEventSequence,
+        _run: &'a AgentRun,
+        _event: &'a RunEvent,
+        _checkpoint: &'a crate::ReplanResearchCheckpoint,
+    ) -> RunJournalStoreFuture<'a, ()> {
+        Box::pin(async { Err(RunJournalStoreFailure::Unavailable) })
+    }
+
+    /// Loads the last durable investigation for this exact run/step, not another task's state.
+    fn load_replan_research<'a>(
+        &'a self,
+        _project: &'a ProjectIdentity,
+        _run_id: AgentRunId,
+        _step_id: a3_domain::TaskStepId,
+    ) -> RunJournalStoreFuture<'a, Option<crate::ReplanResearchCheckpoint>> {
+        Box::pin(async { Err(RunJournalStoreFailure::Unavailable) })
+    }
     /// Creates one run together with its mandatory sequence-one start event atomically.
     fn create_agent_run<'a>(
         &'a self,

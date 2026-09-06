@@ -286,6 +286,8 @@ pub struct AgentContextCompileInput {
     model_profile: ModelProfile,
     run_memory: Option<RunMemoryCheckpoint>,
     research_handoff: Option<ResearchHandoff>,
+    replan_localization: Option<a3_domain::TaskReplanReason>,
+    replan_research: Option<crate::ReplanResearchContext>,
     supplemental_seeds: Vec<TaskLensSeed>,
     tool_results: Vec<ContextToolResult>,
 }
@@ -354,6 +356,8 @@ impl AgentContextCompileInput {
             model_profile,
             run_memory,
             research_handoff: None,
+            replan_localization: None,
+            replan_research: None,
             supplemental_seeds,
             tool_results,
         })
@@ -367,6 +371,38 @@ impl AgentContextCompileInput {
     pub fn with_research_handoff(mut self, handoff: ResearchHandoff) -> Self {
         self.research_handoff = Some(handoff);
         self
+    }
+
+    /// Restricts this turn to source localization for a Core-owned replan cause.
+    /// This does not create a completed task or satisfy implementation verification.
+    #[must_use]
+    pub fn with_replan_localization(mut self, reason: a3_domain::TaskReplanReason) -> Self {
+        self.replan_localization = Some(reason);
+        self
+    }
+
+    /// Returns the Core-bound reason while only read actions may execute.
+    #[must_use]
+    pub const fn replan_localization(&self) -> Option<&a3_domain::TaskReplanReason> {
+        self.replan_localization.as_ref()
+    }
+
+    /// Binds a shared read-only investigation to this exact step and immutable snapshot.
+    pub fn with_replan_research(
+        mut self,
+        research: crate::ReplanResearchContext,
+    ) -> Result<Self, AgentContextCompileInputError> {
+        if research.checkpoint.step_id != self.current_step_id || research.pages.len() > 8 {
+            return Err(AgentContextCompileInputError::CurrentStepUnavailable);
+        }
+        self.replan_research = Some(research);
+        Ok(self)
+    }
+
+    /// Returns the durable replan obligation and volatile original evidence.
+    #[must_use]
+    pub const fn replan_research(&self) -> Option<&crate::ReplanResearchContext> {
+        self.replan_research.as_ref()
     }
 
     /// Returns the exact project whose current publication must be retrieved.

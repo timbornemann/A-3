@@ -1,5 +1,26 @@
 # Memory System und Context Compiler
 
+## Ergänzung: Core-Planpflichten und rungebundene Recherche
+
+[ADR-0048](adrs/0048-rungebundene-replan-recherche.md) bindet die Replan-Recherche an
+Run, Schritt, Snapshot und Journal. Originale Safe-Reader-Seiten gelangen flüchtig und
+mit gezählten Kontextkosten in dieselbe V5-Zulassung wie Ask/Plan. Ein Read allein
+beendet die Recherche nicht. Ergebnisse bleiben Interpretationen, keine Schrittverifikation.
+Read-Zähler und Analysequittungen bleiben beim Wiederanlauf erhalten; Modellturns werden
+auch bei einem fehlgeschlagenen anschließenden Tool-Read abgerechnet.
+Bei ausgefallenen Providerstreams bleibt der gezählte Prompt plus das konservativ reservierte
+Outputlimit im Run-Verbrauch; dies ist keine behauptete Providerabrechnung. Ein einzelner
+fehlgeschlagener Repair bleibt Teil desselben Turns und autorisiert keine Aktion.
+Metadatenmarkierungen tatsächlich gelesener Originalseiten erlauben begrenzte Cachehydration
+nach Neustart. Hash und exakter Bereich müssen erneut passen; Hydration erneuert keinen
+Read-Zähler und keine Analysequittung. Suchspans besitzen diese Befugnis nicht.
+
+[ADR-0049](adrs/0049-core-planpflichten-und-statusnotizen.md) initialisiert neue Plan-/Agent-
+Vorbereitung deterministisch mit Bestand, Änderungsentwurf und Testentwurf. Vorhandene neue
+Features oder Testkonventionen werden nicht als zusätzliche Pflichtvoraussetzung erfunden.
+Der aktive Kontext nennt den Fragetyp ausdrücklich. Nicht belegte V5-Statusnotizen werden
+Hypothesen und bilden keine Abschlussbelege. Bestehende eingefrorene Verträge bleiben erhalten.
+
 Status: verbindliche Baseline  
 Stand: 2026-08-03
 
@@ -630,7 +651,204 @@ vollständig gegen `CodeAndEvidence` gerechnet, vor dem normalen Lens-Packing re
 jede andere Context-Einheit auf Secret-Kandidaten geprüft. Goal- und Ledger-Anchor bleiben davon
 unberührt und ungekürzt.
 
-## Erfolgsmetriken
+## Verbindlicher Rechercheprüfstand (ADR-0047)
+
+Für neue Ask-, Plan- und Agent-Vorbereitungsläufe verwendet die Modellgrenze Recherche-V5.
+Die vorstehenden Freitext-/Nullrundenregeln beschreiben den erhaltenen V3/V4-Legacypfad.
+V5 hält stattdessen einen `ResearchWorkState`: unveränderlicher Auftrag, Core-IDs Q1–Q32,
+Pflicht-/unterstützende/optionale Fragen, frühere Abhängigkeiten, Ergebnisart und Prüfstatus.
+Eine Teilfrage wird nur mit einem zugelassenen Ergebnis beantwortet. Eine Interpretation
+braucht Referenzen auf tatsächlich ausgelieferte Originalfenster. Der Core vergibt pro Paket
+höchstens acht `E1`–`E8`-Anker und bindet sie an Source-ID, Dateihash, Originalbytes und Positionen.
+Das Modell wählt `anchor_ref`, statt Zitate oder Koordinaten nachzutippen. Ein `S`-Label oder
+eine reine Quellenüberschrift reicht nicht. Die strukturierte gespeicherte Provenienz sind
+Originalreferenzen, nicht paketlokale E-IDs. Ältere V5-Test-/Replay-Dokumente mit exakten Zitaten werden weiterhin gegen
+eindeutige Originalstellen geprüft. Die inhaltliche Interpretation bleibt modellabhängig und
+wird nicht zu einem deterministisch bestätigten Fact.
+
+Der Core wählt getrennte Ausgabeverträge: `Initialize` definiert Teilfragen ohne Ergebnisse
+und bindet sie selbst an den vollständigen unveränderlichen Nutzerauftrag. `Analyze(Qn)` erlaubt
+höchstens ein Ergebnis für genau die aktive ID, keine neue Fragenliste und keine freien Tools.
+`Design(Qn)` erlaubt dagegen nur zukünftige Designentscheidungen und keine neuen Beleganker.
+Vollständige vorausgesetzte Entwurfsentscheidungen bleiben im aktiven Kontext erhalten.
+Die feste neue Planvorbereitung benötigt weder Initialize noch einen freien Finalize-Aufruf;
+der Core stellt zugelassene Änderungs- und Testentscheidungen verlustfrei zusammen.
+`Finalize` erlaubt nur noch Planfelder: `summary`, `changes`, `interfaces`, `tests`, `assumptions`
+und die kurze öffentliche Notiz. Der Core rendert Marker, Überschriften, Nummerierung und
+Recherchequellen selbst. Höchstens 32 Änderungen und 32 Tests mit jeweils einzeiligen Ergebnissen
+werden akzeptiert; der bestehende Plan-/Task-Ledger-Vertrag wird anschließend erneut geprüft.
+Das Modell kann durch `kind: plan` weder Rechercheabschluss noch Ausführung autorisieren.
+Ein vollständig validierter Initialvorschlag ohne erforderliche Repository-Pflicht trotz
+ausdrücklich benannter Originaldateien erhält vor dem Einfrieren den vollständigen Originalauftrag
+als Core-Prüfpflicht. Ungültige Dokumente und bestehende Verträge werden dadurch nicht gerettet
+oder umgeschrieben. Siehe [ADR-0050](adrs/0050-verlustfreie-entwurfsuebergabe.md) und
+[ADR-0051](adrs/0051-core-fallback-fuer-ungeeignete-zerlegung.md). Kurze Originalaufträge
+werden dabei gemäß [ADR-0052](adrs/0052-literale-teilpflichten-im-core-fallback.md)
+höchstens in sechs wörtlich erhaltene Teilpflichten segmentiert. Auch der Einzelrepair
+verwendet exakt die jeweilige Phasenregel: Design verlangt keine neuen Quellenanker;
+Analyze interpretiert bestehendes Verhalten und fordert keinen vorgezogenen Entwurf an.
+
+Voraussetzungsergebnisse behalten im aktiven Paket ihre epistemische Art. Nur
+`DesignDecision` bindet zukünftige Fehlerpolitik; eine Repository-Interpretation
+ist dafür keine Designentscheidung. Der Agent-Kontext reserviert aktuelle
+Replan-Pflichten und Originalfenster vor optionalen historischen Zusammenfassungen;
+unverzichtbare offene Arbeitsdaten dürfen weiterhin nicht still abgeschnitten werden.
+
+[ADR-0053](adrs/0053-core-pflichten-fuer-benannte-codefragen.md) verwendet diese
+wörtlichen Core-Pflichten auch für rein repositorybezogene Initialzerlegungen über
+benannte Dateien. Modellgenerierte zusätzliche Zusammenfassungsaufträge werden dabei
+nicht zu Pflichtrecherche; gemischte und bereits gespeicherte Verträge bleiben erhalten.
+
+Die nächste offene Pflichtfrage und deren Voraussetzungen werden stabil ausgewählt. Ein
+identisches Frage-/Originalrevision-/Bereichspaket darf keine weitere Analyse starten; geänderte
+Quellnummern oder neue Formulierungen von Arbeitsnotizen erzeugen keinen Fortschritt. Der Core
+versucht vorhandenen Cache, exakte Pfad-/Symbolanker, bestehende Fast-Index-Flows und Relationen,
+gezielte Literalsuche und begrenzte Verzeichnisnavigation. Erledigte Antworten bleiben erhalten;
+optionale Themen eröffnen nach Abschluss der Pflichtfragen keine weitere Recherche. Unabhängige
+Pflichtfragen dürfen weiterlaufen, wenn eine andere Frage blockiert ist. Die bisherigen äußeren
+12/24-Modell-, 24/48-Read- und 5/15-Minuten-Limits sowie ein Repair pro Dokument bleiben bestehen.
+Byte-Stagnation darf V5 nicht zusätzlich nach zwei Runden stoppen, auch nicht im Retrypfad.
+Der Paketbeleg für eine bearbeitete Analyse wird erst mit einem gültig zugelassenen Dokument
+atomar übernommen. Der bereits journalisierte Beginn eines Modellaufrufs ist noch kein solcher
+Beleg. Abbruch, fehlgeschlagener Einzelrepair oder verbrauchtes Aufrufbudget dürfen dadurch
+einen später ausdrücklich fortgesetzten Versuch desselben Pakets nicht irrtümlich sperren.
+Ein gültiger, aber ergebnisloser Analyseschritt bleibt dagegen als bearbeitet dedupliziert.
+
+Adaptive Zugriffe haben einen dauerhaften, auf 256 Identitäten begrenzten Versuchskatalog.
+Jeder tatsächliche Aktionsstart und sein getrenntes Ergebnis werden über denselben atomaren
+Checkpointpfad gespeichert. Pfad-/Source-Zugriffe derselben 200-Zeilen-Seite verwenden dieselbe
+kanonische Revisionsidentität; Literal-OR-Reihenfolge und Source-Anzeigenummern sind keine neue
+Untersuchung. Flow-Pfade und Views bleiben getrennt. Nur ein vollständig beobachtetes leeres
+Such-/Verzeichnisergebnis oder eine nicht eindeutige Indexauflösung unterdrückt denselben Zugriff
+für dieselbe Frage und Publikation. Fehler, Begrenzung und unterbrochene Versuche bleiben davon
+getrennt. Eine Suche mit übersprungenen Dateien erhält auch bei Adapter-`Complete` keine negative
+Quittung; die Zahl tatsächlich geprüfter Dateien muss der gebundenen Dateimenge entsprechen.
+Erfolgreiche Reads dürfen den flüchtigen Quellcache nach Wiederöffnen erneut befüllen.
+Ein bloß zurückgekehrter Leseaufruf beweist weder neue Evidence noch Aufgabenabschluss.
+Eine einzelne Quittung erlaubt keinen `boundedUnknown`-Abschluss. Erst nach einer gültigen
+Analyse und Ausschöpfung der endlichen Core-Frontier darf der Core eine begrenzte Erkenntnis
+formulieren: mindestens eine vollständig ausgeführte Literalsuche ohne Treffer plus eine
+nicht auflösbare Pfadprüfung oder ein leeres Indexverzeichnis, alle im selben Publikationsscope.
+Offene, fehlgeschlagene und begrenzte Zugriffe sperren diesen Abschluss. Benannte vorhandene
+Dateien müssen weiterhin Originalbezüge besitzen. Entwurfsfragen, verbrauchte Budgets und
+Cancellation sind keine negativen Erkenntnisse. Der Text erklärt ausdrücklich, dass weder
+allgemeine Nichtexistenz noch Laufzeitverhalten bewiesen sind. Eine reine Ask-Grenzerklärung
+braucht keine erfundenen Quellenzitate; ihr typisierter Untersuchungsweg bleibt im Prüfstand.
+Der abschließende Work-Trace trägt `Limited`, nicht einen vollständigen fachlichen Beweis.
+Explizit vom Nutzer genannte fehlende relative Dateipfade werden gezielt im Index aufgelöst
+und ihre Dateinamen literal gesucht. Erfundene Pfade aus Modellnotizen eröffnen diesen Weg nicht.
+Negative Grenzen sind an die gesamte Publikation gebunden und werden bei Scopewechsel stale,
+auch wenn keine einzelne Datei als Ergebnisquelle vorliegt. Reopen löscht stale Ausschlüsse.
+
+Passt die ausführliche Prüfliste nicht zusammen mit Auftrag und 1.536 Bytes Originalreserve,
+kompiliert der Core eine Teilansicht: alle IDs, Prioritäten und Zustände, die vollständige aktive
+Frage und budgetierte Ergebnisvorschauen ihrer Voraussetzungen. Inaktive Definitionen verbleiben
+unverändert im dauerhaften Vertrag; die vollständige Antwort wird aus dessen Ergebnissen gebaut.
+Die Darstellung ist deterministisch und setzt keine Zähler zurück. Ein zu großer Originalauftrag
+oder eine nicht passende aktive Frage bleibt ein ehrlicher `ContextLimit`; beliebig viele
+Teilfragen können die äußere Zahl der Modellentscheidungen nicht überschreiten.
+
+Ask-Antworten werden aus allen zugelassenen Pflichtantworten samt Originalverweisen aufgebaut.
+Pläne behalten diese Antworten als Recherchegrundlage. Neue Schnittstellen sind explizite
+Entwurfsentscheidungen, keine angeblich fehlenden Bestandsdateien. Eine typisierte `question` darf
+in Plan/Agent eine aktive Entwurfsentscheidung klären, wenn die erforderliche Bestandsrecherche
+beantwortet ist; dadurch wird die offene Entwurfsfrage nicht als erledigt gespeichert.
+
+Der Prüfstand wird atomar mit dem Audit gespeichert, bei ausdrücklicher Fortsetzung neu an
+aktuelle Sources gebunden und vor Verwendung auf Aktualität geprüft. Geänderte Originale und
+abhängige Antworten werden `Stale`; nicht verfügbare alte Antworten bleiben nur historische
+Ergebnisse. Die UI zeigt eine stabile read-only Prüfliste getrennt vom animierten Verlauf.
+Sie darf weder den Status setzen noch aus Ergebnissen verifizierte Fakten machen. Ihre
+Quellenknöpfe verwenden ausschließlich die bestehenden geschützten Preview-Capabilities.
+
+Der Agent-Handoff überträgt die Teilfragen und zugelassenen Ergebnisse zusätzlich zu den
+Revisionen. Alle Pflichtüberschriften werden vor optionalen Ergebnistexten im Kontextbudget
+reserviert. Erst die freigegebene Planrevision materialisiert je konkretem Arbeitsergebnis ein
+Umsetzungskriterium. Rechercheabschluss erfüllt keine Änderungs- oder Testverifikation.
+Bei automatischem Replan wird kein künstliches Recherche-Todo mit kopierter Änderungsverifikation
+mehr angelegt. Vor der nächsten Mutation erlaubt die bestehende Execute-Phase höchstens vier
+reine Search-/Inspect-Turns zur Lokalisierung. Prompt, Schema, Decoder und der einzelne Repair
+bleiben dabei read-only; echte Reads und Modellaufrufe werden normal journalisiert/abgerechnet.
+Erst eine zugelassene V5-Interpretation der Replan-Ursache mit aktuellem Originalanker beendet
+diese eingeschränkte Phase. Ein Originalread allein, Such-, Symbol- und Graphmetadaten reichen
+nicht. Der gemeinsame ResearchWorkState-Unterauftrag ist in Knowledge V37 dauerhaft an Run,
+Schritt und Snapshot gebunden. Ein sicheres Originalfenster muss nicht die gesamte Datei enthalten. Derselbe
+Arbeitsschritt mit unveränderten Kriterien und demselben Snapshot darf innerhalb des Runs keine
+erneute automatische Replan-Kette eröffnen; der Core prüft dafür die dauerhaften Ledger-Events
+begrenzt und cancellation-fähig. Es entsteht kein zweiter mutierender Controller.
+Abnahmeumfang und noch offene Schnitte stehen in [Plan 10](plans/10-RESEARCH_WORK_STATE.md).
+
+Die feste Q1-Planbestandsaufnahme verwendet nach
+[ADR-0054](adrs/0054-vollstaendig-gelieferte-planbestandsaufnahme.md) ausschließlich
+bei nachweislich vollständig gelesenen **und aktuell vollständig als E-Fenster
+gelieferten** benannten Revisionen `SummarizeOriginals`: genau eine Interpretation
+der sichtbaren APIs und Integrationsgrenzen. Nicht gelieferte externe Implementierung
+bleibt eine benannte Grenze, kein erfundener Befund. Leere Ergebnisse/Fragen nutzen
+nur den bestehenden Einzelrepair; normale Analyze-Fragen bleiben nullable.
+Unabhängig von der Auslieferungsgröße muss Q1 alle ausdrücklich benannten
+Originalrevisionen belegen, bevor der Core zu den belegfreien Designphasen wechselt.
+Eine unvollständige Bestandsaufnahme wird dort repariert, nicht erst beim Planabschluss.
+Auch vollständige relative Pfade wie `taskflow/manager.py` werden unmittelbar als
+benannte Quelle der aktiven Repositoryfrage erkannt, nicht nur als Suffix eines
+längeren Pfades. Fehlende Belege dürfen nicht bis zur letzten, fachfremden Teilfrage
+aufgeschoben werden; Dateinamenpräfixe bleiben ausgeschlossen.
+Bei einer Quellenabdeckungs-Reparatur benennt der Core die tatsächlich gelieferten
+E-Ankergruppen der benötigten Dateien innerhalb desselben 768-Byte-Reparaturbudgets.
+Mehrere Fenster derselben Revision bilden eine Gruppe; fremde und nicht gelieferte
+Originale erhalten keine erfundenen Anker. Fehlt ein notwendiges Originalfenster,
+bleibt der allgemeine phasengebundene Hinweis zuständig. Dies ist eine konkrete
+Korrekturhilfe, keine automatische Quellenzuordnung oder semantische Zulassung.
+Auch die unabhängige Domain-Zulassung und das Wiederherstellen gespeicherter Zustände
+erzwingen beide Richtungen der Ergebnisart: Repositoryfragen erlauben Interpretation
+oder begrenzte Unbekanntheit, Entwurfsfragen ausschließlich Designentscheidungen.
+Eine negative Suche oder Bestandsbeschreibung kann keinen fehlenden Entwurf ersetzen.
+Der feste Core-Plan zeigt in seiner abgeleiteten Zieltabelle nur aufgelöste Originale.
+Nicht aufgelöste Namen neuer Funktionen oder externer APIs bleiben im unveränderten
+Nutzerauftrag, werden aber nicht zusätzlich als Verzeichnis-Suchauftrag injiziert.
+Die allgemeine Ask-Recherche behält ihre ungelösten Navigationsziele.
+
+Nach [ADR-0056](adrs/0056-vollstaendige-passende-originalpakete.md) erhält ein Set aus
+höchstens acht vollständig gelesenen benannten Originalen Vorrang vor Funktionsfragmenten,
+wenn alle Originaltexte samt Header gemeinsam ins bestehende Budget passen. Cache und
+Read-Quittung müssen bis zum identischen Ende reichen; ein vollständiger Read-Marker
+allein genügt nicht. Expliziter Zeilenfokus bleibt vorrangig. Bei Überlauf gelten weiterhin
+die progressiven Einheiten-/Seitenregeln. Ebenso bleibt ein neu fokussiertes Original
+außerhalb des benannten Sets erreichbar; Pflichtdateien sperren keine Abhängigkeitsrecherche.
+Nur tatsächlich gerenderte Fenster gelten als
+ausgeliefert; es entsteht kein zusätzlicher Read, Beweis oder Kontextplatz.
+
+Nach [ADR-0057](adrs/0057-leerer-entwurf-ist-kein-rechercheauftrag.md) benötigt Design
+bei `progress` genau ein Ergebnis. Ein leerer Entwurf ist ungültiger Modelloutput,
+kein Anlass für weitere Originalreads. Nur die explizite Entscheidung `question`
+für eine folgenreiche Nutzerwahl darf ohne Ergebnis bleiben. Der unabhängige Decoder
+führt ungültigen Output durch den vorhandenen Einzelrepair; normale Analyze-Beleglücken
+bleiben nullable. Dies ersetzt keine inhaltliche Verifikation des Entwurfs.
+
+Nach [ADR-0058](adrs/0058-kompakte-recherchephasen-fuer-kleine-kontexte.md) stehen
+gemeinsame Vertrauensregeln nur einmal in der Systeminstruktion, gefolgt vom aktuellen
+Phasenauftrag. Im bestehenden V5-Vertrag erhält Originalcode Vorrang vor der abgeleiteten
+Zielübersicht und Cursorhinweisen; diese folgen nur im verbleibenden Paketplatz.
+Die Initialisierung und Legacy-Navigation bleiben unverändert. Repository-Arbeitsansichten
+werden oberhalb eines Drittels des Evidence-Pakets partitioniert; aktive Definition,
+stabile IDs, Prioritäten und Status bleiben vollständig, inaktive Definitionen dauerhaft
+im Core. Die Quellenreserve skaliert zwischen 512 und 1.536 Bytes. Bindende
+Designentscheidungen bleiben vollständig; für Design gelten weiterhin 256 Bytes
+Framingreserve. Kein Modell-/Outputlimit und kein Sicherheits- oder Repairbudget wächst.
+
+Der reale Offline-Mehrdateivertrag mit konservativem 8.192/2.048-Profil erhält damit
+2.213 Evidence-Bytes in Ask beziehungsweise 2.212 in Plan/Agent. Alle fünf benötigten
+Methodenkörper liegen in der Bestandsanalyse gemeinsam vor; die drei Modi schließen
+mit jeweils drei Modellstubaufrufen ab. Das beweist Packing und Controllerverhalten,
+nicht die Qualität eines beliebigen echten lokalen Modells.
+
+Nach [ADR-0059](adrs/0059-idempotente-originalanker-in-rechercheergebnissen.md) werden
+identische, einzeln validierte E-Anker in einem Rechercheergebnis als Menge übernommen.
+Mehrere erklärte Methoden im selben Originalfenster benötigen keine mehrfachen
+Quellenidentitäten. Das 32-Elemente-Eingabelimit gilt vor der Kanonisierung; E0/E9/E01,
+fremde Felder und ungelieferte oder mehrdeutige Fenster bleiben abgewiesen. Der Core
+fügt keine fehlenden Quellen hinzu und verbraucht keinen Repair für exakte Wiederholungen.
+
+## Erfolgsmetriken des Prüfstands
 
 - Goal-Retention über lange Runs
 - Anteil turnspezifisch nützlicher Tokens

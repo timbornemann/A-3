@@ -14,6 +14,7 @@ Diese Pl채ne zerlegen A^3 in 체berpr체fbare vertikale Arbeitspakete. Sie sind f�
 8. [Hardening und Release](07-HARDENING_AND_RELEASE.md)
 9. [Fast-Index-Ablauf- und Wertanalyse](08-FAST_INDEX_FLOW_ANALYSIS.md)
 10. [Zusammenh채ngende Desktop-Arbeitsumgebung](09-COHESIVE_DESKTOP_UI.md)
+11. [Verbindliche Recherchef체hrung](10-RESEARCH_WORK_STATE.md)
 
 ## Ausf체hrungsregeln f체r Codex
 

@@ -23,11 +23,10 @@ use a3_application::{
 use a3_context::{DeterministicAgentContextCompiler, DeterministicAgentReadTools};
 use a3_domain::{
     AgentAction, AgentControllerState, AgentRun, AgentRunTimestamp, AgentToolEvidenceSet,
-    ApprovalGrant, ApprovalRequestId, ExpectedTaskEvidence, PolicyDecisionId,
-    ProcessEnvironmentVariable, ProcessEvent, Progress, ProjectIdentity, RunEventId,
-    RunMemoryCheckpoint, StepDependency, StepVerificationId, TaskId, TaskLedger, TaskReplanReason,
-    TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus, ToolRunId,
-    VerificationRunId, VerificationSpecId, WorkspacePolicy,
+    ApprovalGrant, ApprovalRequestId, PolicyDecisionId, ProcessEnvironmentVariable, ProcessEvent,
+    Progress, ProjectIdentity, RunEventId, RunMemoryCheckpoint, StepDependency, StepVerificationId,
+    TaskId, TaskLedger, TaskReplanReason, TaskStepDefinition, TaskStepId, TaskStepRationale,
+    TaskStepStatus, ToolRunId, VerificationRunId, VerificationSpecId, WorkspacePolicy,
 };
 use a3_repo_index::{
     Blake3IndexRunIdFactory, Blake3RepositorySnapshotBuilder, BuiltinIncrementalIndexCompiler,
@@ -44,6 +43,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_AGENT_TURNS_PER_ATTEMPT: u64 = 64;
 const MAX_AUTOMATIC_REPLANS_PER_RUN: usize = 8;
+const MAX_REPLAN_LOCALIZATION_READS: u8 = 4;
 const APPROVAL_LIFETIME_MILLIS: u64 = 10 * 60 * 1_000;
 
 /// Narrow production capabilities used by the existing deterministic Agent harness.
@@ -214,6 +214,65 @@ impl ProductionAgentRunExecutor {
         let mut context_results = Vec::new();
         let mut read_evidence: Option<AgentToolEvidenceSet> = None;
         let mut pending_replan_reason: Option<TaskReplanReason> = None;
+        let mut localization_reason = ledger
+            .replans()
+            .last()
+            .filter(|replan| replan.added_step_ids().contains(&step_id))
+            .map(|replan| replan.reason().clone());
+        let mut replan_research = if let Some(reason) = &localization_reason {
+            let restored = self
+                .ports
+                .journal
+                .load_replan_research(project, run.id(), step_id)
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            let checkpoint = match restored.filter(|r| r.snapshot_id == run.current_snapshot_id()) {
+                Some(checkpoint) => checkpoint,
+                None => a3_application::ReplanResearchCheckpoint::new(
+                    step_id,
+                    run.current_snapshot_id(),
+                    reason,
+                    ledger
+                        .step(step_id)
+                        .ok_or(AgentRunExecutionFailure::AnchorsChanged)?
+                        .definition()
+                        .intended_outcome()
+                        .as_str(),
+                )
+                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+            };
+            if checkpoint.work.ready_to_finish() {
+                localization_reason = None;
+            }
+            let mut research = a3_application::ReplanResearchContext {
+                checkpoint,
+                pages: Vec::new(),
+            };
+            if research.checkpoint.reads() > 0 && !research.checkpoint.work.ready_to_finish() {
+                let originals = self
+                    .ports
+                    .journal
+                    .load_replan_originals(
+                        project,
+                        run.id(),
+                        step_id,
+                        research.checkpoint.snapshot_id,
+                    )
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                hydrate_replan_originals(
+                    &WorkspaceAgentSourceReader,
+                    project,
+                    &mut research,
+                    originals,
+                    control,
+                )
+                .await?;
+            }
+            Some(research)
+        } else {
+            None
+        };
 
         if let AgentRunExecutionTrigger::ApprovalGranted(approval_id) = request.trigger() {
             let action = lock_recovering_poison(&self.pending_mutations)
@@ -262,6 +321,8 @@ impl ProductionAgentRunExecutor {
             if self.handle_mutation_outcome(request.task_id(), outcome)? {
                 return Ok(AgentRunExecutionOutcome::Completed);
             }
+            localization_reason = None;
+            replan_research = None;
         } else if run.state() == AgentControllerState::AwaitApproval {
             return Err(AgentRunExecutionFailure::InvalidState);
         }
@@ -287,6 +348,7 @@ impl ProductionAgentRunExecutor {
                         )
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
                     };
+                    localization_reason = Some(reason.clone());
                     step_id = self
                         .apply_automatic_replan(
                             project,
@@ -297,6 +359,23 @@ impl ProductionAgentRunExecutor {
                             &attempt_control,
                         )
                         .await?;
+                    replan_research = Some(a3_application::ReplanResearchContext {
+                        checkpoint: a3_application::ReplanResearchCheckpoint::new(
+                            step_id,
+                            run.current_snapshot_id(),
+                            localization_reason
+                                .as_ref()
+                                .ok_or(AgentRunExecutionFailure::InvalidState)?,
+                            ledger
+                                .step(step_id)
+                                .ok_or(AgentRunExecutionFailure::AnchorsChanged)?
+                                .definition()
+                                .intended_outcome()
+                                .as_str(),
+                        )
+                        .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+                        pages: Vec::new(),
+                    });
                     context_results.clear();
                     read_evidence = None;
                 }
@@ -320,6 +399,14 @@ impl ProductionAgentRunExecutor {
                 _ => return Err(AgentRunExecutionFailure::InvalidState),
             }
 
+            if replan_research.as_ref().is_some_and(|r| {
+                !r.checkpoint.work.ready_to_finish()
+                    && !r.should_analyze()
+                    && r.checkpoint.reads() >= u16::from(MAX_REPLAN_LOCALIZATION_READS)
+            }) {
+                self.stop_failed_run(project, &mut run).await?;
+                return Err(AgentRunExecutionFailure::InvalidState);
+            }
             let input = AgentContextCompileInput::new(
                 project.clone(),
                 task.goal_contract().clone(),
@@ -331,6 +418,18 @@ impl ProductionAgentRunExecutor {
                 context_results.clone(),
             )
             .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?;
+            let input = match &localization_reason {
+                Some(reason) => input.with_replan_localization(reason.clone()),
+                None => input,
+            };
+            let input = if let Some(research) = &replan_research {
+                validate_replan_originals(project, research, control).await?;
+                input
+                    .with_replan_research(research.clone())
+                    .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?
+            } else {
+                input
+            };
             let input = match &initial_research_handoff {
                 Some(handoff) => {
                     let published =
@@ -353,19 +452,71 @@ impl ProductionAgentRunExecutor {
             let event = turn_outcome
                 .record(&mut run, run_event_id()?, observed_at)
                 .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-            AppendRunEvent::new(self.ports.journal.as_ref())
-                .execute(project, expected_sequence, &run, &event)
-                .await
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            if let AgentTurnOutcome::Researched(research) = &turn_outcome {
+                let freshness = async {
+                    let published =
+                        current_index(self.ports.index.as_ref(), project, &attempt_control).await?;
+                    if published.run().snapshot_id() != research.checkpoint.snapshot_id {
+                        return Err(AgentRunExecutionFailure::AnchorsChanged);
+                    }
+                    if let Some(context) = &replan_research {
+                        validate_replan_originals(project, context, control).await?;
+                    }
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = freshness {
+                    // Usage remains durable, but stale conclusions receive no checkpoint.
+                    AppendRunEvent::new(self.ports.journal.as_ref())
+                        .execute(project, expected_sequence, &run, &event)
+                        .await
+                        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    return Err(error);
+                }
+                self.ports
+                    .journal
+                    .append_replan_research(
+                        project,
+                        expected_sequence,
+                        &run,
+                        &event,
+                        &research.checkpoint,
+                    )
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            } else {
+                AppendRunEvent::new(self.ports.journal.as_ref())
+                    .execute(project, expected_sequence, &run, &event)
+                    .await
+                    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            }
             let mut execution = match turn_outcome {
+                AgentTurnOutcome::Researched(research) => {
+                    let context = replan_research
+                        .as_mut()
+                        .ok_or(AgentRunExecutionFailure::InvalidState)?;
+                    context.checkpoint = research.checkpoint;
+                    if context.checkpoint.work.ready_to_finish() {
+                        localization_reason = None;
+                    }
+                    continue;
+                }
                 AgentTurnOutcome::Executed(execution) => execution,
                 AgentTurnOutcome::Rejected(rejected) => {
-                    let signal =
-                        if rejected.reason() == AgentTurnRejectionReason::CancelledBeforeAction {
-                            AgentControllerSignal::CancelRequested
-                        } else {
-                            AgentControllerSignal::FatalFailure
-                        };
+                    let signal = if matches!(
+                        rejected.reason(),
+                        AgentTurnRejectionReason::CancelledBeforeAction
+                            | AgentTurnRejectionReason::ModelFailed(
+                                a3_application::ModelProviderFailure::Cancelled
+                            )
+                            | AgentTurnRejectionReason::ReadFailed(
+                                a3_application::AgentReadToolFailure::Cancelled
+                            )
+                    ) {
+                        AgentControllerSignal::CancelRequested
+                    } else {
+                        AgentControllerSignal::FatalFailure
+                    };
                     let expected_sequence = run.last_event_sequence();
                     let snapshot_id = run.current_snapshot_id();
                     let observed_at = timestamp()?;
@@ -393,13 +544,40 @@ impl ProductionAgentRunExecutor {
             let action = execution.action().clone();
             match action {
                 AgentAction::Search(_) | AgentAction::Inspect(_) => {
-                    let result = execution
+                    let mut result = execution
                         .take_tool_result()
                         .ok_or(AgentRunExecutionFailure::Unavailable)?;
+                    if let Some(context) = replan_research
+                        .as_mut()
+                        .filter(|r| !r.checkpoint.work.ready_to_finish())
+                    {
+                        context
+                            .checkpoint
+                            .record_read(
+                                &action,
+                                result.status()
+                                    == a3_application::ContextToolResultStatus::Succeeded,
+                            )
+                            .map_err(|_| AgentRunExecutionFailure::InvalidState)?;
+                        if let Some(page) =
+                            result.take_original_page().filter(|p| !p.text().is_empty())
+                            && !context.pages.iter().any(|p| {
+                                p.revision() == page.revision() && p.range() == page.range()
+                            })
+                        {
+                            context.pages.push(page);
+                        }
+                    }
                     let expected_sequence = run.last_event_sequence();
-                    let recorded = result
+                    let mut recorded = result
                         .record(&mut run, run_event_id()?, timestamp()?)
                         .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+                    if let Some(context) = replan_research
+                        .as_ref()
+                        .filter(|r| !r.checkpoint.work.ready_to_finish())
+                    {
+                        recorded = recorded.with_replan(context.checkpoint.clone());
+                    }
                     context_results.push(recorded.context_result().clone());
                     read_evidence = Some(recorded.evidence().clone());
                     AppendAgentRead::new(self.ports.journal.as_ref())
@@ -451,6 +629,8 @@ impl ProductionAgentRunExecutor {
                     }
                     context_results.clear();
                     read_evidence = None;
+                    replan_research = None;
+                    localization_reason = None;
                 }
                 AgentAction::UpdateLedger(update) => {
                     let expected_sequence = run.last_event_sequence();
@@ -539,6 +719,67 @@ impl ProductionAgentRunExecutor {
         }
     }
 
+    async fn stop_failed_run(
+        &self,
+        project: &ProjectIdentity,
+        run: &mut AgentRun,
+    ) -> Result<(), AgentRunExecutionFailure> {
+        let expected_sequence = run.last_event_sequence();
+        let advance = AdvanceAgentController
+            .execute(
+                run,
+                AgentControllerSignal::FatalFailure,
+                run_event_id()?,
+                run.current_snapshot_id(),
+                timestamp()?,
+                false,
+            )
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        AppendRunEvent::new(self.ports.journal.as_ref())
+            .execute(project, expected_sequence, run, advance.event())
+            .await
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)
+    }
+
+    /// Uses durable revision events, not fresh random todo IDs, as the snapshot boundary.
+    async fn replan_seen_at_snapshot(
+        &self,
+        project: &ProjectIdentity,
+        run: &AgentRun,
+        ledger: &TaskLedger,
+        control: &AgentAttemptControl<'_>,
+    ) -> Result<bool, AgentRunExecutionFailure> {
+        let revisions = repeated_replan_revisions(ledger);
+        if revisions.is_empty() {
+            return Ok(false);
+        }
+        let limit = a3_application::RunEventPageLimit::new(256)
+            .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        let mut cursor = None;
+        // Bounded by the existing export ceiling, with a cancellation checkpoint per page.
+        for _ in 0..40 {
+            if control.context.cancellation_token().is_cancelled() {
+                return Err(AgentRunExecutionFailure::Unavailable);
+            }
+            let page = self
+                .ports
+                .journal
+                .load_run_events(project, run.id(), cursor, limit)
+                .await
+                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+            if page.events().iter().any(|event| {
+                event.snapshot_id() == run.current_snapshot_id()
+                    && matches!(event.kind(), a3_domain::RunEventKind::LedgerUpdated { to, .. } if revisions.contains(&to))
+            }) { return Ok(true); }
+            if !page.has_more() {
+                return Ok(false);
+            }
+            cursor = page.events().last().map(|event| event.sequence());
+        }
+        // Incomplete history cannot authorize another replan.
+        Err(AgentRunExecutionFailure::Unavailable)
+    }
+
     async fn apply_automatic_replan(
         &self,
         project: &ProjectIdentity,
@@ -548,22 +789,12 @@ impl ProductionAgentRunExecutor {
         reason: TaskReplanReason,
         control: &AgentAttemptControl<'_>,
     ) -> Result<TaskStepId, AgentRunExecutionFailure> {
-        if ledger.replans().len() >= MAX_AUTOMATIC_REPLANS_PER_RUN {
-            let expected_sequence = run.last_event_sequence();
-            let advance = AdvanceAgentController
-                .execute(
-                    run,
-                    AgentControllerSignal::FatalFailure,
-                    run_event_id()?,
-                    run.current_snapshot_id(),
-                    timestamp()?,
-                    false,
-                )
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-            AppendRunEvent::new(self.ports.journal.as_ref())
-                .execute(project, expected_sequence, run, advance.event())
-                .await
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        if ledger.replans().len() >= MAX_AUTOMATIC_REPLANS_PER_RUN
+            || self
+                .replan_seen_at_snapshot(project, run, ledger, control)
+                .await?
+        {
+            self.stop_failed_run(project, run).await?;
             return Err(AgentRunExecutionFailure::InvalidState);
         }
 
@@ -866,6 +1097,141 @@ fn session_outcome_for_run(
     }
 }
 
+/// Hydration restores only already charged, exact original windows. It cannot create
+/// another read attempt or erase the unchanged packet's analysis receipt.
+async fn hydrate_replan_originals(
+    reader: &dyn a3_application::AgentSourceReader,
+    project: &ProjectIdentity,
+    research: &mut a3_application::ReplanResearchContext,
+    originals: Vec<a3_domain::AgentToolEvidence>,
+    control: &dyn a3_application::AgentSourceReadControl,
+) -> Result<(), AgentRunExecutionFailure> {
+    if originals.len() > 8 {
+        return Err(AgentRunExecutionFailure::InvalidState);
+    }
+    let mut pages = Vec::new();
+    for original in originals {
+        let range = original
+            .location()
+            .range()
+            .ok_or(AgentRunExecutionFailure::InvalidState)?;
+        let lines = range
+            .end_position()
+            .row()
+            .saturating_sub(range.start_position().row())
+            .saturating_add(u32::from(range.end_position().column() != 0))
+            .max(1);
+        let request = a3_domain::AgentFileInspection::new(
+            original.location().revision().path().clone(),
+            a3_domain::AgentFileStartLine::new(range.start_position().row().saturating_add(1))
+                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+            a3_domain::AgentFileLineCount::new(
+                u16::try_from(lines).map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+            )
+            .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+        );
+        let page = reader
+            .read_page(project, original.location().revision(), &request, control)
+            .await
+            .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?;
+        if page.range() != range || page.revision() != original.location().revision() {
+            return Err(AgentRunExecutionFailure::AnchorsChanged);
+        }
+        if !pages.contains(&page) {
+            pages.push(page);
+        }
+    }
+    research.pages = pages;
+    Ok(())
+}
+
+async fn validate_replan_originals(
+    project: &ProjectIdentity,
+    research: &a3_application::ReplanResearchContext,
+    control: &a3_application::JobContext,
+) -> Result<(), AgentRunExecutionFailure> {
+    use a3_application::AgentSourceReader;
+    let mut revisions = research
+        .pages
+        .iter()
+        .map(|p| p.revision().clone())
+        .collect::<Vec<_>>();
+    for result in research
+        .checkpoint
+        .work
+        .questions()
+        .iter()
+        .filter_map(|q| q.result())
+    {
+        for source in result.sources() {
+            if !revisions.contains(&source.revision) {
+                revisions.push(source.revision.clone());
+            }
+        }
+    }
+    for revision in revisions {
+        let request = a3_domain::AgentFileInspection::new(
+            revision.path().clone(),
+            a3_domain::AgentFileStartLine::new(1)
+                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+            a3_domain::AgentFileLineCount::new(1)
+                .map_err(|_| AgentRunExecutionFailure::InvalidState)?,
+        );
+        WorkspaceAgentSourceReader
+            .read_page(project, &revision, &request, control)
+            .await
+            .map_err(|_| AgentRunExecutionFailure::AnchorsChanged)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn replan_original_delivered(action: &AgentAction, read: &a3_application::AgentReadResult) -> bool {
+    let AgentAction::Inspect(inspect) = action else {
+        return false;
+    };
+    let a3_domain::AgentInspectTarget::File(request) = inspect.target() else {
+        return false;
+    };
+    read.status() == a3_application::ContextToolResultStatus::Succeeded
+        && !read.preview().as_str().trim().is_empty()
+        && read.evidence().evidence().iter().any(|evidence| {
+            evidence.location().revision().path() == request.path()
+                && evidence.location().range().is_some_and(|range| {
+                    range.end_byte() > range.start_byte()
+                        && range.start_position().row().saturating_add(1)
+                            == request.start_line().get()
+                })
+        })
+}
+
+fn repeated_replan_revisions(ledger: &TaskLedger) -> BTreeSet<a3_domain::TaskLedgerRevision> {
+    let trigger = ledger.steps().find(|step| {
+        step.is_active_plan_step()
+            && matches!(
+                step.status(),
+                TaskStepStatus::Blocked | TaskStepStatus::Failed
+            )
+    });
+    let Some(trigger) = trigger else {
+        return BTreeSet::new();
+    };
+    ledger
+        .replans()
+        .iter()
+        .filter(|replan| {
+            replan.retired_step_ids().iter().any(|id| {
+                ledger.step(*id).is_some_and(|step| {
+                    step.definition().intended_outcome() == trigger.definition().intended_outcome()
+                        && step.definition().acceptance_criteria()
+                            == trigger.definition().acceptance_criteria()
+                })
+            })
+        })
+        .map(|replan| replan.revision())
+        .collect()
+}
+
 fn automatic_replan_steps(
     ledger: &TaskLedger,
     reason: &TaskReplanReason,
@@ -889,70 +1255,13 @@ fn automatic_replan_steps(
         return Err(AgentRunExecutionFailure::InvalidState);
     }
     let retire_set = retire_step_ids.iter().copied().collect::<BTreeSet<_>>();
-    let trigger_id = ledger
-        .steps()
-        .find(|step| {
-            retire_set.contains(&step.definition().id())
-                && matches!(
-                    step.status(),
-                    TaskStepStatus::Blocked | TaskStepStatus::Failed
-                )
-        })
-        .or_else(|| {
-            ledger
-                .steps()
-                .find(|step| retire_set.contains(&step.definition().id()))
-        })
-        .map(|step| step.definition().id())
-        .ok_or(AgentRunExecutionFailure::InvalidState)?;
-
     let mut replacement_ids = BTreeMap::new();
     for step_id in &retire_step_ids {
         replacement_ids.insert(*step_id, TaskStepId::from_bytes(random_id()?));
     }
-    let analysis_step_id = TaskStepId::from_bytes(random_id()?);
-    let trigger = ledger
-        .step(trigger_id)
-        .ok_or(AgentRunExecutionFailure::AnchorsChanged)?;
-    let trigger_definition = trigger.definition();
-    let trigger_dependencies = remap_dependencies(
-        trigger_definition.dependencies(),
-        &replacement_ids,
-        &retire_set,
-    )?;
-    let analysis_outcome = TaskStepOutcome::try_from_string(bounded_utf8(
-        &format!(
-            "Planlücke untersuchen und innerhalb des bestätigten Ziels beheben: {}",
-            reason.as_str()
-        ),
-        8 * 1_024,
-    ))
-    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-    let analysis = attach_acceptance_criteria(
-        TaskStepDefinition::new(
-            analysis_step_id,
-            None,
-            analysis_outcome,
-            TaskStepRationale::try_from_string(bounded_utf8(
-                &format!("Neu nach Befund: {}", reason.as_str()),
-                8 * 1_024,
-            ))
-            .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-            trigger_dependencies,
-            vec![
-                ExpectedTaskEvidence::try_from_string(
-                    "Aktuelle Source- oder Graph-Evidence für die Ursache der Planlücke".to_owned(),
-                )
-                .map_err(|_| AgentRunExecutionFailure::Unavailable)?,
-            ],
-            trigger_definition
-                .verification_spec()
-                .reidentified(VerificationSpecId::from_bytes(random_id()?)),
-        ),
-        trigger_definition.acceptance_criteria(),
-    )
-    .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
-    let mut additions = vec![analysis];
+    // Localization is a bounded read-only turn of the replacement's owner, not a synthetic
+    // implementation todo with copied pass conditions or acceptance criteria.
+    let mut additions = Vec::new();
 
     for old_id in topological_replan_order(ledger, &retire_set)? {
         let old = ledger
@@ -965,11 +1274,8 @@ fn automatic_replan_steps(
         let parent_step_id = definition
             .parent_step_id()
             .map(|parent| replacement_ids.get(&parent).copied().unwrap_or(parent));
-        let dependencies = if old_id == trigger_id {
-            vec![StepDependency::new(analysis_step_id)]
-        } else {
-            remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?
-        };
+        let dependencies =
+            remap_dependencies(definition.dependencies(), &replacement_ids, &retire_set)?;
         let replacement = attach_acceptance_criteria(
             TaskStepDefinition::new(
                 replacement_id,
@@ -977,7 +1283,8 @@ fn automatic_replan_steps(
                 definition.intended_outcome().clone(),
                 TaskStepRationale::try_from_string(bounded_utf8(
                     &format!(
-                        "Planrevision nach neuem Befund. {}",
+                        "Planrevision nach Befund: {}. {}",
+                        reason.as_str(),
                         definition.rationale().as_str()
                     ),
                     8 * 1_024,
@@ -1191,9 +1498,20 @@ fn revalidate_research_handoff(
         })
         .cloned()
         .collect();
-    let revalidated =
+    let mut revalidated =
         ResearchHandoff::new(current.run().id(), current.run().snapshot_id(), revisions)
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+    if let Some(work) = handoff.work_state() {
+        let mut work = work.clone();
+        work.revalidate_in_scope(
+            current.publication().graph().files(),
+            Some(crate::agent_session_manager::research_access::scope(
+                current,
+            )),
+        )
+        .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
+        revalidated = revalidated.with_work_state(work);
+    }
     Ok(match handoff.command() {
         Some(command) => revalidated.with_command(command.clone()),
         None => revalidated,
@@ -1331,7 +1649,12 @@ fn lock_recovering_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 #[cfg(test)]
+#[path = "production_replan_tests.rs"]
+mod replan_tests;
+
+#[cfg(test)]
 mod tests {
+    use super::repeated_replan_revisions;
     use super::{AgentAttemptControl, automatic_replan_steps, session_outcome_for_run};
     use a3_application::{
         ContextCompileControl, ContextCompilePhase, JobClock, JobCompletion, JobContext,
@@ -1347,6 +1670,7 @@ mod tests {
         TaskStepDefinition, TaskStepId, TaskStepOutcome, TaskStepRationale, TaskStepStatus,
         VerificationMethod, VerificationRequirement, VerificationSpec, VerificationSpecId,
     };
+    use std::collections::BTreeSet;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1411,7 +1735,75 @@ mod tests {
     }
 
     #[test]
-    fn automatic_replan_preserves_completed_work_and_inserts_a_bounded_adaptive_todo()
+    fn replan_search_metadata_cannot_unlock_mutation_without_an_original_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use a3_application::{
+            AgentReadResult, ContextToolResultDigest, ContextToolResultPreview,
+            ContextToolResultStatus,
+        };
+        use a3_domain::{
+            AgentAction, AgentFileInspection, AgentFileLineCount, AgentFileStartLine,
+            AgentInspectAction, AgentInspectTarget, AgentToolEvidence, AgentToolEvidenceSet,
+            ContentHash, EvidenceRef, FileRevision, RepositoryPath, SnapshotId, SourcePosition,
+            SourceRange, SymbolId, ToolRunId,
+        };
+        let path = RepositoryPath::try_from_bytes(b"module.py".to_vec())?;
+        let revision = FileRevision::new(path.clone(), ContentHash::from_bytes([6; 32]));
+        let snapshot = SnapshotId::from_bytes([5; 32]);
+        let range = SourceRange::new(0, 4, SourcePosition::new(0, 0), SourcePosition::new(0, 4))?;
+        let evidence = AgentToolEvidence::for_span(EvidenceRef::new(revision, range));
+        let read = |status, evidence| -> Result<AgentReadResult, Box<dyn std::error::Error>> {
+            Ok(AgentReadResult::new(
+                ToolRunId::from_bytes([1; 32]),
+                status,
+                ContextToolResultPreview::try_from_string("pass".to_owned())?,
+                ContextToolResultDigest::from_bytes([2; 32]),
+                true,
+                snapshot,
+                AgentToolEvidenceSet::new(snapshot, evidence)?,
+                4,
+            )?)
+        };
+        let page = AgentAction::Inspect(AgentInspectAction::new(AgentInspectTarget::File(
+            AgentFileInspection::new(
+                path.clone(),
+                AgentFileStartLine::new(1)?,
+                AgentFileLineCount::new(1)?,
+            ),
+        )));
+        let success = read(ContextToolResultStatus::Succeeded, vec![evidence.clone()])?;
+        assert!(super::replan_original_delivered(&page, &success));
+        let symbol = AgentAction::Inspect(AgentInspectAction::new(AgentInspectTarget::Symbol(
+            SymbolId::from_bytes([8; 32]),
+        )));
+        assert!(!super::replan_original_delivered(&symbol, &success));
+        for status in [
+            ContextToolResultStatus::Failed,
+            ContextToolResultStatus::Denied,
+            ContextToolResultStatus::Cancelled,
+        ] {
+            assert!(!super::replan_original_delivered(
+                &page,
+                &read(status, vec![evidence.clone()])?
+            ));
+        }
+        assert!(!super::replan_original_delivered(
+            &page,
+            &read(ContextToolResultStatus::Succeeded, vec![])?
+        ));
+        let other_page = AgentAction::Inspect(AgentInspectAction::new(AgentInspectTarget::File(
+            AgentFileInspection::new(
+                path,
+                AgentFileStartLine::new(2)?,
+                AgentFileLineCount::new(1)?,
+            ),
+        )));
+        assert!(!super::replan_original_delivered(&other_page, &success));
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_replan_preserves_completed_work_without_a_fake_verification_todo()
     -> Result<(), Box<dyn std::error::Error>> {
         let goal = GoalContract::initial(
             TaskId::from_bytes([1; 32]),
@@ -1491,10 +1883,10 @@ mod tests {
         assert_eq!(retired.len(), 2);
         assert!(retired.contains(&second));
         assert!(retired.contains(&third));
-        assert_eq!(additions.len(), 3);
+        assert_eq!(additions.len(), 2);
         assert!(
             additions[0]
-                .intended_outcome()
+                .rationale()
                 .as_str()
                 .contains("serializer must be added")
         );
@@ -1504,12 +1896,41 @@ mod tests {
             &[StepDependency::new(additions[0].id())]
         );
         assert_eq!(
-            additions[2].dependencies(),
-            &[StepDependency::new(additions[1].id())]
+            additions[0].intended_outcome().as_str(),
+            "implement adapter"
+        );
+        assert_eq!(
+            additions[1].intended_outcome().as_str(),
+            "run integration tests"
         );
         assert_eq!(
             ledger.step(first).map(|step| step.status()),
             Some(TaskStepStatus::Completed)
+        );
+        assert!(repeated_replan_revisions(&ledger).is_empty());
+        let replacement = additions[0].id();
+        let revision = ledger.replan(
+            retired,
+            additions,
+            reason,
+            TaskLedgerTimestamp::from_unix_millis(7)?,
+        )?;
+        ledger.start_step(
+            replacement,
+            run_id,
+            TaskLedgerTimestamp::from_unix_millis(8)?,
+        )?;
+        ledger.block_step(
+            replacement,
+            run_id,
+            TaskStepBlockingReason::try_from_string(
+                "same missing serializer, phrased differently".to_owned(),
+            )?,
+            TaskLedgerTimestamp::from_unix_millis(9)?,
+        )?;
+        assert_eq!(
+            repeated_replan_revisions(&ledger),
+            BTreeSet::from([revision])
         );
         Ok(())
     }

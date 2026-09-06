@@ -39,9 +39,17 @@ mod path;
 mod policy;
 mod policy_decision;
 mod process;
+mod research_access;
+mod research_work;
+pub use research_access::{ResearchAccessAttempt, ResearchAccessKind, ResearchAccessOutcome};
 mod retrieval;
 mod retrieval_fusion;
 mod revision;
+pub use research_work::{
+    MAX_RESEARCH_QUESTIONS, ResearchQuestion, ResearchQuestionCheckpoint, ResearchQuestionDraft,
+    ResearchQuestionId, ResearchQuestionKind, ResearchQuestionPriority, ResearchQuestionStatus,
+    ResearchResult, ResearchResultKind, ResearchResultSource, ResearchWorkError, ResearchWorkState,
+};
 mod run_memory;
 mod secret;
 mod semantic_card;

@@ -728,12 +728,30 @@ Qualität ist eine überprüfte Eigenschaft. „Sieht korrekt aus“, erfolgreic
 
 ### AgentAction und Prompt
 
+- Der ADR-0047-Contract prüft die unveränderliche V5-Teilfragenliste, atomare Analysequittierung,
+  Originalfenster statt bloßer Quellennamen, getrennte Zugriffsversuche und Erkenntnisse sowie
+  dynamische aktive Teilansichten großer Verträge unter unveränderten äußeren Budgets.
+  Ein vollständiger Recherchepfad über Index, Reader, Literalsuche und libSQL muss einen explizit
+  fehlenden Nutzerdateipfad als begrenzte Erkenntnis abschließen können, ohne allgemeine
+  Nichtexistenz zu behaupten oder dieselbe Analyse zu wiederholen. Offene/fehlgeschlagene/
+  begrenzte Zugriffe und stale Publikationen dürfen keine negative Antwort autorisieren.
+  Scopewechsel müssen auch quellenlose Grenzergebnisse invalidieren. Die Replan-Lokalisierung
+  darf weder Such-/Symbol-/Graphmetadaten noch fehlgeschlagene Originalreads als Source-Read
+  behandeln. Der gemeinsame V37-Storage-Vertrag verlangt atomare Read-/Analyse-Checkpoints,
+  echte Originalmarkierungen, falsche Owner-/Snapshot-Abwehr und Rollback ungültiger Anker.
+  Ein realer Safe-Reader-Neustarttest erhält Read-Zähler und Analysequittungen und verwirft
+  geänderte Originalbytes. Providerfehler primär und im Einzelrepair bleiben nichtausführbar
+  und konservativ abgerechnet. Design-Phasenschema und unabhängiger Decoder lehnen neue
+  Originalanker ab; der Plan-/Ledger-Test erhält auch spät platzierte Fehlerpolitik vollständig.
+  Die semantische Praxisabnahme bleibt ein gesonderter Nachweis in Plan 10.
+
 - Der ADR-0042-Arbeitsplan-Contract kompiliert Listen- und nummerierte Einträge aus
   `Implementation Changes` und `Test Plan` in höchstens 64 geordnete atomare Schritte, weist jede
   Definition einer aktuellen Verification zu und lehnt leere beziehungsweise übergroße Pläne vor
   Task-Erzeugung ab. Replan-Regressionen müssen den aktiven Versuch zuerst schließen, die neue
-  Ledger-Revision atomar persistieren, abgeschlossene Schritte erhalten und ein neues sichtbares
-  Planlücken-Todo vor den ersetzten Nachfolgern einfügen. Ein Richtungsblocker muss zu
+  Ledger-Revision atomar persistieren und abgeschlossene Schritte erhalten. Nach ADR-0047
+  ersetzt eine getrennte read-only Lokalisierung das frühere künstliche Planlücken-Todo;
+  Änderungsverifikation darf dafür nicht kopiert werden. Ein Richtungsblocker muss zu
   `AwaitingUser`, ein interner Executorfehler weiterhin zu `Failed` führen.
 
 - Domain-Tests prüfen Grenzen und Redaction für Search, paged File Inspect, Testselektor,
@@ -1057,6 +1075,12 @@ diesen WebView-Nachweis erfüllt das Desktop-Plattformgate nicht.
 Plattformspezifische Installer werden auf der Zielplattform erzeugt und signiert, sobald Distributionsidentitäten verfügbar sind.
 
 ## Definition of Done
+
+Bei Änderungen an der eingebetteten Persistenz bleibt
+`cargo test -p a3-storage-libsql --test connection_lifecycle --offline --locked`
+verbindlich. Dieser native Test hat weder Crash-Retry noch vorgezogenen Erfolgsmarker.
+Für den lokalen libSQL-Patch sind zusätzlich Herkunftschecksumme und die dokumentierte
+enge Upstream-Differenz zu prüfen; Registry-Caches dürfen nicht gepatcht werden.
 
 Ein Arbeitspaket ist Done, wenn:
 

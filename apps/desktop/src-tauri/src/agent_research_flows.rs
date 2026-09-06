@@ -20,6 +20,7 @@ impl AgentAskResearcher {
             return Err(AgentSessionManagerFailure::InvalidOutput);
         };
         let Some(flows) = &self.flows else {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
             return Ok("Ablaufanalyse ist für diesen Index nicht verfügbar.".to_owned());
         };
         let source = state
@@ -42,6 +43,7 @@ impl AgentAskResearcher {
             .take(2)
             .collect::<Vec<_>>();
         if candidates.len() != 1 {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Unresolved);
             return Ok("Bitte zuerst eine eindeutige Funktionsquelle suchen; diese Quelle bezeichnet keinen eindeutigen Ablauf.".to_owned());
         }
         let request =
@@ -68,6 +70,7 @@ impl AgentAskResearcher {
             .await
             .map_err(|_| AgentSessionManagerFailure::Unavailable)?
         else {
+            state.observe_access(a3_domain::ResearchAccessOutcome::Unavailable);
             return Ok(
                 "Ablaufdaten sind nicht mehr aktuell oder das Ziel ist nicht eindeutig auflösbar."
                     .to_owned(),
@@ -109,6 +112,7 @@ impl AgentAskResearcher {
                         r.contains(evidence.range()) || evidence.range().contains(r)
                     })
             }) else {
+                state.observe_access(a3_domain::ResearchAccessOutcome::Limited);
                 return Ok("Ablaufergebnis zurückgehalten: Nicht alle aktuellen Quellbelege konnten im Recherchebudget gesichert werden.".to_owned());
             };
             mapping.push_str(&format!(

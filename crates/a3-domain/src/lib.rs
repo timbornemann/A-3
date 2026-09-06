@@ -7,6 +7,13 @@ mod progress;
 mod project;
 mod version;
 
+pub use project::{
+    MAX_RESEARCH_QUESTIONS, ResearchAccessAttempt, ResearchAccessKind, ResearchAccessOutcome,
+    ResearchQuestion, ResearchQuestionCheckpoint, ResearchQuestionDraft, ResearchQuestionId,
+    ResearchQuestionKind, ResearchQuestionPriority, ResearchQuestionStatus, ResearchResult,
+    ResearchResultKind, ResearchResultSource, ResearchWorkError, ResearchWorkState,
+};
+
 pub use health::Health;
 pub use job::{JobId, JobOwner, JobStatus};
 pub use platform::Platform;

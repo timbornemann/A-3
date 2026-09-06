@@ -156,6 +156,24 @@ impl BoundedResearchController {
         elapsed_millis: u64,
         reserved_decisions: u8,
     ) -> Result<BeginResearchDecision, ResearchControllerError> {
+        self.reserve_decision(elapsed_millis, reserved_decisions, true)
+    }
+
+    /// Reserves a V5 analysis already admitted by the question/packet state machine.
+    /// Legacy byte-stagnation cannot override this stronger guard; outer limits are identical.
+    pub fn begin_work_decision(
+        &mut self,
+        elapsed_millis: u64,
+    ) -> Result<BeginResearchDecision, ResearchControllerError> {
+        self.reserve_decision(elapsed_millis, 0, false)
+    }
+
+    fn reserve_decision(
+        &mut self,
+        elapsed_millis: u64,
+        reserved_decisions: u8,
+        legacy_stagnation: bool,
+    ) -> Result<BeginResearchDecision, ResearchControllerError> {
         if elapsed_millis >= self.limits.duration_millis {
             return Err(ResearchControllerError::TimedOut);
         }
@@ -166,7 +184,7 @@ impl BoundedResearchController {
         let search_allowed = self.decisions_used.saturating_add(reserved_decisions)
             < self.limits.model_decisions
             && self.actions_used < self.limits.read_actions
-            && self.stagnant_rounds < 2;
+            && (!legacy_stagnation || self.stagnant_rounds < 2);
         Ok(if search_allowed {
             BeginResearchDecision::SearchAllowed
         } else {
@@ -233,7 +251,8 @@ impl BoundedResearchController {
         let mut batch_seen = BTreeSet::new();
         let mut unique = Vec::with_capacity(actions.len());
         for action in actions {
-            if !self.seen_actions.contains(&action) && batch_seen.insert(action.clone()) {
+            let key = canonical_action_key(&action);
+            if !self.seen_actions.contains(&key) && batch_seen.insert(key) {
                 unique.push(action);
             }
         }
@@ -242,7 +261,8 @@ impl BoundedResearchController {
             return Err(ResearchControllerError::ActionBudgetExhausted);
         }
         self.actions_used = self.actions_used.saturating_add(unique_count);
-        self.seen_actions.extend(unique.iter().cloned());
+        self.seen_actions
+            .extend(unique.iter().map(canonical_action_key));
         Ok(ResearchActionBatch {
             requested,
             duplicate_count: requested.saturating_sub(unique_count),
@@ -258,10 +278,30 @@ impl BoundedResearchController {
         actions: Vec<AskResearchAction>,
         elapsed_millis: u64,
     ) -> Result<Option<ResearchActionBatch>, ResearchControllerError> {
+        self.prepare_candidates(actions, elapsed_millis, true)
+    }
+
+    /// Selects a different Core-owned V5 frontier without resetting read, model, or time budgets.
+    pub fn prepare_work_frontier(
+        &mut self,
+        actions: Vec<AskResearchAction>,
+        elapsed_millis: u64,
+    ) -> Result<Option<ResearchActionBatch>, ResearchControllerError> {
+        self.prepare_candidates(actions, elapsed_millis, false)
+    }
+
+    fn prepare_candidates(
+        &mut self,
+        actions: Vec<AskResearchAction>,
+        elapsed_millis: u64,
+        legacy_stagnation: bool,
+    ) -> Result<Option<ResearchActionBatch>, ResearchControllerError> {
         if elapsed_millis >= self.limits.duration_millis {
             return Err(ResearchControllerError::TimedOut);
         }
-        if self.decisions_used >= self.limits.model_decisions || self.is_stagnant() {
+        if self.decisions_used >= self.limits.model_decisions
+            || (legacy_stagnation && self.is_stagnant())
+        {
             return Ok(None);
         }
         let available =
@@ -270,7 +310,10 @@ impl BoundedResearchController {
         let actions = actions
             .into_iter()
             .take(64)
-            .filter(|action| !self.seen_actions.contains(action) && unique.insert(action.clone()))
+            .filter(|action| {
+                let key = canonical_action_key(action);
+                !self.seen_actions.contains(&key) && unique.insert(key)
+            })
             .take(available)
             .collect::<Vec<_>>();
         if actions.is_empty() {
@@ -324,6 +367,20 @@ impl BoundedResearchController {
     #[must_use]
     pub const fn diagram_decisions_used(&self) -> u8 {
         self.diagram_decisions_used
+    }
+}
+
+/// Identity of an equivalent read request without changing the actual tool arguments.
+fn canonical_action_key(action: &AskResearchAction) -> AskResearchAction {
+    match action {
+        // Literal search is an OR-set. Reordering it is neither a new request nor new evidence.
+        AskResearchAction::SearchSourceText(values) => {
+            let mut values = values.clone();
+            values.sort();
+            values.dedup();
+            AskResearchAction::SearchSourceText(values)
+        }
+        _ => action.clone(),
     }
 }
 
@@ -428,6 +485,7 @@ impl ResearchMemoryCheckpoint {
 /// Revalidated current research handed to Agent task materialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchHandoff {
+    work_state: Option<a3_domain::ResearchWorkState>,
     index_run_id: IndexRunId,
     snapshot_id: SnapshotId,
     revisions: Vec<FileRevision>,
@@ -449,7 +507,19 @@ impl ResearchHandoff {
             snapshot_id,
             revisions,
             command: None,
+            work_state: None,
         })
+    }
+    /// Retains the admitted question/result contract; it never completes an execution step.
+    #[must_use]
+    pub fn with_work_state(mut self, state: a3_domain::ResearchWorkState) -> Self {
+        self.work_state = Some(state);
+        self
+    }
+    /// Returns source-bound interpretations and concrete research obligations.
+    #[must_use]
+    pub const fn work_state(&self) -> Option<&a3_domain::ResearchWorkState> {
+        self.work_state.as_ref()
     }
     /// Carries one already Core-validated command profile without granting any capability.
     #[must_use]
@@ -572,6 +642,37 @@ mod tests {
         let duplicate = controller.prepare_actions(actions(2))?;
         assert_eq!(duplicate.duplicate_count(), 2);
         assert!(duplicate.actions().is_empty());
+        assert_eq!(controller.actions_used(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn reordered_literal_or_sets_are_the_same_read() -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        let first = AskResearchAction::SearchSourceText(vec!["save".to_owned(), "load".to_owned()]);
+        assert_eq!(
+            controller.prepare_actions(vec![first.clone()])?.actions(),
+            &[first]
+        );
+        let repeated = AskResearchAction::SearchSourceText(vec![
+            "load".to_owned(),
+            "save".to_owned(),
+            "load".to_owned(),
+        ]);
+        assert!(
+            controller
+                .prepare_work_frontier(vec![repeated], 0)?
+                .is_none()
+        );
+        assert_eq!(controller.actions_used(), 1);
+        assert!(
+            controller
+                .prepare_work_frontier(
+                    vec![AskResearchAction::SearchSourceText(vec!["load".to_owned()])],
+                    0
+                )?
+                .is_some()
+        );
         assert_eq!(controller.actions_used(), 2);
         Ok(())
     }
@@ -864,6 +965,40 @@ mod tests {
                 .actions()
                 .len(),
             4
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn typed_work_frontier_supersedes_byte_stagnation_but_never_outer_budgets()
+    -> Result<(), Box<dyn Error>> {
+        let mut controller = BoundedResearchController::new(AgentResearchDepth::Standard);
+        controller.finish_round(1, 1);
+        controller.finish_round(1, 1);
+        assert_eq!(
+            controller.begin_work_decision(0)?,
+            BeginResearchDecision::SearchAllowed
+        );
+        let action = AskResearchAction::SearchSourceText(vec!["log_filepath".to_owned()]);
+        assert!(
+            controller
+                .prepare_work_frontier(vec![action.clone()], 1)?
+                .is_some()
+        );
+        assert!(controller.prepare_work_frontier(vec![action], 2)?.is_none());
+        assert_eq!(controller.actions_used(), 1);
+        for time in 1..12 {
+            let next = controller.begin_work_decision(time)?;
+            assert_eq!(next == BeginResearchDecision::FinalOnly, time == 11);
+        }
+        assert_eq!(
+            controller.begin_work_decision(12),
+            Err(ResearchControllerError::DecisionBudgetExhausted)
+        );
+        assert!(controller.prepare_work_frontier(actions(1), 13)?.is_none());
+        assert_eq!(
+            controller.prepare_work_frontier(actions(1), 300_000),
+            Err(ResearchControllerError::TimedOut)
         );
         Ok(())
     }

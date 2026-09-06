@@ -98,14 +98,24 @@ impl Error for AgentActionSchemaError {}
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeAgentAction {
     version: AgentActionSchemaVersion,
+    localization_only: bool,
 }
 
 impl DecodeAgentAction {
+    /// Restricts the current strict decoder to source reads, including its single repair.
+    #[must_use]
+    pub const fn for_replan_localization() -> Self {
+        Self {
+            version: AgentActionSchemaVersion::V4,
+            localization_only: true,
+        }
+    }
     /// Creates the V1 decoder.
     #[must_use]
     pub const fn version_one() -> Self {
         Self {
             version: AgentActionSchemaVersion::V1,
+            localization_only: false,
         }
     }
 
@@ -114,6 +124,7 @@ impl DecodeAgentAction {
     pub const fn version_two() -> Self {
         Self {
             version: AgentActionSchemaVersion::V2,
+            localization_only: false,
         }
     }
 
@@ -122,6 +133,7 @@ impl DecodeAgentAction {
     pub const fn version_three() -> Self {
         Self {
             version: AgentActionSchemaVersion::V3,
+            localization_only: false,
         }
     }
 
@@ -130,10 +142,12 @@ impl DecodeAgentAction {
     pub const fn current() -> Self {
         Self {
             version: AgentActionSchemaVersion::V4,
+            localization_only: false,
         }
     }
 
-    /// Returns the exact JSON Schema paired with this decoder.
+    /// Returns the version's base schema. `AgentPromptContract` narrows this schema for
+    /// replan localization; this decoder independently enforces the same restriction.
     #[must_use]
     pub const fn json_schema(self) -> AgentActionJsonSchema {
         AgentActionJsonSchema {
@@ -179,6 +193,11 @@ impl DecodeAgentAction {
             None
         };
         let action = decode_action(self.version, object(required(root, "action")?)?)?;
+        if self.localization_only
+            && !matches!(action, AgentAction::Search(_) | AgentAction::Inspect(_))
+        {
+            return Err(AgentActionDecodeError::InvalidValue);
+        }
         Ok(DecodedAgentAction {
             action,
             public_note,

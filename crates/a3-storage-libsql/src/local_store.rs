@@ -114,6 +114,15 @@ pub struct LibsqlKnowledgeStore {
 }
 
 impl LibsqlKnowledgeStore {
+    /// Loads only typed settings from an existing catalog in SQLite read-only mode.
+    /// Does not open project databases, migrate the catalog, or read provider secrets.
+    pub async fn read_settings_snapshot(
+        path: &std::path::Path,
+    ) -> Result<StoredDesktopSettings, a3_application::DesktopSettingsStoreFailure> {
+        settings_repository::read_only_snapshot(path)
+            .await
+            .map_err(|e| e.classify())
+    }
     async fn load_project_map_atlas_insights(
         &self,
         project: &ProjectIdentity,
@@ -1483,6 +1492,74 @@ impl TaskLensWorkspaceStore for LibsqlKnowledgeStore {
 }
 
 impl RunJournalStore for LibsqlKnowledgeStore {
+    fn load_replan_originals<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        step: a3_domain::TaskStepId,
+        snapshot: a3_domain::SnapshotId,
+    ) -> RunJournalStoreFuture<'a, Vec<a3_domain::AgentToolEvidence>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
+            run_journal_repository::replan::originals(
+                &connection,
+                project.worktree().id(),
+                run_id,
+                step,
+                snapshot,
+            )
+            .await
+            .map_err(|e| e.classify())
+        })
+    }
+    fn append_replan_research<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        expected: RunEventSequence,
+        run: &'a AgentRun,
+        event: &'a RunEvent,
+        checkpoint: &'a a3_application::ReplanResearchCheckpoint,
+    ) -> RunJournalStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
+            run_journal_repository::replan::append(
+                &connection,
+                project.worktree().id(),
+                expected,
+                run,
+                event,
+                checkpoint,
+            )
+            .await
+            .map_err(|e| e.classify())
+        })
+    }
+
+    fn load_replan_research<'a>(
+        &'a self,
+        project: &'a ProjectIdentity,
+        run_id: AgentRunId,
+        step: a3_domain::TaskStepId,
+    ) -> RunJournalStoreFuture<'a, Option<a3_application::ReplanResearchCheckpoint>> {
+        Box::pin(async move {
+            let database = self.open_project_knowledge_for_run_journal(project).await?;
+            let connection = database
+                .connection_for_operation()
+                .await
+                .map_err(|_| RunJournalStoreFailure::Unavailable)?;
+            run_journal_repository::replan::load(&connection, project.worktree().id(), run_id, step)
+                .await
+                .map_err(|e| e.classify())
+        })
+    }
     fn create_agent_run<'a>(
         &'a self,
         project: &'a ProjectIdentity,

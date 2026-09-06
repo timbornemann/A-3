@@ -34,6 +34,7 @@ impl ResearchModel for PlanModel {
         &self,
         mode: AgentSessionMode,
         search: bool,
+        _: a3_application::ResearchOutputPhase,
         transcript: &[(ModelMessageRole, String)],
         _: Option<String>,
         _: &JobContext,

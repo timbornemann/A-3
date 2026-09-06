@@ -12,6 +12,32 @@ pub(super) fn candidates(
 ) -> Vec<AskResearchAction> {
     let hint = format!("{}\n{}", note.gap, note.next_step);
     let mut actions = Vec::new();
+    // A genuinely requested missing file must remain investigable. Existing-symbol-only
+    // searches can never establish a negative result for such a target. Derive these literals
+    // from the frozen user objective, never from invented paths in a model's gap note.
+    if let Some(work) = &state.work {
+        let mut missing_literals = Vec::new();
+        for path in query_path_candidates(work.objective()) {
+            if resolve_index_path(published, &path).is_some()
+                || path.len() > 512
+                || a3_domain::RepositoryPath::try_from_bytes(path.as_bytes().to_vec()).is_err()
+                || a3_domain::SecretCandidateClassifierV1::classify(&path).is_some()
+            {
+                continue;
+            }
+            actions.push(AskResearchAction::InspectPath {
+                path: path.clone(),
+                start_line: 1,
+            });
+            let filename = path.rsplit('/').next().unwrap_or(path.as_str());
+            if filename.len() >= 3 && !missing_literals.iter().any(|value| value == filename) {
+                missing_literals.push(filename.to_owned());
+            }
+        }
+        if !missing_literals.is_empty() {
+            actions.push(AskResearchAction::SearchSourceText(missing_literals));
+        }
+    }
     for revision in resolved_target_revisions(&resolve_query_targets(published, &hint)) {
         if state.complete_files.contains(&revision) {
             continue;
@@ -58,8 +84,55 @@ pub(super) fn candidates(
             )
         {
             names.insert(name.to_owned());
+            if state.work.is_some() {
+                let action = AskResearchAction::InspectPath {
+                    path: model_safe_path(symbol.revision().path()),
+                    start_line: symbol
+                        .parsed()
+                        .declaration_range()
+                        .start_position()
+                        .row()
+                        .saturating_add(1),
+                };
+                if !actions.contains(&action) {
+                    actions.push(action);
+                }
+            }
             if names.len() == 8 {
                 break;
+            }
+        }
+    }
+    // V5's finite Core frontier uses existing static relations before broader search.
+    if state.work.is_some() {
+        for source in state
+            .sources
+            .iter()
+            .filter(|s| s.symbol().is_some_and(|name| names.contains(name)))
+            .take(8)
+        {
+            let Ok(ordinal) = u16::try_from(source.ordinal()) else {
+                continue;
+            };
+            actions.push(AskResearchAction::InspectFunctionFlow {
+                source_ordinal: ordinal,
+                call_path: Vec::new(),
+                view: a3_domain::FunctionFlowReadView::Steps(0),
+            });
+            actions.push(AskResearchAction::InspectFunctionFlow {
+                source_ordinal: ordinal,
+                call_path: Vec::new(),
+                view: a3_domain::FunctionFlowReadView::Values(0),
+            });
+            for relation in [
+                a3_application::AskResearchRelation::Callees,
+                a3_application::AskResearchRelation::Callers,
+                a3_application::AskResearchRelation::Imports,
+            ] {
+                actions.push(AskResearchAction::InspectRelations {
+                    source_ordinal: ordinal,
+                    relation,
+                });
             }
         }
     }
@@ -84,11 +157,23 @@ pub(super) fn candidates(
             }
         }
     }
-    actions
+    if state.work.is_some() {
+        for revision in resolved_target_revisions(&resolve_query_targets(published, &hint)) {
+            let path = model_safe_path(revision.path());
+            if let Some((directory, _)) = path.rsplit_once('/') {
+                let action = AskResearchAction::ListDirectory(directory.to_owned());
+                if !actions.contains(&action) {
+                    actions.push(action);
+                }
+            }
+        }
+    }
+    state.novel_work_accesses(published, actions)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResearchStopReason {
+    WorkBlocked,
     TimeLimit,
     DecisionLimit,
     ActionLimit,
@@ -111,6 +196,9 @@ impl ResearchStopReason {
 
     pub(super) const fn message(self) -> &'static str {
         match self {
+            Self::WorkBlocked => {
+                "Offene Pflichtfragen lassen sich mit dem aktuellen Belegpaket und den verbleibenden sicheren Zugriffswegen nicht beantworten. Identische Analysen wurden nicht erneut gestartet; bereits belegte Teilergebnisse bleiben erhalten."
+            }
             Self::ContextLimit => {
                 "Der vollständige Auftrag passt zusammen mit dem Mindestkontext nicht in das verfügbare Modellfenster. Wähle ein größeres Kontextfenster oder teile den Auftrag; der Auftrag wurde nicht still gekürzt."
             }

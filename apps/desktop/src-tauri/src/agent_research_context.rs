@@ -24,6 +24,16 @@ enum FocusOrigin {
     Explicit,
 }
 
+/// Exact source window emitted into the current packet, including composed cached units.
+pub(super) struct DeliveredWindow {
+    anchor: Option<a3_application::ResearchEvidenceAnchorId>,
+    ordinal: u16,
+    source_id: a3_domain::AskResearchSourceId,
+    revision: FileRevision,
+    range: a3_domain::SourceRange,
+    text: String,
+}
+
 /// Merge overlapping/touching intervals, retaining revision and byte-column precision.
 pub(super) fn cover(ranges: &mut Vec<CoveredRange>, mut new: CoveredRange) -> bool {
     if new.start >= new.end
@@ -80,6 +90,37 @@ fn offset(item: &ResearchSourceExcerpt, point: SourcePosition) -> Option<usize> 
 }
 
 impl AskResearchWorkingSet {
+    pub(super) fn work_evidence_windows(&self) -> Vec<a3_application::ResearchEvidenceWindow<'_>> {
+        self.current_source_delivery
+            .iter()
+            .map(|w| a3_application::ResearchEvidenceWindow {
+                anchor: w.anchor,
+                ordinal: w.ordinal,
+                source_id: w.source_id,
+                revision: &w.revision,
+                range: w.range,
+                text: &w.text,
+            })
+            .collect()
+    }
+
+    fn original_byte_at(&self, ordinal: u32, position: SourcePosition) -> Option<usize> {
+        let source = self.sources.iter().find(|s| s.ordinal() == ordinal)?;
+        let original = source.range()?;
+        for item in self.excerpts.iter().filter(|item| item.ordinal == ordinal) {
+            let Some(anchor_offset) = offset(item, original.start_position()) else {
+                continue;
+            };
+            let Some(start_offset) = offset(item, position) else {
+                continue;
+            };
+            let base = usize::try_from(original.start_byte())
+                .ok()?
+                .checked_sub(anchor_offset)?;
+            return base.checked_add(start_offset);
+        }
+        None
+    }
     pub(super) fn evidence_guard<'a>(
         &self,
         project: &'a a3_domain::ProjectIdentity,
@@ -93,7 +134,25 @@ impl AskResearchWorkingSet {
                 revisions.push((range.revision.clone(), range.start.row().saturating_add(1)));
             }
         }
-        super::research_model::EvidenceGuard { project, revisions }
+        if let Some(work) = &self.work {
+            for question in work.questions().iter().filter(|q| q.resolved()) {
+                if let Some(result) = question.result() {
+                    for source in result.sources() {
+                        if !revisions.iter().any(|(r, _)| r == &source.revision) {
+                            revisions.push((
+                                source.revision.clone(),
+                                source.range.start_position().row().saturating_add(1),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        super::research_model::EvidenceGuard {
+            project,
+            revisions,
+            work: None,
+        }
     }
     pub(super) fn record_read_coverage(
         &mut self,
@@ -401,6 +460,62 @@ impl AskResearchWorkingSet {
         false
     }
 
+    /// Prefer a proven complete set only when every original and its exact header fit.
+    /// A complete-read marker alone is insufficient: the cache may have been clipped.
+    fn complete_required_excerpts(
+        &self,
+        required: &[FileRevision],
+        limit: usize,
+    ) -> Option<Vec<&ResearchSourceExcerpt>> {
+        if self.work.is_none()
+            || required.is_empty()
+            || self.focus.iter().any(|focus| {
+                focus.origin == FocusOrigin::Explicit || !required.contains(&focus.revision)
+            })
+        {
+            return None;
+        }
+        let origin = SourcePosition::new(0, 0);
+        let mut selected: Vec<&ResearchSourceExcerpt> = Vec::new();
+        let mut cost = 0_usize;
+        for revision in required {
+            if selected
+                .iter()
+                .any(|item| self.revision_for(item) == Some(revision))
+            {
+                continue;
+            }
+            if selected.len() == 8 || !self.complete_files.contains(revision) {
+                return None;
+            }
+            let item = self.excerpts.iter().find(|item| {
+                item.start_line == 1
+                    && !item.text.is_empty()
+                    && self.revision_for(item) == Some(revision)
+                    && self.read_coverage.iter().any(|read| {
+                        read.revision == *revision
+                            && read.start == origin
+                            && read.end == end_position(origin, &item.text)
+                    })
+            })?;
+            let header = format!(
+                "\n[S{}] {} ab Zeile 1 (Spalte 0) [E{}]\n",
+                item.ordinal,
+                item.path,
+                selected.len() + 1
+            );
+            cost = cost
+                .checked_add(header.len())?
+                .checked_add(item.text.len())?
+                .checked_add(1)?;
+            if cost > limit {
+                return None;
+            }
+            selected.push(item);
+        }
+        Some(selected)
+    }
+
     pub(super) fn compile_evidence_window(
         &mut self,
         required: &[FileRevision],
@@ -424,7 +539,12 @@ impl AskResearchWorkingSet {
                         .is_some_and(|revision| required.contains(revision))),
             )
         });
-        let mut selected: Vec<&ResearchSourceExcerpt> = Vec::new();
+        let complete = self.complete_required_excerpts(required, limit);
+        let prefer_complete = complete.is_some();
+        let mut selected = complete.unwrap_or_default();
+        if prefer_complete {
+            candidates.clear();
+        }
         for item in candidates {
             if selected.iter().any(|old| {
                 self.revision_for(item).is_some()
@@ -469,9 +589,11 @@ impl AskResearchWorkingSet {
         }
         let parts = selected
             .iter()
-            .map(|item| {
+            .enumerate()
+            .map(|(index, item)| {
                 let focus = self.focus.iter().find(|focus| {
-                    (!is_unit(item) || item.text.len() > limit / 2)
+                    !prefer_complete
+                        && (!is_unit(item) || item.text.len() > limit / 2)
                         && self.revision_for(item) == Some(&focus.revision)
                         && offset(item, focus.start).is_some()
                 });
@@ -480,8 +602,13 @@ impl AskResearchWorkingSet {
                     |focus| focus.start,
                 );
                 let body = &item.text[offset(item, start).unwrap_or(0)..];
+                let anchor_label = if self.work.is_some() {
+                    format!(" [E{}]", index + 1)
+                } else {
+                    String::new()
+                };
                 let header = format!(
-                    "\n[S{}] {} ab Zeile {} (Spalte {})\n",
+                    "\n[S{}] {} ab Zeile {} (Spalte {}){anchor_label}\n",
                     item.ordinal,
                     item.path,
                     start.row().saturating_add(1),
@@ -526,7 +653,8 @@ impl AskResearchWorkingSet {
         // When the requested units fit together, reserve them whole before background hits.
         // Equal shares of entire file suffixes repeatedly hid other needed methods.
         let protected = |item: &ResearchSourceExcerpt| {
-            is_unit(item)
+            prefer_complete
+                || is_unit(item)
                 || self
                     .focus
                     .iter()
@@ -572,7 +700,10 @@ impl AskResearchWorkingSet {
         }
         let mut output = String::new();
         let mut delivered = Vec::new();
-        for ((item, start, body, header), quota) in parts.into_iter().zip(quotas) {
+        let mut source_delivery = Vec::new();
+        for (index, ((item, start, body, header), quota)) in
+            parts.into_iter().zip(quotas).enumerate()
+        {
             let available = quota.saturating_sub(header.len());
             let clipped = body.len().saturating_add(1) > available;
             let allowance = if clipped {
@@ -600,6 +731,27 @@ impl AskResearchWorkingSet {
                 output.push_str(&format!("[Kontext gekürzt; Rest im Cache, Zeile {}, Spalte {}. inspectPath fokussiert ohne neuen Read.]\n", end.row().saturating_add(1), end.column()));
             }
             if let Some(revision) = self.revision_for(item) {
+                if let Some(start_byte) = self.original_byte_at(item.ordinal, start)
+                    && let Some(end_byte) = start_byte.checked_add(retained.len())
+                    && let Ok(range) = a3_domain::SourceRange::new(start_byte, end_byte, start, end)
+                    && let Ok(ordinal) = u16::try_from(item.ordinal)
+                    && let Some(source) = self.sources.iter().find(|s| s.ordinal() == item.ordinal)
+                {
+                    source_delivery.push(DeliveredWindow {
+                        anchor: if self.work.is_some() {
+                            u16::try_from(index + 1)
+                                .ok()
+                                .and_then(|n| a3_application::ResearchEvidenceAnchorId::new(n).ok())
+                        } else {
+                            None
+                        },
+                        ordinal,
+                        source_id: source.id(),
+                        revision: revision.clone(),
+                        range,
+                        text: retained.to_owned(),
+                    });
+                }
                 delivered.push(CoveredRange {
                     revision: revision.clone(),
                     start,
@@ -608,6 +760,7 @@ impl AskResearchWorkingSet {
             }
         }
         self.current_delivery = delivered;
+        self.current_source_delivery = source_delivery;
         output
     }
 

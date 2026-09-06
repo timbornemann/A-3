@@ -2209,6 +2209,29 @@ mod tests {
     }
 
     #[test]
+    fn research_work_phases_translate_without_cloud_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for phase in [
+            a3_application::ResearchOutputPhase::Initialize,
+            a3_application::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::SummarizeOriginals(
+                a3_domain::ResearchQuestionId::FIRST,
+            ),
+            a3_application::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::Finalize,
+        ] {
+            let original = a3_application::research_work_phase_schema(phase, true)?;
+            let translated = translate_openai_json_schema(&original)?;
+            assert_eq!(translated["type"], "object");
+            assert_eq!(translated["additionalProperties"], false);
+            assert!(!contains_key(&translated, "oneOf"));
+            assert!(!contains_key(&translated, "const"));
+            assert!(translated["$defs"].get("research").is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn openai_schema_translation_rejects_optional_object_fields() {
         let result = translate_openai_json_schema(&json!({
             "type": "object",

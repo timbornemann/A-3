@@ -75,6 +75,30 @@ Repair-, Stagnations- und Providerpaket-Verträge gehören weiterhin zum Gate.
 
 ## Grenzen
 
+### Erweiterung durch ADR-0047
+
+Der V5-Test im selben Fixture prüft einen eingefrorenen Teilfragenvertrag, echte
+Originalfenster-Anker, das erhaltene Pflicht-Logziel trotz Auslassung im Modellplan,
+optionale nicht blockierende Themen, Persistenz und Agent-Handoff. Ein weiterer
+Fall beantwortet keine Pflichtfrage: identische Pakete dürfen weder neue Analysen
+noch einen falschen Abschluss auslösen. Ungültige Initialisierung erhält nur ihren
+einzelnen Repair, keine nachgeschaltete Legacy-Recovery.
+
+Nach ausdrücklicher Freigabe eines **installierten lokalen** Modells ist außerdem
+ein ignorierter Ask-/Plan-/Agent-Smoke verfügbar. Er verändert weder Desktop-Settings
+noch Originalprojekte. Loopback allein beweist keine lokale Modellresidenz; diese
+ist vor dem Lauf zusätzlich zu prüfen. Keine Downloads oder Cloud-Modelle verwenden.
+
+```powershell
+$env:A3_LOCAL_RESEARCH_MODEL='qwen3.5:4b'
+$env:RUST_TEST_NOCAPTURE='1'
+cargo test -p a3-desktop --lib research_v5_local_model_coherent_smoke --offline --locked -- --ignored --nocapture --test-threads=1
+```
+
+Die 60er-Vorher-/Nachher-Praxisabnahme und fachliche Grenzen stehen in
+[Plan 10](../../docs/plans/10-RESEARCH_WORK_STATE.md). Die folgenden Messungen und
+Gatezahlen beziehen sich auf den früheren ADR-0046-Stand, nicht auf V5.
+
 Verifikation der finalen Fassung:
 
 ```powershell

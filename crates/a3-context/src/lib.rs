@@ -59,9 +59,14 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         let profile = input.model_profile();
         let budget_plan =
             ContextBudgetPlan::for_profile(profile).map_err(ContextCompileFailure::Budget)?;
-        let prompt = AgentPromptContract::current()
-            .prepare(profile)
-            .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
+        let prompt = if input.replan_research().is_some_and(|r| r.should_analyze()) {
+            AgentPromptContract::current().prepare_replan_analysis(profile)
+        } else if input.replan_localization().is_some() {
+            AgentPromptContract::current().prepare_replan_localization(profile)
+        } else {
+            AgentPromptContract::current().prepare(profile)
+        }
+        .map_err(|_| ContextCompileFailure::PromptUnavailable)?;
         let current_step = input
             .task_ledger()
             .step(input.current_step_id())
@@ -72,13 +77,19 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             .and_then(|handoff| handoff.command())
             .cloned()
             .map(SlashCommandExecutionProfile::resolve);
-        let anchor = render_anchor(
+        let mut anchor = render_anchor(
             input.goal_contract(),
             input.task_ledger(),
             current_step,
             profile,
             command_profile.as_ref(),
         );
+        if let Some(reason) = input.replan_localization() {
+            anchor.push_str(&format!(
+                "[REPLAN_LOCALIZATION] read-only; not implementation verification\ncause={}\n",
+                reason.as_str()
+            ));
+        }
         reject_secret_candidate(&anchor)?;
         let goal_tokens = count(profile, &anchor)?;
         if goal_tokens > budget_plan.allowance(ContextSection::GoalAndLedger) {
@@ -121,7 +132,97 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             return Err(ContextCompileFailure::StaleOrMismatchedInput);
         }
 
-        let run_memory = pack_run_memory(input.run_memory(), &lens, profile, budget_plan)?;
+        let work = input
+            .research_handoff()
+            .and_then(|handoff| handoff.work_state().map(|state| (handoff, state)))
+            .map(|(handoff, state)| {
+                let mut state = state.clone();
+                state
+                    .revalidate(handoff.revisions())
+                    .map_err(|_| ContextCompileFailure::StaleOrMismatchedInput)?;
+                Ok::<_, ContextCompileFailure>(state)
+            })
+            .transpose()?;
+        let handoff_contract = work
+            .as_ref()
+            .map(research_handoff_contract)
+            .unwrap_or_default();
+        let replan_contract = input
+            .replan_research()
+            .map(|research| {
+                if research.checkpoint.snapshot_id != lens.snapshot_id() {
+                    return Err(ContextCompileFailure::StaleOrMismatchedInput);
+                }
+                Ok(research.render())
+            })
+            .transpose()?
+            .unwrap_or_default();
+        // Current investigation obligations precede optional historical summaries.
+        let mandatory_research_tokens = count(profile, &handoff_contract)?
+            .checked_add(count(profile, &replan_contract)?)
+            .ok_or(ContextCompileFailure::InvalidPack)?;
+        let mut run_memory = pack_run_memory(
+            input.run_memory(),
+            &lens,
+            profile,
+            budget_plan,
+            mandatory_research_tokens,
+        )?;
+        if !replan_contract.is_empty() {
+            append_mandatory_memory_item(
+                &mut run_memory.text,
+                &mut run_memory.tokens,
+                count(profile, CODE_AND_EVIDENCE_HEADER)?,
+                budget_plan.allowance(ContextSection::CodeAndEvidence),
+                profile,
+                &replan_contract,
+            )?;
+        }
+        if let Some(work) = &work {
+            let allowance = budget_plan.allowance(ContextSection::CodeAndEvidence);
+            let reserved = count(profile, CODE_AND_EVIDENCE_HEADER)?;
+            append_mandatory_memory_item(
+                &mut run_memory.text,
+                &mut run_memory.tokens,
+                reserved,
+                allowance,
+                profile,
+                &handoff_contract,
+            )?;
+            for question in work.questions() {
+                let mut item = format!(
+                    "Q{} {:?} {:?}: {}\n",
+                    question.id().get(),
+                    question.definition().priority,
+                    question.status(),
+                    question.definition().outcome
+                );
+                if question.resolved()
+                    && let Some(result) = question.result()
+                {
+                    item.push_str(&format!("{:?}: {}\n", result.kind(), result.text()));
+                    for source in result.sources() {
+                        item.push_str(&format!(
+                            "original={} hash={} bytes={}..{}\n",
+                            path_text(source.revision.path()),
+                            hex(source.revision.content_hash().as_bytes()),
+                            source.range.start_byte(),
+                            source.range.end_byte()
+                        ));
+                    }
+                }
+                if !append_optional_memory_item(
+                    &mut run_memory.text,
+                    &mut run_memory.tokens,
+                    reserved,
+                    allowance,
+                    profile,
+                    &item,
+                )? {
+                    run_memory.truncated = true;
+                }
+            }
+        }
 
         check_cancelled(control)?;
         report(control, ContextCompilePhase::Pack)?;
@@ -453,11 +554,31 @@ struct PackedRunMemory {
     truncated: bool,
 }
 
+fn research_handoff_contract(work: &a3_domain::ResearchWorkState) -> String {
+    let mut text = String::from(
+        "[RESEARCH_HANDOFF] Source-bound interpretations, not verified facts or completed implementation steps. Recheck original evidence before changes.\n",
+    );
+    for question in work
+        .questions()
+        .iter()
+        .filter(|q| q.definition().priority == a3_domain::ResearchQuestionPriority::Required)
+    {
+        text.push_str(&format!(
+            "Q{} {:?}: {}\n",
+            question.id().get(),
+            question.status(),
+            question.definition().outcome
+        ));
+    }
+    text
+}
+
 fn pack_run_memory(
     checkpoint: Option<&RunMemoryCheckpoint>,
     lens: &TaskLens,
     profile: &ModelProfile,
     budget: ContextBudgetPlan,
+    mandatory_research_reserved: u32,
 ) -> Result<PackedRunMemory, ContextCompileFailure> {
     let Some(checkpoint) = checkpoint else {
         return Ok(PackedRunMemory {
@@ -487,7 +608,9 @@ fn pack_run_memory(
     );
     reject_secret_candidate(&text)?;
     let allowance = budget.allowance(ContextSection::CodeAndEvidence);
-    let reserved_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?;
+    let reserved_tokens = count(profile, CODE_AND_EVIDENCE_HEADER)?
+        .checked_add(mandatory_research_reserved)
+        .ok_or(ContextCompileFailure::InvalidPack)?;
     let mut tokens = count(profile, &text)?;
     ensure_memory_fits(reserved_tokens, tokens, allowance)?;
     let mut claim_ids = BTreeSet::new();

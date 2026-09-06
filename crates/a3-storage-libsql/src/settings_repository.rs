@@ -95,6 +95,37 @@ async fn load_from_connection(
     Ok(StoredDesktopSettings::new(version, settings))
 }
 
+/// Reads an existing catalog without creation, migration, configuration writes or credentials.
+pub(crate) async fn read_only_snapshot(
+    path: &std::path::Path,
+) -> Result<StoredDesktopSettings, SettingsRepositoryError> {
+    let database = libsql::Builder::new_local(path)
+        .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .build()
+        .await
+        .map_err(SettingsRepositoryError::Read)?;
+    let connection = database.connect().map_err(SettingsRepositoryError::Read)?;
+    let mut rows = connection
+        .query("PRAGMA user_version", ())
+        .await
+        .map_err(SettingsRepositoryError::Read)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(SettingsRepositoryError::Read)?
+        .ok_or(SettingsRepositoryError::InvalidStoredData)?;
+    let version = row.get::<u32>(0).map_err(SettingsRepositoryError::Read)?;
+    if version > crate::CatalogSchemaVersion::CURRENT.get() {
+        return Err(SettingsRepositoryError::Open(
+            crate::CatalogOpenError::NewerSchema {
+                found: crate::CatalogSchemaVersion::new(version),
+                supported: crate::CatalogSchemaVersion::CURRENT,
+            },
+        ));
+    }
+    load_from_connection(&connection).await
+}
+
 async fn append_in_transaction(
     transaction: &Transaction,
     expected: DesktopSettingsStoreVersion,

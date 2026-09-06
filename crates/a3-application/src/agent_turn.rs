@@ -213,6 +213,17 @@ pub enum AgentTurnOutcome {
     Executed(Box<AgentTurnExecution>),
     /// No continuation may use an action from this outcome; usage remains chargeable and auditable.
     Rejected(RejectedAgentTurn),
+    /// Shared V5 replan analysis consumed a model turn but grants no tool capability.
+    Researched(Box<AgentResearchTurn>),
+}
+
+/// Charged, source-admitted non-executable investigation result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentResearchTurn {
+    /// Must commit atomically with the model event.
+    pub checkpoint: crate::ReplanResearchCheckpoint,
+    charge: AgentTurnCharge,
+    observed_model_output_bytes: u64,
 }
 
 impl AgentTurnOutcome {
@@ -224,6 +235,13 @@ impl AgentTurnOutcome {
         observed_at: AgentRunTimestamp,
     ) -> Result<RunEvent, AgentRunError> {
         let (charge, snapshot_id, code, outcome, observed_bytes) = match self {
+            Self::Researched(research) => (
+                research.charge,
+                research.checkpoint.snapshot_id,
+                RunEventCode::ControllerDecision,
+                RunEventOutcome::Succeeded,
+                research.observed_model_output_bytes,
+            ),
             Self::Executed(execution) => (
                 execution.charge,
                 execution.snapshot_id,
@@ -233,6 +251,18 @@ impl AgentTurnOutcome {
             ),
             Self::Rejected(rejected) => {
                 let (code, outcome) = match rejected.reason {
+                    AgentTurnRejectionReason::ModelFailed(failure) => match failure {
+                        ModelProviderFailure::TimedOut => {
+                            (RunEventCode::Timeout, RunEventOutcome::Failed)
+                        }
+                        ModelProviderFailure::Cancelled => {
+                            (RunEventCode::Cancellation, RunEventOutcome::Cancelled)
+                        }
+                        ModelProviderFailure::EndpointDenied => {
+                            (RunEventCode::PolicyDecision, RunEventOutcome::Denied)
+                        }
+                        _ => (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed),
+                    },
                     AgentTurnRejectionReason::InvalidAfterRepair
                     | AgentTurnRejectionReason::IncompleteModelOutput => {
                         (RunEventCode::InvalidModelOutput, RunEventOutcome::Failed)
@@ -246,6 +276,15 @@ impl AgentTurnOutcome {
                     AgentTurnRejectionReason::InvalidReadResult => {
                         (RunEventCode::ToolFailure, RunEventOutcome::Failed)
                     }
+                    AgentTurnRejectionReason::ReadFailed(failure) => match failure {
+                        AgentReadToolFailure::Denied => {
+                            (RunEventCode::PolicyDecision, RunEventOutcome::Denied)
+                        }
+                        AgentReadToolFailure::Cancelled => {
+                            (RunEventCode::Cancellation, RunEventOutcome::Cancelled)
+                        }
+                        _ => (RunEventCode::ToolFailure, RunEventOutcome::Failed),
+                    },
                 };
                 (
                     rejected.charge,
@@ -277,6 +316,10 @@ impl AgentTurnOutcome {
 /// Content-free reason a completed turn cannot continue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentTurnRejectionReason {
+    /// Provider failure with conservative reserved usage; never an executable result.
+    ModelFailed(ModelProviderFailure),
+    /// The attempted read failed; the preceding model exchange remains charged.
+    ReadFailed(AgentReadToolFailure),
     /// Primary output was invalid and the sole corrected output remained invalid.
     InvalidAfterRepair,
     /// Provider did not report a normal stop, so potentially incomplete JSON was never decoded.
@@ -354,7 +397,7 @@ impl<'a> ExecuteAgentTurn<'a> {
         let request = compiled.into_request();
         let primary =
             complete_request(self.provider, &request, self.model_timeout, control).await?;
-        if primary.reason != ModelFinishReason::Stop {
+        if let Some(reason) = primary.rejection_reason() {
             return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                 charge: AgentTurnCharge::new(
                     primary.prompt_tokens,
@@ -362,13 +405,29 @@ impl<'a> ExecuteAgentTurn<'a> {
                     None,
                     AgentTurnRepairUsage::None,
                 ),
-                reason: AgentTurnRejectionReason::IncompleteModelOutput,
+                reason,
                 snapshot_id,
                 observed_model_output_bytes: usize_to_u64(primary.raw.len())?,
             }));
         }
+        if let Some(research) = input.replan_research().filter(|r| r.should_analyze()) {
+            return analyze_replan(
+                self.provider,
+                &request,
+                primary,
+                research,
+                self.model_timeout,
+                control,
+            )
+            .await;
+        }
+        let decoder = if input.replan_localization().is_some() {
+            DecodeAgentActionTurn::for_replan_localization()
+        } else {
+            DecodeAgentActionTurn::current()
+        };
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) =
-            match DecodeAgentActionTurn::current().decode_primary(&primary.raw) {
+            match decoder.decode_primary(&primary.raw) {
                 AgentActionPrimaryOutcome::Accepted(action) => (
                     action,
                     primary.prompt_tokens,
@@ -411,7 +470,7 @@ impl<'a> ExecuteAgentTurn<'a> {
                         add_token_counts(primary.output_tokens, corrected.output_tokens)?;
                     let observed_model_output_bytes =
                         combined_output_bytes(primary.raw.len(), corrected.raw.len())?;
-                    if corrected.reason != ModelFinishReason::Stop {
+                    if let Some(reason) = corrected.rejection_reason() {
                         return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                             charge: AgentTurnCharge::new(
                                 prompt_tokens,
@@ -419,7 +478,7 @@ impl<'a> ExecuteAgentTurn<'a> {
                                 None,
                                 AgentTurnRepairUsage::One,
                             ),
-                            reason: AgentTurnRejectionReason::IncompleteModelOutput,
+                            reason,
                             snapshot_id,
                             observed_model_output_bytes,
                         }));
@@ -449,6 +508,17 @@ impl<'a> ExecuteAgentTurn<'a> {
         let (action, public_note) = decoded.into_parts();
         let action_class = AgentTurnActionClass::from_action(&action);
         let charge = AgentTurnCharge::new(prompt_tokens, output_tokens, Some(action_class), repair);
+        if input
+            .replan_research()
+            .is_some_and(|r| !r.checkpoint.work.ready_to_finish() && !r.checkpoint.permits(&action))
+        {
+            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                charge,
+                reason: AgentTurnRejectionReason::InvalidReadResult,
+                snapshot_id,
+                observed_model_output_bytes,
+            }));
+        }
         if AgentControllerControl::is_cancelled(control) {
             return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                 charge,
@@ -523,7 +593,12 @@ impl<'a> ExecuteAgentTurn<'a> {
                             observed_at,
                         )
                         .await?;
-                    return Err(ExecuteAgentTurnFailure::Read(failure));
+                    return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                        charge,
+                        reason: AgentTurnRejectionReason::ReadFailed(failure),
+                        snapshot_id,
+                        observed_model_output_bytes,
+                    }));
                 }
             };
             if result.snapshot_id() != snapshot_id || result.tool_run_id() != tool_run_id {
@@ -572,6 +647,9 @@ fn validate_turn_input(
         .step(input.current_step_id())
         .ok_or(ExecuteAgentTurnFailure::InputMismatch)?;
     if run.goal_contract() != input.goal_contract().reference()
+        || input
+            .replan_research()
+            .is_some_and(|r| r.checkpoint.snapshot_id != run.current_snapshot_id())
         || run.task_ledger_revision() != input.task_ledger().revision()
         || run.model_profile() != Some(input.model_profile().reference())
         || current_step.status() != TaskStepStatus::InProgress
@@ -588,12 +666,118 @@ fn validate_turn_input(
     Ok(())
 }
 
+async fn analyze_replan<C: AgentControllerControl + ModelOperationControl>(
+    provider: &dyn ModelProvider,
+    request: &ModelProviderRequest,
+    primary: CompletedModelRequest,
+    research: &crate::ReplanResearchContext,
+    timeout: ModelRequestTimeout,
+    control: &C,
+) -> Result<AgentTurnOutcome, ExecuteAgentTurnFailure> {
+    let phase = crate::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
+    let mut completion = primary;
+    let mut prompt_tokens = completion.prompt_tokens;
+    let mut output_tokens = completion.output_tokens;
+    let mut observed = usize_to_u64(completion.raw.len())?;
+    for attempt in 0..=1 {
+        let repair = if attempt == 0 {
+            AgentTurnRepairUsage::None
+        } else {
+            AgentTurnRepairUsage::One
+        };
+        let charge = AgentTurnCharge::new(prompt_tokens, output_tokens, None, repair);
+        let failure = if AgentControllerControl::is_cancelled(control) {
+            Some(AgentTurnRejectionReason::CancelledBeforeAction)
+        } else {
+            completion.rejection_reason()
+        };
+        if let Some(reason) = failure {
+            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                charge,
+                reason,
+                snapshot_id: research.checkpoint.snapshot_id,
+                observed_model_output_bytes: observed,
+            }));
+        }
+        let admitted = (|| {
+            let shape: serde_json::Value = serde_json::from_str(&completion.raw).ok()?;
+            if shape["decision"]["kind"] != "progress" {
+                return None;
+            }
+            let decision = crate::DecodeAskResearchDecision
+                .decode_phase(&completion.raw, phase)
+                .ok()?;
+            let crate::AskResearchDecision::Answer { note, .. } = decision else {
+                return None;
+            };
+            let update = note.work.as_ref()?;
+            if update
+                .results
+                .iter()
+                .any(|r| r.kind != a3_domain::ResearchResultKind::Interpretation)
+            {
+                return None;
+            }
+            let windows = research.windows().ok()?;
+            let mut previous = research.checkpoint.work.clone();
+            previous
+                .begin_analysis(a3_domain::ResearchQuestionId::FIRST, research.packet())
+                .ok()?;
+            crate::admit_research_work(previous.objective(), Some(&previous), update, &windows).ok()
+        })();
+        if let Some(work) = admitted {
+            let mut checkpoint = research.checkpoint.clone();
+            checkpoint.work = work;
+            return Ok(AgentTurnOutcome::Researched(Box::new(AgentResearchTurn {
+                checkpoint,
+                charge,
+                observed_model_output_bytes: observed,
+            })));
+        }
+        if attempt == 1 {
+            return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                charge,
+                reason: AgentTurnRejectionReason::InvalidAfterRepair,
+                snapshot_id: research.checkpoint.snapshot_id,
+                observed_model_output_bytes: observed,
+            }));
+        }
+        let mut messages = request.messages().to_vec();
+        messages.push(crate::ModelMessage::try_from_string(crate::ModelMessageRole::User,
+            "The document was not admitted. Return the exact supplied V5 Analyze schema, progress decision, Q1 only, no new questions. Use only current E anchors for an interpretation, or empty results if evidence is insufficient. This is the single repair.".to_owned())?);
+        let repaired = ModelProviderRequest::new(
+            request.profile().clone(),
+            messages,
+            request.structured_output().cloned(),
+        )?;
+        completion = complete_request(provider, &repaired, timeout, control).await?;
+        prompt_tokens = add_token_counts(prompt_tokens, completion.prompt_tokens)?;
+        output_tokens = add_token_counts(output_tokens, completion.output_tokens)?;
+        observed = observed
+            .checked_add(usize_to_u64(completion.raw.len())?)
+            .ok_or(ExecuteAgentTurnFailure::OutputTooLarge)?;
+    }
+    Err(ExecuteAgentTurnFailure::InvalidProviderStream)
+}
+
 #[derive(Debug)]
 struct CompletedModelRequest {
     raw: String,
     reason: ModelFinishReason,
     prompt_tokens: ModelTokenCount,
     output_tokens: ModelTokenCount,
+    failure: Option<ModelProviderFailure>,
+}
+
+impl CompletedModelRequest {
+    fn rejection_reason(&self) -> Option<AgentTurnRejectionReason> {
+        self.failure
+            .map(AgentTurnRejectionReason::ModelFailed)
+            .or_else(|| {
+                (self.reason != ModelFinishReason::Stop)
+                    .then_some(AgentTurnRejectionReason::IncompleteModelOutput)
+            })
+    }
 }
 
 async fn complete_request<C>(
@@ -608,6 +792,37 @@ where
     if provider.provider_id() != request.profile().provider_id() {
         return Err(ExecuteAgentTurnFailure::ProviderMismatch);
     }
+    // Count before sending. Failed streams have no authoritative usage; retain the
+    // reserved output ceiling instead of silently making a paid attempt free on restart.
+    let reserved_prompt = count_request_tokens(request)?;
+    match complete_request_stream(provider, request, timeout, control).await {
+        Ok(completion) => Ok(completion),
+        Err(error) => {
+            let failure = match error {
+                ExecuteAgentTurnFailure::Model(failure) => failure,
+                ExecuteAgentTurnFailure::InvalidProviderStream
+                | ExecuteAgentTurnFailure::OutputTooLarge => ModelProviderFailure::InvalidResponse,
+                other => return Err(other),
+            };
+            Ok(CompletedModelRequest {
+                raw: String::new(),
+                reason: ModelFinishReason::Other,
+                prompt_tokens: reserved_prompt,
+                output_tokens: ModelTokenCount::new(
+                    request.profile().settings().output_limit().get(),
+                ),
+                failure: Some(failure),
+            })
+        }
+    }
+}
+
+async fn complete_request_stream<C: ModelOperationControl>(
+    provider: &dyn ModelProvider,
+    request: &ModelProviderRequest,
+    timeout: ModelRequestTimeout,
+    control: &C,
+) -> Result<CompletedModelRequest, ExecuteAgentTurnFailure> {
     let mut stream = provider.stream(request, timeout, control).await?;
     let mut raw = String::new();
     let mut completion = None;
@@ -637,6 +852,7 @@ where
         .token_counting()
         .count_text(&raw)?;
     Ok(CompletedModelRequest {
+        failure: None,
         raw,
         reason: completion.reason(),
         prompt_tokens: reported_or_fallback(completion.usage().prompt_tokens(), fallback_prompt)?,
@@ -1285,9 +1501,50 @@ mod tests {
     }
 
     #[test]
+    fn replan_localization_cannot_finish_or_mutate_even_after_repair() -> Result<(), Box<dyn Error>>
+    {
+        let forbidden = r#"{"schema_version":4,"public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},"action":{"kind":"finish"}}"#;
+        let mut fixture = turn_fixture(vec![
+            provider_response(forbidden)?,
+            provider_response(forbidden)?,
+        ])?;
+        let input =
+            fixture
+                .input
+                .with_replan_localization(a3_domain::TaskReplanReason::try_from_string(
+                    "Locate the missing serializer".to_owned(),
+                )?);
+        let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+        let provider = ScriptedProvider {
+            provider_id: fixture.profile.provider_id().clone(),
+            responses: Mutex::new(fixture.responses),
+        };
+        let tools = CountingReadTools {
+            calls: AtomicUsize::new(0),
+        };
+        let recovery = TestRecoveryStore::default();
+        let outcome = futures::executor::block_on(
+            ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                &fixture.run,
+                &input,
+                timestamp(5)?,
+                &TestControl,
+            ),
+        )?;
+        let _event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+        assert!(matches!(outcome, AgentTurnOutcome::Rejected(_)));
+        assert_eq!(fixture.run.usage().turn_count(), 1);
+        assert_eq!(fixture.run.usage().repair_count(), 1);
+        assert_eq!(fixture.run.usage().action_count(), 0);
+        assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
     fn denied_tool_attempt_is_durable_before_invocation_and_then_terminal()
     -> Result<(), Box<dyn Error>> {
-        let fixture = turn_fixture(vec![provider_response(
+        let mut fixture = turn_fixture(vec![provider_response(
             r#"{"schema_version":4,"public_note":{"goal":"Controller finden","finding_kind":"hypothesis","finding":"Die Implementierung muss noch lokalisiert werden.","finding_source_refs":[],"gap":"Aktuelle Quelle","next_step":"Nach dem Controller suchen"},"action":{"kind":"search","query":"controller","limit":5}}"#,
         )?])?;
         let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
@@ -1309,10 +1566,18 @@ mod tests {
             ),
         );
 
+        let outcome = result?;
+        let event = outcome.record(&mut fixture.run, event_id(22), timestamp(22)?)?;
         assert!(matches!(
-            result,
-            Err(ExecuteAgentTurnFailure::Read(AgentReadToolFailure::Denied))
+            outcome,
+            AgentTurnOutcome::Rejected(RejectedAgentTurn {
+                reason: AgentTurnRejectionReason::ReadFailed(AgentReadToolFailure::Denied),
+                ..
+            })
         ));
+        assert_eq!(fixture.run.usage().turn_count(), 1);
+        assert_eq!(fixture.run.usage().action_count(), 1);
+        assert_eq!(event.payload().outcome(), Some(RunEventOutcome::Denied));
         assert_eq!(recovery.begins.load(Ordering::SeqCst), 1);
         assert_eq!(
             *recovery
@@ -1330,6 +1595,147 @@ mod tests {
         compiled: CompiledAgentContext,
         profile: ModelProfile,
         responses: VecDeque<Vec<ProviderEvent>>,
+    }
+
+    #[test]
+    fn provider_failure_on_primary_or_repair_remains_charged_and_never_executes()
+    -> Result<(), Box<dyn Error>> {
+        for repair in [false, true] {
+            let mut fixture = turn_fixture(if repair {
+                vec![provider_response("not-json")?]
+            } else {
+                vec![]
+            })?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = ScriptedProvider {
+                provider_id: fixture.profile.provider_id().clone(),
+                responses: Mutex::new(fixture.responses),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
+            let outcome = futures::executor::block_on(
+                ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                    &fixture.run,
+                    &fixture.input,
+                    timestamp(20)?,
+                    &TestControl,
+                ),
+            )?;
+            let AgentTurnOutcome::Rejected(rejected) = &outcome else {
+                return Err("failed provider executed".into());
+            };
+            assert_eq!(
+                rejected.reason(),
+                AgentTurnRejectionReason::ModelFailed(ModelProviderFailure::Unavailable)
+            );
+            assert_eq!(
+                rejected.charge().repair(),
+                if repair {
+                    AgentTurnRepairUsage::One
+                } else {
+                    AgentTurnRepairUsage::None
+                }
+            );
+            assert!(
+                rejected.charge().output_tokens().get()
+                    >= fixture.profile.settings().output_limit().get()
+            );
+            assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+            outcome.record(&mut fixture.run, event_id(22), timestamp(22)?)?;
+            assert_eq!(fixture.run.usage().turn_count(), 1);
+            assert_eq!(fixture.run.usage().action_count(), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replan_v5_analysis_is_charged_source_bound_atomic_and_non_executable()
+    -> Result<(), Box<dyn Error>> {
+        use a3_domain::{
+            AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, ResearchResultKind,
+            SourcePosition, SourceRange,
+        };
+        for (valid, null_result) in [(true, false), (true, true), (false, false)] {
+            let raw = serde_json::json!({"schema_version":5,
+                "decision":{"kind":"progress","note":{"goal":"Cause","finding_kind":"hypothesis","finding":"Current evidence","finding_source_refs":[],"gap":"Check serializer","next_step":"Resolve cause"}},
+                "work":{"questions":[],"results":if null_result { serde_json::json!([]) } else { serde_json::json!([{"question_id":1,"kind":"interpretation","text":"The serializer drops the title; preserve it and verify a round trip.","evidence":[{"anchor_ref":if valid {"E1"} else {"E8"}}]}]) }}}).to_string();
+            let mut fixture = turn_fixture(if valid {
+                vec![provider_response(&raw)?]
+            } else {
+                vec![provider_response(&raw)?, provider_response(&raw)?]
+            })?;
+            let checkpoint = crate::ReplanResearchCheckpoint::new(
+                fixture.input.current_step_id(),
+                snapshot(),
+                &a3_domain::TaskReplanReason::try_from_string("round trip failed".to_owned())?,
+                "preserve title",
+            )?;
+            let page = crate::AgentSourcePage::new(
+                FileRevision::new(
+                    RepositoryPath::try_from_bytes(b"serializer.py".to_vec())?,
+                    ContentHash::from_bytes([31; 32]),
+                ),
+                SourceRange::new(0, 9, SourcePosition::new(0, 0), SourcePosition::new(1, 0))?,
+                AgentFileStartLine::new(1)?,
+                "return 0\n".to_owned(),
+                None,
+                false,
+            )?;
+            let research = crate::ReplanResearchContext {
+                checkpoint: checkpoint.clone(),
+                pages: vec![page],
+            };
+            let input = fixture.input.with_replan_research(research.clone())?;
+            let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+            let provider = ScriptedProvider {
+                provider_id: fixture.profile.provider_id().clone(),
+                responses: Mutex::new(fixture.responses),
+            };
+            let tools = CountingReadTools {
+                calls: AtomicUsize::new(0),
+            };
+            let recovery = TestRecoveryStore::default();
+            let outcome = futures::executor::block_on(
+                ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                    &fixture.run,
+                    &input,
+                    timestamp(5)?,
+                    &TestControl,
+                ),
+            )?;
+            outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+            assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(fixture.run.usage().turn_count(), 1);
+            assert_eq!(fixture.run.usage().action_count(), 0);
+            assert_eq!(fixture.run.usage().repair_count(), u32::from(!valid));
+            assert!(
+                checkpoint.work.questions()[0].attempts().is_empty(),
+                "input never changes on rejected admission"
+            );
+            match outcome {
+                AgentTurnOutcome::Researched(result) if valid => {
+                    assert_eq!(result.checkpoint.work.ready_to_finish(), !null_result);
+                    assert_eq!(
+                        result.checkpoint.work.questions()[0].attempts(),
+                        &std::collections::BTreeSet::from([research.packet()])
+                    );
+                    if !null_result {
+                        assert_eq!(
+                            result.checkpoint.work.questions()[0]
+                                .result()
+                                .ok_or("result")?
+                                .kind(),
+                            ResearchResultKind::Interpretation
+                        );
+                    }
+                }
+                AgentTurnOutcome::Rejected(_) if !valid => {}
+                _ => return Err("unexpected replan admission".into()),
+            }
+        }
+        Ok(())
     }
 
     fn turn_fixture(responses: Vec<Vec<ProviderEvent>>) -> Result<TurnFixture, Box<dyn Error>> {

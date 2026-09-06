@@ -17,6 +17,9 @@ use a3_domain::{
 use libsql::{Connection, Transaction, TransactionBehavior, params};
 use std::collections::BTreeMap;
 
+#[path = "research_work_repository.rs"]
+pub(crate) mod work_state;
+
 pub(crate) async fn begin(
     connection: &Connection,
     worktree_id: WorktreeId,
@@ -475,9 +478,15 @@ pub(crate) async fn load_detail(
     {
         citations.push(AskResearchSourceId::from_bytes(read_id(&row, 0)?));
     }
-    AskResearchDetail::new(turn, events, citations)
-        .map(Some)
-        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)
+    let mut detail = AskResearchDetail::new(turn, events, citations)
+        .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+    if !legacy
+        && let Some(work) =
+            work_state::load(connection, worktree_id, session_id, user_sequence).await?
+    {
+        detail = detail.with_work_state(work);
+    }
+    Ok(Some(detail))
 }
 
 pub(crate) async fn list_sources(
@@ -896,8 +905,12 @@ pub(crate) async fn load_handoff_for_task(
             revisions.push(revision);
         }
     }
-    let handoff = ResearchHandoff::new(index_run_id, snapshot_id, revisions)
+    let mut handoff = ResearchHandoff::new(index_run_id, snapshot_id, revisions)
         .map_err(|_| AskResearchRepositoryError::InvalidStoredData)?;
+    if let Some(work) = work_state::load(connection, worktree_id, session_id, user_sequence).await?
+    {
+        handoff = handoff.with_work_state(work);
+    }
     Ok(Some(match command {
         Some(command) => handoff.with_command(command),
         None => handoff,
@@ -1044,6 +1057,9 @@ async fn insert_event(
     ).await.map_err(AskResearchRepositoryError::Write)?;
     if let Some(note) = event.public_note() {
         insert_note(transaction, worktree_id, event, note).await?;
+    }
+    if let Some(state) = event.work_state() {
+        work_state::insert(transaction, worktree_id, event, state).await?;
     }
     Ok(())
 }

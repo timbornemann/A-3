@@ -370,6 +370,7 @@ impl AskResearchPublicNote {
 /// One append-only, content-free live event in an Ask research turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskResearchEvent {
+    work_state: Option<a3_domain::ResearchWorkState>,
     session_id: AgentSessionId,
     user_sequence: AgentSessionSequence,
     sequence: u32,
@@ -416,6 +417,7 @@ impl AskResearchEvent {
             completeness,
             occurred_at,
             public_note: None,
+            work_state: None,
         })
     }
 
@@ -424,6 +426,19 @@ impl AskResearchEvent {
     pub fn with_public_note(mut self, note: AskResearchPublicNote) -> Self {
         self.public_note = Some(note);
         self
+    }
+
+    /// Commits an admitted research checkpoint atomically with this audit event.
+    #[must_use]
+    pub fn with_work_state(mut self, state: a3_domain::ResearchWorkState) -> Self {
+        self.work_state = Some(state);
+        self
+    }
+
+    /// Returns the optional Core-owned checkpoint, never a raw model proposal.
+    #[must_use]
+    pub const fn work_state(&self) -> Option<&a3_domain::ResearchWorkState> {
+        self.work_state.as_ref()
     }
 
     /// Returns the owning session.
@@ -576,6 +591,7 @@ impl AskResearchSource {
 /// One reconstructed turn with its complete bounded event trail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskResearchDetail {
+    work_state: Option<a3_domain::ResearchWorkState>,
     turn: AskResearchTurn,
     events: Vec<AskResearchEvent>,
     cited_sources: Vec<AskResearchSourceId>,
@@ -605,7 +621,21 @@ impl AskResearchDetail {
             turn,
             events,
             cited_sources,
+            work_state: None,
         })
+    }
+
+    /// Attaches the latest checkpoint from the same persisted turn/read snapshot.
+    #[must_use]
+    pub fn with_work_state(mut self, state: a3_domain::ResearchWorkState) -> Self {
+        self.work_state = Some(state);
+        self
+    }
+
+    /// Returns the stable checklist independently of the bounded event page.
+    #[must_use]
+    pub const fn work_state(&self) -> Option<&a3_domain::ResearchWorkState> {
+        self.work_state.as_ref()
     }
     /// Returns the immutable index binding.
     #[must_use]

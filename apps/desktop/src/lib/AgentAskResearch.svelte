@@ -778,6 +778,52 @@
           {latest ? `${stepLabel(latest.phase, latest.state)}: ${latest.action}` : ''}
         </p>
       {/if}
+      {#if detail.researchWork}
+        <section class="research-checklist" aria-label="Recherche-Prüfstand">
+          <h4>Was noch zu klären ist</h4>
+          <ul>
+            {#each detail.researchWork.questions as question (question.id)}
+              <li data-question-id={question.id} data-question-status={question.status}>
+                <strong>{question.outcome}</strong>
+                <small
+                  >{{ required: 'Erforderlich', supporting: 'Grundlage', optional: 'Zusatzdetail' }[
+                    question.priority
+                  ]} · {{
+                    open: 'Offen',
+                    active: 'Wird geprüft',
+                    answered: 'Beantwortet',
+                    limited: 'Mit Einschränkung beantwortet',
+                    blocked: 'Noch unbeantwortet',
+                    stale: 'Erneut zu prüfen',
+                  }[question.status]}</small
+                >
+                {#if question.result}
+                  <details>
+                    <summary
+                      >{question.status === 'stale'
+                        ? 'Früheres Ergebnis'
+                        : 'Ergebnis und Belege'}</summary
+                    >
+                    <p>{question.result}</p>
+                    <small
+                      >{question.resultKind === 'designDecision'
+                        ? 'Vorgeschlagene Gestaltung'
+                        : question.resultKind === 'boundedUnknown'
+                          ? 'Begrenzte Aussage'
+                          : 'Quellengestützte Interpretation'}</small
+                    >
+                    {#each question.sourceRefs as ref (ref)}
+                      <button type="button" disabled={detail.stale} onclick={() => showSource(ref)}
+                        >Beleg {sourceForRef(ref)?.referenceLabel ?? ''} öffnen</button
+                      >
+                    {/each}
+                  </details>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
       <ol class="research-steps" aria-label="Rechercheverlauf">
         {#each visibleSteps as step, index (step.id)}
           {@const displayState = presentationState(index)}

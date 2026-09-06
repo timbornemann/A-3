@@ -1736,6 +1736,26 @@ mod tests {
     }
 
     #[test]
+    fn research_work_phases_translate_without_cloud_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for phase in [
+            a3_application::ResearchOutputPhase::Initialize,
+            a3_application::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::SummarizeOriginals(
+                a3_domain::ResearchQuestionId::FIRST,
+            ),
+            a3_application::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::Finalize,
+        ] {
+            let original = a3_application::research_work_phase_schema(phase, true)?;
+            let translated = translate_response_json_schema(&original)?;
+            assert_eq!(translated["type"], "object");
+            assert!(translated.get("$id").is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn response_schema_translation_is_bounded_explicit_and_preserves_core_invariants()
     -> Result<(), Box<dyn std::error::Error>> {
         let translated = translate_response_json_schema(&json!({

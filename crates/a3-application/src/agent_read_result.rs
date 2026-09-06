@@ -20,6 +20,8 @@ pub struct AgentReadResult {
     snapshot_id: SnapshotId,
     evidence: AgentToolEvidenceSet,
     observed_output_bytes: u64,
+    original_page: Option<crate::AgentSourcePage>,
+    original_evidence: Option<a3_domain::TaskEvidenceId>,
 }
 
 impl AgentReadResult {
@@ -47,6 +49,8 @@ impl AgentReadResult {
             snapshot_id,
             evidence,
             observed_output_bytes,
+            original_page: None,
+            original_evidence: None,
         })
     }
 
@@ -98,6 +102,27 @@ impl AgentReadResult {
         &self.evidence
     }
 
+    /// Attaches the original page at the reader boundary, without persisting source bytes.
+    pub fn with_original_page(
+        mut self,
+        page: crate::AgentSourcePage,
+    ) -> Result<Self, AgentReadResultError> {
+        if self.status != ContextToolResultStatus::Succeeded
+            || !self.evidence.evidence().contains(&page.evidence())
+        {
+            return Err(AgentReadResultError::EvidenceSnapshotMismatch);
+        }
+        self.original_evidence =
+            (!page.range().is_empty() && !page.text().is_empty()).then(|| page.evidence().id());
+        self.original_page = Some(page);
+        Ok(self)
+    }
+
+    /// Takes volatile original bytes for shared research admission; previews are not evidence.
+    pub fn take_original_page(&mut self) -> Option<crate::AgentSourcePage> {
+        self.original_page.take()
+    }
+
     /// Appends the tool event after its model event and assigns that exact sequence to context.
     pub fn record(
         self,
@@ -145,6 +170,8 @@ impl AgentReadResult {
             event,
             context_result,
             evidence: self.evidence,
+            replan: None,
+            original_evidence: self.original_evidence,
         })
     }
 }
@@ -186,9 +213,28 @@ pub struct RecordedAgentRead {
     event: RunEvent,
     context_result: ContextToolResult,
     evidence: AgentToolEvidenceSet,
+    replan: Option<crate::ReplanResearchCheckpoint>,
+    original_evidence: Option<a3_domain::TaskEvidenceId>,
 }
 
 impl RecordedAgentRead {
+    /// Metadata marking an actual reader page, not a search/graph span preview.
+    #[must_use]
+    pub const fn original_evidence(&self) -> Option<a3_domain::TaskEvidenceId> {
+        self.original_evidence
+    }
+    /// Includes the read's research receipt in the same transaction as its event.
+    #[must_use]
+    pub fn with_replan(mut self, checkpoint: crate::ReplanResearchCheckpoint) -> Self {
+        self.replan = Some(checkpoint);
+        self
+    }
+
+    /// Returns metadata only; original pages never reach persistence.
+    #[must_use]
+    pub const fn replan(&self) -> Option<&crate::ReplanResearchCheckpoint> {
+        self.replan.as_ref()
+    }
     /// Returns the append-only tool event.
     #[must_use]
     pub const fn event(&self) -> &RunEvent {
@@ -211,5 +257,69 @@ impl RecordedAgentRead {
     #[must_use]
     pub fn into_parts(self) -> (RunEvent, ContextToolResult, AgentToolEvidenceSet) {
         (self.event, self.context_result, self.evidence)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use a3_domain::{
+        AgentFileStartLine, ContentHash, FileRevision, RepositoryPath, SourcePosition, SourceRange,
+    };
+
+    #[test]
+    fn only_nonempty_successful_originals_keep_a_hydration_marker_after_take()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for empty in [false, true] {
+            let snapshot = SnapshotId::from_bytes([1; 32]);
+            let page = crate::AgentSourcePage::new(
+                FileRevision::new(
+                    RepositoryPath::try_from_bytes(b"module.py".to_vec())?,
+                    ContentHash::from_bytes([2; 32]),
+                ),
+                SourceRange::new(
+                    0,
+                    if empty { 0 } else { 4 },
+                    SourcePosition::new(0, 0),
+                    SourcePosition::new(0, if empty { 0 } else { 4 }),
+                )?,
+                AgentFileStartLine::new(1)?,
+                if empty {
+                    String::new()
+                } else {
+                    "pass".to_owned()
+                },
+                None,
+                false,
+            )?;
+            let result = |status| {
+                AgentReadResult::new(
+                    ToolRunId::from_bytes([3; 32]),
+                    status,
+                    ContextToolResultPreview::try_from_string("bounded result".to_owned())?,
+                    ContextToolResultDigest::from_bytes([4; 32]),
+                    false,
+                    snapshot,
+                    AgentToolEvidenceSet::new(snapshot, vec![page.evidence()])?,
+                    4,
+                )
+                .map_err(Box::<dyn std::error::Error>::from)
+            };
+            for status in [
+                ContextToolResultStatus::Failed,
+                ContextToolResultStatus::Denied,
+                ContextToolResultStatus::Cancelled,
+            ] {
+                assert!(result(status)?.with_original_page(page.clone()).is_err());
+            }
+            let mut success =
+                result(ContextToolResultStatus::Succeeded)?.with_original_page(page.clone())?;
+            assert_eq!(success.take_original_page(), Some(page.clone()));
+            assert_eq!(
+                success.original_evidence,
+                (!empty).then(|| page.evidence().id())
+            );
+        }
+        Ok(())
     }
 }

@@ -3242,6 +3242,16 @@ const KNOWLEDGE_MIGRATIONS: &[Migration] = &[
         name: "progressive_research_trace_capacity",
         sql: include_str!("migrations/knowledge_v35.sql"),
     },
+    Migration {
+        version: 36,
+        name: "research_work_checkpoints",
+        sql: include_str!("migrations/knowledge_v36.sql"),
+    },
+    Migration {
+        version: 37,
+        name: "run_owned_replan_research",
+        sql: include_str!("migrations/knowledge_v37.sql"),
+    },
 ];
 
 const CATALOG_MIGRATION_CHECKSUM_DOMAIN: &[u8] = b"a3.catalog-migration.v1";
@@ -3274,7 +3284,7 @@ pub struct KnowledgeSchemaVersion(u32);
 
 impl KnowledgeSchemaVersion {
     /// Current worktree schema version understood by this build.
-    pub const CURRENT: Self = Self::new(35);
+    pub const CURRENT: Self = Self::new(37);
 
     /// Creates a schema version from a migration number.
     #[must_use]
@@ -3905,6 +3915,8 @@ mod tests {
         (knowledge_upgrades_from_v32, 32),
         (knowledge_upgrades_from_v33, 33),
         (knowledge_upgrades_from_v34, 34),
+        (knowledge_upgrades_from_v35, 35),
+        (knowledge_upgrades_from_v36, 36),
     );
 
     #[test]
@@ -6505,7 +6517,11 @@ mod tests {
                 assert_eq!(result.is_ok(), conflict == 0);
                 assert_eq!(
                     query_i64(&connection, "PRAGMA user_version").await?,
-                    if conflict == 0 { 35 } else { 34 }
+                    if conflict == 0 {
+                        i64::from(KnowledgeSchemaVersion::CURRENT.get())
+                    } else {
+                        34
+                    }
                 );
                 assert_eq!(
                     crate::agent_ask_research_repository::load_detail(
@@ -6605,6 +6621,128 @@ mod tests {
                         0
                     );
                     assert_eq!(query_i64(&connection,"SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='index_function_flows'").await?,1);
+                }
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v36_checkpoints_migrate_or_roll_back_atomically()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for conflict in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                let repository = [131; 32];
+                let worktree = [132; 32];
+                super::apply_knowledge_bootstrap(&connection, &repository, &worktree).await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..35],
+                    35,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                if conflict {
+                    connection
+                        .execute(
+                            "CREATE TABLE agent_research_work_checkpoints (conflict INTEGER)",
+                            (),
+                        )
+                        .await?;
+                }
+                let result = super::migrate_knowledge(&connection, &repository, &worktree).await;
+                if conflict {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 36, .. })
+                    ));
+                    assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 35);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                        35
+                    );
+                    assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='agent_research_work_checkpoints'").await?, 0);
+                } else {
+                    assert_eq!(result?, KnowledgeSchemaVersion::CURRENT);
+                    assert_eq!(
+                        query_i64(
+                            &connection,
+                            "SELECT COUNT(*) FROM agent_research_work_checkpoints"
+                        )
+                        .await?,
+                        0
+                    );
+                    assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='agent_research_work_checkpoints'").await?, 2);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check")
+                            .await?,
+                        0
+                    );
+                }
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+    }
+
+    #[test]
+    fn knowledge_v37_replan_migrates_or_rolls_back_all_tables_atomically()
+    -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_native_libsql_test(async {
+            for conflict in [false, true] {
+                let database = libsql::Builder::new_local(":memory:").build().await?;
+                let connection = database.connect()?;
+                let repository = [141; 32];
+                let worktree = [142; 32];
+                super::apply_knowledge_bootstrap(&connection, &repository, &worktree).await?;
+                migrate(
+                    &connection,
+                    &KNOWLEDGE_MIGRATIONS[..36],
+                    36,
+                    super::KNOWLEDGE_MIGRATION_CHECKSUM_DOMAIN,
+                )
+                .await?;
+                if conflict {
+                    // Fail after the first V37 table and its guards have been created.
+                    connection
+                        .execute("CREATE TABLE agent_replan_originals (conflict INTEGER)", ())
+                        .await?;
+                }
+                let result = super::migrate_knowledge(&connection, &repository, &worktree).await;
+                if conflict {
+                    assert!(matches!(
+                        result,
+                        Err(MigrationError::Apply { version: 37, .. })
+                    ));
+                    assert_eq!(query_i64(&connection, "PRAGMA user_version").await?, 36);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM schema_migrations").await?,
+                        36
+                    );
+                    assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'agent_replan_research%'").await?, 0);
+                    assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='agent_replan_originals'").await?, 0);
+                } else {
+                    assert_eq!(result?, KnowledgeSchemaVersion::CURRENT);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM agent_replan_originals")
+                            .await?,
+                        0
+                    );
+                    assert_eq!(
+                        query_i64(
+                            &connection,
+                            "SELECT COUNT(*) FROM agent_replan_research_checkpoints"
+                        )
+                        .await?,
+                        0
+                    );
+                    assert_eq!(query_i64(&connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('agent_replan_originals','agent_replan_research_checkpoints')").await?, 4);
+                    assert_eq!(
+                        query_i64(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check")
+                            .await?,
+                        0
+                    );
                 }
             }
             Ok::<(), Box<dyn std::error::Error>>(())

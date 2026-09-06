@@ -13,8 +13,7 @@ use a3_storage_libsql::{LibsqlKnowledgeStore, StorageLayout};
 use a3_workspace::RepositoryInspector;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[path = "../../../../crates/a3-repo-index/tests/support/mod.rs"]
-mod support;
+use crate::index_test_support as support;
 
 #[path = "agent_research_recovery_tests.rs"]
 mod recovery_contract;
@@ -22,6 +21,8 @@ mod recovery_contract;
 #[path = "agent_research_plan_tests.rs"]
 mod plan_contract;
 
+#[path = "agent_research_access_tests.rs"]
+mod access_contract;
 #[path = "agent_research_coherent_tests.rs"]
 mod coherent_contract;
 
@@ -69,6 +70,7 @@ impl ResearchModel for ProgressiveModel {
         &self,
         mode: AgentSessionMode,
         search: bool,
+        _: a3_application::ResearchOutputPhase,
         transcript: &[(ModelMessageRole, String)],
         command: Option<String>,
         _: &JobContext,
@@ -457,6 +459,7 @@ impl ResearchModel for StorageModel {
         &self,
         mode: AgentSessionMode,
         _: bool,
+        _: a3_application::ResearchOutputPhase,
         transcript: &[(ModelMessageRole, String)],
         _: Option<String>,
         _: &JobContext,
@@ -634,6 +637,7 @@ fn storage_gap_is_followed_autonomously_in_all_modes_and_invalid_output_never_ex
             .revision()
             .clone();
         let note = a3_application::AskResearchDecisionNote {
+            work: None,
             goal: "Config lesen".to_owned(),
             finding_kind: a3_application::AskResearchFindingKind::Hypothesis,
             finding: "Weiteren Abschnitt prüfen".to_owned(),
@@ -827,6 +831,7 @@ fn repair_that_uses_the_final_decision_keeps_followup_reads_closed() -> Result<(
                 repository.git(["init", "--initial-branch=main"])?;
                 let project = RepositoryInspector::new().inspect(repository.path())?;
                 let guard = research_model::EvidenceGuard {
+                    work: None,
                     project: &project,
                     revisions: Vec::new(),
                 };

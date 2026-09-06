@@ -16,6 +16,7 @@ impl ResearchModel for SequenceModel {
         &self,
         _: AgentSessionMode,
         _: bool,
+        _: a3_application::ResearchOutputPhase,
         _: &[(ModelMessageRole, String)],
         _: Option<String>,
         _: &JobContext,
@@ -38,6 +39,13 @@ impl ResearchModel for SequenceModel {
 pub(super) fn owned(
     check: impl FnOnce(JobContext, JobSubmitter) -> Result<(), Box<dyn Error>> + Send + 'static,
 ) -> Result<(), Box<dyn Error>> {
+    owned_with_timeout(Duration::from_secs(20), check)
+}
+
+pub(super) fn owned_with_timeout(
+    timeout: Duration,
+    check: impl FnOnce(JobContext, JobSubmitter) -> Result<(), Box<dyn Error>> + Send + 'static,
+) -> Result<(), Box<dyn Error>> {
     let (scheduler, events) =
         JobScheduler::new(JobSchedulerConfig::new(1, 2, 32)?, Arc::new(FixtureClock))?;
     let submitter = scheduler.submitter()?;
@@ -56,10 +64,14 @@ pub(super) fn owned(
             }
         },
     )?;
+    let started = Instant::now();
     loop {
-        let event = events
-            .next_timeout(Duration::from_secs(20))?
-            .ok_or("owned test timeout")?;
+        if started.elapsed() >= timeout {
+            return Err("owned test timeout".into());
+        }
+        let Some(event) = events.next_timeout(Duration::from_secs(2))? else {
+            continue;
+        };
         if matches!(
             event.kind(),
             JobEventKind::Succeeded | JobEventKind::Failed | JobEventKind::Cancelled
@@ -88,6 +100,7 @@ fn a_plan_shape_failure_after_json_repair_cannot_obtain_a_second_document_repair
         repository.git(["init", "--initial-branch=main"])?;
         let project = RepositoryInspector::new().inspect(repository.path())?;
         let guard = research_model::EvidenceGuard {
+            work: None,
             project: &project,
             revisions: Vec::new(),
         };
@@ -130,6 +143,7 @@ fn single_document_repairs_and_global_retry_limits_hold_at_the_actual_decision_b
         repository.git(["init", "--initial-branch=main"])?;
         let project = RepositoryInspector::new().inspect(repository.path())?;
         let guard = research_model::EvidenceGuard {
+            work: None,
             project: &project,
             revisions: Vec::new(),
         };
@@ -236,6 +250,7 @@ fn cached_revision_validation_rejects_live_edits_and_cancellation_before_model_c
             a3_domain::ContentHash::from_bytes(*blake3::hash(body.as_bytes()).as_bytes()),
         );
         let guard = research_model::EvidenceGuard {
+            work: None,
             project: &project,
             revisions: vec![(revision, 1)],
         };
@@ -243,6 +258,7 @@ fn cached_revision_validation_rejects_live_edits_and_cancellation_before_model_c
         let late_body = format!("{}\ndef useful(): return 1\n", "#".repeat(13000));
         repository.write("late.py", &late_body)?;
         let late_guard = research_model::EvidenceGuard {
+            work: None,
             project: &project,
             revisions: vec![(
                 a3_domain::FileRevision::new(
@@ -281,6 +297,7 @@ fn cached_revision_validation_rejects_live_edits_and_cancellation_before_model_c
         outside.write("manager.py", body)?;
         repository.link_directory("escape", outside.path())?;
         let escape = research_model::EvidenceGuard {
+            work: None,
             project: &project,
             revisions: vec![(
                 a3_domain::FileRevision::new(
