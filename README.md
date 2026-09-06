@@ -42,7 +42,11 @@ NDJSON-Validierung und content-freie Fehler. Das versionierte `ModelProfile`, ko
 Tokenzählung, manuelle laufparametersichere Overrides sowie ein echter Ollama-Capability-Self-Test
 sind ebenfalls abgeschlossen. Fehlgeschlagene Structured-Output-Proben können keine ausführbaren
 Aktionen freischalten. Die Desktop-Settings verwalten Ollama sowie die kanonischen Google-Gemini-
-und OpenAI-Endpoints als typisierte Provider. Gemini- und OpenAI-Schlüssel liegen ausschließlich
+und OpenAI-Endpoints als typisierte Provider. Seit ADR-0066 verwaltet die Desktop-Settings drei
+dauerhaft sichtbare Provider-Slots für Ollama, Google Gemini und OpenAI. Jeder Slot wird unabhängig
+konfiguriert, nativ bestätigt, getestet und aktiviert; die Rollenwahl vereinigt ausschließlich die
+ausdrücklich geladenen Kataloge verbundener und aktivierter Provider. Gemini- und OpenAI-Schlüssel
+liegen ausschließlich
 im nativen Betriebssystem-Schlüsselspeicher; libSQL und IPC führen nur inhaltsfreien Status und
 monotone Generation. Der OpenAI-Adapter verwendet die Responses API mit deaktivierter
 Response-Speicherung, striktem JSON Schema und ohne Provider-Tools. Modellkataloge werden nur nach

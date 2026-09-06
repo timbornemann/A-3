@@ -10,13 +10,13 @@ pub use endpoint::{
     OllamaEndpointPolicyError, OllamaEndpointScope, OllamaSettingsEndpointValidator,
 };
 pub use gemini::{
-    GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy, GeminiEndpointPolicyError,
-    GeminiEndpointScope, GeminiModelProvider, GeminiProviderCreateError,
+    ExactGeminiEndpointPolicy, GeminiEndpoint, GeminiEndpointError, GeminiEndpointPolicy,
+    GeminiEndpointPolicyError, GeminiEndpointScope, GeminiModelProvider, GeminiProviderCreateError,
     GeminiSettingsEndpointValidator, LocalOnlyGeminiEndpointPolicy, StandardGeminiEndpointPolicy,
 };
 pub use ollama::{OllamaModelProvider, OllamaProviderCreateError};
 pub use openai::{
-    LocalOnlyOpenAiEndpointPolicy, OpenAiEndpoint, OpenAiEndpointError, OpenAiEndpointPolicy,
-    OpenAiEndpointPolicyError, OpenAiEndpointScope, OpenAiModelProvider, OpenAiProviderCreateError,
-    OpenAiSettingsEndpointValidator, StandardOpenAiEndpointPolicy,
+    ExactOpenAiEndpointPolicy, LocalOnlyOpenAiEndpointPolicy, OpenAiEndpoint, OpenAiEndpointError,
+    OpenAiEndpointPolicy, OpenAiEndpointPolicyError, OpenAiEndpointScope, OpenAiModelProvider,
+    OpenAiProviderCreateError, OpenAiSettingsEndpointValidator, StandardOpenAiEndpointPolicy,
 };

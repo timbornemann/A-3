@@ -1,8 +1,8 @@
 //! Native operating-system credential adapters for A^3.
 
 use a3_application::{
-    ProviderApiKey, ProviderCredential, ProviderCredentialGeneration, ProviderCredentialStore,
-    ProviderCredentialStoreFailure, ProviderCredentialStoreFuture,
+    ModelProviderKind, ProviderApiKey, ProviderCredential, ProviderCredentialGeneration,
+    ProviderCredentialStore, ProviderCredentialStoreFailure, ProviderCredentialStoreFuture,
 };
 use a3_domain::ModelProviderId;
 use std::fmt;
@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 const SERVICE: &str = "dev.timbornemann.a3.provider-api-key";
 const ENVELOPE_PREFIX: &str = "a3-provider-api-key-v1";
+const ENVELOPE_PREFIX_V2: &str = "a3-provider-api-key-v2";
 const MAX_ENVELOPE_BYTES: usize = 8 * 1024;
 
 /// Stores provider credentials in the platform-native credential manager.
@@ -28,6 +29,20 @@ impl NativeProviderCredentialStore {
     ) -> Result<keyring::Entry, ProviderCredentialStoreFailure> {
         keyring::Entry::new(SERVICE, provider_id.as_str())
             .map_err(|_| ProviderCredentialStoreFailure::Unavailable)
+    }
+
+    fn entry_bound(
+        provider_id: &ModelProviderId,
+        origin_fingerprint: &str,
+    ) -> Result<keyring::Entry, ProviderCredentialStoreFailure> {
+        let account = format!("{}:{origin_fingerprint}", provider_id.as_str());
+        keyring::Entry::new(SERVICE, &account)
+            .map_err(|_| ProviderCredentialStoreFailure::Unavailable)
+    }
+
+    fn is_official_origin_binding(provider_id: &ModelProviderId, origin_fingerprint: &str) -> bool {
+        ModelProviderKind::from_provider_id(provider_id.as_str())
+            .is_some_and(|kind| kind.default_origin_fingerprint() == origin_fingerprint)
     }
 }
 
@@ -105,6 +120,102 @@ impl ProviderCredentialStore for NativeProviderCredentialStore {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(_) => Err(ProviderCredentialStoreFailure::Unavailable),
             }
+        })
+    }
+
+    fn load_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        origin_fingerprint: &'a str,
+    ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+        Box::pin(async move {
+            let entry = Self::entry_bound(provider_id, origin_fingerprint)?;
+            let encoded = match entry.get_password() {
+                Ok(value) => Zeroizing::new(value),
+                Err(keyring::Error::NoEntry) => {
+                    let legacy_allowed =
+                        Self::is_official_origin_binding(provider_id, origin_fingerprint);
+                    if legacy_allowed {
+                        return self.load(provider_id).await;
+                    }
+                    return Ok(None);
+                }
+                Err(_) => return Err(ProviderCredentialStoreFailure::Unavailable),
+            };
+            if encoded.len() > MAX_ENVELOPE_BYTES {
+                return Err(ProviderCredentialStoreFailure::Corrupt);
+            }
+            let mut fields = encoded.splitn(4, '\n');
+            if fields.next() != Some(ENVELOPE_PREFIX_V2)
+                || fields.next() != Some(origin_fingerprint)
+            {
+                return Err(ProviderCredentialStoreFailure::Corrupt);
+            }
+            let generation = fields
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .and_then(|value| ProviderCredentialGeneration::new(value).ok())
+                .ok_or(ProviderCredentialStoreFailure::Corrupt)?;
+            let key = fields
+                .next()
+                .ok_or(ProviderCredentialStoreFailure::Corrupt)?;
+            let secret = ProviderApiKey::from_bytes(key.as_bytes().to_vec())
+                .map_err(|_| ProviderCredentialStoreFailure::Corrupt)?;
+            Ok(Some(ProviderCredential::new(generation, secret)))
+        })
+    }
+
+    fn store_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        origin_fingerprint: &'a str,
+        credential: &'a ProviderCredential,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let entry = Self::entry_bound(provider_id, origin_fingerprint)?;
+            let key = std::str::from_utf8(credential.secret().as_bytes())
+                .map_err(|_| ProviderCredentialStoreFailure::Corrupt)?;
+            let encoded = Zeroizing::new(format!(
+                "{ENVELOPE_PREFIX_V2}\n{origin_fingerprint}\n{}\n{key}",
+                credential.generation().get()
+            ));
+            if encoded.len() > MAX_ENVELOPE_BYTES {
+                return Err(ProviderCredentialStoreFailure::ResourceLimit);
+            }
+            entry
+                .set_password(&encoded)
+                .map_err(|_| ProviderCredentialStoreFailure::Unavailable)?;
+            if Self::is_official_origin_binding(provider_id, origin_fingerprint) {
+                let legacy = Self::entry(provider_id)?;
+                match legacy.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => {}
+                    Err(_) => return Err(ProviderCredentialStoreFailure::Unavailable),
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn delete_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        origin_fingerprint: &'a str,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        Box::pin(async move {
+            let entry = Self::entry_bound(provider_id, origin_fingerprint)?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(_) => return Err(ProviderCredentialStoreFailure::Unavailable),
+            }
+            if Self::is_official_origin_binding(provider_id, origin_fingerprint) {
+                let legacy = Self::entry(provider_id)?;
+                match legacy.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => {}
+                    Err(_) => return Err(ProviderCredentialStoreFailure::Unavailable),
+                }
+            }
+            Ok(())
         })
     }
 }

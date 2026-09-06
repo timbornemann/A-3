@@ -184,7 +184,7 @@ impl fmt::Display for OpenAiEndpointError {
 
 impl Error for OpenAiEndpointError {}
 
-/// Settings adapter accepting only the canonical production OpenAI origin.
+/// Settings adapter accepting any validated HTTPS OpenAI-compatible origin.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenAiSettingsEndpointValidator;
 
@@ -195,9 +195,6 @@ impl ModelEndpointValidator for OpenAiSettingsEndpointValidator {
     ) -> Result<ConfiguredModelEndpoint, ModelEndpointValidationFailure> {
         let endpoint =
             OpenAiEndpoint::parse(input).map_err(|_| ModelEndpointValidationFailure::Invalid)?;
-        if endpoint.canonical_origin() != DEFAULT_OPENAI_ORIGIN {
-            return Err(ModelEndpointValidationFailure::Invalid);
-        }
         let provider_id = ModelProviderId::try_from_string(OPENAI_PROVIDER_ID.to_owned())
             .map_err(|_| ModelEndpointValidationFailure::ProviderUnavailable)?;
         let scope = match endpoint.scope() {
@@ -228,6 +225,32 @@ pub struct StandardOpenAiEndpointPolicy;
 impl OpenAiEndpointPolicy for StandardOpenAiEndpointPolicy {
     fn authorize(&self, endpoint: &OpenAiEndpoint) -> Result<(), OpenAiEndpointPolicyError> {
         if endpoint.canonical_origin() == DEFAULT_OPENAI_ORIGIN {
+            Ok(())
+        } else {
+            Err(OpenAiEndpointPolicyError::Denied)
+        }
+    }
+}
+
+/// Exact-origin policy used after the native Settings confirmation step.
+#[derive(Debug, Clone)]
+pub struct ExactOpenAiEndpointPolicy {
+    origin: String,
+}
+
+impl ExactOpenAiEndpointPolicy {
+    /// Binds requests to one canonical origin without allowing redirects or proxies.
+    #[must_use]
+    pub fn new(origin: impl Into<String>) -> Self {
+        Self {
+            origin: origin.into(),
+        }
+    }
+}
+
+impl OpenAiEndpointPolicy for ExactOpenAiEndpointPolicy {
+    fn authorize(&self, endpoint: &OpenAiEndpoint) -> Result<(), OpenAiEndpointPolicyError> {
+        if endpoint.canonical_origin() == self.origin {
             Ok(())
         } else {
             Err(OpenAiEndpointPolicyError::Denied)

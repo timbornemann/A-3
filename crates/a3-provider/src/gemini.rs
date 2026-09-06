@@ -236,9 +236,6 @@ impl ModelEndpointValidator for GeminiSettingsEndpointValidator {
     ) -> Result<ConfiguredModelEndpoint, ModelEndpointValidationFailure> {
         let endpoint =
             GeminiEndpoint::parse(input).map_err(|_| ModelEndpointValidationFailure::Invalid)?;
-        if endpoint.canonical_origin() != DEFAULT_GEMINI_ORIGIN {
-            return Err(ModelEndpointValidationFailure::Invalid);
-        }
         let provider_id = ModelProviderId::try_from_string(GEMINI_PROVIDER_ID.to_owned())
             .map_err(|_| ModelEndpointValidationFailure::ProviderUnavailable)?;
         let scope = match endpoint.scope() {
@@ -269,6 +266,32 @@ pub struct StandardGeminiEndpointPolicy;
 impl GeminiEndpointPolicy for StandardGeminiEndpointPolicy {
     fn authorize(&self, endpoint: &GeminiEndpoint) -> Result<(), GeminiEndpointPolicyError> {
         if endpoint.canonical_origin() == DEFAULT_GEMINI_ORIGIN {
+            Ok(())
+        } else {
+            Err(GeminiEndpointPolicyError::Denied)
+        }
+    }
+}
+
+/// Exact-origin policy used after the native Settings confirmation step.
+#[derive(Debug, Clone)]
+pub struct ExactGeminiEndpointPolicy {
+    origin: String,
+}
+
+impl ExactGeminiEndpointPolicy {
+    /// Binds requests to one canonical origin without allowing redirects or proxies.
+    #[must_use]
+    pub fn new(origin: impl Into<String>) -> Self {
+        Self {
+            origin: origin.into(),
+        }
+    }
+}
+
+impl GeminiEndpointPolicy for ExactGeminiEndpointPolicy {
+    fn authorize(&self, endpoint: &GeminiEndpoint) -> Result<(), GeminiEndpointPolicyError> {
+        if endpoint.canonical_origin() == self.origin {
             Ok(())
         } else {
             Err(GeminiEndpointPolicyError::Denied)

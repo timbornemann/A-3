@@ -11,16 +11,29 @@
     discoverProviderModels,
     probeModelRole,
     querySettings,
+    querySettingsV2,
+    configureModelProviderV2,
+    setModelProviderCredentialV2,
+    deleteModelProviderCredentialV2,
+    discoverProviderModelsV2,
+    setModelProviderEnabledV2,
+    probeModelRoleV2,
     setModelProviderCredential,
     type CancelModelProbeResponseV1,
     type EmbeddingRoleProfileV1,
+    type EmbeddingRoleProfileV2,
     type LlmRoleProfileV1,
+    type LlmRoleProfileV2,
     type ModelProbeInputV1,
     type ModelProviderKindV1,
     type ModelRoleV1,
     type ProviderModelsResponseV1,
     type SettingsResponseV1,
     type SettingsV1,
+    type SettingsV2,
+    type SettingsResponseV2,
+    type ProviderModelsResponseV2,
+    type ProviderSettingsV2,
   } from './settings';
 
   interface Props {
@@ -42,6 +55,35 @@
       input: ModelProbeInputV1,
     ) => Promise<SettingsResponseV1>;
     settingsLoader?: () => Promise<SettingsResponseV1>;
+    settingsLoaderV2?: () => Promise<SettingsResponseV2>;
+    providerConfigurerV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+      endpointOrigin: string | null,
+    ) => Promise<SettingsResponseV2>;
+    credentialSetterV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+      apiKeyBytes: Uint8Array,
+    ) => Promise<SettingsResponseV2>;
+    credentialDeleterV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+    ) => Promise<SettingsResponseV2>;
+    modelDiscovererV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+    ) => Promise<ProviderModelsResponseV2>;
+    providerEnablerV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+      enabled: boolean,
+    ) => Promise<SettingsResponseV2>;
+    roleProberV2?: (
+      expectedRevision: string,
+      providerKind: ModelProviderKindV1,
+      input: ModelProbeInputV1,
+    ) => Promise<SettingsResponseV2>;
   }
 
   type SettingsSection = 'general' | 'models' | 'project' | 'privacy' | 'about';
@@ -83,9 +125,31 @@
     credentialDeleter = deleteModelProviderCredential,
     roleProber = probeModelRole,
     settingsLoader = querySettings,
+    settingsLoaderV2 = querySettingsV2,
+    providerConfigurerV2 = configureModelProviderV2,
+    credentialSetterV2 = setModelProviderCredentialV2,
+    credentialDeleterV2 = deleteModelProviderCredentialV2,
+    modelDiscovererV2 = discoverProviderModelsV2,
+    providerEnablerV2 = setModelProviderEnabledV2,
+    roleProberV2 = probeModelRoleV2,
   }: Props = $props();
 
+  let legacyLoaderProvided = $derived(settingsLoader !== querySettings);
+
   let view = $state<View>({ kind: 'loading' });
+  let v2Settings = $state<SettingsV2 | null>(null);
+  let v2Catalogs = $state<Partial<Record<ModelProviderKindV1, ProviderModelsResponseV2>>>({});
+  let v2Action = $state<string | null>(null);
+  let v2ApiKeys = $state<Record<ModelProviderKindV1, string>>({
+    ollama: '',
+    gemini: '',
+    openai: '',
+  });
+  let v2Origins = $state<Record<ModelProviderKindV1, string>>({
+    ollama: 'http://127.0.0.1:11434',
+    gemini: 'https://generativelanguage.googleapis.com',
+    openai: 'https://api.openai.com',
+  });
   let healthView = $state<HealthView>({ kind: 'idle' });
   let action = $state<Action>({ kind: 'idle' });
   let settingsView = $state<SettingsSection>('general');
@@ -107,9 +171,209 @@
   let apiKeyInput = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
-    void loadSettings();
+    if (legacyLoaderProvided) void loadSettings();
+    else void loadSettingsV2();
     return clearCredentialInput;
   });
+
+  function applyV2Settings(settings: SettingsV2): void {
+    v2Settings = settings;
+    const selectedSlot =
+      settings.providers.find((slot) => slot.enabled && slot.endpoint !== null) ??
+      settings.providers.find((slot) => slot.endpoint !== null) ??
+      null;
+    view = {
+      kind: 'ready',
+      settings: {
+        codingProfile: settings.codingProfile,
+        embeddingProfile: settings.embeddingProfile,
+        endpoint: selectedSlot?.endpoint ?? null,
+        credential: selectedSlot?.credential ?? null,
+        mappingProfile: settings.mappingProfile,
+        privacy: settings.privacy,
+        probeActive: settings.probeActive,
+        providerHealth: selectedSlot?.health ?? null,
+        revision: settings.revision,
+      },
+    };
+  }
+
+  async function loadSettingsV2(): Promise<void> {
+    try {
+      const response = await settingsLoaderV2();
+      applyV2Settings(response.settings);
+      v2Origins = Object.fromEntries(
+        response.settings.providers.map((slot) => [
+          slot.providerKind,
+          slot.endpoint?.origin ?? slot.defaultOrigin,
+        ]),
+      ) as Record<ModelProviderKindV1, string>;
+      v2Catalogs = {};
+      v2Action = null;
+    } catch (error) {
+      view = { kind: 'error', message: recoveryMessage(error) };
+    }
+  }
+
+  function providerSlotsV2(): ProviderSettingsV2[] {
+    return v2Settings?.providers ? [...v2Settings.providers] : [];
+  }
+
+  function v2ProviderLabel(kind: ModelProviderKindV1): string {
+    return providerLabel(kind);
+  }
+
+  function v2CredentialLabel(slot: ProviderSettingsV2): string {
+    if (slot.credential?.status === 'configured') return 'API-Key sicher gespeichert';
+    if (slot.credential?.status === 'recoveryRequired') return 'API-Key muss repariert werden';
+    return requiresApiKey(slot.providerKind) ? 'API-Key fehlt' : 'Kein API-Key erforderlich';
+  }
+
+  function v2HealthLabel(slot: ProviderSettingsV2): string {
+    const status = slot.health?.status ?? 'notChecked';
+    const labels: Record<string, string> = {
+      healthy: 'Verifiziert',
+      unreachable: 'Nicht erreichbar',
+      capabilityLimited: 'Begrenzt',
+      cancelled: 'Abgebrochen',
+      remoteBlocked: 'Remote blockiert',
+      notChecked: 'Nicht geprüft',
+    };
+    return labels[status] ?? 'Nicht geprüft';
+  }
+
+  async function configureProviderV2(kind: ModelProviderKindV1, origin: string): Promise<void> {
+    if (v2Settings === null) return;
+    v2Action = `configuring:${kind}`;
+    try {
+      const response = await providerConfigurerV2(v2Settings.revision, kind, origin.trim() || null);
+      applyV2Settings(response.settings);
+      const remainingCatalogs = { ...v2Catalogs };
+      delete remainingCatalogs[kind];
+      v2Catalogs = remainingCatalogs;
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      if (v2Action?.startsWith('configuring:')) v2Action = null;
+    }
+  }
+
+  async function saveProviderCredentialV2(kind: ModelProviderKindV1): Promise<void> {
+    if (v2Settings === null || !requiresApiKey(kind) || !v2ApiKeys[kind]) return;
+    const bytes = new TextEncoder().encode(v2ApiKeys[kind]);
+    v2ApiKeys[kind] = '';
+    v2Action = `credential:${kind}`;
+    try {
+      const response = await credentialSetterV2(v2Settings.revision, kind, bytes);
+      applyV2Settings(response.settings);
+      const remainingCatalogs = { ...v2Catalogs };
+      delete remainingCatalogs[kind];
+      v2Catalogs = remainingCatalogs;
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      bytes.fill(0);
+      if (v2Action?.startsWith('credential:')) v2Action = null;
+    }
+  }
+
+  async function deleteProviderCredentialV2(kind: ModelProviderKindV1): Promise<void> {
+    if (v2Settings === null) return;
+    v2Action = `deleteCredential:${kind}`;
+    try {
+      applyV2Settings((await credentialDeleterV2(v2Settings.revision, kind)).settings);
+      const remainingCatalogs = { ...v2Catalogs };
+      delete remainingCatalogs[kind];
+      v2Catalogs = remainingCatalogs;
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      if (v2Action?.startsWith('deleteCredential:')) v2Action = null;
+    }
+  }
+
+  async function discoverProviderV2(kind: ModelProviderKindV1): Promise<void> {
+    if (v2Settings === null) return;
+    v2Action = `discovering:${kind}`;
+    try {
+      const result = await modelDiscovererV2(v2Settings.revision, kind);
+      if (
+        result.settings.revision !== v2Settings.revision &&
+        result.settings.revision !== String(BigInt(v2Settings.revision) + 1n)
+      )
+        throw new Error('Providerkatalog ist veraltet.');
+      applyV2Settings(result.settings);
+      v2Catalogs = { ...v2Catalogs, [kind]: result };
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      if (v2Action?.startsWith('discovering:')) v2Action = null;
+    }
+  }
+
+  async function enableProviderV2(kind: ModelProviderKindV1, enabled: boolean): Promise<void> {
+    if (v2Settings === null) return;
+    v2Action = `enabled:${kind}`;
+    try {
+      applyV2Settings((await providerEnablerV2(v2Settings.revision, kind, enabled)).settings);
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      if (v2Action?.startsWith('enabled:')) v2Action = null;
+    }
+  }
+
+  function v2RoleProfile(role: ModelRoleV1): LlmRoleProfileV2 | EmbeddingRoleProfileV2 | null {
+    if (v2Settings === null) return null;
+    if (role === 'coding') return v2Settings.codingProfile;
+    if (role === 'mapping') return v2Settings.mappingProfile;
+    return v2Settings.embeddingProfile;
+  }
+
+  function v2ModelOptions(): { kind: ModelProviderKindV1; modelId: string }[] {
+    return providerSlotsV2().flatMap((slot) =>
+      slot.enabled
+        ? (v2Catalogs[slot.providerKind]?.modelIds.map((modelId) => ({
+            kind: slot.providerKind,
+            modelId,
+          })) ?? [])
+        : [],
+    );
+  }
+
+  async function probeProviderRoleV2(
+    kind: ModelProviderKindV1,
+    role: ModelRoleV1,
+    modelId: string,
+  ): Promise<void> {
+    if (v2Settings === null) return;
+    const input: ModelProbeInputV1 =
+      role === 'embedding'
+        ? { maxBatchSize: embeddingBatchSize, modelId, role }
+        : role === 'coding'
+          ? {
+              contextTokens: codingContextTokens,
+              modelId,
+              outputTokens: codingOutputTokens,
+              parallelism: codingParallelism,
+              role,
+            }
+          : {
+              contextTokens: mappingContextTokens,
+              modelId,
+              outputTokens: mappingOutputTokens,
+              parallelism: mappingParallelism,
+              role,
+            };
+    v2Action = `probing:${kind}:${role}`;
+    try {
+      applyV2Settings((await roleProberV2(v2Settings.revision, kind, input)).settings);
+    } catch (error) {
+      v2Action = recoveryMessage(error);
+    } finally {
+      if (v2Action?.startsWith('probing:')) v2Action = null;
+    }
+  }
 
   async function loadSettings(): Promise<void> {
     view = { kind: 'loading' };
@@ -736,206 +1000,360 @@
             </div>
           </header>
 
-          <section class="model-setup-section" aria-labelledby="provider-setup-heading">
-            <header class="setup-section-heading">
-              <div>
-                <span class="setup-step" aria-hidden="true">1</span>
+          {#if v2Settings !== null}
+            <section class="model-setup-section" aria-labelledby="provider-v2-heading">
+              <header class="setup-section-heading">
                 <div>
-                  <h4 id="provider-setup-heading">KI verbinden</h4>
-                  <p>Lokal mit Ollama oder über einen unterstützten Online-Anbieter.</p>
-                </div>
-              </div>
-            </header>
-
-            {#if view.settings.endpoint === null}
-              <div class="setup-empty-state">
-                <div>
-                  <strong>Bereit für deine Modellverbindung</strong>
-                  <p>
-                    Deinen Code kannst du bereits erkunden. Verbinde jetzt ein Modell für Fragen,
-                    Pläne und Agentenaufgaben.
-                  </p>
-                </div>
-                <div class="provider-choice-grid" aria-label="Provider auswählen">
-                  <button
-                    class="primary-action"
-                    type="button"
-                    onclick={() => openProviderDialog('create', 'ollama')}>Ollama verbinden</button
-                  >
-                  <button type="button" onclick={() => openProviderDialog('create', 'gemini')}
-                    >Google Gemini verwenden</button
-                  >
-                  <button type="button" onclick={() => openProviderDialog('create', 'openai')}
-                    >OpenAI verwenden</button
-                  >
-                </div>
-              </div>
-            {:else}
-              <div class="provider-list" aria-label="Aktive Providerverbindung">
-                <article class="provider-row">
-                  <div class="provider-logo" aria-hidden="true">
-                    {providerInitial(view.settings.endpoint.providerId)}
+                  <span class="setup-step" aria-hidden="true">1</span>
+                  <div>
+                    <h4 id="provider-v2-heading">Provider verbinden und aktivieren</h4>
+                    <p>
+                      Jeder Provider wird unabhängig geprüft. Aktivierung ist erst nach
+                      erfolgreichem Modellabruf möglich.
+                    </p>
                   </div>
-                  <div class="provider-summary">
-                    <div>
-                      <strong>{providerLabel(view.settings.endpoint.providerId)}</strong>
-                      <span class="settings-badge">{healthLabel(view.settings)}</span>
-                      <details class="status-help">
-                        <summary aria-label="Providerstatus erklären"
-                          ><span aria-hidden="true">i</span></summary
-                        >
-                        <div class="status-help-popover" role="note">
-                          <strong>{providerHealthExplanation(view.settings).title}</strong>
-                          <p>{providerHealthExplanation(view.settings).detail}</p>
-                          <p>{providerHealthExplanation(view.settings).nextStep}</p>
-                        </div>
-                      </details>
+                </div>
+              </header>
+              <div class="provider-list" aria-label="Providerkarten">
+                {#each providerSlotsV2() as slot (slot.providerKind)}
+                  <article
+                    class="provider-row provider-card"
+                    aria-labelledby={`provider-${slot.providerKind}`}
+                  >
+                    <div class="provider-logo" aria-hidden="true">
+                      {providerInitial(slot.providerKind)}
                     </div>
-                    <code>{view.settings.endpoint.origin}</code>
-                  </div>
-                  <div class="provider-actions">
-                    <button type="button" onclick={() => openProviderDialog('edit')}
-                      >Bearbeiten</button
-                    >
-                    <button
-                      class="subtle-danger-action"
-                      type="button"
-                      onclick={() => openProviderDialog('remove')}>Entfernen</button
-                    >
-                  </div>
-                </article>
-              </div>
-              {#if view.settings.endpoint.access === 'remoteBlocked'}
-                <div class="remote-warning" role="alert">
-                  <strong>Remote-Verbindung blockiert</strong>
-                  <p>
-                    A^3 führt ohne exakte Freigabe weder Modellerkennung noch Capability-Prüfung
-                    aus.
-                  </p>
-                </div>
-              {/if}
-              {#if view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
-                <div class="remote-warning" role="note">
-                  <strong>{providerLabel(view.settings.endpoint.providerId)} Cloud</strong>
-                  <p>
-                    Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
-                    <code>{remoteProviderHost(view.settings.endpoint.providerId)}</code>. Spätere
-                    Agentenläufe können Prompts und ausgewählten Quelltext nur mit einer eigenen
-                    laufgebundenen Netzwerkfreigabe an {providerLabel(
-                      view.settings.endpoint.providerId,
-                    )} senden. Das Speichern des Keys erzeugt keinen Netzwerkzugriff.
-                  </p>
-                  {#if view.settings.endpoint.providerId === 'openai'}
-                    <p>OpenAI-Anfragen können abhängig vom Konto und Modell Kosten verursachen.</p>
-                  {/if}
-                </div>
-              {/if}
-            {/if}
-          </section>
-
-          <section class="model-setup-section" aria-labelledby="role-setup-heading">
-            <header class="setup-section-heading setup-section-heading-action">
-              <div>
-                <span class="setup-step" aria-hidden="true">2</span>
-                <div>
-                  <h4 id="role-setup-heading">Aufgaben zuordnen</h4>
-                  <p>
-                    Jede Zuordnung wird separat geprüft. Ein Modellname allein aktiviert keine
-                    Funktion.
-                  </p>
-                </div>
-              </div>
-              {#if view.settings.endpoint !== null}
-                {#if action.kind === 'discovering' || (action.kind === 'cancelling' && action.role === null)}
-                  <button type="button" onclick={() => cancelOperation(null)}>
-                    {action.kind === 'cancelling' ? 'Abbruch angefordert …' : 'Erkennung abbrechen'}
-                  </button>
-                {:else}
-                  <button
-                    type="button"
-                    disabled={!canUseActiveProvider(view.settings)}
-                    onclick={discoverModels}>Modelle aktualisieren</button
-                  >
-                {/if}
-              {/if}
-            </header>
-
-            {#if view.settings.endpoint === null}
-              <div class="setup-pending-state">
-                <strong>Provider erforderlich</strong>
-                <p>Verbinde zuerst einen Provider. Die aktuelle Modellliste wird danach geladen.</p>
-              </div>
-            {:else if view.settings.endpoint.access === 'remoteBlocked'}
-              <div class="remote-warning" role="note">
-                <strong>Modellzuordnung nicht verfügbar</strong>
-                <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
-              </div>
-            {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
-              <div class="setup-pending-state">
-                <strong
-                  >{providerLabel(view.settings.endpoint.providerId)} API-Key erforderlich</strong
-                >
-                <p>Speichere oder repariere den API-Key im vorherigen Schritt.</p>
-              </div>
-            {:else if modelCatalog !== null}
-              <div class="model-catalog-summary" role="status">
-                <span>{modelCatalog.modelIds.length} Modelle gefunden</span>
-                {#if modelCatalog.truncated}<span>Liste begrenzt</span>{/if}
-              </div>
-              {#if modelCatalog.modelIds.length === 0}
-                <div class="setup-pending-state">
-                  <strong>Keine Modelle gefunden</strong>
-                  <p>Prüfe den Provider und aktualisiere anschließend die Modellliste.</p>
-                </div>
-              {/if}
-            {/if}
-
-            {#if (modelCatalog !== null && modelCatalog.modelIds.length > 0) || hasRoleAssignments(view.settings)}
-              <div class="model-role-list" aria-label="Modellzuordnungen">
-                {#each modelRoles as role (role)}
-                  <article class="model-role-row">
-                    <div>
-                      <strong>{roleLabel(role)}</strong>
-                      <span>{rolePurpose(role)}</span>
-                    </div>
-                    <div class="model-role-selection">
-                      <code>{roleModelId(view.settings, role) ?? 'Nicht zugeordnet'}</code>
-                      <div class="model-role-status">
-                        <span
-                          class:capability-limited={roleStatus(view.settings, role) ===
-                            'Capability fehlt'}>{roleStatus(view.settings, role)}</span
-                        >
-                        <details class="status-help">
-                          <summary aria-label={`Status für ${roleLabel(role)} erklären`}
-                            ><span aria-hidden="true">i</span></summary
-                          >
-                          <div class="status-help-popover" role="note">
-                            <strong>{roleStatusExplanation(view.settings, role).title}</strong>
-                            <p>{roleStatusExplanation(view.settings, role).detail}</p>
-                            <p>{roleStatusExplanation(view.settings, role).nextStep}</p>
-                          </div>
-                        </details>
+                    <div class="provider-summary">
+                      <div>
+                        <strong id={`provider-${slot.providerKind}`}
+                          >{v2ProviderLabel(slot.providerKind)}</strong
+                        ><span class="settings-badge">{v2HealthLabel(slot)}</span>
                       </div>
+                      <label
+                        >Origin
+                        <input
+                          aria-label={`${v2ProviderLabel(slot.providerKind)} Origin`}
+                          value={v2Origins[slot.providerKind]}
+                          oninput={(event) =>
+                            (v2Origins[slot.providerKind] = event.currentTarget.value)}
+                        />
+                      </label>
+                      <code>{v2CredentialLabel(slot)}</code>
+                      {#if requiresApiKey(slot.providerKind)}
+                        <label
+                          >API-Key
+                          <input
+                            type="password"
+                            autocomplete="off"
+                            aria-label={`${v2ProviderLabel(slot.providerKind)} API-Key`}
+                            bind:value={v2ApiKeys[slot.providerKind]}
+                          />
+                        </label>
+                      {/if}
                     </div>
-                    <button
-                      type="button"
-                      disabled={!canOpenRoleDialog(view.settings, role)}
-                      onclick={() => openRoleDialog(role)}
-                      >{roleModelId(view.settings, role) === null ? 'Einrichten' : 'Ändern'}</button
-                    >
+                    <div class="provider-actions">
+                      <button
+                        type="button"
+                        disabled={v2Action !== null}
+                        onclick={() =>
+                          configureProviderV2(slot.providerKind, v2Origins[slot.providerKind])}
+                        >URL speichern</button
+                      >
+                      <button
+                        type="button"
+                        class="subtle-danger-action"
+                        disabled={v2Action !== null || slot.endpoint === null}
+                        onclick={() => configureProviderV2(slot.providerKind, '')}
+                        >Zurücksetzen</button
+                      >
+                      {#if requiresApiKey(slot.providerKind)}
+                        <button
+                          type="button"
+                          disabled={!v2ApiKeys[slot.providerKind] || v2Action !== null}
+                          onclick={() => saveProviderCredentialV2(slot.providerKind)}
+                          >Key speichern</button
+                        >
+                        {#if slot.credential?.status === 'configured'}<button
+                            type="button"
+                            disabled={v2Action !== null}
+                            onclick={() => deleteProviderCredentialV2(slot.providerKind)}
+                            >Key löschen</button
+                          >{/if}
+                      {/if}
+                      <button
+                        type="button"
+                        disabled={v2Action !== null || slot.endpoint === null}
+                        onclick={() => discoverProviderV2(slot.providerKind)}
+                        >Verbindung testen und Modelle laden</button
+                      >
+                      <button
+                        type="button"
+                        disabled={v2Action !== null || slot.connectionVerifiedAtUnixMillis === null}
+                        aria-pressed={slot.enabled}
+                        onclick={() => enableProviderV2(slot.providerKind, !slot.enabled)}
+                        >{slot.enabled ? 'Provider deaktivieren' : 'Provider aktivieren'}</button
+                      >
+                    </div>
+                    {#if v2Catalogs[slot.providerKind] !== undefined}<small role="status"
+                        >{v2Catalogs[slot.providerKind]?.modelIds.length ?? 0} Modelle geladen</small
+                      >{/if}
                   </article>
                 {/each}
               </div>
-            {:else}
-              <div class="setup-pending-state">
-                <strong>Modellliste wird benötigt</strong>
-                <p>
-                  Nach dem Verbinden lädt A^3 die aktuelle Modellliste. Falls sie nicht verfügbar
-                  ist, aktualisiere sie über die Schaltfläche oben.
-                </p>
+            </section>
+
+            <section class="model-setup-section" aria-labelledby="role-v2-heading">
+              <header class="setup-section-heading">
+                <div>
+                  <span class="setup-step" aria-hidden="true">2</span>
+                  <div>
+                    <h4 id="role-v2-heading">Aufgaben zuordnen</h4>
+                    <p>
+                      Modelle werden als Provider/Modell-Tupel geführt; gleiche IDs bleiben
+                      eindeutig.
+                    </p>
+                  </div>
+                </div>
+              </header>
+              <div class="model-role-list" aria-label="Providerübergreifende Modellzuordnungen">
+                {#each modelRoles as role (role)}
+                  {@const profile = v2RoleProfile(role)}
+                  <article class="model-role-row">
+                    <div><strong>{roleLabel(role)}</strong><span>{rolePurpose(role)}</span></div>
+                    <div class="model-role-selection">
+                      <code
+                        >{profile === null
+                          ? 'Nicht zugeordnet'
+                          : `${profile.providerKind} / ${profile.modelId}`}</code
+                      ><span>{profile === null ? 'Noch nicht geprüft' : 'Verifiziert'}</span>
+                    </div>
+                    <details>
+                      <summary>Modell wählen</summary>
+                      <div class="model-choice-list">
+                        {#each v2ModelOptions() as option (`${option.kind}:${option.modelId}`)}
+                          <button
+                            type="button"
+                            onclick={() => probeProviderRoleV2(option.kind, role, option.modelId)}
+                            >{option.kind} · {option.modelId}</button
+                          >
+                        {/each}
+                      </div>
+                    </details>
+                  </article>
+                {/each}
               </div>
-            {/if}
-          </section>
+            </section>
+          {:else}
+            <section class="model-setup-section" aria-labelledby="provider-setup-heading">
+              <header class="setup-section-heading">
+                <div>
+                  <span class="setup-step" aria-hidden="true">1</span>
+                  <div>
+                    <h4 id="provider-setup-heading">KI verbinden</h4>
+                    <p>Lokal mit Ollama oder über einen unterstützten Online-Anbieter.</p>
+                  </div>
+                </div>
+              </header>
+
+              {#if view.settings.endpoint === null}
+                <div class="setup-empty-state">
+                  <div>
+                    <strong>Bereit für deine Modellverbindung</strong>
+                    <p>
+                      Deinen Code kannst du bereits erkunden. Verbinde jetzt ein Modell für Fragen,
+                      Pläne und Agentenaufgaben.
+                    </p>
+                  </div>
+                  <div class="provider-choice-grid" aria-label="Provider auswählen">
+                    <button
+                      class="primary-action"
+                      type="button"
+                      onclick={() => openProviderDialog('create', 'ollama')}
+                      >Ollama verbinden</button
+                    >
+                    <button type="button" onclick={() => openProviderDialog('create', 'gemini')}
+                      >Google Gemini verwenden</button
+                    >
+                    <button type="button" onclick={() => openProviderDialog('create', 'openai')}
+                      >OpenAI verwenden</button
+                    >
+                  </div>
+                </div>
+              {:else}
+                <div class="provider-list" aria-label="Aktive Providerverbindung">
+                  <article class="provider-row">
+                    <div class="provider-logo" aria-hidden="true">
+                      {providerInitial(view.settings.endpoint.providerId)}
+                    </div>
+                    <div class="provider-summary">
+                      <div>
+                        <strong>{providerLabel(view.settings.endpoint.providerId)}</strong>
+                        <span class="settings-badge">{healthLabel(view.settings)}</span>
+                        <details class="status-help">
+                          <summary aria-label="Providerstatus erklären"
+                            ><span aria-hidden="true">i</span></summary
+                          >
+                          <div class="status-help-popover" role="note">
+                            <strong>{providerHealthExplanation(view.settings).title}</strong>
+                            <p>{providerHealthExplanation(view.settings).detail}</p>
+                            <p>{providerHealthExplanation(view.settings).nextStep}</p>
+                          </div>
+                        </details>
+                      </div>
+                      <code>{view.settings.endpoint.origin}</code>
+                    </div>
+                    <div class="provider-actions">
+                      <button type="button" onclick={() => openProviderDialog('edit')}
+                        >Bearbeiten</button
+                      >
+                      <button
+                        class="subtle-danger-action"
+                        type="button"
+                        onclick={() => openProviderDialog('remove')}>Entfernen</button
+                      >
+                    </div>
+                  </article>
+                </div>
+                {#if view.settings.endpoint.access === 'remoteBlocked'}
+                  <div class="remote-warning" role="alert">
+                    <strong>Remote-Verbindung blockiert</strong>
+                    <p>
+                      A^3 führt ohne exakte Freigabe weder Modellerkennung noch Capability-Prüfung
+                      aus.
+                    </p>
+                  </div>
+                {/if}
+                {#if view.settings.endpoint.access === 'explicitUserInitiatedRemote'}
+                  <div class="remote-warning" role="note">
+                    <strong>{providerLabel(view.settings.endpoint.providerId)} Cloud</strong>
+                    <p>
+                      Modellerkennung und Capability-Prüfung senden erst nach deinem Klick Daten an
+                      <code>{remoteProviderHost(view.settings.endpoint.providerId)}</code>. Spätere
+                      Agentenläufe können Prompts und ausgewählten Quelltext nur mit einer eigenen
+                      laufgebundenen Netzwerkfreigabe an {providerLabel(
+                        view.settings.endpoint.providerId,
+                      )} senden. Das Speichern des Keys erzeugt keinen Netzwerkzugriff.
+                    </p>
+                    {#if view.settings.endpoint.providerId === 'openai'}
+                      <p>
+                        OpenAI-Anfragen können abhängig vom Konto und Modell Kosten verursachen.
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
+            </section>
+
+            <section class="model-setup-section" aria-labelledby="role-setup-heading">
+              <header class="setup-section-heading setup-section-heading-action">
+                <div>
+                  <span class="setup-step" aria-hidden="true">2</span>
+                  <div>
+                    <h4 id="role-setup-heading">Aufgaben zuordnen</h4>
+                    <p>
+                      Jede Zuordnung wird separat geprüft. Ein Modellname allein aktiviert keine
+                      Funktion.
+                    </p>
+                  </div>
+                </div>
+                {#if view.settings.endpoint !== null}
+                  {#if action.kind === 'discovering' || (action.kind === 'cancelling' && action.role === null)}
+                    <button type="button" onclick={() => cancelOperation(null)}>
+                      {action.kind === 'cancelling'
+                        ? 'Abbruch angefordert …'
+                        : 'Erkennung abbrechen'}
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      disabled={!canUseActiveProvider(view.settings)}
+                      onclick={discoverModels}>Modelle aktualisieren</button
+                    >
+                  {/if}
+                {/if}
+              </header>
+
+              {#if view.settings.endpoint === null}
+                <div class="setup-pending-state">
+                  <strong>Provider erforderlich</strong>
+                  <p>
+                    Verbinde zuerst einen Provider. Die aktuelle Modellliste wird danach geladen.
+                  </p>
+                </div>
+              {:else if view.settings.endpoint.access === 'remoteBlocked'}
+                <div class="remote-warning" role="note">
+                  <strong>Modellzuordnung nicht verfügbar</strong>
+                  <p>Der konfigurierte Endpoint ist nicht an den lokalen Rechner gebunden.</p>
+                </div>
+              {:else if view.settings.endpoint.access === 'explicitUserInitiatedRemote' && view.settings.credential?.status !== 'configured'}
+                <div class="setup-pending-state">
+                  <strong
+                    >{providerLabel(view.settings.endpoint.providerId)} API-Key erforderlich</strong
+                  >
+                  <p>Speichere oder repariere den API-Key im vorherigen Schritt.</p>
+                </div>
+              {:else if modelCatalog !== null}
+                <div class="model-catalog-summary" role="status">
+                  <span>{modelCatalog.modelIds.length} Modelle gefunden</span>
+                  {#if modelCatalog.truncated}<span>Liste begrenzt</span>{/if}
+                </div>
+                {#if modelCatalog.modelIds.length === 0}
+                  <div class="setup-pending-state">
+                    <strong>Keine Modelle gefunden</strong>
+                    <p>Prüfe den Provider und aktualisiere anschließend die Modellliste.</p>
+                  </div>
+                {/if}
+              {/if}
+
+              {#if (modelCatalog !== null && modelCatalog.modelIds.length > 0) || hasRoleAssignments(view.settings)}
+                <div class="model-role-list" aria-label="Modellzuordnungen">
+                  {#each modelRoles as role (role)}
+                    <article class="model-role-row">
+                      <div>
+                        <strong>{roleLabel(role)}</strong>
+                        <span>{rolePurpose(role)}</span>
+                      </div>
+                      <div class="model-role-selection">
+                        <code>{roleModelId(view.settings, role) ?? 'Nicht zugeordnet'}</code>
+                        <div class="model-role-status">
+                          <span
+                            class:capability-limited={roleStatus(view.settings, role) ===
+                              'Capability fehlt'}>{roleStatus(view.settings, role)}</span
+                          >
+                          <details class="status-help">
+                            <summary aria-label={`Status für ${roleLabel(role)} erklären`}
+                              ><span aria-hidden="true">i</span></summary
+                            >
+                            <div class="status-help-popover" role="note">
+                              <strong>{roleStatusExplanation(view.settings, role).title}</strong>
+                              <p>{roleStatusExplanation(view.settings, role).detail}</p>
+                              <p>{roleStatusExplanation(view.settings, role).nextStep}</p>
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!canOpenRoleDialog(view.settings, role)}
+                        onclick={() => openRoleDialog(role)}
+                        >{roleModelId(view.settings, role) === null
+                          ? 'Einrichten'
+                          : 'Ändern'}</button
+                      >
+                    </article>
+                  {/each}
+                </div>
+              {:else}
+                <div class="setup-pending-state">
+                  <strong>Modellliste wird benötigt</strong>
+                  <p>
+                    Nach dem Verbinden lädt A^3 die aktuelle Modellliste. Falls sie nicht verfügbar
+                    ist, aktualisiere sie über die Schaltfläche oben.
+                  </p>
+                </div>
+              {/if}
+            </section>
+          {/if}
         </section>
       {:else if settingsView === 'project'}
         <section class="settings-page" aria-labelledby="project-page-heading">

@@ -109,6 +109,44 @@ export interface ProviderModelsResponseV1 {
   truncated: boolean;
 }
 
+export type ModelProviderKindV2 = ModelProviderKindV1;
+export interface ProviderSettingsV2 {
+  providerKind: ModelProviderKindV2;
+  defaultOrigin: string;
+  endpoint: ModelEndpointV1 | null;
+  enabled: boolean;
+  configurationRevision: string;
+  credential: ProviderCredentialV1 | null;
+  connectionVerifiedAtUnixMillis: string | null;
+  health: ProviderHealthV1 | null;
+}
+export interface LlmRoleProfileV2 extends LlmRoleProfileV1 {
+  providerKind: ModelProviderKindV2;
+}
+export interface EmbeddingRoleProfileV2 extends EmbeddingRoleProfileV1 {
+  providerKind: ModelProviderKindV2;
+}
+export interface SettingsV2 {
+  revision: string;
+  providers: [ProviderSettingsV2, ProviderSettingsV2, ProviderSettingsV2];
+  codingProfile: LlmRoleProfileV2 | null;
+  mappingProfile: LlmRoleProfileV2 | null;
+  embeddingProfile: EmbeddingRoleProfileV2 | null;
+  privacy: DataPrivacySettingsV1;
+  probeActive: boolean;
+}
+export interface SettingsResponseV2 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  settings: SettingsV2;
+}
+export interface ProviderModelsResponseV2 {
+  protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+  settings: SettingsV2;
+  providerKind: ModelProviderKindV2;
+  modelIds: string[];
+  truncated: boolean;
+}
+
 const invokeThroughTauri: InvokeCommand = (command, arguments_) =>
   tauriInvoke<unknown>(command, arguments_);
 
@@ -119,6 +157,135 @@ export async function querySettings(
     request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
   });
   return parseSettingsResponseV1(payload);
+}
+
+export async function querySettingsV2(
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  const payload = await invokeCommand('query_settings_v2', {
+    request: { protocolVersion: CURRENT_PROTOCOL_VERSION },
+  });
+  return parseSettingsResponseV2(payload);
+}
+
+export async function configureModelProviderV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  endpointOrigin: string | null,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('configure_model_provider_v2', {
+    request: {
+      endpointOrigin,
+      expectedSettingsRevision,
+      providerKind,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+    },
+  });
+  return parseSettingsResponseV2(payload);
+}
+
+export async function setModelProviderCredentialV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  apiKeyBytes: Uint8Array,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  if (apiKeyBytes.byteLength < 1 || apiKeyBytes.byteLength > 4_096)
+    throw new Error('Provider credential is outside the supported bounds.');
+  const serializedBytes = Array.from(apiKeyBytes);
+  try {
+    const payload = await invokeCommand('set_model_provider_credential_v2', {
+      request: {
+        apiKeyBytes: serializedBytes,
+        expectedSettingsRevision,
+        providerKind,
+        protocolVersion: CURRENT_PROTOCOL_VERSION,
+      },
+    });
+    return parseSettingsResponseV2(payload);
+  } finally {
+    serializedBytes.fill(0);
+  }
+}
+
+export async function deleteModelProviderCredentialV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('delete_model_provider_credential_v2', {
+    request: { expectedSettingsRevision, providerKind, protocolVersion: CURRENT_PROTOCOL_VERSION },
+  });
+  return parseSettingsResponseV2(payload);
+}
+
+export async function setModelProviderEnabledV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  enabled: boolean,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('set_model_provider_enabled_v2', {
+    request: {
+      enabled,
+      expectedSettingsRevision,
+      providerKind,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+    },
+  });
+  return parseSettingsResponseV2(payload);
+}
+
+export async function discoverProviderModelsV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<ProviderModelsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const payload = await invokeCommand('discover_provider_models_v2', {
+    request: { expectedSettingsRevision, providerKind, protocolVersion: CURRENT_PROTOCOL_VERSION },
+  });
+  return parseProviderModelsResponseV2(payload);
+}
+
+export async function probeModelRoleV2(
+  expectedSettingsRevision: string,
+  providerKind: ModelProviderKindV2,
+  input: ModelProbeInputV1,
+  invokeCommand: InvokeCommand = invokeThroughTauri,
+): Promise<SettingsResponseV2> {
+  assertCanonicalDecimal(expectedSettingsRevision, 'Settings revision');
+  const request =
+    input.role === 'embedding'
+      ? {
+          embeddingLimits: { maxBatchSize: input.maxBatchSize },
+          expectedSettingsRevision,
+          llmLimits: null,
+          modelId: input.modelId,
+          providerKind,
+          protocolVersion: CURRENT_PROTOCOL_VERSION,
+          role: input.role,
+        }
+      : {
+          embeddingLimits: null,
+          expectedSettingsRevision,
+          llmLimits: {
+            contextTokens: input.contextTokens,
+            outputTokens: input.outputTokens,
+            parallelism: input.parallelism,
+          },
+          modelId: input.modelId,
+          providerKind,
+          protocolVersion: CURRENT_PROTOCOL_VERSION,
+          role: input.role,
+        };
+  const payload = await invokeCommand('probe_model_role_v2', { request });
+  return parseSettingsResponseV2(payload);
 }
 
 export async function configureModelProvider(
@@ -293,6 +460,197 @@ export function parseProviderModelsResponseV1(payload: unknown): ProviderModelsR
     settingsRevision: payload.settingsRevision,
     truncated: payload.truncated,
   };
+}
+
+export function parseSettingsResponseV2(payload: unknown): SettingsResponseV2 {
+  if (
+    !isRecord(payload) ||
+    !hasExactKeys(payload, ['protocolVersion', 'settings']) ||
+    payload.protocolVersion !== CURRENT_PROTOCOL_VERSION
+  ) {
+    throw new Error('Settings response does not match the V2 schema.');
+  }
+  return { protocolVersion: payload.protocolVersion, settings: parseSettingsV2(payload.settings) };
+}
+
+export function parseProviderModelsResponseV2(payload: unknown): ProviderModelsResponseV2 {
+  if (
+    !isRecord(payload) ||
+    !hasExactKeys(payload, [
+      'modelIds',
+      'protocolVersion',
+      'providerKind',
+      'settings',
+      'truncated',
+    ]) ||
+    payload.protocolVersion !== CURRENT_PROTOCOL_VERSION ||
+    !isProviderKind(payload.providerKind) ||
+    !Array.isArray(payload.modelIds) ||
+    payload.modelIds.length > 256 ||
+    typeof payload.truncated !== 'boolean'
+  ) {
+    throw new Error('Provider model catalog does not match the V2 schema.');
+  }
+  const modelIds = payload.modelIds as unknown[];
+  if (
+    !modelIds.every(isModelId) ||
+    modelIds.some((modelId, index) => index > 0 && modelIds[index - 1]! >= modelId)
+  )
+    throw new Error('Provider model catalog contains invalid model IDs.');
+  return {
+    protocolVersion: payload.protocolVersion,
+    settings: parseSettingsV2(payload.settings),
+    providerKind: payload.providerKind,
+    modelIds: modelIds as string[],
+    truncated: payload.truncated,
+  };
+}
+
+function parseSettingsV2(value: unknown): SettingsV2 {
+  const keys = [
+    'codingProfile',
+    'embeddingProfile',
+    'mappingProfile',
+    'privacy',
+    'probeActive',
+    'providers',
+    'revision',
+  ];
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, keys) ||
+    typeof value.probeActive !== 'boolean' ||
+    !Array.isArray(value.providers) ||
+    value.providers.length !== 3
+  )
+    throw new Error('Settings response contains an invalid V2 snapshot.');
+  assertCanonicalDecimal(value.revision, 'Settings revision');
+  const providers = value.providers.map(parseProviderSettingsV2) as [
+    ProviderSettingsV2,
+    ProviderSettingsV2,
+    ProviderSettingsV2,
+  ];
+  const expected: ModelProviderKindV2[] = ['ollama', 'gemini', 'openai'];
+  if (providers.some((provider, index) => provider.providerKind !== expected[index]))
+    throw new Error('Settings providers are not canonical or unique.');
+  return {
+    revision: value.revision,
+    providers,
+    codingProfile: parseNullable(value.codingProfile, parseLlmProfileV2),
+    mappingProfile: parseNullable(value.mappingProfile, parseLlmProfileV2),
+    embeddingProfile: parseNullable(value.embeddingProfile, parseEmbeddingProfileV2),
+    privacy: parsePrivacy(value.privacy),
+    probeActive: value.probeActive,
+  };
+}
+
+function parseProviderSettingsV2(value: unknown): ProviderSettingsV2 {
+  const keys = [
+    'configurationRevision',
+    'connectionVerifiedAtUnixMillis',
+    'credential',
+    'defaultOrigin',
+    'enabled',
+    'endpoint',
+    'health',
+    'providerKind',
+  ];
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, keys) ||
+    !isProviderKind(value.providerKind) ||
+    typeof value.defaultOrigin !== 'string' ||
+    typeof value.enabled !== 'boolean' ||
+    typeof value.configurationRevision !== 'string' ||
+    (value.connectionVerifiedAtUnixMillis !== null &&
+      typeof value.connectionVerifiedAtUnixMillis !== 'string')
+  )
+    throw new Error('Settings response contains an invalid provider slot.');
+  assertCanonicalDecimal(value.configurationRevision, 'Provider configuration revision');
+  if (value.connectionVerifiedAtUnixMillis !== null)
+    assertCanonicalDecimal(value.connectionVerifiedAtUnixMillis, 'Provider verification timestamp');
+  const endpoint = parseNullable(value.endpoint, parseEndpoint);
+  const expectedDefaultOrigins: Record<ModelProviderKindV2, string> = {
+    ollama: 'http://127.0.0.1:11434',
+    gemini: 'https://generativelanguage.googleapis.com',
+    openai: 'https://api.openai.com',
+  };
+  if (value.defaultOrigin !== expectedDefaultOrigins[value.providerKind])
+    throw new Error('Settings response contains an invalid provider default origin.');
+  if (endpoint !== null && endpoint.providerId !== value.providerKind)
+    throw new Error('Settings response contains a provider/endpoint mismatch.');
+  const credential = parseNullable(value.credential, parseCredential);
+  const health = parseNullable(value.health, parseProviderHealth);
+  const requiresCredential = value.providerKind === 'gemini' || value.providerKind === 'openai';
+  if (
+    (endpoint === null && (credential !== null || value.connectionVerifiedAtUnixMillis !== null)) ||
+    (endpoint !== null && requiresCredential && credential === null) ||
+    (endpoint !== null && !requiresCredential && credential !== null) ||
+    (credential !== null && credential.status === 'configured' && endpoint === null) ||
+    (value.enabled && requiresCredential && credential?.status !== 'configured')
+  )
+    throw new Error('Settings response contains inconsistent provider slot state.');
+  if (value.enabled && (endpoint === null || value.connectionVerifiedAtUnixMillis === null))
+    throw new Error('Provider activation is not backed by connection evidence.');
+  return {
+    providerKind: value.providerKind,
+    defaultOrigin: value.defaultOrigin,
+    endpoint,
+    enabled: value.enabled,
+    configurationRevision: value.configurationRevision,
+    credential,
+    connectionVerifiedAtUnixMillis: value.connectionVerifiedAtUnixMillis,
+    health,
+  };
+}
+
+function parseLlmProfileV2(value: unknown): LlmRoleProfileV2 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'activation',
+      'contextTokens',
+      'modelId',
+      'outputTokens',
+      'parallelism',
+      'probedAtUnixMillis',
+      'profileId',
+      'providerKind',
+      'structuredOutput',
+      'toolCallMode',
+    ])
+  )
+    throw new Error('Settings response contains an invalid provider-bound LLM profile.');
+  if (!isProviderKind(value.providerKind))
+    throw new Error('Settings response contains an invalid profile provider.');
+  const baseValue = { ...value };
+  delete baseValue.providerKind;
+  const base = parseLlmProfile(baseValue);
+  return { ...base, providerKind: value.providerKind };
+}
+
+function parseEmbeddingProfileV2(value: unknown): EmbeddingRoleProfileV2 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'dimension',
+      'maxBatchSize',
+      'modelId',
+      'probedAtUnixMillis',
+      'profileId',
+      'providerKind',
+    ]) ||
+    !isProviderKind(value.providerKind)
+  )
+    throw new Error('Settings response contains an invalid provider-bound embedding profile.');
+  const baseValue = { ...value };
+  delete baseValue.providerKind;
+  const base = parseEmbeddingProfile(baseValue);
+  return { ...base, providerKind: value.providerKind };
+}
+
+function isProviderKind(value: unknown): value is ModelProviderKindV2 {
+  return value === 'ollama' || value === 'gemini' || value === 'openai';
 }
 
 function parseSettings(value: unknown): SettingsV1 {

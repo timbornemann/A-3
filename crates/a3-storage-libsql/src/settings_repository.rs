@@ -3,9 +3,10 @@ use crate::{CatalogDatabase, CatalogOpenError};
 use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStoreFailure,
     DesktopSettingsStoreVersion, LlmModelRole, LlmRoleProfile, ModelEndpointAccess,
-    ModelEndpointScope, ProviderCredentialGeneration, ProviderCredentialLifecycle,
-    ProviderCredentialMetadata, ProviderCredentialRequirement, ProviderHealthObservation,
-    ProviderHealthStatus, SettingsTimestamp, StoredDesktopSettings, VerifiedEmbeddingProfile,
+    ModelEndpointScope, ModelProviderKind, ProviderCredentialGeneration,
+    ProviderCredentialLifecycle, ProviderCredentialMetadata, ProviderCredentialRequirement,
+    ProviderHealthObservation, ProviderHealthStatus, SettingsTimestamp, StoredDesktopSettings,
+    VerifiedEmbeddingProfile,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingDimension, EmbeddingModelId, EmbeddingModelProfile,
@@ -88,10 +89,110 @@ async fn load_from_connection(
     let health = decode_health(endpoint.as_ref(), health_status, health_checked_at)?;
     let (coding, mapping) = load_llm_profiles(connection, version).await?;
     let embedding = load_embedding_profile(connection, version).await?;
-    let settings = DesktopSettings::from_stored_parts(
+    let mut settings = DesktopSettings::from_stored_parts(
         endpoint, credential, health, coding, mapping, embedding,
     )
     .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    let mut provider_count = 0usize;
+    let mut table_rows = connection
+        .query(
+            "SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'desktop_provider_settings' LIMIT 1",
+            (),
+        )
+        .await
+        .map_err(SettingsRepositoryError::Read)?;
+    let provider_table_exists = table_rows
+        .next()
+        .await
+        .map_err(SettingsRepositoryError::Read)?
+        .is_some();
+    if provider_table_exists {
+        let mut provider_rows = connection
+            .query(
+                "SELECT provider_kind, endpoint_provider_id, endpoint_origin, endpoint_scope,
+                 endpoint_access, credential_requirement, credential_state, credential_generation,
+                 enabled, configuration_revision, connection_verified_at_unix_millis,
+                 health_status, health_checked_at_unix_millis
+                 FROM desktop_provider_settings WHERE revision = ?1 ORDER BY provider_kind",
+                [u64_to_i64(version.get())?],
+            )
+            .await
+            .map_err(SettingsRepositoryError::Read)?;
+        while let Some(row) = provider_rows
+            .next()
+            .await
+            .map_err(SettingsRepositoryError::Read)?
+        {
+            provider_count = provider_count.saturating_add(1);
+            let kind = decode_provider_kind(&read_string(&row, 0)?)?;
+            let endpoint = decode_endpoint(
+                read_optional_string(&row, 1)?,
+                read_optional_string(&row, 2)?,
+                read_optional_string(&row, 3)?,
+                read_optional_string(&row, 4)?,
+                &read_string(&row, 5)?,
+            )?;
+            let credential = decode_credential(&read_string(&row, 6)?, read_u64(&row, 7)?)?;
+            let enabled = read_bool(&row, 8)?;
+            let configuration_revision = read_u64(&row, 9)?;
+            let connection_verified_at = read_optional_timestamp(&row, 10)?;
+            let health = decode_health(
+                endpoint.as_ref(),
+                Some(read_string(&row, 11)?),
+                read_optional_i64(&row, 12)?,
+            )?
+            .ok_or(SettingsRepositoryError::InvalidStoredData)?;
+            settings = settings
+                .with_stored_provider_state(
+                    kind,
+                    endpoint,
+                    enabled,
+                    configuration_revision,
+                    credential,
+                    health,
+                    connection_verified_at,
+                )
+                .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+        }
+    }
+    if provider_count != 0 && provider_count != 3 {
+        return Err(SettingsRepositoryError::InvalidStoredData);
+    }
+    if provider_count == 0
+        && let Some(endpoint) = settings.endpoint().cloned()
+        && let Some(kind) = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+    {
+        let verified_at = [
+            settings
+                .llm_profile(LlmModelRole::Coding)
+                .map(LlmRoleProfile::probed_at),
+            settings
+                .llm_profile(LlmModelRole::Mapping)
+                .map(LlmRoleProfile::probed_at),
+            settings
+                .embedding_profile()
+                .map(VerifiedEmbeddingProfile::probed_at),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+        let credential = settings.credential();
+        let health = settings.provider_health().unwrap_or_else(|| {
+            ProviderHealthObservation::initial(ModelEndpointScope::LocalLoopback)
+        });
+        settings = settings
+            .with_stored_provider_state(
+                kind,
+                Some(endpoint),
+                verified_at.is_some(),
+                0,
+                credential,
+                health,
+                verified_at,
+            )
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
+    }
     Ok(StoredDesktopSettings::new(version, settings))
 }
 
@@ -187,6 +288,9 @@ async fn append_in_transaction(
         )
         .await
         .map_err(classify_write)?;
+    for slot in settings.providers() {
+        insert_provider_settings(transaction, next, slot).await?;
+    }
     for role in [LlmModelRole::Coding, LlmModelRole::Mapping] {
         if let Some(profile) = settings.llm_profile(role) {
             insert_llm_profile(transaction, next, role, profile).await?;
@@ -196,6 +300,50 @@ async fn append_in_transaction(
         insert_embedding_profile(transaction, next, profile).await?;
     }
     Ok(StoredDesktopSettings::new(next, settings.clone()))
+}
+
+async fn insert_provider_settings(
+    transaction: &Transaction,
+    version: DesktopSettingsStoreVersion,
+    slot: &a3_application::ProviderSettings,
+) -> Result<(), SettingsRepositoryError> {
+    let endpoint = slot.endpoint();
+    let health = slot.health();
+    transaction
+        .execute(
+            "INSERT INTO desktop_provider_settings (
+             revision, provider_kind, endpoint_provider_id, endpoint_origin, endpoint_scope,
+             endpoint_access, credential_requirement, credential_state, credential_generation,
+             enabled, configuration_revision, connection_verified_at_unix_millis,
+             health_status, health_checked_at_unix_millis
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                u64_to_i64(version.get())?,
+                slot.kind().provider_id(),
+                endpoint.map(|value| value.provider_id().as_str().to_owned()),
+                endpoint.map(|value| value.canonical_origin().to_owned()),
+                endpoint.map(|value| encode_scope(value.scope())),
+                endpoint.map(|value| encode_access(value.access())),
+                endpoint.map_or("none", |value| encode_credential_requirement(
+                    value.credential_requirement()
+                )),
+                encode_credential_lifecycle(slot.credential().lifecycle()),
+                u64_to_i64(slot.credential().generation().get())?,
+                if slot.enabled() { 1_i64 } else { 0_i64 },
+                u64_to_i64(slot.configuration_revision())?,
+                slot.connection_verified_at()
+                    .map(|value| u64_to_i64(value.unix_millis()))
+                    .transpose()?,
+                encode_health_status(health.status()),
+                health
+                    .checked_at()
+                    .map(|value| u64_to_i64(value.unix_millis()))
+                    .transpose()?
+            ],
+        )
+        .await
+        .map_err(classify_write)?;
+    Ok(())
 }
 
 async fn insert_llm_profile(
@@ -418,6 +566,10 @@ fn decode_endpoint(
     }
 }
 
+fn decode_provider_kind(value: &str) -> Result<ModelProviderKind, SettingsRepositoryError> {
+    ModelProviderKind::from_provider_id(value).ok_or(SettingsRepositoryError::InvalidStoredData)
+}
+
 fn decode_credential(
     lifecycle: &str,
     generation: u64,
@@ -438,6 +590,9 @@ fn decode_health(
 ) -> Result<Option<ProviderHealthObservation>, SettingsRepositoryError> {
     match (endpoint, status, checked_at) {
         (None, None, None) => Ok(None),
+        (None, Some(status), None) if status == "not_checked" => Ok(Some(
+            ProviderHealthObservation::initial(ModelEndpointScope::LocalLoopback),
+        )),
         (Some(endpoint), Some(status), None) => {
             let decoded = decode_health_status(&status)?;
             let expected = ProviderHealthObservation::initial_for_endpoint(endpoint);
@@ -672,6 +827,31 @@ fn read_timestamp(
     let value = u64::try_from(value).map_err(|_| SettingsRepositoryError::InvalidStoredData)?;
     SettingsTimestamp::from_unix_millis(value)
         .map_err(|_| SettingsRepositoryError::InvalidStoredData)
+}
+
+fn read_optional_timestamp(
+    row: &libsql::Row,
+    index: i32,
+) -> Result<Option<SettingsTimestamp>, SettingsRepositoryError> {
+    read_optional_i64(row, index)?
+        .map(|value| {
+            SettingsTimestamp::from_unix_millis(
+                u64::try_from(value).map_err(|_| SettingsRepositoryError::InvalidStoredData)?,
+            )
+            .map_err(|_| SettingsRepositoryError::InvalidStoredData)
+        })
+        .transpose()
+}
+
+fn read_bool(row: &libsql::Row, index: i32) -> Result<bool, SettingsRepositoryError> {
+    match row
+        .get::<i64>(index)
+        .map_err(SettingsRepositoryError::Read)?
+    {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(SettingsRepositoryError::InvalidStoredData),
+    }
 }
 
 fn read_string(row: &libsql::Row, index: i32) -> Result<String, SettingsRepositoryError> {

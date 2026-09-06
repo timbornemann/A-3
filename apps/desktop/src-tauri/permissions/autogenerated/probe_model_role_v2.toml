@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-probe-model-role-v2"
+description = "Enables the probe_model_role_v2 command without any pre-configured scope."
+commands.allow = ["probe_model_role_v2"]
+
+[[permission]]
+identifier = "deny-probe-model-role-v2"
+description = "Denies the probe_model_role_v2 command without any pre-configured scope."
+commands.deny = ["probe_model_role_v2"]

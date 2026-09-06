@@ -428,6 +428,37 @@ const CATALOG_MIGRATIONS: &[Migration] = &[
             SELECT RAISE(ABORT, 'UI preference revisions are append-only');\n\
           END;",
     },
+    Migration {
+        version: 8,
+        name: "multi_provider_settings_snapshots",
+        sql: "CREATE TABLE desktop_provider_settings (
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          provider_kind TEXT NOT NULL CHECK (provider_kind IN ('ollama', 'gemini', 'openai')),
+          endpoint_provider_id TEXT CHECK (endpoint_provider_id IS NULL OR length(CAST(endpoint_provider_id AS BLOB)) BETWEEN 1 AND 128),
+          endpoint_origin TEXT CHECK (endpoint_origin IS NULL OR length(CAST(endpoint_origin AS BLOB)) BETWEEN 1 AND 2048),
+          endpoint_scope TEXT CHECK (endpoint_scope IS NULL OR endpoint_scope IN ('local_loopback', 'remote')),
+          endpoint_access TEXT CHECK (endpoint_access IS NULL OR endpoint_access IN ('local', 'remote_blocked', 'explicit_user_initiated_remote')),
+          credential_requirement TEXT NOT NULL CHECK (credential_requirement IN ('none', 'api_key')),
+          credential_state TEXT NOT NULL CHECK (credential_state IN ('not_required', 'missing', 'storing', 'configured', 'deleting')),
+          credential_generation INTEGER NOT NULL CHECK (credential_generation >= 0),
+          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+          configuration_revision INTEGER NOT NULL CHECK (configuration_revision >= 0),
+          connection_verified_at_unix_millis INTEGER CHECK (connection_verified_at_unix_millis IS NULL OR connection_verified_at_unix_millis >= 0),
+          health_status TEXT NOT NULL CHECK (health_status IN ('not_checked', 'healthy', 'capability_limited', 'unreachable', 'cancelled', 'remote_blocked')),
+          health_checked_at_unix_millis INTEGER CHECK (health_checked_at_unix_millis IS NULL OR health_checked_at_unix_millis >= 0),
+          PRIMARY KEY (revision, provider_kind),
+          FOREIGN KEY (revision) REFERENCES desktop_settings_revisions(revision)
+            ON UPDATE RESTRICT ON DELETE RESTRICT
+          ) STRICT;
+          CREATE TRIGGER desktop_provider_settings_update_guard
+          BEFORE UPDATE ON desktop_provider_settings BEGIN
+            SELECT RAISE(ABORT, 'desktop provider settings are immutable');
+          END;
+          CREATE TRIGGER desktop_provider_settings_delete_guard
+          BEFORE DELETE ON desktop_provider_settings BEGIN
+            SELECT RAISE(ABORT, 'desktop provider settings are append-only');
+          END;",
+    },
 ];
 
 const KNOWLEDGE_BOOTSTRAP_MIGRATION: Migration = Migration {
@@ -3263,7 +3294,7 @@ pub struct CatalogSchemaVersion(u32);
 
 impl CatalogSchemaVersion {
     /// Current schema version understood by this build.
-    pub const CURRENT: Self = Self::new(7);
+    pub const CURRENT: Self = Self::new(8);
 
     /// Creates a schema version from a migration number.
     #[must_use]

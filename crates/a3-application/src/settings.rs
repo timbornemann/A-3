@@ -217,6 +217,14 @@ impl ConfiguredModelEndpoint {
         &self.canonical_origin
     }
 
+    /// Returns a stable, content-free fingerprint for credential origin binding.
+    #[must_use]
+    pub fn origin_fingerprint(&self) -> String {
+        blake3::hash(self.canonical_origin.as_bytes())
+            .to_hex()
+            .to_string()
+    }
+
     /// Returns whether requests remain on literal host loopback.
     #[must_use]
     pub const fn scope(&self) -> ModelEndpointScope {
@@ -450,6 +458,143 @@ pub enum ProviderHealthStatus {
     RemoteBlocked,
 }
 
+/// The three closed provider slots exposed by the desktop settings boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ModelProviderKind {
+    /// Local Ollama-compatible provider.
+    Ollama,
+    /// Google Gemini provider.
+    Gemini,
+    /// OpenAI-compatible provider using the native OpenAI wire contract.
+    OpenAi,
+}
+
+impl ModelProviderKind {
+    /// Returns the stable provider identifier used by domain profiles and keyring entries.
+    #[must_use]
+    pub const fn provider_id(self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::Gemini => "gemini",
+            Self::OpenAi => "openai",
+        }
+    }
+
+    /// Returns the official credential-free origin shown as the slot default.
+    #[must_use]
+    pub const fn default_origin(self) -> &'static str {
+        match self {
+            Self::Ollama => "http://127.0.0.1:11434",
+            Self::Gemini => "https://generativelanguage.googleapis.com",
+            Self::OpenAi => "https://api.openai.com",
+        }
+    }
+
+    /// Returns the fingerprint used to permit one-time legacy-key migration for the official origin.
+    #[must_use]
+    pub fn default_origin_fingerprint(self) -> String {
+        blake3::hash(self.default_origin().as_bytes())
+            .to_hex()
+            .to_string()
+    }
+
+    /// Returns the canonical ordering used by persistence and IPC.
+    #[must_use]
+    pub const fn all() -> [Self; 3] {
+        [Self::Ollama, Self::Gemini, Self::OpenAi]
+    }
+
+    /// Resolves a stable provider identifier.
+    #[must_use]
+    pub fn from_provider_id(value: &str) -> Option<Self> {
+        match value {
+            "ollama" => Some(Self::Ollama),
+            "gemini" => Some(Self::Gemini),
+            "openai" => Some(Self::OpenAi),
+            _ => None,
+        }
+    }
+}
+
+/// One durable provider slot. Secrets are represented only by content-free metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSettings {
+    kind: ModelProviderKind,
+    endpoint: Option<ConfiguredModelEndpoint>,
+    enabled: bool,
+    configuration_revision: u64,
+    credential: ProviderCredentialMetadata,
+    health: ProviderHealthObservation,
+    connection_verified_at: Option<SettingsTimestamp>,
+}
+
+impl ProviderSettings {
+    /// Creates an untouched, disabled provider slot.
+    #[must_use]
+    pub const fn initial(kind: ModelProviderKind) -> Self {
+        Self {
+            kind,
+            endpoint: None,
+            enabled: false,
+            configuration_revision: 0,
+            credential: ProviderCredentialMetadata::not_required(),
+            health: ProviderHealthObservation {
+                status: ProviderHealthStatus::NotChecked,
+                checked_at: None,
+            },
+            connection_verified_at: None,
+        }
+    }
+
+    /// Returns the closed provider kind.
+    #[must_use]
+    pub const fn kind(&self) -> ModelProviderKind {
+        self.kind
+    }
+
+    /// Returns the configured endpoint, if one was explicitly saved.
+    #[must_use]
+    pub const fn endpoint(&self) -> Option<&ConfiguredModelEndpoint> {
+        self.endpoint.as_ref()
+    }
+
+    /// Returns the canonical official origin used for this slot's default.
+    #[must_use]
+    pub const fn default_origin(&self) -> &'static str {
+        self.kind.default_origin()
+    }
+
+    /// Returns whether the provider is currently enabled for model selection.
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the provider-local configuration revision.
+    #[must_use]
+    pub const fn configuration_revision(&self) -> u64 {
+        self.configuration_revision
+    }
+
+    /// Returns content-free credential metadata.
+    #[must_use]
+    pub const fn credential(&self) -> ProviderCredentialMetadata {
+        self.credential
+    }
+
+    /// Returns the most recent explicit health observation.
+    #[must_use]
+    pub const fn health(&self) -> ProviderHealthObservation {
+        self.health
+    }
+
+    /// Returns the content-free successful connection time.
+    #[must_use]
+    pub const fn connection_verified_at(&self) -> Option<SettingsTimestamp> {
+        self.connection_verified_at
+    }
+}
+
 /// Timestamped health evidence, or the initial state without a timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderHealthObservation {
@@ -585,6 +730,7 @@ impl DataPrivacySettings {
 /// Complete application-owned Settings V1 snapshot without persistence metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSettings {
+    providers: [ProviderSettings; 3],
     endpoint: Option<ConfiguredModelEndpoint>,
     credential: ProviderCredentialMetadata,
     provider_health: Option<ProviderHealthObservation>,
@@ -599,6 +745,11 @@ impl DesktopSettings {
     #[must_use]
     pub const fn unconfigured() -> Self {
         Self {
+            providers: [
+                ProviderSettings::initial(ModelProviderKind::Ollama),
+                ProviderSettings::initial(ModelProviderKind::Gemini),
+                ProviderSettings::initial(ModelProviderKind::OpenAi),
+            ],
             endpoint: None,
             credential: ProviderCredentialMetadata::not_required(),
             provider_health: None,
@@ -607,6 +758,174 @@ impl DesktopSettings {
             embedding_profile: None,
             privacy: DataPrivacySettings::offline_first_v1(),
         }
+    }
+
+    /// Returns the exactly three canonical provider slots in stable order.
+    #[must_use]
+    pub const fn providers(&self) -> &[ProviderSettings; 3] {
+        &self.providers
+    }
+
+    /// Returns one canonical provider slot.
+    #[must_use]
+    pub fn provider(&self, kind: ModelProviderKind) -> &ProviderSettings {
+        &self.providers[provider_index(kind)]
+    }
+
+    /// Replaces one provider origin and invalidates only that provider's derived evidence.
+    #[must_use]
+    pub fn with_provider_endpoint(
+        mut self,
+        kind: ModelProviderKind,
+        endpoint: Option<ConfiguredModelEndpoint>,
+    ) -> Self {
+        let index = provider_index(kind);
+        let changed = self.providers[index].endpoint != endpoint;
+        if changed {
+            let slot = &mut self.providers[index];
+            slot.endpoint = endpoint;
+            slot.configuration_revision = slot.configuration_revision.saturating_add(1);
+            slot.enabled = false;
+            slot.connection_verified_at = None;
+            slot.health = slot.endpoint.as_ref().map_or_else(
+                || ProviderHealthObservation::initial(ModelEndpointScope::LocalLoopback),
+                ProviderHealthObservation::initial_for_endpoint,
+            );
+            slot.credential = slot.endpoint.as_ref().map_or_else(
+                ProviderCredentialMetadata::not_required,
+                |configured| match configured.credential_requirement() {
+                    ProviderCredentialRequirement::None => {
+                        ProviderCredentialMetadata::not_required()
+                    }
+                    ProviderCredentialRequirement::ApiKey => ProviderCredentialMetadata::missing(),
+                },
+            );
+            self.remove_provider_profiles(kind);
+        }
+        self
+    }
+
+    /// Enables or disables one provider. Enabling requires a successful explicit connection.
+    pub fn with_provider_enabled(
+        mut self,
+        kind: ModelProviderKind,
+        enabled: bool,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let index = provider_index(kind);
+        if enabled {
+            let slot = &self.providers[index];
+            if slot.endpoint.is_none() || slot.connection_verified_at.is_none() {
+                return Err(DesktopSettingsUpdateError::ConnectionUnverified);
+            }
+            if slot.endpoint.as_ref().is_some_and(|endpoint| {
+                endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+            }) && slot.credential.lifecycle() != ProviderCredentialLifecycle::Configured
+            {
+                return Err(DesktopSettingsUpdateError::CredentialUnavailable);
+            }
+        } else {
+            self.remove_provider_profiles(kind);
+        }
+        self.providers[index].enabled = enabled;
+        Ok(self)
+    }
+
+    /// Records an explicit successful connection/model-catalog test for one provider.
+    pub fn with_provider_connection_verified(
+        mut self,
+        kind: ModelProviderKind,
+        verified_at: SettingsTimestamp,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let slot = &mut self.providers[provider_index(kind)];
+        let endpoint = slot
+            .endpoint
+            .as_ref()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+            && slot.credential.lifecycle() != ProviderCredentialLifecycle::Configured
+        {
+            return Err(DesktopSettingsUpdateError::CredentialUnavailable);
+        }
+        slot.connection_verified_at = Some(verified_at);
+        slot.health =
+            ProviderHealthObservation::checked(ProviderHealthStatus::Healthy, verified_at)
+                .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?;
+        Ok(self)
+    }
+
+    /// Records a non-destructive failed retest for one provider.
+    pub fn with_provider_probe_failure(
+        mut self,
+        kind: ModelProviderKind,
+        status: ProviderHealthStatus,
+        checked_at: SettingsTimestamp,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        if !matches!(
+            status,
+            ProviderHealthStatus::Unreachable | ProviderHealthStatus::Cancelled
+        ) {
+            return Err(DesktopSettingsUpdateError::InvalidHealth);
+        }
+        let slot = &mut self.providers[provider_index(kind)];
+        if slot.endpoint.is_none() {
+            return Err(DesktopSettingsUpdateError::EndpointUnavailable);
+        }
+        slot.health = ProviderHealthObservation::checked(status, checked_at)
+            .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?;
+        Ok(self)
+    }
+
+    /// Reconstructs one provider slot from validated persistence fields without network access.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_stored_provider_state(
+        mut self,
+        kind: ModelProviderKind,
+        endpoint: Option<ConfiguredModelEndpoint>,
+        enabled: bool,
+        configuration_revision: u64,
+        credential: ProviderCredentialMetadata,
+        health: ProviderHealthObservation,
+        connection_verified_at: Option<SettingsTimestamp>,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let index = provider_index(kind);
+        if endpoint
+            .as_ref()
+            .is_some_and(|value| value.provider_id().as_str() != kind.provider_id())
+        {
+            return Err(DesktopSettingsUpdateError::ProviderMismatch);
+        }
+        if endpoint.is_none() && (enabled || connection_verified_at.is_some()) {
+            return Err(DesktopSettingsUpdateError::EndpointUnavailable);
+        }
+        if enabled && connection_verified_at.is_none() {
+            return Err(DesktopSettingsUpdateError::ConnectionUnverified);
+        }
+        self.providers[index] = ProviderSettings {
+            kind,
+            endpoint,
+            enabled,
+            configuration_revision,
+            credential,
+            health,
+            connection_verified_at,
+        };
+        Ok(self)
+    }
+
+    fn remove_provider_profiles(&mut self, kind: ModelProviderKind) {
+        let provider_id = kind.provider_id();
+        self.coding_profile = self
+            .coding_profile
+            .take()
+            .filter(|profile| profile.profile().provider_id().as_str() != provider_id);
+        self.mapping_profile = self
+            .mapping_profile
+            .take()
+            .filter(|profile| profile.profile().provider_id().as_str() != provider_id);
+        self.embedding_profile = self
+            .embedding_profile
+            .take()
+            .filter(|profile| profile.profile().provider_id().as_str() != provider_id);
     }
 
     /// Returns the configured provider origin, if any.
@@ -619,6 +938,108 @@ impl DesktopSettings {
     #[must_use]
     pub const fn credential(&self) -> ProviderCredentialMetadata {
         self.credential
+    }
+
+    /// Returns content-free metadata for one provider slot.
+    #[must_use]
+    pub fn provider_credential(&self, kind: ModelProviderKind) -> ProviderCredentialMetadata {
+        self.provider(kind).credential()
+    }
+
+    /// Starts a provider-specific credential write and invalidates only that provider's evidence.
+    pub fn begin_provider_credential_store(
+        mut self,
+        kind: ModelProviderKind,
+    ) -> Result<(Self, ProviderCredentialGeneration), DesktopSettingsUpdateError> {
+        let index = provider_index(kind);
+        let slot = &mut self.providers[index];
+        let endpoint = slot
+            .endpoint()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.credential_requirement() != ProviderCredentialRequirement::ApiKey {
+            return Err(DesktopSettingsUpdateError::CredentialNotRequired);
+        }
+        let generation = slot
+            .credential()
+            .generation()
+            .next()
+            .map_err(|_| DesktopSettingsUpdateError::InvalidCredentialState)?;
+        slot.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Storing,
+            generation,
+        )?;
+        slot.configuration_revision = slot.configuration_revision.saturating_add(1);
+        slot.connection_verified_at = None;
+        slot.enabled = false;
+        self.remove_provider_profiles(kind);
+        Ok((self, generation))
+    }
+
+    /// Completes a provider-specific credential write.
+    pub fn complete_provider_credential_store(
+        mut self,
+        kind: ModelProviderKind,
+        generation: ProviderCredentialGeneration,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let slot = &mut self.providers[provider_index(kind)];
+        if slot.credential().lifecycle() != ProviderCredentialLifecycle::Storing
+            || slot.credential().generation() != generation
+        {
+            return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+        }
+        slot.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Configured,
+            generation,
+        )?;
+        Ok(self)
+    }
+
+    /// Starts deletion of one provider credential while retaining its endpoint.
+    pub fn begin_provider_credential_delete(
+        mut self,
+        kind: ModelProviderKind,
+    ) -> Result<(Self, ProviderCredentialGeneration), DesktopSettingsUpdateError> {
+        let index = provider_index(kind);
+        let slot = &mut self.providers[index];
+        let endpoint = slot
+            .endpoint()
+            .ok_or(DesktopSettingsUpdateError::EndpointUnavailable)?;
+        if endpoint.credential_requirement() != ProviderCredentialRequirement::ApiKey {
+            return Err(DesktopSettingsUpdateError::CredentialNotRequired);
+        }
+        let generation = slot
+            .credential()
+            .generation()
+            .next()
+            .map_err(|_| DesktopSettingsUpdateError::InvalidCredentialState)?;
+        slot.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Deleting,
+            generation,
+        )?;
+        slot.configuration_revision = slot.configuration_revision.saturating_add(1);
+        slot.connection_verified_at = None;
+        slot.enabled = false;
+        self.remove_provider_profiles(kind);
+        Ok((self, generation))
+    }
+
+    /// Completes deletion of one provider credential.
+    pub fn complete_provider_credential_delete(
+        mut self,
+        kind: ModelProviderKind,
+        generation: ProviderCredentialGeneration,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let slot = &mut self.providers[provider_index(kind)];
+        if slot.credential().lifecycle() != ProviderCredentialLifecycle::Deleting
+            || slot.credential().generation() != generation
+        {
+            return Err(DesktopSettingsUpdateError::InvalidCredentialState);
+        }
+        slot.credential = ProviderCredentialMetadata::from_stored_parts(
+            ProviderCredentialLifecycle::Missing,
+            generation,
+        )?;
+        Ok(self)
     }
 
     /// Returns the health state belonging to the current endpoint.
@@ -669,6 +1090,32 @@ impl DesktopSettings {
             self.coding_profile = None;
             self.mapping_profile = None;
             self.embedding_profile = None;
+            for kind in ModelProviderKind::all() {
+                let matches = self
+                    .endpoint
+                    .as_ref()
+                    .is_some_and(|value| value.provider_id().as_str() == kind.provider_id());
+                if matches {
+                    let index = provider_index(kind);
+                    let slot = &mut self.providers[index];
+                    slot.endpoint = self.endpoint.clone();
+                    slot.configuration_revision = slot.configuration_revision.saturating_add(1);
+                    slot.enabled = false;
+                    slot.connection_verified_at = None;
+                    slot.credential = self.credential;
+                    slot.health = match (self.provider_health, self.endpoint.as_ref()) {
+                        (Some(health), _) => health,
+                        (None, Some(endpoint)) => {
+                            ProviderHealthObservation::initial_for_endpoint(endpoint)
+                        }
+                        (None, None) => {
+                            ProviderHealthObservation::initial(ModelEndpointScope::LocalLoopback)
+                        }
+                    };
+                } else if self.endpoint.is_none() {
+                    self.providers[provider_index(kind)] = ProviderSettings::initial(kind);
+                }
+            }
         }
         self
     }
@@ -693,6 +1140,11 @@ impl DesktopSettings {
             ProviderCredentialLifecycle::Storing,
             generation,
         )?;
+        if let Some(endpoint) = self.endpoint.as_ref()
+            && let Some(kind) = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+        {
+            self.providers[provider_index(kind)].credential = self.credential;
+        }
         self.invalidate_provider_evidence();
         Ok((self, generation))
     }
@@ -711,6 +1163,11 @@ impl DesktopSettings {
             ProviderCredentialLifecycle::Configured,
             generation,
         )?;
+        if let Some(endpoint) = self.endpoint.as_ref()
+            && let Some(kind) = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+        {
+            self.providers[provider_index(kind)].credential = self.credential;
+        }
         Ok(self)
     }
 
@@ -734,6 +1191,11 @@ impl DesktopSettings {
             ProviderCredentialLifecycle::Deleting,
             generation,
         )?;
+        if let Some(endpoint) = self.endpoint.as_ref()
+            && let Some(kind) = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+        {
+            self.providers[provider_index(kind)].credential = self.credential;
+        }
         self.invalidate_provider_evidence();
         Ok((self, generation))
     }
@@ -752,6 +1214,11 @@ impl DesktopSettings {
             ProviderCredentialLifecycle::Missing,
             generation,
         )?;
+        if let Some(endpoint) = self.endpoint.as_ref()
+            && let Some(kind) = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+        {
+            self.providers[provider_index(kind)].credential = self.credential;
+        }
         Ok(self)
     }
 
@@ -773,6 +1240,7 @@ impl DesktopSettings {
         probed_at: SettingsTimestamp,
     ) -> Result<Self, DesktopSettingsUpdateError> {
         self.require_matching_provider(profile.provider_id())?;
+        let profile_kind = ModelProviderKind::from_provider_id(profile.provider_id().as_str());
         let role_profile = LlmRoleProfile::from_probe(profile, probed_at);
         let health = match role_profile.activation() {
             LlmProfileActivation::Executable => ProviderHealthStatus::Healthy,
@@ -786,6 +1254,44 @@ impl DesktopSettings {
             ProviderHealthObservation::checked(health, probed_at)
                 .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?,
         );
+        if let Some(kind) = profile_kind {
+            let slot = &mut self.providers[provider_index(kind)];
+            slot.enabled = true;
+            slot.connection_verified_at = Some(probed_at);
+            if let Some(health) = self.provider_health {
+                slot.health = health;
+            }
+        }
+        Ok(self)
+    }
+
+    /// Records one role profile against a specific connected provider slot.
+    pub fn with_provider_llm_probe(
+        mut self,
+        kind: ModelProviderKind,
+        role: LlmModelRole,
+        profile: ModelProfile,
+        probed_at: SettingsTimestamp,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let slot = self.provider(kind);
+        if !slot.enabled() || slot.connection_verified_at().is_none() {
+            return Err(DesktopSettingsUpdateError::ConnectionUnverified);
+        }
+        if profile.provider_id().as_str() != kind.provider_id() {
+            return Err(DesktopSettingsUpdateError::ProviderMismatch);
+        }
+        let role_profile = LlmRoleProfile::from_probe(profile, probed_at);
+        let health = match role_profile.activation() {
+            LlmProfileActivation::Executable => ProviderHealthStatus::Healthy,
+            LlmProfileActivation::CapabilityLimited => ProviderHealthStatus::CapabilityLimited,
+        };
+        match role {
+            LlmModelRole::Coding => self.coding_profile = Some(role_profile),
+            LlmModelRole::Mapping => self.mapping_profile = Some(role_profile),
+        }
+        self.providers[provider_index(kind)].health =
+            ProviderHealthObservation::checked(health, probed_at)
+                .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?;
         Ok(self)
     }
 
@@ -804,6 +1310,27 @@ impl DesktopSettings {
             ProviderHealthObservation::checked(ProviderHealthStatus::Healthy, probed_at)
                 .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?,
         );
+        Ok(self)
+    }
+
+    /// Records one embedding profile against a specific connected provider slot.
+    pub fn with_provider_embedding_probe(
+        mut self,
+        kind: ModelProviderKind,
+        profile: EmbeddingModelProfile,
+        probed_at: SettingsTimestamp,
+    ) -> Result<Self, DesktopSettingsUpdateError> {
+        let slot = self.provider(kind);
+        if !slot.enabled() || slot.connection_verified_at().is_none() {
+            return Err(DesktopSettingsUpdateError::ConnectionUnverified);
+        }
+        if profile.provider_id().as_str() != kind.provider_id() {
+            return Err(DesktopSettingsUpdateError::ProviderMismatch);
+        }
+        self.embedding_profile = Some(VerifiedEmbeddingProfile::from_probe(profile, probed_at));
+        self.providers[provider_index(kind)].health =
+            ProviderHealthObservation::checked(ProviderHealthStatus::Healthy, probed_at)
+                .map_err(|_| DesktopSettingsUpdateError::InvalidHealth)?;
         Ok(self)
     }
 
@@ -931,6 +1458,14 @@ impl DesktopSettings {
     }
 }
 
+fn provider_index(kind: ModelProviderKind) -> usize {
+    match kind {
+        ModelProviderKind::Ollama => 0,
+        ModelProviderKind::Gemini => 1,
+        ModelProviderKind::OpenAi => 2,
+    }
+}
+
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self::unconfigured()
@@ -954,6 +1489,8 @@ pub enum DesktopSettingsUpdateError {
     ProviderMismatch,
     /// Health state contradicted the endpoint or probe result.
     InvalidHealth,
+    /// A provider cannot be enabled before its explicit connection test succeeds.
+    ConnectionUnverified,
 }
 
 impl fmt::Display for DesktopSettingsUpdateError {
@@ -966,6 +1503,7 @@ impl fmt::Display for DesktopSettingsUpdateError {
             Self::InvalidCredentialState => "model provider credential state is inconsistent",
             Self::ProviderMismatch => "model profile belongs to another provider",
             Self::InvalidHealth => "provider health evidence is inconsistent",
+            Self::ConnectionUnverified => "provider connection has not been explicitly verified",
         })
     }
 }
@@ -1354,10 +1892,25 @@ impl LoadDesktopProviderCredential {
         let endpoint = settings
             .endpoint()
             .ok_or(ProviderCredentialAccessError::Missing)?;
+        let kind = ModelProviderKind::from_provider_id(endpoint.provider_id().as_str())
+            .ok_or(ProviderCredentialAccessError::Missing)?;
+        self.execute_for(settings, kind).await
+    }
+
+    /// Loads a credential for a specific provider slot after validating its generation.
+    pub async fn execute_for(
+        &self,
+        settings: &DesktopSettings,
+        kind: ModelProviderKind,
+    ) -> Result<Option<ProviderApiKey>, ProviderCredentialAccessError> {
+        let slot = settings.provider(kind);
+        let endpoint = slot
+            .endpoint()
+            .ok_or(ProviderCredentialAccessError::Missing)?;
         if endpoint.credential_requirement() == ProviderCredentialRequirement::None {
             return Ok(None);
         }
-        let metadata = settings.credential();
+        let metadata = slot.credential();
         match metadata.lifecycle() {
             ProviderCredentialLifecycle::Missing => {
                 return Err(ProviderCredentialAccessError::Missing);
@@ -1370,9 +1923,10 @@ impl LoadDesktopProviderCredential {
             }
             ProviderCredentialLifecycle::Configured => {}
         }
+        let fingerprint = endpoint.origin_fingerprint();
         let stored = self
             .credential_store
-            .load(endpoint.provider_id())
+            .load_bound(endpoint.provider_id(), &fingerprint)
             .await
             .map_err(ProviderCredentialAccessError::Store)?
             .ok_or(ProviderCredentialAccessError::RecoveryRequired)?;
@@ -1477,6 +2031,49 @@ impl RecordDesktopModelProbe {
         .await
     }
 
+    /// Records one LLM probe against a provider slot.
+    pub async fn record_provider_llm(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        role: LlmModelRole,
+        profile: ModelProfile,
+        probed_at: SettingsTimestamp,
+    ) -> Result<StoredDesktopSettings, RecordDesktopModelProbeError> {
+        self.update(expected, |settings| {
+            settings.with_provider_llm_probe(kind, role, profile, probed_at)
+        })
+        .await
+    }
+
+    /// Records one embedding probe against a provider slot.
+    pub async fn record_provider_embedding(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        profile: EmbeddingModelProfile,
+        probed_at: SettingsTimestamp,
+    ) -> Result<StoredDesktopSettings, RecordDesktopModelProbeError> {
+        self.update(expected, |settings| {
+            settings.with_provider_embedding_probe(kind, profile, probed_at)
+        })
+        .await
+    }
+
+    /// Records a non-destructive provider-specific retest failure.
+    pub async fn record_provider_failure(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        status: ProviderHealthStatus,
+        checked_at: SettingsTimestamp,
+    ) -> Result<StoredDesktopSettings, RecordDesktopModelProbeError> {
+        self.update(expected, |settings| {
+            settings.with_provider_probe_failure(kind, status, checked_at)
+        })
+        .await
+    }
+
     /// Records a cancelled or unreachable explicit probe without invalidating older profiles.
     pub async fn record_failure(
         &self,
@@ -1548,11 +2145,11 @@ mod tests {
         DesktopSettings, DesktopSettingsStore, DesktopSettingsStoreFailure,
         DesktopSettingsStoreFuture, DesktopSettingsStoreVersion, LlmModelRole,
         LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointAccess,
-        ModelEndpointScope, ModelEndpointValidationFailure, ModelEndpointValidator, ProviderApiKey,
-        ProviderCredential, ProviderCredentialAccessError, ProviderCredentialLifecycle,
-        ProviderCredentialRequirement, ProviderCredentialStore, ProviderCredentialStoreFailure,
-        ProviderHealthStatus, RecordDesktopModelProbe, SetDesktopProviderCredential,
-        SettingsTimestamp, StoredDesktopSettings,
+        ModelEndpointScope, ModelEndpointValidationFailure, ModelEndpointValidator,
+        ModelProviderKind, ProviderApiKey, ProviderCredential, ProviderCredentialAccessError,
+        ProviderCredentialLifecycle, ProviderCredentialRequirement, ProviderCredentialStore,
+        ProviderCredentialStoreFailure, ProviderHealthStatus, RecordDesktopModelProbe,
+        SetDesktopProviderCredential, SettingsTimestamp, StoredDesktopSettings,
     };
     use crate::ProviderCredentialStoreFuture;
     use a3_domain::{
@@ -1742,6 +2339,155 @@ mod tests {
                 .privacy()
                 .remote_requests_without_approval_enabled()
         );
+    }
+
+    #[test]
+    fn initial_settings_expose_three_disabled_provider_slots() {
+        let settings = DesktopSettings::unconfigured();
+        assert_eq!(settings.providers().len(), 3);
+        assert_eq!(
+            settings
+                .providers()
+                .iter()
+                .map(|provider| provider.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                ModelProviderKind::Ollama,
+                ModelProviderKind::Gemini,
+                ModelProviderKind::OpenAi,
+            ]
+        );
+        assert!(settings.providers().iter().all(|provider| {
+            !provider.enabled()
+                && provider.endpoint().is_none()
+                && provider.connection_verified_at().is_none()
+        }));
+    }
+
+    #[test]
+    fn provider_activation_requires_verification_and_retest_keeps_profiles()
+    -> Result<(), Box<dyn Error>> {
+        let endpoint = ConfiguredModelEndpoint::from_validated_adapter(
+            provider_id()?,
+            "http://127.0.0.1:11434".to_owned(),
+            ModelEndpointScope::LocalLoopback,
+        )?;
+        let settings = DesktopSettings::unconfigured()
+            .with_provider_endpoint(ModelProviderKind::Ollama, Some(endpoint));
+        assert!(matches!(
+            settings
+                .clone()
+                .with_provider_enabled(ModelProviderKind::Ollama, true),
+            Err(super::DesktopSettingsUpdateError::ConnectionUnverified)
+        ));
+
+        let verified = settings
+            .with_provider_connection_verified(
+                ModelProviderKind::Ollama,
+                SettingsTimestamp::from_unix_millis(50)?,
+            )?
+            .with_provider_enabled(ModelProviderKind::Ollama, true)?
+            .with_provider_llm_probe(
+                ModelProviderKind::Ollama,
+                LlmModelRole::Coding,
+                profile(ModelStructuredOutputCapability::Verified)?,
+                SettingsTimestamp::from_unix_millis(51)?,
+            )?;
+        assert!(verified.llm_profile(LlmModelRole::Coding).is_some());
+
+        let retested = verified.with_provider_probe_failure(
+            ModelProviderKind::Ollama,
+            ProviderHealthStatus::Unreachable,
+            SettingsTimestamp::from_unix_millis(52)?,
+        )?;
+        assert!(retested.provider(ModelProviderKind::Ollama).enabled());
+        assert!(
+            retested
+                .provider(ModelProviderKind::Ollama)
+                .connection_verified_at()
+                .is_some()
+        );
+        assert!(retested.llm_profile(LlmModelRole::Coding).is_some());
+        assert_eq!(
+            retested
+                .provider(ModelProviderKind::Ollama)
+                .health()
+                .status(),
+            ProviderHealthStatus::Unreachable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn provider_credential_changes_advance_only_the_provider_revision() -> Result<(), Box<dyn Error>>
+    {
+        let endpoint =
+            RemoteApiKeyValidator.validate("https://generativelanguage.googleapis.com")?;
+        let settings = DesktopSettings::unconfigured()
+            .with_provider_endpoint(ModelProviderKind::Gemini, Some(endpoint));
+        let before = settings
+            .provider(ModelProviderKind::Gemini)
+            .configuration_revision();
+        let (storing, _) = settings.begin_provider_credential_store(ModelProviderKind::Gemini)?;
+        assert_eq!(
+            storing
+                .provider(ModelProviderKind::Gemini)
+                .configuration_revision(),
+            before + 1
+        );
+        assert_eq!(
+            storing
+                .provider(ModelProviderKind::Ollama)
+                .configuration_revision(),
+            0
+        );
+        assert!(
+            storing
+                .provider(ModelProviderKind::Gemini)
+                .connection_verified_at()
+                .is_none()
+        );
+        assert!(!storing.provider(ModelProviderKind::Gemini).enabled());
+        Ok(())
+    }
+
+    #[test]
+    fn changing_one_provider_invalidates_only_that_provider() -> Result<(), Box<dyn Error>> {
+        let ollama_endpoint = ConfiguredModelEndpoint::from_validated_adapter(
+            provider_id()?,
+            "http://127.0.0.1:11434".to_owned(),
+            ModelEndpointScope::LocalLoopback,
+        )?;
+        let gemini_endpoint = ConfiguredModelEndpoint::from_validated_adapter(
+            ModelProviderId::try_from_string("gemini".to_owned())?,
+            "https://generativelanguage.googleapis.com".to_owned(),
+            ModelEndpointScope::Remote,
+        )?;
+        let settings = DesktopSettings::unconfigured()
+            .with_provider_endpoint(ModelProviderKind::Ollama, Some(ollama_endpoint))
+            .with_provider_endpoint(ModelProviderKind::Gemini, Some(gemini_endpoint));
+        let settings = settings
+            .with_provider_connection_verified(
+                ModelProviderKind::Ollama,
+                SettingsTimestamp::from_unix_millis(60)?,
+            )?
+            .with_provider_enabled(ModelProviderKind::Ollama, true)?
+            .with_provider_llm_probe(
+                ModelProviderKind::Ollama,
+                LlmModelRole::Coding,
+                profile(ModelStructuredOutputCapability::Verified)?,
+                SettingsTimestamp::from_unix_millis(61)?,
+            )?;
+        let changed_gemini = settings.with_provider_endpoint(ModelProviderKind::Gemini, None);
+        assert!(changed_gemini.llm_profile(LlmModelRole::Coding).is_some());
+        assert!(changed_gemini.provider(ModelProviderKind::Ollama).enabled());
+        assert!(
+            changed_gemini
+                .provider(ModelProviderKind::Gemini)
+                .endpoint()
+                .is_none()
+        );
+        Ok(())
     }
 
     #[test]

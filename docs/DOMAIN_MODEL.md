@@ -444,6 +444,17 @@ Providerpayload bleiben im Adapter. Ein Katalogeintrag beweist ausschließlich, 
 konfigurierte Provider den Namen zum Abfragezeitpunkt gemeldet hat. Er kann weder ein
 `ModelProfile` erzeugen noch eine Capability aktivieren.
 
+ADR-0066 schließt `ModelProviderKind` auf Ollama, Gemini und OpenAI und modelliert die drei
+Provider als eindeutige Slots im globalen Settings-Zustand. Endpoint, Revision, Credentialstatus,
+Health, Verifikationszeit und Aktivierung gehören jeweils zu genau einem Slot. Aktivierung ist
+erst nach Endpoint-/Credentialprüfung und erfolgreicher Discovery zulässig; eine Konfigurations-
+oder Credentialänderung invalidiert nur den betroffenen Slot und entfernt dessen Rollenprofile,
+während ein fehlgeschlagener Retest die bisherige Aktivierung und Profile nicht zerstört.
+Deaktivierung entfernt die Rollenprofile, behält aber den Slotnachweis. Coding-, Mapping- und
+Embeddingprofile wählen weiterhin genau ein Modell, identifizieren es aber als
+`(ProviderId, ModelId)`-Tupel. Aggregierte Auswahl vereinigt ausschließlich die flüchtigen
+Kataloge verbundener und aktivierter Slots.
+
 `ModelProfile` V1 bindet Provider- und opaque Modell-ID an effektives Kontext- und Outputlimit,
 konservative Tokenzählung, Parallelitätslimit, fixed-point Temperatur und Top-p, kanonische
 Stopbedingungen, Schema-Grounding, expliziten Toolmodus und das Ergebnis einer echten

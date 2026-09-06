@@ -633,22 +633,20 @@ Agent-Auftrag umgeht weder eine neue Planfreigabe nach Ask/Plan noch Policy, App
 Verification. Queue-Requests akzeptieren nur eine opake sessiongebundene Referenz und die exakte
 Queue-Revision. Modus-Chips und deaktivierte UI-Schritte sind ausschließlich Darstellung.
 
-Google Gemini verwendet ausschließlich den festen Origin
-`https://generativelanguage.googleapis.com`. Der Adapter setzt `x-goog-api-key` erst nach der
-exakten Produktionspolicy-Prüfung, deaktiviert Redirects und Umgebungsproxies und sendet zusätzlich
-`x-goog-api-client: a3/0.1.0`. Benutzerdefinierte Gemini-Gateways sind nicht zulässig. Speichern
-oder Löschen eines API-Keys erzeugt keinen Netzwerkzugriff; Modelldiscovery und Capability-Probe
-benötigen jeweils einen ausdrücklichen Klick. Eine spätere Agentenlaufzeit muss unabhängig davon
-ihre laufgebundene Netzwerkfreigabe erhalten.
+ADR-0066 erlaubt für Gemini und OpenAI zusätzlich credentialfreie HTTPS-Origins ohne Pfad, Query,
+Fragment oder Userinfo. Der jeweilige Adapter validiert den nativen Wire-Vertrag; erst danach
+bestätigt ein nativer, nicht von der WebView kontrollierter Dialog Provider und exakte kanonische
+Origin. Die gespeicherte Origin wird vor jedem Request gegen ihre exakte Providerpolicy geprüft;
+Redirects und Umgebungsproxies bleiben deaktiviert. Die offiziellen Origins bleiben vorausgefüllt.
+Speichern oder Löschen eines Keys erzeugt keinen Netzwerkzugriff; Discovery und Capability-Probe
+benötigen jeweils einen ausdrücklichen Klick. Eine spätere Agenten- oder Deep-Map-Laufzeit muss
+unabhängig davon ihre laufgebundene Netzwerkfreigabe erhalten.
 
-OpenAI verwendet ausschließlich den festen Origin `https://api.openai.com`. Der Adapter setzt
-`Authorization: Bearer ...` erst nach der exakten Produktionspolicy-Prüfung, deaktiviert Redirects
-und Umgebungsproxies und sendet `User-Agent: a3/0.1.0`. Benutzerdefinierte OpenAI-kompatible
-Gateways sind nicht zulässig. Speichern oder Löschen eines OpenAI-Keys erzeugt keinen
-Netzwerkzugriff; Discovery und Capability-Probe benötigen jeweils einen ausdrücklichen Klick. Eine
-spätere Agenten- oder Deep-Map-Laufzeit muss unabhängig davon ihre laufgebundene
-Netzwerkfreigabe erhalten. OpenAI-Anfragen können abhängig von Konto und Modell Kosten verursachen;
-die Settings-Oberfläche weist darauf hin.
+Die V2-Credentialhülle bindet jeden Schlüssel an Provider-ID und Origin-Fingerprint. Legacy-V1-
+Schlüssel werden ausschließlich für migrierte offizielle Origins gelesen und bei der nächsten
+bewussten Aktualisierung in die V2-Hülle überführt. Custom-Origins erhalten keinen Legacy-Fallback.
+OpenAI-Anfragen können abhängig von Konto und Modell Kosten verursachen; die Settings-Oberfläche
+weist darauf hin.
 
 Gemini- und OpenAI-Keys sind auf 1 bis 4.096 ASCII-Bytes begrenzt, werden außen um
 ASCII-Whitespace bereinigt
@@ -656,7 +654,8 @@ und darf keine eingebetteten Steuerzeichen enthalten. Das Passwortfeld ist nicht
 DOM-Wert und temporärer `Uint8Array` werden nach Submit, Fehler, Schließen und Unmount geleert. Der
 one-way Set-Request ist weder serialisierbar noch clonebar oder secret-offenlegend debuggbar. Der
 Core speichert im nativen Keyring unter Service `dev.timbornemann.a3.provider-api-key` und dem
-Provideraccount `gemini` beziehungsweise `openai` eine versionierte Hülle aus Generation und Key.
+Provideraccount `gemini` beziehungsweise `openai` eine versionierte Hülle aus Provider-ID,
+Origin-Fingerprint, Generation und Key.
 Verwaltete Rust-Puffer werden beim Drop überschrieben.
 
 libSQL speichert nur Credential-Anforderung, Lifecycle und monotone Generation. Schreiben und

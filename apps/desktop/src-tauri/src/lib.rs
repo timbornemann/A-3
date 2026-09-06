@@ -1970,6 +1970,113 @@ impl CompositionRoot {
             .await
     }
 
+    /// Reads the complete three-provider Settings V2 snapshot without provider access.
+    pub async fn query_settings_v2(
+        &self,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .query_v2()
+            .await
+    }
+
+    /// Configures one provider slot under Settings V2.
+    pub async fn configure_model_provider_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV2,
+        endpoint: Option<&str>,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        let response = self
+            .model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .configure_provider_v2(expected, provider_kind, endpoint)
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
+    }
+
+    /// Stores one provider-bound credential under Settings V2.
+    pub async fn set_model_provider_credential_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV2,
+        secret: a3_application::ProviderApiKey,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        let response = self
+            .model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .set_credential_v2(expected, provider_kind, secret)
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
+    }
+
+    /// Deletes one provider-bound credential under Settings V2.
+    pub async fn delete_model_provider_credential_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV2,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        let response = self
+            .model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .delete_credential_v2(expected, provider_kind)
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
+    }
+
+    /// Enables or disables one provider slot under Settings V2.
+    pub async fn set_model_provider_enabled_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV2,
+        enabled: bool,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        let response = self
+            .model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .set_enabled_v2(expected, provider_kind, enabled)
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
+    }
+
+    /// Explicitly discovers one provider catalog under Settings V2.
+    pub async fn discover_provider_models_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        provider_kind: a3_protocol::ModelProviderKindV2,
+    ) -> Result<a3_protocol::ProviderModelsResponseV2, CommandErrorV1> {
+        self.model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .discover_provider_models_v2(expected, provider_kind)
+            .await
+    }
+
+    /// Probes one provider/model tuple under Settings V2.
+    pub async fn probe_model_role_v2(
+        &self,
+        expected: a3_application::DesktopSettingsStoreVersion,
+        request: &a3_protocol::ProbeModelRoleRequestV2,
+    ) -> Result<a3_protocol::SettingsResponseV2, CommandErrorV1> {
+        let response = self
+            .model_settings
+            .as_ref()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?
+            .probe_v2(expected, request)
+            .await?;
+        self.synchronize_deep_map_runtime().await?;
+        Ok(response)
+    }
+
     /// Validates and stores one closed active provider without performing a request.
     pub async fn configure_model_provider(
         &self,
@@ -5889,8 +5996,8 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::cancel_model_probe,
             commands::cancel_deep_map,
             commands::compile_task_lens,
-            commands::configure_model_provider,
-            commands::delete_model_provider_credential,
+            commands::configure_model_provider_v2,
+            commands::delete_model_provider_credential_v2,
             commands::confirm_project_command_allowlist,
             commands::control_agent_approval,
             commands::control_agent_session,
@@ -5898,7 +6005,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::control_agent_session_queue,
             commands::control_agent_task_run,
             commands::create_agent_goal,
-            commands::discover_provider_models,
+            commands::discover_provider_models_v2,
             commands::list_recent_projects,
             commands::open_project,
             commands::pause_deep_map,
@@ -5958,7 +6065,7 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::query_task_lens_tasks,
             commands::query_repository_tree,
             commands::query_health,
-            commands::query_settings,
+            commands::query_settings_v2,
             commands::query_ui_preferences,
             commands::rebuild_project_index,
             commands::resume_deep_map,
@@ -5966,8 +6073,9 @@ pub fn run() -> Result<(), DesktopRunError> {
             commands::revise_agent_goal,
             commands::remove_project,
             commands::remove_catalog_project,
-            commands::probe_model_role,
-            commands::set_model_provider_credential,
+            commands::probe_model_role_v2,
+            commands::set_model_provider_credential_v2,
+            commands::set_model_provider_enabled_v2,
             commands::start_deep_map,
             commands::submit_agent_message,
             commands::submit_agent_message_v2,

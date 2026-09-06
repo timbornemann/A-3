@@ -2,12 +2,12 @@ use a3_application::{
     ConfiguredModelEndpoint, DeepMapExecutor, DeepMapPublicationStateStore, DesktopSettings,
     DesktopSettingsStore, GetDesktopSettings, KnowledgeIndexStore, LlmModelRole,
     LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope, ModelProvider,
-    ProviderCredentialStore, RunDeepMap, VerifiedModuleCardPublisher,
+    ModelProviderKind, ProviderCredentialStore, RunDeepMap, VerifiedModuleCardPublisher,
 };
 use a3_provider::{
-    GeminiEndpoint, GeminiModelProvider, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
-    OllamaModelProvider, OpenAiEndpoint, OpenAiModelProvider, StandardGeminiEndpointPolicy,
-    StandardOpenAiEndpointPolicy,
+    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider,
+    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider, OpenAiEndpoint,
+    OpenAiModelProvider,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -58,24 +58,34 @@ impl DeepMapRuntime {
             }
             "gemini" => {
                 let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin()).ok()?;
+                let origin = endpoint.canonical_origin();
                 let key = LoadDesktopProviderCredential::new(Arc::clone(&self.credentials))
-                    .execute(settings)
+                    .execute_for(settings, ModelProviderKind::Gemini)
                     .await
                     .ok()??;
                 Arc::new(
-                    GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
-                        .ok()?,
+                    GeminiModelProvider::new(
+                        endpoint,
+                        Arc::new(ExactGeminiEndpointPolicy::new(origin)),
+                        key,
+                    )
+                    .ok()?,
                 )
             }
             "openai" => {
                 let endpoint = OpenAiEndpoint::parse(endpoint.canonical_origin()).ok()?;
+                let origin = endpoint.canonical_origin();
                 let key = LoadDesktopProviderCredential::new(Arc::clone(&self.credentials))
-                    .execute(settings)
+                    .execute_for(settings, ModelProviderKind::OpenAi)
                     .await
                     .ok()??;
                 Arc::new(
-                    OpenAiModelProvider::new(endpoint, Arc::new(StandardOpenAiEndpointPolicy), key)
-                        .ok()?,
+                    OpenAiModelProvider::new(
+                        endpoint,
+                        Arc::new(ExactOpenAiEndpointPolicy::new(origin)),
+                        key,
+                    )
+                    .ok()?,
                 )
             }
             _ => return None,
@@ -95,14 +105,16 @@ impl DeepMapRuntime {
 fn executable_mapping(
     settings: &DesktopSettings,
 ) -> Option<(&ConfiguredModelEndpoint, a3_domain::ModelProfile)> {
-    let endpoint = settings.endpoint()?;
     let selected = settings.llm_profile(LlmModelRole::Mapping)?;
-    if selected.activation() != LlmProfileActivation::Executable
-        || selected.profile().provider_id() != endpoint.provider_id()
-    {
+    if selected.activation() != LlmProfileActivation::Executable {
         return None;
     }
-    Some((endpoint, selected.profile().clone()))
+    let kind = ModelProviderKind::from_provider_id(selected.profile().provider_id().as_str())?;
+    let slot = settings.provider(kind);
+    if !slot.enabled() || slot.connection_verified_at().is_none() {
+        return None;
+    }
+    Some((slot.endpoint()?, selected.profile().clone()))
 }
 
 impl fmt::Debug for DeepMapRuntime {

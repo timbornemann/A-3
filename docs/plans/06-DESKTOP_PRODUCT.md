@@ -818,6 +818,20 @@ Gemini-Fehlerobjekte innerhalb eines HTTP-200-SSE-Streams nach ihrem numerischen
 klassifiziert: 408, 429 und retry-fähige 5xx erreichen den gemeinsamen begrenzten Retry, dauerhafte
 4xx bleiben Ablehnungen und Providertexte verlassen den Adapter nicht.
 
+Erweiterung vom 2026-09-06: ADR-0066 ersetzt die produktive Einzelprovideransicht durch drei
+dauerhaft sichtbare, nicht umschaltbare Karten für Ollama, Google Gemini und OpenAI. Jede Karte
+wird unabhängig konfiguriert, nativ für eine neue oder geänderte Cloud-Origin bestätigt, getestet
+und erst danach aktiviert. `SettingsV2` liefert exakt diese drei Slots mit eigener Revision,
+Credentialstatus, Health und Verifikationszeit; das V7-Schema bleibt lesbar und wird beim nächsten
+Write append-only in Providerzeilen von V8 überführt. Discovery ist zugleich der explizite
+Verbindungstest, bleibt flüchtig und serialisiert im globalen abbrechbaren Modelloperations-Slot.
+Die Rollenwahl vereinigt nur Kataloge verbundener und aktivierter Provider und identifiziert jedes
+Modell als Provider-/Modell-Tupel. Deaktivieren oder Zurücksetzen entfernt nur die Rollenprofile
+des jeweiligen Slots; ein fehlgeschlagener späterer Retest ist nicht destruktiv. Runtime, Agent,
+Deep Map und Embeddings lösen Endpoint und Credential aus dem aktivierten, unverändert verifizierten
+Provider auf. Die ungenaue V1-Einzelproviderprojektion wird nicht mehr als produktiver Desktop-
+Command registriert; `cancel_model_probe` bleibt verfügbar.
+
 ## U9 Design System und Accessibility
 
 - [x] Farb-, Typografie-, Spacing- und Focus-Tokens

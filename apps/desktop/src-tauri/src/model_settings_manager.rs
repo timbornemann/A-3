@@ -4,12 +4,12 @@ use a3_application::{
     DesktopSettingsStoreVersion, DiscoverProviderModels, EmbeddingCapabilityProbeRequest,
     GetDesktopSettings, LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential,
     ManageDesktopProviderCredentialError, ModelCancellationFuture, ModelEndpointAccess,
-    ModelEndpointScope, ModelOperationControl, ModelProviderFailure, ModelRequestTimeout,
-    ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure, ProviderApiKey,
-    ProviderCredentialAccessError, ProviderCredentialLifecycle, ProviderCredentialRequirement,
-    ProviderCredentialStore, ProviderCredentialStoreFailure, ProviderHealthStatus,
-    RecordDesktopModelProbe, RecordDesktopModelProbeError, SetDesktopProviderCredential,
-    SettingsTimestamp, StoredDesktopSettings,
+    ModelEndpointScope, ModelOperationControl, ModelProviderFailure, ModelProviderKind,
+    ModelRequestTimeout, ProbeEmbeddingModelProfile, ProbeModelProfile, ProbeModelProfileFailure,
+    ProviderApiKey, ProviderCredentialAccessError, ProviderCredentialLifecycle,
+    ProviderCredentialRequirement, ProviderCredentialStore, ProviderCredentialStoreFailure,
+    ProviderHealthStatus, RecordDesktopModelProbe, RecordDesktopModelProbeError,
+    SetDesktopProviderCredential, SettingsTimestamp, StoredDesktopSettings,
 };
 use a3_domain::{
     EmbeddingBatchSize, EmbeddingModelId, ModelContextLimit, ModelId, ModelOutputLimit,
@@ -19,17 +19,20 @@ use a3_domain::{
 };
 use a3_protocol::{
     CancelModelProbeResponseV1, CommandErrorV1, DataPrivacySettingsV1, EmbeddingRoleProfileV1,
-    ErrorCodeV1, LlmRoleProfileV1, ModelEndpointAccessV1, ModelEndpointScopeV1, ModelEndpointV1,
-    ModelProfileActivationV1, ModelProviderKindV1, ModelRoleV1, ModelToolCallModeV1,
-    ProbeModelRoleRequestV1, ProviderCredentialStatusV1, ProviderCredentialV1,
-    ProviderHealthStatusV1, ProviderHealthV1, ProviderModelsResponseV1, SettingsResponseV1,
-    SettingsV1, StructuredOutputCapabilityV1,
+    EmbeddingRoleProfileV2, ErrorCodeV1, LlmRoleProfileV1, LlmRoleProfileV2, ModelEndpointAccessV1,
+    ModelEndpointScopeV1, ModelEndpointV1, ModelProfileActivationV1, ModelProviderKindV1,
+    ModelProviderKindV2, ModelRoleV1, ModelToolCallModeV1, ProbeModelRoleRequestV1,
+    ProbeModelRoleRequestV2, ProviderCredentialStatusV1, ProviderCredentialV1,
+    ProviderHealthStatusV1, ProviderHealthV1, ProviderModelsResponseV1, ProviderModelsResponseV2,
+    ProviderSettingsV2, SettingsResponseV1, SettingsResponseV2, SettingsV1, SettingsV2,
+    StructuredOutputCapabilityV1,
 };
 use a3_provider::{
-    GeminiEndpoint, GeminiEndpointPolicy, GeminiModelProvider, GeminiSettingsEndpointValidator,
-    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider,
-    OllamaSettingsEndpointValidator, OpenAiEndpoint, OpenAiEndpointPolicy, OpenAiModelProvider,
-    OpenAiSettingsEndpointValidator, StandardGeminiEndpointPolicy, StandardOpenAiEndpointPolicy,
+    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiEndpointPolicy,
+    GeminiModelProvider, GeminiSettingsEndpointValidator, LocalOnlyOllamaEndpointPolicy,
+    OllamaEndpoint, OllamaModelProvider, OllamaSettingsEndpointValidator, OpenAiEndpoint,
+    OpenAiEndpointPolicy, OpenAiModelProvider, OpenAiSettingsEndpointValidator,
+    StandardGeminiEndpointPolicy, StandardOpenAiEndpointPolicy,
 };
 use futures::task::AtomicWaker;
 use std::fmt;
@@ -71,6 +74,283 @@ impl ModelSettingsManager {
             .await
             .map_err(map_store_error)?;
         Ok(self.map_settings(&stored, self.probe_is_active()).await)
+    }
+
+    /// Reads the complete three-provider Settings V2 snapshot without provider access.
+    pub async fn query_v2(&self) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let stored = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        Ok(self.map_settings_v2(&stored, self.probe_is_active()).await)
+    }
+
+    /// Configures one provider slot without contacting its endpoint.
+    pub async fn configure_provider_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKindV2,
+        endpoint: Option<&str>,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let current = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        if current.version() != expected {
+            return Err(invalid_request());
+        }
+        let kind = provider_kind_v2(kind);
+        let validator: Arc<dyn a3_application::ModelEndpointValidator> = match kind {
+            ModelProviderKind::Ollama => Arc::new(OllamaSettingsEndpointValidator),
+            ModelProviderKind::Gemini => Arc::new(GeminiSettingsEndpointValidator),
+            ModelProviderKind::OpenAi => Arc::new(OpenAiSettingsEndpointValidator),
+        };
+        let configured = endpoint
+            .map(|value| validator.validate(value))
+            .transpose()
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        let endpoint_changed = current
+            .settings()
+            .provider(kind)
+            .endpoint()
+            .map(|value| value.canonical_origin())
+            != configured.as_ref().map(|value| value.canonical_origin());
+        let mut current = current;
+        let mut expected = expected;
+        if endpoint_changed
+            && current
+                .settings()
+                .provider(kind)
+                .endpoint()
+                .is_some_and(|value| {
+                    value.credential_requirement() == ProviderCredentialRequirement::ApiKey
+                })
+            && matches!(
+                current.settings().provider(kind).credential().lifecycle(),
+                ProviderCredentialLifecycle::Configured
+                    | ProviderCredentialLifecycle::Storing
+                    | ProviderCredentialLifecycle::Deleting
+            )
+        {
+            let (deleting_settings, generation) = current
+                .settings()
+                .clone()
+                .begin_provider_credential_delete(kind)
+                .map_err(|_| {
+                    CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+                })?;
+            let deleting = self
+                .store
+                .append(expected, &deleting_settings)
+                .await
+                .map_err(map_store_error)?;
+            let provider_id =
+                a3_domain::ModelProviderId::try_from_string(kind.provider_id().to_owned())
+                    .map_err(|_| invalid_request())?;
+            let fingerprint = current
+                .settings()
+                .provider(kind)
+                .endpoint()
+                .map(|value| value.origin_fingerprint())
+                .unwrap_or_default();
+            self.credential_store
+                .delete_bound(&provider_id, &fingerprint)
+                .await
+                .map_err(|error| {
+                    map_credential_mutation_error(
+                        ManageDesktopProviderCredentialError::CredentialStore(error),
+                    )
+                })?;
+            let missing = deleting
+                .settings()
+                .clone()
+                .complete_provider_credential_delete(kind, generation)
+                .map_err(|_| {
+                    CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+                })?;
+            current = self
+                .store
+                .append(deleting.version(), &missing)
+                .await
+                .map_err(map_store_error)?;
+            expected = current.version();
+        }
+        let updated = current
+            .settings()
+            .clone()
+            .with_provider_endpoint(kind, configured);
+        let stored = self
+            .store
+            .append(expected, &updated)
+            .await
+            .map_err(map_store_error)?;
+        Ok(self.map_settings_v2(&stored, false).await)
+    }
+
+    /// Stores a key for one provider slot and keeps the secret outside Settings/IPC.
+    pub async fn set_credential_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKindV2,
+        secret: ProviderApiKey,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let kind = provider_kind_v2(kind);
+        let current = self.load_expected(expected).await?;
+        let (storing_settings, generation) = current
+            .settings()
+            .clone()
+            .begin_provider_credential_store(kind)
+            .map_err(|_| {
+                CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+            })?;
+        let storing = self
+            .store
+            .append(expected, &storing_settings)
+            .await
+            .map_err(map_store_error)?;
+        let provider_id =
+            a3_domain::ModelProviderId::try_from_string(kind.provider_id().to_owned())
+                .map_err(|_| invalid_request())?;
+        let fingerprint = current
+            .settings()
+            .provider(kind)
+            .endpoint()
+            .map(|value| value.origin_fingerprint())
+            .unwrap_or_default();
+        let credential = a3_application::ProviderCredential::new(generation, secret);
+        self.credential_store
+            .store_bound(&provider_id, &fingerprint, &credential)
+            .await
+            .map_err(|error| {
+                map_credential_mutation_error(
+                    ManageDesktopProviderCredentialError::CredentialStore(error),
+                )
+            })?;
+        let configured = storing
+            .settings()
+            .clone()
+            .complete_provider_credential_store(kind, generation)
+            .map_err(|_| {
+                CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+            })?;
+        let stored = self
+            .store
+            .append(storing.version(), &configured)
+            .await
+            .map_err(map_store_error)?;
+        Ok(self.map_settings_v2(&stored, false).await)
+    }
+
+    /// Deletes one provider key while retaining its endpoint configuration.
+    pub async fn delete_credential_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKindV2,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let kind = provider_kind_v2(kind);
+        let current = self.load_expected(expected).await?;
+        let (deleting_settings, generation) = current
+            .settings()
+            .clone()
+            .begin_provider_credential_delete(kind)
+            .map_err(|_| {
+                CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+            })?;
+        let deleting = self
+            .store
+            .append(expected, &deleting_settings)
+            .await
+            .map_err(map_store_error)?;
+        let provider_id =
+            a3_domain::ModelProviderId::try_from_string(kind.provider_id().to_owned())
+                .map_err(|_| invalid_request())?;
+        let fingerprint = current
+            .settings()
+            .provider(kind)
+            .endpoint()
+            .map(|value| value.origin_fingerprint())
+            .unwrap_or_default();
+        self.credential_store
+            .delete_bound(&provider_id, &fingerprint)
+            .await
+            .map_err(|error| {
+                map_credential_mutation_error(
+                    ManageDesktopProviderCredentialError::CredentialStore(error),
+                )
+            })?;
+        let missing = deleting
+            .settings()
+            .clone()
+            .complete_provider_credential_delete(kind, generation)
+            .map_err(|_| {
+                CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialRecoveryRequired)
+            })?;
+        let stored = self
+            .store
+            .append(deleting.version(), &missing)
+            .await
+            .map_err(map_store_error)?;
+        Ok(self.map_settings_v2(&stored, false).await)
+    }
+
+    /// Enables or disables one provider slot. Enabling is gated by verified connectivity.
+    pub async fn set_enabled_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKindV2,
+        enabled: bool,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let current = self.load_expected(expected).await?;
+        let kind = provider_kind_v2(kind);
+        if enabled
+            && current
+                .settings()
+                .provider(kind)
+                .endpoint()
+                .is_some_and(|endpoint| {
+                    endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+                })
+        {
+            self.load_provider_api_key_for(current.settings(), kind)
+                .await?;
+        }
+        let updated = current
+            .settings()
+            .clone()
+            .with_provider_enabled(kind, enabled)
+            .map_err(|error| match error {
+                a3_application::DesktopSettingsUpdateError::ConnectionUnverified => {
+                    CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid)
+                }
+                a3_application::DesktopSettingsUpdateError::CredentialUnavailable => {
+                    CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialMissing)
+                }
+                _ => invalid_request(),
+            })?;
+        let stored = self
+            .store
+            .append(expected, &updated)
+            .await
+            .map_err(map_store_error)?;
+        Ok(self.map_settings_v2(&stored, false).await)
+    }
+
+    async fn load_expected(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+    ) -> Result<StoredDesktopSettings, CommandErrorV1> {
+        let current = GetDesktopSettings::new(Arc::clone(&self.store))
+            .execute()
+            .await
+            .map_err(map_store_error)?;
+        if current.version() != expected {
+            return Err(invalid_request());
+        }
+        Ok(current)
     }
 
     /// Replaces or clears the credential-free active provider without performing a request.
@@ -163,6 +443,311 @@ impl ModelSettingsManager {
             .await;
         self.release_probe(&cancellation);
         result
+    }
+
+    /// Explicitly tests and discovers one provider, persisting its content-free verification.
+    pub async fn discover_provider_models_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKindV2,
+    ) -> Result<ProviderModelsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        let cancellation = self.acquire_probe()?;
+        let kind = provider_kind_v2(kind);
+        let result = self
+            .discover_provider_models_v2_owned(expected, kind, cancellation.as_ref())
+            .await;
+        self.release_probe(&cancellation);
+        result
+    }
+
+    /// Runs one explicit capability probe for a provider/model tuple.
+    pub async fn probe_v2(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        request: &ProbeModelRoleRequestV2,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let _operation = self.acquire_operation()?;
+        validate_probe_shape_v2(request)?;
+        let cancellation = self.acquire_probe()?;
+        let kind = provider_kind_v2(request.provider_kind());
+        let result = self
+            .probe_v2_owned(expected, kind, request, cancellation.as_ref())
+            .await;
+        self.release_probe(&cancellation);
+        result
+    }
+
+    async fn probe_v2_owned(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        request: &ProbeModelRoleRequestV2,
+        control: &dyn ModelOperationControl,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let current = self.load_expected(expected).await?;
+        let slot = current.settings().provider(kind);
+        if !slot.enabled() || slot.connection_verified_at().is_none() {
+            return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+        }
+        let endpoint = current
+            .settings()
+            .provider(kind)
+            .endpoint()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        let timeout = ModelRequestTimeout::from_millis(MODEL_PROBE_TIMEOUT_MILLIS)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
+        let recorder = RecordDesktopModelProbe::new(Arc::clone(&self.store));
+        match kind {
+            ModelProviderKind::Ollama => {
+                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
+                    return Err(invalid_request());
+                }
+                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| invalid_request())?;
+                let provider =
+                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+                        .map_err(|_| invalid_request())?;
+                self.execute_probe_v2(
+                    &provider, &provider, expected, kind, request, timeout, recorder, control,
+                )
+                .await
+            }
+            ModelProviderKind::Gemini => {
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = GeminiEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let policy = ExactGeminiEndpointPolicy::new(origin);
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = GeminiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                self.execute_probe_v2(
+                    &provider, &provider, expected, kind, request, timeout, recorder, control,
+                )
+                .await
+            }
+            ModelProviderKind::OpenAi => {
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = OpenAiEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let policy = ExactOpenAiEndpointPolicy::new(origin);
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = OpenAiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                self.execute_probe_v2(
+                    &provider, &provider, expected, kind, request, timeout, recorder, control,
+                )
+                .await
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_probe_v2(
+        &self,
+        llm_prober: &dyn a3_application::ModelCapabilityProbe,
+        embedding_prober: &dyn a3_application::EmbeddingCapabilityProbe,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        request: &ProbeModelRoleRequestV2,
+        timeout: ModelRequestTimeout,
+        recorder: RecordDesktopModelProbe,
+        control: &dyn ModelOperationControl,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let result = match request.role() {
+            ModelRoleV1::Coding | ModelRoleV1::Mapping => {
+                let limits = request.llm_limits().ok_or_else(invalid_request)?;
+                let settings = llm_settings(limits)?;
+                let probe_request = a3_application::ModelCapabilityProbeRequest::new(
+                    ModelId::try_from_string(request.model_id().to_owned())
+                        .map_err(|_| invalid_request())?,
+                    settings,
+                );
+                match ProbeModelProfile::new(llm_prober)
+                    .execute(&probe_request, timeout, control)
+                    .await
+                {
+                    Ok(profile) => {
+                        let role = match request.role() {
+                            ModelRoleV1::Coding => LlmModelRole::Coding,
+                            ModelRoleV1::Mapping => LlmModelRole::Mapping,
+                            ModelRoleV1::Embedding => return Err(invalid_request()),
+                        };
+                        recorder
+                            .record_provider_llm(expected, kind, role, profile, settings_now()?)
+                            .await
+                    }
+                    Err(ProbeModelProfileFailure::Provider(error)) => {
+                        return self
+                            .record_provider_probe_failure(
+                                recorder,
+                                expected,
+                                kind,
+                                error,
+                                settings_now()?,
+                            )
+                            .await;
+                    }
+                    Err(ProbeModelProfileFailure::ContextLimitExceedsProvider { .. }) => {
+                        return Err(invalid_request());
+                    }
+                }
+            }
+            ModelRoleV1::Embedding => {
+                let limits = request.embedding_limits().ok_or_else(invalid_request)?;
+                let probe_request = EmbeddingCapabilityProbeRequest::new(
+                    EmbeddingModelId::new(request.model_id().to_owned())
+                        .map_err(|_| invalid_request())?,
+                    EmbeddingBatchSize::new(limits.max_batch_size())
+                        .map_err(|_| invalid_request())?,
+                );
+                match ProbeEmbeddingModelProfile::new(embedding_prober)
+                    .execute(&probe_request, timeout, control)
+                    .await
+                {
+                    Ok(profile) => {
+                        recorder
+                            .record_provider_embedding(expected, kind, profile, settings_now()?)
+                            .await
+                    }
+                    Err(error) => {
+                        return self
+                            .record_provider_probe_failure(
+                                recorder,
+                                expected,
+                                kind,
+                                error,
+                                settings_now()?,
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
+        .map_err(map_record_error)?;
+        Ok(self.map_settings_v2(&result, false).await)
+    }
+
+    async fn record_provider_probe_failure(
+        &self,
+        recorder: RecordDesktopModelProbe,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        error: ModelProviderFailure,
+        at: SettingsTimestamp,
+    ) -> Result<SettingsResponseV2, CommandErrorV1> {
+        let status = if error == ModelProviderFailure::Cancelled {
+            ProviderHealthStatus::Cancelled
+        } else {
+            ProviderHealthStatus::Unreachable
+        };
+        let stored = recorder
+            .record_provider_failure(expected, kind, status, at)
+            .await
+            .map_err(map_record_error)?;
+        Ok(self.map_settings_v2(&stored, false).await)
+    }
+
+    async fn discover_provider_models_v2_owned(
+        &self,
+        expected: DesktopSettingsStoreVersion,
+        kind: ModelProviderKind,
+        control: &dyn ModelOperationControl,
+    ) -> Result<ProviderModelsResponseV2, CommandErrorV1> {
+        let current = self.load_expected(expected).await?;
+        let endpoint = current
+            .settings()
+            .provider(kind)
+            .endpoint()
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        let timeout = ModelRequestTimeout::from_millis(MODEL_DISCOVERY_TIMEOUT_MILLIS)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelSettingsUnavailable))?;
+        let catalog_result = match kind {
+            ModelProviderKind::Ollama => {
+                if endpoint.scope() != ModelEndpointScope::LocalLoopback {
+                    return Err(CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid));
+                }
+                let endpoint = OllamaEndpoint::parse(endpoint.canonical_origin())
+                    .map_err(|_| invalid_request())?;
+                let provider =
+                    OllamaModelProvider::new(endpoint, Arc::new(LocalOnlyOllamaEndpointPolicy))
+                        .map_err(|_| invalid_request())?;
+                DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+            }
+            ModelProviderKind::Gemini => {
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = GeminiEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let policy = ExactGeminiEndpointPolicy::new(origin);
+                policy.authorize(&endpoint).map_err(|_| invalid_request())?;
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = GeminiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+            }
+            ModelProviderKind::OpenAi => {
+                let origin = endpoint.canonical_origin().to_owned();
+                let endpoint = OpenAiEndpoint::parse(&origin).map_err(|_| invalid_request())?;
+                let policy = ExactOpenAiEndpointPolicy::new(origin);
+                policy.authorize(&endpoint).map_err(|_| invalid_request())?;
+                let key = self
+                    .load_provider_api_key_for(current.settings(), kind)
+                    .await?;
+                let provider = OpenAiModelProvider::new(endpoint, Arc::new(policy), key)
+                    .map_err(|_| invalid_request())?;
+                DiscoverProviderModels::new(&provider)
+                    .execute(timeout, control)
+                    .await
+            }
+        };
+        let catalog = match catalog_result {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                let status = if error == ModelProviderFailure::Cancelled {
+                    ProviderHealthStatus::Cancelled
+                } else {
+                    ProviderHealthStatus::Unreachable
+                };
+                let failed = current
+                    .settings()
+                    .clone()
+                    .with_provider_probe_failure(kind, status, settings_now()?)
+                    .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+                self.store
+                    .append(expected, &failed)
+                    .await
+                    .map_err(map_store_error)?;
+                return Err(map_model_operation_error(error));
+            }
+        };
+        let verified_at = settings_now()?;
+        let updated = current
+            .settings()
+            .clone()
+            .with_provider_connection_verified(kind, verified_at)
+            .map_err(|_| CommandErrorV1::settings(ErrorCodeV1::ModelEndpointInvalid))?;
+        let stored = self
+            .store
+            .append(expected, &updated)
+            .await
+            .map_err(map_store_error)?;
+        Ok(ProviderModelsResponseV2::new(
+            self.map_settings_v2_snapshot(&stored, false).await,
+            provider_kind_v2_back(kind),
+            catalog
+                .model_ids()
+                .iter()
+                .map(|model| model.as_str().to_owned())
+                .collect(),
+            catalog.truncated(),
+        ))
     }
 
     /// Runs one bounded explicit local provider probe and persists its redacted result.
@@ -535,6 +1120,18 @@ impl ModelSettingsManager {
             .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialMissing))
     }
 
+    async fn load_provider_api_key_for(
+        &self,
+        settings: &a3_application::DesktopSettings,
+        kind: ModelProviderKind,
+    ) -> Result<ProviderApiKey, CommandErrorV1> {
+        LoadDesktopProviderCredential::new(Arc::clone(&self.credential_store))
+            .execute_for(settings, kind)
+            .await
+            .map_err(map_credential_access_error)?
+            .ok_or_else(|| CommandErrorV1::settings(ErrorCodeV1::ProviderCredentialMissing))
+    }
+
     async fn map_settings(
         &self,
         stored: &StoredDesktopSettings,
@@ -542,6 +1139,109 @@ impl ModelSettingsManager {
     ) -> SettingsResponseV1 {
         let credential = credential_projection(stored, &self.credential_store).await;
         map_settings(stored, probe_active, credential)
+    }
+
+    async fn map_settings_v2(
+        &self,
+        stored: &StoredDesktopSettings,
+        probe_active: bool,
+    ) -> SettingsResponseV2 {
+        SettingsResponseV2::new(self.map_settings_v2_snapshot(stored, probe_active).await)
+    }
+
+    async fn map_settings_v2_snapshot(
+        &self,
+        stored: &StoredDesktopSettings,
+        probe_active: bool,
+    ) -> SettingsV2 {
+        let settings = stored.settings();
+        let providers = [
+            self.map_provider_settings_v2(settings, ModelProviderKind::Ollama)
+                .await,
+            self.map_provider_settings_v2(settings, ModelProviderKind::Gemini)
+                .await,
+            self.map_provider_settings_v2(settings, ModelProviderKind::OpenAi)
+                .await,
+        ];
+        let privacy = settings.privacy();
+        SettingsV2::new(
+            stored.version().get().to_string(),
+            providers,
+            settings
+                .llm_profile(LlmModelRole::Coding)
+                .map(map_llm_profile_v2),
+            settings
+                .llm_profile(LlmModelRole::Mapping)
+                .map(map_llm_profile_v2),
+            settings.embedding_profile().map(map_embedding_profile_v2),
+            DataPrivacySettingsV1::new(
+                privacy.telemetry_enabled(),
+                privacy.cloud_sync_enabled(),
+                privacy.automatic_provider_discovery_enabled(),
+                privacy.prompt_response_logging_enabled(),
+                privacy.remote_requests_without_approval_enabled(),
+            ),
+            probe_active,
+        )
+    }
+
+    async fn map_provider_settings_v2(
+        &self,
+        settings: &a3_application::DesktopSettings,
+        kind: ModelProviderKind,
+    ) -> ProviderSettingsV2 {
+        let slot = settings.provider(kind);
+        let credential = if slot.endpoint().is_some_and(|endpoint| {
+            endpoint.credential_requirement() == ProviderCredentialRequirement::ApiKey
+        }) {
+            Some(ProviderCredentialV1::api_key(
+                self.provider_credential_status_v2(settings, kind).await,
+            ))
+        } else {
+            None
+        };
+        let endpoint = slot.endpoint().map(map_endpoint);
+        let health = Some(ProviderHealthV1::new(
+            map_health_status(slot.health().status()),
+            slot.health()
+                .checked_at()
+                .map(|value| value.unix_millis().to_string()),
+        ));
+        ProviderSettingsV2::new(
+            provider_kind_v2_back(slot.kind()),
+            slot.default_origin().to_owned(),
+            endpoint,
+            slot.enabled(),
+            slot.configuration_revision().to_string(),
+            credential,
+            slot.connection_verified_at()
+                .map(|value| value.unix_millis().to_string()),
+            health,
+        )
+    }
+
+    async fn provider_credential_status_v2(
+        &self,
+        settings: &a3_application::DesktopSettings,
+        kind: ModelProviderKind,
+    ) -> ProviderCredentialStatusV1 {
+        match LoadDesktopProviderCredential::new(Arc::clone(&self.credential_store))
+            .execute_for(settings, kind)
+            .await
+        {
+            Ok(Some(_)) => ProviderCredentialStatusV1::Configured,
+            Ok(None) | Err(ProviderCredentialAccessError::Missing) => {
+                ProviderCredentialStatusV1::Missing
+            }
+            Err(ProviderCredentialAccessError::RecoveryRequired)
+            | Err(ProviderCredentialAccessError::Store(ProviderCredentialStoreFailure::Corrupt)) => {
+                ProviderCredentialStatusV1::RecoveryRequired
+            }
+            Err(ProviderCredentialAccessError::Store(
+                ProviderCredentialStoreFailure::Unavailable
+                | ProviderCredentialStoreFailure::ResourceLimit,
+            )) => ProviderCredentialStatusV1::Unavailable,
+        }
     }
 }
 
@@ -608,6 +1308,22 @@ impl ModelOperationControl for ProbeCancellation {
 }
 
 fn validate_probe_shape(request: &ProbeModelRoleRequestV1) -> Result<(), CommandErrorV1> {
+    let valid = match request.role() {
+        ModelRoleV1::Coding | ModelRoleV1::Mapping => {
+            request.llm_limits().is_some() && request.embedding_limits().is_none()
+        }
+        ModelRoleV1::Embedding => {
+            request.llm_limits().is_none() && request.embedding_limits().is_some()
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(invalid_request())
+    }
+}
+
+fn validate_probe_shape_v2(request: &ProbeModelRoleRequestV2) -> Result<(), CommandErrorV1> {
     let valid = match request.role() {
         ModelRoleV1::Coding | ModelRoleV1::Mapping => {
             request.llm_limits().is_some() && request.embedding_limits().is_none()
@@ -722,6 +1438,30 @@ const fn provider_kind_id(kind: ModelProviderKindV1) -> &'static str {
     }
 }
 
+const fn provider_kind_v2(kind: ModelProviderKindV2) -> ModelProviderKind {
+    match kind {
+        ModelProviderKindV2::Ollama => ModelProviderKind::Ollama,
+        ModelProviderKindV2::Gemini => ModelProviderKind::Gemini,
+        ModelProviderKindV2::OpenAi => ModelProviderKind::OpenAi,
+    }
+}
+
+const fn provider_kind_v2_back(kind: ModelProviderKind) -> ModelProviderKindV2 {
+    match kind {
+        ModelProviderKind::Ollama => ModelProviderKindV2::Ollama,
+        ModelProviderKind::Gemini => ModelProviderKindV2::Gemini,
+        ModelProviderKind::OpenAi => ModelProviderKindV2::OpenAi,
+    }
+}
+
+fn provider_kind_from_id(value: &str) -> ModelProviderKindV2 {
+    match value {
+        "gemini" => ModelProviderKindV2::Gemini,
+        "openai" => ModelProviderKindV2::OpenAi,
+        _ => ModelProviderKindV2::Ollama,
+    }
+}
+
 fn credential_origin_is_authorized(endpoint: &a3_application::ConfiguredModelEndpoint) -> bool {
     match endpoint.provider_id().as_str() {
         "gemini" => GeminiEndpoint::parse(endpoint.canonical_origin())
@@ -796,6 +1536,67 @@ fn map_settings(
         ),
         probe_active,
     ))
+}
+
+fn map_endpoint(endpoint: &a3_application::ConfiguredModelEndpoint) -> ModelEndpointV1 {
+    ModelEndpointV1::new(
+        endpoint.provider_id().as_str().to_owned(),
+        endpoint.canonical_origin().to_owned(),
+        match endpoint.scope() {
+            ModelEndpointScope::LocalLoopback => ModelEndpointScopeV1::LocalLoopback,
+            ModelEndpointScope::Remote => ModelEndpointScopeV1::Remote,
+        },
+        match endpoint.access() {
+            ModelEndpointAccess::Local => ModelEndpointAccessV1::Local,
+            ModelEndpointAccess::RemoteBlocked => ModelEndpointAccessV1::RemoteBlocked,
+            ModelEndpointAccess::ExplicitUserInitiatedRemote => {
+                ModelEndpointAccessV1::ExplicitUserInitiatedRemote
+            }
+        },
+    )
+}
+
+fn map_llm_profile_v2(selected: &a3_application::LlmRoleProfile) -> LlmRoleProfileV2 {
+    let profile = selected.profile();
+    LlmRoleProfileV2::new(
+        provider_kind_from_id(profile.provider_id().as_str()),
+        profile.id().to_string(),
+        profile.model_id().as_str().to_owned(),
+        profile.settings().context_limit().get(),
+        profile.settings().output_limit().get(),
+        profile.settings().parallelism_limit().get(),
+        match profile.capabilities().structured_output() {
+            ModelStructuredOutputCapability::Verified => StructuredOutputCapabilityV1::Verified,
+            ModelStructuredOutputCapability::Unavailable => {
+                StructuredOutputCapabilityV1::Unavailable
+            }
+        },
+        match profile.capabilities().tool_call_mode() {
+            ModelToolCallMode::Disabled => ModelToolCallModeV1::Disabled,
+            ModelToolCallMode::NativeProviderReported => {
+                ModelToolCallModeV1::NativeProviderReported
+            }
+        },
+        match selected.activation() {
+            LlmProfileActivation::Executable => ModelProfileActivationV1::Executable,
+            LlmProfileActivation::CapabilityLimited => ModelProfileActivationV1::CapabilityLimited,
+        },
+        selected.probed_at().unix_millis().to_string(),
+    )
+}
+
+fn map_embedding_profile_v2(
+    selected: &a3_application::VerifiedEmbeddingProfile,
+) -> EmbeddingRoleProfileV2 {
+    let profile = selected.profile();
+    EmbeddingRoleProfileV2::new(
+        provider_kind_from_id(profile.provider_id().as_str()),
+        profile.id().to_string(),
+        profile.model_id().as_str().to_owned(),
+        profile.dimension().get(),
+        profile.max_batch_size().get(),
+        selected.probed_at().unix_millis().to_string(),
+    )
 }
 
 fn map_llm_profile(selected: &a3_application::LlmRoleProfile) -> LlmRoleProfileV1 {

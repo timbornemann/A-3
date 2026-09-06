@@ -13,6 +13,9 @@ pub struct QuerySettingsRequestV1 {
     protocol_version: ProtocolVersion,
 }
 
+/// Settings V2 uses the same version-only read request shape.
+pub type QuerySettingsRequestV2 = QuerySettingsRequestV1;
+
 impl QuerySettingsRequestV1 {
     /// Returns the version checked before reading local settings.
     #[must_use]
@@ -711,6 +714,462 @@ impl CancelModelProbeResponseV1 {
         Self {
             protocol_version: ProtocolVersion::CURRENT,
             cancellation_requested,
+        }
+    }
+}
+
+/// Closed provider implementation available to the Settings V2 boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelProviderKindV2 {
+    /// Local Ollama-compatible API.
+    Ollama,
+    /// Google Gemini API.
+    Gemini,
+    /// OpenAI API.
+    #[serde(rename = "openai")]
+    OpenAi,
+}
+
+/// Provider-specific endpoint configuration mutation.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ConfigureModelProviderRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+    endpoint_origin: Option<String>,
+}
+
+impl ConfigureModelProviderRequestV2 {
+    /// Returns the protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the CAS revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
+    }
+    /// Returns the closed provider kind.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV2 {
+        self.provider_kind
+    }
+    /// Returns the origin supplied for this provider slot.
+    #[must_use]
+    pub fn endpoint_origin(&self) -> Option<&str> {
+        self.endpoint_origin.as_deref()
+    }
+}
+
+impl fmt::Debug for ConfigureModelProviderRequestV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConfigureModelProviderRequestV2")
+            .field("protocol_version", &self.protocol_version)
+            .field(
+                "expected_settings_revision",
+                &self.expected_settings_revision,
+            )
+            .field("provider_kind", &self.provider_kind)
+            .field("has_endpoint", &self.endpoint_origin.is_some())
+            .finish()
+    }
+}
+
+/// Provider-specific one-way API-key write.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SetModelProviderCredentialRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+    #[serde(deserialize_with = "deserialize_provider_api_key_bytes")]
+    api_key_bytes: Vec<u8>,
+}
+
+impl SetModelProviderCredentialRequestV2 {
+    /// Consumes the secret-bearing request and returns only its bounded parts.
+    #[must_use]
+    pub fn into_parts(mut self) -> (ProtocolVersion, String, ModelProviderKindV2, Vec<u8>) {
+        (
+            self.protocol_version,
+            std::mem::take(&mut self.expected_settings_revision),
+            self.provider_kind,
+            std::mem::take(&mut self.api_key_bytes),
+        )
+    }
+}
+
+impl Drop for SetModelProviderCredentialRequestV2 {
+    fn drop(&mut self) {
+        self.api_key_bytes.zeroize();
+    }
+}
+
+/// Provider-specific credential deletion.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeleteModelProviderCredentialRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+}
+
+impl DeleteModelProviderCredentialRequestV2 {
+    /// Returns the protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the CAS revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
+    }
+    /// Returns the provider kind.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV2 {
+        self.provider_kind
+    }
+}
+
+/// Explicit catalog read and connection test for one provider slot.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DiscoverProviderModelsRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+}
+
+impl DiscoverProviderModelsRequestV2 {
+    /// Returns the protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the CAS revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
+    }
+    /// Returns the provider kind.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV2 {
+        self.provider_kind
+    }
+}
+
+/// Provider-specific activation mutation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SetModelProviderEnabledRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+    enabled: bool,
+}
+
+impl SetModelProviderEnabledRequestV2 {
+    /// Returns the protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the CAS revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
+    }
+    /// Returns the provider kind.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV2 {
+        self.provider_kind
+    }
+    /// Returns the requested activation state.
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+/// Explicit role capability probe bound to a provider/model tuple.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProbeModelRoleRequestV2 {
+    protocol_version: ProtocolVersion,
+    expected_settings_revision: String,
+    provider_kind: ModelProviderKindV2,
+    role: ModelRoleV1,
+    model_id: String,
+    llm_limits: Option<LlmProbeLimitsV1>,
+    embedding_limits: Option<EmbeddingProbeLimitsV1>,
+}
+
+impl ProbeModelRoleRequestV2 {
+    /// Returns the protocol version.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+    /// Returns the CAS revision.
+    #[must_use]
+    pub fn expected_settings_revision(&self) -> &str {
+        &self.expected_settings_revision
+    }
+    /// Returns the provider kind.
+    #[must_use]
+    pub const fn provider_kind(&self) -> ModelProviderKindV2 {
+        self.provider_kind
+    }
+    /// Returns the selected role.
+    #[must_use]
+    pub const fn role(&self) -> ModelRoleV1 {
+        self.role
+    }
+    /// Returns the provider-native model ID.
+    #[must_use]
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+    /// Returns LLM limits.
+    #[must_use]
+    pub const fn llm_limits(&self) -> Option<LlmProbeLimitsV1> {
+        self.llm_limits
+    }
+    /// Returns embedding limits.
+    #[must_use]
+    pub const fn embedding_limits(&self) -> Option<EmbeddingProbeLimitsV1> {
+        self.embedding_limits
+    }
+}
+
+impl fmt::Debug for ProbeModelRoleRequestV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProbeModelRoleRequestV2")
+            .field("protocol_version", &self.protocol_version)
+            .field(
+                "expected_settings_revision",
+                &self.expected_settings_revision,
+            )
+            .field("provider_kind", &self.provider_kind)
+            .field("role", &self.role)
+            .field("has_model_id", &!self.model_id.is_empty())
+            .field("llm_limits", &self.llm_limits)
+            .field("embedding_limits", &self.embedding_limits)
+            .finish()
+    }
+}
+
+/// One provider slot in the Settings V2 snapshot.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProviderSettingsV2 {
+    provider_kind: ModelProviderKindV2,
+    default_origin: String,
+    endpoint: Option<ModelEndpointV1>,
+    enabled: bool,
+    configuration_revision: String,
+    credential: Option<ProviderCredentialV1>,
+    connection_verified_at_unix_millis: Option<String>,
+    health: Option<ProviderHealthV1>,
+}
+
+impl ProviderSettingsV2 {
+    /// Creates one validated provider-slot projection.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        provider_kind: ModelProviderKindV2,
+        default_origin: String,
+        endpoint: Option<ModelEndpointV1>,
+        enabled: bool,
+        configuration_revision: String,
+        credential: Option<ProviderCredentialV1>,
+        connection_verified_at_unix_millis: Option<String>,
+        health: Option<ProviderHealthV1>,
+    ) -> Self {
+        Self {
+            provider_kind,
+            default_origin,
+            endpoint,
+            enabled,
+            configuration_revision,
+            credential,
+            connection_verified_at_unix_millis,
+            health,
+        }
+    }
+}
+
+/// Role profile projection carrying the provider/model tuple identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LlmRoleProfileV2 {
+    provider_kind: ModelProviderKindV2,
+    profile_id: String,
+    model_id: String,
+    context_tokens: u32,
+    output_tokens: u32,
+    parallelism: u16,
+    structured_output: StructuredOutputCapabilityV1,
+    tool_call_mode: ModelToolCallModeV1,
+    activation: ModelProfileActivationV1,
+    probed_at_unix_millis: String,
+}
+
+impl LlmRoleProfileV2 {
+    /// Creates a complete provider-bound role projection.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        provider_kind: ModelProviderKindV2,
+        profile_id: String,
+        model_id: String,
+        context_tokens: u32,
+        output_tokens: u32,
+        parallelism: u16,
+        structured_output: StructuredOutputCapabilityV1,
+        tool_call_mode: ModelToolCallModeV1,
+        activation: ModelProfileActivationV1,
+        probed_at_unix_millis: String,
+    ) -> Self {
+        Self {
+            provider_kind,
+            profile_id,
+            model_id,
+            context_tokens,
+            output_tokens,
+            parallelism,
+            structured_output,
+            tool_call_mode,
+            activation,
+            probed_at_unix_millis,
+        }
+    }
+}
+
+/// Provider-bound embedding profile projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct EmbeddingRoleProfileV2 {
+    provider_kind: ModelProviderKindV2,
+    profile_id: String,
+    model_id: String,
+    dimension: u16,
+    max_batch_size: u16,
+    probed_at_unix_millis: String,
+}
+
+impl EmbeddingRoleProfileV2 {
+    /// Creates a provider-bound embedding projection.
+    #[must_use]
+    pub const fn new(
+        provider_kind: ModelProviderKindV2,
+        profile_id: String,
+        model_id: String,
+        dimension: u16,
+        max_batch_size: u16,
+        probed_at_unix_millis: String,
+    ) -> Self {
+        Self {
+            provider_kind,
+            profile_id,
+            model_id,
+            dimension,
+            max_batch_size,
+            probed_at_unix_millis,
+        }
+    }
+}
+
+/// Complete three-slot settings projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SettingsV2 {
+    revision: String,
+    providers: [ProviderSettingsV2; 3],
+    coding_profile: Option<LlmRoleProfileV2>,
+    mapping_profile: Option<LlmRoleProfileV2>,
+    embedding_profile: Option<EmbeddingRoleProfileV2>,
+    privacy: DataPrivacySettingsV1,
+    probe_active: bool,
+}
+
+impl SettingsV2 {
+    /// Creates one complete Settings V2 projection.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        revision: String,
+        providers: [ProviderSettingsV2; 3],
+        coding_profile: Option<LlmRoleProfileV2>,
+        mapping_profile: Option<LlmRoleProfileV2>,
+        embedding_profile: Option<EmbeddingRoleProfileV2>,
+        privacy: DataPrivacySettingsV1,
+        probe_active: bool,
+    ) -> Self {
+        Self {
+            revision,
+            providers,
+            coding_profile,
+            mapping_profile,
+            embedding_profile,
+            privacy,
+            probe_active,
+        }
+    }
+}
+
+/// V2 settings command response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SettingsResponseV2 {
+    protocol_version: ProtocolVersion,
+    settings: SettingsV2,
+}
+
+impl SettingsResponseV2 {
+    /// Creates a current-protocol response.
+    #[must_use]
+    pub const fn new(settings: SettingsV2) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            settings,
+        }
+    }
+}
+
+/// Provider-bound catalog and updated verification snapshot.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProviderModelsResponseV2 {
+    protocol_version: ProtocolVersion,
+    settings: SettingsV2,
+    provider_kind: ModelProviderKindV2,
+    model_ids: Vec<String>,
+    truncated: bool,
+}
+
+impl ProviderModelsResponseV2 {
+    /// Creates a current-protocol provider catalog response.
+    #[must_use]
+    pub const fn new(
+        settings: SettingsV2,
+        provider_kind: ModelProviderKindV2,
+        model_ids: Vec<String>,
+        truncated: bool,
+    ) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::CURRENT,
+            settings,
+            provider_kind,
+            model_ids,
+            truncated,
         }
     }
 }

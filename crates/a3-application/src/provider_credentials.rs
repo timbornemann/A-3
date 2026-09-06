@@ -184,6 +184,34 @@ pub trait ProviderCredentialStore: fmt::Debug + Send + Sync {
         &'a self,
         provider_id: &'a ModelProviderId,
     ) -> ProviderCredentialStoreFuture<'a, ()>;
+
+    /// Loads a credential bound to an exact canonical-origin fingerprint.
+    fn load_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        _origin_fingerprint: &'a str,
+    ) -> ProviderCredentialStoreFuture<'a, Option<ProviderCredential>> {
+        self.load(provider_id)
+    }
+
+    /// Stores a credential bound to an exact canonical-origin fingerprint.
+    fn store_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        _origin_fingerprint: &'a str,
+        credential: &'a ProviderCredential,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        self.store(provider_id, credential)
+    }
+
+    /// Deletes the credential bound to an exact canonical-origin fingerprint.
+    fn delete_bound<'a>(
+        &'a self,
+        provider_id: &'a ModelProviderId,
+        _origin_fingerprint: &'a str,
+    ) -> ProviderCredentialStoreFuture<'a, ()> {
+        self.delete(provider_id)
+    }
 }
 
 /// Stable content-free OS credential storage failure.

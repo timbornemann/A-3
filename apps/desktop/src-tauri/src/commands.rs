@@ -22,8 +22,8 @@ use crate::{
     parse_canonical_positive_u64,
 };
 use a3_application::{
-    AgentSessionListQuery, AgentWorkspaceLayout, SLASH_COMMAND_LENSES, SLASH_COMMANDS,
-    UiPreferencesStoreVersion,
+    AgentSessionListQuery, AgentWorkspaceLayout, ModelEndpointValidator, SLASH_COMMAND_LENSES,
+    SLASH_COMMANDS, UiPreferencesStoreVersion,
 };
 use a3_domain::{
     AgentResearchDepth, AgentSessionId, AgentSessionMode, AgentSessionRevision, DeepMapMode,
@@ -43,7 +43,7 @@ use a3_protocol::{
     AgentSlashCommandRoleV1, AgentSlashCommandV1, AgentSlashCommandsResponseV1,
     AgentTaskControlActionV1, AgentTaskControlResponseV1, AgentTaskRecoveryResponseV1,
     CancelModelProbeRequestV1, CancelModelProbeResponseV1, CommandErrorV1,
-    CompileTaskLensRequestV1, ConfigureModelProviderRequestV1,
+    CompileTaskLensRequestV1, ConfigureModelProviderRequestV1, ConfigureModelProviderRequestV2,
     ConfirmProjectCommandAllowlistRequestV1, ContinueAgentResearchRequestV1,
     ControlAgentApprovalRequestV1, ControlAgentSessionQueueRequestV1, ControlAgentSessionRequestV1,
     ControlAgentSessionRequestV2, ControlAgentTaskRunRequestV1, ControlDeepMapRequestV1,
@@ -51,15 +51,16 @@ use a3_protocol::{
     DeepMapEntryDetailResponseV1, DeepMapEntryPageResponseV1, DeepMapModeV2,
     DeepMapModuleStepsResponseV1, DeepMapRunDashboardResponseV1, DeepMapRunModulesResponseV1,
     DeepMapRunPageResponseV1, DeepMapStartResponseV2, DeepMapStatusResponseV3,
-    DeleteModelProviderCredentialRequestV1, DiscoverProviderModelsRequestV1,
-    ExportAgentDiagramRequestV1, HealthRequestV1, HealthResponseV1, IndexActivityResponseV1,
-    IndexOverviewResponseV1, ListRecentProjectsRequestV1, ModuleCardDetailResponseV1,
-    ModuleCardEvidenceResponseV1, ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1,
-    ModuleRuntimeFlowResponseV1, ModuleRuntimeMapResponseV1, ModuleTreeResponseV1,
-    OpenProjectRequestV1, OpenProjectResponseV1, ProbeModelRoleRequestV1,
-    ProjectActivationResponseV1, ProjectCatalogResponseV1, ProjectMapSceneResponseV1,
-    ProjectMapSearchResponseV1, ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1,
-    ProjectStatusResponseV1, ProtocolVersion, ProviderModelsResponseV1,
+    DeleteModelProviderCredentialRequestV1, DeleteModelProviderCredentialRequestV2,
+    DiscoverProviderModelsRequestV1, DiscoverProviderModelsRequestV2, ExportAgentDiagramRequestV1,
+    HealthRequestV1, HealthResponseV1, IndexActivityResponseV1, IndexOverviewResponseV1,
+    ListRecentProjectsRequestV1, ModuleCardDetailResponseV1, ModuleCardEvidenceResponseV1,
+    ModuleCardFreshnessResponseV1, ModuleDependencyGraphResponseV1, ModuleRuntimeFlowResponseV1,
+    ModuleRuntimeMapResponseV1, ModuleTreeResponseV1, OpenProjectRequestV1, OpenProjectResponseV1,
+    ProbeModelRoleRequestV1, ProbeModelRoleRequestV2, ProjectActivationResponseV1,
+    ProjectCatalogResponseV1, ProjectMapSceneResponseV1, ProjectMapSearchResponseV1,
+    ProjectMapSourcePreviewResponseV1, ProjectSettingsResponseV1, ProjectStatusResponseV1,
+    ProtocolVersion, ProviderModelsResponseV1, ProviderModelsResponseV2,
     QueryAgentActivityRequestV1, QueryAgentApprovalRequestV1, QueryAgentAskResearchDetailRequestV1,
     QueryAgentAskResearchSourcePreviewRequestV1, QueryAgentAskResearchSourcesRequestV1,
     QueryAgentAskResearchTurnsRequestV1, QueryAgentDiagramArtifactRequestV1,
@@ -80,11 +81,12 @@ use a3_protocol::{
     RebuildProjectIndexRequestV1, RebuildProjectIndexResponseV1, RecentProjectsResponseV1,
     RemoveCatalogProjectRequestV1, RemoveProjectRequestV1, RemoveProjectResponseV1,
     RepositoryTreeResponseV1, RestoreLastProjectRequestV1, ReviseAgentGoalRequestV1,
-    SetModelProviderCredentialRequestV1, SettingsResponseV1, StartDeepMapRequestV2,
-    SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2, SubmitAgentMessageRequestV3,
-    SubmitAgentMessageRequestV4, SubmitAgentMessageResponseV4, TaskLensCompileResponseV1,
-    TaskLensTaskResponseV1, TaskLensTasksResponseV1, UiPreferencesResponseV1,
-    UpdateAgentWorkspaceLayoutRequestV1,
+    SetModelProviderCredentialRequestV1, SetModelProviderCredentialRequestV2,
+    SetModelProviderEnabledRequestV2, SettingsResponseV1, SettingsResponseV2,
+    StartDeepMapRequestV2, SubmitAgentMessageRequestV1, SubmitAgentMessageRequestV2,
+    SubmitAgentMessageRequestV3, SubmitAgentMessageRequestV4, SubmitAgentMessageResponseV4,
+    TaskLensCompileResponseV1, TaskLensTaskResponseV1, TaskLensTasksResponseV1,
+    UiPreferencesResponseV1, UpdateAgentWorkspaceLayoutRequestV1,
 };
 use a3_protocol::{
     ProjectMapAtlasSceneResponseV1, ProjectMapEntityContextResponseV1,
@@ -92,8 +94,14 @@ use a3_protocol::{
     QueryProjectMapAtlasSceneRequestV1, QueryProjectMapEntityContextRequestV1,
     QueryProjectMapFlowSceneRequestV1, QueryProjectMapInventoryPageRequestV1,
 };
+use a3_provider::{
+    GeminiSettingsEndpointValidator, OllamaSettingsEndpointValidator,
+    OpenAiSettingsEndpointValidator,
+};
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{
+    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+};
 
 #[tauri::command]
 /// Opens one native directory picker and returns only a validated project identity projection.
@@ -905,6 +913,73 @@ pub async fn query_settings(
 }
 
 #[tauri::command]
+/// Reads the complete three-provider Settings V2 snapshot without provider access.
+pub async fn query_settings_v2(
+    request: QuerySettingsRequestV1,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    root.query_settings_v2().await
+}
+
+#[tauri::command]
+/// Configures one provider slot under the V2 contract.
+pub async fn configure_model_provider_v2(
+    request: ConfigureModelProviderRequestV2,
+    app: AppHandle,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    execute_configure_model_provider_v2(request, &app, root.inner()).await
+}
+
+#[tauri::command]
+/// Stores one provider-bound API key under the V2 contract.
+pub async fn set_model_provider_credential_v2(
+    request: SetModelProviderCredentialRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    execute_set_model_provider_credential_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Deletes one provider-bound API key under the V2 contract.
+pub async fn delete_model_provider_credential_v2(
+    request: DeleteModelProviderCredentialRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    execute_delete_model_provider_credential_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Enables or disables one provider slot after the connection gate.
+pub async fn set_model_provider_enabled_v2(
+    request: SetModelProviderEnabledRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    execute_set_model_provider_enabled_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Explicitly tests and discovers one provider slot under V2.
+pub async fn discover_provider_models_v2(
+    request: DiscoverProviderModelsRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<ProviderModelsResponseV2, CommandErrorV1> {
+    execute_discover_provider_models_v2(request, root.inner()).await
+}
+
+#[tauri::command]
+/// Probes one provider/model tuple under V2.
+pub async fn probe_model_role_v2(
+    request: ProbeModelRoleRequestV2,
+    root: State<'_, CompositionRoot>,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    execute_probe_model_role_v2(request, root.inner()).await
+}
+
+#[tauri::command]
 /// Validates and stores one closed active provider configuration or clears it.
 pub async fn configure_model_provider(
     request: ConfigureModelProviderRequestV1,
@@ -995,6 +1070,117 @@ async fn execute_query_settings(
         return Err(CommandErrorV1::unsupported_protocol_version());
     }
     root.query_settings().await
+}
+
+async fn execute_configure_model_provider_v2(
+    request: ConfigureModelProviderRequestV2,
+    app: &AppHandle,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    if let Some(origin) = request.endpoint_origin() {
+        let canonical_origin = match request.provider_kind() {
+            a3_protocol::ModelProviderKindV2::Ollama => OllamaSettingsEndpointValidator
+                .validate(origin)
+                .map(|endpoint| endpoint.canonical_origin().to_owned()),
+            a3_protocol::ModelProviderKindV2::Gemini => GeminiSettingsEndpointValidator
+                .validate(origin)
+                .map(|endpoint| endpoint.canonical_origin().to_owned()),
+            a3_protocol::ModelProviderKindV2::OpenAi => OpenAiSettingsEndpointValidator
+                .validate(origin)
+                .map(|endpoint| endpoint.canonical_origin().to_owned()),
+        }
+        .map_err(|_| CommandErrorV1::settings(a3_protocol::ErrorCodeV1::ModelEndpointInvalid))?;
+        let is_cloud = matches!(
+            request.provider_kind(),
+            a3_protocol::ModelProviderKindV2::Gemini | a3_protocol::ModelProviderKindV2::OpenAi
+        );
+        if is_cloud {
+            let provider_label = match request.provider_kind() {
+                a3_protocol::ModelProviderKindV2::Gemini => "Google Gemini",
+                a3_protocol::ModelProviderKindV2::OpenAi => "OpenAI",
+                a3_protocol::ModelProviderKindV2::Ollama => "Ollama",
+            };
+            let result = app.dialog().message(format!("Provider: {provider_label}\nExakte Origin: {canonical_origin}\n\nNur bestätigen, wenn dieses Ziel denselben nativen Providervertrag unterstützt."))
+                .title("A^3 Provider-Origin bestätigen")
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::YesNo)
+                .blocking_show_with_result();
+            if !matches!(result, MessageDialogResult::Yes) {
+                return Err(CommandErrorV1::settings(
+                    a3_protocol::ErrorCodeV1::ModelEndpointInvalid,
+                ));
+            }
+        }
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.configure_model_provider_v2(expected, request.provider_kind(), request.endpoint_origin())
+        .await
+}
+
+async fn execute_set_model_provider_credential_v2(
+    request: SetModelProviderCredentialRequestV2,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    let (protocol_version, expected_revision, provider_kind, secret_bytes) = request.into_parts();
+    if protocol_version != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let secret = a3_application::ProviderApiKey::from_bytes(secret_bytes).map_err(|_| {
+        CommandErrorV1::settings(a3_protocol::ErrorCodeV1::ProviderCredentialInvalid)
+    })?;
+    let expected = settings_version_from_v1(&expected_revision)?;
+    root.set_model_provider_credential_v2(expected, provider_kind, secret)
+        .await
+}
+
+async fn execute_delete_model_provider_credential_v2(
+    request: DeleteModelProviderCredentialRequestV2,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.delete_model_provider_credential_v2(expected, request.provider_kind())
+        .await
+}
+
+async fn execute_set_model_provider_enabled_v2(
+    request: SetModelProviderEnabledRequestV2,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.set_model_provider_enabled_v2(expected, request.provider_kind(), request.enabled())
+        .await
+}
+
+async fn execute_discover_provider_models_v2(
+    request: DiscoverProviderModelsRequestV2,
+    root: &CompositionRoot,
+) -> Result<ProviderModelsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.discover_provider_models_v2(expected, request.provider_kind())
+        .await
+}
+
+async fn execute_probe_model_role_v2(
+    request: ProbeModelRoleRequestV2,
+    root: &CompositionRoot,
+) -> Result<SettingsResponseV2, CommandErrorV1> {
+    if request.protocol_version() != ProtocolVersion::CURRENT {
+        return Err(CommandErrorV1::unsupported_protocol_version());
+    }
+    let expected = settings_version_from_v1(request.expected_settings_revision())?;
+    root.probe_model_role_v2(expected, &request).await
 }
 
 async fn execute_configure_model_provider(

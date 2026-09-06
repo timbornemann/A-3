@@ -685,6 +685,24 @@ eindeutige, streng sortierte Modell-IDs. Sie ist flüchtige Auswahlhilfe und kei
 `probe_model_role` bleibt die einzige Modellaktivierungsgrenze; Discovery und Probe lassen sich
 über den gemeinsamen engen `cancel_model_probe`-Command kooperativ abbrechen.
 
+## Settings V2: drei Provider-Slots
+
+ADR-0066 ersetzt die V1-Einzelproviderprojektion als produktive Settingsansicht. Die registrierten
+V2-Commands sind `query_settings_v2`, `configure_model_provider_v2`,
+`set_model_provider_credential_v2`, `delete_model_provider_credential_v2`,
+`discover_provider_models_v2`, `set_model_provider_enabled_v2` und `probe_model_role_v2`.
+`SettingsV2` liefert exakt die kanonisch sortierten Slots `ollama`, `gemini` und `openai` mit
+Default-Origin, optionalem Endpoint, Aktivierung, eigener Konfigurationsrevision,
+Credentialstatus, Verifikationszeit und Healthstatus. Rollenprofile tragen zusätzlich die
+Providerart; ein Modell ist deshalb immer ein Provider-/Modell-Tupel.
+
+Konfiguration, Credentialänderung, Discovery, Aktivierung und Probe sind jeweils CAS-gebunden.
+Discovery ist der explizite Verbindungstest und liefert den flüchtigen, providergebundenen
+Katalog zusammen mit dem aktualisierten Snapshot. Probe- und Discovery-Requests enthalten keine
+vom WebView vorgegebenen Endpoints, Capabilitystatus oder Zeitwerte. Die historischen V1-
+Settings-Commands bleiben für alte Domain-/Componenttests lesbar, sind aber nicht mehr im
+produktiven Tauri-Handler registriert; `cancel_model_probe` bleibt die gemeinsame Abbruchgrenze.
+
 ## Command Error V1
 
 Ein syntaktisch gültiger Requestfehler erhält einen sicheren, serialisierbaren Fehler:

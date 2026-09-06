@@ -2,14 +2,14 @@ use a3_application::{
     ConfiguredModelEndpoint, DesktopSettings, DesktopSettingsStore, GetDesktopSettings,
     LlmModelRole, LlmProfileActivation, LoadDesktopProviderCredential, ModelEndpointScope,
     ModelFinishReason, ModelMessage, ModelMessageRole, ModelOperationControl, ModelProvider,
-    ModelProviderFailure, ModelProviderRequest, ModelRequestTimeout, ProviderCredentialStore,
-    ProviderEvent, StructuredOutputSchema,
+    ModelProviderFailure, ModelProviderKind, ModelProviderRequest, ModelRequestTimeout,
+    ProviderCredentialStore, ProviderEvent, StructuredOutputSchema,
 };
 use a3_domain::{AgentSessionMode, ModelPromptSchemaGrounding, SecretCandidateClassifierV1};
 use a3_provider::{
-    GeminiEndpoint, GeminiModelProvider, LocalOnlyOllamaEndpointPolicy, OllamaEndpoint,
-    OllamaModelProvider, OpenAiEndpoint, OpenAiModelProvider, StandardGeminiEndpointPolicy,
-    StandardOpenAiEndpointPolicy,
+    ExactGeminiEndpointPolicy, ExactOpenAiEndpointPolicy, GeminiEndpoint, GeminiModelProvider,
+    LocalOnlyOllamaEndpointPolicy, OllamaEndpoint, OllamaModelProvider, OpenAiEndpoint,
+    OpenAiModelProvider,
 };
 use futures::StreamExt;
 use std::fmt;
@@ -498,26 +498,36 @@ pub(crate) async fn resolve_provider(
         "gemini" => {
             let endpoint = GeminiEndpoint::parse(endpoint.canonical_origin())
                 .map_err(|_| AgentConversationFailure::Unavailable)?;
+            let origin = endpoint.canonical_origin();
             let key = LoadDesktopProviderCredential::new(Arc::clone(credentials))
-                .execute(settings)
+                .execute_for(settings, ModelProviderKind::Gemini)
                 .await
                 .map_err(|_| AgentConversationFailure::Unavailable)?
                 .ok_or(AgentConversationFailure::ModelNotConfigured)?;
-            GeminiModelProvider::new(endpoint, Arc::new(StandardGeminiEndpointPolicy), key)
-                .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
-                .map_err(|_| AgentConversationFailure::Unavailable)
+            GeminiModelProvider::new(
+                endpoint,
+                Arc::new(ExactGeminiEndpointPolicy::new(origin)),
+                key,
+            )
+            .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
+            .map_err(|_| AgentConversationFailure::Unavailable)
         }
         "openai" => {
             let endpoint = OpenAiEndpoint::parse(endpoint.canonical_origin())
                 .map_err(|_| AgentConversationFailure::Unavailable)?;
+            let origin = endpoint.canonical_origin();
             let key = LoadDesktopProviderCredential::new(Arc::clone(credentials))
-                .execute(settings)
+                .execute_for(settings, ModelProviderKind::OpenAi)
                 .await
                 .map_err(|_| AgentConversationFailure::Unavailable)?
                 .ok_or(AgentConversationFailure::ModelNotConfigured)?;
-            OpenAiModelProvider::new(endpoint, Arc::new(StandardOpenAiEndpointPolicy), key)
-                .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
-                .map_err(|_| AgentConversationFailure::Unavailable)
+            OpenAiModelProvider::new(
+                endpoint,
+                Arc::new(ExactOpenAiEndpointPolicy::new(origin)),
+                key,
+            )
+            .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>)
+            .map_err(|_| AgentConversationFailure::Unavailable)
         }
         _ => Err(AgentConversationFailure::Unavailable),
     }
@@ -526,13 +536,16 @@ pub(crate) async fn resolve_provider(
 pub(crate) fn executable_coding(
     settings: &DesktopSettings,
 ) -> Option<(&ConfiguredModelEndpoint, a3_domain::ModelProfile)> {
-    let endpoint = settings.endpoint()?;
     let selected = settings.llm_profile(LlmModelRole::Coding)?;
-    if selected.activation() != LlmProfileActivation::Executable
-        || selected.profile().provider_id() != endpoint.provider_id()
-    {
+    if selected.activation() != LlmProfileActivation::Executable {
         return None;
     }
+    let kind = ModelProviderKind::from_provider_id(selected.profile().provider_id().as_str())?;
+    let slot = settings.provider(kind);
+    if !slot.enabled() || slot.connection_verified_at().is_none() {
+        return None;
+    }
+    let endpoint = slot.endpoint()?;
     Some((endpoint, selected.profile().clone()))
 }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-model-provider-enabled-v2"
+description = "Enables the set_model_provider_enabled_v2 command without any pre-configured scope."
+commands.allow = ["set_model_provider_enabled_v2"]
+
+[[permission]]
+identifier = "deny-set-model-provider-enabled-v2"
+description = "Denies the set_model_provider_enabled_v2 command without any pre-configured scope."
+commands.deny = ["set_model_provider_enabled_v2"]

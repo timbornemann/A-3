@@ -766,7 +766,7 @@ Snapshotstand und einen credential-freien Origin, den der Ollama-Adapter kanonis
 Probe-Evidence atomar. Ein Remote-Origin bleibt speicherbar und sichtbar, aber in U8
 `RemoteBlocked` und ohne pauschale Netzwerkfreigabe.
 
-ADR-0026 projiziert diesen aktiven Endpunkt als typisierte Providerverbindung. V1 unterstützt
+Historisch projizierte ADR-0026 diesen aktiven Endpunkt als typisierte Providerverbindung. V1 unterstützte
 weiterhin genau eine aktive Verbindung; ADR-0028 und ADR-0032 erweitern die geschlossene
 Protokollauswahl auf `ollama`, `gemini` und `openai`, jeweils zusammen mit einem nativen Adapter und
 einer exakten Endpointpolicy. `DiscoverProviderModels` erhält weder Endpoint noch Modellnamen aus
@@ -774,6 +774,18 @@ der WebView. Der Composition Root lädt den revisionsgebundenen Endpoint und der
 fragt erst nach explizitem Nutzeraufruf den begrenzten nativen Modellkatalog ab. Der flüchtige,
 sortierte Katalog ist nur Auswahlhilfe, wird nicht persistiert und ist niemals
 Capability-Evidence.
+
+ADR-0066 ersetzt diese produktive Einzelproviderprojektion durch genau drei kanonisch sortierte,
+dauerhaft sichtbare Slots für Ollama, Gemini und OpenAI. Jeder Slot besitzt eigene Revision,
+credentialfreie Endpointkonfiguration, Credential-Lifecycle, Health, Verifikationszeit und
+Aktivierung; ein Slot darf erst nach erfolgreicher expliziter Discovery aktiviert werden.
+Discovery und Capability-Probes bleiben im globalen abbrechbaren Operations-Slot serialisiert.
+V2-Settings liefern nur die content-freie Projektion und registrieren die verlustbehaftete
+V1-Einzelprovideransicht nicht mehr als Desktop-Command. Kataloge bleiben flüchtig und werden
+providergebunden geladen; Rollenprofile referenzieren immer das Tupel aus Provider-ID und
+Modell-ID. Endpoint- oder Key-Änderungen invalidieren ausschließlich den betroffenen Slot,
+fehlerhafte spätere Retests bleiben dagegen nicht destruktiv. Die Laufzeit löst Endpoint und
+Credential aus genau diesem aktivierten, verifizierten Slot auf.
 
 Coding, Mapping und Embedding besitzen getrennte Kandidaten und werden nur durch eine explizite,
 abbrechbare und zeitbegrenzte Providerprobe aktualisiert. Der Core lädt den Endpoint aus seinem
@@ -787,8 +799,9 @@ Provider-, Credential- und Probe-Änderungen. Fehlt Profil, erforderliches Crede
 bleibt Deep Map bewusst unavailable; die Settings-Grenze simuliert keine Ausführbarkeit.
 Agent-Runs bleiben unabhängig davon unavailable, solange kein eigener Agent-Executor komponiert ist.
 
-OpenAI ist ausschließlich über `https://api.openai.com` produktiv erreichbar. Der native Adapter
-verwendet `GET /v1/models`, `POST /v1/responses` und `POST /v1/embeddings`; Requests setzen
+OpenAI verwendet standardmäßig `https://api.openai.com`; nach der ADR-0066-Adaptervalidierung
+und nativen Originbestätigung sind auch kompatible credentialfreie HTTPS-Origins zulässig. Der
+native Adapter verwendet `GET /v1/models`, `POST /v1/responses` und `POST /v1/embeddings`; Requests setzen
 `store: false`, deaktivieren Provider-Tools und übertragen den Bearer-Key erst nach der exakten
 Policyprüfung. GPT- und Embeddingnamen bleiben Kandidaten. Nur eine echte strikte JSON-Schema-Probe
 beziehungsweise ein validierter Vektor aktiviert ein Rollenprofil. Der Deep-Map-Composition-Root
