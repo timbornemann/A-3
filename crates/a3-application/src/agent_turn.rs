@@ -1958,26 +1958,36 @@ mod tests {
 
     #[test]
     fn patch_snapshot_conflicts_share_one_repair_before_tools() -> Result<(), Box<dyn Error>> {
-        for (operation, code) in [
+        for (operation, code, structurally_valid) in [
             (
                 serde_json::json!({"kind":"add","path":"existing.rs","content":"changed\n"}),
                 "patch_target_already_exists",
+                true,
             ),
             (
                 serde_json::json!({"kind":"update","path":"existing.rs","expected_hash":"ff".repeat(32),"content":"changed\n"}),
                 "patch_source_revision_changed",
+                true,
             ),
             (
                 serde_json::json!({"kind":"update","path":"missing.rs","expected_hash":"07".repeat(32),"content":"changed\n"}),
                 "patch_source_not_indexed",
+                true,
             ),
             (
                 serde_json::json!({"kind":"move","path":"source.rs","expected_hash":"08".repeat(32),"destination":"existing.rs"}),
                 "patch_target_already_exists",
+                true,
             ),
             (
                 serde_json::json!({"kind":"delete","path":"missing.rs","expected_hash":"07".repeat(32)}),
                 "patch_source_not_indexed",
+                true,
+            ),
+            (
+                serde_json::json!({"kind":"move","path":"source.rs","expected_hash":"08".repeat(32),"destination":"source.rs"}),
+                "patch_same_move_path",
+                false,
             ),
         ] {
             for correction in ["repeat", "update", "add", "move", "delete", "inspect"] {
@@ -2017,22 +2027,27 @@ mod tests {
                     }
                     _ => {}
                 }
-                // Schema-only replay remains valid; only the bound publication disproves it.
-                assert!(
+                // Snapshot conflicts are structurally valid; a same-path move is
+                // already invalid in the domain. Both use this same sole repair.
+                assert_eq!(
                     crate::DecodeAgentAction::current()
                         .decode(&wrong.to_string())
-                        .is_ok()
+                        .is_ok(),
+                    structurally_valid,
                 );
-                let provider = ScriptedProvider {
-                    provider_id: fixture.profile.provider_id().clone(),
-                    responses: Mutex::new(
-                        vec![
-                            provider_response(&wrong.to_string())?,
-                            provider_response(&repaired.to_string())?,
-                            provider_response(&valid.to_string())?,
-                        ]
-                        .into(),
-                    ),
+                let provider = RecordingReplanProvider {
+                    inner: ScriptedProvider {
+                        provider_id: fixture.profile.provider_id().clone(),
+                        responses: Mutex::new(
+                            vec![
+                                provider_response(&wrong.to_string())?,
+                                provider_response(&repaired.to_string())?,
+                                provider_response(&valid.to_string())?,
+                            ]
+                            .into(),
+                        ),
+                    },
+                    requests: Mutex::new(Vec::new()),
                 };
                 let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
                 let tools = CountingReadTools {
@@ -2068,8 +2083,32 @@ mod tests {
                     }
                 }
                 assert_eq!(fixture.run.usage().repair_count(), 1);
+                let requests = provider.requests.lock().map_err(|_| "requests")?;
+                assert_eq!(requests.len(), 2);
+                assert_eq!(
+                    requests[0].structured_output(),
+                    requests[1].structured_output()
+                );
+                let messages = requests[1].messages();
+                assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
+                let feedback = messages.last().ok_or("repair feedback")?.content();
+                assert!(feedback.contains(code));
+                assert!(feedback.len() <= 512);
+                if matches!(code, "patch_target_already_exists" | "patch_same_move_path") {
+                    assert!(feedback.contains("use update"));
+                    assert!(feedback.contains("inspect first"));
+                }
+                for private in [
+                    "existing.rs",
+                    "source.rs",
+                    "missing.rs",
+                    "current scoped change",
+                ] {
+                    assert!(!feedback.contains(private));
+                }
                 assert_eq!(
                     provider
+                        .inner
                         .responses
                         .lock()
                         .map_err(|_| "provider lock")?

@@ -343,6 +343,15 @@ der gesamte Index in den Prompt kopiert noch Originale nachgeladen oder Modellwe
 korrigiert. Dieselbe Publikation gilt für Primär- und Repairantwort; sie ersetzt
 keine Live-Frischeprüfung und erteilt keine Schreibfreigabe.
 
+Bei `TargetAlreadyExists` und `SameMovePath` erklärt der bestehende Einzelrepair
+zusätzlich in festem Core-Text den Unterschied zwischen neuer Datei, Verschieben
+und Bearbeiten des Inhalts. Ein beabsichtigtes In-place-Edit benötigt `update` mit
+den bereits gelieferten aktuellen Ankern; bei Unklarheit bleibt `inspect` möglich.
+Der Hinweis verbietet das Umgehen durch Löschen oder erfundene Verschiebeziele.
+Er enthält keine Rohantwort, Pfade oder Dateiinhalte, bleibt insgesamt innerhalb
+512 Bytes und ändert weder Operationsart noch Modellwerte automatisch. Auch eine
+danach zulässige Patchaktion benötigt weiterhin die normale Vorschau und Freigabe.
+
 Neue normale Agentturns verwenden nach
 [ADR-0087](adrs/0087-agentaktionen-ohne-modellstatusnotiz.md) das AgentAction-V5-
 Schema ohne modellgenerierten Statusblock. Das ausführbare Aktionsschema bleibt

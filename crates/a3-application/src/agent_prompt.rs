@@ -541,6 +541,16 @@ impl AgentActionRepair {
     /// Consumes this sole capability while preparing one content-free correction request.
     pub fn prepare(self) -> Result<PreparedAgentActionRepair, ModelMessageError> {
         let hint = match self.error {
+            AgentActionDecodeError::PatchConflict(
+                crate::PatchConflictKind::TargetAlreadyExists,
+            ) => {
+                " The destination already exists. add creates a new file; move needs an unused destination. For an intended content edit, use update with the supplied current path and expected_hash. Otherwise inspect first; do not delete a file to bypass this conflict."
+            }
+            AgentActionDecodeError::InvalidPatchOperation(
+                a3_domain::PatchOperationError::SameMovePath,
+            ) => {
+                " move changes a file's path, so source and destination must differ. For an intended edit in place, use update with the supplied path, expected_hash and new content. Otherwise inspect first; do not invent another destination to bypass this error."
+            }
             AgentActionDecodeError::RepeatedReplanRead => {
                 " This read already has a durable attempt. Choose a different relevant search or inspect target; repeating it is not new evidence."
             }
@@ -771,6 +781,35 @@ mod tests {
             let schema = crate::research_work_phase_schema(phase, false)?;
             assert!(schema["properties"]["decision"]["oneOf"].is_array());
             assert!(schema["$defs"].get("questionDecision").is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn patch_operation_repair_explains_the_value_conflict_with_bounded_core_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for error in [
+            AgentActionDecodeError::PatchConflict(crate::PatchConflictKind::TargetAlreadyExists),
+            AgentActionDecodeError::InvalidPatchOperation(
+                a3_domain::PatchOperationError::SameMovePath,
+            ),
+        ] {
+            let code = error.repair_code();
+            let prepared = AgentActionRepair {
+                decoder: DecodeAgentAction::current(),
+                error,
+            }
+            .prepare()?;
+            let text = prepared.instruction().content();
+            assert!(text.contains(code));
+            assert!(
+                text.contains("use update"),
+                "the repair must distinguish editing content from adding or moving a file"
+            );
+            assert!(text.contains("expected_hash"));
+            assert!(text.contains("same schema"));
+            assert!(text.len() <= 512);
+            assert!(!text.contains("delete the existing"));
         }
         Ok(())
     }

@@ -40,6 +40,15 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Die live belegten Patchfehler `TargetAlreadyExists` und `SameMovePath` im
+      vorhandenen Einzelrepair durch feste inhaltsfreie Operationshinweise erläutern.
+      Keine automatische Operationswahl, kein Ausweichen durch Löschen, keine neuen
+      Anker oder Berechtigungen. Zulassung und alle Patch-Grenzen unabhängig halten;
+      Rot→Grün, vollständige Gates und unveränderte lokale Coding-Lives prüfen.
+      36 Turnkombinationen und vollständige lokale Gates bestehen. Qwen erreicht
+      zweimal in drei Lives nachweislich Done; der dritte Lauf und Ornith bleiben
+      fehlgeschlagen. Die lokale Nutzbarkeitsabnahme bleibt deshalb offen.
+
 - [x] Replan-Analyseschema an die bereits erzwungene reine V5-Progress-Zulassung
       angleichen: keine dort anschließend verbotene Nutzerfrage anbieten. Normale
       Ask-/Plan-Fragen, Einzelrepair, Originalpflichten und fehlende Belege erhalten.

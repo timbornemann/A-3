@@ -2101,3 +2101,57 @@ Bericht `eval-1788799066038.jsonl`, SHA-256
 `59feb56047e7673d35306257a6008cfc329feb5681339f9dd5a9879d9f513200`;
 Log `replan-analysis-schema-20260907/luna-research-matrix.log`, SHA-256
 `397a8c1469814acd74a5f6c098d278e09062fda073b9ba58bb8415462a692078`.
+
+### Inhaltsfreie Operationshilfe im vorhandenen Patch-Einzelrepair
+
+Qwen wiederholte mehrfach `TargetAlreadyExists`, Ornith `SameMovePath`. Der bisherige
+Repair nannte zwar den geschlossenen Fehlercode, erläuterte aber nicht die betroffenen
+Operationsregeln. Der neue Hinweis-Test ist zunächst rot (`patch-operation-repair-red.log`).
+Für genau diese beiden Fehler erklärt fester Core-Text jetzt Add, Move und Update:
+Nur ein beabsichtigtes In-place-Edit soll `update` mit den gelieferten Ankern verwenden;
+bei Unklarheit bleibt Inspect möglich. Löschen oder erfundene Ziele sind kein Ausweg.
+Der Core schreibt keine Operation oder Modellwerte um und gibt nichts zusätzlich frei.
+
+Die vollständigen V5-Reparaturhinweise umfassen 420 beziehungsweise 406 UTF-8-Bytes,
+bleiben unter der bestehenden 512-Byte-Testgrenze und passen auch innerhalb der
+450-Einheiten-Sicherheitsreserve des 8k-Profils. Die Primärinstruktion und Modellprofile
+bleiben unverändert. Es wurde keine zusätzliche Reparatur- oder Ausgaberunde eingeführt.
+
+Der bestehende vollständige Turnvertrag prüft nun 36 Kombinationen: sechs Fehler
+einschließlich des bereits strukturell ungültigen SameMovePath, jeweils mit wiederholtem
+Fehler oder Update/Add/Move/Delete/Inspect. Wiederholte Fehler haben keine Toolwirkung,
+gültige Vorschläge bleiben unmodifiziert und benötigen normale weitere Autorisierung.
+Genau zwei Requests, ein Repair, unveränderte Originalnachrichten und Schema sowie
+eine ungenutzte dritte Antwort werden geprüft; die Hinweise enthalten keine Fixturepfade
+oder Modellprosa. Gezielte Serie: `patch-operation-repair-targeted.log`.
+
+Formatierung, vollständiges Workspace-Clippy mit `-D warnings` und vollständige
+Workspace-Tests bestehen; Rust mit `--all-features --offline --locked --jobs 2`,
+Tests seriell mit `--test-threads=1`. Logs `patch-operation-repair-clippy.log` und
+`patch-operation-repair-workspace.log`, jeweils Exit 0. Link- und Diff-Prüfung bestehen.
+
+Eingefrorenes Binary `patch-operation-repair-20260907/agent-tests.exe`, SHA-256
+`b4988c4977804e140023d257cd901b405e790e4f7d94851504b6957410638b00`.
+
+| Modell / Lauf | Dauer | Tatsächliches Coding-Ergebnis |
+| --- | --- | --- |
+| Qwen 8k / 1 | 85,54 s | Done 34, zuletzt Test Exit 0, Completed/verified, unabhängig grün |
+| Qwen 8k / 2 | 77,88 s | Done 37, zuletzt Test Exit 0, Completed/verified, unabhängig grün |
+| Qwen 8k / 3 | 115,18 s | IncompleteModelOutput, Failed 21, unabhängig rot |
+| Ornith 9B | 22,76 s | SameMovePath nach Einzelrepair, Failed 6, unabhängig rot |
+| Luna | 13,11 s | Done 23, Test Exit 0, Completed/verified, unabhängig grün |
+
+Lokale Modelle liefen strikt nacheinander, jede Wiederholung auf einer neuen Kopie
+derselben öffentlichen Aufgabe mit denselben Schutzregeln. Geschützte Dateien bleiben
+überall bytegleich; die erfolgreichen Fälle bestätigen zusätzlich unveränderte native
+Settings. Das sind zwei echte lokale Umsetzungserfolge, keine allgemeine Zuverlässigkeits-
+oder Geschwindigkeitsgarantie: Qwens dritter Lauf und Ornith bleiben ausdrücklich rot.
+Die früheren fehlgeschlagenen Testereignisse werden auch in erfolgreichen Runs nicht gelöscht.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `qwen-live.log`: `7fe4917e84dcab781ee6781b52cd83a48362d85b6101e35dd5741cfa6c70da8d`
+- `qwen-live-2.log`: `71917ced8cb6cf5b1fb322706111a13b009bb87903d1cfc5870f9e840c6f8c04`
+- `qwen-live-3.log`: `d8625463ae4cd6752401f6ab00cb327307ea393032a7f5fa42135c4039fdeec2`
+- `ornith-live.log`: `199d8ad581b4af01d030b70f10150dfa04bd966d7b1f9766c3158136407625d0`
+- `luna-live.log`: `09e26dcd8f3ff6c59daadcb74c3734b965d445fc98e0f74dc85ea2b0cafc8fec`
