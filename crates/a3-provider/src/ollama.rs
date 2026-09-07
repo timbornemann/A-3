@@ -329,7 +329,7 @@ impl OllamaModelProvider {
                 content: OLLAMA_PROBE_PROMPT,
             }],
             stream: false,
-            think: false,
+            think: OllamaThinking::for_model(request.model_id().as_str()),
             format: &schema,
             options: OllamaChatOptions::for_probe(request, reported_context_limit),
         };
@@ -528,7 +528,7 @@ struct OllamaProbeChatRequest<'a> {
     model: &'a str,
     messages: [OllamaRequestMessage<'a>; 1],
     stream: bool,
-    think: bool,
+    think: OllamaThinking,
     format: &'a Value,
     options: OllamaChatOptions<'a>,
 }
@@ -726,7 +726,7 @@ struct OllamaChatRequest<'a> {
     model: &'a str,
     messages: Vec<OllamaRequestMessage<'a>>,
     stream: bool,
-    think: bool,
+    think: OllamaThinking,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<&'a Value>,
     options: OllamaChatOptions<'a>,
@@ -745,11 +745,41 @@ impl<'a> OllamaChatRequest<'a> {
                 })
                 .collect(),
             stream: true,
-            think: false,
+            think: OllamaThinking::for_model(request.model_id().as_str()),
             format: request
                 .structured_output()
                 .map(a3_application::StructuredOutputSchema::value),
             options: OllamaChatOptions::from_request(request),
+        }
+    }
+}
+
+/// Adapter-only wire compatibility, not capability evidence (ADR-0067).
+#[derive(Clone, Copy)]
+enum OllamaThinking {
+    Disabled,
+    Low,
+}
+
+impl OllamaThinking {
+    fn for_model(model: &str) -> Self {
+        if model == "gpt-oss"
+            || model
+                .strip_prefix("gpt-oss:")
+                .is_some_and(|tag| !tag.is_empty())
+        {
+            Self::Low
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+impl Serialize for OllamaThinking {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Low => serializer.serialize_str("low"),
         }
     }
 }
@@ -1051,6 +1081,31 @@ impl Error for OllamaProviderCreateError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn thinking_wire_selection_is_exact_and_does_not_enable_similar_names()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for model in ["gpt-oss", "gpt-oss:20b", "gpt-oss:120b"] {
+            assert_eq!(
+                serde_json::to_value(super::OllamaThinking::for_model(model))?,
+                "low"
+            );
+        }
+        for model in [
+            "gpt-oss:",
+            "gpt-oss-extra:20b",
+            "my-gpt-oss:20b",
+            "user/gpt-oss:20b",
+            "qwen38-8k:latest",
+            "ornith-1.5:9b",
+        ] {
+            assert_eq!(
+                serde_json::to_value(super::OllamaThinking::for_model(model))?,
+                false
+            );
+        }
+        Ok(())
+    }
+
     use super::{
         MAX_OLLAMA_LINE_BYTES, OllamaStreamState, classify_http_status, finish_body, finish_reason,
         operational_context_tokens, parse_model_catalog, parse_ollama_line, parse_show_observation,

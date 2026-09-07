@@ -91,6 +91,7 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0063](0063-idempotente-v5-statusquellen.md) | Idempotente V5-Statusquellen |
 | [0064](0064-budgetierte-bestandsuebergabe-an-entwuerfe.md) | Budgetierte Bestandsübergabe an Entwürfe |
 | [0065](0065-zusammenhaengende-listen-im-core-auftrag.md) | Zusammenhängende Listen im Core-Auftrag |
+| [0067](0067-ollama-gpt-oss-wire-thinking.md) | Ollama GPT-OSS Wire-Thinking |
 
 ## Neue ADRs
 

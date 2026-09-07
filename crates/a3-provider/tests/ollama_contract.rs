@@ -456,6 +456,74 @@ async fn invalid_structured_probe_output_creates_a_non_executable_profile() -> R
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gpt_oss_probe_and_stream_use_low_thinking_without_exposing_reasoning()
+-> Result<(), TestError> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let server = tokio::spawn(async move {
+        let mut bodies = Vec::new();
+        for index in 0..3 {
+            let (mut stream, _) = listener.accept().await?;
+            bodies.push(serde_json::from_slice::<Value>(
+                &read_http_request(&mut stream).await?.body,
+            )?);
+            if index == 0 {
+                write_json_response(&mut stream, "200 OK", br#"{"capabilities":["completion","thinking"],"model_info":{"gptoss.context_length":131072}}"#).await?;
+            } else if index == 1 {
+                write_json_response(&mut stream, "200 OK", br#"{"model":"gpt-oss:20b","message":{"role":"assistant","content":"{\"a3_probe\":\"ok\"}","thinking":"private fixture reasoning"},"done":true,"done_reason":"stop"}"#).await?;
+            } else {
+                write_chunked_head(&mut stream).await?;
+                write_http_chunk(&mut stream, b"{\"model\":\"gpt-oss:20b\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"private fixture reasoning\"},\"done\":false}\n{\"model\":\"gpt-oss:20b\",\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true,\"done_reason\":\"stop\"}\n").await?;
+                finish_http_chunks(&mut stream).await?;
+            }
+        }
+        Ok::<_, TestError>(bodies)
+    });
+    let provider = provider(endpoint)?;
+    let control = TestControl::default();
+    let timeout = ModelRequestTimeout::from_millis(5_000)?;
+    let profile = ProbeModelProfile::new(&provider)
+        .execute(
+            &ModelCapabilityProbeRequest::new(
+                ModelId::try_from_string("gpt-oss:20b".to_owned())?,
+                ollama_settings()?,
+            ),
+            timeout,
+            &control,
+        )
+        .await?;
+    assert!(profile.executable_actions_enabled());
+    let request = ModelProviderRequest::new(
+        profile,
+        vec![ModelMessage::try_from_string(
+            ModelMessageRole::User,
+            "Return ok".to_owned(),
+        )?],
+        None,
+    )?;
+    let mut stream = provider.stream(&request, timeout, &control).await?;
+    let mut output = String::new();
+    let mut completions = 0;
+    while let Some(event) = stream.next().await {
+        match event? {
+            ProviderEvent::OutputText(chunk) => output.push_str(chunk.as_str()),
+            ProviderEvent::Completed(done) => {
+                assert_eq!(done.reason(), ModelFinishReason::Stop);
+                completions += 1;
+            }
+        }
+    }
+    let bodies = server.await??;
+    assert_eq!(output, "ok");
+    assert_eq!(completions, 1);
+    assert_eq!(bodies[1]["think"], "low");
+    assert_eq!(bodies[2]["think"], "low");
+    assert_eq!(bodies[1]["options"]["num_predict"], 32);
+    assert_eq!(bodies[2]["options"]["num_predict"], 2048);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedding_probe_observes_real_dimension_without_accepting_a_ui_dimension()
 -> Result<(), TestError> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;

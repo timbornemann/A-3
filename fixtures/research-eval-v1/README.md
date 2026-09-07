@@ -23,7 +23,7 @@ Live tests are ignored by default and must only be opted in after explicit user 
 Check that the selected model is already installed and locally resident using Ollama's
 loopback `/api/tags` and `/api/show`; a remote model/host is not local residency.
 Do not pull models or change application settings. The reviewed local profiles are
-`ornith-1.5:9b` and `gemma4:12b` at 16,384 context / 4,096 output, and
+`ornith-1.5:9b`, `gemma4:12b` and `gpt-oss:20b` at 16,384 context / 4,096 output, and
 `qwen38-8k:latest` at **8,192 context / 2,048 output**. Historical 4B/16k runs remain
 separate observations. Local profiles use temperature 0, parallelism 1, conservative
 UTF-8 counting and FormatFieldOnly, plus a real structured-output capability probe.
@@ -42,6 +42,16 @@ For the explicitly approved configured-provider check, instead set
 `A3_CONFIGURED_RESEARCH_CATALOG` to the existing application's `catalog.db` path.
 The runner prints provider, model, context and output only, loads settings read-only
 and uses the existing native credential adapter. It does not update or migrate that catalog.
+By default this selects the executable Coding profile. To test another explicitly approved
+stored provider without changing roles, set both `A3_RESEARCH_EVAL_PROVIDER` and
+`A3_RESEARCH_EVAL_MODEL`. The only reviewed pairs are `openai` / `gpt-5.6-luna` and
+`gemini` / `gemma-4-26b-a4b-it`. The slot must already be enabled and connection-verified;
+the target must appear in a fresh bounded catalog and pass the real capability probe.
+Existing matching Coding settings are preserved; otherwise the ephemeral fixture profile
+is 16,384 context with 2,048 output for Luna or 4,096 for Google Gemma. Nothing is persisted.
+Clear both override variables for the default selection, and clear all catalog/override
+variables before a local test. Ambiguous local-plus-catalog selections fail before any read
+or provider request. Local tests also check catalog membership before capability probing.
 One repetition runs all 12 smoke cases; five runs all 60. Optional
 `A3_RESEARCH_EVAL_CASE='family:variant'` selects a diagnostic case (both zero-based),
 which must not be presented as a full matrix. Remove that variable for full acceptance.

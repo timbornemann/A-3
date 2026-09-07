@@ -1,7 +1,7 @@
 # Plan 10: Verbindliche Rechercheführung
 
 Status: Implementierung und Modellläufe abgeschlossen; inhaltliche Praxisabnahme offen.\
-Stand: 2026-09-06. Ausgangscommit: `31e9db7`.
+Stand: 2026-09-07. Ausgangscommit: `31e9db7`.
 
 Entscheidungen: [ADR-0047](../adrs/0047-verbindlicher-recherchearbeitsstand.md),
 [ADR-0048](../adrs/0048-rungebundene-replan-recherche.md),
@@ -39,6 +39,21 @@ oder äußeren Recherchebudgets. Berechtigungsgrenzen und wirklich folgenreiche
 fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
+
+Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
+
+- [x] Explizite Live-Testauswahl für Luna und Google Gemma aus bestehenden freigegebenen
+      Providerslots; keine Änderung an Rollen, Credentials, Origins oder Benutzerkatalog.
+- [ ] Live-Nachtest von `gpt-5.6-luna`, `gemma-4-26b-a4b-it`, `ornith-1.5:9b`,
+      `qwen38-8k:latest` und `gpt-oss:20b`; lokale Modelle strikt nacheinander.
+- [ ] Inhaltliche Defekte anhand der Originale und unveränderter Testfragen reproduzieren,
+      gezielte Regressionen und Korrekturen statt pauschaler Budget-/Promptvergrößerung.
+- [x] Leere GPT-OSS-Probe durch den unterstützten Ollama-Wirewert korrigieren,
+      Offline-Grenzen und reale Recherche nachtesten
+      ([ADR-0067](../adrs/0067-ollama-gpt-oss-wire-thinking.md)).
+- [ ] Live-Agent-Umsetzung auf isolierter Fixture einschließlich tatsächlicher Verification
+      prüfen; bisherige Agent-Vorbereitung ist kein Nachweis ausgeführter Änderungen.
+- [ ] Erneute vollständige Qualitätsgates und dokumentierte verbleibende Grenzen.
 
 - [x] Versionierte Domain-Typen, stabile Teilfragen, explizite epistemische Arten,
       Abhängigkeiten, Ergebnis-/Evidence-Validierung und transitive Invalidierung.

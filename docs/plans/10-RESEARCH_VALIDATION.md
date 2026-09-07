@@ -909,3 +909,77 @@ vollständig gelieferten Originale kein nachgewiesenes Heilmittel.
 Die abschließende reine Protokoll-/Checklistenänderung besteht erneut
 `pnpm check:links` (108 Markdown-Dateien, jetzt 413 lokale Links) und
 `git diff --check`. Seit `030f2f1` wurde keine Produktions- oder Testlogik geändert.
+
+## Fortsetzung 2026-09-07: Mehrprovider und GPT-OSS
+
+Ausgangsstand ist `21a37b1` einschließlich der zwischenzeitlichen Mehrprovider-
+Einstellungen (`93aaf5e`, ADR-0066). Die explizite Fixture-Auswahl verwendet
+unveränderte gespeicherte, aktivierte Providerslots, native origin-gebundene Keys,
+frischen Modellkatalog und echte Capability-Probe. Sie schreibt keine Rollen,
+Profile, Credentials oder Benutzerkataloge. Für lokale Tests wurden `/api/tags`
+und `/api/show` geprüft: Ornith 9,0B Q4_K_M, Qwen 27,3B IQ3_M und GPT-OSS
+20,9B MXFP4 sind installiert, ohne Remote-Modell/-Host. Lokale Läufe sind sequenziell.
+
+Zwischenstände, ausdrücklich **keine inhaltliche Endabnahme**:
+
+| Modell | Bericht | Rückgabe `completed` | Begriffrubrik | Nutzerhalte | Calls / Bytes / ms |
+| --- | --- | ---: | ---: | ---: | --- |
+| gpt-5.6-luna | eval-1788769943354.jsonl | 12/12 | 12/12 | 0 | 35 / 126978 / 213736 |
+| gemma-4-26b-a4b-it (Google) | eval-1788769864966.jsonl | 0/12 | 0/12 | 12 | 14 / 37777 / 449022 |
+| gpt-oss:20b mit ADR-0067 | eval-1788770459162.jsonl | 12/12 | 11/12 | 1 | 35 / 137301 / 221813 |
+
+`completed` bedeutet hier nur Rückgabe des Researchers, nicht zwingend einen
+fertigen Plan: GPT-OSS fragt in CSV 3:2 unnötig nach der Bestätigung der erst zu
+entwerfenden Tests. Die unabhängig ausgewiesenen Nutzerhalte und Rubrik bleiben
+daher verbindlich. Der vollständige Inhalt dieses Gegenbeispiels bleibt im Bericht.
+Auch erfolgreiche Audit-Antworten enthalten unbewiesene Persistenzbehauptungen;
+Luna CSV 3:0 widerspricht sich zwischen verpflichtendem Header und erfolgreicher
+leerer Datei. Die frühere inhaltliche Abnahme bleibt offen.
+
+Die ersten beiden Berichte verwenden das eingefrorene Binary
+`target/research-eval/multiprovider-20260907/research-tests.exe`, SHA-256
+`45474578263b004a67a263ec26307418ce1c9698e623a158b3ee7996b7784dad`.
+GPT-OSS verwendet `target/research-eval/oss-low-20260907/research-tests.exe`, SHA-256
+`551a2a8beb21fba1798bf5818fa5bfa5d34a218dfd140214aebc1634c6901c64`.
+Berichtshashes in obiger Reihenfolge:
+
+- `a649814fae0f6b17a6f763daf7f0734acd9142550d01be4aaa71ef7f75f1f7e6`
+- `b0a7a28d9621d50924f6d4d3570e3d6dc56a2d452b8eaa25fa04b172c230ee85`
+- `8bf2e9ef30ac8730f51ba96df61220dfe61fabee2accc886c08043db438e1de7`
+
+### Eng belegte Adapterkorrektur
+
+GPT-OSS scheiterte zunächst vor Erstellung eines Matrixberichts an der Capability-
+Probe (36,68 s Gesamtversuch). Der lokale A/B-Vergleich liefert mit `think: false`
+HTTP 200/Stop, aber null sichtbare Bytes – sowohl bei 32 als auch 256 Output-Tokens.
+Mit `think: "low"` liefert derselbe 32-Token-Request das exakte 17-Byte-Probeobjekt.
+ADR-0067 korrigiert ausschließlich dieses Adapter-Wiremapping, nicht die Budgets.
+Der neue HTTP-Regressionstest war vorher rot (`false` statt `low`) und danach grün;
+er prüft Probe, Stream, unveränderte Output-Limits und ausgeschlossenen Thinking-Kanal.
+Alle Provider-Verträge bestehen: 24 Einheiten, 13 Gemini-, 14 Ollama-, 10 OpenAI-
+Vertragstests. Der externe OpenAI-Live-Test bleibt absichtlich ignoriert.
+
+### Noch offene Ursachen
+
+Google Gemma besteht die reale Probe und einfache JSON-/Union-/Nullarray-/numerische
+Const-Diagnosen. Das tatsächliche Initialize-Schema wird zurückgewiesen; Typisierung
+von schema_version oder Inlining der Referenzen hilft nicht. Kleinere verschachtelte
+Array-Maxima werden angenommen, erzeugen aber im 30-Sekunden-Diagnosefenster noch
+keinen sauberen Abschluss. Ein akzeptierter Wire-Request ist kein valides Ergebnis.
+Die Diagnose verändert weder Produktionsschema noch Decoder oder Zugriffsrechte.
+Gezielte weitere Schemaanalyse und die unnötige GPT-OSS-Testplanfrage bleiben offen.
+
+Der volle Rust-Workspace samt All-Features-, Offline-, Locked- und seriellen Tests
+besteht auf ADR-0067 einschließlich realer Patch-/Index-/Verification-Grenzen.
+Weitere Diagnoseänderungen, Clippy, verbleibende Modellnachtests und Live-Agent-
+Implementierung benötigen weiterhin eigene abgeschlossene Nachweise.
+
+Der anschließende Diagnose-A/B-Lauf (`schema-bounds-20260907/research-tests.exe`,
+SHA-256 `5b6fd851987d1cad040eee27272b5c3a4f5f4a2737f164155d15cc3fad572656`)
+entfernt nur im öffentlichen Testrequest Array-Maxima größer eins. Das bisher
+zurückgewiesene Initialize liefert jetzt Stop und 673 sichtbare Bytes. Der Inhalt
+enthält weiterhin ungültige Quellen/Abhängigkeiten und wird dadurch nicht fachlich
+oder durch den Core zugelassen. Das belegt einen Wire-Unterschied, keine richtige
+Recherche. Clippy mit `--workspace --all-targets --all-features --offline --locked
+-- -D warnings`, erneute drei Fixture-Auswahltests, Formatierung und Linkprüfung
+(111 Dateien / 423 lokale Links) bestehen. Keine Frontenddatei wurde geändert.
