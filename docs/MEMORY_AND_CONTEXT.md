@@ -653,9 +653,10 @@ unberührt und ungekürzt.
 
 ## Verbindlicher Rechercheprüfstand (ADR-0047)
 
-Für neue Ask-, Plan- und Agent-Vorbereitungsläufe verwendet die Modellgrenze Recherche-V5.
+Für neue Ask-, Plan- und Agent-Vorbereitungsläufe verwendet die Modellgrenze Recherche-V6
+gemäß [ADR-0071](adrs/0071-core-eigene-recherchestatusangaben.md).
 Die vorstehenden Freitext-/Nullrundenregeln beschreiben den erhaltenen V3/V4-Legacypfad.
-V5 hält stattdessen einen `ResearchWorkState`: unveränderlicher Auftrag, Core-IDs Q1–Q32,
+Der seit V5 bestehende `ResearchWorkState` bleibt unverändert: unveränderlicher Auftrag, Core-IDs Q1–Q32,
 Pflicht-/unterstützende/optionale Fragen, frühere Abhängigkeiten, Ergebnisart und Prüfstatus.
 Eine Teilfrage wird nur mit einem zugelassenen Ergebnis beantwortet. Eine Interpretation
 braucht Referenzen auf tatsächlich ausgelieferte Originalfenster. Der Core vergibt pro Paket
@@ -674,10 +675,41 @@ Vollständige vorausgesetzte Entwurfsentscheidungen bleiben im aktiven Kontext e
 Die feste neue Planvorbereitung benötigt weder Initialize noch einen freien Finalize-Aufruf;
 der Core stellt zugelassene Änderungs- und Testentscheidungen verlustfrei zusammen.
 `Finalize` erlaubt nur noch Planfelder: `summary`, `changes`, `interfaces`, `tests`, `assumptions`
-und die kurze öffentliche Notiz. Der Core rendert Marker, Überschriften, Nummerierung und
+und in V5 zusätzlich die kurze öffentliche Notiz. Der Core rendert Marker, Überschriften, Nummerierung und
 Recherchequellen selbst. Höchstens 32 Änderungen und 32 Tests mit jeweils einzeiligen Ergebnissen
 werden akzeptiert; der bestehende Plan-/Task-Ledger-Vertrag wird anschließend erneut geprüft.
 Das Modell kann durch `kind: plan` weder Rechercheabschluss noch Ausführung autorisieren.
+
+V6 verlangt keine wiederholte administrative Modellnotiz. Ziel, zugelassener Fortschritt
+und nächste offene Pflicht kommen ausschließlich aus dem Core-Prüfstand. Sie erscheinen
+als begrenzte Audit-Ereignisse und in der vorhandenen Prüfliste, nicht als Einträge der
+Befundtabelle. So werden sie auch nach Datenbank-Reopen nicht zu ResearchMemory-Findings.
+V3–V5-Modellnotizen behalten ihre bisherigen unabhängigen Prüfungen und Speicherung.
+Eine neue Persistenzversion ist dafür nicht nötig.
+
+Für echte weitere Recherche erlaubt V6-Analyze gemäß
+[ADR-0072](adrs/0072-typisierter-belegbedarf-ohne-statusprosa.md) einen typisierten
+`evidenceNeed` für die aktive Frage mit ein bis acht einfachen Symbol-/Pfadliteralen.
+Jedes Literal muss im aktuellen Originalauftrag oder einem tatsächlich gelieferten
+Originalfenster vorkommen. Es ist nur ein Kandidat für die bestehende Core-Frontier:
+kein Fakt, kein Tool, kein Abschluss und kein neues Budget. Bedarf und Ergebnisse
+dürfen nicht gemeinsam auftreten. Die vorhandene Audit-Query hält diese Navigation
+für Fortsetzungen fest; alte Querytexte bleiben unmaßgebliche Suchhistorie und ersetzen
+keine erneute Original-/Scopeprüfung. Designphasen können so keine neue Recherche anfordern.
+Nach [ADR-0074](adrs/0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) gilt
+dies auch für V6-SummarizeOriginals: vollständig gelieferte benannte Dateien können
+erst auf weitere Helfer verweisen. Leerer `progress` bleibt dort unzulässig; nur der
+konkrete geprüfte Bedarf darf den unverändert offenen Stand an die Read-Frontier geben.
+
+[ADR-0073](adrs/0073-originalgebundene-navigationsstellen-im-kontext.md) hält im
+vorhandenen 32-Einheiten-Cache auch kurze, tatsächlich gelieferte Originalzeilen der
+Navigation fest (höchstens 512 Bytes je Zeile). Ganze Funktionen über der Hälfte des
+Evidence-Paketbudgets bleiben paginierbar statt als übergroße Einheit zu konkurrieren.
+Nach Übergang zum nächsten Helfer bleibt die konkrete Entdeckungsstelle erhalten;
+der alte breite Navigationscursor konkurriert nicht weiter mit dessen noch ungelesenem
+Rumpf. Expliziter Fokus bleibt erhalten. Neue Seiten derselben Datei dürfen durch
+behaltene Einheiten nicht gesperrt werden. Es entstehen keine neuen Belege oder Bytes.
+
 Ein vollständig validierter Initialvorschlag ohne erforderliche Repository-Pflicht trotz
 ausdrücklich benannter Originaldateien erhält vor dem Einfrieren den vollständigen Originalauftrag
 als Core-Prüfpflicht. Ungültige Dokumente und bestehende Verträge werden dadurch nicht gerettet

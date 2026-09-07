@@ -15,6 +15,47 @@ pub struct ResearchWorkUpdate {
     pub results: Vec<ResearchResultProposal>,
 }
 
+/// Bounded V6 navigation candidates, never evidence, tool input or completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResearchEvidenceNeed {
+    question: ResearchQuestionId,
+    targets: Vec<String>,
+}
+
+impl ResearchEvidenceNeed {
+    /// Bounds and validates literals before the Core checks their original occurrence.
+    pub fn new(question: ResearchQuestionId, targets: Vec<String>) -> Result<Self, DecodeError> {
+        if targets.is_empty()
+            || targets.len() > 8
+            || targets.iter().enumerate().any(|(i, target)| {
+                target.is_empty()
+                    || target.len() > 96
+                    || target.starts_with(['/', '-'])
+                    || target
+                        .split('/')
+                        .any(|part| matches!(part, "" | "." | ".."))
+                    || !target
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+                    || targets[..i].contains(target)
+            })
+        {
+            return Err(DecodeError::InvalidValue);
+        }
+        Ok(Self { question, targets })
+    }
+    /// Active question to which the need must be independently bound.
+    #[must_use]
+    pub const fn question(&self) -> ResearchQuestionId {
+        self.question
+    }
+    /// Safe lexical candidates; existence and relevance have not been proven by this type.
+    #[must_use]
+    pub fn targets(&self) -> &[String] {
+        &self.targets
+    }
+}
+
 /// Core-selected document phase, never inferred from text supplied by the model or repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchOutputPhase {
@@ -38,6 +79,52 @@ impl ResearchOutputPhase {
     pub const fn is_design(self) -> bool {
         matches!(self, Self::Design(_) | Self::DesignTests(_))
     }
+}
+
+/// Current V6 wire contract: the Core owns presentation, not the model (ADR-0071).
+/// The independent V5 builder remains unchanged for historical replay and comparisons.
+pub fn research_work_current_phase_schema(
+    phase: ResearchOutputPhase,
+    reads: bool,
+) -> Result<Value, DecodeError> {
+    let mut schema = research_work_phase_schema(phase, reads)?;
+    schema["$id"] = json!("https://a3.local/schemas/ask-research-decision-v6.schema.json");
+    schema["title"] = json!("A^3 Research Work Decision V6");
+    schema["properties"]["schema_version"] = json!({"const":6});
+    for name in ["progress", "questionDecision", "planDecision"] {
+        if let Some(definition) = schema["$defs"].get_mut(name) {
+            definition["required"]
+                .as_array_mut()
+                .ok_or(DecodeError::InvalidSchema)?
+                .retain(|key| key != "note");
+            definition["properties"]
+                .as_object_mut()
+                .ok_or(DecodeError::InvalidSchema)?
+                .remove("note");
+        }
+    }
+    if let ResearchOutputPhase::Analyze(question)
+    | ResearchOutputPhase::SummarizeOriginals(question) = phase
+    {
+        if matches!(phase, ResearchOutputPhase::SummarizeOriginals(_)) {
+            schema["$defs"]["work"]["properties"]["results"]["minItems"] = json!(0);
+        }
+        schema["$defs"]["evidenceNeed"] = json!({"type":"object","additionalProperties":false,
+            "required":["kind","question_id","targets"],"properties":{
+                "kind":{"const":"evidenceNeed"},"question_id":{"const":question.get()},
+                "targets":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":96},
+                    "description":"Simple symbol or relative path literals occurring in the current original request or delivered source. No prose, whitespace, shell syntax, URLs, absolute paths or traversal. Core search candidates, not tools or evidence."}}});
+        let decision = &mut schema["properties"]["decision"];
+        if decision.get("oneOf").is_none() {
+            *decision = json!({"oneOf":[decision.take()]});
+        }
+        decision["oneOf"]
+            .as_array_mut()
+            .ok_or(DecodeError::InvalidSchema)?
+            .push(json!({"$ref":"#/$defs/evidenceNeed"}));
+    }
+    crate::schema_projection::prune_definitions(&mut schema).ok_or(DecodeError::InvalidSchema)?;
+    Ok(schema)
 }
 
 /// Narrows V5 to the current trusted phase and drops unreachable schema definitions.
@@ -270,7 +357,7 @@ pub fn research_work_decision_schema() -> Result<Value, DecodeError> {
 
 pub(crate) fn validate_phase(value: &Value, phase: ResearchOutputPhase) -> Result<(), DecodeError> {
     use crate::ask_research_action_codec::{array, object, string};
-    if value["schema_version"] != 5 {
+    if !matches!(value["schema_version"].as_u64(), Some(5 | 6)) {
         return Err(DecodeError::UnsupportedVersion);
     }
     let decision = object(&value["decision"])?;
@@ -278,6 +365,17 @@ pub(crate) fn validate_phase(value: &Value, phase: ResearchOutputPhase) -> Resul
     let questions = array(work, "questions")?;
     let results = array(work, "results")?;
     let kind = string(decision, "kind")?;
+    if kind == "evidenceNeed" {
+        return if value["schema_version"] == 6
+            && matches!(phase, ResearchOutputPhase::Analyze(id) | ResearchOutputPhase::SummarizeOriginals(id) if value["decision"]["question_id"] == id.get())
+            && questions.is_empty()
+            && results.is_empty()
+        {
+            Ok(())
+        } else {
+            Err(DecodeError::InvalidValue)
+        };
+    }
     let valid = match phase {
         ResearchOutputPhase::Initialize => {
             kind == "progress"
@@ -825,6 +923,130 @@ mod tests {
         document["work"]["results"][0]["question_id"] = json!(3);
         document["work"]["results"][0]["evidence"] = json!([{"anchor_ref":"E1"}]);
         assert!(decoder.decode_phase(&document.to_string(), tests).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn research_v6_accepts_work_without_model_status_and_rejects_injected_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let phase = ResearchOutputPhase::DesignTests(ResearchQuestionId::new(3)?);
+        let decoder = crate::DecodeAskResearchDecision;
+        let mut document = json!({"schema_version":6,"decision":{"kind":"progress"},
+            "work":{"questions":[],"results":[{"question_id":3,"kind":"designDecision",
+                "text":"Use missing input; expect exit 1, stderr and no writes.","evidence":[]}]}});
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_ok());
+        document["decision"]["note"] = json!({});
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        document["decision"] = json!({"kind":"progress"});
+        document["work"]["results"][0]["evidence"] = json!([{"anchor_ref":"E1"}]);
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        document["work"]["results"][0]["evidence"] = json!([]);
+        document["schema_version"] = json!(5);
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn research_v6_evidence_need_is_bounded_phase_bound_and_never_a_result()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = ResearchQuestionId::FIRST;
+        let phase = ResearchOutputPhase::Analyze(id);
+        let decoder = crate::DecodeAskResearchDecision;
+        let mut document = json!({"schema_version":6,"decision":{"kind":"evidenceNeed","question_id":1,"targets":["get_storage","taskflow/manager.py"]},"work":{"questions":[],"results":[]}});
+        let crate::AskResearchDecision::Answer {
+            note,
+            evidence_status,
+            ..
+        } = decoder.decode_phase(&document.to_string(), phase)?
+        else {
+            return Err("need became a tool".into());
+        };
+        assert_eq!(
+            evidence_status,
+            crate::AskResearchEvidenceStatus::Incomplete
+        );
+        assert_eq!(note.origin, crate::AskResearchNoteOrigin::CoreWorkState);
+        assert!(note.source_ordinals.is_empty());
+        assert_eq!(note.evidence_need.ok_or("typed need")?.question(), id);
+        let summary = ResearchOutputPhase::SummarizeOriginals(id);
+        assert!(decoder.decode_phase(&document.to_string(), summary).is_ok());
+        let mut empty_progress = document.clone();
+        empty_progress["decision"] = json!({"kind":"progress"});
+        assert!(
+            decoder
+                .decode_phase(&empty_progress.to_string(), summary)
+                .is_err()
+        );
+        for other in [
+            ResearchOutputPhase::Initialize,
+            ResearchOutputPhase::Design(id),
+            ResearchOutputPhase::DesignTests(id),
+            ResearchOutputPhase::Finalize,
+            ResearchOutputPhase::Analyze(ResearchQuestionId::new(2)?),
+        ] {
+            assert!(decoder.decode_phase(&document.to_string(), other).is_err());
+        }
+        for targets in [
+            json!([]),
+            json!(vec!["name"; 9]),
+            json!(["name", "name"]),
+            json!(["../outside"]),
+            json!(["/absolute"]),
+            json!(["C:/outside"]),
+            json!(["https://example.invalid"]),
+            json!(["name;exit"]),
+            json!(["two words"]),
+            json!(["name\nnext"]),
+            json!(["x".repeat(97)]),
+        ] {
+            document["decision"]["targets"] = targets;
+            assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        }
+        document["decision"]["targets"] = json!(["get_storage"]);
+        document["work"]["results"] =
+            json!([{"question_id":1,"kind":"interpretation","text":"Unproven","evidence":[]}]);
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        document["work"]["results"] = json!([]);
+        document["schema_version"] = json!(5);
+        assert!(decoder.decode_phase(&document.to_string(), phase).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn research_v6_phase_schemas_remove_status_without_relaxing_result_contracts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for phase in [
+            ResearchOutputPhase::Initialize,
+            ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::SummarizeOriginals(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::Design(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::DesignTests(ResearchQuestionId::FIRST),
+            ResearchOutputPhase::Finalize,
+        ] {
+            let previous = research_work_phase_schema(phase, true)?;
+            let current = research_work_current_phase_schema(phase, true)?;
+            assert_eq!(current["properties"]["schema_version"]["const"], 6);
+            assert!(current["$defs"].get("v5StatusNote").is_none());
+            let mut expected_work = previous["$defs"]["work"].clone();
+            if matches!(phase, ResearchOutputPhase::SummarizeOriginals(_)) {
+                expected_work["properties"]["results"]["minItems"] = json!(0);
+            }
+            assert_eq!(current["$defs"]["work"], expected_work);
+            assert_eq!(current["$defs"]["result"], previous["$defs"]["result"]);
+            assert_eq!(
+                current["$defs"].get("evidenceNeed").is_some(),
+                matches!(
+                    phase,
+                    ResearchOutputPhase::Analyze(_) | ResearchOutputPhase::SummarizeOriginals(_)
+                )
+            );
+            assert!(current.to_string().len() < previous.to_string().len());
+            println!(
+                "research-schema {phase:?}: V5={} V6={} UTF-8 bytes",
+                previous.to_string().len(),
+                current.to_string().len()
+            );
+        }
         Ok(())
     }
 

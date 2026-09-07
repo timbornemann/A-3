@@ -41,6 +41,8 @@ enum WorkFault {
     EchoTestObligationAlways,
     TestConfirmationOnce,
     TestConfirmationAlways,
+    CoreStatus,
+    CoreStatusRepairOnce,
 }
 
 fn retained_long_design() -> String {
@@ -371,6 +373,20 @@ impl ResearchModel for CoherentModel {
                     "message":"Please confirm the test scenarios before I define the requested tests."});
                 document["work"]["results"] = serde_json::json!([]);
             }
+            if matches!(
+                self.fault,
+                WorkFault::CoreStatus | WorkFault::CoreStatusRepairOnce
+            ) {
+                document["schema_version"] = serde_json::json!(6);
+                document["decision"]
+                    .as_object_mut()
+                    .ok_or(AgentConversationFailure::InvalidOutput)?
+                    .remove("note");
+                if self.fault == WorkFault::CoreStatusRepairOnce && call == 0 {
+                    document["decision"]["note"] =
+                        serde_json::json!({"finding":"injected presentation"});
+                }
+            }
             return Ok(document.to_string());
         }
         let complete = [ADD, DISPATCH, INIT, LOG, CALLBACK]
@@ -517,6 +533,17 @@ fn research_core_test_design_repairs_unnecessary_confirmation_without_user_halt(
 fn research_core_test_design_repeated_confirmation_cannot_complete_or_start_reads()
 -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(true, false, WorkFault::TestConfirmationAlways)
+}
+
+#[test]
+fn research_v6_core_status_completes_all_modes_without_model_presentation()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::CoreStatus)
+}
+
+#[test]
+fn research_v6_injected_status_gets_one_repair_without_extra_reads() -> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::CoreStatusRepairOnce)
 }
 
 #[test]
@@ -857,6 +884,33 @@ fn coherent_fixture_with_profile(
                     }
                 }
                 let result = received?;
+                if matches!(
+                    fault,
+                    WorkFault::CoreStatus | WorkFault::CoreStatusRepairOnce
+                ) {
+                    let detail = store
+                        .load_detail(&project, id, AgentSessionSequence::FIRST)
+                        .await?
+                        .ok_or("trace")?;
+                    let work = detail.work_state().ok_or("work")?;
+                    assert!(work.ready_to_finish());
+                    assert!(work.accesses().is_empty());
+                    assert!(
+                        detail
+                            .events()
+                            .iter()
+                            .all(|event| event.public_note().is_none()),
+                        "Core status must survive persistence as audit, not a reusable model finding"
+                    );
+                    assert_eq!(
+                        model.calls.load(Ordering::SeqCst),
+                        if fault == WorkFault::CoreStatusRepairOnce {
+                            4
+                        } else {
+                            3
+                        }
+                    );
+                }
                 if matches!(
                     fault,
                     WorkFault::EchoTestObligationOnce

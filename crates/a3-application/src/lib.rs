@@ -21,8 +21,9 @@ pub use research_work_admission::{
     ResearchEvidenceWindow, ResearchWorkAdmissionError, admit_research_work,
 };
 pub use research_work_codec::{
-    ResearchEvidenceAnchorId, ResearchOutputPhase, ResearchQuoteProposal, ResearchResultProposal,
-    ResearchWorkUpdate, research_work_decision_schema, research_work_phase_schema,
+    ResearchEvidenceAnchorId, ResearchEvidenceNeed, ResearchOutputPhase, ResearchQuoteProposal,
+    ResearchResultProposal, ResearchWorkUpdate, research_work_current_phase_schema,
+    research_work_decision_schema, research_work_phase_schema,
 };
 mod agent_runtime;
 mod agent_session;
@@ -197,7 +198,7 @@ pub use agent_turn::{
 pub use ask_research_action_codec::{
     AskResearchAction, AskResearchDecision, AskResearchDecisionDecodeError,
     AskResearchDecisionJsonSchema, AskResearchDecisionNote, AskResearchEvidenceStatus,
-    AskResearchFindingKind, AskResearchRelation, DecodeAskResearchDecision,
+    AskResearchFindingKind, AskResearchNoteOrigin, AskResearchRelation, DecodeAskResearchDecision,
 };
 pub use command_discovery::{
     CommandAllowlistStore, CommandAllowlistStoreFailure, CommandAllowlistStoreFuture,

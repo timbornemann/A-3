@@ -9,6 +9,25 @@ use a3_domain::{
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
+fn research_v6_core_presentation_never_accumulates_as_memory() -> TestResult {
+    let mut state = AskResearchWorkingSet::new(4096);
+    let decision = a3_application::DecodeAskResearchDecision.decode_phase(
+        r#"{"schema_version":6,"work":{"questions":[],"results":[]},"decision":{"kind":"progress"}}"#,
+        a3_application::ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
+    )?;
+    let a3_application::AskResearchDecision::Answer { note, .. } = decision else {
+        return Err("progress must not become an executable action".into());
+    };
+    state.record_note("Read entry.py", &note)?;
+    state.record_note("Read entry.py", &note)?;
+    assert!(state.memory_findings.is_empty());
+    assert!(state.memory_gaps.is_empty());
+    assert!(state.memory.is_none());
+    assert!(state.last_note.is_some());
+    Ok(())
+}
+
+#[test]
 fn core_plan_packet_does_not_promote_unresolved_new_symbols_to_research_requirements() -> TestResult
 {
     let query = "Plan a new import_csv in main.py using csv.DictReader; retain all requirements.";
@@ -415,6 +434,8 @@ fn working_findings_survive_long_obsolete_gaps_with_intact_references() -> TestR
         state.record_note(
             "CSV planen",
             &AskResearchDecisionNote {
+                origin: a3_application::AskResearchNoteOrigin::Model,
+                evidence_need: None,
                 work: None,
                 goal: "CSV planen".to_owned(),
                 finding_kind: AskResearchFindingKind::Observation,
@@ -1104,6 +1125,8 @@ fn only_the_latest_gap_is_an_active_obligation() -> TestResult {
         state.record_note(
             "Explain REST routing",
             &AskResearchDecisionNote {
+                origin: a3_application::AskResearchNoteOrigin::Model,
+                evidence_need: None,
                 work: None,
                 goal: "Explain the current request".to_owned(),
                 finding_kind: AskResearchFindingKind::Hypothesis,

@@ -95,6 +95,38 @@ pub(super) fn core_plan_contract(work: &ResearchWorkState) -> bool {
             })
 }
 impl WorkGuard {
+    pub(super) fn validate_evidence_need(
+        &self,
+        need: &a3_application::ResearchEvidenceNeed,
+    ) -> Result<(), research_model::DecisionIssue> {
+        if !matches!(self.output_phase(),
+            a3_application::ResearchOutputPhase::Analyze(id)
+            | a3_application::ResearchOutputPhase::SummarizeOriginals(id) if id == need.question())
+            || !need.targets().iter().all(|target| {
+                self.objective.contains(target)
+                    || self
+                        .windows
+                        .iter()
+                        .any(|window| window.text.contains(target))
+            })
+        {
+            return Err(research_model::DecisionIssue::WorkEvidence);
+        }
+        Ok(())
+    }
+    pub(super) fn admit_evidence_need(
+        &self,
+        need: &a3_application::ResearchEvidenceNeed,
+        update: &ResearchWorkUpdate,
+    ) -> Result<ResearchWorkState, research_model::DecisionIssue> {
+        self.validate_evidence_need(need)?;
+        if !update.questions.is_empty() || !update.results.is_empty() {
+            return Err(research_model::DecisionIssue::WorkEvidence);
+        }
+        self.previous
+            .clone()
+            .ok_or(research_model::DecisionIssue::WorkEvidence)
+    }
     /// Concrete repair guidance from actual delivery, not an inferred fact or a new read.
     pub(super) fn coverage_repair_hint(&self) -> Option<String> {
         use a3_application::ResearchOutputPhase;
@@ -170,7 +202,7 @@ impl WorkGuard {
             return None;
         }
         let mut hint = format!(
-            "Original coverage repair for Q{}. Return schema_version=5, work.questions=[], one result question_id={}, kind=interpretation, and decision kind=progress with note. Explain the requested behavior of EACH required original and cite at least one current anchor_ref from EVERY file group: {}. Multiple anchors in one group belong to the same file. Use only evidence supporting the explanation, not S labels or copied quotes. Do not substitute one file for another, omit a required file, propose new design or invent facts. The Core still validates every source; no extra read or repair is granted.",
+            "Original coverage repair for Q{}. Return schema_version=6, work.questions=[], one result question_id={}, kind=interpretation, and decision with kind=progress only; no note. Explain the requested behavior of EACH required original and cite at least one current anchor_ref from EVERY file group: {}. Multiple anchors in one group belong to the same file. Use only evidence supporting the explanation, not S labels or copied quotes. Do not substitute one file for another, omit a required file, propose new design or invent facts. The Core still validates every source; no extra read or repair is granted.",
             id.get(),
             id.get(),
             groups.join(" ")
@@ -960,9 +992,12 @@ impl AskResearchWorkingSet {
                     .map_err(|_| super::AgentSessionManagerFailure::InvalidOutput)?;
             }
             // Packet acknowledgement and result admission either both succeed or change nothing.
-            let admitted = guard
-                .admit(update)
-                .map_err(|_| super::AgentSessionManagerFailure::InvalidOutput)?;
+            let admitted = if let Some(need) = &note.evidence_need {
+                guard.admit_evidence_need(need, update)
+            } else {
+                guard.admit(update)
+            }
+            .map_err(|_| super::AgentSessionManagerFailure::InvalidOutput)?;
             self.work = Some(admitted);
         }
         Ok(())
@@ -1014,6 +1049,33 @@ mod tests {
         ResearchQuestionKind, ResearchQuestionPriority, ResearchResultKind, SourcePosition,
     };
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn research_v6_navigation_needs_actual_original_occurrence_and_active_question() -> TestResult {
+        let previous = ResearchWorkState::new("audit destination".to_owned(), vec![draft()])?;
+        let mut guard = guard(Some(previous))?;
+        let need = a3_application::ResearchEvidenceNeed::new(
+            ResearchQuestionId::FIRST,
+            vec!["audit_log.txt".to_owned()],
+        )?;
+        assert!(guard.validate_evidence_need(&need).is_ok());
+        let invented = a3_application::ResearchEvidenceNeed::new(
+            ResearchQuestionId::FIRST,
+            vec!["invented_helper".to_owned()],
+        )?;
+        assert!(guard.validate_evidence_need(&invented).is_err());
+        let wrong = a3_application::ResearchEvidenceNeed::new(
+            ResearchQuestionId::new(2)?,
+            vec!["audit_log.txt".to_owned()],
+        )?;
+        assert!(guard.validate_evidence_need(&wrong).is_err());
+        let before = guard.previous.clone();
+        guard.windows.clear();
+        assert!(guard.validate_evidence_need(&need).is_err());
+        assert_eq!(guard.previous, before);
+        assert!(!guard.previous.as_ref().ok_or("state")?.ready_to_finish());
+        Ok(())
+    }
 
     #[test]
     fn research_core_obligation_echo_is_not_a_result_but_literal_user_answers_remain_valid()
@@ -1206,8 +1268,9 @@ mod tests {
             )),
             4,
         );
-        assert!(summary.contains("exactly one result"));
-        assert!(!summary.contains("return results=[]"));
+        assert!(summary.contains("exactly one interpretation"));
+        assert!(summary.contains("kind:evidenceNeed"));
+        assert!(summary.contains("No note, empty progress"));
         assert!(summary.len() <= 768);
         assert_eq!(issue.repair_hint_for_phase(None, 4), issue.repair_hint(4));
         for phase in [

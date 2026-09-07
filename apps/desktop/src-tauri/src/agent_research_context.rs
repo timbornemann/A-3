@@ -328,10 +328,13 @@ impl AskResearchWorkingSet {
                     SourcePosition::new(range.end_position().row().saturating_add(1), 0)
                 },
             };
-            if self.excerpts.iter().any(|item| {
-                self.revision_for(item) == Some(&unit.revision)
-                    && offset(item, unit.start).is_some()
-            }) {
+            if (range.end_byte().saturating_sub(range.start_byte()) as usize)
+                <= self.evidence_limit / 2
+                && self.excerpts.iter().any(|item| {
+                    self.revision_for(item) == Some(&unit.revision)
+                        && offset(item, unit.start).is_some()
+                })
+            {
                 self.retain_unit(unit);
                 // An indented method alone does not prove its owning class. Retain the
                 // actual enclosing declaration line as source, never an invented label.
@@ -404,6 +407,45 @@ impl AskResearchWorkingSet {
             }
         }
         focused
+    }
+
+    /// Preserve actual lexical discovery sites, never model prose or authority.
+    pub(super) fn retain_navigation_origins(
+        &mut self,
+        need: &a3_application::ResearchEvidenceNeed,
+    ) {
+        let mut origins = Vec::new();
+        for target in need.targets() {
+            for window in &self.current_source_delivery {
+                let mut start = window.range.start_position();
+                for line in window.text.split_inclusive('\n') {
+                    let end = end_position(start, line);
+                    if start.column() == 0 && line.len() <= 512 && line.contains(target) {
+                        origins.push(CoveredRange {
+                            revision: window.revision.clone(),
+                            start,
+                            end,
+                        });
+                        break;
+                    }
+                    start = end;
+                }
+                if origins.len() == 8 {
+                    break;
+                }
+            }
+            if origins.len() == 8 {
+                break;
+            }
+        }
+        for origin in origins {
+            // The discovery site is now an exact retained unit. Its old broad cursor
+            // must not compete with the next helper's unread body. Explicit user focus stays.
+            self.focus.retain(|focus| {
+                focus.revision != origin.revision || focus.origin == FocusOrigin::Explicit
+            });
+            self.retain_unit(origin);
+        }
     }
 
     fn retain_unit(&mut self, mut unit: CoveredRange) {
@@ -772,7 +814,11 @@ impl AskResearchWorkingSet {
         // Retention is not a lock: exact new lines and the sole recovery frontier must
         // still be visible, including an unselected region of the SAME file.
         for focus in &self.focus {
-            if focus.origin != FocusOrigin::Explicit
+            if (focus.origin != FocusOrigin::Explicit
+                && self
+                    .last_note
+                    .as_ref()
+                    .is_none_or(|note| note.evidence_need.is_none()))
                 || !ranges.iter().any(|unit| unit.revision == focus.revision)
                 || ranges.iter().any(|unit| {
                     unit.revision == focus.revision

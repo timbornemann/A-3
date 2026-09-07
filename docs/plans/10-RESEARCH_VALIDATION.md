@@ -1085,3 +1085,121 @@ Methodenkörper gleichzeitig. Sichtprüfung findet trotzdem unbewiesene Persiste
 unscharfe Konstruktor-CWD-Angaben und im vorgeschlagenen Audit-Test eine JSON-
 Behauptung, obwohl die Fixture ein Python-Dict formatiert. Solche Inhaltsdefekte
 werden nicht durch grüne Ablauf- oder Begriffsmetriken geschlossen.
+
+## V6: Core-Status, konkreter Belegbedarf und lange Helfer
+
+Ausgangscommit `e214c0c`; ADR-0071 bis ADR-0074 sind Implementierungsschnitte,
+keine automatische Praxisfreigabe. V6 entfernt Modell-Statusnotizen. Ein zuerst
+roter realer Persistenztest belegte deren falsche Wiederaufnahme als Befund;
+Core-Status wird jetzt nur als Audit gespeichert. Der echte Fortsetzungsweg
+revalidiert Quellen, erhält die letzte Suchrichtung und übernimmt null Core-
+Statusangaben in Findings oder Gaps. V3–V5 bleiben separat geprüft.
+
+Die neue lange Helferfixture enthält entry.py, zeta.py und kappa.py, zwei
+190-Zeilen-Originalkörper sowie 32 unbeteiligte Dateien. Vor der Kontextkorrektur
+verliert Ask beim zweiten Helfer die vorherige Rückgabestelle und endet nach
+sieben Calls ohne Ergebnis (neun Read-Aktionen). Das Modell erfindet dabei keine
+Erkenntnissammlung: Es bewertet ausschließlich das jeweilige aktuelle Paket.
+Originalgebundene kurze Navigationsstellen und das Freigeben des alten breiten
+Cursors erhalten den Zusammenhang. Nach ADR-0073/0074 bestehen Ask, Plan und
+Agent-Vorbereitung mit jeweils neun Calls, acht Read-Aktionen und unverändert
+4096 Evidence-Bytes. Der negative erfundene Helfer erhält einen Einzelrepair,
+null adaptive Reads und null Abschlüsse. Kleine Legacy-Pakete, expliziter Fokus
+und Wiederaufnahme wurden nach einem zwischenzeitlich gefundenen Legacy-
+Fokusregress erneut gezielt geprüft. Das ist kein Live-Agent-Patchnachweis.
+
+Neutrale Schema-UTF-8-Bytes V5 → V6, einschließlich konkretem Belegbedarf:
+Initialize 1845 → 1148; Analyze 2215 → 2028; SummarizeOriginals 1949 → 1820;
+Design 2280 → 1537; DesignTests 1985 → 1288; Finalize 1943 → 1246.
+Das ist eine reproduzierbare Größenmessung, kein Laufzeit- oder Qualitätsbeweis.
+Schema- und unabhängige Decoderprüfungen erhalten die Ergebnisgrenzen; der
+V6-SummarizeOriginals-Schemaarm kann für evidenceNeed null Ergebnisse darstellen,
+leerer progress bleibt durch Decoder und Work-Admission verboten.
+
+### Abgeschlossene Modellnachtests und offene Ursachen
+
+Der zuvor noch aktive ADR-0068-Google-Bericht `eval-1788771282213.jsonl` endet
+mit 0/12 Abschlüssen, zwölf Nutzerhalten, 22 Calls, 58300 Kontextbytes und
+1782054 ms. SHA-256 `550bb8b8d184e949909ba920e84b4acd9051c54d85aa870e97ffb3ded74a5026`.
+Die historische Zwischenprotokollierung oben bleibt als solche erhalten.
+
+Das eingefrorene `v6-core-20260907/research-tests.exe` (nur ADR-0071/0072,
+vor Kontextkorrektur und Plan-Erweiterung) hat SHA-256
+`8091fa45be8581c6254a32dd2db481bf29d51cbd771321d23f0be4031d6f3712`.
+
+- Luna `eval-1788775227603.jsonl`: 12/12 completed, work_ready und Rubrik v2,
+  null Nutzerhalte/Reads, 35 Calls, 129371 Kontextbytes, 159870 ms. SHA-256
+  `e620b3152ae5a45808c764a652422fb4ee3f09d57bcc62e55bd251bc11ca8313`.
+- Google Gemma Storage 0:0 `eval-1788775215289.jsonl`: 0/1 Abschluss,
+  ein Nutzerhalt, vier Calls, 13538 Kontextbytes, 188740 ms. SHA-256
+  `063bc9703b4547b0543c04aee4d994152efa9abec36ba763b0ed055636f1b3ec`.
+  Initialize bleibt zunächst ungültig; nach Repair endet Analyze zweimal am
+  Ausgabelimit. Weglassen der Statusnotiz allein löst diesen Modellfall nicht.
+
+Die Nachtests einschließlich ADR-0073/0074 und Reopen verwenden
+`v6-navigation-20260907/research-tests.exe`, SHA-256
+`11d22281d3f78ab05fae603df4caf5c18983db0ceb89ee82d8b4b82cc80c3de5`.
+Lokale Modelle laufen strikt nacheinander; externe Provider verwenden weiterhin
+nur die freigegebenen nativen Profil-/Credential-Bindungen. Während der Messung
+laufen teilweise lokale Buildgates: Laufzeiten sind daher kein isolierter
+Performancevergleich.
+
+Granite antwortet im REST-Fall 2:0 nach gültigem Q1 auf Q2 nur mit leerem progress,
+obwohl API und Manager im aktuellen Paket stehen. Die Deduplizierung verhindert
+eine Endlosschleife, liefert aber noch keinen Abschluss. Google Gemma liefert im
+CSV-Plan 3:2 zweimal denselben 97-Byte-Leerfortschritt; er wird korrekt abgewiesen,
+null Reads, null beantwortete Pflichten. Diese Grenzen und ausgelassene tatsächliche
+Writer in einzelnen Luna-/Granite-Antworten bleiben offen. Ein gültiger Decoderlauf,
+eine schöne Prüfliste oder vollständige Begriffrubrik ersetzt keine Inhaltsabnahme.
+
+Gezielt bestehen sechs V6-Desktoptests, drei V6-Applicationtests, beide Provider-
+Phasenübersetzungen und der wiederhergestellte Legacy-Aufrufkettenvertrag. Der
+Workspace-Gesamtgate läuft bei dieser Zwischenprotokollierung noch. Clippy fand
+eine durch den neuen optionalen Bedarf vergrößerte Enum-Variante; der seltene Bedarf
+wird nun wie der vorhandene Work-Vorschlag indirekt gespeichert. Der erneute Gate
+und die restlichen lokalen Matrixenden benötigen eigene terminale Nachweise.
+
+### Terminale V6-Navigationsmatrix und Qualitätsgates
+
+Alle vier lokalen Modelle liefen nacheinander mit demselben eingefrorenen Binary.
+Die folgenden Zahlen sind vollständige Matrixenden, keine Hochrechnung:
+
+| Modell / Bericht | completed / ready / Rubrik v2 | Halte / Reads | Calls / Kontextbytes / ms |
+| --- | --- | --- | --- |
+| Granite / `eval-1788775949362.jsonl` | 11 / 11 / 9 von 12 | 1 / 1 | 36 / 128567 / 180870 |
+| Luna / `eval-1788775996818.jsonl` | 12 / 12 / 11 von 12 | 0 / 0 | 34 / 123886 / 150548 |
+| GPT-OSS / `eval-1788776142807.jsonl` | 8 / 8 / 8 von 12 | 4 / 0 | 39 / 144382 / 177579 |
+| Ornith / `eval-1788776328699.jsonl` | 11 / 11 / 10 von 12 | 1 / 3 | 37 / 132440 / 208713 |
+| Qwen 8k / `eval-1788776549940.jsonl` | 12 / 12 / 11 von 12 | 0 / 0 | 35 / 107011 / 233711 |
+
+SHA-256 in derselben Reihenfolge:
+
+- `f304921df9c145fbd70545a7a191697ef6085a3fc7b6f79d7792f6cbb0b348fa`
+- `e9337e1d699297f29b560be888153da8e9e67240ee1b41a793f6a65e0eed2245`
+- `d475ac228a394859f18949d27dc98dff054b111b390cb399c0cffa5f35d4b13f`
+- `8b470c19d46b421c2c6b738b2e5f12d8d891d223d3c4ff58a91cc9de50455647`
+- `2c191a4bfcd422552e839b0bfd37a6cc9f7844e0993edc839882bfc1094c09a6`
+
+Google CSV 3:2 `eval-1788775954643.jsonl` endet mit 0/1 completed/ready/Rubrik,
+einem Halt, null Reads, zwei Calls, 7661 Kontextbytes und 2723 ms; SHA-256
+`d17bd68d1adafb77876047f09af1f6557f88a4d9eca21c82f913a4fd402ed724`.
+Der GPT-OSS-Regress besteht aus leeren sichtbaren Stream-Dokumenten in vier Fällen,
+nicht aus einer erneut gescheiterten Capability-Probe. Alter oder Modellgröße sind
+damit nicht als Ursache belegt. Ornith bleibt einmal nach leerer Bestandsanalyse
+stehen. Alle Modelle außer GPT-OSS lassen im Audit-Fall 1:0 den tatsächlichen
+Writer aus; eine vorhandene Quelldatei garantiert keine vollständige Interpretation.
+
+Der volle Workspace-Test endet mit Exit 0 (`v6-workspace-tests-final.log`), inklusive
+Storage-/Reopen-, Provider-, echter Patch-/Process-/Acceptance- und Doc-Tests.
+Clippy mit allen Targets/Features und `-D warnings` endet ebenfalls mit Exit 0
+(`v6-clippy-verified.log`). Die Testfixture verwendet keine Panic-Ausweichstelle.
+Nach den reinen Teststilkorrekturen bestehen die sechs V6-Desktopregressionen erneut.
+Formatter, `git diff --check` und Linkprüfung (118 Dateien, 453 lokale Links) bestehen;
+die bekannte lokale Node-Versionsabweichung bleibt sichtbar. Kein Frontend geändert.
+
+Der Endstand stellt außerdem die zwischenzeitlich verlorene explizite Analysepflicht
+für ACTIVE Q wieder her. Die eingefrorene Matrix oben enthält diese Promptkorrektur
+noch nicht; ein gezielter neuer Live-Lauf ist deshalb erforderlich. Ein öffentlicher
+Wire-Diagnosetest ergänzt denselben trivialen Analyseauftrag unter V5 und V6, um
+Stream- und Schemafehler getrennt von Repository-Semantik untersuchen zu können.
+Die Gesamtpraxisabnahme, Inhaltskorrekturen und Live-Agent-Umsetzung bleiben offen.

@@ -373,6 +373,9 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         let simple = json!({"type":"object", "properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false});
         let union = json!({"type":"object", "properties":{"answer":{"anyOf":[{"type":"string"},{"type":"integer"}]}},"required":["answer"],"additionalProperties":false});
         let initialize = a3_application::research_work_phase_schema(ResearchOutputPhase::Initialize, true)?;
+        let analyze_phase = ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST);
+        let v5_analyze = a3_application::research_work_phase_schema(analyze_phase, true)?;
+        let v6_analyze = a3_application::research_work_current_phase_schema(analyze_phase, true)?;
         let mut small_initialize = initialize.clone();
         small_initialize["$defs"]["work"]["properties"]["questions"]["maxItems"] = json!(2);
         small_initialize["$defs"]["question"]["properties"]["dependencies"]["maxItems"] = json!(1);
@@ -381,6 +384,9 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         let mut relaxed_initialize = initialize.clone();
         remove_diagnostic_array_bounds(&mut relaxed_initialize);
         let cases = [
+            ("v5_analyze", v5_analyze),
+            ("v6_analyze", v6_analyze),
+            ("v6_initialize", a3_application::research_work_current_phase_schema(ResearchOutputPhase::Initialize, true)?),
             ("relaxed_initialize", relaxed_initialize),
             ("simple", simple),
             ("union", union),
@@ -396,9 +402,15 @@ fn research_live_wire_diagnostic() -> Result<(), Box<dyn Error>> {
         }
         for (name, schema) in cases {
             if selected.as_deref().is_some_and(|selection| selection != name) { continue; }
+            let question = if name.ends_with("_analyze") {
+                "Analyze ACTIVE Q1: What does helper() return? Current delivered original [E1]: def helper(): return 7. Return one interpretation for question_id 1 with anchor_ref E1, no new questions. Use a progress decision. If the schema requires a note, use brief status with finding_kind=hypothesis and finding_source_refs=[]. This is public synthetic data; no tools are available."
+            } else {
+                "Answer briefly using the supplied schema. Where applicable use a progress decision and one question about a fixture. No research or tools are available."
+            };
+            println!("research-wire case={name} schema_bytes={} context_bytes={}", schema.to_string().len(), question.len());
             let request = ModelProviderRequest::new(live.profile.clone(), vec![
                 ModelMessage::try_from_string(ModelMessageRole::System, "Return a short JSON object matching the supplied schema. This is a synthetic wire diagnostic, no tools or actions.".to_owned())?,
-                ModelMessage::try_from_string(ModelMessageRole::User, "Answer briefly using the supplied schema. Where applicable use a progress decision and one question about a fixture. No research or tools are available.".to_owned())?,
+                ModelMessage::try_from_string(ModelMessageRole::User, question.to_owned())?,
             ], Some(StructuredOutputSchema::new(schema)?))?;
             let result = live.provider.stream(&request, ModelRequestTimeout::from_millis(30_000)?, &ProbeControl).await;
             match result {

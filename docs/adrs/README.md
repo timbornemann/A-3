@@ -95,6 +95,10 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0068](0068-gemini-schema-arraygrenzen.md) | Variable Array-Maxima im Gemini-Wire-Schema |
 | [0069](0069-core-testentwurf-ohne-bestaetigungsschleife.md) | Core-Testentwurf ohne Bestätigungsschleife |
 | [0070](0070-gemma-api-explizites-minimal-thinking.md) | Explizites minimales Thinking für die Gemma-4-API |
+| [0071](0071-core-eigene-recherchestatusangaben.md) | Core-eigene Statusangaben im V6-Recherchevertrag |
+| [0072](0072-typisierter-belegbedarf-ohne-statusprosa.md) | Typisierter Belegbedarf ohne Statusprosa |
+| [0073](0073-originalgebundene-navigationsstellen-im-kontext.md) | Originalgebundene Navigationsstellen im Kontext |
+| [0074](0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) | Konkreter Belegbedarf in der Planbestandsaufnahme |
 
 ## Neue ADRs
 

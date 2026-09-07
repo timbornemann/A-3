@@ -216,6 +216,7 @@ fn research_matrix_diagnostics_bind_numeric_anchors_without_source_or_model_text
 // Fixed-shape diagnostics for the public fixture, never raw model/provider content.
 fn invalid_shape_summary(document: &serde_json::Value) -> serde_json::Value {
     let note = &document["decision"]["note"];
+    let note_present = document["decision"].get("note").is_some();
     let refs = note["finding_source_refs"].as_array();
     let canonical_ref = |value: &serde_json::Value, prefix: char, max: u16| {
         value.as_str().is_some_and(|text| {
@@ -240,10 +241,12 @@ fn invalid_shape_summary(document: &serde_json::Value) -> serde_json::Value {
             }).collect::<Vec<_>>()
         });
     serde_json::json!({
+        "model_note_present":note_present,
+        "evidence_need":document["decision"]["kind"] == "evidenceNeed",
         "note_bytes":(["goal","finding","gap","next_step"].map(|key| note[key].as_str().map(|s| s.trim().len()))),
-        "note_kind_valid":matches!(note["finding_kind"].as_str(), Some("observation" | "hypothesis" | "conclusion")),
-        "note_refs_canonical":refs.is_some_and(|r| r.iter().all(|v| canonical_ref(v, 'S', 200))),
-        "note_refs_duplicate":refs.is_some_and(|r| r.iter().enumerate().any(|(i,v)| r[..i].contains(v))),
+        "note_kind_valid":note_present.then(|| matches!(note["finding_kind"].as_str(), Some("observation" | "hypothesis" | "conclusion"))),
+        "note_refs_canonical":note_present.then(|| refs.is_some_and(|r| r.iter().all(|v| canonical_ref(v, 'S', 200)))),
+        "note_refs_duplicate":note_present.then(|| refs.is_some_and(|r| r.iter().enumerate().any(|(i,v)| r[..i].contains(v)))),
         "results":results
     })
 }
@@ -256,6 +259,12 @@ fn research_matrix_shape_diagnostics_distinguish_repeated_anchors_without_raw_te
     assert_eq!(summary["note_refs_canonical"], false);
     assert_eq!(summary["results"][0]["anchors_duplicate"], true);
     assert!(!summary.to_string().contains("sentinel"));
+    let current = invalid_shape_summary(
+        &serde_json::json!({"decision":{"kind":"progress"},"work":{"results":[]}}),
+    );
+    assert_eq!(current["model_note_present"], false);
+    assert!(current["note_refs_canonical"].is_null());
+    assert!(current["note_kind_valid"].is_null());
 }
 impl ResearchModel for MatrixModel {
     fn requires_work_contract(&self) -> bool {
@@ -302,6 +311,7 @@ impl ResearchModel for MatrixModel {
                 | a3_application::ResearchOutputPhase::Design(_)
                 | a3_application::ResearchOutputPhase::DesignTests(_)
         ) && let Ok(document) = serde_json::from_str::<serde_json::Value>(&output)
+            && document["decision"].get("note").is_some()
             && document["work"]["results"]
                 .as_array()
                 .is_some_and(Vec::is_empty)

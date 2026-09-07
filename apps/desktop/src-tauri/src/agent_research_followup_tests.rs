@@ -26,6 +26,9 @@ mod access_contract;
 #[path = "agent_research_coherent_tests.rs"]
 mod coherent_contract;
 
+#[path = "agent_research_navigation_tests.rs"]
+mod navigation_contract;
+
 fn fixture_plan(summary: &str) -> String {
     format!(
         "PLAN:\n## Summary\n{summary}\n## Implementation Changes\n1. Die gewünschte Erweiterung über die bestehende Manager-API integrieren.\n## Interfaces\nNeue CSV-Spalten als vorgeschlagenen Vertrag dokumentieren.\n## Test Plan\n1. Gültige und fehlerhafte CSV-Zeilen sowie unveränderte Bestandsaufgaben prüfen.\n## Assumptions\nNeue CSV-Spalten werden entworfen, nicht als vorhandene Schnittstelle behauptet."
@@ -637,6 +640,8 @@ fn storage_gap_is_followed_autonomously_in_all_modes_and_invalid_output_never_ex
             .revision()
             .clone();
         let note = a3_application::AskResearchDecisionNote {
+            origin: a3_application::AskResearchNoteOrigin::Model,
+            evidence_need: None,
             work: None,
             goal: "Config lesen".to_owned(),
             finding_kind: a3_application::AskResearchFindingKind::Hypothesis,

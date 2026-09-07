@@ -1845,7 +1845,7 @@ impl AgentAskResearcher {
             if self.continuation_from.is_some() {
                 state.event_sequence = state.event_sequence.saturating_add(1);
                 self.append_note_event(project, turn, state.event_sequence, AskResearchPhase::Preparing,
-                    "Arbeitsstand der vorherigen Recherche gegen den aktuellen Projektstand bestätigt", mapped_note).await?;
+                    "Arbeitsstand der vorherigen Recherche gegen den aktuellen Projektstand bestätigt", ResearchPresentation::Model(mapped_note)).await?;
             }
             state.record_revalidated_note(query, note, mapped, self.continuation_from.is_some())?;
             reused_findings = reused_findings.saturating_add(1);
@@ -2869,19 +2869,30 @@ impl AgentAskResearcher {
         sequence: u32,
         phase: AskResearchPhase,
         action: &str,
-        note: AskResearchPublicNote,
+        presentation: ResearchPresentation,
     ) -> Result<(), AgentSessionManagerFailure> {
+        let (action, query, note) = match presentation {
+            ResearchPresentation::Model(note) => (action.to_owned(), None, Some(note)),
+            ResearchPresentation::Core { status, query } => (
+                bounded_text(&format!("{action}. {status}"), 512),
+                query,
+                None,
+            ),
+        };
         let event = research_event(
             turn.session_id(),
             turn.user_sequence(),
             sequence,
             phase,
             AskResearchState::Running,
-            action,
-            None,
+            &action,
+            query.as_deref(),
             AskResearchCompleteness::NotApplicable,
-        )?
-        .with_public_note(note);
+        )?;
+        let event = match note {
+            Some(note) => event.with_public_note(note),
+            None => event,
+        };
         self.trace.append_event(project, &event).await?;
         Ok(())
     }
@@ -3331,6 +3342,14 @@ impl AskResearchWorkingSet {
         note: &a3_application::AskResearchDecisionNote,
     ) -> Result<(), AgentSessionManagerFailure> {
         self.last_note = Some(note.clone());
+        if note.origin == a3_application::AskResearchNoteOrigin::CoreWorkState {
+            if let Some(need) = &note.evidence_need {
+                self.retain_navigation_origins(need);
+            }
+            // The durable work aggregate already owns these counters and obligations.
+            // Never accumulate presentation as new knowledge or repeated search gaps.
+            return Ok(());
+        }
         let source_ids = note
             .source_ordinals
             .iter()
@@ -6572,10 +6591,30 @@ fn visible_research_query(query: Option<&str>) -> Option<String> {
         .map(|value| bounded_text(value, 4 * 1024))
 }
 
+/// Status is audit-only. It must never enter the persisted finding table, including on resume.
+enum ResearchPresentation {
+    Model(AskResearchPublicNote),
+    Core {
+        status: String,
+        query: Option<String>,
+    },
+}
+
 fn public_note(
     note: &a3_application::AskResearchDecisionNote,
     state: &AskResearchWorkingSet,
-) -> Result<AskResearchPublicNote, AgentSessionManagerFailure> {
+) -> Result<ResearchPresentation, AgentSessionManagerFailure> {
+    if note.origin == a3_application::AskResearchNoteOrigin::CoreWorkState {
+        return Ok(ResearchPresentation::Core {
+            status: format!("{} {}", note.finding, note.next_step),
+            // The existing continuation query history is navigation, never proof or a command.
+            // Restore must still revalidate originals before a model can request this need again.
+            query: note
+                .evidence_need
+                .as_ref()
+                .and_then(|need| visible_research_query(Some(&need.targets().join(" ")))),
+        });
+    }
     let source_ids = note
         .source_ordinals
         .iter()
@@ -6605,6 +6644,7 @@ fn public_note(
         note.gap.clone(),
         note.next_step.clone(),
     )
+    .map(ResearchPresentation::Model)
     .map_err(|_| AgentSessionManagerFailure::InvalidOutput)
 }
 

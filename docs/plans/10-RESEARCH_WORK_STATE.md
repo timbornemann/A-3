@@ -1,6 +1,6 @@
 # Plan 10: Verbindliche Rechercheführung
 
-Status: Implementierung und Modellläufe abgeschlossen; inhaltliche Praxisabnahme offen.\
+Status: Deterministische Baseline umgesetzt; fortgesetzte Modell- und Implementierungsabnahme läuft.\
 Stand: 2026-09-07. Ausgangscommit: `31e9db7`.
 
 Entscheidungen: [ADR-0047](../adrs/0047-verbindlicher-recherchearbeitsstand.md),
@@ -62,6 +62,19 @@ Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
       als Erfolg zählen ([ADR-0070](../adrs/0070-gemma-api-explizites-minimal-thinking.md)).
 - [ ] Live-Agent-Umsetzung auf isolierter Fixture einschließlich tatsächlicher Verification
       prüfen; bisherige Agent-Vorbereitung ist kein Nachweis ausgeführter Änderungen.
+- [x] Modellgenerierte Verwaltungsnotizen aus dem aktuellen V6-Vertrag entfernen;
+      Status und nächste Pflicht aus dem zugelassenen Core-Prüfstand ableiten,
+      Legacy- und Evidence-Grenzen erhalten und vergleichbar live nachtesten
+      ([ADR-0071](../adrs/0071-core-eigene-recherchestatusangaben.md)).
+- [x] Gezielte weitere Belege im V6-Analyze über einen eng typisierten,
+      originalgebundenen Bedarf erhalten; keine freie Statusprosa und kein neuer
+      Tool-/Budgetweg ([ADR-0072](../adrs/0072-typisierter-belegbedarf-ohne-statusprosa.md)).
+- [x] Bereits gelieferte Navigationsstellen langer Helfer im vorhandenen Originalcache
+      erhalten, ohne neue Seiten zu sperren oder Budgets zu vergrößern
+      ([ADR-0073](../adrs/0073-originalgebundene-navigationsstellen-im-kontext.md)).
+- [x] Originalgebundenen Belegbedarf auch in V6-Planbestandsaufnahme erhalten;
+      leeren Fortschritt weiterhin abweisen und alle drei Modi prüfen
+      ([ADR-0074](../adrs/0074-konkreter-belegbedarf-in-planbestandsaufnahme.md)).
 - [x] Erneute vollständige Qualitätsgates und dokumentierte verbleibende Grenzen
       für ADR-0068 bis ADR-0070 und Rubrik v2. Weitere Korrekturen brauchen neue Gates.
 

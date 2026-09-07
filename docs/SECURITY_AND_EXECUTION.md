@@ -615,6 +615,24 @@ Frage kann eine Mutation autorisieren.
 
 ## Netzwerk und Datenschutz
 
+Der aktuelle Recherche-V6-Vertrag gemäß
+[ADR-0071](adrs/0071-core-eigene-recherchestatusangaben.md) akzeptiert keine
+modellgenerierten Verwaltungsnotizen. Core-Status wird ausschließlich als Audit
+gespeichert, nicht als wiederverwendbarer Befund. Der V6-Belegbedarf aus
+[ADR-0072](adrs/0072-typisierter-belegbedarf-ohne-statusprosa.md) enthält nur
+eng begrenzte, originalgebundene Suchliterale. URI, absolute Pfade, Traversal,
+Whitespace und Shellsyntax werden unabhängig vom Providerschema abgewiesen.
+Erst die bestehenden Indexauflösungs-, Freshness-, Safe-Reader- und Policygrenzen
+entscheiden über einen Zugriff. Ein Literalvorkommen ist kein Ausführungsrecht
+und kein semantischer Beweis. Die Audit-Queryhistorie bewahrt lediglich die
+Suchrichtung; sie darf nach Wiederaufnahme weder einen Fakt noch einen ungeprüften
+Read autorisieren. Historische V3–V5-Dokumente behalten ihre strikte Zulassung.
+Die eng typisierte Variante gilt in Analyze sowie nach
+[ADR-0074](adrs/0074-konkreter-belegbedarf-in-planbestandsaufnahme.md) in
+SummarizeOriginals. Leerer Fortschritt ist in der Bestandsaufnahme weiterhin kein
+zulässiges Ergebnis. Der unveränderte Arbeitsstand wird vor und bei Übernahme des
+Bedarfs unabhängig geprüft; Design erhält keine Read- oder Need-Variante.
+
 V1 ist offline-first:
 
 - keine Telemetrie;

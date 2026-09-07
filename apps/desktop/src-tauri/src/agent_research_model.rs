@@ -28,10 +28,15 @@ impl EvidenceGuard<'_> {
                 ) {
                     return Err(DecisionIssue::ReadsClosed);
                 }
-                let state = guard.admit(update)?;
+                let state = if let Some(need) = &note.evidence_need {
+                    guard.admit_evidence_need(need, update)?
+                } else {
+                    guard.admit(update)?
+                };
                 if let a3_application::AskResearchDecision::Answer {
                     evidence_status,
                     markdown,
+                    note,
                     ..
                 } = &mut decision
                 {
@@ -59,6 +64,9 @@ impl EvidenceGuard<'_> {
                     } else {
                         AskResearchEvidenceStatus::Incomplete
                     };
+                    if note.origin == a3_application::AskResearchNoteOrigin::CoreWorkState {
+                        bind_core_work_note(note, &state);
+                    }
                 }
             }
             (None, _) if required => return Err(DecisionIssue::WorkEvidence),
@@ -93,6 +101,50 @@ impl EvidenceGuard<'_> {
                 })?;
         }
         Ok(())
+    }
+}
+
+fn bind_core_work_note(
+    note: &mut a3_application::AskResearchDecisionNote,
+    state: &a3_domain::ResearchWorkState,
+) {
+    note.goal = bounded_text(state.objective(), 1024);
+    note.finding_kind = a3_application::AskResearchFindingKind::Hypothesis;
+    note.finding = format!(
+        "Core-Prüfstand: {} von {} Teilfragen besitzen ein zugelassenes aktuelles Ergebnis; das ist keine Implementierungsverifikation.",
+        state.resolved_count(),
+        state.questions().len()
+    );
+    note.source_ordinals.clear();
+    if state.ready_to_finish() {
+        note.gap = "Alle erforderlichen Teilfragen besitzen ein zugelassenes aktuelles Ergebnis."
+            .to_owned();
+        note.next_step = "Zugelassene Ergebnisse ohne neue Recherche darstellen.".to_owned();
+    } else if let Some(question) = state.next_question().and_then(|id| state.question(id)) {
+        note.gap = if let Some(need) = &note.evidence_need {
+            format!(
+                "Belegbedarf für Q{}: {}",
+                need.question().get(),
+                need.targets().join(" ")
+            )
+        } else {
+            bounded_text(
+                &format!(
+                    "{} {}",
+                    question.definition().outcome,
+                    question.definition().request_fragment
+                ),
+                1024,
+            )
+        };
+        note.next_step = format!(
+            "Die offene Teilfrage Q{} unter ihren bestehenden Beleg- und Budgetgrenzen bearbeiten.",
+            question.id().get()
+        );
+    } else {
+        note.gap = "Pflichtstand noch nicht abgeschlossen.".to_owned();
+        note.next_step =
+            "Den bestehenden Prüfstand revalidieren; keinen Abschluss behaupten.".to_owned();
     }
 }
 
@@ -162,7 +214,7 @@ impl DecisionIssue {
                 "kind=interpretation with current E-window anchor_ref evidence. Explain the actual delivered implementation"
             };
             return format!(
-                "Core instruction echo in Q{}: the previous text only repeated an assigned obligation. Return schema_version=5, decision with kind=progress and note, work.questions=[], exactly one result question_id={}, {result}. Do not copy an obligation or promise to do it later. Preserve the original request and admitted prerequisites. No new reads or obligations. Failure category: {}.",
+                "Core instruction echo in Q{}: the previous text only repeated an assigned obligation. Return schema_version=6, decision with kind=progress only, work.questions=[], exactly one result question_id={}, {result}. Do not copy an obligation or promise to do it later. Preserve the original request and admitted prerequisites. No note, new reads or obligations. Failure category: {}.",
                 id.get(),
                 id.get(),
                 self.code()
@@ -170,11 +222,12 @@ impl DecisionIssue {
         }
         let rule = match phase {
             Some(ResearchOutputPhase::Initialize) => {
-                "Initialize: decision contains only kind=progress and note. Return schema_version=5, work.questions with the complete required investigation contract and work.results=[]. Classify existing-code questions as repository; future proposals as design. Do not answer yet."
+                "Initialize: decision contains only kind=progress. Return schema_version=6, work.questions with the complete required investigation contract and work.results=[]. Classify existing-code questions as repository; future proposals as design. Do not answer yet or emit a note."
             }
             Some(ResearchOutputPhase::Analyze(id)) => {
                 return format!(
-                    "Analyze Q{}: return schema_version=5; decision contains only kind=progress and note; work.questions=[]. work.results contains at most one result, question_id={}, kind=interpretation, using only actually delivered current E-window anchor_ref evidence. Cover all explicitly named originals relevant to this question. No copied quotes, citation markers, boundedUnknown, designDecision, markdown or new questions. If original evidence cannot answer this question, return results=[] and identify the exact gap. Failure category: {}.",
+                    "Analyze Q{}: schema_version=6; work.questions=[]; decision={{kind:progress}}; at most one result question_id={}, kind=interpretation with current E-window anchor_ref evidence. Cover relevant named originals. No note, quotes, citation markers, boundedUnknown, designDecision, markdown or new questions. If evidence is missing, results=[]; optionally decision={{kind:evidenceNeed,question_id:{},targets:[exact symbol or relative path literals from the request or delivered originals]}}. The Core alone resolves and reads existing indexed targets. Failure category: {}.",
+                    id.get(),
                     id.get(),
                     id.get(),
                     self.code()
@@ -182,7 +235,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::DesignTests(id)) => {
                 return format!(
-                    "DesignTests Q{}: return schema_version=5, decision kind=progress with note, work.questions=[], exactly one result question_id={}, kind=designDecision, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. Do not reopen research, change prerequisites or claim tests were executed. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
+                    "DesignTests Q{}: return schema_version=6, decision contains only kind=progress, work.questions=[], exactly one result question_id={}, kind=designDecision, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. No note, new research, changed prerequisites or implementation claims. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
@@ -190,7 +243,7 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::Design(id)) => {
                 return format!(
-                    "Design Q{}: return schema_version=5; decision contains only kind=progress and note; work.questions=[]. work.results must contain exactly one concrete result, question_id={}, kind=designDecision, evidence=[]. Answer the original request, not merely a heading or status. Preserve admitted prerequisite design decisions; specify the requested future outcome. A proposed implementation need not already exist; further repository reads cannot repair an empty design. Only a consequential missing user choice permits kind=question with message and empty results. Do not add source anchors, quotes, citation markers, interpretation, boundedUnknown, markdown or new obligations. Failure category: {}.",
+                    "Design Q{}: return schema_version=6; decision contains only kind=progress; work.questions=[]. work.results must contain exactly one concrete result, question_id={}, kind=designDecision, evidence=[]. Answer the original request, not merely a heading or status. Preserve admitted prerequisite design decisions; specify the requested future outcome. A proposed implementation need not already exist; further repository reads cannot repair an empty design. Only a consequential missing user choice permits kind=question with message and empty results. No note, source anchors, quotes, citation markers, interpretation, boundedUnknown, markdown or new obligations. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
@@ -198,14 +251,15 @@ impl DecisionIssue {
             }
             Some(ResearchOutputPhase::SummarizeOriginals(id)) => {
                 return format!(
-                    "SummarizeOriginals Q{}: schema_version=5; decision contains only kind=progress and note; work.questions=[]. Return exactly one result, question_id={}, kind=interpretation, with current E-window anchor_ref evidence. Describe the delivered entry points, APIs and visible integration constraints; all named originals are present in full. State unseen external implementation details as limits, not new prerequisites. No new design, tools, question or empty result. Failure category: {}.",
+                    "SummarizeOriginals Q{}: schema_version=6, work.questions=[]. With decision={{kind:progress}} return exactly one interpretation question_id={} with current E-window anchor_ref covering every named original. For a concrete missing helper only: results=[] and decision={{kind:evidenceNeed,question_id:{},targets:[exact literals from delivered originals/request]}}. No note, empty progress, new design, tools, questions or invented external facts. Core owns reads and validates every source. Failure category: {}.",
+                    id.get(),
                     id.get(),
                     id.get(),
                     self.code()
                 );
             }
             Some(ResearchOutputPhase::Finalize) => {
-                "Finalize: return kind=plan with note, summary, changes, interfaces, tests and assumptions. Changes/tests are nonempty arrays of single-line concrete verifiable outcomes. No markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. Use work.questions=[] and work.results=[]. The Core formats the plan and attaches admitted original evidence."
+                "Finalize: return schema_version=6, kind=plan with summary, changes, interfaces, tests and assumptions. Changes/tests are nonempty arrays of single-line concrete verifiable outcomes. No note, markdown field, markers, headings, citations, source_refs, evidence_status, new research or question. Use work.questions=[] and work.results=[]. The Core formats the plan and attaches admitted original evidence."
             }
             None => return self.repair_hint(source_count),
         };
@@ -449,7 +503,7 @@ pub(super) fn validate_outcome_with_attribution(
 }
 
 pub(super) trait ResearchModel: Send + Sync {
-    /// Historical replay models retain V3/V4; the production provider always requires V5.
+    /// Historical replay models retain V3/V4; production requires the current work contract.
     fn requires_work_contract(&self) -> bool {
         false
     }

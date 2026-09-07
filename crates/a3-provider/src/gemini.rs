@@ -1935,10 +1935,14 @@ mod tests {
             a3_application::ResearchOutputPhase::DesignTests(a3_domain::ResearchQuestionId::FIRST),
             a3_application::ResearchOutputPhase::Finalize,
         ] {
-            let original = a3_application::research_work_phase_schema(phase, true)?;
-            let translated = translate_response_json_schema(&original)?;
-            assert_eq!(translated["type"], "object");
-            assert!(translated.get("$id").is_none());
+            for original in [
+                a3_application::research_work_phase_schema(phase, true)?,
+                a3_application::research_work_current_phase_schema(phase, true)?,
+            ] {
+                let translated = translate_response_json_schema(&original)?;
+                assert_eq!(translated["type"], "object");
+                assert!(translated.get("$id").is_none());
+            }
         }
         Ok(())
     }
