@@ -953,6 +953,9 @@ normale Agentturns AgentAction V5 mit genau `schema_version` und `action`.
 Die unabhängige Prüfung von Aktionen, aktuellen IDs und Patch-Snapshots bleibt
 vollständig bestehen. Fortschritt stammt aus bestehendem Run-Journal und Ledger,
 nicht aus einer vom Modell behaupteten Erkenntnis oder erfolgreichen Prüfung.
-Replan-Localization bleibt read-only AgentAction V4; Replan-Analyse bleibt Research
+Neue Replan-Localization verwendet nach
+[ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md) ebenfalls AgentAction V5
+ohne Modellstatus, strikt auf Search/Inspect beschränkt. Dies gilt für Primär- und
+Einzelrepair und erweitert weder Reads noch Berechtigungen. Replan-Analyse bleibt Research
 V5 und Ask/Plan/Vorbereitung bei Research V7. Keiner dieser Verträge kann durch
 gleiche numerische Versionen den jeweils anderen autorisieren.

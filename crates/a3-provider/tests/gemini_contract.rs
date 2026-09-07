@@ -340,73 +340,105 @@ async fn research_wire_projection_does_not_relax_the_independent_decoder() -> Re
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn replan_analysis_schema_reaches_the_provider_without_an_unusable_question_arm()
+async fn replan_phase_schemas_reach_the_provider_with_only_admitted_decisions()
 -> Result<(), TestError> {
-    let base = sample_request("gemma-4-26b-a4b-it", false)?;
-    let prepared = a3_application::AgentPromptContract::current()
-        .prepare_replan_analysis(base.profile())
-        .map_err(map_app_error)?;
-    let original = prepared.structured_output().value().clone();
-    let (system, grounding, schema) = prepared.into_parts();
-    let mut messages = vec![system];
-    messages.extend(grounding);
-    let request = ModelProviderRequest::new(base.profile().clone(), messages, Some(schema))
-        .map_err(map_app_error)?;
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let endpoint = endpoint_for(&listener)?;
-    let response = json!({"schema_version":5,"decision":{"kind":"progress","note":{
-        "goal":"Inspect fixture","finding_kind":"hypothesis","finding":"Need original code","finding_source_refs":[],"gap":"Originals missing","next_step":"Inspect"}},
-        "work":{"questions":[],"results":[]}}).to_string();
-    let expected = response.clone();
-    // The stub and adapter are jointly owned and bounded, including pre-connect failure.
-    let server = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
-        let (mut stream, _) = listener.accept().await?;
-        let request = read_http_request(&mut stream).await?;
-        write_event_stream_head(&mut stream).await?;
-        let event = json!({"candidates":[{"index":0,"content":{"parts":[{"text":response}]},"finishReason":"STOP"}]});
-        write_http_chunk(&mut stream, format!("data: {event}\n\n").as_bytes()).await?;
-        finish_http_chunks(&mut stream).await?;
-        Ok::<_, TestError>(request)
-    });
-    let provider = test_provider(endpoint)?;
-    let control = TestControl::default();
-    let exchange = async {
-        let mut stream = provider
-            .stream(
-                &request,
-                ModelRequestTimeout::from_millis(5000).map_err(map_app_error)?,
-                &control,
-            )
-            .await
-            .map_err(map_app_error)?;
-        let mut output = String::new();
-        let mut completed = false;
-        while let Some(event) = stream.next().await {
-            match event.map_err(map_app_error)? {
-                ProviderEvent::OutputText(chunk) => output.push_str(chunk.as_str()),
-                ProviderEvent::Completed(_) => completed = true,
-            }
+    for localization in [false, true] {
+        let base = sample_request("gemma-4-26b-a4b-it", false)?;
+        let prompt = a3_application::AgentPromptContract::current();
+        let prepared = if localization {
+            prompt.prepare_replan_localization(base.profile())
+        } else {
+            prompt.prepare_replan_analysis(base.profile())
         }
-        assert!(completed);
-        Ok::<_, TestError>(output)
-    };
-    let (server, output) = futures::join!(server, exchange);
-    assert_eq!(output?, expected);
-    let wire: Value = serde_json::from_slice(&server??.body)?;
-    let schema = &wire["generationConfig"]["responseJsonSchema"];
-    assert_eq!(
-        schema["properties"]["decision"],
-        json!({"$ref":"#/$defs/progress"})
-    );
-    assert!(schema["$defs"].get("questionDecision").is_none());
-    assert_eq!(
-        schema["$defs"]["progress"]["properties"]["kind"]["enum"],
-        json!(["progress"])
-    );
-    assert_eq!(
-        request.structured_output().ok_or("schema")?.value(),
-        &original
-    );
+        .map_err(map_app_error)?;
+        let original = prepared.structured_output().value().clone();
+        let (system, grounding, schema) = prepared.into_parts();
+        let mut messages = vec![system];
+        messages.extend(grounding);
+        let request = ModelProviderRequest::new(base.profile().clone(), messages, Some(schema))
+            .map_err(map_app_error)?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = endpoint_for(&listener)?;
+        let response = if localization {
+            json!({"schema_version":5,"action":{"kind":"search","query":"increment","limit":5}})
+                .to_string()
+        } else {
+            json!({"schema_version":5,"decision":{"kind":"progress","note":{
+                "goal":"Inspect fixture","finding_kind":"hypothesis","finding":"Need original code","finding_source_refs":[],"gap":"Originals missing","next_step":"Inspect"}},
+                "work":{"questions":[],"results":[]}}).to_string()
+        };
+        let expected = response.clone();
+        // The stub and adapter are jointly owned and bounded, including pre-connect failure.
+        let server = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            let (mut stream, _) = listener.accept().await?;
+            let request = read_http_request(&mut stream).await?;
+            write_event_stream_head(&mut stream).await?;
+            let event = json!({"candidates":[{"index":0,"content":{"parts":[{"text":response}]},"finishReason":"STOP"}]});
+            write_http_chunk(&mut stream, format!("data: {event}\n\n").as_bytes()).await?;
+            finish_http_chunks(&mut stream).await?;
+            Ok::<_, TestError>(request)
+        });
+        let provider = test_provider(endpoint)?;
+        let control = TestControl::default();
+        let exchange = async {
+            let mut stream = provider
+                .stream(
+                    &request,
+                    ModelRequestTimeout::from_millis(5000).map_err(map_app_error)?,
+                    &control,
+                )
+                .await
+                .map_err(map_app_error)?;
+            let mut output = String::new();
+            let mut completed = false;
+            while let Some(event) = stream.next().await {
+                match event.map_err(map_app_error)? {
+                    ProviderEvent::OutputText(chunk) => output.push_str(chunk.as_str()),
+                    ProviderEvent::Completed(_) => completed = true,
+                }
+            }
+            assert!(completed);
+            Ok::<_, TestError>(output)
+        };
+        let (server, output) = futures::join!(server, exchange);
+        let output = output?;
+        assert_eq!(output, expected);
+        let wire: Value = serde_json::from_slice(&server??.body)?;
+        let schema = &wire["generationConfig"]["responseJsonSchema"];
+        if localization {
+            assert_eq!(schema["properties"]["schema_version"]["enum"], json!([5]));
+            assert!(schema["properties"].get("public_note").is_none());
+            assert_eq!(
+                schema["properties"]["action"]["anyOf"],
+                json!([{"$ref":"#/$defs/search"},{"$ref":"#/$defs/inspect"}])
+            );
+            for forbidden in ["publicNote", "applyPatch", "run", "updateLedger", "finish"] {
+                assert!(schema["$defs"].get(forbidden).is_none());
+            }
+            let decoded = a3_application::DecodeAgentAction::for_replan_localization()
+                .decode_envelope(&output)
+                .map_err(map_app_error)?;
+            assert!(decoded.public_note().is_none());
+            assert!(matches!(
+                decoded.action(),
+                a3_domain::AgentAction::Search(_)
+            ));
+        } else {
+            assert_eq!(
+                schema["properties"]["decision"],
+                json!({"$ref":"#/$defs/progress"})
+            );
+            assert!(schema["$defs"].get("questionDecision").is_none());
+            assert_eq!(
+                schema["$defs"]["progress"]["properties"]["kind"]["enum"],
+                json!(["progress"])
+            );
+        }
+        assert_eq!(
+            request.structured_output().ok_or("schema")?.value(),
+            &original
+        );
+    }
     Ok(())
 }
 

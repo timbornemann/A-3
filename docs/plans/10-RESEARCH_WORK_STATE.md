@@ -40,6 +40,17 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [x] Replan-Leseturns auf den bestehenden statusfreien AgentAction-V5-Vertrag
+      umstellen; Search/Inspect allein, strikte historische Decoder, Einzelrepair,
+      Vier-Read- und Legacy-Duplikatgrenzen erhalten
+      ([ADR-0091](../adrs/0091-statusfreie-replan-lokalisierung.md)).
+      Schema-/Turn-/Context-/Providerverträge und vollständige lokale Gates bestehen.
+      Alle sechs Coding-Lives geprüft; Luna besteht, lokale Abläufe bleiben offen.
+- [ ] Den beim Replan-Analyze derzeit verworfenen Belegbedarf durch einen
+      begrenzten typisierten, originalgebundenen und dauerhaft rekonstruierbaren
+      Navigationsbedarf ersetzen. Eigene Persistenzentscheidung und Wiederanlauf-
+      /Freshness-/Rollback-Nachweise vor Umstellung; keine freie Statusprosa als Fakt.
+
 - [x] Nicht regulär beendete Agentantworten behalten ihren geschlossenen Provider-
       Beendigungsgrund (`OutputLimit` oder `Other`) statt der bisherigen Sammelmeldung.
       Auch scheinbar vollständiges JSON darf damit nicht ausführbar werden; Primär-

@@ -81,6 +81,8 @@ fn replan_localization_is_in_the_counted_anchor_digest_and_restricted_schema()
                 .contains("cause=Find the serializer source")
     }));
     let schema = after.request().structured_output().ok_or("schema")?.value();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 5);
+    assert!(schema["properties"].get("public_note").is_none());
     assert_eq!(
         schema["properties"]["action"]["oneOf"]
             .as_array()

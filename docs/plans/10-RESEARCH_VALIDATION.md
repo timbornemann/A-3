@@ -2194,3 +2194,62 @@ SHA-256 der Logs im selben Verzeichnis:
 - `qwen-live-2.log`: `f1f19ab28aebedabc964907fe9eff925eae7478fd0c4cc60703818b7aef536cb`
 - `qwen-live-3.log`: `ba6e5f481f9c4d7c5154572f7b241f5f3284dee816f7085c0133392356bdc247`
 - `luna-live.log`: `328d4a0d01bb8fe557fcf00274f3daca060a538d46a2ae38787025eac6c2748e`
+
+### ADR-0091: Statusfreie Replan-Leseturns
+
+Der Promptregressionstest ist zuerst rot (`replan-statusless-red.log`): Der neue
+Leseturn fordert noch V4 statt V5. Prompt und unabhängiger Primär-/Repairdecoder
+verwenden jetzt den bestehenden V5-Umschlag, weiterhin ausschließlich Search/Inspect.
+Die expliziten historischen Decoder und der getrennte Research-V5-Analysevertrag
+bleiben erhalten. Die kanonische, gleichartig beschnittene Schema-Fixture misst
+3.663 Byte für V4 gegenüber 3.000 Byte für V5. Das ist eine Umfangsmessung, kein
+Nachweis besserer Modellqualität oder Geschwindigkeit.
+
+Gezielte Verträge bestehen (`replan-statusless-targeted.log` und
+`replan-statusless-all-targeted.log`). Der vollständige Turntest wurde anschließend
+um den explizit gültigen historischen V4-Read erweitert und prüft insgesamt 14
+Kombinationen: vier außerhalb Replan gültige Nicht-Leseaktionen, Zusatznotiz,
+falsche Version und historischer Read, jeweils wiederholt oder durch einen gültigen
+V5-Read korrigiert. Genau ein Repair, unveränderte Requests/Schema, keine Nutzung
+der dritten Antwort, keine Toolwirkung bei Ablehnung und keine übernommene Notiz
+werden unabhängig geprüft. Vorhandene Duplikat-, Legacy-Claim-, Budget- und
+Originalregressionen bleiben bestehen. Der echte Gemini-HTTPvertrag deckt jetzt
+beide Replan-Phasen ab; der reale Contextvertrag prüft Digest und vollständige
+Nachrichtenabrechnung für das aktuelle Leseschema.
+
+Die abschließende Formatprüfung, vollständiges Workspace-Clippy mit `-D warnings`
+und die vollständige Workspace-Testsuite bestehen, einschließlich der ergänzten
+historischen Turnkombination. Rust-Gates mit `--all-features --offline --locked
+--jobs 2`, Tests zusätzlich `--test-threads=1`. Logs: `replan-statusless-clippy.log`
+und `replan-statusless-workspace.log`, Exit 0. Markdown-Link- und Diff-Prüfung bestehen.
+
+Eingefrorenes Binary `replan-statusless-20260907/agent-tests.exe`, SHA-256
+`6a1262b456e42ce80f7bd0d4d589a919cf9e1f6d5ff8aad71cb3ff6ec827ed25`.
+Es enthält den geänderten Produktionscode; die letzte zusätzliche historische
+Turntestkombination und die kosmetische Formatierung des HTTPtests kamen erst
+danach hinzu und werden durch die abschließende Workspace-Suite geprüft.
+
+| Modell | Dauer | Tatsächliches Coding-Ergebnis |
+| --- | --- | --- |
+| Luna | 14,71 s | Done 21, Test Exit 0, Completed/verified, unabhängig grün |
+| Google Gemma | 11,52 s | ModelFailed(Unavailable), Failed 16, unabhängig rot |
+| Qwen 8k | 114,54 s | InvalidState, Failed 43, vier Tests Exit 1, unabhängig rot |
+| Granite 8B | 21,07 s | RepeatedReplanRead nach Einzelrepair, Failed 24, unabhängig rot |
+| Ornith 9B | 66,09 s | IncompleteModelOutput(OutputLimit), Failed 24, unabhängig rot |
+| GPT-OSS 20B | 20,68 s | ModelFailed(InvalidResponse), Failed 12, unabhängig rot |
+
+Lokale Modelle liefen nacheinander; alle geschützten Dateien bleiben bytegleich.
+Luna bestätigt außerdem unveränderte native Settings. Mehrere Testfehler allein
+beweisen nicht, ob dazwischen eine Patchmutation stattfand. Orniths Ausgabelimit
+ist jetzt erstmals genau klassifiziert; daraus folgt nicht rückwirkend derselbe
+Grund für Qwens älteren unklassifizierten Abbruch. Die Änderung beseitigt die
+unnötige Statuspflicht, aber die lokale Nutzbarkeit ist damit nicht abgenommen.
+
+SHA-256 der Logs im selben Verzeichnis:
+
+- `luna-live.log`: `f67300bdef5d219f1afdcaee9aca7df038c5f7785c3404d2240248b03c85130e`
+- `google-live.log`: `4bc7acbeda48e19688024b83f86b94cff51a2a477ce656357c534e971352b15d`
+- `qwen-live.log`: `9a5c03d9dffa082d3df7b90d608f8644271b01b56c5aefda7608071e97f8341f`
+- `granite-live.log`: `f794ec1b9d187a4aed679d653499225c66f5d90bedf9e872084c35c9e776f55c`
+- `ornith-live.log`: `8943c711233ebd483e58dfd288c0c15ce2acdb0e7245cb59197e280ccd6694ee`
+- `gpt-oss-live.log`: `2e5bb2579d3899e497fd3f2e9cde9a7fb689fd3948aaf3e73cf63cc8443ae7e3`

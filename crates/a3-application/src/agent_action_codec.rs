@@ -171,11 +171,11 @@ pub struct DecodeAgentAction {
 }
 
 impl DecodeAgentAction {
-    /// Restricts the historical V4 replan contract to reads, including its single repair.
+    /// Restricts the current status-free contract to reads, including its single repair.
     #[must_use]
     pub const fn for_replan_localization() -> Self {
         Self {
-            version: AgentActionSchemaVersion::V4,
+            version: AgentActionSchemaVersion::CURRENT,
             localization_only: true,
             anchors: None,
         }

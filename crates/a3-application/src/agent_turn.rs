@@ -1725,41 +1725,109 @@ mod tests {
     #[test]
     fn replan_localization_cannot_finish_or_mutate_even_after_repair() -> Result<(), Box<dyn Error>>
     {
-        let forbidden = r#"{"schema_version":4,"public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},"action":{"kind":"finish"}}"#;
-        let mut fixture = turn_fixture(vec![
-            provider_response(forbidden)?,
-            provider_response(forbidden)?,
-        ])?;
-        let input =
-            fixture
-                .input
-                .with_replan_localization(a3_domain::TaskReplanReason::try_from_string(
-                    "Locate the missing serializer".to_owned(),
-                )?);
-        let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
-        let provider = ScriptedProvider {
-            provider_id: fixture.profile.provider_id().clone(),
-            responses: Mutex::new(fixture.responses),
-        };
-        let tools = CountingReadTools {
-            calls: AtomicUsize::new(0),
-        };
-        let recovery = TestRecoveryStore::default();
-        let outcome = futures::executor::block_on(
-            ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
-                &fixture.run,
-                &input,
-                timestamp(5)?,
-                &TestControl,
-            ),
-        )?;
-        let _event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
-        assert!(matches!(outcome, AgentTurnOutcome::Rejected(_)));
-        assert_eq!(fixture.run.usage().turn_count(), 1);
-        assert_eq!(fixture.run.usage().repair_count(), 1);
-        assert_eq!(fixture.run.usage().action_count(), 0);
-        assert_eq!(tools.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(recovery.begins.load(Ordering::SeqCst), 0);
+        let id = "22".repeat(32);
+        let read = serde_json::json!({"schema_version":5,"action":{"kind":"search","query":"serializer","limit":5}});
+        let mut extra_note = read.clone();
+        extra_note["public_note"] = serde_json::json!({"goal":"private status"});
+        let mut wrong_version = read.clone();
+        wrong_version["schema_version"] = serde_json::json!(4);
+        let mut legacy = wrong_version.clone();
+        legacy["public_note"] = serde_json::json!({"goal":"Locate","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"});
+        assert!(
+            crate::DecodeAgentAction::version_four()
+                .decode_envelope(&legacy.to_string())?
+                .public_note()
+                .is_some()
+        );
+        let mut forbidden_documents = vec![extra_note, wrong_version, legacy];
+        for action in [
+            serde_json::json!({"kind":"finish"}),
+            serde_json::json!({"kind":"run","step_id":id,"command_id":id}),
+            serde_json::json!({"kind":"update_ledger","step_id":id,"update":{"kind":"record_result","summary":"unverified result"}}),
+            serde_json::json!({"kind":"apply_patch","run_id":id,"worktree_id":id,"snapshot_id":id,"step_id":id,"verification_spec_id":id,"rationale":"add source","operations":[{"kind":"add","path":"new.rs","content":"fn new() {}\n"}]}),
+        ] {
+            let document = serde_json::json!({"schema_version":5,"action":action});
+            // These are valid actions outside localization, not merely malformed inputs.
+            crate::DecodeAgentAction::current().decode(&document.to_string())?;
+            forbidden_documents.push(document);
+        }
+        for forbidden in forbidden_documents {
+            for corrected in [false, true] {
+                let mut fixture = turn_fixture(vec![
+                    provider_response(&forbidden.to_string())?,
+                    provider_response(&if corrected {
+                        read.to_string()
+                    } else {
+                        forbidden.to_string()
+                    })?,
+                    provider_response("unused third response")?,
+                ])?;
+                let input = fixture.input.with_replan_localization(
+                    a3_domain::TaskReplanReason::try_from_string(
+                        "Locate the missing serializer".to_owned(),
+                    )?,
+                );
+                let compiler = OneContextCompiler(Mutex::new(Some(fixture.compiled)));
+                let provider = RecordingReplanProvider {
+                    inner: ScriptedProvider {
+                        provider_id: fixture.profile.provider_id().clone(),
+                        responses: Mutex::new(fixture.responses),
+                    },
+                    requests: Mutex::new(Vec::new()),
+                };
+                let tools = CountingReadTools {
+                    calls: AtomicUsize::new(0),
+                };
+                let recovery = TestRecoveryStore::default();
+                let outcome = futures::executor::block_on(
+                    ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery).execute(
+                        &fixture.run,
+                        &input,
+                        timestamp(5)?,
+                        &TestControl,
+                    ),
+                )?;
+                let _event = outcome.record(&mut fixture.run, event_id(20), timestamp(20)?)?;
+                match outcome {
+                    AgentTurnOutcome::Executed(execution) if corrected => {
+                        assert!(matches!(execution.action(), AgentAction::Search(_)));
+                        assert!(execution.public_note().is_none());
+                    }
+                    AgentTurnOutcome::Rejected(_) if !corrected => {}
+                    _ => return Err("incorrect read-only repair outcome".into()),
+                }
+                assert_eq!(fixture.run.usage().turn_count(), 1);
+                assert_eq!(fixture.run.usage().repair_count(), 1);
+                assert_eq!(tools.calls.load(Ordering::SeqCst), usize::from(corrected));
+                assert_eq!(
+                    recovery.begins.load(Ordering::SeqCst),
+                    usize::from(corrected)
+                );
+                if !corrected {
+                    assert_eq!(fixture.run.usage().action_count(), 0);
+                }
+                assert_eq!(
+                    provider
+                        .inner
+                        .responses
+                        .lock()
+                        .map_err(|_| "responses")?
+                        .len(),
+                    1
+                );
+                let requests = provider.requests.lock().map_err(|_| "requests")?;
+                assert_eq!(requests.len(), 2);
+                assert_eq!(
+                    requests[0].structured_output(),
+                    requests[1].structured_output()
+                );
+                let messages = requests[1].messages();
+                assert_eq!(&messages[..messages.len() - 1], requests[0].messages());
+                let repair = messages.last().ok_or("repair")?.content();
+                assert!(repair.contains("V5"));
+                assert!(!repair.contains("private status"));
+            }
+        }
         Ok(())
     }
 
@@ -1779,9 +1847,9 @@ mod tests {
             ),
             (1, "novel", None),
         ] {
-            let raw = serde_json::json!({"schema_version":4,
-                "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
-                "action":{"kind":"search","query":query,"limit":5}}).to_string();
+            let raw = serde_json::json!({"schema_version":5,
+                "action":{"kind":"search","query":query,"limit":5}})
+            .to_string();
             let mut fixture =
                 turn_fixture(vec![provider_response(&raw)?, provider_response(&raw)?])?;
             let reason =
@@ -1868,14 +1936,14 @@ mod tests {
     fn replan_duplicate_read_can_use_only_the_existing_single_repair() -> Result<(), Box<dyn Error>>
     {
         let read = |query: &str| {
-            serde_json::json!({"schema_version":4,
-            "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
-            "action":{"kind":"search","query":query,"limit":5}}).to_string()
+            serde_json::json!({"schema_version":5,
+            "action":{"kind":"search","query":query,"limit":5}})
+            .to_string()
         };
         let claim = |id: &str| {
-            serde_json::json!({"schema_version":4,
-            "public_note":{"goal":"Localize","finding_kind":"hypothesis","finding":"Source needed","finding_source_refs":[],"gap":"Cause","next_step":"Inspect"},
-            "action":{"kind":"inspect","target":{"kind":"claim","claim_id":id}}}).to_string()
+            serde_json::json!({"schema_version":5,
+            "action":{"kind":"inspect","target":{"kind":"claim","claim_id":id}}})
+            .to_string()
         };
         for (primary, correction, succeeds, legacy) in [
             (read("controller"), read("serializer"), true, false),

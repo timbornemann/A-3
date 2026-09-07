@@ -921,6 +921,14 @@ erneute automatische Replan-Kette eröffnen; der Core prüft dafür die dauerhaf
 begrenzt und cancellation-fähig. Es entsteht kein zweiter mutierender Controller.
 Abnahmeumfang und noch offene Schnitte stehen in [Plan 10](plans/10-RESEARCH_WORK_STATE.md).
 
+Neue Replan-Leseturns verwenden nach
+[ADR-0091](adrs/0091-statusfreie-replan-lokalisierung.md) den bestehenden
+AgentAction-V5-Umschlag ohne `public_note`, auf Search/Inspect beschränkt.
+Prompt, Schema und unabhängiger Primär-/Repairdecoder verlangen denselben Vertrag.
+Fortschritt stammt weiterhin aus echten Core-Ereignissen, nicht aus Modellstatus.
+Historische V3/V4-Decoder behalten ihre strikte Notizpflicht. Read-Duplikate,
+Vier-Read-Grenze, Quellen-Freshness und die separate Analyse bleiben unverändert.
+
 Das Replan-Analyseschema bietet nur `decision.kind=progress` an und entfernt den
 hier unerreichbaren Nutzerfrage-Arm samt Definitionen. Primärantwort und Einzelrepair
 verwenden dieselbe Projektion, auch bei wiederholtem Schema im Prompt. Der unabhängige
