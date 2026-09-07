@@ -35,8 +35,9 @@ impl AgentContextCompiler for RepeatStagedCompiler {
             t.budget_usage(),
             0,
             false,
-        );
-        Box::pin(async move { Ok(result) })
+        )
+        .with_original_sources(t.original_sources().to_vec());
+        Box::pin(async move { result })
     }
 }
 
@@ -90,6 +91,7 @@ fn staged_fixture_with_command(
 }
 
 mod after_change;
+mod source_guidance;
 
 const SEARCH_CHOICE: &str = r#"{"version":1,"choice":"search"}"#;
 const SEARCH_ARGUMENTS: &str = r#"{"version":1,"parameters":{"query":"increment","limit":3}}"#;
@@ -125,8 +127,6 @@ impl ModelProvider for StagedDeadlineProvider {
 fn staged_deadline_is_shared_and_expired_run_cannot_start_choice() -> Result<(), Box<dyn Error>> {
     for remaining_millis in [0, 10_000] {
         let fixture = staged_fixture(&[SEARCH_CHOICE, SEARCH_ARGUMENTS])?;
-        let digest = fixture.compiled.digest();
-        let base = fixture.compiled.request().clone();
         let compiler = RepeatStagedCompiler {
             template: fixture.compiled,
             calls: AtomicUsize::new(0),
@@ -152,8 +152,7 @@ fn staged_deadline_is_shared_and_expired_run_cannot_start_choice() -> Result<(),
             ExecuteAgentTurn::new(&compiler, &provider, &tools, &recovery),
             &fixture.run,
             &fixture.input,
-            &base,
-            digest,
+            &compiler.template,
             observed_at,
             &TestControl,
         ))?;

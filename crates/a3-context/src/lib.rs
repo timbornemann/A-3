@@ -380,7 +380,7 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
         let request = ModelProviderRequest::new(profile.clone(), messages, Some(structured_output))
             .map_err(|_| ContextCompileFailure::InvalidPack)?;
         report(control, ContextCompilePhase::Complete)?;
-        Ok(CompiledAgentContext::new(
+        CompiledAgentContext::new(
             request,
             ContextCompilerPolicyVersion::CURRENT,
             digest,
@@ -395,7 +395,8 @@ impl<'a> DeterministicAgentContextCompiler<'a> {
             budget_usage,
             lens.excluded_stale_claims(),
             run_memory.truncated || packed.truncated || lens.truncated(),
-        ))
+        )
+        .with_original_sources(originals.delivered)
     }
 }
 

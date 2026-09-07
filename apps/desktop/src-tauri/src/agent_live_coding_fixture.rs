@@ -310,8 +310,13 @@ async fn evaluate(control: &JobContext) -> Result<(), Box<dyn Error>> {
     let generation = match std::env::var("A3_LIVE_AGENT_GENERATION").as_deref() {
         Ok("staged") => AgentActionGeneration::SelectThenFill,
         Ok("guided") => AgentActionGeneration::ReviewThenSelect,
+        Ok("source-guided") => AgentActionGeneration::SourceGuided,
         Ok("baseline") | Err(std::env::VarError::NotPresent) => AgentActionGeneration::SingleAction,
-        _ => return Err("A3_LIVE_AGENT_GENERATION must be baseline, staged or guided".into()),
+        _ => {
+            return Err(
+                "A3_LIVE_AGENT_GENERATION must be baseline, staged, guided or source-guided".into(),
+            );
+        }
     };
     println!(
         "A3_LIVE_CODING version=2 case={} generation={generation:?}",

@@ -1,5 +1,93 @@
 # Plan 10: Verifikationsprotokoll
 
+## 2026-09-08: Exakte Read-Diagnose und SourceWork-Vergleich (ADR-0098)
+
+Ausgangspunkt `a42f164`. Der bisherige Qwen-Befund wird jetzt durch ein
+testlokales, auf 64 Einträge pro Executorversuch begrenztes Fenster präzisiert.
+Verglichen werden die echten typisierten Search-/Inspect-Anforderungen und
+Snapshot-IDs, nicht ihre redigierte Debugdarstellung. Ergebnisdigests werden
+separat verglichen. Die Ausgabe enthält nur geschlossene Typen, Status, Größen
+und Wiederholungsbits; keine Pfade, Suchbegriffe, Claim-IDs oder Quellinhalte.
+
+Der diagnostische Zwei-Modul-Lauf mit `qwen38-8k:latest`, `guided`, Context 8192,
+Output 2048 erhält beide Originale vor dem ersten Codingturn. Danach erfolgen
+26 erfolgreiche Datei-Reads, davon 24 identische Anfragen mit identischen
+Ergebnissen im selben Snapshot; keine Mutation oder Prozessausführung. Nach
+120 s Versuchsfrist wird der laufende Provideraufruf abgebrochen. Gesamter
+Testprozess 131,99 s; 27 Turns, journalisierte Kosten von 134607 Prompt- und
+4059 Outputtokens, kein Repair.
+Geschützte Dateien und native Einstellungen bleiben unverändert. Das ist ein
+negativer Diagnosebefund, kein erfolgreicher Task.
+
+Eingefrorenes Diagnosebinary `target/reports/agent-read-probe-20260908/agent-tests.exe`,
+SHA-256 `361cfe4a26eadf50f14e164fc7bb23ce538c04d964ca41359279146b86225a1f`.
+Log `qwen-two-guided.log` im selben Verzeichnis, SHA-256
+`f264f1159cf8e2a07da2706ba4479826257d471c5cfa79d962091dc67996330d`.
+
+[ADR-0098](../adrs/0098-quellengefuehrte-arbeitsentscheidung-im-vergleich.md)
+ergänzt die tatsächliche Original-Lieferprojektion und eine vierte native
+Vergleichsstrategie. Die Projektionsdaten entstehen erst nach erfolgreicher
+Readerprüfung und Budgetzulassung; Prompt und größere V8-Budgets bleiben
+unverändert. SourceWork führt bei aktueller Lieferung und operationalem Schritt
+zur konkreten Änderung, weiteren Evidence oder geplanten Prüfung. Vollständig
+gelieferte Datei-Reads erreichen nur in diesem Vergleichspfad keine Toolgrenze.
+Ein einzelner Repair bleibt allen Stufen gemeinsam. Andere Dateien und noch
+fehlende Bereiche werden nicht aufgrund bloßer Pfadgleichheit gesperrt.
+
+Der geplante gegenbalancierte Livevergleich `guided`/`source-guided` wurde vor
+dem Start durch die Ausführungsrichtlinie des Engineering-Werkzeugs abgewiesen
+(`CreateProcess: blocked by policy`). Der gebündelte Auftrag wurde nicht
+gestartet; das vorgesehene neue Berichtverzeichnis wurde nicht angelegt. Kein
+SourceWork-Liveergebnis wird daraus abgeleitet, die Sperre wurde nicht umgangen.
+Die Verhaltens-/Produktabnahme bleibt ausdrücklich offen. Eine bloß schneller
+abgelehnte Wiederholung wäre ohnehin kein Nachweis autonomer Aufgabenerfüllung.
+
+Offline abgeschlossen:
+
+- Vier SourceWork-Turntests mit allen Folgewegen, gemeinsamem Einzelrepair,
+  gesperrter Wiederholung, weiterhin erlaubtem anderem Read und unveränderten
+  früheren Vergleichsstrategien. Sowohl geänderter Digest als auch eine abweichende
+  typisierte Lieferprojektion bei gleichem Digest stoppen vor dem Folgeaufruf.
+- Ein Coverage-Test für Teilbereiche, CRLF, EOF mit/ohne Schlusszeilenumbruch,
+  leere Seiten, anderen Snapshot und andere Datei. Die 7 Unit- und 24
+  Context-Integrationstests bleiben grün; fehlendes Budget, Readerfehler und Replan
+  erzeugen keine automatische Lieferprojektion.
+- Zwei inhaltsfreie ReadProbe-Regressionsfälle, insbesondere unterschiedliche
+  Claim-IDs trotz identischer Debug-Redaktion und sichtbare Fensterverdrängung.
+- Der neue `real_source_guided`-Integrationstest verwendet echtes Repository,
+  publizierten Index, Safe Reader, Context Compiler, Read-Tool und Recovery Store.
+  Geskriptete gültige Wiederholungen werden nach genau einem Repair vor dem Read
+  zurückgewiesen, ihre Kosten bleiben erhalten und der Schritt bleibt offen.
+  Dieser Test behauptet ausdrücklich keinen Live-Modellerfolg.
+
+Exakte Checks mit `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, sämtlich Exit 0:
+
+```text
+cargo fmt --all -- --check
+cargo test -p a3-application --lib source_work --offline --locked --jobs 2
+cargo test -p a3-context --offline --locked --jobs 2
+cargo test -p a3-desktop --lib live_read_probe --offline --locked --jobs 2 -- --test-threads=1
+cargo test -p a3-agent-harness-tests --test coding_tasks real_source_guided --offline --locked --jobs 2 -- --test-threads=1
+cargo clippy --workspace --all-targets --all-features --offline --locked --jobs 2 -- -D warnings
+cargo test --workspace --all-features --offline --locked --jobs 2 -- --test-threads=1
+pnpm check:links
+git diff --check
+```
+
+Die volle Suite enthält 302 Application-Tests, unveränderte Coding-Goldens,
+echte Ein-/Zwei-Datei-Verifikation, Ask-/Plan- und Live-Edit-Grenzen sowie den
+separaten nativen `connection_lifecycle` ohne Crash-Retry. Der Linkcheck prüft
+143 Markdown-Dateien und 594 lokale Links; nur die bekannte Node-25.6.1-Warnung
+gegenüber dem gewünschten 24.14.0 bleibt bestehen. Keine Frontendänderung.
+
+Abschließende Logs unter `target/reports`, SHA-256:
+
+- `agent-source-guided-clippy.log`:
+  `ba287c319d50daa676de2973f009d0218d2973c199a6565f2f34a16de194f428`.
+- `agent-source-guided-workspace.log`:
+  `0e90c9b2c10f39884a645ea86942956a7ee90b7883fb55daaf7b99eb920b4b46`.
+
 ## 2026-09-08: Größere Codeversorgung und unabhängige Live-Orakel (ADR-0096/0097)
 
 Ausgangspunkt `957fc75`. [Live-Coding V2](../../fixtures/agent-live-coding-v2/README.md)

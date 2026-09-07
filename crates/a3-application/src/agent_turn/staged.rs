@@ -1,5 +1,5 @@
 //! Owned, bounded action generation in Application, not in a provider adapter.
-use super::{after_change, staged_contract as contract, *};
+use super::{after_change, source_guidance, staged_contract as contract, *};
 use crate::DecodedAgentAction;
 use std::time::Instant;
 
@@ -13,6 +13,7 @@ pub(super) type Generated = (
 
 enum Stage {
     AfterChange(a3_domain::AgentRunAction),
+    SourceWork(a3_domain::AgentRunAction),
     Choose(contract::ChoiceScope),
     Arguments(contract::Arguments),
 }
@@ -21,6 +22,7 @@ impl Stage {
     fn request_contract(&self) -> (serde_json::Value, &str) {
         match self {
             Self::AfterChange(_) => (after_change::schema(), after_change::PROMPT),
+            Self::SourceWork(_) => (source_guidance::schema(), source_guidance::PROMPT),
             Self::Choose(contract::ChoiceScope::All) => {
                 (contract::choice_schema(), contract::CHOICE_PROMPT)
             }
@@ -87,14 +89,16 @@ pub(super) async fn generate<C>(
     executor: ExecuteAgentTurn<'_>,
     run: &AgentRun,
     input: &AgentContextCompileInput,
-    base: &ModelProviderRequest,
-    digest: ContextDigest,
+    compiled: &crate::CompiledAgentContext,
     observed_at: AgentRunTimestamp,
     control: &C,
 ) -> Result<Result<(Generated, ContextDigest), RejectedAgentTurn>, ExecuteAgentTurnFailure>
 where
     C: AgentControllerControl + ContextCompileControl + ModelOperationControl,
 {
+    let base = compiled.request();
+    let digest = compiled.digest();
+    let sources = compiled.original_sources();
     let started = Instant::now();
     let run_elapsed = observed_at
         .unix_millis()
@@ -110,13 +114,25 @@ where
     exchange_digest.update(&digest.as_bytes());
     let snapshot = run.current_snapshot_id();
     let mut usage = Usage::default();
-    let verification = (executor.generation == AgentActionGeneration::ReviewThenSelect)
+    let source_guided = executor.generation == AgentActionGeneration::SourceGuided;
+    let verification = (source_guided
+        || executor.generation == AgentActionGeneration::ReviewThenSelect)
         .then(|| after_change::planned_verification(input, run))
         .flatten();
-    let max_calls = if verification.is_some() { 4 } else { 3 };
     let mut stage = verification
         .map(Stage::AfterChange)
+        .or_else(|| {
+            source_guided
+                .then(|| source_guidance::planned_verification(input, run, sources))
+                .flatten()
+                .map(Stage::SourceWork)
+        })
         .unwrap_or(Stage::Choose(contract::ChoiceScope::All));
+    let max_calls = if matches!(stage, Stage::AfterChange(_) | Stage::SourceWork(_)) {
+        4
+    } else {
+        3
+    };
     let mut repair: Option<String> = None;
     let step = input
         .task_ledger()
@@ -173,8 +189,11 @@ where
                     AgentTurnRejectionReason::CancelledBeforeAction,
                 )));
             }
-            if !fresh.is_ok_and(|fresh| fresh.digest() == digest && fresh.snapshot_id() == snapshot)
-            {
+            if !fresh.is_ok_and(|fresh| {
+                fresh.digest() == digest
+                    && fresh.snapshot_id() == snapshot
+                    && fresh.original_sources() == sources
+            }) {
                 return Ok(Err(usage.reject(
                     snapshot,
                     AgentTurnRejectionReason::Staged(StagedActionFailure::ContextChanged),
@@ -222,8 +241,16 @@ where
         if let Some(reason) = completion.rejection_reason() {
             return Ok(Err(usage.reject(snapshot, reason)));
         }
-        let (failure, instruction) = if let Stage::AfterChange(verification) = &stage {
-            match after_change::decode(&completion.raw) {
+        let (failure, instruction) = if let Stage::AfterChange(verification)
+        | Stage::SourceWork(verification) = &stage
+        {
+            let source_work = matches!(stage, Stage::SourceWork(_));
+            let decision = if source_work {
+                source_guidance::decode(&completion.raw)
+            } else {
+                after_change::decode(&completion.raw)
+            };
+            match decision {
                 Some(after_change::NextWork::Verify) => {
                     let raw = after_change::verification_wire(verification);
                     let AgentActionPrimaryOutcome::Accepted(action) = decoder.decode_primary_in_snapshot(&raw, executor.patch_snapshot) else {
@@ -239,11 +266,17 @@ where
                     stage = Stage::Choose(contract::ChoiceScope::Evidence);
                     continue;
                 }
+                None if source_work => (StagedActionFailure::InvalidSourceWork, "Invalid SourceWork V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=change, verify or need_evidence. No action, code, IDs, success status or extra fields.".to_owned()),
                 None => (StagedActionFailure::InvalidAfterChange, "Invalid AfterChange V1 decision. This is the only repair shared by all stages. Return exactly version=1 and next=verify, continue_change or need_evidence. No action, code, IDs, success status or extra fields.".to_owned()),
             }
         } else if let Stage::Arguments(args) = &stage {
             let raw = args.assemble(&completion.raw);
             match raw.as_deref().map(|raw|decoder.decode_primary_in_snapshot(raw, executor.patch_snapshot)) {
+                Some(AgentActionPrimaryOutcome::Accepted(action)) if source_guided
+                    && source_guidance::already_supplied(action.action(), snapshot, sources) => (
+                    StagedActionFailure::SourceAlreadySupplied,
+                    "This complete file range is already delivered in the current ORIGINAL_SOURCE blocks. This is the only shared repair. For the same locked inspect_file choice, request only genuinely missing lines or another needed file, not the supplied range. Do not invent a path or change action kind.".to_owned(),
+                ),
                 Some(AgentActionPrimaryOutcome::Accepted(action)) => {
                     return Ok(Ok(finish(action, &usage, exchange_digest)));
                 }

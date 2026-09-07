@@ -559,6 +559,7 @@ pub struct CompiledAgentContext {
     budget_usage: ContextBudgetUsage,
     excluded_stale_claims: u16,
     truncated: bool,
+    original_sources: Vec<crate::ContextOriginalSource>,
 }
 
 impl CompiledAgentContext {
@@ -596,7 +597,32 @@ impl CompiledAgentContext {
             budget_usage,
             excluded_stale_claims,
             truncated,
+            original_sources: Vec::new(),
         }
+    }
+
+    /// Attaches only the at-most-two pages actually packed by the trusted compiler.
+    /// Metadata from another snapshot or duplicate file pages fails closed.
+    pub fn with_original_sources(
+        mut self,
+        sources: Vec<crate::ContextOriginalSource>,
+    ) -> Result<Self, ContextCompileFailure> {
+        let mut paths = BTreeSet::new();
+        if sources.len() > 2
+            || sources.iter().any(|source| {
+                source.snapshot_id() != self.snapshot_id || !paths.insert(source.revision().path())
+            })
+        {
+            return Err(ContextCompileFailure::InvalidPack);
+        }
+        self.original_sources = sources;
+        Ok(self)
+    }
+
+    /// Returns delivery metadata for this compile only, never historical read claims.
+    #[must_use]
+    pub fn original_sources(&self) -> &[crate::ContextOriginalSource] {
+        &self.original_sources
     }
 
     /// Returns the request ready for the neutral ModelProvider port.

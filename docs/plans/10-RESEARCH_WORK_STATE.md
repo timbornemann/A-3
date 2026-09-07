@@ -40,6 +40,16 @@ fehlende Nutzerentscheidungen bleiben Stopgründe.
 
 ## Vertikale Schnitte
 
+- [ ] Quellengeführte Vorentscheidung und exakt gelieferte Originalbereiche nach
+      [ADR-0098](../adrs/0098-quellengefuehrte-arbeitsentscheidung-im-vergleich.md)
+      als getrennten nativen Vergleich prüfen. Qwen-Diagnose belegt 24 wiederholte
+      Anfragen unter 26 erfolgreichen Datei-Reads im gleichen Snapshot. Typisierte
+      Lieferprojektion, enge Read-Zulassung und SourceWork sind implementiert;
+      Grenztests, echter Reader-/Harness-Vertrag und vollständige lokale Gates bestehen.
+      Der Live-Start wurde vor Prozessausführung vom Engineering-Werkzeug gesperrt;
+      der gegenbalancierte Modellnachweis bleibt offen.
+      Keine allgemeine Suchfrontier oder produktive Strategieumstellung behaupten.
+
 - [x] Die V2-Liveabnahme um echte Modelländerungen über zwei Module und
       unabhängige zusätzliche Testeingaben erweitern. Das dadurch nachgewiesene
       Verdrängen aktueller Originale durch optionale Metadaten mit

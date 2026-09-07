@@ -20,6 +20,7 @@ pub(super) struct PackedOriginals {
     pub tokens: u32,
     pub truncated: bool,
     pub replan: bool,
+    pub delivered: Vec<a3_application::ContextOriginalSource>,
 }
 
 struct Candidate<'a> {
@@ -127,6 +128,12 @@ pub(super) async fn materialize(
             continue;
         }
         packed.text.push_str(&rendered);
+        packed
+            .delivered
+            .push(a3_application::ContextOriginalSource::from_packed_page(
+                lens.snapshot_id(),
+                &page,
+            ));
         packed.tokens = next;
         packed.truncated |= page.truncated();
     }

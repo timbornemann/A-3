@@ -139,6 +139,19 @@ fn originals_are_current_counted_deterministic_and_not_duplicated_by_lens_metada
     let second = compile(&source, &input)?;
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.request(), second.request());
+    assert_eq!(first.original_sources(), second.original_sources());
+    let delivered = first.original_sources();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].snapshot_id(), first.snapshot_id());
+    assert_eq!(delivered[0].revision().path(), &path("src/context.rs")?);
+    assert!(delivered[0].covers(
+        first.snapshot_id(),
+        &AgentFileInspection::new(
+            path("src/context.rs")?,
+            AgentFileStartLine::new(1)?,
+            a3_domain::AgentFileLineCount::new(64)?,
+        )
+    ));
     let text = pack(&first);
     assert_eq!(
         text.matches("[ORIGINAL_SOURCE path=src/context.rs ")
@@ -213,6 +226,7 @@ fn oversized_page_is_not_partially_injected_or_replaced_by_old_preview()
     let input = input(Fixture::new()?.snapshot_id)?;
     let compiled = compile(&Source::new(&"x".repeat(12000)), &input)?;
     assert!(!pack(&compiled).contains("[ORIGINAL_SOURCE "));
+    assert!(compiled.original_sources().is_empty());
     assert!(compiled.truncated());
     assert_counted(&compiled)?;
     Ok(())
@@ -260,6 +274,7 @@ fn stale_invalid_and_cancelled_readers_fail_closed_optional_failures_omit_source
         let compiled = compile(&source, &input)?;
         assert!(compiled.truncated());
         assert!(!pack(&compiled).contains("not delivered"));
+        assert!(compiled.original_sources().is_empty());
         assert!(!pack(&compiled).contains("[ORIGINAL_SOURCE "));
     }
     let mut source = Source::new("invalid range");
@@ -283,6 +298,7 @@ fn replan_localization_performs_zero_automatic_source_reads() -> Result<(), Box<
     source.failure = Some(AgentSourceReadFailure::Stale);
     let compiled = compile(&source, &input)?;
     assert!(source.calls.lock().map_err(|_| "lock")?.is_empty());
+    assert!(compiled.original_sources().is_empty());
     assert!(!pack(&compiled).contains("[ORIGINAL_SOURCE "));
     assert!(pack(&compiled).contains("[REPLAN_LOCALIZATION]"));
     let checkpoint = a3_application::ReplanResearchCheckpoint::new(

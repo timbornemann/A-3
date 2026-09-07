@@ -21,6 +21,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 mod after_change;
+mod source_guidance;
 mod staged;
 mod staged_contract;
 
@@ -34,6 +35,8 @@ pub enum AgentActionGeneration {
     SelectThenFill,
     /// Controlled comparison: guide the next work decision after an actual patch receipt.
     ReviewThenSelect,
+    /// Controlled comparison: guide work from actually delivered current originals too.
+    SourceGuided,
 }
 
 /// Closed failures of an opt-in staged exchange; contains no model/source text.
@@ -41,6 +44,10 @@ pub enum AgentActionGeneration {
 pub enum StagedActionFailure {
     /// Invalid post-change work decision after the shared repair was consumed.
     InvalidAfterChange,
+    /// Invalid source-guided work decision after the shared repair was consumed.
+    InvalidSourceWork,
+    /// A file request was fully supplied in this current context, including after repair.
+    SourceAlreadySupplied,
     /// Invalid choice after the shared repair was consumed.
     InvalidChoice,
     /// Invalid arguments after the shared repair was consumed.
@@ -303,6 +310,8 @@ impl AgentTurnOutcome {
                     AgentTurnRejectionReason::InvalidAfterRepair
                     | AgentTurnRejectionReason::Staged(
                         StagedActionFailure::InvalidAfterChange
+                        | StagedActionFailure::InvalidSourceWork
+                        | StagedActionFailure::SourceAlreadySupplied
                         | StagedActionFailure::InvalidChoice
                         | StagedActionFailure::InvalidArguments
                         | StagedActionFailure::InvalidAction(_)
@@ -478,24 +487,14 @@ impl<'a> ExecuteAgentTurn<'a> {
         let mut context_digest = compiled.digest();
         let snapshot_id = compiled.snapshot_id();
         let current_step_id = compiled.current_step_id();
-        let request = compiled.into_request();
+        let request = compiled.request();
         let (decoded, prompt_tokens, output_tokens, repair, observed_model_output_bytes) = if self
             .generation
             != AgentActionGeneration::SingleAction
             && input.replan_localization().is_none()
             && input.replan_research().is_none()
         {
-            match staged::generate(
-                self,
-                run,
-                input,
-                &request,
-                context_digest,
-                observed_at,
-                control,
-            )
-            .await?
-            {
+            match staged::generate(self, run, input, &compiled, observed_at, control).await? {
                 Ok((generated, digest)) => {
                     context_digest = digest;
                     generated
@@ -504,7 +503,7 @@ impl<'a> ExecuteAgentTurn<'a> {
             }
         } else {
             let primary =
-                complete_request(self.provider, &request, self.model_timeout, control).await?;
+                complete_request(self.provider, request, self.model_timeout, control).await?;
             if let Some(reason) = primary.rejection_reason() {
                 return Ok(AgentTurnOutcome::Rejected(RejectedAgentTurn {
                     charge: AgentTurnCharge::new(
@@ -521,7 +520,7 @@ impl<'a> ExecuteAgentTurn<'a> {
             if let Some(research) = input.replan_research().filter(|r| r.should_analyze()) {
                 return analyze_replan(
                     self.provider,
-                    &request,
+                    request,
                     primary,
                     research,
                     self.model_timeout,

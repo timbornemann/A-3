@@ -8,10 +8,19 @@ liefert Patchinhalte. Ein bestätigter Ein-Schritt-Plan ist der Startpunkt;
 eine vollständige Conversation-Planübergabe ist hier nicht enthalten.
 
 `A3_LIVE_AGENT_CASE` wählt ausschließlich `small-local-bugfix` (Standard) oder
-`two-module-change`. `A3_LIVE_AGENT_GENERATION` wählt unverändert `baseline`,
-`staged` oder `guided`. Modell-/Providerfreigaben sind weiterhin ausdrücklich
+`two-module-change`. `A3_LIVE_AGENT_GENERATION` wählt `baseline`,
+`staged`, `guided` oder den separaten ADR-0098-Vergleich `source-guided`.
+Modell-/Providerfreigaben sind weiterhin ausdrücklich
 erforderlich; lokale Modelle werden strikt nacheinander getestet. V2 verändert
 weder die produktive Strategie noch die nativen Einstellungen.
+
+`source-guided` nutzt nur tatsächlich im aktuellen Kontext gelieferte Originalseiten
+für eine vorgeschaltete kleine Arbeitsentscheidung und sperrt vollständig redundante
+Datei-Reads vor der Toolgrenze. Das ist noch keine allgemeine Suchfrontier oder
+Produktfreigabe. Die Liveinstrumentierung vergleicht höchstens 64 tatsächliche
+typisierte Leseanforderungen und Ergebnisdigests pro Executorversuch; geloggt werden
+nur Typ, Wiederholungsbits, Status und Größen, keine Pfade, Suchbegriffe oder
+Quellinhalte. Ein neuer Versuch hat ausdrücklich ein neues Diagnosefenster.
 
 Die exakte Testfreigabe erlaubt Updates ausschließlich an `increment.py`
 beziehungsweise `pricing.py` und `invoice.py`, einzeln oder zusammen. Add, Move,

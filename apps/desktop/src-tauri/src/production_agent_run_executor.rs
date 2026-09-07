@@ -168,6 +168,8 @@ impl ProductionAgentRunExecutor {
             .map_err(|_| AgentRunExecutionFailure::Unavailable)?;
         #[cfg(test)]
         let provider = generation_probe::observe(provider, self.generation_probe.is_some());
+        #[cfg(test)]
+        let mut read_probe = generation_probe::ReadProbe::default();
         let initial_research_handoff = match &self.ports.research {
             Some(store) => store
                 .load_handoff_for_task(project, request.task_id())
@@ -642,6 +644,13 @@ impl ProductionAgentRunExecutor {
                         recorded = recorded.with_replan(context.checkpoint.clone());
                     }
                     context_results.push(recorded.context_result().clone());
+                    #[cfg(test)]
+                    if self.generation_probe.is_some()
+                        && let Some(observation) =
+                            read_probe.record(&action, recorded.context_result())
+                    {
+                        println!("A3_LIVE_READ scope=attempt {observation:?}");
+                    }
                     read_evidence = Some(recorded.evidence().clone());
                     AppendAgentRead::new(self.ports.journal.as_ref())
                         .execute(project, expected_sequence, &run, &recorded)

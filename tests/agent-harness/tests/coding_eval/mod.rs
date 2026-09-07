@@ -48,6 +48,7 @@ use std::time::Duration;
 mod compaction;
 mod guided;
 mod replan;
+mod source_guidance;
 
 const EXPECTED_RESULTS: &str =
     include_str!("../../../../fixtures/agent-coding-eval-v1/expected-results.json");
