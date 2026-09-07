@@ -142,6 +142,7 @@ pub(crate) fn research_evidence_budget_for_profile(
             a3_domain::ResearchQuestionId::FIRST,
         ),
         a3_application::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+        a3_application::ResearchOutputPhase::DesignTests(a3_domain::ResearchQuestionId::FIRST),
         a3_application::ResearchOutputPhase::Finalize,
     ] {
         let schema = research_contract_schema(true, phase)?;
@@ -456,6 +457,9 @@ pub(crate) fn research_phase_system_prompt(
         ResearchOutputPhase::SummarizeOriginals(_) => {
             "SummarizeOriginals: complete reading AND complete delivery verified. Return exactly one source-bound result for ACTIVE Q, kind=interpretation, with current E-window anchor_ref covering every named original. Describe existing APIs/entrypoints/constraints; unshown external details are limits, not new prerequisites. No question, tools, empty result or future design."
         }
+        ResearchOutputPhase::DesignTests(_) => {
+            "DesignTests: return exactly one concrete designDecision for ACTIVE Q with evidence=[]. Derive inputs, expected results and verification methods from the request and admitted design. No question decision or user confirmation of routine test scenarios; no new reads or implementation claims."
+        }
         ResearchOutputPhase::Design(_) => {
             "Design ACTIVE Q: exactly one concrete designDecision, evidence=[]. New work need not already exist. Only admitted designDecision prerequisites fix future policies. Preserve failure guarantees in tests. State safe reversible assumptions. Only a consequential missing user choice permits kind=question with message and results=[]."
         }
@@ -463,12 +467,11 @@ pub(crate) fn research_phase_system_prompt(
             "Use typed plan fields only: kind=plan; concrete changes, interfaces, tests, assumptions; work.questions=[], work.results=[]. Do not add unsupported facts or claim implementation. The Core renders all headings and original citations. No new investigation, questions or markers."
         }
     };
-    let planning =
-        if mode != AgentSessionMode::Ask && matches!(phase, ResearchOutputPhase::Design(_)) {
-            " Plan readiness is not patch readiness."
-        } else {
-            ""
-        };
+    let planning = if mode != AgentSessionMode::Ask && phase.is_design() {
+        " Plan readiness is not patch readiness."
+    } else {
+        ""
+    };
     let limit = if !search_allowed && phase == ResearchOutputPhase::Initialize {
         " Budget exhausted: the Core will offer continuation."
     } else {
@@ -759,6 +762,16 @@ mod tests {
             );
             assert!(prompt.contains("Plan readiness is not patch readiness"));
             assert!(prompt.contains("need not already exist"));
+            let tests = research_phase_system_prompt(
+                mode,
+                true,
+                a3_application::ResearchOutputPhase::DesignTests(
+                    a3_domain::ResearchQuestionId::FIRST,
+                ),
+                None,
+            );
+            assert!(tests.contains("No question decision or user confirmation"));
+            assert!(tests.contains("Plan readiness is not patch readiness"));
             assert!(
                 prompt.contains("Only admitted designDecision prerequisites fix future policies")
             );

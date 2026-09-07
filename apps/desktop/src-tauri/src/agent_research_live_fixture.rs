@@ -135,6 +135,7 @@ impl LiveResearchModel {
                 | "ornith-1.5:9b"
                 | "gemma4:12b"
                 | "gpt-oss:20b"
+                | "granite4.2:8b"
         ) {
             return Err("fixture requires an explicitly reviewed installed local model".into());
         }
@@ -344,7 +345,12 @@ fn research_live_profiles_preserve_the_eight_k_boundary() -> Result<(), Box<dyn 
     let small = fixture_profile_settings("qwen38-8k:latest")?;
     assert_eq!(small.context_limit().get(), 8192);
     assert_eq!(small.output_limit().get(), 2048);
-    for model in ["ornith-1.5:9b", "gpt-oss:20b", "gemma-4-26b-a4b-it"] {
+    for model in [
+        "ornith-1.5:9b",
+        "gpt-oss:20b",
+        "granite4.2:8b",
+        "gemma-4-26b-a4b-it",
+    ] {
         let profile = fixture_profile_settings(model)?;
         assert_eq!(profile.context_limit().get(), 16_384);
         assert_eq!(profile.output_limit().get(), 4096);

@@ -200,6 +200,7 @@ fn research_full_current_packet_and_maximum_repair_fit_real_provider_limits()
                         ResearchQuestionId::FIRST,
                     ),
                     a3_application::ResearchOutputPhase::Design(ResearchQuestionId::FIRST),
+                    a3_application::ResearchOutputPhase::DesignTests(ResearchQuestionId::FIRST),
                     a3_application::ResearchOutputPhase::Finalize,
                 ] {
                     let provider = CapturingProvider {

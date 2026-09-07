@@ -728,6 +728,7 @@ impl GeminiModelProvider {
                 stop_sequences: None,
                 response_mime_type: Some("application/json"),
                 response_json_schema: Some(probe_schema),
+                thinking_config: GeminiThinkingConfig::for_model(request.model_id().as_str()),
             }),
         };
         let target_url = self
@@ -829,6 +830,7 @@ impl<'a> GeminiGenerateContentRequest<'a> {
             stop_sequences,
             response_mime_type,
             response_json_schema,
+            thinking_config: GeminiThinkingConfig::for_model(request.profile().model_id().as_str()),
         });
 
         Ok(Self {
@@ -870,6 +872,33 @@ struct GeminiGenerationConfig<'a> {
     response_mime_type: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "responseJsonSchema")]
     response_json_schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "thinkingConfig")]
+    thinking_config: Option<GeminiThinkingConfig>,
+}
+
+#[derive(Serialize)]
+struct GeminiThinkingConfig {
+    #[serde(rename = "thinkingLevel")]
+    level: GeminiThinkingLevel,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GeminiThinkingLevel {
+    Minimal,
+}
+
+impl GeminiThinkingConfig {
+    /// Documented wire behavior only; never a capability inference (ADR-0070).
+    fn for_model(model: &str) -> Option<Self> {
+        matches!(
+            normalize_model_path(model),
+            "gemma-4-26b-a4b-it" | "gemma-4-31b-it"
+        )
+        .then_some(Self {
+            level: GeminiThinkingLevel::Minimal,
+        })
+    }
 }
 
 fn translate_response_json_schema(schema: &Value) -> Result<Value, ModelProviderFailure> {
@@ -877,7 +906,42 @@ fn translate_response_json_schema(schema: &Value) -> Result<Value, ModelProvider
     let mut translated = translate_schema_node(schema, 0, &mut nodes)?;
     compact_equivalent_prefix_items(&mut translated);
     prune_unused_definitions(&mut translated)?;
+    omit_variable_array_maxima(&mut translated);
     Ok(translated)
+}
+
+/// Wire guidance only; the unchanged Core decoder enforces original bounds (ADR-0068).
+/// Visit schema positions, never literal enum/const values that resemble schemas.
+fn omit_variable_array_maxima(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if object
+        .get("maxItems")
+        .and_then(Value::as_u64)
+        .is_some_and(|max| max > 1 && object.get("minItems").and_then(Value::as_u64) != Some(max))
+    {
+        object.remove("maxItems");
+    }
+    for keyword in ["properties", "$defs"] {
+        if let Some(children) = object.get_mut(keyword).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                omit_variable_array_maxima(child);
+            }
+        }
+    }
+    for keyword in ["items", "additionalProperties"] {
+        if let Some(child) = object.get_mut(keyword) {
+            omit_variable_array_maxima(child);
+        }
+    }
+    for keyword in ["prefixItems", "anyOf", "oneOf"] {
+        if let Some(children) = object.get_mut(keyword).and_then(Value::as_array_mut) {
+            for child in children {
+                omit_variable_array_maxima(child);
+            }
+        }
+    }
 }
 
 fn translate_schema_node(
@@ -1732,6 +1796,33 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn minimal_gemma_thinking_is_exact_and_does_not_change_other_models()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for model in [
+            "gemma-4-26b-a4b-it",
+            "gemma-4-31b-it",
+            "models/gemma-4-26b-a4b-it",
+        ] {
+            assert_eq!(
+                serde_json::to_value(super::GeminiThinkingConfig::for_model(model))?,
+                json!({"thinkingLevel":"minimal"})
+            );
+        }
+        for model in [
+            "gemini-2.5-flash",
+            "gemini-3-pro",
+            "gemma-3-27b-it",
+            "gemma-4-26b-a4b-it-preview",
+            "gemma-4-26b-a4b-it ",
+            "custom/gemma-4-31b-it",
+            "models/models/gemma-4-31b-it",
+        ] {
+            assert!(super::GeminiThinkingConfig::for_model(model).is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn localhost_normalizes_and_remote_requires_https() -> Result<(), Box<dyn std::error::Error>> {
         let local = GeminiEndpoint::parse("http://localhost:8080")?;
         assert_eq!(local.scope(), GeminiEndpointScope::LocalLoopback);
@@ -1759,6 +1850,79 @@ mod tests {
     }
 
     #[test]
+    fn research_schema_projection_omits_variable_array_maxima_but_keeps_core_bounds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use a3_application::ResearchOutputPhase;
+        let original =
+            a3_application::research_work_phase_schema(ResearchOutputPhase::Initialize, true)?;
+        let before = original.clone();
+        let wire = translate_response_json_schema(&original)?;
+        assert!(
+            wire["$defs"]["work"]["properties"]["questions"]
+                .get("maxItems")
+                .is_none()
+        );
+        assert!(
+            wire["$defs"]["question"]["properties"]["dependencies"]
+                .get("maxItems")
+                .is_none()
+        );
+        assert_eq!(
+            wire["$defs"]["work"]["properties"]["questions"]["minItems"],
+            1
+        );
+        assert_eq!(
+            wire["$defs"]["work"]["properties"]["results"]["maxItems"],
+            0
+        );
+        assert_eq!(original, before);
+        assert_eq!(
+            original["$defs"]["work"]["properties"]["questions"]["maxItems"],
+            32
+        );
+        let analysis =
+            translate_response_json_schema(&a3_application::research_work_phase_schema(
+                ResearchOutputPhase::Analyze(a3_domain::ResearchQuestionId::FIRST),
+                true,
+            )?)?;
+        assert_eq!(
+            analysis["$defs"]["work"]["properties"]["results"]["maxItems"],
+            1
+        );
+        let tuple = translate_response_json_schema(
+            &json!({"type":"array","minItems":3,"maxItems":3,"items":{"type":"string"}}),
+        )?;
+        assert_eq!(tuple["maxItems"], 3);
+        let literal = json!({"type":"object","enum":[{"maxItems":32,"items":{"maxItems":8}}]});
+        assert_eq!(translate_response_json_schema(&literal)?, literal);
+        // Wire guidance cannot authorize oversized results: admission remains independent.
+        let mut question = json!({"kind":"repository","priority":"required","outcome":"Inspect the public fixture","dependencies":[]});
+        let mut document = json!({"schema_version":5,"decision":{"kind":"progress","note":{
+            "goal":"Inspect fixture","finding_kind":"hypothesis","finding":"No originals read","finding_source_refs":[],"gap":"","next_step":""}},
+            "work":{"questions":[question.clone()],"results":[]}});
+        let decoder = a3_application::DecodeAskResearchDecision;
+        assert!(
+            decoder
+                .decode_phase(&document.to_string(), ResearchOutputPhase::Initialize)
+                .is_ok()
+        );
+        document["work"]["questions"] = json!(vec![question.clone(); 33]);
+        assert!(
+            decoder
+                .decode_phase(&document.to_string(), ResearchOutputPhase::Initialize)
+                .is_err()
+        );
+        question["dependencies"] = json!(vec![1; 32]);
+        document["work"]["questions"] = json!([question]);
+        assert!(
+            decoder
+                .decode_phase(&document.to_string(), ResearchOutputPhase::Initialize)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn research_work_phases_translate_without_cloud_access()
     -> Result<(), Box<dyn std::error::Error>> {
         for phase in [
@@ -1768,6 +1932,7 @@ mod tests {
                 a3_domain::ResearchQuestionId::FIRST,
             ),
             a3_application::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::DesignTests(a3_domain::ResearchQuestionId::FIRST),
             a3_application::ResearchOutputPhase::Finalize,
         ] {
             let original = a3_application::research_work_phase_schema(phase, true)?;

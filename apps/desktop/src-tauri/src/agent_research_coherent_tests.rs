@@ -39,6 +39,8 @@ enum WorkFault {
     RepeatedNoteSources,
     EchoTestObligationOnce,
     EchoTestObligationAlways,
+    TestConfirmationOnce,
+    TestConfirmationAlways,
 }
 
 fn retained_long_design() -> String {
@@ -276,11 +278,12 @@ impl ResearchModel for CoherentModel {
             }
             if let a3_application::ResearchOutputPhase::Analyze(question)
             | a3_application::ResearchOutputPhase::SummarizeOriginals(question)
-            | a3_application::ResearchOutputPhase::Design(question) = phase
+            | a3_application::ResearchOutputPhase::Design(question)
+            | a3_application::ResearchOutputPhase::DesignTests(question) = phase
                 && let Some(results) = document["work"]["results"].as_array_mut()
             {
                 results.retain(|r| r["question_id"] == question.get());
-                if matches!(phase, a3_application::ResearchOutputPhase::Design(_)) {
+                if phase.is_design() {
                     for result in results {
                         result["evidence"] = serde_json::json!([]);
                     }
@@ -328,7 +331,7 @@ impl ResearchModel for CoherentModel {
                     document["work"]["results"][0]["text"] =
                         serde_json::json!(retained_long_design());
                 }
-                if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 3)
+                if matches!(phase, a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == 3)
                 {
                     assert!(
                         packet.contains(&retained_long_design()),
@@ -342,14 +345,14 @@ impl ResearchModel for CoherentModel {
                     document["work"]["results"][0]["text"] =
                         serde_json::json!(retained_long_interpretation());
                 }
-                if matches!(phase, a3_application::ResearchOutputPhase::Design(_)) {
+                if phase.is_design() {
                     assert!(
                         packet.contains(&retained_long_interpretation()),
                         "a fitting prerequisite must not lose its late destination to a fixed preview"
                     );
                 }
             }
-            if matches!(phase, a3_application::ResearchOutputPhase::Design(id) if id.get() == 3)
+            if matches!(phase, a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == 3)
                 && (self.fault == WorkFault::EchoTestObligationAlways
                     || (self.fault == WorkFault::EchoTestObligationOnce && call == 2))
             {
@@ -358,6 +361,15 @@ impl ResearchModel for CoherentModel {
                     .find_map(|line| line.strip_prefix("ACTIVE Q3: "))
                     .ok_or(AgentConversationFailure::InvalidInput)?;
                 document["work"]["results"][0]["text"] = serde_json::json!(outcome);
+            }
+            if matches!(phase, a3_application::ResearchOutputPhase::DesignTests(id) if id.get() == 3)
+                && (self.fault == WorkFault::TestConfirmationAlways
+                    || (self.fault == WorkFault::TestConfirmationOnce && call == 2))
+            {
+                let note = document["decision"]["note"].clone();
+                document["decision"] = serde_json::json!({"kind":"question","note":note,
+                    "message":"Please confirm the test scenarios before I define the requested tests."});
+                document["work"]["results"] = serde_json::json!([]);
             }
             return Ok(document.to_string());
         }
@@ -493,6 +505,18 @@ fn research_v5_invalid_analysis_does_not_poison_the_same_packet_on_resume()
 #[test]
 fn research_v5_empty_design_repairs_once_without_repository_reads() -> Result<(), Box<dyn Error>> {
     coherent_fixture_selected(true, false, WorkFault::EmptyDesignOnce)
+}
+
+#[test]
+fn research_core_test_design_repairs_unnecessary_confirmation_without_user_halt()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::TestConfirmationOnce)
+}
+
+#[test]
+fn research_core_test_design_repeated_confirmation_cannot_complete_or_start_reads()
+-> Result<(), Box<dyn Error>> {
+    coherent_fixture_selected(true, false, WorkFault::TestConfirmationAlways)
 }
 
 #[test]
@@ -713,6 +737,8 @@ fn coherent_fixture_with_profile(
                         | WorkFault::LongInterpretation
                         | WorkFault::EchoTestObligationOnce
                         | WorkFault::EchoTestObligationAlways
+                        | WorkFault::TestConfirmationOnce
+                        | WorkFault::TestConfirmationAlways
                 ) && mode == AgentSessionMode::Ask
                 {
                     continue;
@@ -833,9 +859,15 @@ fn coherent_fixture_with_profile(
                 let result = received?;
                 if matches!(
                     fault,
-                    WorkFault::EchoTestObligationOnce | WorkFault::EchoTestObligationAlways
+                    WorkFault::EchoTestObligationOnce
+                        | WorkFault::EchoTestObligationAlways
+                        | WorkFault::TestConfirmationOnce
+                        | WorkFault::TestConfirmationAlways
                 ) {
-                    let failed = fault == WorkFault::EchoTestObligationAlways;
+                    let failed = matches!(
+                        fault,
+                        WorkFault::EchoTestObligationAlways | WorkFault::TestConfirmationAlways
+                    );
                     assert_eq!(
                         model.calls.load(Ordering::SeqCst),
                         4,

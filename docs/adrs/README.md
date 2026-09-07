@@ -92,6 +92,9 @@ Verantwortlicher Maintainer und finale Freigabeinstanz für ADRs ist **Tim Borne
 | [0064](0064-budgetierte-bestandsuebergabe-an-entwuerfe.md) | Budgetierte Bestandsübergabe an Entwürfe |
 | [0065](0065-zusammenhaengende-listen-im-core-auftrag.md) | Zusammenhängende Listen im Core-Auftrag |
 | [0067](0067-ollama-gpt-oss-wire-thinking.md) | Ollama GPT-OSS Wire-Thinking |
+| [0068](0068-gemini-schema-arraygrenzen.md) | Variable Array-Maxima im Gemini-Wire-Schema |
+| [0069](0069-core-testentwurf-ohne-bestaetigungsschleife.md) | Core-Testentwurf ohne Bestätigungsschleife |
+| [0070](0070-gemma-api-explizites-minimal-thinking.md) | Explizites minimales Thinking für die Gemma-4-API |
 
 ## Neue ADRs
 

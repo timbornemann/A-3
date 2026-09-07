@@ -26,8 +26,18 @@ pub enum ResearchOutputPhase {
     SummarizeOriginals(ResearchQuestionId),
     /// Propose future behavior using admitted prerequisites, without claiming new originals.
     Design(ResearchQuestionId),
+    /// Derive concrete tests from the admitted Core design without asking for routine confirmation.
+    DesignTests(ResearchQuestionId),
     /// Format already admitted results without reopening research.
     Finalize,
+}
+
+impl ResearchOutputPhase {
+    /// Both future-design phases propose decisions, never new repository facts.
+    #[must_use]
+    pub const fn is_design(self) -> bool {
+        matches!(self, Self::Design(_) | Self::DesignTests(_))
+    }
 }
 
 /// Narrows V5 to the current trusted phase and drops unreachable schema definitions.
@@ -51,6 +61,7 @@ pub fn research_work_phase_schema(
         ResearchOutputPhase::Analyze(_)
         | ResearchOutputPhase::SummarizeOriginals(_)
         | ResearchOutputPhase::Design(_)
+        | ResearchOutputPhase::DesignTests(_)
         | ResearchOutputPhase::Finalize => {
             schema["$defs"]["work"]["properties"]["questions"] =
                 json!({"type":"array","maxItems":0,"items":{"type":"null"}});
@@ -58,7 +69,8 @@ pub fn research_work_phase_schema(
     }
     if let ResearchOutputPhase::Analyze(question)
     | ResearchOutputPhase::SummarizeOriginals(question)
-    | ResearchOutputPhase::Design(question) = phase
+    | ResearchOutputPhase::Design(question)
+    | ResearchOutputPhase::DesignTests(question) = phase
     {
         schema["$defs"]["work"]["properties"]["results"]["maxItems"] = json!(1);
         if matches!(phase, ResearchOutputPhase::SummarizeOriginals(_)) {
@@ -68,13 +80,19 @@ pub fn research_work_phase_schema(
         schema["$defs"]["result"]["properties"]["question_id"] = json!({"const":question.get()});
         schema["$defs"]["result"]["properties"]["evidence"]["items"] =
             json!({"$ref":"#/$defs/anchor"});
-        if matches!(phase, ResearchOutputPhase::Design(_)) {
+        if phase.is_design() {
             schema["$defs"]["work"]["properties"]["results"]["description"] = json!(
                 "For decision.kind=progress return exactly one concrete designDecision. Empty results are allowed only with decision.kind=question for a consequential missing user choice; never request repository reads for future design."
             );
             schema["$defs"]["result"]["properties"]["kind"] = json!({"const":"designDecision"});
             schema["$defs"]["result"]["properties"]["evidence"] =
                 json!({"type":"array","maxItems":0,"items":{"type":"null"}});
+            if matches!(phase, ResearchOutputPhase::DesignTests(_)) {
+                schema["$defs"]["work"]["properties"]["results"]["minItems"] = json!(1);
+                schema["$defs"]["work"]["properties"]["results"]["description"] = json!(
+                    "Return exactly one concrete test design consistent with admitted prerequisites: inputs, expected outcomes and verification methods. Do not ask the user to define or confirm tests. No new repository reads."
+                );
+            }
         } else {
             // Repository analysis cannot emit a proposed design or self-authorize a
             // bounded unknown. The Core derives negative boundaries from actual receipts.
@@ -271,13 +289,13 @@ pub(crate) fn validate_phase(value: &Value, phase: ResearchOutputPhase) -> Resul
         }
         ResearchOutputPhase::Analyze(id)
         | ResearchOutputPhase::SummarizeOriginals(id)
-        | ResearchOutputPhase::Design(id) => {
+        | ResearchOutputPhase::Design(id)
+        | ResearchOutputPhase::DesignTests(id) => {
             matches!(kind, "progress" | "question")
+                && (!matches!(phase, ResearchOutputPhase::DesignTests(_)) || kind == "progress")
                 && questions.is_empty()
                 && results.len() <= 1
-                && (!matches!(phase, ResearchOutputPhase::Design(_))
-                    || kind == "question"
-                    || results.len() == 1)
+                && (!phase.is_design() || kind == "question" || results.len() == 1)
                 && (!matches!(phase, ResearchOutputPhase::SummarizeOriginals(_))
                     || (kind == "progress" && results.len() == 1))
                 && results.iter().all(|r| {
@@ -291,7 +309,7 @@ pub(crate) fn validate_phase(value: &Value, phase: ResearchOutputPhase) -> Resul
                             || r["evidence"]
                                 .as_array()
                                 .is_some_and(|items| !items.is_empty()))
-                        && (!matches!(phase, ResearchOutputPhase::Design(_))
+                        && (!phase.is_design()
                             || (r["kind"] == "designDecision"
                                 && r["evidence"].as_array().is_some_and(Vec::is_empty)))
                         && r["evidence"].as_array().is_some_and(|items| {
@@ -779,6 +797,37 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn core_test_design_rejects_questions_independently_and_preserves_general_design()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = ResearchQuestionId::new(3)?;
+        let tests = ResearchOutputPhase::DesignTests(id);
+        let design = ResearchOutputPhase::Design(id);
+        let schema = research_work_phase_schema(tests, true)?;
+        assert_eq!(schema["properties"]["decision"]["$ref"], "#/$defs/progress");
+        assert!(schema["$defs"].get("questionDecision").is_none());
+        assert_eq!(
+            schema["$defs"]["work"]["properties"]["results"]["minItems"],
+            1
+        );
+        let note = json!({"goal":"Tests","finding_kind":"hypothesis","finding":"Design available","finding_source_refs":[],"gap":"","next_step":""});
+        let mut document = json!({"schema_version":5,"decision":{"kind":"question","note":note,
+            "message":"Please confirm which tests to design."},"work":{"questions":[],"results":[]}});
+        let decoder = crate::DecodeAskResearchDecision;
+        assert!(decoder.decode_phase(&document.to_string(), design).is_ok());
+        assert!(decoder.decode_phase(&document.to_string(), tests).is_err());
+        document["decision"] = json!({"kind":"progress","note":note});
+        assert!(decoder.decode_phase(&document.to_string(), tests).is_err());
+        document["work"]["results"] = json!([{"question_id":3,"kind":"designDecision","text":"Use a missing input file; expect exit code 2, stderr and no add_task calls.","evidence":[]}]);
+        assert!(decoder.decode_phase(&document.to_string(), tests).is_ok());
+        document["work"]["results"][0]["question_id"] = json!(2);
+        assert!(decoder.decode_phase(&document.to_string(), tests).is_err());
+        document["work"]["results"][0]["question_id"] = json!(3);
+        document["work"]["results"][0]["evidence"] = json!([{"anchor_ref":"E1"}]);
+        assert!(decoder.decode_phase(&document.to_string(), tests).is_err());
+        Ok(())
+    }
+
     #[test]
     fn design_progress_requires_an_answer_but_preserves_consequential_questions() {
         let note = json!({"goal":"Entwurf", "finding_kind":"hypothesis", "finding":"Auswertung", "finding_source_refs":[], "gap":"Entscheidung", "next_step":"Entwurf festlegen"});

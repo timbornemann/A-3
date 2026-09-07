@@ -983,3 +983,105 @@ oder durch den Core zugelassen. Das belegt einen Wire-Unterschied, keine richtig
 Recherche. Clippy mit `--workspace --all-targets --all-features --offline --locked
 -- -D warnings`, erneute drei Fixture-Auswahltests, Formatierung und Linkprüfung
 (111 Dateien / 423 lokale Links) bestehen. Keine Frontenddatei wurde geändert.
+
+## Fortsetzung: Provider-Wire, Core-Testentwurf und belastbare Messung
+
+Ausgangspunkt ist Sicherungscommit `b1f9791`. Alle hier genannten Berichte liegen
+unter `target/research-eval/`; historische Berichte werden nicht umgeschrieben.
+Granite wurde vor dem Start als lokal installiert (8,8B Q4_K_M, kein Remote-Host)
+geprüft. Lokale Modelle liefen weiterhin ausschließlich nacheinander.
+
+| Modell / Stand | Bericht | Rückgabe `completed` | Rubrik v1 | Nutzerhalte | Calls / Bytes / ms |
+| --- | --- | ---: | ---: | ---: | --- |
+| Ornith, ADR-0067 | eval-1788770705617.jsonl | 12/12 | 11/12 | 0 | 35 / 127892 / 245005 |
+| Qwen 8k, ADR-0067 | eval-1788771015049.jsonl | 12/12 | 11/12 | 0 | 34 / 103628 / 411583 |
+| Granite, ADR-0068 | eval-1788771571188.jsonl | 11/12 | 9/12 | 1 | 36 / 127858 / 241267 |
+| GPT-OSS, ADR-0069, nur CSV 3:2 fünfmal | eval-1788772145252.jsonl | 5/5 | 2/5 | 0 | 15 / 85461 / 129698 |
+| Luna, ADR-0069 | eval-1788772147463.jsonl | 12/12 | 12/12 | 0 | 34 / 123903 / 223820 |
+| Google Gemma, ADR-0070, nur Storage 0:0 | eval-1788772487134.jsonl | 0/1 | 0/1 | 1 | 4 / 13498 / 201320 |
+
+Die fünf GPT-OSS-Nachtests beantworten den konkreten Core-Testauftrag ohne
+Bestätigungsfrage, zusätzlichen Repair oder adaptiven Read. Die drei Rubrikfehler
+sind bei Sichtprüfung **keine fehlende UTF-8-Nennung**: das Modell schreibt `UTF‑8`
+mit U+2011 statt ASCII-Bindestrich. Der gespeicherte v1-Fehlbericht bleibt unverändert.
+Die Auswertung wurde deshalb rot→grün auf typografische U+2010/U+2011-Bindestriche
+geprüft. Ab `rubric_version=2` verlangt `passed` zusätzlich ausdrücklich keinen
+Nutzerhalt und `work_ready=true` aus dem dauerhaften Core-Arbeitsstand. Ein
+`QUESTION:` mit sämtlichen Rubrikbegriffen oder fehlender/unfertiger Arbeitsstand
+kann nicht mehr bestehen. Diese Änderung betrifft nur die Messung, nicht
+Ergebniszulassung, Dateizugriff oder Produktionsprompts.
+
+Inhaltlich bleiben echte Gegenbeispiele: GPT-OSS verwendet im CSV-Testentwurf
+`click.testing.CliRunner` für den tatsächlich gelesenen argparse-Einstiegspunkt
+und patcht den importierten Manager im falschen Modul. Luna kombiniert weiterhin
+fehlende Pflichtheader als Fehler mit leerer Datei als Erfolg, ohne diese Ausnahme
+eindeutig aufzulösen. Ornith und Qwen lassen im Audit-Fall 1:0 den Writer-Begriff aus.
+Granite lässt zusätzlich beide Storage-Dateinamen aus und scheitert einmal nach
+überlangem Erstresultat und fehlender Quellenabdeckung im Einzelrepair. Ein
+abgeschlossener Pflichtstand oder Begrifftreffer beweist keine semantische Wahrheit.
+
+### Gemini: getrennte Ursachen, keine vorgetäuschte Abhilfe
+
+ADR-0068 projiziert ausschließlich variable Array-Maxima größer eins aus dem
+Wire-Schema. Ein unabhängiger HTTP-Vertrag weist eine vom Provider akzeptierte
+33-Fragen-Antwort weiterhin am unveränderten Decoder ab; 0/1-Grenzen und feste
+Tuple-Arity bleiben erhalten. Die reale Nachmatrix `eval-1788771282213.jsonl`
+ist bei dieser Zwischenprotokollierung noch aktiv und liefert weiterhin zahlreiche
+OutputLimit-Abbrüche. Sie wird noch nicht als abgeschlossene Matrix gewertet.
+
+ADR-0070 setzt ausschließlich für die zwei dokumentierten gehosteten Gemma-4-IDs
+explizit `thinkingLevel=minimal`, mit identischem Wirewert in Probe und Stream.
+Der neue HTTP-Vertrag war mit fehlendem Feld rot, danach grün; unveränderte
+256-/2048-Tokenlimits, ausgeschlossene Thought-Ausgabe und unveränderte andere
+Gemini-Modelle sind geprüft. Der kontrollierte echte Storage-0:0-Nachtest nutzt
+weiter 16k/4k, dieselbe Frage und dieselbe öffentliche Fixture. Er repariert einmal
+eine ungültige Initialize-Statusnotiz und erreicht die Analyse, aber beide
+Analyseversuche enden weiter mit OutputLimit. Das ist **keine erfolgreiche
+Recherche und kein nachgewiesener Geschwindigkeitsgewinn**. Die Annahme, Thinking
+allein erkläre die Abbrüche, ist damit nicht bestätigt.
+
+### Reproduktionsanker
+
+Ornith/Qwen nutzen das oben dokumentierte `oss-low-20260907`-Binary. Granite und
+die ADR-0068-Google-Matrix nutzen `gemini-bounds-20260907/research-tests.exe`, SHA-256
+`7584dd382c03726f47aa0d8692845fe53d5d402c9e9f8100355afc7cf06c2341`.
+GPT-OSS fünfmal und Luna nutzen `core-test-design-20260907/research-tests.exe`, SHA-256
+`f372f103fa407b05055467f0d77d845ff0a219fbd09dc5a781412aa5efa60472`.
+Google mit minimalem Thinking nutzt `gemma-minimal-20260907/research-tests.exe`, SHA-256
+`0a165a1a4031374fc6e0fc7478f52233f5d0edc2f31c68d54bf4d91df136782d`.
+Berichtshashes in Reihenfolge der obigen Tabelle:
+
+- `036412b4356fe5575863a3dc95ff4efc62f571160eb169a0e9d2c64ae0927361`
+- `9fdd391727aaa5ae356dbbf946c4008c7e4d724aae4a17862c90af580975df2d`
+- `41560a00f080564031ad8b8f8a9dca8252f1046575222ba3e1e3e700e358d874`
+- `d7c7d955223d42ba923d7050266927001da54d74de9a788e13a37328c6647b08`
+- `828da5cdb209242a6ea370044d8dbb6b05b0a2edb687e1f06e43cad148cc1d10`
+- `2938f511ef43589028e14d2c721d2f980ebd1367d26f6a01905ca60653617770`
+
+Die Rubrik-v2-Nachtests nutzen `rubric-v2-20260907/research-tests.exe`, SHA-256
+`a61247fa1738e7d9d4dd8b32612809ea89418a31631bb3623829897537b76b32`.
+Ihre Ergebnisse und der noch laufende Workspace-Gesamtgate benötigen einen
+eigenen terminalen Nachweis. Gezielte Prüfungen bestehen bereits: 39 Application-
+Recherchetests, 101 Desktop-Recherchetests (vier Live-Tests ignoriert), danach
+26 Provider-Einheiten, 15 Gemini-, 14 Ollama-, zehn OpenAI-HTTP-Verträge und fünf
+Matrix-Diagnose-/Rubriktests. Linkprüfung: 114 Markdown-Dateien, 435 lokale Links;
+`git diff --check` grün. Keine Frontenddateien, Benutzerkataloge oder Profile geändert.
+
+### Terminaler Gate- und GPT-OSS-v2-Nachweis
+
+Der volle `cargo test --workspace --all-features --offline --locked -- --test-threads=1`
+und `cargo clippy --workspace --all-targets --all-features --offline --locked -- -D warnings`
+enden auf ADR-0068 bis ADR-0070 einschließlich Rubrik v2 mit Exit 0. Echte lokale
+Patch-, Process-, Index-, Recovery-, Acceptance- und Storage-Verträge laufen mit;
+die Live-Agent-Implementierungsabnahme wird damit nicht vorgetäuscht.
+
+GPT-OSS `eval-1788772713023.jsonl` besteht mit Rubrik v2: 12/12 Rückgaben, 12/12
+`work_ready`, 12/12 notwendige Begriffe, null Nutzerhalte und adaptive Reads,
+34 Calls / 127123 Kontextbytes / 207217 ms. SHA-256:
+`f4399675bc2f366d86e46d651a8426b2af3b2ae47afe68ae58e3cd8c53b11f4b`.
+Der anschließende zusammenhängende Ask-/Plan-/Agent-Vorbereitungs-Smoke besteht
+ebenfalls (68,61 s, eigener Test). Die Analysepakete enthalten die fünf benötigten
+Methodenkörper gleichzeitig. Sichtprüfung findet trotzdem unbewiesene Persistenz,
+unscharfe Konstruktor-CWD-Angaben und im vorgeschlagenen Audit-Test eine JSON-
+Behauptung, obwohl die Fixture ein Python-Dict formatiert. Solche Inhaltsdefekte
+werden nicht durch grüne Ablauf- oder Begriffsmetriken geschlossen.

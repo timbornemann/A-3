@@ -48,7 +48,9 @@ const QUESTIONS: [[&str; 3]; 4] = [
 ];
 
 fn missing_concepts(family: usize, answer: &str) -> Vec<&'static str> {
-    let lower = answer.to_lowercase();
+    // Typography in prose is not a missing concept. This is not code normalization
+    // or evidence admission; only U+2010/2011 hyphens join the existing ASCII rubric.
+    let lower = answer.to_lowercase().replace(['\u{2010}', '\u{2011}'], "-");
     let groups: &[&[&str]] = match family {
         0 => &[
             &["json"],
@@ -95,6 +97,15 @@ fn missing_concepts(family: usize, answer: &str) -> Vec<&'static str> {
         .filter(|alternatives| !alternatives.iter().any(|s| lower.contains(s)))
         .map(|alternatives| alternatives[0])
         .collect()
+}
+
+fn matrix_case_passed(
+    completed: bool,
+    user_halt: bool,
+    work_ready: Option<bool>,
+    missing: &[&str],
+) -> bool {
+    completed && !user_halt && work_ready == Some(true) && missing.is_empty()
 }
 
 struct MatrixModel {
@@ -289,6 +300,7 @@ impl ResearchModel for MatrixModel {
             a3_application::ResearchOutputPhase::Analyze(_)
                 | a3_application::ResearchOutputPhase::SummarizeOriginals(_)
                 | a3_application::ResearchOutputPhase::Design(_)
+                | a3_application::ResearchOutputPhase::DesignTests(_)
         ) && let Ok(document) = serde_json::from_str::<serde_json::Value>(&output)
             && document["work"]["results"]
                 .as_array()
@@ -351,6 +363,30 @@ fn research_matrix_rubric_rejects_missing_destinations_callbacks_and_plan_requir
         )
         .is_empty()
     );
+}
+
+#[test]
+fn research_matrix_rubric_recognizes_typographic_hyphens_without_inventing_concepts() {
+    let answer = "PLAN: import-csv DictReader project_id title add_task UTF-8 tests invalid";
+    for hyphen in ['-', '\u{2010}', '\u{2011}'] {
+        assert!(missing_concepts(3, &answer.replace('-', &hyphen.to_string())).is_empty());
+    }
+    assert!(missing_concepts(3, &answer.replace("UTF-8", "UTF-16")).contains(&"utf-8"));
+}
+
+#[test]
+fn research_matrix_cannot_pass_a_question_or_unfinished_work_with_all_keywords() {
+    let answer = "QUESTION: Confirm PLAN: import-csv DictReader project_id title add_task UTF-8 tests invalid?";
+    let missing = missing_concepts(3, answer);
+    assert!(missing.is_empty());
+    let user_halt = answer.trim_start().starts_with("QUESTION:");
+    assert!(!matrix_case_passed(true, user_halt, Some(true), &missing));
+    for ready in [None, Some(false)] {
+        assert!(!matrix_case_passed(true, false, ready, &missing));
+    }
+    assert!(!matrix_case_passed(false, false, Some(true), &missing));
+    assert!(!matrix_case_passed(true, false, Some(true), &["write"]));
+    assert!(matrix_case_passed(true, false, Some(true), &missing));
 }
 
 #[test]
@@ -513,7 +549,6 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             None => (false, String::new(), Some("owned_job_failed".to_owned())),
                         };
                         let missing = missing_concepts(family, &answer);
-                        let passed = completed && missing.is_empty();
                         let detail = store
                             .load_detail(&project, id, AgentSessionSequence::FIRST)
                             .await?;
@@ -532,6 +567,11 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                                     .sum::<u64>()
                             });
                         let user_halt = !completed || answer.trim_start().starts_with("QUESTION:");
+                        let work_ready = detail
+                            .as_ref()
+                            .and_then(|d| d.work_state())
+                            .map(|w| w.ready_to_finish());
+                        let passed = matrix_case_passed(completed, user_halt, work_ready, &missing);
                         let work_summary = detail.as_ref().and_then(|d| d.work_state()).map(|work| {
                             serde_json::json!({
                                 "questions":work.questions().iter().map(|q| serde_json::json!({
@@ -585,7 +625,7 @@ fn research_approved_model_matrix() -> Result<(), Box<dyn Error>> {
                             .lock()
                             .map_err(|_| "fixture diagnostics poisoned")?
                             .clone();
-                        let record = serde_json::json!({"fixture":"research-eval-v1","family":family,"variant":variant,"repeat":repeat,"completed":completed,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
+                        let record = serde_json::json!({"fixture":"research-eval-v1","rubric_version":2,"family":family,"variant":variant,"repeat":repeat,"completed":completed,"work_ready":work_ready,"passed":passed,"missing":missing,"error":error,"calls":model.calls.load(Ordering::SeqCst),"adaptive_reads":adaptive_reads,"repeated_adaptive_reads":repeated_adaptive_reads,"user_halt":user_halt,"context_utf8_bytes":model.bytes.load(Ordering::SeqCst),"elapsed_ms":started.elapsed().as_millis(),"answer":answer,"work_summary":work_summary,"empty_analysis_notes":empty_notes,"decision_diagnostics":decisions});
                         writeln!(report, "{record}")?;
                         report.flush()?;
                         let mut summary = record;

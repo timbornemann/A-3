@@ -2241,6 +2241,7 @@ mod tests {
                 a3_domain::ResearchQuestionId::FIRST,
             ),
             a3_application::ResearchOutputPhase::Design(a3_domain::ResearchQuestionId::FIRST),
+            a3_application::ResearchOutputPhase::DesignTests(a3_domain::ResearchQuestionId::FIRST),
             a3_application::ResearchOutputPhase::Finalize,
         ] {
             let original = a3_application::research_work_phase_schema(phase, true)?;

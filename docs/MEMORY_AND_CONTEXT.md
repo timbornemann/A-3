@@ -754,6 +754,17 @@ Entwurfsentscheidungen, keine angeblich fehlenden Bestandsdateien. Eine typisier
 in Plan/Agent eine aktive Entwurfsentscheidung klären, wenn die erforderliche Bestandsrecherche
 beantwortet ist; dadurch wird die offene Entwurfsfrage nicht als erledigt gespeichert.
 
+Die dritte Pflicht des erkannten Core-Planvertrags ist gemäß
+[ADR-0069](adrs/0069-core-testentwurf-ohne-bestaetigungsschleife.md) enger:
+`DesignTests(Q)` leitet nach erfüllten Voraussetzungen konkrete Tests aus dem
+beauftragten Verhalten und dem festgehaltenen Änderungsentwurf ab. Genau ein
+`designDecision`, keine neuen Belege und keine `question`-Entscheidung sind zulässig.
+Routine-Testfälle zu entwerfen erfordert keine weitere Bestätigung. Schema, Decoder
+und Work-Admission prüfen dies unabhängig; der unveränderte Einzelrepair kann ein
+ungültiges Dokument korrigieren, aber keinen Abschluss oder neue Leserunde erfinden.
+Allgemeines Design und echte folgenreiche Änderungsentscheidungen behalten Rückfragen.
+Der Testentwurf autorisiert weder eine Ausführung noch eine Sicherheitsfreigabe.
+
 Der Prüfstand wird atomar mit dem Audit gespeichert, bei ausdrücklicher Fortsetzung neu an
 aktuelle Sources gebunden und vor Verwendung auf Aktualität geprüft. Geänderte Originale und
 abhängige Antworten werden `Stale`; nicht verfügbare alte Antworten bleiben nur historische

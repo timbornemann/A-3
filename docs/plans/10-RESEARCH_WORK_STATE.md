@@ -45,15 +45,25 @@ Fortsetzung mit Mehrprovider-Einstellungen (ADR-0066):
 - [x] Explizite Live-Testauswahl für Luna und Google Gemma aus bestehenden freigegebenen
       Providerslots; keine Änderung an Rollen, Credentials, Origins oder Benutzerkatalog.
 - [ ] Live-Nachtest von `gpt-5.6-luna`, `gemma-4-26b-a4b-it`, `ornith-1.5:9b`,
-      `qwen38-8k:latest` und `gpt-oss:20b`; lokale Modelle strikt nacheinander.
+      `qwen38-8k:latest`, `gpt-oss:20b` und `granite4.2:8b`; lokale Modelle strikt nacheinander.
 - [ ] Inhaltliche Defekte anhand der Originale und unveränderter Testfragen reproduzieren,
       gezielte Regressionen und Korrekturen statt pauschaler Budget-/Promptvergrößerung.
 - [x] Leere GPT-OSS-Probe durch den unterstützten Ollama-Wirewert korrigieren,
       Offline-Grenzen und reale Recherche nachtesten
       ([ADR-0067](../adrs/0067-ollama-gpt-oss-wire-thinking.md)).
+- [ ] Gemini-Schema-Zurückweisung an der Adaptergrenze korrigieren, ohne Core-
+      Zulassung oder Budgets zu lockern; echte Nachtests getrennt auswerten
+      ([ADR-0068](../adrs/0068-gemini-schema-arraygrenzen.md)).
+- [x] Unnötige Bestätigungsfragen im Core-Testentwurf nach fertigem Änderungsentwurf
+      mit enger Phase, Einzelrepair und echtem Mehrmodus-/Modellnachtest abfangen
+      ([ADR-0069](../adrs/0069-core-testentwurf-ohne-bestaetigungsschleife.md)).
+- [x] Gehostetes Gemma 4 mit dokumentiertem explizitem minimalem Thinking prüfen;
+      unveränderte Budgets und kontrollierter Live-Vergleich, keine vermutete Abhilfe
+      als Erfolg zählen ([ADR-0070](../adrs/0070-gemma-api-explizites-minimal-thinking.md)).
 - [ ] Live-Agent-Umsetzung auf isolierter Fixture einschließlich tatsächlicher Verification
       prüfen; bisherige Agent-Vorbereitung ist kein Nachweis ausgeführter Änderungen.
-- [ ] Erneute vollständige Qualitätsgates und dokumentierte verbleibende Grenzen.
+- [x] Erneute vollständige Qualitätsgates und dokumentierte verbleibende Grenzen
+      für ADR-0068 bis ADR-0070 und Rubrik v2. Weitere Korrekturen brauchen neue Gates.
 
 - [x] Versionierte Domain-Typen, stabile Teilfragen, explizite epistemische Arten,
       Abhängigkeiten, Ergebnis-/Evidence-Validierung und transitive Invalidierung.

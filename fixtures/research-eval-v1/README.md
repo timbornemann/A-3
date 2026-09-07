@@ -23,7 +23,8 @@ Live tests are ignored by default and must only be opted in after explicit user 
 Check that the selected model is already installed and locally resident using Ollama's
 loopback `/api/tags` and `/api/show`; a remote model/host is not local residency.
 Do not pull models or change application settings. The reviewed local profiles are
-`ornith-1.5:9b`, `gemma4:12b` and `gpt-oss:20b` at 16,384 context / 4,096 output, and
+`ornith-1.5:9b`, `gemma4:12b`, `gpt-oss:20b` and `granite4.2:8b` at
+16,384 context / 4,096 output, and
 `qwen38-8k:latest` at **8,192 context / 2,048 output**. Historical 4B/16k runs remain
 separate observations. Local profiles use temperature 0, parallelism 1, conservative
 UTF-8 counting and FormatFieldOnly, plus a real structured-output capability probe.
@@ -74,8 +75,15 @@ Native child crashes can produce partial files before the existing bounded worke
 only a complete 60-record report qualifies as a full matrix, and failed attempts remain
 visible. Originals are checked byte-for-byte after every case. No private source is used.
 
-- `completed` measures terminal research without a continuation request; `passed` also
-  requires the unchanged necessary-concept rubric. Neither proves semantic truth.
+- `completed` retains the historical measure: research returned without a continuation
+  request. It does not by itself prove a finished plan. Starting with `rubric_version=2`,
+  `passed` additionally requires no `user_halt`, durable `work_ready=true`, and the
+  necessary-concept rubric. `work_ready` is the Core's current required-question state,
+  not a model's self-rating or a semantic proof. An absent work state cannot pass.
+- Rubric v2 recognizes U+2010/U+2011 typography as ASCII hyphens in prose; e.g. `UTF‑8`
+  must not be reported as absent. Required concepts and original fixture questions are
+  unchanged. This does not normalize code identifiers for evidence admission. Old
+  reports without a version keep their original v1 meaning and are never rewritten.
 - `user_halt` also catches a returned `QUESTION:`. Baseline has only completion state;
   missing newer metric fields mean **unavailable**, never zero.
 - `adaptive_reads` counts durable access starts, and `repeated_adaptive_reads` counts

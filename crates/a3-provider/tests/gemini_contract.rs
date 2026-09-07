@@ -245,6 +245,7 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
         Some("test-gemini-key")
     );
     let payload: Value = serde_json::from_slice(&wire_request.body)?;
+    assert!(payload["generationConfig"].get("thinkingConfig").is_none());
     assert_eq!(
         payload["systemInstruction"]["parts"][0]["text"],
         "System instruction"
@@ -280,6 +281,61 @@ async fn gemini_adapter_streams_neutral_events_and_encodes_strict_request() -> R
     assert_eq!(completed.reason(), ModelFinishReason::Stop);
     assert_eq!(completed.usage().prompt_tokens(), Some(12));
     assert_eq!(completed.usage().output_tokens(), Some(4));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn research_wire_projection_does_not_relax_the_independent_decoder() -> Result<(), TestError>
+{
+    let phase = a3_application::ResearchOutputPhase::Initialize;
+    let schema = a3_application::research_work_phase_schema(phase, true).map_err(map_app_error)?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = endpoint_for(&listener)?;
+    let question = json!({"kind":"repository","priority":"required","outcome":"Inspect public fixture","dependencies":[]});
+    let oversized = json!({"schema_version":5,"decision":{"kind":"progress","note":{
+        "goal":"Inspect fixture","finding_kind":"hypothesis","finding":"No originals read","finding_source_refs":[],"gap":"","next_step":""}},
+        "work":{"questions":vec![question;33],"results":[]}}).to_string();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let request = read_http_request(&mut stream).await?;
+        write_event_stream_head(&mut stream).await?;
+        let event = json!({"candidates":[{"index":0,"content":{"parts":[{"text":oversized}]},"finishReason":"STOP"}]});
+        write_http_chunk(&mut stream, format!("data: {event}\n\n").as_bytes()).await?;
+        finish_http_chunks(&mut stream).await?;
+        Ok::<_, TestError>(request)
+    });
+    let provider = test_provider(endpoint)?;
+    let request = structured_request_with_schema("gemma-4-26b-a4b-it", schema)?;
+    let control = TestControl::default();
+    let mut stream = provider
+        .stream(
+            &request,
+            ModelRequestTimeout::from_millis(5000).map_err(map_app_error)?,
+            &control,
+        )
+        .await
+        .map_err(map_app_error)?;
+    let mut output = String::new();
+    let mut completed = false;
+    while let Some(event) = stream.next().await {
+        match event.map_err(map_app_error)? {
+            ProviderEvent::OutputText(chunk) => output.push_str(chunk.as_str()),
+            ProviderEvent::Completed(done) => {
+                assert_eq!(done.reason(), ModelFinishReason::Stop);
+                completed = true;
+            }
+        }
+    }
+    assert!(completed);
+    let wire: Value = serde_json::from_slice(&server.await??.body)?;
+    let work = &wire["generationConfig"]["responseJsonSchema"]["$defs"]["work"]["properties"];
+    assert!(work["questions"].get("maxItems").is_none());
+    assert_eq!(work["results"]["maxItems"], 0);
+    assert!(
+        a3_application::DecodeAskResearchDecision
+            .decode_phase(&output, phase)
+            .is_err()
+    );
     Ok(())
 }
 
@@ -482,6 +538,11 @@ async fn capability_probe_uses_show_metadata_and_a_real_strict_schema_request()
         "/v1beta/models/gemini-2.5-flash:generateContent"
     );
     let chat_body: Value = serde_json::from_slice(&chat_request.body)?;
+    assert!(
+        chat_body["generationConfig"]
+            .get("thinkingConfig")
+            .is_none()
+    );
     assert_eq!(
         chat_body["generationConfig"]["responseMimeType"],
         "application/json"
@@ -556,6 +617,86 @@ async fn invalid_structured_probe_output_creates_a_non_executable_profile() -> R
         profile.capabilities().structured_output(),
         ModelStructuredOutputCapability::Unavailable
     );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gemma_api_probe_and_stream_use_minimal_thinking_without_exposing_thoughts()
+-> Result<(), TestError> {
+    for model in ["gemma-4-26b-a4b-it", "models/gemma-4-31b-it"] {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = endpoint_for(&listener)?;
+        let server = tokio::spawn(async move {
+            let (mut show, _) = listener.accept().await?;
+            let _ = read_http_request(&mut show).await?;
+            let metadata = json!({"name": model, "inputTokenLimit":16384,"outputTokenLimit":4096,"supportedGenerationMethods":["generateContent","streamGenerateContent"]});
+            write_json_response(&mut show, "200 OK", &serde_json::to_vec(&metadata)?).await?;
+            let (mut probe, _) = listener.accept().await?;
+            let probe_request = read_http_request(&mut probe).await?;
+            write_json_response(&mut probe, "200 OK", br#"{"candidates":[{"finishReason":"STOP","content":{"parts":[{"thought":true,"text":"not an answer"},{"text":"{\"a3_probe\":\"ok\"}"}]}}]}"#).await?;
+            let (mut stream, _) = listener.accept().await?;
+            let stream_request = read_http_request(&mut stream).await?;
+            write_event_stream_head(&mut stream).await?;
+            write_http_chunk(&mut stream, b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"not evidence\"},{\"text\":\"{\\\"result\\\":\\\"ok\\\"}\"}]},\"finishReason\":\"STOP\"}]}\n\n").await?;
+            finish_http_chunks(&mut stream).await?;
+            Ok::<_, TestError>((probe_request, stream_request))
+        });
+        let provider = test_provider(endpoint)?;
+        let control = TestControl::default();
+        let timeout = ModelRequestTimeout::from_millis(5_000).map_err(map_app_error)?;
+        let probe_request = ModelCapabilityProbeRequest::new(
+            ModelId::try_from_string(model.to_owned()).map_err(map_app_error)?,
+            sample_settings()?,
+        );
+        let profile = ProbeModelProfile::new(&provider)
+            .execute(&probe_request, timeout, &control)
+            .await
+            .map_err(map_probe_error)?;
+        assert_eq!(
+            profile.capabilities().structured_output(),
+            ModelStructuredOutputCapability::Verified
+        );
+        let sample = sample_request(model, true)?;
+        let request = ModelProviderRequest::new(
+            profile,
+            sample.messages().to_vec(),
+            sample.structured_output().cloned(),
+        )
+        .map_err(map_app_error)?;
+        let expected = [
+            ProviderEvent::OutputText(
+                a3_application::ModelOutputChunk::try_from_string(r#"{"result":"ok"}"#.to_owned())
+                    .map_err(map_app_error)?,
+            ),
+            ProviderEvent::Completed(a3_application::ModelProviderCompletion::new(
+                ModelFinishReason::Stop,
+                a3_application::ModelProviderUsage::new(None, None),
+            )),
+        ];
+        let events =
+            verify_model_provider_stream(&provider, &request, timeout, &control, &expected).await?;
+        let visible = events
+            .iter()
+            .filter_map(|event| match event {
+                ProviderEvent::OutputText(chunk) => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(visible, r#"{"result":"ok"}"#);
+        assert!(
+            matches!(events.last(), Some(ProviderEvent::Completed(done)) if done.reason() == ModelFinishReason::Stop)
+        );
+        let (probe, stream) = server.await??;
+        for (wire, expected_limit) in [(probe, 256), (stream, 2048)] {
+            let body: Value = serde_json::from_slice(&wire.body)?;
+            assert_eq!(
+                body["generationConfig"]["thinkingConfig"],
+                json!({"thinkingLevel":"minimal"})
+            );
+            assert_eq!(body["generationConfig"]["maxOutputTokens"], expected_limit);
+            assert!(body["generationConfig"]["responseJsonSchema"].is_object());
+        }
+    }
     Ok(())
 }
 

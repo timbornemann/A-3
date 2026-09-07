@@ -204,7 +204,11 @@ impl WorkGuard {
                     if state.question(id).is_some_and(|q| {
                         q.definition().kind == a3_domain::ResearchQuestionKind::Design
                     }) {
-                        ResearchOutputPhase::Design(id)
+                        if id.get() == 3 && core_plan_contract(state) {
+                            ResearchOutputPhase::DesignTests(id)
+                        } else {
+                            ResearchOutputPhase::Design(id)
+                        }
                     } else if self.complete_originals
                         && id == a3_domain::ResearchQuestionId::FIRST
                         && core_plan_contract(state)
@@ -266,7 +270,8 @@ impl WorkGuard {
         }
         if let a3_application::ResearchOutputPhase::Analyze(question)
         | a3_application::ResearchOutputPhase::SummarizeOriginals(question)
-        | a3_application::ResearchOutputPhase::Design(question) = self.output_phase()
+        | a3_application::ResearchOutputPhase::Design(question)
+        | a3_application::ResearchOutputPhase::DesignTests(question) = self.output_phase()
             && (update.results.len() > 1
                 || update
                     .results
@@ -1209,16 +1214,23 @@ mod tests {
             ResearchOutputPhase::Analyze(ResearchQuestionId::FIRST),
             ResearchOutputPhase::SummarizeOriginals(ResearchQuestionId::FIRST),
             ResearchOutputPhase::Design(ResearchQuestionId::new(3)?),
+            ResearchOutputPhase::DesignTests(ResearchQuestionId::new(3)?),
         ] {
             let hint =
                 research_model::DecisionIssue::WorkEcho.repair_hint_for_phase(Some(phase), 4);
             assert!(hint.starts_with("Core instruction echo"));
             assert!(hint.len() <= 768);
-            assert_eq!(
-                hint.contains("evidence=[]"),
-                matches!(phase, ResearchOutputPhase::Design(_))
-            );
+            assert_eq!(hint.contains("evidence=[]"), phase.is_design());
         }
+        let tests = issue.repair_hint_for_phase(
+            Some(ResearchOutputPhase::DesignTests(ResearchQuestionId::new(
+                3,
+            )?)),
+            4,
+        );
+        assert!(tests.contains("never ask the user"));
+        assert!(tests.contains("exactly one result"));
+        assert!(tests.len() <= 768);
         Ok(())
     }
 

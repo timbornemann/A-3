@@ -37,6 +37,10 @@ impl EvidenceGuard<'_> {
                 {
                     let design_choice = mode != AgentSessionMode::Ask
                         && state.can_request_design_choice()
+                        && !matches!(
+                            guard.output_phase(),
+                            a3_application::ResearchOutputPhase::DesignTests(_)
+                        )
                         && markdown
                             .trim()
                             .strip_prefix("QUESTION:")
@@ -148,10 +152,11 @@ impl DecisionIssue {
             && let Some(
                 ResearchOutputPhase::Analyze(id)
                 | ResearchOutputPhase::SummarizeOriginals(id)
-                | ResearchOutputPhase::Design(id),
+                | ResearchOutputPhase::Design(id)
+                | ResearchOutputPhase::DesignTests(id),
             ) = phase
         {
-            let result = if matches!(phase, Some(ResearchOutputPhase::Design(_))) {
+            let result = if phase.is_some_and(ResearchOutputPhase::is_design) {
                 "kind=designDecision, evidence=[]. Make concrete future decisions; for tests give inputs, expected outcomes and a verification method consistent with prerequisite decisions"
             } else {
                 "kind=interpretation with current E-window anchor_ref evidence. Explain the actual delivered implementation"
@@ -170,6 +175,14 @@ impl DecisionIssue {
             Some(ResearchOutputPhase::Analyze(id)) => {
                 return format!(
                     "Analyze Q{}: return schema_version=5; decision contains only kind=progress and note; work.questions=[]. work.results contains at most one result, question_id={}, kind=interpretation, using only actually delivered current E-window anchor_ref evidence. Cover all explicitly named originals relevant to this question. No copied quotes, citation markers, boundedUnknown, designDecision, markdown or new questions. If original evidence cannot answer this question, return results=[] and identify the exact gap. Failure category: {}.",
+                    id.get(),
+                    id.get(),
+                    self.code()
+                );
+            }
+            Some(ResearchOutputPhase::DesignTests(id)) => {
+                return format!(
+                    "DesignTests Q{}: return schema_version=5, decision kind=progress with note, work.questions=[], exactly one result question_id={}, kind=designDecision, evidence=[]. Derive concrete test inputs, expected results and verification methods from the original request and admitted design. Defining these tests is your assigned work; never ask the user to supply or confirm routine scenarios. Do not reopen research, change prerequisites or claim tests were executed. Maximum result text 4096 UTF-8 bytes. Failure category: {}.",
                     id.get(),
                     id.get(),
                     self.code()
